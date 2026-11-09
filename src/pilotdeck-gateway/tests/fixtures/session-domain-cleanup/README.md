@@ -1540,3 +1540,37 @@ isolates the `_exit_uncertain` guard, 1200 the `_exit_arms` guard — both
 must answer True, never raise); four revert mutants are killed, plus an
 injection-only control that must keep the fail-closed line and lose it only
 under the mutant (`mutneg-r21-variants.out`).
+
+fix-r22 (DS r21 boundary#1/concurrency#1/#2/sibling#1 — all five
+non-P3 findings runtime-arbitrated and confirmed, probe-verified,
+`fix-r22-audit/probe-r22-arb.out` + `probe-r22-e2e.out`): a
+resolvable-constant outer shell (`('x' if flag else ('sta'+'tus') if
+(1.0 is 1.0) else 'y')) if 1 else 'z'`) re-opened the r19/r20
+partial-arm-set escape — `_exit_uncertain` answered False for the
+outer test without recursing into the taken arm while `_exit_arms`
+flattened into it, so both the status-key face and the clean-status
+value face escaped enumeration.  Four violation consumers
+(`_exit_name_violation`, `_exit_provenance`, `_helper_exits_zero`,
+`unshared_status_slots` return elements) likewise read a surviving
+partial arm set as the complete answer.  The scan stage
+(`scan_aggregation_tree` recursion family) had no boundary at all —
+a 1200-deep no-paren chain in a return position collapsed the whole
+audit into one RecursionError line — and the two parse tuples let a
+60k-unary chain's `MemoryError('Parser stack overflowed')` through to
+the same collapse.  The fix recurses the taken/orelse arm in
+`_exit_uncertain`'s non-runtime branch, wires all four consumers to
+consult it (RecursionError fails closed the same way), wraps the
+per-file scan block in a `(RecursionError, MemoryError)` boundary
+(the file is recorded `cannot scan … (scan stage)` and skipped), and
+adds `MemoryError` to both parse tuples (`RecursionError` also joins
+the proven-definitions arm).  The write path's hand-mirrored
+three-step spelling pipeline is extracted into `_walk_word_hit`
+(simplify#1).  The `_fsr6` raised-recursionlimit isolation gap
+(concurrency#3) is registered, not changed: the reviewer-suggested
+'FAIL'-arm shape measures as a false red on healthy trees under
+`setrecursionlimit(20000)` (`probe-r22-fsr6.out`), so the 'PASS' arms
+stay and the trade-off is documented in-repo.  New `_fsr7` pins cover
+the constant-shell key/value/plain faces, the four consumer wirings,
+and the rogue enumeration.  Ten revert mutants are killed
+(`fix-r22-audit/mutneg-r22-variants.out`), including the scan
+boundary and the parse tuple arms with injected killer shapes.
