@@ -404,6 +404,127 @@ fn zone_resolver_cache_reprobes_unresolved_zones() {
     );
 }
 
+/// #2314: concurrent first calls for one zone all resolve, and the cache
+/// converges on a single memoized entry. The double-check accepts that each
+/// concurrent first-caller may parse the zone once (bounded by the number
+/// of racing callers); after they join, a further call must *hit* — the
+/// parse count freezes at whatever the race produced.
+#[test]
+fn zone_resolver_cache_concurrent_first_calls_converge() {
+    let cache = std::sync::Arc::new(CronZoneResolverCache::new());
+    let workers: Vec<_> = (0..8)
+        .map(|index| {
+            let cache = std::sync::Arc::clone(&cache);
+            std::thread::spawn(move || {
+                let result = cache.resolver("Asia/Tokyo");
+                assert!(
+                    result.is_ok(),
+                    "#2314 concurrent first calls: worker {index} must resolve the zone"
+                );
+            })
+        })
+        .collect();
+    for (index, worker) in workers.into_iter().enumerate() {
+        worker
+            .join()
+            .unwrap_or_else(|_| panic!("#2314 concurrent first calls: worker {index} panicked"));
+    }
+    let parses = cache.parse_count();
+    assert!(
+        (1..=8).contains(&parses),
+        "#2314 concurrent first calls: each of the 8 workers parses at most once, got {parses}"
+    );
+    assert!(
+        cache.resolver("Asia/Tokyo").is_ok(),
+        "#2314 concurrent first calls: the post-join call must resolve"
+    );
+    assert_eq!(
+        cache.parse_count(),
+        parses,
+        "#2314 concurrent first calls: the memoized entry must serve the post-join call without a new parse"
+    );
+}
+
+/// #2314: the parse runs *outside* the cache lock (double-check). A first
+/// call parked inside its parse (via the test seam) must not stop a
+/// *different* zone's already-cached hit from returning — under the old
+/// single-lock shape the parked parse held the lock and serialized every
+/// zone's call behind one slow first parse.
+#[test]
+fn zone_resolver_cache_parse_does_not_block_other_zones() {
+    let cache = std::sync::Arc::new(CronZoneResolverCache::new());
+    assert!(
+        cache.resolver("Asia/Tokyo").is_ok(),
+        "#2314 lock scope: the primed zone must resolve on this host"
+    );
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    cache.set_parse_hook(Some(std::sync::Arc::new(move || {
+        entered_tx.send(()).ok();
+        // Park inside the parse until released (or the test is gone).
+        release_rx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .recv()
+            .ok();
+    })));
+    let parsing = {
+        let cache = std::sync::Arc::clone(&cache);
+        std::thread::spawn(move || cache.resolver("Europe/Berlin"))
+    };
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("#2314 lock scope: the parse must reach the seam");
+    let hit_done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let hit = {
+        let cache = std::sync::Arc::clone(&cache);
+        let hit_done = std::sync::Arc::clone(&hit_done);
+        std::thread::spawn(move || {
+            let result = cache.resolver("Asia/Tokyo");
+            assert!(
+                result.is_ok(),
+                "#2314 lock scope: the cached hit must resolve"
+            );
+            hit_done.store(true, std::sync::atomic::Ordering::SeqCst);
+        })
+    };
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(
+        hit_done.load(std::sync::atomic::Ordering::SeqCst),
+        "#2314 lock scope: a parked first parse must not block another zone's cached hit"
+    );
+    hit.join()
+        .expect("#2314 lock scope: the cached-hit worker must not panic");
+    release_tx
+        .send(())
+        .expect("#2314 lock scope: the parked parse must accept its release");
+    let parsed = parsing
+        .join()
+        .expect("#2314 lock scope: the parsing worker must not panic");
+    assert!(
+        parsed.is_ok(),
+        "#2314 lock scope: the parked parse must resolve its zone"
+    );
+    assert_eq!(
+        cache.parse_count(),
+        2,
+        "#2314 lock scope: exactly the primed zone plus the parked parse"
+    );
+    for zone in ["Asia/Tokyo", "Europe/Berlin"] {
+        assert!(
+            cache.resolver(zone).is_ok(),
+            "#2314 lock scope: {zone} must hit after the interleaving"
+        );
+    }
+    assert_eq!(
+        cache.parse_count(),
+        2,
+        "#2314 lock scope: the post-interleaving calls must hit, not re-parse"
+    );
+    cache.set_parse_hook(None);
+}
+
 /// TimeClip normalizes `-0` to `+0` after `ToIntegerOrInfinity`, verified on
 /// Node v22.22.0 (`new Date(-0.5).getTime()` is `+0`, `Object.is(…, -0)`
 /// false); the oracle's JSON cannot distinguish the two zero bits, so this
