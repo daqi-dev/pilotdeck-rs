@@ -454,13 +454,17 @@ mutations = [
     # worker (the management family's `memory-inline-sync` shape, #1322): on
     # the single-threaded runtime the `join!` polls `create` to completion on
     # its first poll, the sibling never runs in between, and `ran_before`
-    # stays false at the bound assertion.
+    # stays false at the bound assertion. The `Ok::<_, JoinError>` pin keeps
+    # the value's type identical to the `spawn_blocking` form — plain `Ok(...)`
+    # leaves the error type uninferred (E0282, cb8 r1 compile log in
+    # _tmp/20261026-issue-2195/review-r1/); the issue's recipe said the bare
+    # form compiled, which the first host run disproved.
     ('cron-inline-sync', CRON,
      '            let dispatched = tokio::task::spawn_blocking(move || {\n'
      '                cron::dispatch(cron.as_deref(), &dispatch_method, &params)\n'
      '            })\n'
      '            .await;',
-     '            let dispatched = Ok(cron::dispatch(cron.as_deref(), &dispatch_method, &params));',
+     '            let dispatched = Ok::<_, tokio::task::JoinError>(cron::dispatch(cron.as_deref(), &dispatch_method, &params));',
      'native_process::methods::cron::cron_tests::cron_request_dispatches_off_the_async_worker',
      '#1509 cron dispatch must yield the async worker before answering'),
 ]
