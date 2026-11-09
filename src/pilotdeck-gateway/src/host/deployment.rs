@@ -30,6 +30,13 @@ const LAUNCHER_CONTENT: &[u8] = include_bytes!(
     "../../../pilotdeck-transport/assets/sidecar/pilotdeck-agent-loop-sidecar-launcher.mjs"
 );
 
+// Replace only deployment anchors in fixture tests, without changing NODE or
+// installing assets into the checkout. Thread-local scope isolates other tests.
+#[cfg(test)]
+thread_local! {
+    static TEST_MODULE_ROOT: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Profile {
     Native,
@@ -158,6 +165,10 @@ pub(crate) fn find_packaged_js_sidecar_from(start: &Path) -> Option<PathBuf> {
 }
 
 fn compiled_module_js_sidecar() -> PathBuf {
+    #[cfg(test)]
+    if let Some(root) = TEST_MODULE_ROOT.with(|root| root.borrow().clone()) {
+        return root.join(COMPILED_JS_SIDECAR);
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(COMPILED_JS_SIDECAR)
 }
 
@@ -166,6 +177,10 @@ pub(crate) fn compiled_module_js_sidecar_for_tests() -> PathBuf {
 }
 
 fn find_packaged_js_sidecar() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(root) = TEST_MODULE_ROOT.with(|root| root.borrow().clone()) {
+        return find_packaged_js_sidecar_from(&root);
+    }
     let mut starts = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
@@ -352,6 +367,47 @@ fn optional_positive_integer(value: Option<&str>) -> Result<Option<u64>, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn with_module_root<T>(root: &Path, run: impl FnOnce() -> T) -> T {
+        struct Reset(Option<PathBuf>);
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                TEST_MODULE_ROOT.with(|root| root.replace(self.0.take()));
+            }
+        }
+        let _reset = Reset(TEST_MODULE_ROOT.with(|slot| slot.replace(Some(root.into()))));
+        run()
+    }
+
+    fn sidecar_fixture(name: &str, relative_path: &str) -> (Scratch, PathBuf) {
+        let scratch = Scratch::new(name);
+        let sidecar = scratch.path().join(relative_path);
+        fs::create_dir_all(sidecar.parent().unwrap()).unwrap();
+        fs::write(scratch.path().join("package.json"), r#"{"type":"module"}"#).unwrap();
+        // This adapter emits events only after importing and calling the factory
+        // and consuming its real async iterator; no canned success response.
+        fs::write(
+            &sidecar,
+            r#"import { createInterface } from 'node:readline';
+import { pathToFileURL } from 'node:url';
+import { resolve } from 'node:path';
+const lines = createInterface({ input: process.stdin });
+for await (const line of lines) {
+    const request = JSON.parse(line);
+    if (request.kind !== 'request' || request.method !== 'execute') throw new Error('expected execute');
+    const factory = await import(pathToFileURL(resolve(process.env.PILOTDECK_AGENT_LOOP_FACTORY)).href);
+    const execution = await factory.default(request.payload);
+    for await (const event of execution.loop.run(execution.input)) {
+        console.log(JSON.stringify({ kind: 'notification', method: 'agent.tick', payload: event }));
+    }
+    console.log(JSON.stringify({ kind: 'response', messageId: request.messageId, outcome: 'success' }));
+}
+"#,
+        )
+        .unwrap();
+        fs::write(sidecar.with_file_name(SIDECAR_LAUNCHER), LAUNCHER_CONTENT).unwrap();
+        (scratch, sidecar)
+    }
 
     /// Local scratch directory: B has a crate-wide `crate::scratch::Scratch`,
     /// this crate keeps one per test module. Same contract — a unique temp
@@ -628,32 +684,32 @@ mod tests {
 
     #[test]
     fn default_stdio_sidecar_matches_ts_compile_module_sibling() {
-        let Profile::Stdio { command, args, .. } = resolve(
-            &env(&[(TRANSPORT, "stdio")]),
-            Path::new("/cwd"),
-            Path::new("/bin/pilotdeck-agent-loop-sidecar"),
-        )
-        .unwrap()
-        else {
-            panic!("stdio")
-        };
-        assert_eq!(command, default_stdio_js_command());
-        assert_eq!(
-            args,
-            [super::compiled_module_js_sidecar_for_tests()
-                .to_string_lossy()
-                .into_owned()]
-        );
-        // The packaged JS sidecar belongs to the deployment bundle, which this
-        // checkout does not carry. Assert the path contract the profile picks;
-        // the bundle-presence check only runs where a bundle exists.
-        let packaged = super::compiled_module_js_sidecar_for_tests();
-        assert_eq!(args, [packaged.to_string_lossy().into_owned()]);
-        if PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dist").is_dir() {
-            assert!(
-                packaged.is_file(),
-                "packaged sidecar must ship beside the deployment profile anchor"
-            );
+        for layout in [COMPILED_JS_SIDECAR, PACKAGED_JS_SIDECAR] {
+            let (scratch, sidecar) = sidecar_fixture("default-stdio", layout);
+            with_module_root(scratch.path(), || {
+                let Profile::Stdio { command, args, .. } = resolve(
+                    &env(&[(TRANSPORT, "stdio")]),
+                    Path::new("/cwd"),
+                    Path::new("/bin/pilotdeck-agent-loop-sidecar"),
+                )
+                .unwrap()
+                else {
+                    panic!("stdio")
+                };
+                assert_eq!(command, default_stdio_js_command());
+                assert_eq!(
+                    super::compiled_module_js_sidecar_for_tests(),
+                    scratch.path().join(COMPILED_JS_SIDECAR)
+                );
+                assert_eq!(args, [sidecar.to_string_lossy().into_owned()]);
+                assert!(
+                    sidecar.is_file(),
+                    "packaged sidecar must ship beside the deployment profile anchor"
+                );
+                let launcher = bundled_launcher(&sidecar).unwrap();
+                assert_eq!(launcher, sidecar.with_file_name(SIDECAR_LAUNCHER));
+                assert_eq!(fs::read(launcher).unwrap(), LAUNCHER_CONTENT);
+            });
         }
     }
 
@@ -712,30 +768,41 @@ process.exit(typeof loaded.default === "function" ? 0 : 2);"#,
     #[test]
     fn bundled_agent_module_execute_invokes_factory() {
         use std::process::{Command, Stdio};
-        let scratch = crate::scratch::Scratch::new("sidecar-factory-exec");
+        let (scratch, sidecar) = sidecar_fixture("sidecar-factory-exec", COMPILED_JS_SIDECAR);
         let factory = scratch.path().join("factory.mjs");
         std::fs::write(
             &factory,
-            "export default async function createSidecarExecution() {\
+            "import { writeFileSync } from 'node:fs';\n\
+             export default async function createSidecarExecution(payload) {\
+             writeFileSync(process.env.FACTORY_MARKER, JSON.stringify(payload));\
              return { loop: { run: async function*() { yield { type: 'tick' }; } }, input: {} };\
              }",
         )
         .unwrap();
-        let sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("assets/cli/pilotdeck-agent-loop-sidecar.js");
-        // The Node sidecar bundle ships with the deployment package, not with
-        // this source checkout; without it there is no factory to exercise.
-        if !sidecar.is_file() {
-            return;
-        }
+        let Profile::Stdio { command, args, env } = with_module_root(scratch.path(), || {
+            resolve(
+                &env(&[(TRANSPORT, "stdio"), (FACTORY, factory.to_str().unwrap())]),
+                scratch.path(),
+                Path::new("/bin/pilotdeck-agent-loop-sidecar"),
+            )
+            .unwrap()
+        }) else {
+            panic!("stdio")
+        };
+        assert!(sidecar.is_file());
+        assert_eq!(command, default_stdio_js_command());
+        assert_eq!(args, [sidecar.to_string_lossy().into_owned()]);
         let request = concat!(
             r#"{"kind":"request","method":"execute","messageId":"m-exec","requestId":"r1","#,
             r#""runId":"run1","operationId":"op1","payload":{}}"#,
             "\n",
         );
-        let mut child = Command::new("node")
-            .arg(&sidecar)
-            .env("PILOTDECK_AGENT_LOOP_FACTORY", &factory)
+        let marker = scratch.path().join("factory-called.json");
+        let mut child = Command::new(&command)
+            .args(&args)
+            .envs(&env)
+            .env("FACTORY_MARKER", &marker)
+            .current_dir(scratch.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -747,6 +814,12 @@ process.exit(typeof loaded.default === "function" ? 0 : 2);"#,
             stdin.write_all(request.as_bytes()).unwrap();
         }
         let output = child.wait_with_output().expect("sidecar output");
+        assert!(
+            output.status.success(),
+            "sidecar failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(fs::read_to_string(marker).unwrap(), "{}");
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
             !stdout.contains("SIDEcar_FACTORY_ONLY"),

@@ -648,12 +648,11 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let scratch = crate::scratch::Scratch::new("update-health-no-root");
-        // Without the Web bundle the healthy-server contract is unchanged; the
-        // probe must still connect and accept the context payload.
-        let expected_root = match super::super::update::default_web_update_project_root() {
-            Some(root) => root.canonicalize().unwrap(),
-            None => scratch.path().canonicalize().unwrap(),
-        };
+        // Exercise the services-directory fallback with no Git root or updater.
+        let anchor = scratch.path().join("gateway/src/runtime");
+        std::fs::create_dir_all(&anchor).unwrap();
+        std::fs::create_dir_all(scratch.path().join("ui/server/services")).unwrap();
+        let expected_root = scratch.path().canonicalize().unwrap();
         let server = thread::spawn(move || {
             for _ in 0..2 {
                 let (mut stream, _) = listener.accept().unwrap();
@@ -699,22 +698,21 @@ mod tests {
             ("SERVER_PORT".into(), port.to_string()),
             ("DATABASE_PATH".into(), db.to_string_lossy().into()),
         ]);
-        // Resolving the installation directory needs the Web bundle, which this
-        // source checkout does not ship; the healthy-server handshake is already
-        // covered by the probe path above when a bundle is present.
-        let bundle = super::super::update::default_web_update_project_root().is_some();
-        let client = try_online_client(&env, None);
-        if bundle {
-            let client = client.unwrap();
+        super::super::update::with_deployment_anchor_for_tests(&anchor, || {
+            assert_eq!(
+                super::super::update::default_web_update_project_root().unwrap(),
+                scratch.path()
+            );
+            let client = try_online_client(&env, None).unwrap();
             assert!(
                 client.is_some(),
                 "healthy web must connect via /api/update/context even without a local root"
             );
-        } else {
-            // Without the bundle the constructor reports runtimeUnavailable;
-            // that is a missing package, not a healthy-server rejection.
-            assert!(!matches!(client, Ok(None)), "a healthy server must connect");
-        }
+            assert_eq!(
+                client.unwrap().project_root,
+                scratch.path().canonicalize().unwrap()
+            );
+        });
         server.join().unwrap();
     }
 
