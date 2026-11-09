@@ -140,6 +140,21 @@ fn replacement_error(error: crate::runtime::replacement::ReplacementError) -> Re
     }
 }
 
+/// The reservation both model methods hold across their whole body: the
+/// request's `sessionKey` when present, an inert guard otherwise (the
+/// reserved body's own gate reports the missing key).
+fn reserve_model_update<'a>(
+    requests: &'a Requests,
+    params: &JsValue,
+    operation: &str,
+) -> Result<crate::runtime::replacement::TranscriptWriteReservation<'a>, RequestError> {
+    let key = params.get("sessionKey").and_then(JsValue::as_string);
+    requests
+        .replacement
+        .reserve_transcript_write_held(key, operation)
+        .map_err(replacement_error)
+}
+
 /// Resolves `projectKey` from params, falling back to the configured project.
 /// The session_dir slice owns the family's copy of this resolution; a local
 /// one keeps the config family inside its sanctioned file set.
@@ -189,20 +204,15 @@ impl Requests {
     }
 
     /// InProcessGateway.ts:2191-2199: the transcript-write reservation wraps
-    /// the whole callback, released on every exit.
+    /// the whole callback, released on every exit. The TS `try/finally` runs
+    /// under a Promise that cannot be dropped, so the Rust port holds the
+    /// release in a `Drop` guard (#2391): a request future dropped at an await
+    /// point, or a panic unwinding the reserved body, releases too instead of
+    /// stranding the key at `SESSION_BUSY` until restart.
     async fn session_model_set(&self, params: &JsValue) -> Result<JsValue, RequestError> {
-        let reserved = params.get("sessionKey").and_then(JsValue::as_string);
-        if let Some(key) = &reserved
-            && let Err(error) = self
-                .replacement
-                .reserve_transcript_write(key, "change the session model")
-        {
-            return Err(replacement_error(error));
-        }
+        let reserved = reserve_model_update(self, params, "change the session model")?;
         let result = self.session_model_set_reserved(params).await;
-        if let Some(key) = &reserved {
-            self.replacement.release_transcript_write(key);
-        }
+        drop(reserved);
         result
     }
 
@@ -245,20 +255,12 @@ impl Requests {
         model_result(&project_key, &session_key, &selection, &metadata, &self.env)
     }
 
-    /// InProcessGateway.ts:2201-2209: the clear reservation mirrors set's.
+    /// InProcessGateway.ts:2201-2209: the clear reservation mirrors set's —
+    /// held in the same `Drop` guard (#2391).
     async fn session_model_clear(&self, params: &JsValue) -> Result<JsValue, RequestError> {
-        let reserved = params.get("sessionKey").and_then(JsValue::as_string);
-        if let Some(key) = &reserved
-            && let Err(error) = self
-                .replacement
-                .reserve_transcript_write(key, "clear the session model")
-        {
-            return Err(replacement_error(error));
-        }
+        let reserved = reserve_model_update(self, params, "clear the session model")?;
         let result = self.session_model_clear_reserved(params).await;
-        if let Some(key) = &reserved {
-            self.replacement.release_transcript_write(key);
-        }
+        drop(reserved);
         result
     }
 
@@ -1084,6 +1086,104 @@ mod tests {
             Some("session_metadata"),
             "#1457 transcript entry is session metadata"
         );
+        teardown(&r).await;
+    }
+
+    /// #2391: a `session_model_set` request future dropped at an await point
+    /// must release its transcript-write reservation. The TS wrapper is a
+    /// `try { … } finally { release }` around a Promise that cannot be
+    /// dropped, so the Rust port's extra exits — cancellation at an await
+    /// point and a panic in the reserved body — are the release guard's to
+    /// cover; without it the key is stranded at `SESSION_BUSY` until the
+    /// process restarts. The test holds the transcript fence so the request
+    /// parks inside the reserved body, past the synchronous reserve prefix.
+    #[tokio::test]
+    async fn session_model_set_dropped_mid_write_releases_the_reservation() {
+        let (_scratch, r) = setup_fixture();
+        let key = JsString::from("cfg-drop-1");
+        let fence = transcript_locks::acquire(&transcript_locks::session_transcript_path(
+            &r.options.home,
+            &r.options.project,
+            &key,
+        ))
+        .await
+        .expect("#2391 test holds the transcript fence");
+        let params = object([
+            ("sessionKey", JsValue::String(key.clone())),
+            ("selection", selection("model", "test", "test")),
+        ]);
+        let mut request = Box::pin(r.session_config_request("session_model_set".into(), params));
+        // One poll runs the synchronous prefix — the reserve included — and
+        // parks the future at the held fence; a completion here would mean the
+        // fixture never reached the write.
+        let parked = std::future::poll_fn(|cx| {
+            std::task::Poll::Ready(request.as_mut().poll(cx).is_pending())
+        })
+        .await;
+        negative_assert!(parked, "#2391 the request parks at the held fence");
+        negative_assert!(
+            r.replacement.has_transcript_write_reservation(&key),
+            "#2391 the parked request holds the reservation"
+        );
+        // Cancel the request the way a dropped request future is: mid-body,
+        // at the await point.
+        drop(request);
+        negative_assert!(
+            !r.replacement.has_transcript_write_reservation(&key),
+            "#2391 a dropped request releases its transcript-write reservation"
+        );
+        drop(fence);
+        let retry = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([
+                    ("sessionKey", JsValue::String(key.clone())),
+                    ("selection", selection("model", "test", "test")),
+                ]),
+            )
+            .await;
+        negative_assert!(
+            retry.is_ok(),
+            "#2391 the next write is not blocked by a stranded reservation: {:?}",
+            retry
+                .err()
+                .map(|error| (error.code.to_string(), error_text(&error)))
+        );
+        teardown(&r).await;
+    }
+
+    /// #2391: the clear method's reservation travels in the same `Drop`
+    /// guard — a dropped clear request must not strand its key either.
+    #[tokio::test]
+    async fn session_model_clear_dropped_mid_write_releases_the_reservation() {
+        let (_scratch, r) = setup_fixture();
+        let key = JsString::from("cfg-drop-2");
+        let fence = transcript_locks::acquire(&transcript_locks::session_transcript_path(
+            &r.options.home,
+            &r.options.project,
+            &key,
+        ))
+        .await
+        .expect("#2391 test holds the transcript fence");
+        let mut request = Box::pin(r.session_config_request(
+            "session_model_clear".into(),
+            object([("sessionKey", JsValue::String(key.clone()))]),
+        ));
+        let parked = std::future::poll_fn(|cx| {
+            std::task::Poll::Ready(request.as_mut().poll(cx).is_pending())
+        })
+        .await;
+        negative_assert!(parked, "#2391 the clear request parks at the held fence");
+        negative_assert!(
+            r.replacement.has_transcript_write_reservation(&key),
+            "#2391 the parked clear request holds the reservation"
+        );
+        drop(request);
+        negative_assert!(
+            !r.replacement.has_transcript_write_reservation(&key),
+            "#2391 a dropped clear request releases its transcript-write reservation"
+        );
+        drop(fence);
         teardown(&r).await;
     }
 

@@ -136,6 +136,23 @@ pub enum SubmitClaim {
     Claimed,
     Conflict,
 }
+/// One held transcript-write reservation. `Drop` releases it — the guard shape
+/// the settings slice's listener `Capture` (`runtime/settings/gateway.rs`)
+/// uses for the same cancellation hazard: the TS `try { … } finally
+/// { release }` wrapper runs under a Promise that cannot be dropped, so the
+/// Rust port's extra exits (a request future dropped at an await point, a
+/// panic unwinding the reserved body) must still release.
+pub struct TranscriptWriteReservation<'a> {
+    coordinator: &'a ReplacementCoordinator,
+    key: Option<JsString>,
+}
+impl Drop for TranscriptWriteReservation<'_> {
+    fn drop(&mut self) {
+        if let Some(key) = self.key.take() {
+            self.coordinator.release_transcript_write(&key);
+        }
+    }
+}
 impl ReplacementCoordinator {
     pub fn new(
         storage: ReplacementStorage,
@@ -171,6 +188,26 @@ impl ReplacementCoordinator {
     }
     pub fn has_transcript_write_reservation(&self, key: &JsString) -> bool {
         self.0.state.lock().unwrap().reservations.contains(key)
+    }
+    /// [`Self::reserve_transcript_write`] returning the release as a `Drop`
+    /// guard instead of a paired call, so the caller's whole body — returns,
+    /// errors, and the exits a TS Promise never takes (a request future
+    /// dropped at an await point, a panic in the reserved body) — releases
+    /// the reservation. Without the guard either stray exit strands the key
+    /// at `SESSION_BUSY` until the process restarts. `key: None` holds
+    /// nothing; the wrapped body's own gate reports the missing key.
+    pub fn reserve_transcript_write_held(
+        &self,
+        key: Option<&JsString>,
+        operation: &str,
+    ) -> Result<TranscriptWriteReservation<'_>, ReplacementError> {
+        if let Some(key) = key {
+            self.reserve_transcript_write(key, operation)?;
+        }
+        Ok(TranscriptWriteReservation {
+            coordinator: self,
+            key: key.cloned(),
+        })
     }
     pub fn fork_session(&self, input: JsValue) -> BoxFuture<ReplacementResult> {
         match &self.0.storage.fork_session {

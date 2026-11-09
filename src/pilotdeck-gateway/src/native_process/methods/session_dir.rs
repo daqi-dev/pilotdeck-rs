@@ -227,7 +227,9 @@ impl Requests {
     }
 
     /// `createLocalGateway.deleteSession` → close live owner, delete transcript +
-    /// file history + tool results + subagents directories.
+    /// file history + tool results + subagents directories, then drop the
+    /// session's SDK registry rows (`clearSdkSessionState`,
+    /// createLocalGateway.ts:1160).
     async fn session_delete(&self, params: &JsValue) -> Result<JsValue, RequestError> {
         let key = require_session_key(params)?;
         let project_root: std::path::PathBuf = resolve_project(self, params)?.into();
@@ -288,6 +290,22 @@ impl Requests {
         })
         .await
         .map_err(|e| RequestError::new(e.to_string()))??;
+        // `registry.clearSdkSessionState(input.sessionKey)` — after every
+        // storage delete succeeded, exactly like the baseline. The native
+        // split (#2392): the MCP fields (server table, permission-mode
+        // overrides, generated permission rules, the shared session→project
+        // entry) live in `SdkMcpConfig`; `sdkThinkingOverrides` lives in
+        // `session_overrides`. The registry half of the TS clear (task-budget
+        // ledger, session configs, plugins, handler registrations) has no
+        // production instance in this process yet — see `clear_session_state`'s
+        // contract (runtime/sdk_session/registry.rs): it must be called
+        // **before** the MCP clear, because the MCP clear drops the shared
+        // projects entry its budget step reads. When that half is wired
+        // (#1872-74 follow-up), it belongs above this line, never below it.
+        self.mcp
+            .config()
+            .clear_sdk_session_state(&JsValue::String(key.clone()));
+        self.session_overrides.clear_thinking(&key);
         Ok(JsValue::Undefined)
     }
 
@@ -1041,6 +1059,159 @@ mod tests {
     #[tokio::test]
     async fn delete_session_blank_key_gate_order() {
         blank_key_gate_order("delete_session").await;
+    }
+
+    /// The session keys one `snapshot_state` table holds, as UTF-8 strings.
+    fn snapshot_table_keys(
+        config: &crate::runtime::mcp::sdk::SdkMcpConfig,
+        field: &str,
+    ) -> Vec<String> {
+        let rows = config
+            .snapshot_state()
+            .get(field)
+            .cloned()
+            .unwrap_or(JsValue::Undefined);
+        let JsValue::Array(ref rows) = rows else {
+            return Vec::new();
+        };
+        rows.iter()
+            .map(|row| match row {
+                JsValue::Array(parts) => parts
+                    .first()
+                    .and_then(JsValue::as_string)
+                    .map(|key| String::from_utf16_lossy(key.units()))
+                    .unwrap_or_default(),
+                _ => String::new(),
+            })
+            .collect()
+    }
+
+    /// Seed the two `clearSdkSessionState` halves this process owns for one
+    /// key: the MCP permission tables (an override row plus its generated
+    /// rule, exactly what `setMcpPermissionModeOverrideForSdk` leaves) and
+    /// the thinking override.
+    async fn seed_sdk_session_state(requests: &Requests, session: &str) {
+        let input = object([
+            ("sessionKey", session.into()),
+            ("serverName", "pdrs-2392-server".into()),
+            ("mode", "auto".into()),
+        ]);
+        requests
+            .mcp
+            .config()
+            .set_mcp_permission_mode_override(&input)
+            .await
+            .expect("#2392 the seeded permission override commits");
+        // The lease-acquired sync shape (the wiring layer calls this with
+        // `lease.rules().ask`, ProjectRuntimeRegistry.ts:305-308): generates
+        // the session's permission-rule row for the override just seeded.
+        requests
+            .mcp
+            .config()
+            .sync_permission_rules(&session.into(), &mut Vec::new());
+        requests
+            .session_overrides
+            .set_thinking(&session.into(), object([("enabled", JsValue::Bool(true))]));
+        requests
+            .session_overrides
+            .set_permission_mode(&session.into(), "acceptEdits".into());
+    }
+
+    /// #2392: `deleteSession` ends with `clearSdkSessionState`
+    /// (createLocalGateway.ts:1160), so the deleted session's registry rows
+    /// must not outlive its files. The permission-mode selection is the
+    /// counter-scope: the TS clear never touches `sessionOverrides`, so the
+    /// native delete must keep it.
+    #[tokio::test]
+    async fn session_delete_clears_the_sdk_session_state() {
+        let (_scratch, requests) = crate::native_process::management_tests::setup();
+        let session: JsString = "a8-session".into();
+        seed_sdk_session_state(&requests, "a8-session").await;
+        let config = requests.mcp.config();
+        negative_assert!(
+            snapshot_table_keys(config, "overrides").contains(&"a8-session".to_string()),
+            "#2392 delete starts with a seeded MCP permission override"
+        );
+        negative_assert!(
+            snapshot_table_keys(config, "rules").contains(&"a8-session".to_string()),
+            "#2392 delete starts with a seeded generated permission rule"
+        );
+        negative_assert!(
+            requests.session_overrides.thinking(&session).is_some(),
+            "#2392 delete starts with a seeded thinking override"
+        );
+
+        let result = crate::runtime::turn::gateway::GatewayRequests::request(
+            &requests,
+            "delete_session".into(),
+            object([("sessionKey", "a8-session".into())]),
+        )
+        .await;
+        negative_assert!(
+            matches!(result, Ok(JsValue::Undefined)),
+            "#2392 delete_session answers undefined after deleting the transcript"
+        );
+        negative_assert!(
+            !snapshot_table_keys(config, "overrides").contains(&"a8-session".to_string()),
+            "#2392 delete drops the session's MCP permission overrides"
+        );
+        negative_assert!(
+            !snapshot_table_keys(config, "rules").contains(&"a8-session".to_string()),
+            "#2392 delete drops the session's generated permission rules"
+        );
+        negative_assert!(
+            requests.session_overrides.thinking(&session).is_none(),
+            "#2392 delete drops the session's thinking override"
+        );
+        negative_assert_eq!(
+            requests
+                .session_overrides
+                .permission_mode(&session)
+                .map(|mode| String::from_utf16_lossy(mode.units())),
+            Some("acceptEdits".to_string()),
+            "#2392 delete keeps the permission-mode selection, which the TS clear does not touch"
+        );
+
+        requests.owner.shutdown().await.expect("#2392 shutdown");
+        requests.project.dispose().await.expect("#2392 dispose");
+    }
+
+    /// #2392: `clearSdkSessionState` runs only after every storage delete
+    /// succeeded (createLocalGateway.ts:1150-1160); `SESSION_NOT_FOUND`
+    /// leaves before any clear, so the seeded rows survive the refusal.
+    #[tokio::test]
+    async fn session_delete_not_found_keeps_the_sdk_session_state() {
+        let (_scratch, requests) = crate::native_process::management_tests::setup();
+        let session: JsString = "pdrs-2392-ghost".into();
+        seed_sdk_session_state(&requests, "pdrs-2392-ghost").await;
+        let error = crate::runtime::turn::gateway::GatewayRequests::request(
+            &requests,
+            "delete_session".into(),
+            object([("sessionKey", "pdrs-2392-ghost".into())]),
+        )
+        .await
+        .expect_err("#2392 delete_session refuses the session without a transcript");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "SESSION_NOT_FOUND",
+            "#2392 the missing transcript answers SESSION_NOT_FOUND"
+        );
+        let config = requests.mcp.config();
+        negative_assert!(
+            snapshot_table_keys(config, "overrides").contains(&"pdrs-2392-ghost".to_string()),
+            "#2392 the refusal keeps the session's MCP permission overrides"
+        );
+        negative_assert!(
+            snapshot_table_keys(config, "rules").contains(&"pdrs-2392-ghost".to_string()),
+            "#2392 the refusal keeps the session's generated permission rules"
+        );
+        negative_assert!(
+            requests.session_overrides.thinking(&session).is_some(),
+            "#2392 the refusal keeps the session's thinking override"
+        );
+
+        requests.owner.shutdown().await.expect("#2392 shutdown");
+        requests.project.dispose().await.expect("#2392 dispose");
     }
 
     #[tokio::test]
