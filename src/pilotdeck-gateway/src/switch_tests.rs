@@ -927,27 +927,34 @@ async fn a_cancelled_stop_face_leaves_the_gate_closed() {
 /// manager (and with it the manager's scheduler cleanup, which only its
 /// `CronRuntime::drop` wakes) alive past the host's own references. A
 /// strong key here would retire that cleanup to process exit for every
-/// ordinary host that served one management dispatch.
+/// ordinary host that served one management dispatch. The assertions are
+/// identity-based (weak handles to this test's own manager and gate), not
+/// registry-wide counts: the registry is process-global, so a census would
+/// be perturbed by sibling tests registering their own managers.
 #[test]
 fn the_management_gate_registry_forgets_dead_managers() {
     let scratch = Scratch::new("switch-cron-gate-registry");
-    let before = crate::switch::cron_management_gate_live_entries();
     let first = cron_manager(&scratch);
-    let _gate = crate::switch::cron_management_gate(&first);
-    assert_eq!(
-        crate::switch::cron_management_gate_live_entries(),
-        before + 1,
-        "#2363 the first lookup registers the manager's gate"
-    );
-    drop(_gate);
+    let gate = crate::switch::cron_management_gate(&first);
+    let first_manager = Arc::downgrade(&first);
+    let first_gate = Arc::downgrade(&gate);
+    drop(gate);
     drop(first);
-    // Any later lookup sweeps the dead entry before its own find-or-create,
-    // so the census stays flat instead of accumulating per dead manager.
+    // The registry must not be what keeps the manager alive: with this
+    // test's strong references gone, the weak key is already dead. (A
+    // revert to strong keys fails here — the registry would hold it.)
+    assert!(
+        first_manager.upgrade().is_none(),
+        "#2363 the registry does not keep the dropped manager alive"
+    );
+    // Any later lookup sweeps the dead entry before its own
+    // find-or-create, releasing the gate that entry held. (With the sweep
+    // removed, the dead-key entry — and its gate — would survive; with it,
+    // the weak gate is dead once the sweep has run.)
     let second = cron_manager(&scratch);
-    let _gate = crate::switch::cron_management_gate(&second);
-    assert_eq!(
-        crate::switch::cron_management_gate_live_entries(),
-        before + 1,
+    let _second_gate = crate::switch::cron_management_gate(&second);
+    assert!(
+        first_gate.upgrade().is_none(),
         "#2363 the dropped manager's entry is swept, not retained"
     );
 }

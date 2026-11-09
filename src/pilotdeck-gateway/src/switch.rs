@@ -509,19 +509,6 @@ pub(crate) fn cron_management_gate(manager: &Arc<CronManager>) -> Arc<CronManage
     gate
 }
 
-/// #2363 codex concurrency P1: the census that pins the gate registry's
-/// lifetime contract — every entry's key must be live. Test-only; the
-/// contract itself is enforced by the sweep in [`cron_management_gate`].
-#[cfg(test)]
-pub(crate) fn cron_management_gate_live_entries() -> usize {
-    CRON_MANAGEMENT_GATES
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .iter()
-        .filter(|(held, _)| held.strong_count() > 0)
-        .count()
-}
-
 impl CronManagementGate {
     /// The dispatch half: the read guard a management dispatch holds across
     /// its whole body. Blocking — the dispatch closure runs on the blocking
