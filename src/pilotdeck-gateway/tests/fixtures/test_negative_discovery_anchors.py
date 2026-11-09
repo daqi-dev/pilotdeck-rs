@@ -1902,7 +1902,13 @@ def _slices_a_string_constant(node, constants, seen=()):
     (``WORD[0:1]``) is reported too: fail-closed, one extra report beats a
     hole (the split that r30 introduced when it stopped treating the string
     itself as the container). An f-string interpolating such a slice is the
-    same build.
+    same build. A ``+`` concatenation carries whatever either side reads:
+    ``Path(WORD[:3] + '/pilotdeck-gateway')`` still builds from the substring
+    (r32, review P0 — the predicate stopped at the ``BinOp`` and let the head
+    pass silently). An *all-literal* ``+`` chain has no slice on either side
+    and keeps its silence: the network-timing precedent concatenates unit-test
+    labels, and a whole-string ``'sms' + '/' + 'mod.rs'`` is the README's
+    registered blind shape, not a new report.
     """
     if isinstance(node, ast.Subscript):
         return (isinstance(node.slice, ast.Slice)
@@ -1916,6 +1922,9 @@ def _slices_a_string_constant(node, constants, seen=()):
         return any(isinstance(part, ast.FormattedValue)
                    and _slices_a_string_constant(part.value, constants)
                    for part in node.values)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return (_slices_a_string_constant(node.left, constants, seen)
+                or _slices_a_string_constant(node.right, constants, seen))
     return False
 
 
@@ -3547,13 +3556,20 @@ def bare_concat_keys(tree, table, root=FIXTURES):
             if ambiguous:
                 report_ambiguous(ambiguous[0], expression)
             elif (repo_rooted(node) or opaque_join_segment(node)
-                  or _slices_a_string_constant(
-                      _leading_path_piece(node, aliases), constants)):
+                  or (_slices_a_string_constant(
+                          _leading_path_piece(node, aliases), constants)
+                      and not _join_resets_to_absolute(node, constants,
+                                                       aliases))):
                 # A head built from a *substring* of a spelled constant —
                 # ``Path(WORD[:3]) / …`` with ``WORD = 'src/pilotdeck-
                 # gateway/src'`` — leaves the discovery key nowhere in the
                 # file text either, so it reports exactly like the other
-                # opaque heads (r31, review P0).
+                # opaque heads (r31, review P0). Unless a filesystem join's
+                # absolute argument has already discarded that head —
+                # ``os.path.join(WORD[:3], '/tmp', 'mod.rs')`` reads
+                # ``/tmp/mod.rs``, outside the repository — which keeps the
+                # absolute-path silence the single-component fallback below
+                # already honours (r32, review P1).
                 report_unresolvable(expression)
             elif (_single_component_directory(
                       _leading_path_piece(node, aliases), constants)
@@ -3744,6 +3760,20 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                     if isinstance(following, ast.FormattedValue):
                         piece = _string_value(following.value, constants)
                         if piece is not None and '/' in piece:
+                            joined = True
+                            break
+                        # ``f'{WORD[:3] + "/"}{name}'``: the separator rides a
+                        # literal operand of the *head* concatenation itself,
+                        # and the opaque name that follows is the file name —
+                        # the same build with the SEP and the name swapped
+                        # (r32, review P0). The head has already qualified as
+                        # reading a substring of a spelled constant, so a
+                        # display counter never reaches this reading.
+                        if (isinstance(target, ast.BinOp)
+                                and any(isinstance(operand, ast.Constant)
+                                        and isinstance(operand.value, str)
+                                        and '/' in operand.value
+                                        for operand in _add_operands(target))):
                             joined = True
                             break
             if joined and (repo_rooted(node)
@@ -4639,6 +4669,9 @@ class DiscoveryAnchorTests(unittest.TestCase):
                 sum(1 for rel in measured
                     if blind.get(rel) and unresolvable.get(rel))),
             'gap totals': (len(blind), len(unresolvable)),
+            'overlap with the first set': (
+                sum(1 for rel in measured
+                    if blind.get(rel) and unresolvable.get(rel)),),
             'keys total and import': (total_keys, import_keys),
             'bare keys': (total_keys - import_keys,),
             'unresolvable files and places': (
@@ -4650,6 +4683,7 @@ class DiscoveryAnchorTests(unittest.TestCase):
             'two-set split': (r'\*\*(\d+) 个仅缺键 \+ (\d+) 个仅含不可解形状'
                               r' \+ (\d+) 个两者都有\*\*'),
             'gap totals': r'合计 (\d+) 个文件存在字面缺失、(\d+) 个文件含不可解形状',
+            'overlap with the first set': r'——后者有 (\d+) 个与前者重叠',
             'keys total and import': (r'字面缺失合计 \*\*(\d+) 条键\*\*'
                                       r'（其中 \*\*(\d+) 条是共享助手 import 键\*\*'),
             'bare keys': r'余下 (\d+) 条是裸文件名拼接',
@@ -8202,6 +8236,79 @@ class DiscoveryAnchorTests(unittest.TestCase):
             "    return Path(WORD[name]) / 'pilotdeck-gateway' / 'src' / 'lib.rs'\n"
         )
         self.assertEqual(violations(dynamic_index,
+                                    'example/negative_controls.py'), [])
+        # A statically one-character slice is still a slice — reported on its
+        # own, not only when it rides along a longer bound (r32, review P2:
+        # the r31 pin only exercised ``[:3]``-shaped bounds).
+        one_character = (
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "WORD = 'src/pilotdeck-gateway/src'\n"
+            "def row(name):\n"
+            "    return Path(WORD[0:1]) / 'pilotdeck-gateway' / 'src' / 'lib.rs'\n"
+        )
+        problems = violations(one_character, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unresolvable repository path' in problem
+                for problem in problems), problems)
+        # A filesystem join's absolute argument discards the sliced head —
+        # ``os.path.join(WORD[:3], '/tmp', 'mod.rs')`` reads ``/tmp/mod.rs``,
+        # outside the repository — so the slice disjunct honours the same
+        # absolute-reset silence the single-component fallback already does
+        # (r32, review P1: the disjunct fired before the reset check).
+        absolute_reset = (
+            "import os\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "WORD = 'src/pilotdeck-gateway/src'\n"
+            "def row():\n"
+            "    return os.path.join(WORD[:3], '/tmp', 'mod.rs')\n"
+        )
+        self.assertEqual(violations(absolute_reset,
+                                   'example/negative_controls.py'), [])
+
+    def test_a_concatenated_slice_head_is_an_unresolvable_repository_path(self):
+        """``Path(WORD[:3] + '/pilotdeck-gateway')`` still reads the substring.
+
+        A ``+`` concatenation carries whatever either side builds, so a sliced
+        constant wrapped in the concatenation is the same opaque head the
+        bare slice already is — the predicate stopped at the ``BinOp`` and
+        let ``Path(WORD[:3] + '/pilotdeck-gateway') / 'src' / 'lib.rs'``
+        pass silently while its key sat inside the spelled constant
+        (r32, review P0). An all-literal ``+`` chain has no slice on either
+        side and keeps the registered silence.
+        """
+        concatenated = (
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "WORD = 'src/pilotdeck-gateway/src'\n"
+            "def row():\n"
+            "    return Path(WORD[:3] + '/pilotdeck-gateway') / 'src' / 'lib.rs'\n"
+        )
+        problems = violations(concatenated, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unresolvable repository path' in problem
+                for problem in problems), problems)
+        concatenated_fstring = (
+            "DISCOVERY_ANCHORS = ()\n"
+            "WORD = 'src/pilotdeck-gateway/src'\n"
+            "def row(name):\n"
+            "    return f'{WORD[:3] + \"/\"}{name}'\n"
+        )
+        problems = violations(concatenated_fstring,
+                              'example/negative_controls.py')
+        self.assertTrue(
+            any('unsupported f-string path' in problem
+                for problem in problems), problems)
+        # The all-literal ``+`` concat keeps its registered silence: no slice
+        # on either side, and the whole-string blind shape is the README's
+        # registration, not a new report (network-timing precedent).
+        all_literal = (
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def row():\n"
+            "    return Path('sms' + '/' + 'mod.rs')\n"
+        )
+        self.assertEqual(violations(all_literal,
                                     'example/negative_controls.py'), [])
 
     def test_a_module_function_with_keyword_arguments_reads_its_first_argument(self):
