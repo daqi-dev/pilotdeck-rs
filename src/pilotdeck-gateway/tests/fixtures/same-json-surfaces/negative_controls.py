@@ -53,7 +53,7 @@ common = root / 'scripts/gateway-parity/common.py'
 # deadline the worst case is the whole table times 3 bound commands each
 # charged ``timeout + twice the kill grace`` -- the 10 cases the r2 review
 # counted already summed to exactly MAX_AGE, and the table has since grown to
-# 15.  The budget bounds the window below that age instead: it is checked
+# 18.  The budget bounds the window below that age instead: it is checked
 # before every case and a spent budget marks the rest INVALID (never KILLED,
 # never silently skipped), so the run fails closed instead of outliving the
 # lease.
@@ -243,6 +243,13 @@ def bound(test):
 
 def preflight():
     errors = []
+    # The exit-side reserve and the restore window cover exactly GUARDED_PATHS
+    # (#2552 r1 DS simplify#1): a case row pointing outside that set would
+    # KeyError inside the finally restore and leave mutant bytes behind, so an
+    # unguarded target is a preflight refusal, never a run.
+    unguarded = sorted(str(row[1]) for row in cases if row[1] not in GUARDED_PATHS)
+    if unguarded:
+        errors.append('case target outside GUARDED_PATHS: ' + ', '.join(unguarded))
     for name, path, old, new, test in cases:
         source = path.read_text()
         try:

@@ -70,9 +70,11 @@ dot / 根 / `src` 内走 `negative_selection.refuse_unusable_target()`，后者�
 与 `same-json-surfaces` 自身源码不读取 target（登记表机器断言无任何读取形态），但它们委托的
 `mutating_sources` 窗口会经 `_ensure_workspace_scanner` 读取 `CARGO_TARGET_DIR`（未设置取共享默认、
 空串/纯空白/dot 在该共享规则处拒绝）且冷主机上可能 cargo 编译扫描器，故「不编译 Cargo」不成立（#2552）；
-四档全豁免的实际理由是矩阵无法承载：「未设置」会启动一个 300s 矩阵子进程跑不完的完整 guarded 批，
-空串/纯空白/dot 在 same-json-surfaces 经 #2431 started 旗标以 rc 2 拒、在 cli-parity-mock-gateway
-以未捕获异常退 1，均非入口自身的 target 守卫；豁免理由与所依赖的源码事实都有断言，不静默漏测。）
+四档全豁免的实际理由是矩阵暂不可承载：「未设置」会启动一个 300s 矩阵子进程跑不完的完整 guarded 批，
+空串/纯空白/dot 在 same-json-surfaces 经 #2431 started 旗标以 rc 2 拒（#2552 实测 rc 2、stderr 点名、
+无证据目录——实为可承载，纳入矩阵待登记表支持「自身源码不调 target_environment」的形态，#2552 跟进）、
+在 cli-parity-mock-gateway 以启动异常逐行收成 INVALID 证据后退 1（证据目录已领，留档不撤），
+均非入口自身的 target 守卫；豁免理由与所依赖的源码事实都有断言，不静默漏测。）
 同一文件里的 `PENDING_BARE_ASSERTS` 是**只减不增**的存量登记：仍带裸 `assert` 的
 `*/negative_controls.py` 必须逐条列出并写理由，新脚本带裸 `assert` 直接让 CI 红。因此
 「已迁移清单」不会被误读成全集——这个**表**只覆盖 `negative_controls.py` 命名的入口；

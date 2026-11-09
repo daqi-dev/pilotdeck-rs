@@ -2818,17 +2818,23 @@ class SameJsonSurfaces(unittest.TestCase):
         marker = '#2552 the budget guard refuses when common.py is unreadable'
         path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
         try:
+            import contextlib
             import io
+            import signal
             with tempfile.TemporaryDirectory(prefix='pdrs-2552-budget-') as folder:
                 folder = Path(folder)
                 missing = folder / 'missing-common.py'
                 renamed = folder / 'renamed-common.py'
                 renamed.write_text('LEASE_MAX_AGE = 2400\n')
-                # (label, common.py the guard reads, LEASE_BUDGET_SECONDS)
+                # (label, common.py the guard reads, budget reader); the
+                # violating budget is read from the pristine constants the
+                # guard itself loads, never restated here (#2552 r1 DS
+                # concurrency#1: a restated 2400 drifts with common.py).
                 probes = (('missing common.py', missing, None),
                           ('renamed MAX_AGE', renamed, None),
-                          ('budget above MAX_AGE', None, 2400))
-                for label, common_path, budget in probes:
+                          ('budget above MAX_AGE', None,
+                           lambda module: module.load_pristine_common().MAX_AGE))
+                for label, common_path, budget_reader in probes:
                     with self.subTest(label=label), \
                             tempfile.TemporaryDirectory(prefix='pdrs-2552-out-') as out_folder:
                         out = Path(out_folder) / 'out'
@@ -2836,29 +2842,56 @@ class SameJsonSurfaces(unittest.TestCase):
                             'samejson_budget_' + label.replace(' ', '_').replace('-', '_'), path)
                         module = importlib.util.module_from_spec(spec)
                         exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
-                        with patch.object(module, 'preflight', lambda: True), \
-                                patch.object(module, 'common',
-                                             common_path if common_path is not None else module.common), \
-                                patch.object(module, 'LEASE_BUDGET_SECONDS',
-                                             budget if budget is not None
-                                             else module.LEASE_BUDGET_SECONDS), \
-                                patch('sys.stdout', new_callable=io.StringIO), \
-                                patch('sys.stderr', new_callable=io.StringIO) as stderr, \
-                                patch.object(sys, 'argv', [str(path), str(out),
-                                                           'surfaces-frames-bare-not-equal']):
-                            try:
-                                module.main()
-                                raised = None
-                            except BaseException as exit_code:
-                                # BaseException, not just SystemExit: a mutant
-                                # that lets the guard's error escape main()
-                                # must fail this pin's own assertion below --
-                                # a ``with self.subTest`` swallows anything
-                                # raised through it into an unittest ERROR,
-                                # which classify() reads as INVALID, never
-                                # KILLED (#2552, same lesson as #2425's
-                                # assertRaises note).
-                                raised = exit_code
+                        budget = budget_reader(module) if budget_reader is not None else None
+
+                        # Inert on the failure path (#2552 r1 DS concurrency#1
+                        # + boundary#4): every probe must die inside
+                        # require_lease_budget_below_max_age, before the claim
+                        # and before install_terminate_handlers.  Stub
+                        # mutating_sources with a sentinel that turns a broken
+                        # guard into this pin's own failure instead of letting
+                        # main() walk on and mutate this very tree, and
+                        # save/restore the signal dispositions like the #2431
+                        # pins.
+                        def sentinel(*_args, **_kwargs):
+                            raise RuntimeError('budget guard let main() reach mutating_sources')
+
+                        names = [signal.SIGTERM] + [getattr(signal, name) for name in ('SIGHUP', 'SIGQUIT')
+                                                     if hasattr(signal, name)]
+                        saved = {name: signal.getsignal(name) for name in names}
+                        try:
+                            with contextlib.ExitStack() as stack:
+                                stack.enter_context(patch.object(module, 'preflight', lambda: True))
+                                stack.enter_context(patch.object(module, 'mutating_sources', sentinel))
+                                if common_path is not None:
+                                    stack.enter_context(patch.object(module, 'common', common_path))
+                                if budget is not None:
+                                    stack.enter_context(patch.object(module, 'LEASE_BUDGET_SECONDS', budget))
+                                stack.enter_context(patch('sys.stdout', new_callable=io.StringIO))
+                                stderr = stack.enter_context(
+                                    patch('sys.stderr', new_callable=io.StringIO))
+                                stack.enter_context(patch.object(sys, 'argv', [str(path), str(out),
+                                                                               'surfaces-frames-bare-not-equal']))
+                                try:
+                                    module.main()
+                                    raised = None
+                                except BaseException as exit_code:
+                                    # BaseException, not just SystemExit: a
+                                    # mutant that lets the guard's error escape
+                                    # main() must fail this pin's own
+                                    # assertion below -- a ``with self.subTest``
+                                    # swallows anything raised through it into
+                                    # an unittest ERROR, which classify()
+                                    # reads as INVALID, never KILLED (#2552,
+                                    # same lesson as #2425's assertRaises
+                                    # note).  The sentinel's RuntimeError
+                                    # failing the 'lease budget' needle is
+                                    # the same protection for the opposite
+                                    # direction.
+                                    raised = exit_code
+                        finally:
+                            for name, disposition in saved.items():
+                                signal.signal(name, disposition)
                         self.assertTrue(raised is not None
                                         and isinstance(raised, SystemExit)
                                         and raised.code == 2
@@ -2872,11 +2905,16 @@ class SameJsonSurfaces(unittest.TestCase):
         # #2552 (DS concurrency#4): the spent-budget branch had no committed
         # regression pin -- deleting it left every SameJsonSurfaces test
         # green and the invariant had only a one-time drift probe.  Pin the
-        # call site and the INVALID marking by bytes, the reserve arithmetic
-        # and the below-MAX_AGE invariant by value, and the tail reserve's
-        # derivation (guarded-path count times the real _git worst case,
-        # imported constants) so it cannot silently become a hand-picked
-        # number again (DS concurrency#1).
+        # call site and the INVALID marking by bytes -- including the
+        # append's 'status': 'INVALID' literal and the trailing continue,
+        # which a KILLED-swap or a break would otherwise survive as a false
+        # green (#2552 r1 DS concurrency#2 + boundary#2, two independent
+        # hits), and the mutating_sources call site's use of GUARDED_PATHS,
+        # so the reserve cannot drift from the guarded set (DS sibling#4) --
+        # the reserve arithmetic and the below-MAX_AGE invariant by value,
+        # and the tail reserve's derivation (guarded-path count times the
+        # real _git worst case, imported constants) so it cannot silently
+        # become a hand-picked number again (DS concurrency#1).
         marker = '#2552 a spent lease budget marks the remaining cases INVALID'
         path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
         try:
@@ -2889,6 +2927,9 @@ class SameJsonSurfaces(unittest.TestCase):
             self.assertTrue(
                 source.count('if lease_budget_left(clock, time.monotonic()) <= 0:') == 1
                 and source.count("'s parity lease budget before this case") == 1
+                and source.count("results.append({'name': row[0], 'status': 'INVALID',") == 1
+                and source.count("' by name'})\n                        continue") == 1
+                and source.count('mutating_sources(root, GUARDED_PATHS,') == 1
                 and module.TAIL_OVERHEAD_SECONDS
                     == len(module.GUARDED_PATHS) * (module.GIT_TIMEOUT
                                                      + 2 * module.KILL_GRACE_SECONDS)
