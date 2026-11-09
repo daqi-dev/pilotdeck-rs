@@ -1026,6 +1026,38 @@ def _folded_status_hit(folded, words):
             or (folded is not None and folded in words))
 
 
+def _conditional_status_word(node, words):
+    """A runtime conditional that can still be a status word (fix-r19).
+
+    fix-r19 (DS r18 boundary#1 P0, probe-verified —
+    fix-r19-audit/probe-r19-p0.out G2/G3/G5/G6): a runtime test or
+    operand leaves every arm reachable (short-circuit semantics via
+    ``_exit_arms``), and an f-string interpolation can carry the
+    conditional of its own, so a status word assembled by folding in
+    ONE arm (``('sta' + 'tus') if flag else 'x'``) is a value the
+    expression CAN take while the fold's single-string contract answers
+    None — the one-value-two-meanings gap, now on the "which arm" axis.
+    The rule is word-aware on purpose (the fold is not): a conditional
+    counts only when a reachable arm folds to one of *words* or stops
+    the fold as the sentinel; a conditional whose arms fold to ordinary
+    strings only (``('ord' + 'inary') if flag else 'x'``) stays a miss,
+    and a genuinely runtime arm (a Name, a call) certifies nothing by
+    itself — this ruler judges constant spellings, not runtime values
+    (probe controls C1/C3).  Over-collection stays the safe direction:
+    a JoinedStr with non-empty literal parts around the interpolation
+    can never equal a bare word, but it is flagged rather than excused.
+    """
+    if isinstance(node, ast.JoinedStr):
+        return any(isinstance(part, ast.FormattedValue)
+                   and _conditional_status_word(part.value, words)
+                   for part in node.values)
+    if not isinstance(node, (ast.IfExp, ast.BoolOp)):
+        return False
+    return any(_folded_status_hit(_folded_string(arm), words)
+               or _conditional_status_word(arm, words)
+               for arm in _exit_arms(node))
+
+
 def _folded_string(node, budget=None):
     """The string *node* builds out of constants, or None, or the stopped-fold
     sentinel ``_FOLD_STRING_UNRESOLVED`` (#892 r20).
@@ -1283,27 +1315,33 @@ def _folded_string_fold(node, budget):
     # is Constant / JoinedStr / BinOp Add-Mod-Mult only, so a constant
     # expression outside it ('status' if True else 'x', 'status' or 'x')
     # fell through to this fail-open None — the same one-value-two-
-    # meanings gap r14 closed for budget exhaustion.  None stays reserved
-    # for the runtime grammar (_test_is_runtime): an expression built
-    # without those nodes is constant by the interpreter's own semantics,
-    # so an unfolded one means "unknowable", never "not a status word".
-    # The r17 FormattedValue branch propagates the sentinel unchanged.
-    # A None node is not an expression at all: _dict_pairs hands the
-    # ``**spread`` slot's key (None) to _status_key -> _folded_string,
-    # and that pre-r18 read stayed None (a miss); it must not reach
-    # _test_is_runtime's ast.walk.
-    if node is None:
-        return None
+    # meanings gap r14 closed for budget exhaustion.  The r17
+    # FormattedValue branch propagates the sentinel unchanged.
+    # fix-r19 (DS r18 boundary#1 P0 + sibling#1 P2, probe-verified —
+    # fix-r19-audit/probe-r19-p0.out G1/G7 and the non-string controls):
+    # the r18 branch judged the whole subtree with _test_is_runtime, so a
+    # dead-arm Name or a later runtime operand turned a conditional that
+    # IS one constant string (('sta' + 'tus') if True else name,
+    # ('sta' + 'tus') or name) back into the fail-open None, while an
+    # all-constant NON-string conditional ({} if True else {}) read the
+    # sentinel and could flag a healthy function.  The branch now
+    # resolves per reachable arm (_exit_arms: a constant test keeps only
+    # the taken arm, a BoolOp stops at the operand that settles it): a
+    # single reachable arm folds as itself — the exact string when it
+    # folds, None when it does not (an empty dict literal is not a
+    # string, never the sentinel).  A constant-but-unresolvable test
+    # certifies no arm, so the fold stops as the sentinel there; a
+    # runtime branch cannot be answered with one string and keeps None —
+    # the runtime half of the r19 rule is word-aware and lives in
+    # _conditional_status_word.  (A None node is not an expression at
+    # all and falls through to the return below; the ``**spread`` slot's
+    # None key is guarded at _status_key's entry, where that judgment
+    # belongs.)
     if isinstance(node, (ast.IfExp, ast.BoolOp)):
-        # IfExp / BoolOp are the string-producing operators outside the
-        # grammar above — an unfolded one means "unknowable string", never
-        # "not a status word" (the pre-r18 fail-open gap, probe F1/F2/F3/F6).
-        # Every other grammar-miss shape (Dict/Set/List/Tuple/Compare...)
-        # produces something that is not a string at all, so the miss None
-        # stays correct there — collapsing them into the sentinel turned
-        # ``verdict = {}`` into a status hit and failed the healthy
-        # controls run_all baseline.
-        return None if _test_is_runtime(node) else _FOLD_STRING_UNRESOLVED
+        arms = _exit_arms(node)
+        if len(arms) == 1:
+            return _folded_string(arms[0], budget)
+        return None if arms else _FOLD_STRING_UNRESOLVED
     return None
 
 
@@ -1316,6 +1354,11 @@ def _status_literals(node):
     # function into the enumeration flags it; missing one loses the audit).
     # fix-r15: the polarity lives in _folded_status_hit (DS simplify#1).
     if _folded_status_hit(folded, words):
+        return True
+    # fix-r19 (DS r18 boundary#1 P0, probe G4/G5/G6): a runtime
+    # conditional can still take a status-word arm — see
+    # _conditional_status_word.
+    if _conditional_status_word(node, words):
         return True
     return any(isinstance(n, ast.Constant) and n.value in words for n in ast.walk(node))
 
@@ -1453,6 +1496,11 @@ def _status_key(node):
     if node is None:
         return False
     if _folded_status_hit(_folded_string(node), _STATUS_KEYS):
+        return True
+    # fix-r19 (DS r18 boundary#1 P0, probe G1/G2/G3/G7): the key-side
+    # mirror of the value-side rule — a runtime conditional whose
+    # reachable arm folds to a status key is a status key.
+    if _conditional_status_word(node, _STATUS_KEYS):
         return True
     return any(isinstance(n, ast.Constant) and n.value in _STATUS_KEYS
                for n in ast.walk(node))
@@ -8508,11 +8556,16 @@ def _aggregation_audit_impl():
         "'status' if True else 'x'",
         "('sta' + 'tus') if True else 'x'",
     ]
-    if any(_folded_string(ast.parse(shape, mode='eval').body) is None
+    # fix-r19 (DS r18 boundary#2 P2): the pin rejected only None, so a
+    # regression that folded these shapes to a definite WRONG value (or
+    # left the sentinel where the arm folds exactly) stayed green; and
+    # under the r19 per-arm rule each single-reachable-arm shape folds to
+    # the exact word — the pin now demands exactly that.
+    if any(_folded_string(ast.parse(shape, mode='eval').body) != 'status'
            for shape in _fsr4_shapes):
-        failures.append('#892 aggregation-audit: a constant key outside '
-                        'the fold grammar read as runtime instead of '
-                        'stopping the fold (#1652)')
+        failures.append('#892 aggregation-audit: a constant conditional '
+                        'key did not fold to the exact status word '
+                        '(#1652)')
     # Key face: the Subscript shapes are runtime grammar (the fold keeps
     # None) and must be caught by the key-side constant walk fallback.
     _fsr4_keys = [
@@ -8552,6 +8605,120 @@ def _aggregation_audit_impl():
         failures.append('#892 aggregation-audit: a genuinely-runtime key '
                         'was enumerated as a status write '
                         '(over-collection regression, rogue6) (#1652)')
+    # #1652 fix-r19 (DS r18 boundary#1 P0 + sibling#1 P2, probe-verified —
+    # fix-r19-audit/probe-r19-p0.out G1-G7 / controls C1-C6): the r18
+    # IfExp/BoolOp branch judged the whole subtree with _test_is_runtime,
+    # so a dead-arm Name or a runtime test turned a constant-valued
+    # conditional into the fail-open None, while an all-constant
+    # NON-string conditional read the sentinel.  Fold face: the
+    # dead-arm and short-circuit shapes fold to the exact word; the
+    # runtime-branch and non-string shapes keep None (never a wrong
+    # string, never the sentinel).
+    _fsr5_fold_exact = [
+        "('sta' + 'tus') if True else name",
+        "('sta' + 'tus') or name",
+    ]
+    if any(_folded_string(ast.parse(shape, mode='eval').body) != 'status'
+           for shape in _fsr5_fold_exact):
+        failures.append('#892 aggregation-audit: a constant conditional '
+                        'with a dead-arm or later runtime operand did '
+                        'not fold to the status word (#1652)')
+    _fsr5_fold_none = [
+        '{} if True else {}',
+        '[] if True else []',
+        '(1 + 2) if True else 0',
+        "('sta' + 'tus') if flag else 'x'",
+    ]
+    if any(_folded_string(ast.parse(shape, mode='eval').body) is not None
+           for shape in _fsr5_fold_none):
+        failures.append('#892 aggregation-audit: a non-string or '
+                        'runtime-branch conditional read as a known '
+                        'string or as the sentinel (#1652)')
+    # Key/literal faces: a runtime branch whose reachable arm folds to
+    # the word is a status key / status literal, on both sides.
+    _fsr5_keys = [
+        "('sta' + 'tus') if True else name",
+        "('sta' + 'tus') if flag else 'x'",
+        'f\'{("sta" + "tus") if flag else "x"}\'',
+        "('sta' + 'tus') or name",
+    ]
+    if any(not _status_key(ast.parse(shape, mode='eval').body)
+           for shape in _fsr5_keys):
+        failures.append('#892 aggregation-audit: a conditional status '
+                        'key with a folded or dead-arm word was not '
+                        'read as a status key (#1652)')
+    _fsr5_lits = [
+        "('PA' + 'SS') if True else name",
+        "('PA' + 'SS') if flag else 'x'",
+        'f\'{("PA" + "SS") if flag else "x"}\'',
+    ]
+    if any(not _status_literals(ast.parse(shape, mode='eval').body)
+           for shape in _fsr5_lits):
+        failures.append('#892 aggregation-audit: a conditional status '
+                        'value with a folded or dead-arm word was not '
+                        'read as a status literal (#1652)')
+    # Negative faces: the runtime and non-status conditionals must stay
+    # misses — over-collection would flag healthy functions.
+    _fsr5_not_keys = [
+        'name',
+        "('ord' + 'inary') if flag else 'x'",
+        '{} if True else {}',
+    ]
+    if any(_status_key(ast.parse(shape, mode='eval').body)
+           for shape in _fsr5_not_keys):
+        failures.append('#892 aggregation-audit: a runtime or non-status '
+                        'conditional key was over-collected as a status '
+                        'key (#1652)')
+    _fsr5_not_lits = [
+        "('or' + 'dinary') if flag else 'x'",
+        '{} if True else {}',
+    ]
+    if any(_status_literals(ast.parse(shape, mode='eval').body)
+           for shape in _fsr5_not_lits):
+        failures.append('#892 aggregation-audit: a runtime or non-status '
+                        'conditional value was over-collected as a '
+                        'status literal (#1652)')
+    # End-to-end: every write below has a key or value that is exactly
+    # the status word / status literal in one reachable arm, so each
+    # rogue must be enumerated; rogues 7-9 are the negative controls
+    # (genuinely-runtime key, folded non-status conditional key, status
+    # key with a folded non-status conditional value) and must stay out.
+    _fsr5_writes = [
+        "    report[('sta' + 'tus') if True else name] = 'PASS'",
+        "    report[('sta' + 'tus') if flag else 'x'] = 'PASS'",
+        '    report[f\'{("sta" + "tus") if flag else "x"}\'] = \'PASS\'',
+        "    report[('sta' + 'tus') or name] = 'PASS'",
+        "    report['status'] = ('PA' + 'SS') if True else name",
+        "    report['status'] = ('PA' + 'SS') if flag else 'x'",
+        '    report[\'status\'] = f\'{("PA" + "SS") if flag else "x"}\'',
+    ]
+    _fsr5_lines = ['report = {}', 'name = "other"', 'flag = True', '']
+    for _i, _write in enumerate(_fsr5_writes):
+        _fsr5_lines += [f'def rogue{_i}(rows):', _write, '    return 0', '']
+    _fsr5_lines += ['def rogue7(rows):', '    report[name] = \'PASS\'',
+                   '    return 0', '']
+    _fsr5_lines += ['def rogue8(rows):',
+                   "    report[('ord' + 'inary') if flag else 'x']"
+                   " = 'PASS'", '    return 0', '']
+    _fsr5_lines += ['def rogue9(rows):',
+                   "    report['status'] = ('or' + 'dinary') if flag"
+                   " else 'x'", '    return 0', '']
+    _fsr5_found, _fsr5_dup = scan_aggregation_tree(
+        ast.parse('\n'.join(_fsr5_lines)), 'fix-r19-self-check.py')
+    for _i in range(len(_fsr5_writes)):
+        if ('fix-r19-self-check.py', f'rogue{_i}') not in _fsr5_found:
+            failures.append('#892 aggregation-audit: a conditional '
+                            'status write with a folded or dead-arm '
+                            f'word escaped enumeration (rogue{_i}) '
+                            '(#1652)')
+            break
+    for _i in (7, 8, 9):
+        if ('fix-r19-self-check.py', f'rogue{_i}') in _fsr5_found:
+            failures.append('#892 aggregation-audit: a runtime or '
+                            'non-status conditional was enumerated as '
+                            f'a status write (over-collection '
+                            f'regression, rogue{_i}) (#1652)')
+            break
     # #1652 fix-r16 (DS sibling#2 r15 P2): _nested_slot_fail_closed keeps
     # the bare ``in`` on purpose — a stopped fold (the sentinel) must NOT
     # exempt a nested status slot there; False is the flagging, safe
