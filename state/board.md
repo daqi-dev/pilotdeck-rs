@@ -3266,3 +3266,8 @@ updated: 2026-11-05 13:4x · by Claude Code 协调者（13:4x 交接：#1419 合
 
 - **四提交**：`68b7901` continuation 队列 · `400acba` submit_uploads 测 · `6737433` subagent providers · `5a3d434` 企微验签/微信附件。
 - **全量 lib** 4255/0；证据 `pdrs-ext/…/r11/最终报告.md`；未 push；runtime 双父 merge 待 Codex 路交付后另做。
+
+### 2026-11-09 pdrs-daqi-b-channels r12（真合并 runtime 43772a7）
+
+- **`git merge --no-ff`** → `2ef5bdf`，父 `a050aef` + `43772a7`；Codex r7 三提交并入。
+- **全量 lib** 4258/0；六组定向测全绿；证据 `pdrs-ext/…/r12/最终报告.md`；未 push。
