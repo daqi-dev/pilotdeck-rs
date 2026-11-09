@@ -112,6 +112,10 @@ metadata-only 字段序、session_model/config/skills/manager 四处描述器有
 不 trim、metadata `metadata_summary` 完整路径空白标题不 trim（共 35 个）。
 #2309 再加 1 个：dispatch 把 `Err` 压回 `Response` 成功体（`error-mapped-to-response`，
 镜像 snapshot-projection 同名行，绑 `dispatch_routes_only_manager_methods`；共 36 个）。
+分母由静态名册 `EXPECTED_NAMES`（36 项，与上表同序）钉死：启动时
+`negative_selection.registered()` 拒绝表漂移（rc 2，不开跑），跑后复核记录的
+verdict 名单，不符则写 `roster-mismatch.json` 且不写 `summary.json`（#1666 契约，
+镜像 memory-gateway / snapshot-projection 家族）。
 执行器是 `tests/fixtures/negative_suite.py`：逐项正控 → 变异 → 恢复 → 汇总
 KILLED/SURVIVED/INVALID，任一非 KILLED 非零退出。新增产品文件在提交前不在 HEAD，
 `mutating_sources` 会拒绝；提交后由协调者运行。`--audit` 只核对锚点。
