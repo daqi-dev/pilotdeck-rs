@@ -3,7 +3,7 @@ type: experiment
 number: "016"
 date: 2026-11-09
 title: A8.5 切换状态机矩阵 · 探针装置进仓与补格（#2251/#2255/#2258）
-status: 装置进仓（P1–P7 移植参数化）+ P8–P15 补格完成（#2251/#2255）；P16（#2258）随后续段补
+status: 装置进仓（P1–P7 移植参数化）+ P8–P16 补格完成（#2251/#2255/#2258，批次 p2batch-d6 收口）
 related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fixtures]
 ---
 
@@ -52,6 +52,7 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
 | p13_empty_set | #2255 空集合格 | 组件级三格 + 全空五步组合级：全部 0–4ms 落定（空集合不挂起、退出路径可达） |
 | p14_child/p14_half_stop | #2255 半停格 | 真 cron 先真停不回滚 + alwaysOn stop 失败：单失败原样抛、finally 照走 unpublish、二次 stop no-op；server 级半停窗口 E1/E2 可服务、后续四步照走、退出码 0 |
 | p15_child/p15_driver | #2255 单飞 + 退出码抬升 | 重复信号（SIGTERM×2+SIGINT）下 automation.stop 恰 1 次（两层单飞缓存）；挂起窗口内 late unhandledRejection ⇒ exit 1（对照 0） |
+| p16_stop_acceptance | #2258 停接纳机制观测面 | 机制 A（关 listener，真实 server）：新连接三层 ECONNREFUSED、空闲 keep-alive 服务端 FIN、裸层复用已 FIN 连接 = 写成功后静默悬挂（agent 的 ECONNREFUSED 只能来自重建连）；机制 B-RST/B-EOF（纯 node 受控）：握手一律完成后 RST（ECONNRESET）或 EOF（node:http 层两者同为 ECONNRESET 码，fetch 层可区分 ECONNRESET / UND_ERR_SOCKET） |
 
 ## 结论
 
@@ -74,6 +75,9 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
    控制面照常摘除；server 级半停窗口 E1/E2 照常可服务、后续步骤照走、退出码 0。
 9. **单飞 + 退出码抬升**（p15）：重复信号下停机只进一次；退出码可被停机挂起窗口内迟到的
    unhandledRejection 抢写为 1（对照 0）——退出码不只由停切换过程产生。
+10. **停接纳机制观测面**（p16）：机制 A 在 connect 相位明确拒绝并立即释放端口；机制 B 握手一律完成、
+    失败推迟到读写相位且端口不释放；A 的裸层复用是静默悬挂（重建连解释坐实）；B 的 EOF/RST 变体在
+    node:http 层同码（ECONNRESET）、fetch 层可区分。
 
 ## 边界（时间与规模）
 
@@ -86,4 +90,6 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
   组合覆盖点，基线自带 test/composition override）；P15 的 automation 是快停 stub（单飞的可观察面），
   closeServer 是真实 `server.close()` 挂在 driver 持有的 WS 上（P2b 机制）——信号接线照抄
   `src/cli/pilotdeck.ts:266-280`。
-- P16（#2258 停接纳机制）在本实验目录续登记。
+- P16 的机制 B（bind 保留 + accept 后 RST/EOF）是纯 node 受控构造（基线不存在该机制，观测面
+  不来自基线）；机制 A 对真实 server 的裸层复用观测用 `allowHalfOpen` 客户端（收到服务端 FIN 后
+  可写侧保持打开，才能真实观测复用后果）。
