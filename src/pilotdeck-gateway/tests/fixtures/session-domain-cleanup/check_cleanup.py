@@ -2422,15 +2422,28 @@ def _import_value_capable(value, kinds, factory=None, seen=frozenset(),
                 if id(parent) not in pushed_classes:
                     pushed_classes.add(id(parent))
                     stack.append((parent, path))
-            for node in ast.walk(value):
+            # #1953 fix-r1 round 44 (GLM r43 sibling#5): the assign check
+            # pierced nested scopes -- a *method-local* ``__new__ = ...``
+            # is not a class attribute and made the whole class read
+            # capable.  Only the class body's own statements bind
+            # ``__new__``; nested scope bodies are not descended (their
+            # header expressions still are, the same rule the module
+            # walks carry).
+            pending = list(value.body)
+            while pending:
+                node = pending.pop()
                 if (isinstance(node, ast.Assign)
                         and any(isinstance(target, ast.Name)
                                 and target.id == '__new__'
                                 for target in node.targets)):
                     return True
-                if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                        and node.name == '__new__'):
-                    stack.append((node, path))
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if node.name == '__new__':
+                        stack.append((node, path))
+                    continue
+                if isinstance(node, (ast.Lambda, ast.ClassDef)):
+                    continue
+                pending.extend(ast.iter_child_nodes(node))
             continue
         if isinstance(value, (ast.Lambda, ast.FunctionDef,
                              ast.AsyncFunctionDef)):
@@ -2574,6 +2587,26 @@ def _name_rebound_beyond(tree, name, skip):
                 and isinstance(node.target, ast.Name)
                 and node.target.id == name):
             return True
+        # #1953 fix-r1 round 44 (GLM r43 boundary#4 + sibling#4, probe
+        # 2026-11-10): a module-level ``match`` capture rebinds the name --
+        # ``match [_Bad]: case [_B]:`` replaces the clean class with
+        # whatever the pattern captured (probe b4a/b4b: the ruler kept the
+        # stale ClassDef and read the class path clean while the run
+        # imported), and a bare ``del name`` removes the binding the event
+        # walk priced.  Every capture spelling counts: a ``MatchAs``, a
+        # ``MatchStar`` rest and a ``MatchMapping`` rest.
+        if isinstance(node, ast.Match):
+            for case in node.cases:
+                for pattern in ast.walk(case.pattern):
+                    if ((isinstance(pattern, (ast.MatchAs, ast.MatchStar))
+                            and pattern.name == name)
+                            or (isinstance(pattern, ast.MatchMapping)
+                                and pattern.rest == name)):
+                        return True
+        if isinstance(node, ast.Delete):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == name:
+                    return True
         if isinstance(node, (ast.For, ast.AsyncFor)):
             if name in _target_names(node.target):
                 return True
@@ -3548,52 +3581,54 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
         literal_len = len(binding_value.elts)
     display_is_dict = isinstance(binding_value, ast.Dict)
 
-    def priced_moves(removal, index):
-        """Whether the priced selection still addresses the same element
-        after removing (``removal``) at -- or inserting at -- ``index``
-        (already normalized against the literal length; ``None`` is the
-        display's tail position).
-
-        A positive ``leading`` anchors at the front: indices below it never
-        move.  A ``trailing`` count anchors ``trailing`` slots from the
-        end: a removal at or past the anchor takes the slot the selection
-        reads, an insertion past it does the same, and anything before it
-        shifts the tail along with the anchor.
-        """
-        if trailing is not None:
-            if literal_len is None or not 1 <= trailing <= literal_len:
-                return True
-            anchor = literal_len - trailing
-            if index is None:
-                index = literal_len - 1 if removal else literal_len
-            return index >= anchor if removal else index > anchor
-        if not isinstance(leading, int) or literal_len is None:
-            return True
-        if index is None:
-            index = literal_len - 1 if removal else literal_len
-        return leading >= index
+    # #1953 fix-r1 round 44 (GLM r43 boundary#1, probe 2026-11-10): the
+    # round-43 per-event pricing answered each mutation against the
+    # ORIGINAL literal length, so two individually-safe mutations could
+    # composite into a moving one -- ``[_hs[0], L, L]; pop(1); pop(1);
+    # items[-1](...)`` removed the selected trailing element at run time
+    # while every single price read "not moving" (a false PASS; pop+insert
+    # and del+del composite the same way).  The pricing is now a
+    # *simulation*: every priced mutation between the binding and the use
+    # becomes an event, the events run in source order against the
+    # *current* length, and the selection is convicted when the element
+    # it addressed no longer sits where the subscript reads it.  A single
+    # event reproduces the round-43 verdict exactly (probe b1-clean /
+    # b1-clean2); the composites the per-event reading laundered now
+    # convict (probe b1a/b1b/b1c/b1-loop).
+    priceable = (not display_is_dict and literal_len is not None
+                 and ((trailing is not None and 1 <= trailing <= literal_len)
+                      or isinstance(leading, int)))
+    sim_pos = None
+    if priceable:
+        sim_pos = (literal_len - trailing if trailing is not None
+                   else leading)
 
     # Aliases of the display name anywhere in the scope (a fixpoint, so
     # chains launder too): a mutation through one is a mutation.
-    names = {name}
-    changed = True
-    while changed:
-        changed = False
-        for node in ast.walk(scope):
-            if (isinstance(node, ast.Assign) and len(node.targets) == 1
-                    and isinstance(node.targets[0], ast.Name)):
-                value = node.value
-                while isinstance(value, ast.NamedExpr):
-                    value = value.value
-                if (isinstance(value, ast.Name) and value.id in names
-                        and node.targets[0].id not in names):
-                    names.add(node.targets[0].id)
-                    changed = True
+    # #1953 fix-r1 round 44 (GLM r43 boundary#2/#3, probe 2026-11-10): the
+    # fixpoint read only single-target ``ast.Assign`` spellings, so a
+    # walrus display alias (``(_n2 := _items)``) laundered a mutation the
+    # same way the dict/mutator spellings did -- the shared closure now
+    # reads every binding spelling.
+    names = _name_alias_closure(scope, {name})
 
-    def mutates_display(callee, call):
+    def mutates_display(callee, call, price=True):
+        """The display mutation *call* makes (r44 event model).
+
+        ``None`` -- the call does not touch the display; ``True`` -- an
+        unconditional mutation; ``('removal', k)`` / ``('insertion', k)``
+        -- a priced event the window simulation replays in source order
+        (*k* keeps its literal sign; the simulation normalizes it against
+        the length in force when the event runs, because a composite may
+        have changed it already).  With *price* false -- the mutator
+        collection -- a closure body runs once per call and the count is
+        not statically known, so every mutating call counts
+        unconditionally: a priced-safe ``pop`` inside one is the same
+        composite the simulation refuses (probe b1-loop).
+        """
         if not (isinstance(callee, ast.Attribute)
                 and callee.attr in _MUTATING_DISPLAY_ATTRS):
-            return False
+            return None
         if isinstance(callee.value, ast.Name) and callee.value.id in names:
             if (callee.attr in ('pop', 'insert', 'append', 'extend')
                     and not display_is_dict):
@@ -3603,42 +3638,31 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
                 # selection's anchor like ``pop(k)``/``insert(k, v)`` do; the
                 # index argument may spell its sign as a unary literal the
                 # same way the selection slice does, and anything not
-                # statically priceable stays a mutation.
-                def literal_index(first):
-                    if (isinstance(first, ast.Constant)
-                            and isinstance(first.value, int)
-                            and not isinstance(first.value, bool)):
-                        return first.value
-                    if (isinstance(first, ast.UnaryOp)
-                            and isinstance(first.op, ast.USub)
-                            and isinstance(first.operand, ast.Constant)
-                            and isinstance(first.operand.value, int)
-                            and not isinstance(first.operand.value, bool)):
-                        return -first.operand.value
-                    return None
+                # statically priceable stays a mutation.  The shared
+                # ``_constant_int`` reads that spelling (round 44,
+                # GLM r43 sibling#3: the third inline copy of it).
+                if not price or not priceable:
+                    return True
                 if callee.attr in ('append', 'extend'):
-                    return priced_moves(False, None)
+                    return ('insertion', None)
                 first = call.args[0] if call.args else None
                 if first is None:
                     # ``pop()`` removes the last element: only a selection
                     # at the very end of a literal display moves.
-                    return priced_moves(True, None)
-                index = literal_index(first)
+                    return ('removal', None)
+                index = _constant_int(first)
                 if index is None:
                     return True
-                if index < 0:
-                    if literal_len is None:
-                        return True
-                    index += literal_len
                 # removing/inserting at k shifts indices >= k
-                return priced_moves(callee.attr == 'pop', index)
+                return ('removal' if callee.attr == 'pop' else 'insertion',
+                        index)
             if callee.attr == 'pop' and display_is_dict:
                 first = call.args[0] if call.args else None
                 if (isinstance(first, ast.Constant)
                         and isinstance(first.value, (str, bytes, int, float))
                         and isinstance(leading, (str, bytes, int, float))
                         and first.value != leading):
-                    return False
+                    return None
                 return True
             return True
         # The unbound spellings: ``list.reverse(_items)`` /
@@ -3650,7 +3674,7 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
             first = call.args[0] if call.args else None
             if isinstance(first, ast.Name) and first.id in names:
                 return True
-        return False
+        return None
 
     # Nested scopes whose bodies mutate the display: the def may sit before
     # the binding, so the *call* inside the window is what convicts (and a
@@ -3662,7 +3686,8 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
                 continue
             for inner in ast.walk(statement):
                 if (isinstance(inner, ast.Call)
-                        and mutates_display(_callee_expr(inner), inner)):
+                        and mutates_display(_callee_expr(inner), inner,
+                                            price=False)):
                     mutators.add(statement.name)
                     break
         elif (isinstance(statement, ast.Assign)
@@ -3671,28 +3696,29 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
                 and isinstance(statement.value, ast.Lambda)):
             for inner in ast.walk(statement.value):
                 if (isinstance(inner, ast.Call)
-                        and mutates_display(_callee_expr(inner), inner)):
+                        and mutates_display(_callee_expr(inner), inner,
+                                            price=False)):
                     mutators.add(statement.targets[0].id)
                     break
     # #1953 fix-r1 round 43 (GLM r42 boundary#2, probe 2026-11-10): a
     # mutating closure called through an alias -- ``_m = _mutate; _m()`` --
     # is a call *to it*, and the contract convicts on any call to the
     # mutator, so the alias gets the same assignment-transitive closure the
-    # display names got above.
-    changed = True
-    while changed:
-        changed = False
-        for node in ast.walk(scope):
-            if (isinstance(node, ast.Assign) and len(node.targets) == 1
-                    and isinstance(node.targets[0], ast.Name)):
-                value = node.value
-                while isinstance(value, ast.NamedExpr):
-                    value = value.value
-                if (isinstance(value, ast.Name) and value.id in mutators
-                        and node.targets[0].id not in mutators):
-                    mutators.add(node.targets[0].id)
-                    changed = True
+    # display names got above.  #1953 fix-r1 round 44 (GLM r43 boundary#3,
+    # probe 2026-11-10): the closure reads every binding spelling -- a
+    # walrus / annotated / multi-target / unpack alias called a mutating
+    # closure the single-target fixpoint never saw.
+    mutators |= _name_alias_closure(scope, mutators)
 
+    # #1953 fix-r1 round 44 (GLM r43 boundary#1, probe b1-loop): the nodes
+    # a loop re-runs without re-running the binding -- their priced events
+    # execute an unknown number of times between the binding and the use,
+    # which is the composite the simulation refuses, so each convicts.
+    repeated = _repeated_between(scope, binding_pos)
+
+    # The window: every priced event between the certain binding and the
+    # use, replayed in source order against the length in force.
+    events = []
     for statement in ast.walk(scope):
         if not isinstance(statement, ast.stmt):
             continue
@@ -3701,15 +3727,24 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
         if not binding_pos < position < use_pos:
             continue
         for node in ast.walk(statement):
+            node_position = (getattr(node, 'lineno', position[0]),
+                             getattr(node, 'col_offset', position[1]))
             if isinstance(node, ast.Call):
                 callee = _callee_expr(node)
-                if mutates_display(callee, node):
-                    return True
                 if (isinstance(callee, ast.Name) and callee.id in mutators):
                     return True
                 if (isinstance(callee, ast.Attribute)
                         and callee.attr in mutators):
                     return True
+                event = mutates_display(callee, node)
+                if event is None:
+                    continue
+                if event is True:
+                    return True
+                if id(node) in repeated:
+                    return True
+                events.append((node_position, event))
+                continue
             if isinstance(node, (ast.For, ast.AsyncFor)):
                 # GLM r41 boundary P0#1: a For *target* is a subscript write
                 # class of its own -- ``for _items[0] in ...`` rebinds the
@@ -3740,23 +3775,13 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
                             and not display_is_dict
                             and isinstance(binding_value,
                                            (ast.Tuple, ast.List))):
-                        index = None
-                        sl = target.slice
-                        if (isinstance(sl, ast.Constant)
-                                and isinstance(sl.value, int)
-                                and not isinstance(sl.value, bool)):
-                            index = sl.value
-                        elif (isinstance(sl, ast.UnaryOp)
-                                and isinstance(sl.op, ast.USub)
-                                and isinstance(sl.operand, ast.Constant)
-                                and isinstance(sl.operand.value, int)
-                                and not isinstance(sl.operand.value, bool)):
-                            index = -sl.operand.value
-                        if index is not None:
-                            if index < 0:
-                                index += len(binding_value.elts)
-                            if not priced_moves(True, index):
-                                continue
+                        index = _constant_int(target.slice)
+                        if (index is not None and priceable
+                                and id(node) not in repeated):
+                            events.append((node_position,
+                                           ('removal', index)))
+                            continue
+                        if index is not None and id(node) in repeated:
                             return True
                     for sub in ast.walk(target):
                         if not isinstance(sub, ast.Subscript):
@@ -3766,7 +3791,41 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
                             base = base.value
                         if isinstance(base, ast.Name) and base.id in names:
                             return True
-    return False
+    if not events:
+        return False
+    if not priceable:
+        return True
+    # #1953 fix-r1 round 44 (GLM r43 boundary#1, probe 2026-11-10): replay
+    # the priced events in source order against the length in force --
+    # ``pos`` tracks where the selected element sits, ``ln`` how long the
+    # display is, and a removal at the selected position (a composite can
+    # move it there) takes the slot the selection reads.  A negative index
+    # normalizes against the *current* length; the verdict falls out of
+    # the invariant ``pos == ln - trailing`` (or ``pos == leading``).
+    pos = sim_pos
+    ln = literal_len
+    for _order, (kind, index) in sorted(events, key=lambda item: item[0]):
+        if kind == 'removal':
+            if index is None:
+                index = ln - 1
+            elif index < 0:
+                index += ln
+            if index == pos:
+                return True
+            if index < pos:
+                pos -= 1
+            ln -= 1
+        else:
+            if index is None:
+                index = ln
+            elif index < 0:
+                index += ln
+            if index <= pos:
+                pos += 1
+            ln += 1
+    if trailing is not None:
+        return pos != ln - trailing
+    return pos != leading
 
 
 def _unbounded_write(node, kinds):
@@ -4144,6 +4203,13 @@ def _sys_modules_write_values(tree, kinds=None):
                     else:
                         record('*', node)
             stack.extend(
+                # #1953 fix-r1 round 44 (GLM r43 sibling#6, probe 2026-11-10):
+                # the loop context here is ONLY the For-target key
+                # resolution ``record_key`` needs (``loops`` above); While
+                # has no target and an async-for key falls to ``'*'`` via
+                # ``_first_target_name``, i.e. the one narrow consumer stays
+                # conservative -- deliberately not the canonical
+                # For/While semantics of ``_flow_marks``.
                 (child, loops + (node,) if isinstance(node, ast.For) else loops,
                  scope)
                 for child in reversed(list(ast.iter_child_nodes(node))))
@@ -6488,17 +6554,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 # never saw one and every negative selection declined the
                 # path; the unary spelling now normalizes the same way the
                 # (hand-built) negative ``Constant`` branch always meant to.
-                index = None
-                if (isinstance(sl, ast.Constant)
-                        and isinstance(sl.value, int)
-                        and not isinstance(sl.value, bool)):
-                    index = sl.value
-                elif (isinstance(sl, ast.UnaryOp)
-                        and isinstance(sl.op, ast.USub)
-                        and isinstance(sl.operand, ast.Constant)
-                        and isinstance(sl.operand.value, int)
-                        and not isinstance(sl.operand.value, bool)):
-                    index = -sl.operand.value
+                index = _constant_int(sl)
                 if index is None:
                     return None
                 if index < 0:
@@ -7107,6 +7163,12 @@ def _receiver_attribute_writes(tree, receivers, shared):
             calls.append((node, scope, loops, entry))
         for child in reversed(list(ast.iter_child_nodes(node))):
             stack.append(
+                # #1953 fix-r1 round 44 (GLM r43 sibling#6): the loop context
+                # is only the For-target key resolution the ``calls`` pass
+                # below needs (the same narrow consumer as
+                # ``_sys_modules_write_values``); While has no target and
+                # stays conservative, so the canonical For/While semantics
+                # of ``_flow_marks`` are deliberately not mirrored here.
                 (child, child if isinstance(
                     child, (ast.FunctionDef, ast.AsyncFunctionDef,
                             ast.Lambda))
@@ -7310,20 +7372,13 @@ def _dict_binding_keys(name, tree):
     # ``dict.__setitem__(d, k, v)`` / ``operator.setitem(d, k, v)`` spellings
     # name the same mapping -- the literal binding's keys are no longer the
     # whole story, so each reads unbounded too.
-    receivers = {name}
-    changed = True
-    while changed:
-        changed = False
-        for node in ast.walk(tree):
-            if (isinstance(node, ast.Assign) and len(node.targets) == 1
-                    and isinstance(node.targets[0], ast.Name)):
-                value = node.value
-                while isinstance(value, ast.NamedExpr):
-                    value = value.value
-                if (isinstance(value, ast.Name) and value.id in receivers
-                        and node.targets[0].id not in receivers):
-                    receivers.add(node.targets[0].id)
-                    changed = True
+    # #1953 fix-r1 round 44 (GLM r43 boundary#2, probe 2026-11-10): the
+    # receivers follow the shared alias closure -- an annotated
+    # (``e: dict = d``), walrus (``(_e := d)``), multi-target
+    # (``e = f = d``) or unpack (``e, x = (d, 1)``) alias keeps the same
+    # mapping the plain spelling does, and the single-target fixpoint
+    # never saw one (probes b2a-d).
+    receivers = _name_alias_closure(tree, {name})
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             targets = node.targets
@@ -7840,6 +7895,117 @@ def _local_bound_values(node):
     return values
 
 
+def _name_alias_closure(scope, seeds):
+    """Every name an alias chain of *seeds* reaches (r44).
+
+    #1953 fix-r1 round 44 (GLM r43 boundary#2/#3, probe 2026-11-10): the
+    alias fixpoints read only single-target ``ast.Assign`` spellings, so an
+    annotated alias (``e: dict = d``), a bare walrus (``(_e := d)``), a
+    multi-target (``e = f = d``) or an unpack (``e, x = (d, 1)``) stayed
+    outside the set -- the write through the alias was judged against the
+    literal binding and read clean (a false PASS in every family that
+    spelled one; probes b2a-d / b3a-d / b3e).  The closure follows one
+    *value* hop per binding the way :func:`_local_bound_values` projects
+    it, so every spelling that hands a name the same object joins the set.
+    An augmented assignment is not an alias (``f += d`` hands *f* d's
+    items, not the object *d* is), and a ``for``/``with``/``except``/import
+    target has no single value to follow.
+    """
+    names = set(seeds)
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(scope):
+            if isinstance(node, ast.AugAssign):
+                continue
+            if (isinstance(node, ast.NamedExpr)
+                    and isinstance(node.target, ast.Name)):
+                value = node.value
+                while isinstance(value, ast.NamedExpr):
+                    value = value.value
+                if (isinstance(value, ast.Name) and value.id in names
+                        and node.target.id not in names):
+                    names.add(node.target.id)
+                    changed = True
+                continue
+            for target, value in _local_bound_values(node).items():
+                while isinstance(value, ast.NamedExpr):
+                    value = value.value
+                if (isinstance(value, ast.Name) and value.id in names
+                        and target not in names):
+                    names.add(target)
+                    changed = True
+    return names
+
+
+def _repeated_between(scope, binding_pos):
+    """ids of nodes a loop re-runs without re-running the binding (r44).
+
+    #1953 fix-r1 round 44 (GLM r43 boundary#1, probe b1-loop): a priced
+    mutation inside a loop body executes once per iteration while the
+    display binding ran once -- the composite the per-event pricing
+    laundered (``for _ in (0, 1): _items.pop(1)`` moves the selection at
+    run time).  A loop re-runs a node without re-running the binding when
+    the binding sits outside it; a binding *inside* the body re-establishes
+    the display every iteration, so the window stays per-iteration linear
+    (probe b1-loop-clean is the shape that must keep its clean read when
+    the binding joins the loop).  The ``for`` iterable evaluates once, so
+    it keeps the outer verdict; the ``while`` test and the ``else`` blocks
+    re-run / run once like the round-43 walk spellings.  A nested scope's
+    body runs on its own terms (its *header* expressions still re-run per
+    enclosing iteration), and a comprehension's later parts run once per
+    item (the first iterable, whenever the expression does).
+    """
+    repeated = set()
+    stack = [(scope, False)]
+    while stack:
+        node, carried = stack.pop()
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            start = ((node.body[0].lineno, node.body[0].col_offset)
+                     if node.body else (node.lineno, node.col_offset))
+            inner = carried or binding_pos < start
+            stack.append((node.iter, carried))
+            for child in node.body + node.orelse:
+                stack.append((child, inner))
+            continue
+        if isinstance(node, ast.While):
+            start = ((node.body[0].lineno, node.body[0].col_offset)
+                     if node.body else (node.lineno, node.col_offset))
+            inner = carried or binding_pos < start
+            for child in [node.test] + node.body + node.orelse:
+                stack.append((child, inner))
+            continue
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp,
+                             ast.GeneratorExp)):
+            for index, generator in enumerate(node.generators):
+                stack.append((generator.iter,
+                              carried if index == 0 else True))
+                for part in ([generator.target] + list(generator.ifs)):
+                    stack.append((part, True))
+            if isinstance(node, ast.DictComp):
+                stack.append((node.key, True))
+                stack.append((node.value, True))
+            else:
+                stack.append((node.elt, True))
+            continue
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                            ast.Lambda, ast.ClassDef)):
+            # the nested scope's body runs on its own terms; its header
+            # expressions (defaults, decorators) re-run per enclosing
+            # iteration
+            if carried:
+                repeated.add(id(node))
+            for child in ast.iter_child_nodes(node):
+                stack.append((child, carried
+                              if not isinstance(child, ast.stmt) else False))
+            continue
+        if carried:
+            repeated.add(id(node))
+        for child in ast.iter_child_nodes(node):
+            stack.append((child, carried))
+    return repeated
+
+
 def _function_shared_names(function, shared=None, rel=None, loaders=frozenset(),
                            proven=frozenset()):
     """(trusted names, locally rebound receivers) inside *function* (#892 r21).
@@ -8217,8 +8383,43 @@ def _name_bindings(function, outer_imports=None):
             for generator in node.generators:
                 _bind_iterable(generator.target, generator.iter, bindings,
                                node.lineno, node)
-        inner = loops + (node,) if isinstance(
-            node, (ast.For, ast.AsyncFor, ast.While)) else loops
+        # #1953 fix-r1 round 44 (GLM r43 sibling#2, probe 2026-11-10): the
+        # fourth loop-context walk carries the same For/While semantics
+        # the r43 fix gave its three siblings -- the ``for`` iterable and
+        # the ``else`` blocks keep the outer loops, only the bodies and
+        # the ``while`` test carry the loop.  The old blanket ``inner`` let
+        # a for-else binding share the loop id with a body call, and the
+        # ``_bindings_at`` back-edge clause read the later else binding
+        # at the earlier use (probe s2).
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            inner = loops + (node,)
+            for child in reversed(node.body):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                      ast.Lambda, ast.ClassDef)):
+                    continue
+                stack.append((child, inner, comp))
+            for child in reversed(node.orelse):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                      ast.Lambda, ast.ClassDef)):
+                    continue
+                stack.append((child, loops, comp))
+            stack.append((node.target, loops, comp))
+            stack.append((node.iter, loops, comp))
+            continue
+        if isinstance(node, ast.While):
+            inner = loops + (node,)
+            for child in reversed(node.body):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                      ast.Lambda, ast.ClassDef)):
+                    continue
+                stack.append((child, inner, comp))
+            for child in reversed(node.orelse):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                      ast.Lambda, ast.ClassDef)):
+                    continue
+                stack.append((child, loops, comp))
+            stack.append((node.test, inner, comp))
+            continue
         inner_comp = comp + (node,) if isinstance(
             node, (ast.ListComp, ast.SetComp, ast.GeneratorExp,
                    ast.DictComp)) else comp
@@ -8226,7 +8427,7 @@ def _name_bindings(function, outer_imports=None):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
                                   ast.Lambda, ast.ClassDef)):
                 continue
-            stack.append((child, inner, inner_comp))
+            stack.append((child, loops, inner_comp))
 
     bindings.imported = _imported_write_aliases(function, outer_imports)
     # #1953 fix-r1 round 22 (codex r21 P0-1): the ``import builtins as bi``
@@ -9874,11 +10075,33 @@ def _module_open_calls(tree):
             if target is not None:
                 spelled.setdefault(target, []).append(
                     ((node.lineno, node.col_offset), loops))
-        inner = loops
-        if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
+        # #1953 fix-r1 round 44 (GLM r43 sibling#1, probe 2026-11-10): the
+        # third loop-context walk now carries the same For/While semantics
+        # the r43 fix gave ``_flow_marks`` and ``_module_call_positions``
+        # -- the ``for`` iterable evaluates once *before* the loop starts
+        # and the ``else`` blocks run once *after* it ends, so only the
+        # bodies and the ``while`` test carry the loop id.  The old blanket
+        # ``inner`` let a body binding share the loop id with an iterable
+        # call and kept the site a clean module never makes (probe s1).
+        if isinstance(node, (ast.For, ast.AsyncFor)):
             inner = loops + (id(node),)
+            stack.append((node.iter, loops))
+            stack.append((node.target, loops))
+            for child in reversed(node.body):
+                stack.append((child, inner))
+            for child in reversed(node.orelse):
+                stack.append((child, loops))
+            continue
+        if isinstance(node, ast.While):
+            inner = loops + (id(node),)
+            stack.append((node.test, inner))
+            for child in reversed(node.body):
+                stack.append((child, inner))
+            for child in reversed(node.orelse):
+                stack.append((child, loops))
+            continue
         for child in reversed(list(ast.iter_child_nodes(node))):
-            stack.append((child, inner))
+            stack.append((child, loops))
     return sites, spelled
 
 
@@ -10774,10 +10997,16 @@ def _exit_arms(node):
 def _exit_code_shaped(node):
     if isinstance(node, ast.Constant):
         return isinstance(node.value, int) and not isinstance(node.value, bool)
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+    if isinstance(node, ast.Call):
         # ``return bool(x)`` leaves the process with 0 when x is falsy, the same
         # inline computation as ``int(...)`` (MiniMax sibling r6 P2-2).
-        return node.func.id in ('int', 'bool')
+        # #1953 fix-r1 round 44 (anthropic r43 sibling#1, probe 2026-11-10):
+        # the callee reads through the shared walrus unwrap --
+        # ``(_i := int)('PASS') if cond else 0`` computes the code the same
+        # way the direct spelling does.
+        func = _callee_expr(node)
+        if isinstance(func, ast.Name):
+            return func.id in ('int', 'bool')
     if isinstance(node, ast.IfExp):
         return _exit_code_shaped(node.body) and _exit_code_shaped(node.orelse)
     return False
@@ -11119,8 +11348,14 @@ def _inline_exit_call(value):
     arm knew only ``int``, so ``code = bool(x); return code`` was one source
     with two verdicts (MiniMax boundary r7 P0-1 / sibling r7 P1-1).
     """
-    if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
-        return value.func.id if value.func.id in ('int', 'bool') else None
+    # #1953 fix-r1 round 44 (anthropic r43 sibling#2, probe 2026-11-10):
+    # the callee reads through the shared walrus unwrap --
+    # ``code = (_i := int)('PASS'); return code`` relays the same
+    # computation the direct spelling does.
+    if isinstance(value, ast.Call):
+        func = _callee_expr(value)
+        if isinstance(func, ast.Name):
+            return func.id if func.id in ('int', 'bool') else None
     return None
 
 
@@ -17097,10 +17332,13 @@ def aggregation_audit():
             "from builtins import __import__ as imp\n" + _m42_src)
         _m42_refusals = _import_refused_calls(
             _m42_loop, _object_kinds_pass(_m42_loop, ()))
+        # #1953 fix-r1 round 44: bind the unwrapped callee once instead of
+        # calling ``_callee_expr`` twice per node (r43 simplify note).
         for _m42_call in (node for node in ast.walk(_m42_loop)
                           if isinstance(node, ast.Call)
-                          and isinstance(_callee_expr(node), ast.Name)
-                          and _callee_expr(node).id == 'imp'):
+                          and isinstance(
+                              _m42_callee := _callee_expr(node), ast.Name)
+                          and _m42_callee.id == 'imp'):
             if id(_m42_call) not in _m42_refusals:
                 failures.append('#1953 aggregation-audit: detector '
                                 'self-test kept an in-loop call live behind '
@@ -17473,8 +17711,16 @@ def aggregation_audit():
             ('_f43i', None),
             ('_f43b', id(_m43_calls_tree.body[1])),
             ('_f43e', None)):
-        _m43_loops = ((_m43_positions.get(_m43_name)
-                       or ((None, ()),))[0][1])
+        # #1953 fix-r1 round 44 (GLM r43 boundary#5, probe 2026-11-10): the
+        # ``or ((None, ()),)`` default made a MISSING call satisfy the
+        # want=None assertions -- a present check must come first so a
+        # dropped entry cannot pass as "no loops".
+        if _m43_name not in _m43_positions:
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost the ' + _m43_name
+                            + ' call position entirely (round 44)')
+            continue
+        _m43_loops = _m43_positions[_m43_name][0][1]
         _m43_ok = ((_m43_want in _m43_loops) if _m43_want is not None
                    else not _m43_loops)
         if not _m43_ok:
@@ -17557,6 +17803,363 @@ def aggregation_audit():
             failures.append('#1953 aggregation-audit: detector self-test '
                             'lost the ' + _m43_marker + ' marker behind a '
                             'walrus ' + _m43_kind + ' callee (round 43)')
+    # #1953 fix-r1 round 44 (GLM r43 boundary#1 P0, probe 2026-11-10): each
+    # priced mutation used the ORIGINAL literal length, so two individually
+    # safe events composite into a moving one -- ``[_hs[0], L, L]`` with a
+    # trailing selection: ``pop(1); pop(1)`` removes the selected element.
+    # The selection is now simulated over the priced event stream, every
+    # removal/insertion against the current length.  A loop the binding does
+    # not run in re-executes an event without re-running the binding, so a
+    # carried priced event stays a mutation -- fail-closed: the loop that
+    # runs it only once reports too (anything not statically priceable
+    # stays a mutation, the standing contract).
+    for _m44_kind, _m44_src in (
+            ("a pop+pop composite removing the selected element",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _items.pop(1)\n"
+             "    _items.pop(1)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a pop+insert composite crossing the anchor",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _items.pop(1)\n"
+             "    _items.insert(2, _hs[0])\n"
+             "    _items[-1]('common', object())\n"),
+            ("a del+del composite through the Delete spelling",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    del _items[1]\n"
+             "    del _items[1]\n"
+             "    _items[-1]('common', object())\n"),
+            ("a loop-carried pop executed twice",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    for _ in (0, 1):\n"
+             "        _items.pop(1)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a loop-carried pop executed once (fail-closed standing)",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    for _ in (0,):\n"
+             "        _items.pop(1)\n"
+             "    _items[-1]('common', object())\n")):
+        _m44_display = ast.parse(
+            "def _m44a(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m44_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' not in _withdrawn_receivers(_m44_display):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost a receiver behind ' + _m44_kind
+                            + ' (round 44)')
+    # The same simulation must not convict the net-zero composites.
+    for _m44_kind, _m44_src in (
+            ("a net-zero pop+insert composite",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _items.pop(1)\n"
+             "    _items.insert(1, None)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a before-anchor pop(0)+insert(0) composite",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _items.pop(0)\n"
+             "    _items.insert(0, None)\n"
+             "    _items[-1]('common', object())\n")):
+        _m44_clean = ast.parse(
+            "def _m44b(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m44_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' in _withdrawn_receivers(_m44_clean):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'withdrew a clean receiver behind ' + _m44_kind
+                            + ' (round 44)')
+    # #1953 fix-r1 round 44 (GLM r43 boundary#2, probe 2026-11-10): the dict
+    # receiver alias closure reads every binding spelling -- AnnAssign,
+    # walrus, multi-target and unpack aliases are receivers too.
+    for _m44_kind, _m44_src in (
+            ("an AnnAssign alias receiver write",
+             "d = {'status': None}\n"
+             "e: dict = d\n"
+             "e['common'] = 1\n"),
+            ("a walrus alias receiver write",
+             "d = {'status': None}\n"
+             "(_e := d)\n"
+             "_e['common'] = 1\n"),
+            ("a multi-target alias receiver write",
+             "d = {'status': None}\n"
+             "e = f = d\n"
+             "e['common'] = 1\n"),
+            ("an unpack alias receiver write",
+             "d = {'status': None}\n"
+             "e, x = (d, 1)\n"
+             "e['common'] = 1\n")):
+        if _dict_binding_keys('d', ast.parse(_m44_src)) is not None:
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'kept dict keys bounded behind ' + _m44_kind
+                            + ' (round 44)')
+    if _dict_binding_keys(
+            'd', ast.parse("d = {'status': None}\ne: dict = d\n")) is None:
+        failures.append('#1953 aggregation-audit: detector self-test '
+                        'withdrew dict keys behind a writeless alias '
+                        '(round 44)')
+    # #1953 fix-r1 round 44 (GLM r43 boundary#3, probe 2026-11-10): the same
+    # alias-closure spellings for the mutators and the display name -- an
+    # alias call of the mutating closure and an aliased mutating method are
+    # mutations under every spelling.
+    for _m44_kind, _m44_src in (
+            ("a walrus alias call of a mutating closure",
+             "    def _mutate():\n"
+             "        _items.reverse()\n"
+             "    _items = [lambda *a: None, _hs[0]]\n"
+             "    (_m := _mutate)\n"
+             "    _m()\n"
+             "    _items[0]('common', object())\n"),
+            ("an AnnAssign alias call of a mutating closure",
+             "    def _mutate():\n"
+             "        _items.reverse()\n"
+             "    _items = [lambda *a: None, _hs[0]]\n"
+             "    _m: object = _mutate\n"
+             "    _m()\n"
+             "    _items[0]('common', object())\n"),
+            ("a multi-target alias call of a mutating closure",
+             "    def _mutate():\n"
+             "        _items.reverse()\n"
+             "    _items = [lambda *a: None, _hs[0]]\n"
+             "    _m = _n2 = _mutate\n"
+             "    _m()\n"
+             "    _items[0]('common', object())\n"),
+            ("an unpack alias call of a mutating closure",
+             "    def _mutate():\n"
+             "        _items.reverse()\n"
+             "    _items = [lambda *a: None, _hs[0]]\n"
+             "    _m, _x = (_mutate, 1)\n"
+             "    _m()\n"
+             "    _items[0]('common', object())\n"),
+            ("a walrus alias of the mutated display itself",
+             "    _items = [lambda *a: None, _hs[0]]\n"
+             "    (_n2 := _items)\n"
+             "    _n2.reverse()\n"
+             "    _items[0]('common', object())\n")):
+        _m44_display = ast.parse(
+            "def _m44c(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m44_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' not in _withdrawn_receivers(_m44_display):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost a receiver behind ' + _m44_kind
+                            + ' (round 44)')
+    # #1953 fix-r1 round 44 (GLM r43 boundary#4, probe 2026-11-10): module-
+    # level match captures (value, mapping, star, mapping-rest) and a bare
+    # ``del name`` rebind the name -- the rebind family keeps the
+    # conservative import standing.
+    for _m44_kind, _m44_src in (
+            ("a match value capture rebinding the base",
+             "class _B:\n"
+             "    def __new__(cls, name):\n"
+             "        return SimpleNamespace(modules={})\n"
+             "class _Bad:\n"
+             "    def __new__(cls, name):\n"
+             "        return sys\n"
+             "match [_Bad]:\n"
+             "    case [_B]:\n"
+             "        pass\n"
+             "class imp(_B):\n"
+             "    pass\n"),
+            ("a match mapping capture rebinding the base",
+             "class _B:\n"
+             "    def __new__(cls, name):\n"
+             "        return SimpleNamespace(modules={})\n"
+             "class _Bad:\n"
+             "    def __new__(cls, name):\n"
+             "        return sys\n"
+             "match {'k': _Bad}:\n"
+             "    case {'k': _B}:\n"
+             "        pass\n"
+             "class imp(_B):\n"
+             "    pass\n"),
+            ("a match star capture rebinding the base (fail-closed)",
+             "class _B:\n"
+             "    def __new__(cls, name):\n"
+             "        return SimpleNamespace(modules={})\n"
+             "class _Bad:\n"
+             "    def __new__(cls, name):\n"
+             "        return sys\n"
+             "match [_Bad]:\n"
+             "    case [*_B]:\n"
+             "        pass\n"
+             "class imp(_B):\n"
+             "    pass\n"),
+            ("a match mapping-rest capture rebinding the base (fail-closed)",
+             "class _B:\n"
+             "    def __new__(cls, name):\n"
+             "        return SimpleNamespace(modules={})\n"
+             "class _Bad:\n"
+             "    def __new__(cls, name):\n"
+             "        return sys\n"
+             "match {'k': _Bad}:\n"
+             "    case {'k': _v, **_B}:\n"
+             "        pass\n"
+             "class imp(_B):\n"
+             "    pass\n"),
+            ("a del rebind used without a re-import (fail-closed)",
+             "class _B:\n"
+             "    def __new__(cls, name):\n"
+             "        return SimpleNamespace(modules={})\n"
+             "del _B\n"
+             "class imp(_B):\n"
+             "    pass\n"),
+            ("a del rebind followed by a re-import",
+             "class _B:\n"
+             "    def __new__(cls, name):\n"
+             "        return SimpleNamespace(modules={})\n"
+             "del _B\n"
+             "from types import SimpleNamespace as _B\n")):
+        _m44_written = ast.parse(
+            "import sys\n"
+            "from builtins import __import__ as imp\n" + _m44_src +
+            "s = imp('sys')\n"
+            "s.modules['_guard'] = object()\n"
+            "_guard = sys.modules.get('_guard')\n")
+        if '_guard' not in _sys_modules_write_values(_m44_written):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'dropped the import standing behind ' + _m44_kind
+                            + ' (round 44)')
+    _m44_unrelated = ast.parse(
+        "import sys\n"
+        "from builtins import __import__ as imp\n"
+        "from types import SimpleNamespace\n"
+        "class _B:\n"
+        "    def __new__(cls, name):\n"
+        "        return SimpleNamespace(modules={})\n"
+        "match [1]:\n"
+        "    case [_other]:\n"
+        "        pass\n"
+        "class imp(_B):\n"
+        "    pass\n"
+        "s = imp('sys')\n"
+        "s.modules['_guard'] = object()\n"
+        "_guard = sys.modules.get('_guard')\n")
+    if '_guard' in _sys_modules_write_values(_m44_unrelated):
+        failures.append('#1953 aggregation-audit: detector self-test kept '
+                        'reporting an import behind an unrelated match '
+                        'capture (round 44)')
+    # #1953 fix-r1 round 44 (GLM r43 sibling#3 tail, probe 2026-11-10): the
+    # assigned ``__new__`` check reads the class body's direct statements
+    # only -- a method-local ``__new__ = ...`` assign is that method's own
+    # local name, not the class builder; the direct class-body spelling
+    # keeps the standing.
+    for _m44_kind, _m44_src, _m44_want in (
+            ("a method-local __new__ assign",
+             "class _B:\n"
+             "    def __new__(cls, name):\n"
+             "        return SimpleNamespace(modules={})\n"
+             "    def _m(self):\n"
+             "        __new__ = staticmethod(\n"
+             "            lambda cls, name: sys)\n"
+             "        return __new__\n"
+             "class imp(_B):\n"
+             "    pass\n", False),
+            ("a direct class-body __new__ assign",
+             "class _B:\n"
+             "    def __new__(cls, name):\n"
+             "        return SimpleNamespace(modules={})\n"
+             "    __new__ = staticmethod(lambda cls, name: sys)\n"
+             "class imp(_B):\n"
+             "    pass\n", True)):
+        _m44_new = ast.parse(
+            "import sys\n"
+            "from builtins import __import__ as imp\n"
+            "from types import SimpleNamespace\n" + _m44_src +
+            "s = imp('sys')\n"
+            "s.modules['_guard'] = object()\n"
+            "_guard = sys.modules.get('_guard')\n")
+        if ('_guard' in _sys_modules_write_values(_m44_new)) != _m44_want:
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            + ('dropped the import standing behind '
+                               if _m44_want else
+                               'kept the import standing behind ')
+                            + _m44_kind + ' (round 44)')
+    # #1953 fix-r1 round 44 (GLM r43 sibling#1, probe 2026-11-10): the third
+    # loop-context walk (``_module_open_calls``) carries the canonical
+    # For/While semantics -- the ``for`` iterable and both ``else`` blocks
+    # stay outer, the bodies and the ``while`` test carry the loop id.
+    _m44_open_tree = ast.parse(
+        "for _i44 in [globals()]:\n"
+        "    globals()\n"
+        "else:\n"
+        "    globals()\n"
+        "while globals():\n"
+        "    globals()\n"
+        "else:\n"
+        "    globals()\n")
+    _m44_open_sites = {site[0]: site[1]
+                       for site in _module_open_calls(_m44_open_tree)[0]}
+    for _m44_call, _m44_want in (
+            (_m44_open_tree.body[0].iter.elts[0], ()),
+            (_m44_open_tree.body[0].body[0].value,
+             (id(_m44_open_tree.body[0]),)),
+            (_m44_open_tree.body[0].orelse[0].value, ()),
+            (_m44_open_tree.body[1].test,
+             (id(_m44_open_tree.body[1]),)),
+            (_m44_open_tree.body[1].body[0].value,
+             (id(_m44_open_tree.body[1]),)),
+            (_m44_open_tree.body[1].orelse[0].value, ())):
+        _m44_pos = (_m44_call.lineno, _m44_call.col_offset)
+        if _m44_pos not in _m44_open_sites:
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost the open-call site at %r entirely '
+                            '(round 44)' % (_m44_pos,))
+            continue
+        if _m44_open_sites[_m44_pos] != _m44_want:
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'read the open-call site at %r with the wrong '
+                            'loop context (round 44)' % (_m44_pos,))
+    # #1953 fix-r1 round 44 (GLM r43 sibling#2, probe 2026-11-10): the fourth
+    # walk (``_name_bindings``) carries the same semantics -- a for-else
+    # binding runs once after the loop and shares no loop id with the body.
+    _m44_nb_tree = ast.parse(
+        "def _f(report):\n"
+        "    w = setattr\n"
+        "    for _ in [0]:\n"
+        "        w(report, 'status', 'PASS')\n"
+        "    else:\n"
+        "        w = len\n"
+        "    return report\n")
+    _m44_func = _m44_nb_tree.body[0]
+    _m44_nb = _name_bindings(_m44_func)
+    _m44_else_assign = _m44_func.body[1].orelse[0]
+    _m44_body_call = [node for node in _m44_func.body[1].body
+                      if isinstance(node, ast.Expr)
+                      and isinstance(node.value, ast.Call)][0]
+    if any(_m44_loop is _m44_func.body[1]
+           for _m44_loop in _m44_nb.loops_of.get(_m44_else_assign, ())):
+        failures.append('#1953 aggregation-audit: detector self-test '
+                        'leaked the loop id onto a for-else binding '
+                        '(round 44)')
+    if not any(_m44_loop is _m44_func.body[1]
+               for _m44_loop in _m44_nb.loops_of.get(_m44_body_call, ())):
+        failures.append('#1953 aggregation-audit: detector self-test '
+                        'lost the loop id of a for body call (round 44)')
+    # #1953 fix-r1 round 44 (anthropic r43 sibling#1/#2, probe 2026-11-10):
+    # the exit-marker family reads the callee through the shared walrus
+    # unwrap -- a ternary arm and a relayed assignment behind
+    # ``(_i := int)`` keep the exit shape and the spelling.
+    if not _exit_code_shaped(
+            ast.parse("(_i := int)('PASS') if c else 0").body[0].value):
+        failures.append('#1953 aggregation-audit: detector self-test lost '
+                        'the exit shape behind a walrus int callee '
+                        '(round 44)')
+    if _exit_code_shaped(ast.parse("(_i := len)('PASS')").body[0].value):
+        failures.append('#1953 aggregation-audit: detector self-test kept '
+                        'the exit shape behind a walrus len callee '
+                        '(round 44)')
+    if _inline_exit_call(
+            ast.parse("code = (_i := int)('PASS')").body[0].value) != 'int':
+        failures.append('#1953 aggregation-audit: detector self-test lost '
+                        'the int spelling behind a walrus callee '
+                        '(round 44)')
+    if _inline_exit_call(
+            ast.parse("code = (_i := bool)(x)").body[0].value) != 'bool':
+        failures.append('#1953 aggregation-audit: detector self-test lost '
+                        'the bool spelling behind a walrus callee '
+                        '(round 44)')
     for _label, _source, _want in (
             ("a handle certainly overwritten in a finally block",
              "def _w42_use():\n"

@@ -2437,3 +2437,94 @@ extended to projected unpack elements).
 | **An unpack rebinding onto the write helper keeps the marker, onto a clean callee does not grow one** (both directions, GLM sibling#3): `spare, w = (clean, setattr)` then `w(report, 'status', 'PASS')`; the mirror `spare, w = (setattr, clean)`. | `... lost the write-status marker behind an unpack rebinding onto the write helper / kept the write-status marker behind an unpack rebinding onto a clean callee (round 43)` |
 | **Aliased and unbound dict receivers unbind the keys** (false PASS guard): `e = d; e.update(...)`; `dict.update(d, ...)`; `dict.__setitem__(d, ...)`. | `... kept dict keys bounded behind an aliased receiver update / an unbound dict.update receiver / an unbound dict.__setitem__ receiver (round 43)` |
 | **Walrus exit-raise and return-int callees keep their markers** (false PASS guard): `raise (_e := SystemExit)(0)`; `return (_i := int)('PASS')`. | `... lost the raise-exit-status marker behind a walrus exit callee / the return-int-status marker behind a walrus int callee (round 43)` |
+
+### Closed by `fix-r1` round 44 (GLM r43 boundary#1..#5 / sibling#1..#3 / sibling#6 tail; anthropic r43 sibling#1/#2; probe 2026-11-10)
+
+Every finding was probe-reproduced against the round-43 ruler before any fix
+(`_tmp/20261109-issue-1953-revival/`, `probe-r44.log` pre-fix /
+`probe-r44-after.log` post-fix; the "r42" column is the round-42 commit kept
+as a second witness, the "r43" column the fixed ruler).  One P3 claim was
+refuted by measurement and closed without a fix: anthropic boundary#1
+asserted the ClassDef branch of `_import_alias_events` is dead code -- but
+the events table records the ClassDef target (probe ant-b1), so
+`class_node(_B)` resolves.
+
+The composite-pricing family (GLM boundary#1, P0).  Each priced mutation
+read the ORIGINAL literal length, so two individually-safe events composite
+into a moving one: `[_hs[0], L, L]` with a trailing selection (`pop(1)` and
+`pop(1)` each price "not moving" against the original anchor) removes the
+selected element at runtime.  The selection is now **simulated over the
+priced event stream**: events are collected in source order and replayed
+against the current length (`ln`), the selected element index (`pos`) is
+tracked (`k == pos` convicts, `k < pos` shifts `pos`, insertions `p <= pos`
+shift it up), negative indices normalize against the current `ln`, and the
+final verdict compares `pos` with the current trailing anchor / leading
+position.  Single-event verdicts are reproduced exactly (the invariant
+`pos == ln - trailing` holds across every non-convicting event).  A
+**loop the binding does not run in** re-executes an event without
+re-running the binding (`_repeated_between`), so a carried priced event
+convicts -- fail-closed: the loop that runs it only once reports too (the
+`for _ in (0,):` clean twin withdraws; anything not statically priceable
+stays a mutation, the standing contract).  The **mutator collection** now
+takes any mutating call in a def/lambda body (`price=False`), so a
+loop-carried or call-count-unknown mutator closes conservatively.
+
+The alias-closure family.  `_name_alias_closure(scope, seeds)` is the one
+shared fixpoint for display names, mutators and dict receivers (GLM
+boundary#2/#3): it reads every binding spelling -- `AnnAssign`, a bare
+walrus anywhere in an expression, multi-target `a = b = x`, and unpack
+projection through `_local_bound_values` -- and deliberately skips
+`AugAssign` (`f += d` is not an alias).  It replaces the three
+single-target-Assign-only fixpoints.
+
+The rebind family (GLM boundary#4).  `_name_rebound_beyond` now reads
+module-level `match` captures (`MatchAs` / `MatchStar` names,
+`MatchMapping.rest`) and a bare `del name` (ast.Delete Name targets), so a
+captured or deleted base keeps the conservative import standing.
+
+The walk-sync family.  `_module_open_calls` (the third loop-context walk,
+GLM sibling#1) and `_name_bindings` (the fourth, GLM sibling#2) now carry
+the canonical For/While semantics round 43 gave `_flow_marks` and
+`_module_call_positions`: the `for` iterable and the `else` blocks stay
+outer, the bodies and the `while` test carry the loop id.  The old blanket
+`inner` kept a phantom open-call site behind a loop-body shadow (probe s1)
+and let a for-else binding share the loop id with the body use (probe s2).
+
+The exit-marker family (anthropic sibling#1/#2).  `_exit_code_shaped` and
+`_inline_exit_call` read their callee through the shared `_callee_expr`
+walrus unwrap: a ternary arm `(_i := int)('PASS') if c else 0` keeps the
+exit shape, and the relay `code = (_i := int)('PASS')` keeps the `int` /
+`bool` spelling.  The battery's `_m43_positions` presence check (GLM
+boundary#5) makes a dropped call fail its own assertion instead of
+satisfying the `want=None` shape.  The `__new__` Assign check reads the
+class body's direct statements only (GLM sibling#3 tail): a method-local
+`__new__ = ...` is that method's own local name, not the class builder.
+Three inline negative-int normalizers now call the shared `_constant_int`
+(GLM sibling#3).  The For-only loop contexts of `_sys_modules_write_values`
+and `_receiver_attribute_writes` carry an explicit exemption comment
+(GLM sibling#6): their only consumer is For-target key resolution, which
+stays conservative without the While/async branches.
+
+Known residuals (follow-up issue): the `remove` / `popitem` /
+`dict.update` pricing, the b1d/b1i conservative mirror, the mutators
+`ast.walk` piercing and the hardcoded builtin type list carry over from
+round 43; the loop-carried clean twin is a deliberate false-report
+trade-off documented above; the width guard is `O(chain length x tree)`
+(the same order as the fixpoint it replaced); the hardcoded
+mutating-attribute tuples and the bare-walrus raise-exit spelling are
+unchanged; the fifth/sixth walks stay For-only by the recorded exemption.
+
+| Shape | Self-test |
+|---|---|
+| **Composite mutations move a selection** (false PASS guard): `pop(1); pop(1)`, `pop(1); insert(2, hs[0])`, `del items[1]; del items[1]`, and a loop-carried `for _ in (0, 1): pop(1)` before `items[-1]` -- withdraw. | `... lost a receiver behind a pop+pop composite removing the selected element / a pop+insert composite crossing the anchor / a del+del composite through the Delete spelling / a loop-carried pop executed twice (round 44)` |
+| **A loop-carried pop executed once still withdraws** (fail-closed floor lock): `for _ in (0,): pop(1)` before `items[-1]`. | `... lost a receiver behind a loop-carried pop executed once (fail-closed standing) (round 44)` |
+| **Net-zero composites do not withdraw** (false FAIL guard): `pop(1); insert(1, None)` and `pop(0); insert(0, None)` before `items[-1]`. | `... withdrew a clean receiver behind a net-zero pop+insert composite / a before-anchor pop(0)+insert(0) composite (round 44)` |
+| **Every alias spelling of a dict receiver unbinds the keys** (false PASS guard): `e: dict = d`, `(_e := d)`, `e = f = d`, `e, x = (d, 1)` with a write through the alias. | `... kept dict keys bounded behind an AnnAssign alias receiver write / a walrus alias receiver write / a multi-target alias receiver write / an unpack alias receiver write (round 44)` |
+| **A writeless alias keeps the keys bounded** (false FAIL guard): `e: dict = d` with no write through it. | `... withdrew dict keys behind a writeless alias (round 44)` |
+| **Every alias spelling of a mutating closure convicts** (false PASS guard): `(_m := _mutate)`, `_m: object = _mutate`, `_m = _n2 = _mutate`, `_m, _x = (_mutate, 1)` then `_m()`; and a walrus alias of the display itself `(_n2 := _items); _n2.reverse()`. | `... lost a receiver behind a walrus alias call of a mutating closure / an AnnAssign alias call of a mutating closure / a multi-target alias call of a mutating closure / an unpack alias call of a mutating closure / a walrus alias of the mutated display itself (round 44)` |
+| **Match captures and del rebind the base name** (floor lock): `case [_B]`, `case {'k': _B}`, `case [*_B]`, `case {'k': _v, **_B}` over a clean `_B` with a `_Bad` subject; `del _B` used or re-imported. | `... dropped the import standing behind a match value capture rebinding the base / a match mapping capture rebinding the base / a match star capture rebinding the base (fail-closed) / a match mapping-rest capture rebinding the base (fail-closed) / a del rebind used without a re-import (fail-closed) / a del rebind followed by a re-import (round 44)` |
+| **An unrelated match capture does not report** (false FAIL guard): `case [_other]` over a clean `_B`. | `... kept reporting an import behind an unrelated match capture (round 44)` |
+| **A method-local `__new__` assign is not the class builder; the direct class-body assign is** (both directions): `def _m(self): __new__ = staticmethod(...)` vs a direct `__new__ = staticmethod(...)` in the class body. | `... kept the import standing behind a method-local __new__ assign / dropped the import standing behind a direct class-body __new__ assign (round 44)` |
+| **The third walk carries the canonical loop semantics** (structural guard, `_module_open_calls`): for-iter and both `else` calls stay outer; the for body, the while test and the while body carry the loop id. | `... lost the open-call site at (line, col) entirely / read the open-call site at (line, col) with the wrong loop context (round 44)` |
+| **The fourth walk carries the same semantics** (structural guard, `_name_bindings`): a for-else binding shares no loop id with the body call; the body call keeps the loop id. | `... leaked the loop id onto a for-else binding / lost the loop id of a for body call (round 44)` |
+| **Walrus exit callees keep shape and spelling** (false PASS guard): `(_i := int)('PASS') if c else 0` shaped; `code = (_i := int)('PASS')` / `code = (_i := bool)(x)` spelled; the `len` mirror stays unshaped. | `... lost the exit shape behind a walrus int callee / kept the exit shape behind a walrus len callee / lost the int spelling behind a walrus callee / lost the bool spelling behind a walrus callee (round 44)` |
