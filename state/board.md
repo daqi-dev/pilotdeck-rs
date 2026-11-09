@@ -3281,3 +3281,8 @@ updated: 2026-11-05 13:4x · by Claude Code 协调者（13:4x 交接：#1419 合
 
 - 微信附件 SSRF/路径穿越修复；`cdn_url`+媒体解密+加密 CDN 上传；出站失败记日志并 fallback。
 - **全量 lib** 4265/0；证据 `pdrs-ext/…/r14/最终报告.md`，`r14/logs/lib-full-r14.log`；已提交，未 push。
+
+### 2026-11-10 pdrs-daqi-b-channels r15（Grok r14-attach P1+P2 一次修）
+
+- 钉连 HTTP（映射 IPv6、重定向重验）；落盘 `O_NOFOLLOW`；TS `full_url`/aes_key/图片解密 Err；无 context fallback。
+- **全量 lib** 4271/0；证据 `pdrs-ext/…/r15/最终报告.md`，`r15/logs/lib-full-r15.log`；提交 `b67e3f0`，未 push。
