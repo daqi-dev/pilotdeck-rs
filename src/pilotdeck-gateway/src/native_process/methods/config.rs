@@ -215,20 +215,21 @@ impl Requests {
         // reserve it too, held in the same `Drop`-guard shape as the request
         // key (#2391) so both reservations release side by side on every
         // exit, at the same level they were taken.
-        // #1872 fix-r3: a blank request key never reaches the write — the
+        // #1872 fix-r4: a blank request key never reaches the write — the
         // sessionKey gate inside rejects it first — and TS reserves only the
         // request spelling (InProcessGateway.ts:2193), so reserving the
         // owner a blank key folds onto would let that owner's concurrent
         // reservation answer busy for a request TS rejects as
-        // INVALID_SESSION_KEY (ts-blankkey-probe E/G). Skip the owner side
-        // for a blank request key.
-        let reserved_key = params
-            .get("sessionKey")
-            .and_then(JsValue::as_string)
-            .filter(|key| trimmed_string_is_non_empty(key));
+        // INVALID_SESSION_KEY (ts-blankkey-probe E/G). The owner is still
+        // resolved and handed down — the busy gate inside keeps its
+        // blank-key guard for it — and only the reservation is skipped, by
+        // the `owner_reserved` conjunct.
+        let reserved_key = params.get("sessionKey").and_then(JsValue::as_string);
         let owner = self.live_transcript_owner(reserved_key.as_ref());
-        let owner_reserved =
-            matches!((&owner, reserved_key.as_ref()), (Some(owner), Some(key)) if owner != key);
+        let owner_reserved = matches!(
+            (&owner, reserved_key.as_ref()),
+            (Some(owner), Some(key)) if owner != key && trimmed_string_is_non_empty(key)
+        );
         let owner_guard = self
             .replacement
             .reserve_transcript_write_held(
@@ -319,17 +320,19 @@ impl Requests {
         // onto is gated by its own exact key, so reserve it before the busy
         // check → append → close window opens on it, held in the same
         // `Drop`-guard shape as the request key (#2391).
-        // #1872 fix-r3: mirror the set wrapper — the owner a blank key
+        // #1872 fix-r4: mirror the set wrapper — the owner a blank key
         // folds onto is not reserved either (TS reserves only the request
         // spelling, InProcessGateway.ts:2203), so a busy owner reservation
-        // cannot answer for a request the sessionKey gate rejects.
-        let reserved_key = params
-            .get("sessionKey")
-            .and_then(JsValue::as_string)
-            .filter(|key| trimmed_string_is_non_empty(key));
+        // cannot answer for a request the sessionKey gate rejects. As on
+        // set, the owner stays resolved (the sessionKey gate here answers
+        // a blank key before the busy gate can consult it) and only the
+        // reservation is skipped.
+        let reserved_key = params.get("sessionKey").and_then(JsValue::as_string);
         let owner = self.live_transcript_owner(reserved_key.as_ref());
-        let owner_reserved =
-            matches!((&owner, reserved_key.as_ref()), (Some(owner), Some(key)) if owner != key);
+        let owner_reserved = matches!(
+            (&owner, reserved_key.as_ref()),
+            (Some(owner), Some(key)) if owner != key && trimmed_string_is_non_empty(key)
+        );
         let owner_guard = self
             .replacement
             .reserve_transcript_write_held(
@@ -1691,7 +1694,7 @@ mod tests {
                 object([("sessionKey", "".into()), ("mode", "plan".into())]),
             )
             .await
-            .expect_err("#1872 a blank key answers permission's sessionKey gate");
+            .expect_err("#1872 the blank key is a sessionKey error for permission");
         negative_assert_eq!(
             error.code.as_str(),
             "INVALID_SESSION_KEY",
