@@ -2723,6 +2723,38 @@ class SameJsonSurfaces(unittest.TestCase):
         except (Exception, SystemExit) as error:
             self.fail(marker + ': ' + repr(error))
 
+    def test_install_terminate_handlers_leaves_live_registrations(self):
+        # #2552 (DS r8 sibling#1 + concurrency#1, Claude r7 sibling#1 +
+        # concurrency#1, two families converging): the byte counts above prove
+        # the registration rows exist in the file, not that
+        # install_terminate_handlers() executes them.  An 'if False:' guard,
+        # a renamed attribute ('SIGHUP_'), or a move into a dead function
+        # all keep every count at 1 while the guarded batch actually runs on
+        # default dispositions -- an interrupted run would leave the mutant
+        # behind, the exact failure #2425 pins.  Ask the signal table
+        # itself: exec the module, call install_terminate_handlers(), and
+        # require each handler to be live, restoring the saved dispositions
+        # afterwards (the save/restore form the #2431 pins already use).
+        import signal
+        marker = '#2425/#2552 install_terminate_handlers registers all three signals'
+        path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
+        try:
+            spec = importlib.util.spec_from_file_location('samejson_install_pins', path)
+            module = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            names = [signal.SIGTERM] + [getattr(signal, name) for name in ('SIGHUP', 'SIGQUIT')
+                                        if hasattr(signal, name)]
+            saved = {name: signal.getsignal(name) for name in names}
+            try:
+                module.install_terminate_handlers()
+                self.assertTrue(all(signal.getsignal(name) is module.terminate_cleanly
+                                     for name in names), marker)
+            finally:
+                for name, disposition in saved.items():
+                    signal.signal(name, disposition)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
     def test_startup_refusal_is_rc2_memory_branch(self):
         # #2431: a startup-phase failure (the tree lock becoming unavailable
         # before the first mutation) must be a refusal, not a red run -- rc 2,
