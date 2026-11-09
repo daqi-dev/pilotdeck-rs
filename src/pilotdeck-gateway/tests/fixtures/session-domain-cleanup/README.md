@@ -1574,3 +1574,17 @@ the constant-shell key/value/plain faces, the four consumer wirings,
 and the rogue enumeration.  Ten revert mutants are killed
 (`fix-r22-audit/mutneg-r22-variants.out`), including the scan
 boundary and the parse tuple arms with injected killer shapes.
+
+fix-r23 (DS boundary r22 P0, probe-verified): the routes-through-the-map
+exemption in `_helper_exits_zero` ran as a whole-tree scan before the
+empty-arm and uncertainty checks, so a helper whose return merely
+MENTIONED the shared aggregate in an arm the flattener drops
+(``(1.0 is 1.0) and (0 if flag else common.aggregate_status(rows)[0])``)
+was exempted while the runtime always took the clean literal.  The
+exemption is now judged on the exit arms only — the fix-r7 semantics
+the slot scan already uses — and only after the empty/partial set has
+failed closed.  `ValueError` joins both parse tuples (NUL-byte sources
+report as SyntaxError on 3.12+ and as ValueError on <=3.11; both now
+answer with the same per-file line).  New `_fsr8` pins cover both top
+shapes, the partial-arm mention, and the live/mixed no-over-collection
+faces; revert mutants are killed (`mutneg-r23.out`).
