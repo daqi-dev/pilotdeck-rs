@@ -283,7 +283,10 @@ fn model_usage_provider_order_matches_ts() {
         crate::negative_assert_eq!(actual, expected, "#2131 modelUsageSnapshot order: {id}");
         checked += 1;
     }
-    assert!(checked >= 1, "#2131 modelUsage must replay at least one case");
+    assert!(
+        checked >= 1,
+        "#2131 modelUsage must replay at least one case"
+    );
 }
 
 #[test]
