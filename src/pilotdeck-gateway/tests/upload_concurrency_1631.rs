@@ -5,10 +5,11 @@
 //! therefore no longer both report success, and the cancel path can no
 //! longer delete the files behind a completion that was already reported.
 //!
-//! #2276: the barrier is the store's pre-mutate hook, fired between each
+//! #2276: the rendezvous is the store's pre-mutate hook, fired between each
 //! caller's outside-`get()` snapshot and the gate, so "both callers passed
 //! the snapshot, neither entered the gate" is a scheduled fact instead of a
-//! scheduler coincidence.
+//! scheduler coincidence. The rendezvous is deadline-bounded (fix-r1): a
+//! racer that never arrives turns the wait into a panic, not a hang.
 #[path = "common/scratch.rs"]
 mod scratch;
 
@@ -18,7 +19,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        Arc, Barrier,
+        Arc, Condvar, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     thread,
@@ -98,6 +99,50 @@ enum Op {
     Cancel,
 }
 
+/// #2276 review fix-r1: the rendezvous is bounded. The pre-fix shape used a
+/// plain `Barrier`, whose `wait()` never times out — a racer that returned
+/// or panicked before reaching the pre-mutate hook (its outside `get()`
+/// failed, say) left its partner blocked forever, turning a would-be red
+/// test into a hung test binary. The deadline below makes "the other racer
+/// never came" a panic instead.
+const RENDEZVOUS_CAP: Duration = Duration::from_secs(60);
+
+/// The #2276 rendezvous, with the hard deadline from `RENDEZVOUS_CAP`.
+struct Rendezvous {
+    arrived: Mutex<usize>,
+    both: Condvar,
+}
+
+impl Rendezvous {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            arrived: Mutex::new(0),
+            both: Condvar::new(),
+        })
+    }
+
+    /// Wait for the second party but never past `RENDEZVOUS_CAP`.
+    fn meet(&self) {
+        let mut arrived = self.arrived.lock().unwrap();
+        *arrived += 1;
+        self.both.notify_all();
+        let deadline = Instant::now() + RENDEZVOUS_CAP;
+        while *arrived < 2 {
+            let (guard, timeout) = self
+                .both
+                .wait_timeout(arrived, deadline.saturating_duration_since(Instant::now()))
+                .unwrap();
+            arrived = guard;
+            if timeout.timed_out() && *arrived < 2 {
+                panic!(
+                    "the racing pair never met: only {arrived} of 2 callers \
+                     reached the rendezvous within {RENDEZVOUS_CAP:?}"
+                );
+            }
+        }
+    }
+}
+
 fn race_pair(
     store: &Arc<UploadStore>,
     id: &str,
@@ -107,10 +152,10 @@ fn race_pair(
     // #2276: both callers rendezvous at the pre-mutate hook — after their
     // outside-`get()` snapshots, before either touches the gate — so the
     // interleaving window is deterministic, not a scheduler coincidence.
-    let barrier = Arc::new(Barrier::new(2));
-    let gate = barrier.clone();
+    let rendezvous = Rendezvous::new();
+    let gate = rendezvous.clone();
     store.set_pre_mutate_hook(Some(Arc::new(move || {
-        gate.wait();
+        gate.meet();
     })));
     let spawn = |op: Op, store: Arc<UploadStore>, id: String| {
         thread::spawn(move || match op {
@@ -125,7 +170,7 @@ fn race_pair(
         t_second.join().expect("second thread panicked"),
     );
     // Clear the rendezvous: a later sequential call on the same store must
-    // not block on a barrier nobody else is approaching.
+    // not block on a rendezvous nobody else is approaching.
     store.set_pre_mutate_hook(None);
     results
 }

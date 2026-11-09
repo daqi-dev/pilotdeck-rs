@@ -11,12 +11,18 @@
 //! on the same id can no longer both succeed, and a `completed` record's
 //! files survive that racing cancel (#1631) — when that in-gate re-read
 //! succeeds: a record the expiry sweep removed after the outside `get()`
-//! is refused with `UPLOAD_NOT_FOUND` instead of falling back to the
-//! outside snapshot, so a swept upload is neither resurrected on disk nor
-//! reported completed (#2279). A verdict of "no change" (refusal or an
-//! already-settled no-op) writes and emits nothing and leaves `updatedAt`
-//! alone, so a refusal cannot surface as a metadata-write failure instead
-//! of its semantic code (#2275). The guarantee is scoped to
+//! but before that re-read is refused with `UPLOAD_NOT_FOUND` instead of
+//! falling back to the outside snapshot (#2279). A sweep that lands
+//! between the re-read and the metadata write is outside this gate's
+//! scope — the record removals are not themselves gated, so `write` can
+//! still re-create a just-swept task directory (the same mutate-family
+//! rework as #1503, tracked as #2670). A verdict of "no change" — an
+//! already-settled no-op, or a refusal whose closure answers `false` —
+//! writes and emits nothing and leaves `updatedAt` alone, so those
+//! refusals cannot surface as a metadata-write failure instead of their
+//! semantic code (#2275); the manifest-mismatch refusal is a different
+//! shape: it settles the record with a `mark_failed` write on purpose and
+//! answers `true`. The guarantee is scoped to
 //! that pair: a `write_part` in flight does not judge status inside the
 //! gate, so it can still flip a record back to `uploading` after a cancel —
 //! the same-gate rework for `write_part`/`fail`/`remove_tree` is #1503.
@@ -882,11 +888,13 @@ impl UploadStore {
     }
 
     /// Serialized per uploadId within this instance only (see module docs).
-    /// The closure reports whether the record actually changed (#2275): a
-    /// refusal or an already-settled no-op answers `false`, and then nothing
-    /// is written, emitted, or stamped — the refusal reaches the caller
-    /// without a metadata rewrite that could fail and poison the gate behind
-    /// a verdict that never needed the disk in the first place.
+    /// The closure reports whether the record actually changed (#2275): an
+    /// already-settled no-op, or a refusal whose closure answers `false`,
+    /// skips the write, the emit and the `updatedAt` stamp entirely — that
+    /// refusal reaches the caller without a metadata rewrite that could
+    /// fail and poison the gate behind a verdict that never needed the
+    /// disk in the first place. A refusal that settles the record instead
+    /// (the manifest-mismatch `mark_failed`) answers `true` and does write.
     fn mutate(
         &self,
         record: &UploadRecord,
