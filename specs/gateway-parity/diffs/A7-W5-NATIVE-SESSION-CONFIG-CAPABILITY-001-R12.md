@@ -276,7 +276,9 @@ thinking/style/seed 的空键门序经 TS 源码核为 sessionKey 门先于 busy
   `_tmp/20261109-1872-harvest/negctl-fix2-sample/`（head 6186bf101，
   `cb8-verify-1872-r4.log`）；修复轮三的三行样本 2 KILLED + 1 INVALID 见
   `negctl-fix3-sample/`（head c5fba0d57，permission 行锚 Ok 路径不达断言
-  标签，轮四改锚）；修复轮四的三行换锚样本随本轮宿主复跑）。
+  标签，轮四改锚）；修复轮四的四行样本——三行换锚行加 busy 卫活性证明行
+  （`set-busy-gate-blank-key-guard-removed`，卫在 owner 照旧解析后重新可达）
+  ——全 KILLED 见 `negctl-fix4-sample/`，head `df757e021`）。
 - 绿跑（worker 树 HEAD `1f03a0b95`，工作树干净）：`cargo test -p
   pilotdeck-gateway --lib -- native_process::` → `347 passed; 0 failed`、
   `-- runtime::session::` → `340 passed; 0 failed`；fmt --check 与 clippy
@@ -296,7 +298,13 @@ thinking/style/seed 的空键门序经 TS 源码核为 sessionKey 门先于 busy
   空键门）/ `runtime::session::` **341** passed，负控 `--check` 69/59、三行
   样本 2 KILLED + 1 INVALID——permission 行锚在 require 弱化（Ok）路径不进
   panic 载荷，DS fix-r3 评审与实跑同判、修复轮四改锚（原始输出
-  `cb8-verify-1872-r5.log`，样本目录 `negctl-fix3-sample/`）。
+  `cb8-verify-1872-r5.log`，样本目录 `negctl-fix3-sample/`）；修复轮四 head
+  `df757e021` 同树复跑 fmt --check 与 clippy --all-targets -D warnings 绿、
+  `native_process::` **363** passed / `runtime::session::` **341** passed，负控
+  `--check` 69/59、四行有界样本全 KILLED——三行换锚行（含 permission 改锚行）
+  加 `set-busy-gate-blank-key-guard-removed`（卫在 owner 照旧解析后重新可达的
+  活性证明，即 DS fix-r3 sibling#1 修复的实测）（原始输出
+  `cb8-verify-1872-r6.log`，样本目录 `negctl-fix4-sample/`）。
 - 账本闸门：`diffs/` 只追加，`check_frozen.py` 的 `check_diffs` 规则要求本件
   frontmatter `original` 写基础 ID（已写 `-001`，非 `-R11`）。
 
