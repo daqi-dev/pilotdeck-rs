@@ -460,8 +460,10 @@ if not sys.flags.isolated:
     print(f'negative_controls: run with -I: python3 -I {__file__}', file=sys.stderr)
     raise SystemExit(2)
 
+import atexit
 import importlib.util
 import json
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -472,8 +474,14 @@ from pathlib import Path
 # __pycache__/check_outcome_parity.*.pyc（PEP 552 unchecked-hash 可直接执行），
 # 而本脚本正是用 spec_from_file_location 再加载 checker——陈旧字节码会让负控的
 # KILLED/INVALID 归因跑的不是当前源码。
+# #2452：自建前缀注册 atexit 清理（rmtree 容错，同三个装置入口与探针）——本模块
+# 被 self_check 的预算求值在进程内 exec（lru_cache 单例，每进程一次），此前每次
+# exec 各泄漏一个常驻空临时目录且把宿主的 sys.pycache_prefix 顶掉；目录由
+# mkdtemp 独占创建（mode 700）且 dont_write_bytecode 下恒为空，退出时 rmtree 只会
+# 删掉自己的空目录。OSError 回退路径核实不存在，不注册。
 try:
     sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-retirement-pyc-')
+    atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
 except OSError:
     # 没有可写临时目录也不能让执行器起不来（起不来就到不了「失效旧 summary」）：
     # 指向一个**核实不存在**的目录即「读不到缓存」。名字带 16 位随机字节并在

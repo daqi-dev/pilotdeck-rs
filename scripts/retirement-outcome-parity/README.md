@@ -131,7 +131,11 @@ python3 -I scripts/retirement-outcome-parity/negative_controls.py --output <输�
 `check_lock` 对三种敌意形态各跑一次**守卫 fd 探针**（子进程预置敌意锁文件 + 一份已发布的
 `summary.json`，断言探针不挂死、已发布 summary 不被误删）；`control_lock` 再对守卫 fd
 本身做三条变异——去 `O_NONBLOCK`（预置 FIFO 上挂死必红）、去 `S_ISREG` 判定（预置目录
-锁下已发布 summary 被删必红）、去 `O_NOFOLLOW`（预置符号链接锁下同红）。锁文件名的字面副本共三份（checker /
+锁下已发布 summary 被删必红）、去 `O_NOFOLLOW`（预置符号链接锁下同红）。三条变异登记在
+`self_check.py` 的 `GUARD_FD_MUTATIONS`，条数 3 由 `EXPECTED_GUARD_FD_MUTATIONS` 断言
+（#2436）——外层预算的锁趟数算式 `LOCK_CHECK_PASSES − len(GUARD_FD_MUTATIONS)` 从登记簿
+推导，删一条变异两边一起降、不等式仍绿；条数钉死让登记簿缩水当场红，而不是少测一种
+还全绿。锁文件名的字面副本共三份（checker /
 负控守卫 / self_check 控件），`self_check` 的 lock 用例断言三份都在源码里——改常量只改两处
 当场红（r8）。
 
@@ -269,31 +273,42 @@ queue 都跑（只受 `scope` 的 docs-only 分类控制，不做 paths 过滤�
 | `self_check.py`（七项全跑） | 体积预算 · `emit` 复现 · `check` 5 轮 · 负控 · 输出目录互斥 · 敌意写目标 · CI 接线，七条守卫本身都还在 |
 | `self_check.py --self-check-controls` | 给上面这些守卫造违反样本，它们必须**变红**（接线守卫自己的变异自检） |
 
-外层 `timeout-minutes: 170` 必须**大于**全 job 有效内部最坏和 + 开销余量（r11 P0）。
-`self_check.py` 的 `retirement_budget_rows` 遍历 ci.yml 实际声明的全部 steps，各步
-贡献记录与 `RETIREMENT_STEP_ORDER` 双向互证后，累加导出 `INTERNAL_WORST_CASE_SECONDS`。
-未知形态没有预算规则即红；遗漏一项贡献或多算一个幽灵 step 也红，不再手列全 job 加数。
+外层 `timeout-minutes` 必须**大于**全 job 有效内部最坏和 + 开销余量（r11 P0）。
+判据是 `RETIREMENT_JOB_TIMEOUT_MINUTES` × 60 > `INTERNAL_WORST_CASE_SECONDS` +
+`JOB_OVERHEAD_MARGIN_SECONDS`，由 `self_check.py` 的 `retirement_budget_rows`
+遍历 ci.yml 实际声明的全部 steps 求值：各步贡献记录与 `RETIREMENT_STEP_ORDER`
+双向互证后，累加导出 `INTERNAL_WORST_CASE_SECONDS`。未知形态没有预算规则即红；
+遗漏一项贡献或多算一个幽灵 step 也红，不再手列全 job 加数。下表与正文的量级数字
+是**给人看的近似值**（#2454）——判据以 `retirement_budget_rows` 求值为准，本
+README 与 ci.yml 注释都不维护第二份精确和（改推导常量后手抄数字只会静默烂掉）。
 
 | step | 上限来源 | 内部贡献 |
 |---|---|---|
-| checkout / 安装 PyYAML / upload | `JOB_OVERHEAD_STEPS` 显式共享 overhead 桶，桶集合双向核覆盖 | 共享下方 300 s 余量 |
-| 直跑 emit | step 声明 `timeout-minutes: 5`，守卫钉住且求和读取声明 | 300 s |
-| 直跑 check | step 声明 `timeout-minutes: 5`，同上 | 300 s |
-| 直跑负控 | 读 `negative_controls` 的参考轮集合、控件登记与 `CHECK_TIMEOUT_SECONDS`；再应用 step 声明 `timeout-minutes: 30`（登记与自检 NEGCTL 同源） | 原始 (5+1+17+0)×600 = 13800 s；有效 min(13800, 1800) = 1800 s |
-| 七项自检 | EMIT + CHECK + NEGCTL + 一趟 LOCK + WRITES | 3260 s |
-| 变异自检 | (LOCK_CHECK_PASSES−1)×LOCK + CONTROL_CHECK_SUBPROCESSES×CHECK | 4200 s |
+| checkout / 安装 PyYAML / upload | `JOB_OVERHEAD_STEPS` 显式共享 overhead 桶，桶集合双向核覆盖 | 共享 `JOB_OVERHEAD_MARGIN_SECONDS`（≈ 5 min） |
+| 直跑 emit | step 声明 `timeout-minutes`，值钉死为登记值且求和读取声明 | = 声明值（≈ 5 min） |
+| 直跑 check | 同上 | ≈ 5 min |
+| 直跑负控 | 读 `negative_controls` 的参考轮集合、控件登记与 `CHECK_TIMEOUT_SECONDS`；再应用 step 声明 `timeout-minutes`（登记与自检 NEGCTL 同源） | 原始 ≈ (5+1+17+0)×600 s ≈ 3.8 h；有效 = 声明限（≈ 30 min） |
+| 七项自检 | EMIT + CHECK + NEGCTL + 一趟 LOCK + WRITES | ≈ 0.9 h |
+| 变异自检 | (LOCK_CHECK_PASSES−1)×LOCK + CONTROL_CHECK_SUBPROCESSES×CHECK | ≈ 1.2 h |
 
-两项自检沿用 r10 内部推导：LOCK 单趟 660 s（4×60 s 等锁 + 2×60 s wait +
-敌意锁 3×50 s + 守卫 fd 3×50 s），共六趟；WRITES 4×50 s；control_check 三趟
-各 300 s。公式与 `_assert_pass_counting` 的调用点互证不变。完整内部和
-原始和 **21860 s ≈ 364.3 min**；直跑负控加声明上限后，有效内部和
-**9860 s ≈ 164.3 min**，外层 **170×60 = 10200 > 9860 + 300 s**。
+两项自检沿用 r10 内部推导：LOCK 单趟 = 4×60 s 等锁 + 2×60 s wait + 敌意锁
+3×50 s + 守卫 fd 3×50 s，共 `LOCK_CHECK_PASSES` 趟；WRITES 4×50 s；
+control_check 三趟各 `CHECK_TIMEOUT_SECONDS`。公式与 `_assert_pass_counting`
+的调用点互证不变。完整原始和 ≈ 6 h；直跑负控加声明上限后，有效内部和 ≈ 2.7 h，
+外层登记值 `RETIREMENT_JOB_TIMEOUT_MINUTES`（现 170 min，低于托管 job 6 h
+平台上限）保持严格大于有效和 + 开销。
 本轮采用任务书修项 3 的 step 上限路线：仅把外层抬到 400 min 无法满足
 `ubuntu-latest` 的托管 job [6 小时平台上限](https://docs.github.com/en/actions/reference/limits)；
 超过平台上限的 timeout 会[先按平台上限取消](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idtimeout-minutes)。
 保留完整原始推导，再用实际声明的 step 上限约束有效贡献，不改变 PASS/KILLED 判分。
 r9 的 85 min、r10 的 130 min 均源自不完整和；本轮补全覆盖范围，不改严格大于判据。
 `retirement-job-timeout-lowered` 降到 55 仍须红，其失败锚串从外层预算常量派生。
+`raw_seconds > cap_seconds` 的降级语义由 `NEGCTL_STEP_CAP_ABSORBED_CHECKER_TIMEOUTS`
+机器化（#2453）：被声明限压到 cap 的必须恰是直跑负控行（emit/check 的声明值与入算值
+相等），cap 必须吸收恰 3 个整 checker 超时（`cap % limit == 0`、
+`cap // limit == NEGCTL_STEP_CAP_ABSORBED_CHECKER_TIMEOUTS`），
+raw = passes × limit 一并断言——第 4 次 checker 超时才落进 step 硬杀（summary.json 只在
+控件循环结束后写，硬杀下没有 summary、哪一控挂了不可见）；整除关系被破坏当场红。
 外层不足会退化为平台硬杀（cancelled，summary 不发布）。
 
 `self_check.py` 是这些守卫的单一实现，本地可整跑：
@@ -305,7 +320,7 @@ python3 -I scripts/retirement-outcome-parity/self_check.py --self-check-controls
 
 `--self-check-controls` 给每个能造违反样本的守卫造样本，对应检查必须**变红**：体积预算用
 超大夹具**两种**（单文件超 1 MiB、若干个不超单文件上限的文件合计超 5 MiB 总量）；CI 接线用
-**四十四种**变异 workflow（删掉 retirement job / 整段注释掉 / 给 job 内闸门
+**四十九种**变异 workflow（删掉 retirement job / 整段注释掉 / 给 job 内闸门
 step 加 `if: false` · 引号键 `"if": false` · `continue-on-error` / 给 **job 级**（4 空格缩进）
 加 `continue-on-error` / 把闸门命令整行挪进同 step 的 `env.UNUSED: |` / 用嵌套 `env:` 下的
 `run: exit 1` 冒充聚合 Require 的执行体 / 用 `if false; then … fi` 包住整条命令 / `|| true` /
@@ -327,12 +342,22 @@ pr-gate job `if: false`（被跳过的必需检查被 GitHub 报成 success）�
 fetch 基线步 `continue-on-error` 键删 / 登记值 `true`→`false`（键集恰等与值钉死各有违反
 路径）、闸门 step env 加未登记键、闸门 step 整步删；另修正 r8 的「pr-gate check step 删
 `shell: bash`」样本——pr-gate.yml 的 shell 行带行尾注释，旧字面量匹配不到它、实际删的是
-fetch 步的 shell（r9 起按「行首值 + 可选注释」锚定，step 键集恰等先行拦下）。
+fetch 步的 shell（r9 起按「行首值 + 可选注释」锚定，step 键集恰等先行拦下）——
+与 **#2451 五条**：三个直跑 gate 的 step `timeout-minutes` 降 / 升（emit 5→4 / 5→6、
+负控 30→29 / 30→31——降值让挂住的检查打不满内部超时、失败退化成 step 硬杀；钉值判定
+红在 `retirement_budget_rows`，预算接线块被删时这四条 SURVIVED）与负控 step 的
+`timeout-minutes` 整行删（红在 step 键集判定，第一道拦截）。
 每条样本的失败文案必须落在**点名判定**上（锚串全量登记在
 `SAMPLE_FAILURE_ANCHORS`，`control_wiring` 另断言样本集合与登记簿逐名全等——漏一条 /
-多一条 / 红错地方都算控件失败；条数 44 由 `EXPECTED_WIRING_SAMPLES` 钉死，样本与锚串
+多一条 / 红错地方都算控件失败；条数 49 由 `EXPECTED_WIRING_SAMPLES` 钉死，样本与锚串
 **一起**删时逐名全等照样成立、登记簿静默缩水——对齐 `EXPECTED_LOCK_HOSTILE_PLANTS`
-先例，r9）；输出目录锁用三种**预置敌意锁文件**（同名 FIFO / 目录 /
+先例，r9）；r11 预算接线的另外五个判定（step cap / overhead / budget rule /
+budget coverage / budget total）只有预算面消费，workflow 样本够不到（改顺序 / 键集 /
+脚本的变异先红在各自判定上）——`control_wiring` 另对**登记簿本身**做进程内变异逐条直攻
+（幽灵闸门超时登记 → step cap coverage、幽灵 overhead 桶 → overhead coverage、摘掉
+upload 步的桶登记 → budget rule missing、重排 step 登记顺序 → budget coverage、
+`EMIT_TIMEOUT_SECONDS` 常量漂移 → budget total；登记在 `REGISTRY_MUTATION_ANCHORS`，
+条数 5 由 `EXPECTED_REGISTRY_MUTATIONS` 钉死，finally 必还原）；输出目录锁用三种**预置敌意锁文件**（同名 FIFO / 目录 /
 符号链接，去掉 `O_NONBLOCK` 或 `S_ISREG` 判定即挂起或假持锁，登记在 `LOCK_HOSTILE_PLANTS`，
 条数 3 由 `EXPECTED_LOCK_HOSTILE_PLANTS` 断言）加**时间戳序互斥**（两个持锁子进程各打
 `LOCKED ACQUIRED`/`RELEASED`（`time.monotonic()`，取锁信号与时戳合并为单次 print——分两次
@@ -366,7 +391,9 @@ job 报成 success**，而 `check` 自己是必需检查，跳掉它就再没有
 step 顺序与名字按登记比对，`timeout-minutes` 值钉死为登记值并断言**大于**内部最坏和
 `INTERNAL_WORST_CASE_SECONDS` + job 开销余量（r9；外层预算先到时挂住的检查退化为平台硬杀）；
 闸门 step 只许有 `name` + `run` + `shell` 且 `shell` 值恰为
-`bash`（`env` / `with` / `if` / `continue-on-error`、嵌套的 `env: {run: …}` 全红）；每个闸门
+`bash`，**加**三个直跑 gate（emit / check / 负控）各自登记的 `timeout-minutes`
+（`GATE_STEP_TIMEOUT_MINUTES` 成员才许带这一键，键值钉死为登记值，#2451；
+`env` / `with` / `if` / `continue-on-error`、嵌套的 `env: {run: …}` 全红）；每个闸门
 step 的 `run` 必须是
 **literal 块标量（`|`）**且完整标量值与 `GATE_SCRIPTS` **逐字相等**——续行拼接（plain 多行
 标量，换行折叠成空格）、`>` 折叠块、引号标量**显式判红并写明是哪一种形态**；聚合 Require
