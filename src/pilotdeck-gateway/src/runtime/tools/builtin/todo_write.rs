@@ -326,13 +326,18 @@ impl DurableTodoService {
     }
     pub fn session(&self, session_id: &JsString) -> std::io::Result<Arc<TodoSession>> {
         let key = session_id.units().to_vec();
-        if let Some(value) = self.sessions.lock().unwrap().get(&key).cloned() {
+        // Look up and insert under one lock: releasing it between the lookup
+        // and the insert let two concurrent callers for one session open two
+        // `TodoSession`s over the same path, so each kept its own copy of the
+        // list and the later write silently dropped the other's todos.
+        let mut sessions = self.sessions.lock().unwrap();
+        if let Some(value) = sessions.get(&key).cloned() {
             return Ok(value);
         }
         let value = Arc::new(TodoSession::open(
             self.root.join(format!("{}.json", digest(session_id))),
         )?);
-        self.sessions.lock().unwrap().insert(key, value.clone());
+        sessions.insert(key, value.clone());
         Ok(value)
     }
 }
@@ -734,5 +739,39 @@ mod tests {
                 .len(),
             4
         );
+    }
+
+    /// Two threads asking for one session must receive the same instance. The
+    /// old split lock released between the lookup and the insert, so both
+    /// threads could open their own `TodoSession` over one path and one write
+    /// would silently overwrite the other.
+    #[test]
+    fn concurrent_session_lookup_returns_one_instance() {
+        let root = root();
+        let service = Arc::new(DurableTodoService::open(&root).unwrap());
+        let (started, starting) = std::sync::mpsc::channel();
+        let handles = (0..8)
+            .map(|_| {
+                let service = Arc::clone(&service);
+                let started = started.clone();
+                std::thread::spawn(move || {
+                    started.send(()).unwrap();
+                    service.session(&"s".into()).unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        for _ in 0..8 {
+            starting.recv().unwrap();
+        }
+        let sessions = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>();
+        for session in &sessions[1..] {
+            assert!(
+                Arc::ptr_eq(&sessions[0], session),
+                "every caller must share one TodoSession"
+            );
+        }
     }
 }
