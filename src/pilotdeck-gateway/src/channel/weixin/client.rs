@@ -118,6 +118,25 @@ pub fn is_recoverable_poll_error(detail: &str) -> bool {
 /// The `WeixinIlinkClient` slice the channel depends on (WeixinChannel.ts
 /// type of the same name), so tests can substitute a scripted mock.
 pub trait WeixinIlinkClient: Send + Sync {
+    fn get_upload_url(&self, _params: JsValue) -> BoxFuture<Result<JsValue, WeixinClientError>> {
+        Box::pin(async {
+            Err(WeixinClientError::error(
+                "Weixin client does not support media uploads",
+            ))
+        })
+    }
+    fn send_media(
+        &self,
+        _user: &JsString,
+        _item: JsValue,
+        _context: &JsString,
+    ) -> BoxFuture<Result<(), WeixinClientError>> {
+        Box::pin(async {
+            Err(WeixinClientError::error(
+                "Weixin client does not support media sending",
+            ))
+        })
+    }
     fn cursor(&self) -> String;
     fn set_cursor(&self, cursor: &str);
     /// Long-poll; a client-side timeout returns the empty-response shape.
@@ -410,6 +429,48 @@ impl IlinkHttpClient {
 }
 
 impl WeixinIlinkClient for IlinkHttpClient {
+    fn get_upload_url(&self, params: JsValue) -> BoxFuture<Result<JsValue, WeixinClientError>> {
+        let this = self.clone();
+        Box::pin(async move {
+            this.post_json("ilink/bot/getuploadurl", &params, this.api_timeout)
+                .await
+        })
+    }
+    fn send_media(
+        &self,
+        user: &JsString,
+        item: JsValue,
+        context: &JsString,
+    ) -> BoxFuture<Result<(), WeixinClientError>> {
+        let this = self.clone();
+        let user = user.clone();
+        let context = context.clone();
+        Box::pin(async move {
+            let mut message = JsObject::new();
+            message.insert("from_user_id".into(), JsValue::from(""));
+            message.insert("to_user_id".into(), JsValue::String(user));
+            message.insert(
+                "client_id".into(),
+                JsValue::from(generate_client_id().as_str()),
+            );
+            message.insert("message_type".into(), JsValue::Number(MESSAGE_TYPE_BOT));
+            message.insert(
+                "message_state".into(),
+                JsValue::Number(MESSAGE_STATE_FINISH),
+            );
+            message.insert("context_token".into(), JsValue::String(context));
+            message.insert("item_list".into(), JsValue::Array(vec![item]));
+            let mut payload = JsObject::new();
+            payload.insert("msg".into(), JsValue::Object(message));
+            this.post_json(
+                "ilink/bot/sendmessage",
+                &JsValue::Object(payload),
+                this.api_timeout,
+            )
+            .await
+            .map(|_| ())
+        })
+    }
     fn cursor(&self) -> String {
         self.cursor
             .lock()

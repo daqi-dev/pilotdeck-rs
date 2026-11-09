@@ -275,8 +275,12 @@ impl Requests {
     }
 
     async fn management(&self, method: &str, params: &JsValue) -> Result<JsValue, RequestError> {
+        if method == "manager_browsers" {
+            return super::manager_browser::dispatch(self.manager_browser.clone(), params)
+                .map_err(super::manager_browser::request_error);
+        }
         self.admit_management_project(params)?;
-        if matches!(method, "manager_sessions" | "manager_browsers") {
+        if method == "manager_sessions" {
             let catalog = TranscriptSessionCatalog::new_bounded(|key| {
                 super::methods::session_dir::bounded_chat_dir(&key.pilot_home, &key.project_root)
                     .map_err(|error| ManagerError::with_message("Error", None, error.message))
@@ -290,12 +294,9 @@ impl Requests {
                 &self.options.project,
                 &self.options.home,
             );
-            return (if method == "manager_sessions" {
-                gateway.sessions(params)
-            } else {
-                gateway.browsers(params)
-            })
-            .map_err(|e| error(e.code(), e.message().clone()));
+            return gateway
+                .sessions(params)
+                .map_err(|e| error(e.code(), e.message().clone()));
         }
         // Keep the generation leased through all awaits (catalog refresh/list/
         // release included); invalidation must not dispose an in-flight request.

@@ -249,6 +249,7 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             // unconnected state builds it explicitly.
             dialog_recovery: None,
             sop: None,
+            manager_browser: None,
             user_dialog_bus: Arc::new(std::sync::Mutex::new(
                 crate::user_dialog::GatewayUserDialogBus::connected(
                     crate::user_dialog::DialogRuntime::default(),

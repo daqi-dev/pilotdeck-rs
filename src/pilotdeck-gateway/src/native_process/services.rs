@@ -6,7 +6,10 @@ use crate::{
         context::compaction::js_truthy,
         project::{ProjectResources, ProjectRuntimeRegistry},
         turn::{
-            submit::{NativeSubmitSnapshots, SubmitError, SubmitFuture, SubmitSnapshots},
+            submit::{
+                ChannelAttachmentOrigin, NativeSubmitSnapshots, SubmitError, SubmitFuture,
+                SubmitSnapshots,
+            },
             submit_host::{SubmitAttachmentLease, SubmitCwdService, SubmitHostServices},
         },
     },
@@ -733,6 +736,23 @@ pub(super) fn compose_attachment_turn(
     message: &JsValue,
     attachments: &[JsValue],
 ) -> Result<JsValue, SubmitError> {
+    compose_attachment_turn_with_cache(project_dir, message, attachments, None)
+}
+
+/// The additional root is an internal adapter capability. It cannot be selected
+/// by channelKey/metadata on a WS request. All files still pass the same
+/// pre-open identity, post-open containment, handle identity and bounded read.
+pub(super) fn compose_attachment_turn_with_cache(
+    project_dir: &Path,
+    message: &JsValue,
+    attachments: &[JsValue],
+    channel_cache: Option<(&Path, &Path)>,
+) -> Result<JsValue, SubmitError> {
+    let channel_roots = channel_cache.and_then(|(base, root)| {
+        let base_real = fs::canonicalize(base).ok()?;
+        let canonical = crate::upload::canonical_home(root, base, &base_real)?;
+        Some((vec![root.to_path_buf(), canonical.clone()], canonical))
+    });
     let mut entries: Vec<AttachEntry> = Vec::new();
     for attachment in attachments {
         let kind = text_field(attachment, "type").unwrap_or_default();
@@ -918,8 +938,25 @@ pub(super) fn compose_attachment_turn(
         // the resolver projection and both keep every failure below silent.
         let audio = is_audio_attachment(entry);
         let no_resolver = audio || content_only;
-        let resolved = match lease_guard(&entry.path, &lease_lexical_roots, lease_canon.as_deref())
-        {
+        // Select one independently validated home per attachment. A failed
+        // channel-root validation never broadens the ordinary upload lease.
+        let channel = channel_roots.as_ref().filter(|(roots, _)| {
+            roots
+                .iter()
+                .any(|root| Path::new(&entry.path).starts_with(root))
+        });
+        let lease_lexical_roots = channel
+            .map(|(roots, _)| roots.as_slice())
+            .unwrap_or(&lease_lexical_roots);
+        let lease_canon = channel
+            .map(|(_, canonical)| Some(canonical.clone()))
+            .unwrap_or_else(|| lease_canon.clone());
+        let upload_store_canon = if channel.is_some() {
+            None
+        } else {
+            upload_store_canon.clone()
+        };
+        let resolved = match lease_guard(&entry.path, lease_lexical_roots, lease_canon.as_deref()) {
             Ok(LeaseGuard::Resolved(resolved)) => resolved,
             Ok(LeaseGuard::Unresolved(error)) => {
                 if no_resolver {
@@ -1493,6 +1530,58 @@ impl SubmitCwdService for Cwd {
         }
     }
 }
+impl Services {
+    fn compose_native_attachments<'a>(
+        &'a self,
+        message: &'a JsValue,
+        attachments: Vec<JsValue>,
+        origin: Option<ChannelAttachmentOrigin>,
+    ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
+        Box::pin(async move {
+            super::assembly::validate_profile(&self.options, &self.env)
+                .await
+                .map_err(|error| unavailable(&error.to_string()))?;
+            if !matches!(message, JsValue::String(_)) {
+                return Err(failure("message must be a string."));
+            }
+            if attachments.is_empty() {
+                return Ok(object([("type", "text".into()), ("text", message.clone())]));
+            }
+            let project_dir = self.options.project.clone();
+            let cache = origin.map(|origin| match origin {
+                ChannelAttachmentOrigin::Feishu => (
+                    self.options.home.clone(),
+                    self.options.home.join("im-attachments/feishu"),
+                ),
+                ChannelAttachmentOrigin::Weixin => (
+                    self.options.home.clone(),
+                    self.options.home.join("im-attachments/weixin"),
+                ),
+                ChannelAttachmentOrigin::Wecom => (
+                    std::env::temp_dir(),
+                    std::env::temp_dir().join("pilotdeck-wecom-media"),
+                ),
+            });
+            let message = message.clone();
+            // P1-3/concurrency#5: the whole composition — the once-per-prepare
+            // lease-root canonicalize (simplify#2), the per-attachment stat and
+            // read — runs on a blocking thread so the async executor is not
+            // blocked.
+            tokio::task::spawn_blocking(move || match cache {
+                Some((base, root)) => compose_attachment_turn_with_cache(
+                    &project_dir,
+                    &message,
+                    &attachments,
+                    Some((&base, &root)),
+                ),
+                None => compose_attachment_turn(&project_dir, &message, &attachments),
+            })
+            .await
+            .map_err(|e| failure(e.to_string()))?
+        })
+    }
+}
+
 impl SubmitHostServices for Services {
     fn bind_project<'a>(
         &'a self,
@@ -1772,6 +1861,16 @@ impl SubmitHostServices for Services {
             })
         })
     }
+    fn prepare_channel_attachment_turn<'a>(
+        &'a self,
+        origin: ChannelAttachmentOrigin,
+        message: &'a JsValue,
+        attachments: Vec<JsValue>,
+        _project: Option<&JsString>,
+        _session: Option<&JsString>,
+    ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
+        self.compose_native_attachments(message, attachments, Some(origin))
+    }
     fn prepare_attachment_turn<'a>(
         &'a self,
         message: &'a JsValue,
@@ -1779,28 +1878,7 @@ impl SubmitHostServices for Services {
         _project: Option<&JsString>,
         _session: Option<&JsString>,
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
-        Box::pin(async move {
-            super::assembly::validate_profile(&self.options, &self.env)
-                .await
-                .map_err(|error| unavailable(&error.to_string()))?;
-            if !matches!(message, JsValue::String(_)) {
-                return Err(failure("message must be a string."));
-            }
-            if attachments.is_empty() {
-                return Ok(object([("type", "text".into()), ("text", message.clone())]));
-            }
-            let project_dir = self.options.project.clone();
-            let message = message.clone();
-            // P1-3/concurrency#5: the whole composition — the once-per-prepare
-            // lease-root canonicalize (simplify#2), the per-attachment stat and
-            // read — runs on a blocking thread so the async executor is not
-            // blocked.
-            tokio::task::spawn_blocking(move || {
-                compose_attachment_turn(&project_dir, &message, &attachments)
-            })
-            .await
-            .map_err(|e| failure(e.to_string()))?
-        })
+        self.compose_native_attachments(message, attachments, None)
     }
     fn resolve_model_selection<'a>(
         &'a self,
@@ -2272,6 +2350,22 @@ impl SubmitHostServices for ScopedServices {
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
         self.services
             .prepare_attachment_turn(message, attachments, project, session)
+    }
+    fn prepare_channel_attachment_turn<'a>(
+        &'a self,
+        origin: ChannelAttachmentOrigin,
+        message: &'a JsValue,
+        attachments: Vec<JsValue>,
+        project: Option<&JsString>,
+        session: Option<&JsString>,
+    ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
+        self.services.prepare_channel_attachment_turn(
+            origin,
+            message,
+            attachments,
+            project,
+            session,
+        )
     }
     fn resolve_model_selection<'a>(
         &'a self,

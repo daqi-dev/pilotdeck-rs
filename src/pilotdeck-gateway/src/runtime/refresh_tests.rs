@@ -630,11 +630,18 @@ impl RefreshRegistry for ReadyRegistry {
 }
 
 fn manual_bundle(log: &Arc<Log>, store: &Arc<ManualStore>) -> RefreshBundle {
+    manual_bundle_with_registry(log, store, Arc::new(ReadyRegistry))
+}
+fn manual_bundle_with_registry(
+    log: &Arc<Log>,
+    store: &Arc<ManualStore>,
+    registry: Arc<dyn RefreshRegistry>,
+) -> RefreshBundle {
     let fakes = Arc::new(Fakes(Arc::clone(log)));
     let router = Arc::clone(&fakes);
     let bundle = RefreshBundle::new(RefreshOptions {
         config_store: Arc::clone(store) as _,
-        registry: Arc::new(ReadyRegistry),
+        registry,
         memory_maintenance: fakes.clone(),
         router: Arc::new(move || Some(Arc::clone(&router) as Arc<dyn RefreshRouter>)),
         project_root: "/root".into(),
@@ -693,4 +700,54 @@ fn settlement_on_a_live_executor_does_not_warn() {
         ])
     );
     bundle.dispose();
+}
+
+#[tokio::test]
+async fn ready_notification_checkpoint_precedes_rpc_without_waiting_pending_io() {
+    let log = Arc::new(Log::default());
+    let store = Arc::new(ManualStore::default());
+    let ready = manual_bundle(&log, &store);
+    ready.bind_server(Arc::new(Fakes(log.clone())));
+    store.emit(&["agent.model".into()], &[ChangeClass::NextRuntime]);
+    ready.settle_ready_notifications().await;
+    assert!(
+        log.take()
+            .iter()
+            .any(|line| line == "broadcast:config_changed:agent.model")
+    );
+    ready.dispose();
+
+    struct Blocked(Arc<tokio::sync::Notify>);
+    impl RefreshRegistry for Blocked {
+        fn reload(&self) -> Result<BoxFuture<RuntimeResult>, RuntimeError> {
+            let gate = self.0.clone();
+            Ok(Box::pin(async move {
+                gate.notified().await;
+                Ok(())
+            }))
+        }
+        fn invalidate(&self, _: Option<&JsString>) {}
+    }
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let pending = manual_bundle_with_registry(&log, &store, Arc::new(Blocked(gate.clone())));
+    pending.bind_server(Arc::new(Fakes(log.clone())));
+    store.emit(&["agent.model".into()], &[ChangeClass::NextRuntime]);
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        tokio::join!(
+            pending.settle_ready_notifications(),
+            pending.settle_ready_notifications()
+        );
+    })
+    .await
+    .expect("two concurrent RPCs must not await pending registry I/O");
+    assert!(!log.take().iter().any(|line| line.starts_with("broadcast:")));
+    gate.notify_one();
+    let observed = lines(&log, 2).await;
+    assert!(
+        observed
+            .iter()
+            .any(|line| line == "broadcast:config_changed:agent.model"),
+        "{observed:?}"
+    );
+    pending.dispose();
 }

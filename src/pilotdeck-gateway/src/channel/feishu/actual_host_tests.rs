@@ -24,6 +24,8 @@ struct Wire {
     http: Mutex<Vec<(String, String, Vec<u8>)>>,
     models: Mutex<Vec<Value>>,
     sent: Mutex<Vec<Value>>,
+    home: Mutex<Option<std::path::PathBuf>>,
+    failure_evidence: Mutex<Option<std::path::PathBuf>>,
 }
 impl Default for Wire {
     fn default() -> Self {
@@ -37,10 +39,53 @@ impl Default for Wire {
             http: Mutex::new(vec![]),
             models: Mutex::new(vec![]),
             sent: Mutex::new(vec![]),
+            home: Mutex::new(None),
+            failure_evidence: Mutex::new(None),
         }
     }
 }
 impl Wire {
+    fn preserve_failure(&self) {
+        let mut prior = self
+            .failure_evidence
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(path) = prior.as_ref() {
+            eprintln!("Feishu full raw evidence={}", path.display());
+            return;
+        }
+        let base = std::env::current_dir()
+            .unwrap_or_else(|_| std::env::temp_dir())
+            .join("_tmp/native-channel-consumer-failures");
+        let path = base.join(format!("feishu-{}.json", uuid::Uuid::new_v4()));
+        let http: Vec<Value> = self
+            .http
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .map(|(p, a, b)| {
+                let body = match serde_json::from_slice::<Value>(b) {
+                    Ok(body) => body,
+                    Err(_) => {
+                        use base64::Engine;
+                        json!({"base64":base64::engine::general_purpose::STANDARD.encode(b)})
+                    }
+                };
+                json!({"path":p,"authorization":a,"body":body})
+            })
+            .collect();
+        let transcripts:Vec<Value>=self.home.lock().unwrap_or_else(|e|e.into_inner()).as_ref().map(|home|walk(&home.join("projects")).into_iter().filter(|p|p.extension().is_some_and(|e|e=="jsonl")).map(|p|json!({"path":p,"text":std::fs::read_to_string(&p).unwrap_or_default()})).collect()).unwrap_or_default();
+        let value = json!({"http":http,"models":self.models.lock().unwrap_or_else(|e|e.into_inner()).clone(),"sent":self.sent.lock().unwrap_or_else(|e|e.into_inner()).clone(),"sockets":self.sockets.load(Ordering::SeqCst),"acks":self.acks.load(Ordering::SeqCst),"transcripts":transcripts});
+        match std::fs::create_dir_all(&base).and_then(|_| {
+            std::fs::write(&path, serde_json::to_vec_pretty(&value).unwrap_or_default())
+        }) {
+            Ok(()) => {
+                eprintln!("Feishu full raw evidence={}", path.display());
+                *prior = Some(path);
+            }
+            Err(error) => eprintln!("Feishu evidence persistence error: {error}"),
+        }
+    }
     fn event(&self, kind: &str, content: Value) {
         let id = self.seq.fetch_add(1, Ordering::SeqCst);
         self.incoming.send(json!({"schema":"2.0","header":{"event_id":format!("event-{id}"),"event_type":"im.message.receive_v1"},"event":{"sender":{"sender_id":{"open_id":"human"},"sender_type":"user"},"message":{"message_id":format!("message-{id}"),"chat_id":"room","chat_type":"p2p","message_type":kind,"content":content.to_string()}}})).expect("active Feishu Socket Mode");
@@ -64,6 +109,7 @@ struct Peer {
 impl Drop for Peer {
     fn drop(&mut self) {
         if std::thread::panicking() {
+            self.state.preserve_failure();
             eprintln!(
                 "Feishu REST paths={:#?}; sent={:#?}; models={:#?}",
                 self.state
@@ -204,6 +250,7 @@ async fn feishu_actual_server_media_a7_upload_interactions_new_reload_shutdown()
     let approved = requests.options.project.join("feishu-approved.txt");
     let denied = requests.options.project.join("feishu-denied.txt");
     let peer = peer(output, approved.clone(), denied.clone()).await;
+    *peer.state.home.lock().unwrap() = Some(requests.options.home.clone());
     let path = requests.options.home.join("pilotdeck.yaml");
     let mut config = json!({"schemaVersion":1,"agent":{"model":"test/test"},"model":{"providers":{"test":{"protocol":"openai","url":format!("{}/v1",peer.origin),"apiKey":"mock-only","models":{"test":{}}}}},"adapters":{"feishu":{"enabled":true,"appId":"cli_0123456789abcdef","appSecret":"mock-secret","connectionMode":"stream"}}});
     std::fs::write(&path, config.to_string()).unwrap();

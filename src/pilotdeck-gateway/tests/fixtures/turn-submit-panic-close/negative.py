@@ -199,14 +199,8 @@ mutations = [
      '    }',
      SUBMIT_TEST),
     ('panic-trailing-wait-removed', 'publish.rs',
-     '                // #2498: the trailing wait ends at a hard close — a\n'
-     '                // never-settling append must not park the consumer past\n'
-     '                // `close_live`, or `join!(manage, consume)` in submit never\n'
-     '                // returns and the turn, admission and completion fence leak.\n'
-     '                // Frames already in the queue above were settled before the\n'
-     '                // close and are still drained first, like TS\'s `queue.close`.\n'
-     '                self.publication.wait_for_trailing_writes(&writes).await;',
-     '                self.publication.wait_for(&writes).await;',
+     '                        self.publication.wait_for_trailing_writes(&writes).await;',
+     '                        self.publication.wait_for(&writes).await;',
      STUCK_TEST),
     ('timer-record-unbounded', 'submit.rs',
      '                        let budget = self.abort_budget();\n'

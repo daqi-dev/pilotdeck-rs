@@ -1,21 +1,9 @@
-//! Weixin channel (`adapters/channel/weixin/WeixinChannel.ts` pr1 subset) on
-//! the #1327 lifecycle core: text-message dispatch through the same gateway
-//! submit port as every other inbound path, `/new` session rotation with old
-//! turn abort, chunked replies, pending reply queue, cursor persistence, QR
-//! background login with a bounded recovery watcher, and the three-branch
-//! poll loop (`errcode -14` / `ret != 0` / exception).
-//!
-//! pr1 scope cuts (pr2 follows the plan): elicitation/permission helpers,
-//! attachments (AES/CDN, image/file/voice items), the full live-reply
-//! controller (the weixin transport subset with no `edit` and no
-//! `maxMessageLength` is inlined here: deltas only accumulate, one final
-//! `sendReply` at `flushFinal`), cron delivery, and the channel command
-//! registry. The gateway surface is a weixin-owned port
-//! ([`WeixinGatewayPort`]) constructor-injected in pr1; pr2 collects it into
-//! `ChannelStartDeps` once the A7 inbound port lands. The adapter-state
-//! reporter ([`WeixinRuntimeStatusReporter`]) is likewise injected in pr1:
-//! the #1327 core reports only the four lifecycle states, while this adapter
-//! also reports its own login states.
+//! Native Weixin channel: shared A7 turns, full live replies, permission and
+//! elicitation answers, central commands, persisted sessions/cursor and owned
+//! polling/login recovery. Inbound media downloads/decrypts into the isolated
+//! attachment store; assistant attachments prepare, AES-encrypt, upload to CDN
+//! and send through the native ILink media API. Production credentials and
+//! state roots come from the owning Server's explicit home.
 mod client;
 mod commands;
 mod interaction;
@@ -24,6 +12,9 @@ mod mapper;
 // #1823: inbound attachment decryption + CDN download. The inbound item
 // pipeline that calls it is pr2b-1 (#1822); this module is not wired yet.
 mod media;
+mod outbound;
+#[cfg(test)]
+mod outbound_tests;
 #[cfg(test)]
 mod replay_tests;
 mod state;
@@ -1634,6 +1625,11 @@ impl WeixinChannel {
                 "error" if js_string_text(event.get("code")) == "turn_timeout" => {
                     reply.mark_timed_out().await;
                 }
+                "assistant_attachment" => {
+                    if let Some(attachment) = event.get("attachment") {
+                        self.send_attachment(user, attachment).await;
+                    }
+                }
                 "elicitation_request" => {
                     let chat = String::from_utf16_lossy(user.units());
                     let session = String::from_utf16_lossy(turn.session_key.units());
@@ -2298,7 +2294,10 @@ impl WeixinGatewayPort for NativeWeixinGatewayPort {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         let submitter = self.submitter.clone();
         tokio::spawn(async move {
-            let mut submission = submitter.submit(input);
+            let mut submission = submitter.submit_channel(
+                input,
+                crate::runtime::turn::submit::ChannelAttachmentOrigin::Weixin,
+            );
             loop {
                 match submission.next().await {
                     Ok(Some(event)) => {

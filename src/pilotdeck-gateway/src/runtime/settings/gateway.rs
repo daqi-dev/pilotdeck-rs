@@ -160,12 +160,19 @@ pub struct OutputStylesReload {
 /// `runtimeRefresh.reloadConfig()`).
 pub trait ReloadConfigSource: Send + Sync {
     fn reload_config(&self) -> SettingsFuture<Result<ReloadOutcome, SettingsError>>;
+    fn settle_ready_notifications(&self) -> SettingsFuture<()> {
+        Box::pin(async {})
+    }
 }
 
 impl ReloadConfigSource for RefreshBundle {
+    fn settle_ready_notifications(&self) -> SettingsFuture<()> {
+        Box::pin(RefreshBundle::settle_ready_notifications(self))
+    }
     fn reload_config(&self) -> SettingsFuture<Result<ReloadOutcome, SettingsError>> {
         let reload = RefreshBundle::reload_config(self);
-        Box::pin(async move { reload.await.map_err(|error| SettingsError::config(&error)) })
+        let inner = RefreshBundle::notification_checkpoint_after_reload(self, reload);
+        Box::pin(async move { inner.await.map_err(|error| SettingsError::config(&error)) })
     }
 }
 
@@ -368,6 +375,9 @@ impl SettingsGateway {
         let result = reload.await;
         drop(capture);
         result.map_err(|error| SettingsError::config(&error))?;
+        if let Some(refresh) = &self.options.reload_config {
+            refresh.settle_ready_notifications().await;
+        }
         let changed_paths = std::mem::take(&mut *lock(&captured));
         Ok(update_result(
             &updated.applied,

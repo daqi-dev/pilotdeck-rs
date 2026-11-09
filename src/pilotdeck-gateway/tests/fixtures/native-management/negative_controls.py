@@ -50,7 +50,7 @@ WIRING = 'native_process::management_tests::submit_snapshot_wiring_matches_manag
 ENVIRONMENT = 'native_process::tests::explicit_options_and_environment'
 mutations = [
     ('omit-snapshot', SOURCE, 'if method.starts_with("snapshot_") {', 'if method.starts_with("unwired_snapshot_") {', TEST, '#1231 routed first result'),
-    ('omit-manager', SOURCE, 'if matches!(method, "manager_sessions" | "manager_browsers") {', 'if matches!(method, "unwired_manager_sessions" | "manager_browsers") {', TEST, '#1231 routed first result'),
+    ('omit-manager', SOURCE, 'if method == "manager_sessions" {', 'if method == "unwired_manager_sessions" {', TEST, '#1231 routed first result'),
     ('omit-commands', SOURCE, 'return Some(self.commands(params).await);', 'return Some(Err(unavailable()));', TEST, '#1231 routed first result'),
     ('omit-skills', SOURCE, 'let skill = SkillMethod::from_wire(method).ok_or_else(unavailable)?;', 'let skill = SkillMethod::from_wire("unwired_skills").ok_or_else(unavailable)?;', TEST, '#1231 routed first result'),
     ('dirty-not-updated', OWNER, 'if record.context.project_key.as_ref() == Some(project) {\n                record.dirty = !reason.is_empty();', 'if record.context.project_key.as_ref() == Some(project) {\n                record.dirty = reason.is_empty();', TEST, '#1231 dirty flag recreates cached session'),

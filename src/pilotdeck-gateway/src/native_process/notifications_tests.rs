@@ -113,6 +113,9 @@ async fn actual_server_settings_broadcast_precedes_response_and_skips_unauthenti
     );
     a.close(None).await.unwrap();
     unauthenticated.close(None).await.unwrap();
+    drop(a);
+    drop(b);
+    drop(unauthenticated);
     let _ = stop_tx.send(());
     task.await.unwrap().unwrap();
 }
@@ -273,6 +276,8 @@ async fn real_server_cron_model_emits_turn_notification() {
     .expect("cron must reach the model");
     client.close(None).await.unwrap();
     observer.close(None).await.unwrap();
+    drop(client);
+    drop(observer);
     let _ = stop.send(());
     task.await.unwrap().unwrap();
     provider_task.abort();
@@ -350,6 +355,8 @@ async fn real_server_model_dialog_requested_and_answered_are_broadcast() {
     .expect("the model must receive the actual dialog answer");
     client.close(None).await.unwrap();
     observer.close(None).await.unwrap();
+    drop(client);
+    drop(observer);
     let _ = stop.send(());
     task.await.unwrap().unwrap();
     provider_task.abort();

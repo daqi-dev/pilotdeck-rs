@@ -5485,3 +5485,7 @@ Draft #2786 当前已推f855107a；工作候选r34（源码清单679d5eb1）Gate
 ### 2026-11-10 · r38 数据保护与 r39 回归接续
 
 Draft #2786 保持2b72c477未合并。mbp2 r37完整Gateway/CLI nextest实际7753运行、7747通过、6失败、770跳过；严格clippy失败原件均在主仓 _tmp/20261110-gateway-integration/received-r37-full-regression/。已定位缺rg、源码包无Git索引及安全守卫拒CARGO_BUILD_JOBS三项环境问题，SDK oracle重复持同一mutex已修；MCP IPv6错误文本待实测，startup accept有界重试已修。r38 Linux全目标check及四bin完成；真实进程oversize/missing恢复保护和TS/Rust lineage活跃commit、11错误码、aux字节、回滚/冷恢复已通过，原2b72失败原件未覆盖；正式suite未通过。r39已接UTF16错误/ID保真、飞书真实媒体/交互夹具、Server广播与后台IO保活，mbp2 check通过、正清严格检查并运行新网络测试。Sol继续微信出站媒体及余下交互，Terra继续正式session采集（仍INCOMPLETE），另一路接host四拓扑与101入口；cb8/mbp2独立target，本机不构建。新main e123a6df2仅脚本/批准/状态增量，#2737 R5已MERGED待批量接收；原CLI/app/GPUI/file_edit工作与快照继续保留，未切规范目录。
+
+### 2026-11-10 · Gateway 整合 r43 接续（未收口）
+
+整合树继续由 Codex 独占，统一 CLI/前端树及旧快照未改。已逐块接入 main #2498 四提交，保留 native reliable durability budget；当前 main 固定 0f4c64b43，产品增量无遗漏。r40 严格 clippy/四 bin 通过；15 项定向复验中通知顺序、附件接入和渠道 fixture 仍有失败，旧原件保留。现已实现内部 typed 渠道附件缓存授权（普通 WS 不放宽）、Weixin 出站媒体、可选浏览器 provider 嵌入与配置通知就绪 checkpoint；r43 在 mbp2 编译及定向回归，未以候选冒充通过。本机只编辑与静态检查，未构建。Linux r38 数据恢复/lineage/后台归档真实验证通过；53 两轮原始严格差异仍红（TS25/Rust48），新增23均定位为跨通道交错，未改尺子；72 原生采集仍有缺项，独立修 collector。SOP/MCP/AO/重连/后台停止已完成5轮双端产品实测，正式 session suite 接线继续。证据主索引仍 _tmp/20261110-gateway-integration/；机械替换零命中规则见 state/memory/20261110-checked-source-edits.md。下一步以同一固定头完成附件/停机负例、正式采集及独立双谱系评审，再更新 Draft PR #2786。

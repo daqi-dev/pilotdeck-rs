@@ -14,7 +14,8 @@ use std::{collections::HashMap, sync::Arc};
 use pilotdeck_protocol::{JsString, JsValue};
 
 use super::submit::{
-    PreparedTurn, SubmitError, SubmitFuture, SubmitHost, SubmitSnapshots, SubmitWorkspace,
+    ChannelAttachmentOrigin, PreparedTurn, SubmitError, SubmitFuture, SubmitHost, SubmitSnapshots,
+    SubmitWorkspace,
 };
 use crate::storage::RunRef;
 
@@ -80,6 +81,17 @@ pub trait SubmitHostServices: Send + Sync {
         project: Option<&JsString>,
         session: Option<&JsString>,
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>>;
+    /// Typed adapter origin permits only its own server-owned attachment cache.
+    fn prepare_channel_attachment_turn<'a>(
+        &'a self,
+        _origin: ChannelAttachmentOrigin,
+        message: &'a JsValue,
+        attachments: Vec<JsValue>,
+        project: Option<&JsString>,
+        session: Option<&JsString>,
+    ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
+        self.prepare_attachment_turn(message, attachments, project, session)
+    }
     /// `resolveTurnModelSelection(input)` → `{ source, selection? }`
     /// (InProcessGateway.ts:1509-1515). createLocalGateway always wires the
     /// resolver, so the TS no-resolver fallback chain is unreachable here.
@@ -250,6 +262,7 @@ pub struct GatewaySubmitHost {
     replacement: Arc<dyn SubmitReplacement>,
     admission: Arc<dyn SubmitAdmission>,
     leases: std::sync::Mutex<SubmitLeases>,
+    channel_origin: Option<ChannelAttachmentOrigin>,
 }
 impl GatewaySubmitHost {
     pub fn new(
@@ -262,10 +275,23 @@ impl GatewaySubmitHost {
             replacement,
             admission,
             leases: std::sync::Mutex::new(HashMap::new()),
+            channel_origin: None,
         }
     }
 }
 impl SubmitHost for GatewaySubmitHost {
+    fn with_channel_attachments(
+        &self,
+        origin: ChannelAttachmentOrigin,
+    ) -> Option<Arc<dyn SubmitHost>> {
+        let mut host = Self::new(
+            self.services.clone(),
+            self.replacement.clone(),
+            self.admission.clone(),
+        );
+        host.channel_origin = Some(origin);
+        Some(Arc::new(host))
+    }
     fn bound_project_key(&self) -> Option<JsString> {
         self.services.bound_project_key()
     }
@@ -344,15 +370,29 @@ impl SubmitHost for GatewaySubmitHost {
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .insert((run.session_key.clone(), run.run_id.clone()), lease.release);
             }
-            let agent_input = self
-                .services
-                .prepare_attachment_turn(
-                    field(input, "message"),
-                    attachments,
-                    field(input, "projectKey").as_string(),
-                    field(input, "sessionKey").as_string(),
-                )
-                .await?;
+            let agent_input = match self.channel_origin {
+                Some(origin) => {
+                    self.services
+                        .prepare_channel_attachment_turn(
+                            origin,
+                            field(input, "message"),
+                            attachments,
+                            field(input, "projectKey").as_string(),
+                            field(input, "sessionKey").as_string(),
+                        )
+                        .await?
+                }
+                None => {
+                    self.services
+                        .prepare_attachment_turn(
+                            field(input, "message"),
+                            attachments,
+                            field(input, "projectKey").as_string(),
+                            field(input, "sessionKey").as_string(),
+                        )
+                        .await?
+                }
+            };
             let model_selection = self.services.resolve_model_selection(input).await?;
             let plan = field(input, "mode") == &JsValue::from("plan");
             let override_model = selection_override(field(&model_selection, "selection"))?;

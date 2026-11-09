@@ -76,7 +76,16 @@ impl TurnGateway for SubmitterTurnGateway {
                 JsValue::Array(options.synthetic_messages),
             );
         }
-        let submission = self.submitter.submit(input);
+        use crate::runtime::turn::submit::ChannelAttachmentOrigin;
+        let origin = match request.channel_key.to_string().as_str() {
+            "feishu" => Some(ChannelAttachmentOrigin::Feishu),
+            "wecom" => Some(ChannelAttachmentOrigin::Wecom),
+            _ => None,
+        };
+        let submission = match origin {
+            Some(origin) => self.submitter.submit_channel(input, origin),
+            None => self.submitter.submit(input),
+        };
         Box::pin(
             async move { Ok(Box::new(SubmissionStream(submission)) as Box<dyn TurnEventStream>) },
         )

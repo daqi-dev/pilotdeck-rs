@@ -175,7 +175,21 @@ struct PumpContext<'a> {
 /// They return wire events
 /// (including usage/command short-circuits); empty means admission may proceed.
 /// The production host lives in [`super::submit_host`].
+/// Internal adapter authority, never parsed from the wire or attachment metadata.
+#[derive(Clone, Copy, Debug)]
+pub enum ChannelAttachmentOrigin {
+    Feishu,
+    Wecom,
+    Weixin,
+}
+
 pub trait SubmitHost: Send + Sync {
+    fn with_channel_attachments(
+        &self,
+        _origin: ChannelAttachmentOrigin,
+    ) -> Option<Arc<dyn SubmitHost>> {
+        None
+    }
     fn bound_project_key(&self) -> Option<JsString> {
         None
     }
@@ -330,6 +344,15 @@ impl TurnSubmitter {
         self.submit_observed(input, |_| {})
     }
 
+    /// Only native adapters call this entry. WS/HTTP callers keep `submit`.
+    pub(crate) fn submit_channel(
+        self: &Arc<Self>,
+        input: JsValue,
+        origin: ChannelAttachmentOrigin,
+    ) -> TurnSubmission {
+        self.submit_with_budget(input, |_| {}, None, Some(origin))
+    }
+
     /// Native consumers that must classify terminal failure reliably opt in.
     /// This does not change the legacy live queue's close behavior.
     pub fn submit_reliable(self: &Arc<Self>, input: JsValue) -> TurnSubmission {
@@ -339,6 +362,7 @@ impl TurnSubmitter {
             Some(Duration::from_millis(
                 self.host.abort_turn_timeout_ms().max(1),
             )),
+            None,
         )
     }
 
@@ -348,13 +372,14 @@ impl TurnSubmitter {
         input: JsValue,
         admitted: impl FnOnce(&RunRef) + Send + 'static,
     ) -> TurnSubmission {
-        self.submit_with_budget(input, admitted, None)
+        self.submit_with_budget(input, admitted, None, None)
     }
     fn submit_with_budget(
         self: &Arc<Self>,
         input: JsValue,
         admitted: impl FnOnce(&RunRef) + Send + 'static,
         reliable_budget: Option<Duration>,
+        channel_origin: Option<ChannelAttachmentOrigin>,
     ) -> TurnSubmission {
         let (send, receiver) = mpsc::unbounded_channel();
         let (consumed, barrier) = oneshot::channel();
@@ -362,7 +387,14 @@ impl TurnSubmitter {
         let submitter = self.clone();
         tokio::spawn(async move {
             let outcome = submitter
-                .run(input, &send, barrier, admitted, reliable_budget)
+                .run(
+                    input,
+                    &send,
+                    barrier,
+                    admitted,
+                    reliable_budget,
+                    channel_origin,
+                )
                 .await;
             let _ = send.send(Message::End);
             let _ = result.send(outcome);
@@ -382,6 +414,7 @@ impl TurnSubmitter {
         barrier: oneshot::Receiver<()>,
         admitted: impl FnOnce(&RunRef) + Send,
         reliable_budget: Option<Duration>,
+        channel_origin: Option<ChannelAttachmentOrigin>,
     ) -> Result<(), SubmitError> {
         // Gateway normalization precedes validation and durable acceptance.
         let early = self.host.normalize(&mut input).await?;
@@ -393,7 +426,14 @@ impl TurnSubmitter {
             emit_all(send, vec![event]);
             return Ok(());
         }
-        if let Some(host) = self.host.bind_project(&mut input).await? {
+        let mut host = self.host.bind_project(&mut input).await?;
+        if let Some(origin) = channel_origin {
+            let source = host.as_ref().unwrap_or(&self.host);
+            if let Some(channel_host) = source.with_channel_attachments(origin) {
+                host = Some(channel_host);
+            }
+        }
+        if let Some(host) = host {
             let scoped = Arc::new(Self {
                 owner: self.owner.clone(),
                 coordinator: self.coordinator.clone(),

@@ -376,6 +376,7 @@ fn base_requests(root: &Path, owner: &SessionOwner) -> Requests {
         // this stub must match, not the retired observer-coupled state.
         dialog_recovery: None,
         sop: None,
+        manager_browser: None,
         user_dialog_bus: Arc::new(Mutex::new(GatewayUserDialogBus::connected(
             DialogRuntime::default(),
         ))),

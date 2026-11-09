@@ -1,0 +1,796 @@
+{
+  "fixed": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/adapters/channel/weixin/WeixinChannel.ts": "10e487dc1a69cae0238015e6f473b7b16375a9055ed5d007c7f558973c36f160",
+    "src/adapters/channel/protocol/ChannelCommandRegistry.ts": "e93b583e0a5323bd35ca93c9568e484f876daa367057a2d423aabdc825867c55",
+    "src/session/search/ChatSearchArgs.ts": "f728eaf3e6b33b932f5bae1c2398f7f40084693f11a51489cd6a31107b78601c",
+    "src/session/search/formatChatHistorySearch.ts": "64323cc98de655675b19bcde3ad6d9b5ce67574f227f9592ec0a78cf636ea443",
+    "src/adapters/channel/protocol/ImAttachmentDelivery.ts": "0f64b552f3b2ceb5b20a7290ab9a266672056f3adf183fbb58b145929286cca2",
+    "src/adapters/channel/protocol/ImAttachmentStore.ts": "ce53fb0885d77b8d6fd8a25ea2371c8e8ab66ed425ed5f147633e2f77f6a4941",
+    "src/adapters/channel/protocol/ImChatSessionState.ts": "501b8597ffbba2fe2b8852900c7fdbad31c9c9866191b86489aee649158ca340",
+    "src/adapters/channel/protocol/ImCronDelivery.ts": "3e505b3fa1205993089e3ed6854541fb6e7d332b7b33173d3c351880de7e8c14",
+    "src/adapters/channel/protocol/ImElicitationHelper.ts": "cb743ce32129e33c65cbee9ff5c613b057b65d8a642a0fc11b1e1362fb458cf4",
+    "src/adapters/channel/protocol/ImPermissionHelper.ts": "40a6e25f143e9973d2cef836bb40d47f8e693424ad9aac5f2391be6514193477",
+    "src/adapters/channel/protocol/ImLiveReplyController.ts": "7e17a83d84e4bf9367d110b8fb0bd45db13c46118837a1012a29e8b756d69ed6",
+    "src/status/agentStatus.ts": "9b3f11e574fc33652594afa0a7b74f574542df57b50bb7226111cc40f2d6233b",
+    "src/adapters/channel/weixin/WeixinSessionMapper.ts": "8ca99585987a076217388a55d189ab2d736dd95a785d3ae76285aebbb15e9c16"
+  },
+  "sdk": {
+    "client.js": "ceca2f1f651667bf00761a4f27130432bf7213c37d58b31ce490d794884c57b2",
+    "api.js": "754703b0d6eebe81251d4bec88823059e499b80e3c49f2a6a7c9220a5a8dec8a"
+  },
+  "environment": {
+    "node": "22.22.0",
+    "acorn": "8.15.0",
+    "ada": "2.9.2",
+    "amaro": "1.1.4",
+    "ares": "1.34.6",
+    "brotli": "1.1.0",
+    "cjs_module_lexer": "2.1.0",
+    "cldr": "48.0",
+    "icu": "78.2",
+    "llhttp": "9.3.0",
+    "modules": "127",
+    "napi": "10",
+    "nbytes": "0.1.1",
+    "ncrypto": "0.0.1",
+    "nghttp2": "1.64.0",
+    "openssl": "3.5.4",
+    "simdjson": "3.13.0",
+    "simdutf": "6.4.2",
+    "sqlite": "3.50.4",
+    "tz": "2025c",
+    "undici": "6.23.0",
+    "unicode": "17.0",
+    "uv": "1.52.1",
+    "uvwasi": "0.0.23",
+    "v8": "12.4.254.21-node.33",
+    "zlib": "1.3.1-470d3a2",
+    "zstd": "1.5.7"
+  },
+  "formalAcceptance": false,
+  "declaredMocks": [
+    "deterministic entropy for AES/filekey only",
+    "homedir isolated",
+    "official CDN origin routed to loopback"
+  ],
+  "cases": [
+    {
+      "name": "file",
+      "input": {
+        "type": "file",
+        "name": "reply.txt",
+        "mimeType": "text/plain",
+        "content": "d2VpeGluLWZpbGUtbWFya2Vy"
+      },
+      "result": true,
+      "wire": [
+        {
+          "method": "POST",
+          "path": "/ilink/bot/getuploadurl",
+          "contentType": "application/json",
+          "authorization": "Bearer mock-token",
+          "body": {
+            "filekey": "22222222222222222222222222222222",
+            "media_type": 3,
+            "to_user_id": "alice",
+            "rawsize": 18,
+            "rawfilemd5": "a54450a569e84988f021d8afdb1efd57",
+            "filesize": 32,
+            "no_need_thumb": true,
+            "aeskey": "11111111111111111111111111111111",
+            "base_info": {
+              "channel_version": "weixin-ilink/0.1.0"
+            }
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/cdn-upload",
+          "contentType": "application/octet-stream",
+          "authorization": null,
+          "bytesBase64": "Ni19ZphFnotFhEdjHxxoHxLhEwOkM4RA19XLKuTvUow="
+        },
+        {
+          "method": "POST",
+          "path": "/ilink/bot/sendmessage",
+          "contentType": "application/json",
+          "authorization": "Bearer mock-token",
+          "body": {
+            "msg": {
+              "from_user_id": "",
+              "to_user_id": "alice",
+              "client_id": "$CLIENT",
+              "message_type": 2,
+              "message_state": 2,
+              "context_token": "ctx",
+              "item_list": [
+                {
+                  "type": 4,
+                  "file_item": {
+                    "file_name": "reply.txt",
+                    "len": "18",
+                    "media": {
+                      "encrypt_query_param": "download-param",
+                      "aes_key": "MTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTE=",
+                      "encrypt_type": 1
+                    }
+                  }
+                }
+              ]
+            },
+            "base_info": {
+              "channel_version": "weixin-ilink/0.1.0"
+            }
+          }
+        }
+      ],
+      "logs": [
+        [
+          "info",
+          "weixin: preparing attachment reply.txt as file bytes=18"
+        ],
+        [
+          "info",
+          "weixin: upload url response for reply.txt: {\"ret\":0,\"hasUploadParam\":false,\"hasUploadFullUrl\":true,\"hasUploadUrl\":false,\"hasCdnUrl\":false,\"hasDownloadUrl\":false}"
+        ],
+        [
+          "info",
+          "weixin: CDN upload succeeded for reply.txt"
+        ],
+        [
+          "info",
+          "weixin: sent attachment to alice: reply.txt"
+        ]
+      ],
+      "pendingReplies": []
+    },
+    {
+      "name": "image",
+      "input": {
+        "type": "image",
+        "name": "pixel.png",
+        "mimeType": "image/png",
+        "content": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
+      },
+      "result": true,
+      "wire": [
+        {
+          "method": "POST",
+          "path": "/ilink/bot/getuploadurl",
+          "contentType": "application/json",
+          "authorization": "Bearer mock-token",
+          "body": {
+            "filekey": "22222222222222222222222222222222",
+            "media_type": 1,
+            "to_user_id": "alice",
+            "rawsize": 70,
+            "rawfilemd5": "8feea4e2ac428d1b5bda8b7ec9955825",
+            "filesize": 80,
+            "no_need_thumb": true,
+            "aeskey": "11111111111111111111111111111111",
+            "base_info": {
+              "channel_version": "weixin-ilink/0.1.0"
+            }
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/cdn-upload",
+          "contentType": "application/octet-stream",
+          "authorization": null,
+          "bytesBase64": "kSRsFNas9O303Op5NhtemCKpxFqCWx9vgzhYGza1vZGo8IKpe3k8H9fT6NtOH2qBTmmAoAltzkwh6vQa0c3XEMNgEBmGTXHJNhZ1FnVu8o4="
+        },
+        {
+          "method": "POST",
+          "path": "/ilink/bot/sendmessage",
+          "contentType": "application/json",
+          "authorization": "Bearer mock-token",
+          "body": {
+            "msg": {
+              "from_user_id": "",
+              "to_user_id": "alice",
+              "client_id": "$CLIENT",
+              "message_type": 2,
+              "message_state": 2,
+              "context_token": "ctx",
+              "item_list": [
+                {
+                  "type": 2,
+                  "image_item": {
+                    "media": {
+                      "encrypt_query_param": "download-param",
+                      "aes_key": "MTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTE=",
+                      "encrypt_type": 1
+                    },
+                    "mid_size": 80
+                  }
+                }
+              ]
+            },
+            "base_info": {
+              "channel_version": "weixin-ilink/0.1.0"
+            }
+          }
+        }
+      ],
+      "logs": [
+        [
+          "info",
+          "weixin: preparing attachment pixel.png as image bytes=70"
+        ],
+        [
+          "info",
+          "weixin: upload url response for pixel.png: {\"ret\":0,\"hasUploadParam\":false,\"hasUploadFullUrl\":true,\"hasUploadUrl\":false,\"hasCdnUrl\":false,\"hasDownloadUrl\":false}"
+        ],
+        [
+          "info",
+          "weixin: CDN upload succeeded for pixel.png"
+        ],
+        [
+          "info",
+          "weixin: sent attachment to alice: pixel.png"
+        ]
+      ],
+      "pendingReplies": []
+    },
+    {
+      "name": "upload-param",
+      "input": {
+        "type": "file",
+        "name": "reply.txt",
+        "mimeType": "text/plain",
+        "content": "d2VpeGluLWZpbGUtbWFya2Vy"
+      },
+      "result": true,
+      "wire": [
+        {
+          "method": "POST",
+          "path": "/ilink/bot/getuploadurl",
+          "contentType": "application/json",
+          "authorization": "Bearer mock-token",
+          "body": {
+            "filekey": "22222222222222222222222222222222",
+            "media_type": 3,
+            "to_user_id": "alice",
+            "rawsize": 18,
+            "rawfilemd5": "a54450a569e84988f021d8afdb1efd57",
+            "filesize": 32,
+            "no_need_thumb": true,
+            "aeskey": "11111111111111111111111111111111",
+            "base_info": {
+              "channel_version": "weixin-ilink/0.1.0"
+            }
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/c2c/upload?encrypted_query_param=mock%20param%20%2F%2B&filekey=22222222222222222222222222222222",
+          "contentType": "application/octet-stream",
+          "authorization": null,
+          "bytesBase64": "Ni19ZphFnotFhEdjHxxoHxLhEwOkM4RA19XLKuTvUow="
+        },
+        {
+          "method": "POST",
+          "path": "/ilink/bot/sendmessage",
+          "contentType": "application/json",
+          "authorization": "Bearer mock-token",
+          "body": {
+            "msg": {
+              "from_user_id": "",
+              "to_user_id": "alice",
+              "client_id": "$CLIENT",
+              "message_type": 2,
+              "message_state": 2,
+              "context_token": "ctx",
+              "item_list": [
+                {
+                  "type": 4,
+                  "file_item": {
+                    "file_name": "reply.txt",
+                    "len": "18",
+                    "media": {
+                      "encrypt_query_param": "download-param",
+                      "aes_key": "MTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTE=",
+                      "encrypt_type": 1
+                    }
+                  }
+                }
+              ]
+            },
+            "base_info": {
+              "channel_version": "weixin-ilink/0.1.0"
+            }
+          }
+        }
+      ],
+      "logs": [
+        [
+          "info",
+          "weixin: preparing attachment reply.txt as file bytes=18"
+        ],
+        [
+          "info",
+          "weixin: upload url response for reply.txt: {\"ret\":0,\"hasUploadParam\":true,\"hasUploadFullUrl\":false,\"hasUploadUrl\":false,\"hasCdnUrl\":false,\"hasDownloadUrl\":false}"
+        ],
+        [
+          "info",
+          "weixin: CDN upload succeeded for reply.txt"
+        ],
+        [
+          "info",
+          "weixin: sent attachment to alice: reply.txt"
+        ]
+      ],
+      "pendingReplies": []
+    },
+    {
+      "name": "getupload-ret",
+      "input": {
+        "type": "file",
+        "name": "reply.txt",
+        "mimeType": "text/plain",
+        "content": "d2VpeGluLWZpbGUtbWFya2Vy"
+      },
+      "result": false,
+      "wire": [
+        {
+          "method": "POST",
+          "path": "/ilink/bot/getuploadurl",
+          "contentType": "application/json",
+          "authorization": "Bearer mock-token",
+          "body": {
+            "filekey": "22222222222222222222222222222222",
+            "media_type": 3,
+            "to_user_id": "alice",
+            "rawsize": 18,
+            "rawfilemd5": "a54450a569e84988f021d8afdb1efd57",
+            "filesize": 32,
+            "no_need_thumb": true,
+            "aeskey": "11111111111111111111111111111111",
+            "base_info": {
+              "channel_version": "weixin-ilink/0.1.0"
+            }
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/ilink/bot/sendmessage",
+          "contentType": "application/json",
+          "authorization": "Bearer mock-token",
+          "body": {
+            "msg": {
+              "from_user_id": "",
+              "to_user_id": "alice",
+              "client_id": "$CLIENT",
+              "message_type": 2,
+              "message_state": 2,
+              "context_token": "ctx",
+              "item_list": [
+                {
+                  "type": 1,
+                  "text_item": {
+                    "text": "附件发送失败：reply.txt"
+                  }
+                }
+              ]
+            },
+            "base_info": {
+              "channel_version": "weixin-ilink/0.1.0"
+            }
+          }
+        }
+      ],
+      "logs": [
+        [
+          "info",
+          "weixin: preparing attachment reply.txt as file bytes=18"
+        ],
+        [
+          "info",
+          "weixin: upload url response for reply.txt: {\"ret\":7,\"errmsg\":\"mock refused\",\"hasUploadParam\":false,\"hasUploadFullUrl\":false,\"hasUploadUrl\":false,\"hasCdnUrl\":false,\"hasDownloadUrl\":false}"
+        ],
+        [
+          "error",
+          "IM attachment send failed: Error: weixin getuploadurl failed ret=7 errmsg=mock refused"
+        ],
+        [
+          "info",
+          "weixin: sent reply to alice"
+        ]
+      ],
+      "pendingReplies": []
+    },
+    {
+      "name": "cdn-error",
+      "input": {
+        "type": "file",
+        "name": "reply.txt",
+        "mimeType": "text/plain",
+        "content": "d2VpeGluLWZpbGUtbWFya2Vy"
+      },
+      "result": false,
+      "wire": [
+        {
+          "method": "POST",
+          "path": "/ilink/bot/getuploadurl",
+          "contentType": "application/json",
+          "authorization": "Bearer mock-token",
+          "body": {
+            "filekey": "22222222222222222222222222222222",
+            "media_type": 3,
+            "to_user_id": "alice",
+            "rawsize": 18,
+            "rawfilemd5": "a54450a569e84988f021d8afdb1efd57",
+            "filesize": 32,
+            "no_need_thumb": true,
+            "aeskey": "11111111111111111111111111111111",
+            "base_info": {
+              "channel_version": "weixin-ilink/0.1.0"
+            }
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/cdn-upload",
+          "contentType": "application/octet-stream",
+          "authorization": null,
+          "bytesBase64": "Ni19ZphFnotFhEdjHxxoHxLhEwOkM4RA19XLKuTvUow="
+        },
+        {
+          "method": "POST",
+          "path": "/ilink/bot/sendmessage",
+          "contentType": "application/json",
+          "authorization": "Bearer mock-token",
+          "body": {
+            "msg": {
+              "from_user_id": "",
+              "to_user_id": "alice",
+              "client_id": "$CLIENT",
+              "message_type": 2,
+              "message_state": 2,
+              "context_token": "ctx",
+              "item_list": [
+                {
+                  "type": 1,
+                  "text_item": {
+                    "text": "附件发送失败：reply.txt"
+                  }
+                }
+              ]
+            },
+            "base_info": {
+              "channel_version": "weixin-ilink/0.1.0"
+            }
+          }
+        }
+      ],
+      "logs": [
+        [
+          "info",
+          "weixin: preparing attachment reply.txt as file bytes=18"
+        ],
+        [
+          "info",
+          "weixin: upload url response for reply.txt: {\"ret\":0,\"hasUploadParam\":false,\"hasUploadFullUrl\":true,\"hasUploadUrl\":false,\"hasCdnUrl\":false,\"hasDownloadUrl\":false}"
+        ],
+        [
+          "error",
+          "IM attachment send failed: Error: weixin CDN upload HTTP 503: mock CDN denied"
+        ],
+        [
+          "info",
+          "weixin: sent reply to alice"
+        ]
+      ],
+      "pendingReplies": []
+    },
+    {
+      "name": "missing-header",
+      "input": {
+        "type": "file",
+        "name": "reply.txt",
+        "mimeType": "text/plain",
+        "content": "d2VpeGluLWZpbGUtbWFya2Vy"
+      },
+      "result": false,
+      "wire": [
+        {
+          "method": "POST",
+          "path": "/ilink/bot/getuploadurl",
+          "contentType": "application/json",
+          "authorization": "Bearer mock-token",
+          "body": {
+            "filekey": "22222222222222222222222222222222",
+            "media_type": 3,
+            "to_user_id": "alice",
+            "rawsize": 18,
+            "rawfilemd5": "a54450a569e84988f021d8afdb1efd57",
+            "filesize": 32,
+            "no_need_thumb": true,
+            "aeskey": "11111111111111111111111111111111",
+            "base_info": {
+              "channel_version": "weixin-ilink/0.1.0"
+            }
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/cdn-upload",
+          "contentType": "application/octet-stream",
+          "authorization": null,
+          "bytesBase64": "Ni19ZphFnotFhEdjHxxoHxLhEwOkM4RA19XLKuTvUow="
+        },
+        {
+          "method": "POST",
+          "path": "/ilink/bot/sendmessage",
+          "contentType": "application/json",
+          "authorization": "Bearer mock-token",
+          "body": {
+            "msg": {
+              "from_user_id": "",
+              "to_user_id": "alice",
+              "client_id": "$CLIENT",
+              "message_type": 2,
+              "message_state": 2,
+              "context_token": "ctx",
+              "item_list": [
+                {
+                  "type": 1,
+                  "text_item": {
+                    "text": "附件发送失败：reply.txt"
+                  }
+                }
+              ]
+            },
+            "base_info": {
+              "channel_version": "weixin-ilink/0.1.0"
+            }
+          }
+        }
+      ],
+      "logs": [
+        [
+          "info",
+          "weixin: preparing attachment reply.txt as file bytes=18"
+        ],
+        [
+          "info",
+          "weixin: upload url response for reply.txt: {\"ret\":0,\"hasUploadParam\":false,\"hasUploadFullUrl\":true,\"hasUploadUrl\":false,\"hasCdnUrl\":false,\"hasDownloadUrl\":false}"
+        ],
+        [
+          "error",
+          "IM attachment send failed: Error: weixin CDN upload response missing x-encrypted-param"
+        ],
+        [
+          "info",
+          "weixin: sent reply to alice"
+        ]
+      ],
+      "pendingReplies": []
+    },
+    {
+      "name": "redirect307",
+      "input": {
+        "type": "file",
+        "name": "reply.txt",
+        "mimeType": "text/plain",
+        "content": "d2VpeGluLWZpbGUtbWFya2Vy"
+      },
+      "result": false,
+      "wire": [
+        {
+          "method": "POST",
+          "path": "/ilink/bot/getuploadurl",
+          "contentType": "application/json",
+          "authorization": "Bearer mock-token",
+          "body": {
+            "filekey": "22222222222222222222222222222222",
+            "media_type": 3,
+            "to_user_id": "alice",
+            "rawsize": 18,
+            "rawfilemd5": "a54450a569e84988f021d8afdb1efd57",
+            "filesize": 32,
+            "no_need_thumb": true,
+            "aeskey": "11111111111111111111111111111111",
+            "base_info": {
+              "channel_version": "weixin-ilink/0.1.0"
+            }
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/cdn-redirect",
+          "contentType": "application/octet-stream",
+          "authorization": null,
+          "bytesBase64": "Ni19ZphFnotFhEdjHxxoHxLhEwOkM4RA19XLKuTvUow="
+        },
+        {
+          "method": "POST",
+          "path": "/ilink/bot/sendmessage",
+          "contentType": "application/json",
+          "authorization": "Bearer mock-token",
+          "body": {
+            "msg": {
+              "from_user_id": "",
+              "to_user_id": "alice",
+              "client_id": "$CLIENT",
+              "message_type": 2,
+              "message_state": 2,
+              "context_token": "ctx",
+              "item_list": [
+                {
+                  "type": 1,
+                  "text_item": {
+                    "text": "附件发送失败：reply.txt"
+                  }
+                }
+              ]
+            },
+            "base_info": {
+              "channel_version": "weixin-ilink/0.1.0"
+            }
+          }
+        }
+      ],
+      "logs": [
+        [
+          "info",
+          "weixin: preparing attachment reply.txt as file bytes=18"
+        ],
+        [
+          "info",
+          "weixin: upload url response for reply.txt: {\"ret\":0,\"hasUploadParam\":false,\"hasUploadFullUrl\":true,\"hasUploadUrl\":false,\"hasCdnUrl\":false,\"hasDownloadUrl\":false}"
+        ],
+        [
+          "error",
+          "IM attachment send failed: TypeError: fetch failed"
+        ],
+        [
+          "info",
+          "weixin: sent reply to alice"
+        ]
+      ],
+      "pendingReplies": []
+    },
+    {
+      "name": "local-path",
+      "input": {
+        "type": "file",
+        "name": "reply.txt",
+        "path": "/fixture/reply.txt",
+        "source": "local_path"
+      },
+      "result": false,
+      "wire": [
+        {
+          "method": "POST",
+          "path": "/ilink/bot/sendmessage",
+          "contentType": "application/json",
+          "authorization": "Bearer mock-token",
+          "body": {
+            "msg": {
+              "from_user_id": "",
+              "to_user_id": "alice",
+              "client_id": "$CLIENT",
+              "message_type": 2,
+              "message_state": 2,
+              "context_token": "ctx",
+              "item_list": [
+                {
+                  "type": 1,
+                  "text_item": {
+                    "text": "附件 /fixture/reply.txt 需要授权后才能发送。"
+                  }
+                }
+              ]
+            },
+            "base_info": {
+              "channel_version": "weixin-ilink/0.1.0"
+            }
+          }
+        }
+      ],
+      "logs": [
+        [
+          "info",
+          "weixin: sent reply to alice"
+        ]
+      ],
+      "pendingReplies": []
+    },
+    {
+      "name": "empty-input",
+      "input": {
+        "type": "file",
+        "name": "reply.txt"
+      },
+      "result": false,
+      "wire": [
+        {
+          "method": "POST",
+          "path": "/ilink/bot/sendmessage",
+          "contentType": "application/json",
+          "authorization": "Bearer mock-token",
+          "body": {
+            "msg": {
+              "from_user_id": "",
+              "to_user_id": "alice",
+              "client_id": "$CLIENT",
+              "message_type": 2,
+              "message_state": 2,
+              "context_token": "ctx",
+              "item_list": [
+                {
+                  "type": 1,
+                  "text_item": {
+                    "text": "附件发送失败：reply.txt"
+                  }
+                }
+              ]
+            },
+            "base_info": {
+              "channel_version": "weixin-ilink/0.1.0"
+            }
+          }
+        }
+      ],
+      "logs": [
+        [
+          "error",
+          "IM attachment send failed: Error: attachment has neither content nor path"
+        ],
+        [
+          "info",
+          "weixin: sent reply to alice"
+        ]
+      ],
+      "pendingReplies": []
+    },
+    {
+      "name": "client-missing",
+      "input": {
+        "type": "file",
+        "name": "reply.txt",
+        "mimeType": "text/plain",
+        "content": "d2VpeGluLWZpbGUtbWFya2Vy"
+      },
+      "result": false,
+      "wire": [],
+      "logs": [],
+      "pendingReplies": [
+        [
+          "alice",
+          [
+            "附件发送失败：reply.txt"
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "context-missing",
+      "input": {
+        "type": "file",
+        "name": "reply.txt",
+        "mimeType": "text/plain",
+        "content": "d2VpeGluLWZpbGUtbWFya2Vy"
+      },
+      "result": false,
+      "wire": [],
+      "logs": [
+        [
+          "warn",
+          "weixin: no context_token for alice, cannot send"
+        ]
+      ],
+      "pendingReplies": [
+        [
+          "alice",
+          [
+            "附件发送失败：reply.txt"
+          ]
+        ]
+      ]
+    }
+  ]
+}

@@ -121,3 +121,8 @@ regexes = [
   '''^EBESExQVFhcYGRobHB0eHw==$''',
   '''^MDAwMTAyMDMwNDA1MDYwNzA4MDkwYTBiMGMwZDBlMGY=$''',
 ]
+
+[[allowlists]]
+description = "Weixin outbound 固定 TS 采集元数据 sdk/api.js 的 SHA256（文件内容摘要，非凭据）；outbound-capture.mjs 对已安装固定 SDK 源文件计算，精确值级匹配，不放行路径或 api 字段其它值。"
+regexTarget = "secret"
+regexes = ['''^754703b0d6eebe81251d4bec88823059e499b80e3c49f2a6a7c9220a5a8dec8a$''']

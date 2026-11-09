@@ -46,6 +46,7 @@ pub struct Requests {
     pub async_hook_registry: Option<Arc<AsyncHookRegistry>>,
     /// Gateway user-dialog bus backing the `user_dialog` / `respond` methods.
     pub user_dialog_bus: Arc<Mutex<GatewayUserDialogBus>>,
+    pub(crate) manager_browser: Option<Arc<dyn crate::runtime::manager::ManagerBrowserPort>>,
     pub(crate) sop: Option<Arc<super::sop_control::NativeSopControl>>,
     pub(crate) dialog_recovery: Option<Arc<super::assembly::dialog_recovery::NativeDialogRecovery>>,
     /// A8 U1 upload + attachment lease gateway (#1321).
@@ -216,6 +217,17 @@ impl GatewayRequests for Requests {
         params: JsValue,
     ) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async move {
+            // The optional embedding provider owns its input/domain contract.
+            // TS forwards the original value, including null and foreign keys.
+            if method.equals_str("manager_browsers") {
+                let provider = self.manager_browser.clone();
+                return tokio::task::spawn_blocking(move || {
+                    super::manager_browser::dispatch(provider, &params)
+                })
+                .await
+                .map_err(|e| RequestError::new(e.to_string()))?
+                .map_err(super::manager_browser::request_error);
+            }
             // createLocalGateway's archive callbacks use the configured fallback
             // project for nullish keys. Fill it before isolated admission, while
             // leaving Metadata's cwd lazy for explicit paths and other RPCs.

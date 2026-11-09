@@ -232,6 +232,7 @@ struct Inner {
     unsubscribe: Mutex<Option<Unsubscribe>>,
     server: Mutex<Option<Arc<dyn NotificationServer>>>,
     executor: Handle,
+    settlement_checkpoints: Mutex<Vec<watch::Receiver<bool>>>,
 }
 
 /// `GatewayRuntimeRefreshBundle`. Construct inside a Tokio runtime; settled
@@ -248,7 +249,39 @@ impl RefreshBundle {
                 unsubscribe: Mutex::new(None),
                 server: Mutex::new(None),
                 executor: Handle::current(),
+                settlement_checkpoints: Mutex::new(Vec::new()),
             }),
+        }
+    }
+
+    /// Let already-ready reload settlements publish before an RPC response,
+    /// matching the baseline promise continuation order. Pending I/O does not
+    /// delay the response: each settlement acknowledges its first poll, or
+    /// its notification if that first poll completed. Concurrent RPCs observe
+    /// the same checkpoints; cancellation never consumes another RPC's wait.
+    pub fn settle_ready_notifications(&self) -> impl Future<Output = ()> + Send + 'static {
+        let checkpoints = lock(&self.inner.settlement_checkpoints).clone();
+        async move {
+            for mut checkpoint in checkpoints {
+                let _ = checkpoint.wait_for(|polled| *polled).await;
+            }
+        }
+    }
+
+    pub(crate) fn notification_checkpoint_after_reload<F, T>(
+        &self,
+        reload: F,
+    ) -> impl Future<Output = T> + Send + 'static
+    where
+        F: Future<Output = T> + Send + 'static,
+        T: Send + 'static,
+    {
+        let inner = self.inner.clone();
+        async move {
+            let result = reload.await;
+            let bundle = RefreshBundle { inner };
+            bundle.settle_ready_notifications().await;
+            result
         }
     }
 
@@ -502,13 +535,27 @@ fn on_config_change(inner: &Arc<Inner>, paths: &[JsString], classes: &[ChangeCla
         inner: Some(Arc::clone(&inner)),
         joined,
     };
+    let (polled, checkpoint) = watch::channel(false);
+    {
+        let mut checkpoints = lock(&inner.settlement_checkpoints);
+        checkpoints.retain(|pending| !*pending.borrow() && pending.has_changed().is_ok());
+        checkpoints.push(checkpoint);
+    }
     executor.spawn(async move {
         let mut lost = lost;
         // The reload future is dropped only after its settlement callbacks:
         // a registry may hold its queue position until then (see
         // [`RefreshRegistry::reload`]).
         let mut reload = reload;
-        let settled = reload.as_mut().await;
+        let first_poll =
+            std::future::poll_fn(|cx| std::task::Poll::Ready(reload.as_mut().poll(cx))).await;
+        let settled = match first_poll {
+            std::task::Poll::Ready(result) => result,
+            std::task::Poll::Pending => {
+                polled.send_replace(true);
+                reload.as_mut().await
+            }
+        };
         lost.inner = None;
         match settled {
             Ok(()) => {
@@ -539,6 +586,7 @@ fn on_config_change(inner: &Arc<Inner>, paths: &[JsString], classes: &[ChangeCla
             ),
         }
         drop(reload);
+        polled.send_replace(true);
     });
 }
 

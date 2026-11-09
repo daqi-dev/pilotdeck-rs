@@ -200,6 +200,29 @@ pub async fn start(options: Options, env: Env) -> Result<TurnGateway, ProxyError
     .await
 }
 
+/// Compose the same native Server core for an embedding that owns a browser
+/// manager. The caller owns its listener; an absent provider remains unavailable.
+pub async fn start_with_manager_browser(
+    options: Options,
+    env: Env,
+    manager_browser: Option<Arc<dyn crate::runtime::manager::ManagerBrowserPort>>,
+) -> Result<TurnGateway, ProxyError> {
+    start_assembly(
+        options,
+        env,
+        crate::upload::CLEANUP_INTERVAL,
+        Arc::new(|_, result| Box::pin(async move { result })),
+        Arc::new(|error| eprintln!("native project cleanup: {error}")),
+        None,
+        None,
+        AssemblySeams {
+            manager_browser,
+            ..Default::default()
+        },
+    )
+    .await
+}
+
 type CleanupResult =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>;
 pub(super) type CleanupObserver =
@@ -255,6 +278,7 @@ pub(super) struct AssemblySeams {
     pub permission_rule_sets: Option<Arc<GatewaySessionPermissionRuleSetRegistry>>,
     pub acquire_miss_report: Option<AcquireMissReport>,
     pub publish_mcp_config: bool,
+    pub manager_browser: Option<Arc<dyn crate::runtime::manager::ManagerBrowserPort>>,
 }
 
 impl Default for AssemblySeams {
@@ -268,6 +292,7 @@ impl Default for AssemblySeams {
             permission_rule_sets: None,
             acquire_miss_report: None,
             publish_mcp_config: true,
+            manager_browser: None,
         }
     }
 }
@@ -496,6 +521,7 @@ async fn start_assembly(
         permission_rule_sets,
         acquire_miss_report,
         publish_mcp_config,
+        manager_browser,
     } = seams;
     let registry_switch = run_registry_switch(&env)?;
     let stimulus_switch = storage_stimulus_switch(&env)?;
@@ -1873,6 +1899,7 @@ async fn start_assembly(
                 mcp: mcp_gateway,
                 async_hook_registry,
                 user_dialog_bus: user_dialog_bus.clone(),
+                manager_browser: manager_browser.clone(),
                 dialog_recovery: Some(dialog_recovery.clone()),
                 sop: Some(sop.clone()),
                 upload_gateway: upload_gateway.clone(),

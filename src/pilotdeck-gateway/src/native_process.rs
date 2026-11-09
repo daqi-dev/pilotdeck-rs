@@ -13,12 +13,18 @@ use std::{
 mod agent;
 mod agent_mcp;
 mod assembly;
+pub use assembly::start_with_manager_browser;
 #[cfg(unix)]
 mod background;
 #[cfg(unix)]
 mod background_archive;
+#[cfg(test)]
+mod channel_attachment_security_tests;
 mod deployment;
 mod local_host;
+mod manager_browser;
+#[cfg(test)]
+mod manager_browser_ws_tests;
 #[cfg(test)]
 mod multi_project_history_tests;
 mod project_scope;
@@ -515,6 +521,9 @@ mod wecom_callback_actual_host_tests;
 #[cfg(test)]
 #[path = "channel/weixin/actual_host_tests.rs"]
 mod weixin_actual_host_tests;
+#[cfg(test)]
+#[path = "channel/weixin/media_host_tests.rs"]
+mod weixin_media_host_tests;
 
 #[cfg(unix)]
 mod session_history;

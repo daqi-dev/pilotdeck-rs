@@ -299,7 +299,7 @@ async fn slack_actual_server_official_envelope_a7_interactions_reconnect_public_
         .unwrap();
     until(
         &peer.state,
-        "reload creates second real Slack transport",
+        "reload creates third real Slack transport after owned refresh",
         || {
             peer.state.sockets.load(Ordering::SeqCst) == 1
                 && peer
@@ -310,7 +310,7 @@ async fn slack_actual_server_official_envelope_a7_interactions_reconnect_public_
                     .iter()
                     .filter(|(p, _, _)| p == "/api/auth.test")
                     .count()
-                    == 2
+                    == 3
         },
     )
     .await;

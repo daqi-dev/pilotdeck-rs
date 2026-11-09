@@ -67,6 +67,9 @@ fn cron(requests: &Requests) -> bool {
 fn flag_settings(requests: &Requests) -> bool {
     requests.settings.supports("apply_flag_settings")
 }
+fn manager_browsers(requests: &Requests) -> bool {
+    requests.manager_browser.is_some()
+}
 fn update_settings(requests: &Requests) -> bool {
     requests.settings.supports("update_settings")
 }
@@ -129,6 +132,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
     Capability { name: "memory_list", methods: &[], wired: memory },
     Capability { name: "memory_wipe", methods: &[], wired: memory },
     Capability { name: "manager_sessions", methods: &[], wired: compiled_in },
+    Capability { name: "manager_browsers", methods: &[], wired: manager_browsers },
     Capability { name: "snapshot_list", methods: &[], wired: snapshots },
     Capability { name: "snapshot_get", methods: &[], wired: snapshots },
     Capability { name: "snapshot_restore", methods: &[], wired: snapshots },
@@ -204,16 +208,10 @@ pub(super) const NOT_ADVERTISED: &[(&str, &str)] = &[(
 /// to the recorded set; they are listed so the boundary is readable in the
 /// tree and so adding one without deleting its line fails a test.
 #[allow(dead_code)] // read by the capability tests only
-pub(super) const OUT_OF_SCOPE: &[(&str, &str)] = &[
-    (
-        "manager_browsers",
-        "not this issue: the TS CLI only passes the callback through (cli/createLocalGateway.ts:1270) and nothing in the baseline tree calls it, so the baseline never advertises it either",
-    ),
-    (
-        "sdk_session_defaults",
-        "not this issue: the wire protocol declares only `sdk_session_config` (protocol/types.ts), so there is no request to serve",
-    ),
-];
+pub(super) const OUT_OF_SCOPE: &[(&str, &str)] = &[(
+    "sdk_session_defaults",
+    "not this issue: the wire protocol declares only `sdk_session_config` (protocol/types.ts), so there is no request to serve",
+)];
 
 /// The wire methods a capability promises.
 fn promised(capability: &Capability) -> impl Iterator<Item = &'static str> {
