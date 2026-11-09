@@ -4390,7 +4390,8 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
     // single-request cells (accepted, no self-invented error); the durable
     // record and the mailbox identity carry the coerced text — and because
     // the identity is the coerced text, cross-type same-text interleavings
-    // alias in Rust while TS keys by the raw wire value (§交错 A/B below).
+    // alias in Rust while TS keys by the raw wire value (§交错 A/B, §缺席格
+    // and the explicit-null cells below: absent → "undefined", null → "null").
     use crate::runtime::turn::gateway::GatewayRequests;
 
     let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
@@ -4709,6 +4710,119 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
             "undefined"
         ))),
         "#1604 queueItemId carries the undefined text (A7.2-STEER-INPUT-001)"
+    );
+    // §null 强转格 (r2 boundary#1): an explicit `itemId: null` coerces to the
+    // literal text "null" — a third alias class of the same boundary, not the
+    // "undefined" of the absent key. TS embeds the raw `null` (probe
+    // `20261109-review-2382-r2-ds/ts-probe/output5.txt` g2: `queueItemId:null`).
+    let _reservation_e = requests
+        .owner
+        .begin_turn(&"ie".into(), &"re".into())
+        .expect("#1604 null-id admission slot");
+    let _turn_e = start_steer_run(&steer, "ie", "te", "re");
+    let nulled = requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", "ie".into()),
+                ("runId", "re".into()),
+                ("itemId", JsValue::Null),
+                ("message", "m".into()),
+            ]),
+        )
+        .await
+        .expect("#1604 the null itemId steer stays Ok");
+    negative_assert_eq!(
+        nulled.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1604 a null itemId is accepted like TS"
+    );
+    let drained = steer
+        .mailbox_for_test(&"ie".into())
+        .expect("#1604 null-id mailbox")
+        .drain(&"te".into());
+    negative_assert_eq!(drained.len(), 1, "#1604 the null-id steer was enqueued");
+    negative_assert_eq!(
+        drained[0].item_id,
+        pilotdeck_protocol::JsString::from("null"),
+        "#1604 the null itemId coerces to the literal null text"
+    );
+    let metadata = drained[0]
+        .message
+        .get("metadata")
+        .expect("#1604 null-id canonical metadata");
+    negative_assert_eq!(
+        metadata.get("queueItemId"),
+        Some(&JsValue::String(pilotdeck_protocol::JsString::from("null"))),
+        "#1604 queueItemId carries the null text while TS embeds the raw null (A7.2-STEER-INPUT-001)"
+    );
+    // §null 交错格: TS keys the mailbox by the raw `null` value, so the
+    // literal `"null"` string steers independently and survives a cancel of
+    // its own spelling (probe `output5.txt` null_pending_after_drain:[null]);
+    // Rust's text identity merges the two and the cancel removes the entry.
+    let _reservation_f = requests
+        .owner
+        .begin_turn(&"if".into(), &"rf".into())
+        .expect("#1604 null-interleave admission slot");
+    let _turn_f = start_steer_run(&steer, "if", "tf", "rf");
+    let nulled = requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", "if".into()),
+                ("runId", "rf".into()),
+                ("itemId", JsValue::Null),
+                ("message", "m".into()),
+            ]),
+        )
+        .await
+        .expect("#1604 the null-interleave steer stays Ok");
+    negative_assert_eq!(
+        nulled.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1604 the null interleave steer is accepted like TS"
+    );
+    let literal = requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", "if".into()),
+                ("runId", "rf".into()),
+                ("itemId", "null".into()),
+                ("message", "literal".into()),
+            ]),
+        )
+        .await
+        .expect("#1604 the literal null steer stays Ok");
+    negative_assert_eq!(
+        literal.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1604 the literal null-string id answers accepted while Rust dedupes it against the null id"
+    );
+    let cancelled = requests
+        .request(
+            "cancel_steer".into(),
+            crate::metadata::object([
+                ("sessionKey", "if".into()),
+                ("runId", "rf".into()),
+                ("itemId", "null".into()),
+            ]),
+        )
+        .await
+        .expect("#1604 the literal null-string cancel stays Ok");
+    negative_assert_eq!(
+        cancelled.get("cancelled"),
+        Some(&JsValue::Bool(true)),
+        "#1604 the literal cancel removes the null-aliased entry (Rust divergence)"
+    );
+    negative_assert_eq!(
+        steer
+            .mailbox_for_test(&"if".into())
+            .expect("#1604 null-interleave mailbox")
+            .drain(&"tf".into())
+            .len(),
+        0,
+        "#1604 the null-id message is silently lost (TS drains [null])"
     );
     requests
         .owner
