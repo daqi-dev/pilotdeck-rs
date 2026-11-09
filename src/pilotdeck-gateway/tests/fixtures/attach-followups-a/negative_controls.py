@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""#1458/#1459/#1462/#1464/#1468/#1469: every attach-followups-a mutation.
+"""#1458/#1459/#1462/#1464/#1468/#1469/#1629: every attach-followups-a mutation.
 
 Usage: negative_controls.py --check
        negative_controls.py [--compile-only] NEW_OUTPUT_DIR [mutation ...]
@@ -13,7 +13,9 @@ error arm, the (dev, inode) depth check it complements, the pre-open identity
 itself, the no-follow sampling of that identity (a link planted before the
 approved stat must not become the approved object), and the two legitimate
 homes — the upload-store root and the lease root — each with its own
-containment and leaf-link terms in the shared `canonical_home` guard.
+containment and leaf-link terms in the shared `canonical_home` guard. The two
+#1629 rows pin the last lease_guard softening: the path's own canonicalize
+failure (any errno, not just NotFound) must stay a not-found diagnostic.
 """
 import argparse
 import hashlib
@@ -95,6 +97,28 @@ mutations = [
             )),''',
      'native_process::services_tests::lease_symlink_escape_softens_to_not_found',
      '#1464 a lease symlink escape must not fail the turn'),
+    # #1629: the last path-inspection failure that could still reject the
+    # turn — the path's own canonicalize failing with a non-`NotFound` errno
+    # under a valid root (ELOOP/ENOTDIR/EACCES/…) — softened like every other
+    # branch: the TS resolver's stat try/catch has no errno filter, so any
+    # stat failure becomes a not-found diagnostic. The row restores the
+    # pre-#1629 hard failure; the ELOOP and ENOTDIR fixtures each bind it so
+    # both spellings of "any failure" are proven live (an ELOOP-only row
+    # would leave the ENOTDIR test unproven, and vice versa).
+    ('lease-path-hard-failure-restored', SERVICES,
+     '            Err(error) => Ok(LeaseGuard::Unresolved(error)),',
+     '''            Err(error) => Err(failure(format!(
+                "Attachment lease path cannot be resolved: {error}."
+            ))),''',
+     'native_process::services_tests::symlink_loop_lease_path_softens_to_not_found_diagnostic',
+     '#1629 a symlink-loop lease path must not fail the turn'),
+    ('lease-path-notdir-hard-failure-restored', SERVICES,
+     '            Err(error) => Ok(LeaseGuard::Unresolved(error)),',
+     '''            Err(error) => Err(failure(format!(
+                "Attachment lease path cannot be resolved: {error}."
+            ))),''',
+     'native_process::services_tests::not_directory_lease_path_softens_to_not_found_diagnostic',
+     '#1629 an ENOTDIR lease path must not fail the turn'),
     ('filter-info-inverted', SERVICES,
      '        DiagnosticSeverity::Info => !registered,',
      '        DiagnosticSeverity::Info => registered,',

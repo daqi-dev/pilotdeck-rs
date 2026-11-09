@@ -8,7 +8,8 @@
 //! diagnostics, stat-authoritative oversize gate and the EISDIR turn
 //! failure) plus the attach-followups-a follow-ups (#1458 pdf_size_estimate
 //! info, #1469 attachment_unsupported diagnostics, #1462 the Node EISDIR
-//! message, #1459/#1464 the lease-root/lease-path softening), the #1460
+//! message, #1459/#1464 the lease-root/lease-path softening and #1629 the
+//! path-level canonicalize softening), the #1460
 //! two-pass split (a direct-content attachment with a channelKey path is
 //! still registered; its path failures stay silent like the audio skip —
 //! including the open failure of an unopenable lease file),
@@ -3384,25 +3385,93 @@ fn unresolvable_lease_root_softens_to_not_found() {
 
 #[cfg(unix)]
 #[test]
-fn symlink_loop_lease_path_fails_the_turn() {
+fn symlink_loop_lease_path_softens_to_not_found_diagnostic() {
     use std::os::unix::fs::symlink;
     let scratch = Scratch::new();
-    // P2: only the ENOENT canonicalize failure softens into the not-found
-    // diagnostic; a symlink loop (ELOOP) is a hard turn failure.
+    // #1629: a symlink loop on the lease path itself — a canonicalize
+    // failure with a non-`NotFound` errno under a valid root — no longer
+    // fails the turn. The TS resolver's stat try/catch has no errno filter
+    // (AttachmentResolver.ts:188-201, Node probe
+    // `_tmp/20261026-issue-1629/probe/ts-stat-failures.mjs`), so the ELOOP
+    // softens exactly like the TTL cleanup race: no read, no registration,
+    // no inline.
     let link = scratch.lease("loop.png");
-    symlink(Path::new(&link), Path::new(&link)).expect("#1321 symlink loop fixture");
-    let result = compose_attachment_turn(
-        &scratch.0,
-        &message("hello"),
-        &[attachment(&link, "image/png")],
+    symlink(Path::new(&link), Path::new(&link)).expect("#1629 symlink loop fixture");
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(
+            &scratch.0,
+            &message("hello"),
+            &[attachment(&link, "image/png")],
+        ),
+        "#1629 a symlink-loop lease path must not fail the turn",
     );
-    let Err(error) = result else {
-        panic!("#1321 P2: a symlink-loop lease path must fail the turn");
-    };
+    let blocks = content_blocks(&result);
+    // std's OS-error Display is `{strerror} (os error {errno})` on both
+    // Linux and macOS, but the ELOOP errno differs (40/62), so the pin
+    // stops before the number.
     negative_assert!(
-        error.message.contains("cannot be resolved"),
-        "#1321 P2: a non-ENOENT canonicalize failure must be a hard failure, got: {}",
-        error.message
+        diagnostics_block(&blocks).contains(&format!(
+            "Image attachment not found: {link} (Too many levels of symbolic links (os error "
+        )),
+        "#1629 a symlink-loop lease path must soften to the not-found diagnostic, got: {}",
+        diagnostics_block(&blocks)
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| block.get("type") != Some(&"image".into())),
+        "#1629 a symlink-loop lease path must never inline"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1629 a symlink-loop lease path must never register allowedReadFiles"
+    );
+    negative_assert!(
+        note_block(&blocks).is_empty(),
+        "#1629 a symlink-loop lease path must never produce a note line"
+    );
+}
+
+#[test]
+fn not_directory_lease_path_softens_to_not_found_diagnostic() {
+    let scratch = Scratch::new();
+    // #1629: the non-ELOOP spelling of a non-`NotFound` canonicalize
+    // failure — a regular file where a directory component is expected
+    // (ENOTDIR), the same error class the TS stat catch swallows. An EACCES
+    // fixture would need chmod 000, which does not fail under a root uid
+    // (the #1459 root-test precedent), so ENOTDIR — deterministic on every
+    // uid and both Unixes — carries the "any failure" claim.
+    std::fs::write(scratch.lease("plain.txt"), b"x").expect("#1629 regular-file fixture");
+    let path = scratch.lease("plain.txt/sub.png");
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(
+            &scratch.0,
+            &message("hello"),
+            &[attachment(&path, "image/png")],
+        ),
+        "#1629 an ENOTDIR lease path must not fail the turn",
+    );
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        diagnostics_block(&blocks).contains(&format!(
+            "Image attachment not found: {path} (Not a directory (os error "
+        )),
+        "#1629 an ENOTDIR lease path must soften to the not-found diagnostic, got: {}",
+        diagnostics_block(&blocks)
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| block.get("type") != Some(&"image".into())),
+        "#1629 an ENOTDIR lease path must never inline"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1629 an ENOTDIR lease path must never register allowedReadFiles"
+    );
+    negative_assert!(
+        note_block(&blocks).is_empty(),
+        "#1629 an ENOTDIR lease path must never produce a note line"
     );
 }
 

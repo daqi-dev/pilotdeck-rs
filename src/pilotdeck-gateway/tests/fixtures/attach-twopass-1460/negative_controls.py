@@ -10,7 +10,9 @@ must still register a direct-content attachment (dropping the registration
 gate, or un-skipping the resolver projection, both turn the golden test
 red). The four silent-failure rows pin the other half of the split: a
 content-produced attachment keeps every pinned path failure silent like the
-audio skip (unresolved, the P2 internal error, the lone-surrogate
+audio skip (unresolved — twice: the plain spelling and, since the #1629
+softening moved the ELOOP canonicalize failure into the same arm, that
+spelling too — the lone-surrogate
 diagnostic, and the open failure — the arms with a bound test; the deeper
 gates share the same `no_resolver` continue). The seven #1461 rows pin the
 two spellings — the outer diagnostic keeps the lone surrogate through the
@@ -49,7 +51,7 @@ ABSOLUTE = 'native_process::services_tests::absolute_surrogate_diagnostic_surviv
 WARM_CACHE = 'native_process::services_tests::relative_surrogate_diagnostic_uses_the_cached_first_cwd'
 GOLDEN_BLOCKS = '#1460 direct content with a channelKey path must keep message, image and note blocks'
 SILENT_BLOCKS = '#1460 content attachments with invalid paths must keep message and image blocks only'
-ELOOP_TURN = '#1460 an ELOOP path on a content attachment must not fail the turn'
+ELOOP_BLOCKS = '#1460 an ELOOP content attachment must keep message and image blocks only'
 UNOPENABLE_QUIET = '#1460 an unopenable path on a content attachment must not diagnose'
 SURROGATE_SPELLING = '#1461 the not-found diagnostic must keep the surrogate outer and the lossy inner spelling'
 FOLDED_ROUTE = '#1461 the not-found words route on the raw spelling, not the resolved tail'
@@ -85,27 +87,23 @@ mutations = [
      SILENT, SILENT_BLOCKS),
     # #1460: the P2 internal error is equally swallowed for a content
     # attachment — the turn must not fail over a path the resolver
-    # projection never sees.
-    ('content-p2-hard-failure-restored', SERVICES,
-     '''            Err(rejected) => {
-                // #1464: the only remaining rejection is the P2 internal
-                // error (a non-NotFound canonicalize failure of the path
-                // itself under a valid root) — audio and a content-produced
-                // attachment stay silent.
+    # projection never sees. #1629 re-anchor: the path-level canonicalize
+    # failure now softens inside lease_guard, so the content ELOOP fixture
+    # flows through the same Unresolved arm as every other unresolvable
+    # path; the row keeps that fixture separately bound to the arm's
+    # content silence (restoring the audio-only skip adds the diagnostics
+    # block the block-count assertion catches first, the same
+    # first-failure binding the SILENT row above uses).
+    ('content-eloop-arm-diagnosed', SERVICES,
+     '''            Ok(LeaseGuard::Unresolved(error)) => {
                 if no_resolver {
                     continue;
-                }
-                return Err(rejected);''',
-     '''            Err(rejected) => {
-                // #1464: the only remaining rejection is the P2 internal
-                // error (a non-NotFound canonicalize failure of the path
-                // itself under a valid root) — audio and a content-produced
-                // attachment stay silent.
+                }''',
+     '''            Ok(LeaseGuard::Unresolved(error)) => {
                 if audio {
                     continue;
-                }
-                return Err(rejected);''',
-     ELOOP, ELOOP_TURN),
+                }''',
+     ELOOP, ELOOP_BLOCKS),
     # #1460: the lone-surrogate not-found diagnostic belongs to the resolver
     # projection a content attachment never enters.
     ('content-surrogate-diagnosed', SERVICES,
