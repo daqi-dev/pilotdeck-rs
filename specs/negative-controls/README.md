@@ -130,8 +130,9 @@
 `pending.for_script` 以入口自身路径为身份键且作为启动前置、summary 载荷记 `selected` 执行集、
 名册防线由 `test_negative_roster_guards.py` 机检并进 CI）与
 `utf16-residual-sort`（#2131 起
-同形自管：`EXPECTED_NAMES` 静态名册 + 启动拒跑全走 `refuse()` + 守卫退出失败
-按 #1076 fix-r1 契约发布 INVALID 后退 2，同批进三条拒跑矩阵）。**其余同族入口尚未迁移**，
+同形自管：`EXPECTED_NAMES` 静态名册 + 启动拒跑全走 `refuse()` + 进 `mutating_sources`
+之后的守卫失败作废已跑行、发布 INVALID 后按四分表退 1（延迟信号退 128+signum），
+同批进三条拒跑矩阵）。**其余同族入口尚未迁移**，
 由 #1666 按目录分批推进，名单是机器可检的：`tests/fixtures/test_negative_optimize_guards.py`
 的 `PENDING_BARE_ASSERTS` 登记每个仍含裸 `assert` 的 `*/negative_controls.py` 及理由，
 该表只减不增——新脚本带裸 `assert` 会让 CI 红，迁移一个就在同一次改动里删掉它的条目。

@@ -107,14 +107,14 @@ def main():
         # have a mutant on disk between its write and restore phases, which
         # would make this read-only check see `count == 0` spuriously.
         try:
-            with tree_lock(root):
+            with tree_lock(root, timeout=60):
                 for name, path, old, _, _, _ in cases:
                     count = path.read_text().count(old)
                     if count != 1:
                         failures.append(f'{name}: expected 1 anchor, got {count}')
-        except OSError as error:
-            # TimeoutError is an OSError subclass: a busy lock or an unreadable
-            # anchor source is a refusal (2), not a bare traceback (1).
+        except (OSError, UnicodeDecodeError) as error:
+            # TimeoutError is an OSError subclass: a busy lock, an unreadable
+            # or non-UTF-8 anchor source is a refusal (2), not a traceback (1).
             refuse(f'#2131 check-anchors tree lock or read failed: {error}')
         print('\n'.join(failures) if failures else f'{len(cases)} anchors OK')
         return int(bool(failures))
@@ -122,6 +122,9 @@ def main():
     compile_only = '--compile-only' in sys.argv[1:]
     if not args:
         refuse('usage: --check-anchors | [--compile-only] NEW_OUTPUT_DIR [mutation ...]')
+    if args[0].startswith('--'):
+        # `--check-anchors extra` must not become an output directory name.
+        refuse(f'usage: unknown option {args[0]}')
     # No baseline row exists in this suite: each case carries its own
     # positive control, so the selector's baseline default is turned off.
     try:
@@ -165,12 +168,14 @@ def main():
                fixture / 'generate.mts', fixture / 'README.md', Path(__file__),
                *(shared / name for name in (
                    'negative_process.py', 'negative_suite.py', 'negative_panic.py',
-                   'pending_reanchor.py', 'negative_selection.py'))]
+                   'pending_reanchor.py', 'negative_selection.py',
+                   'negative_scope.py'))]
     def startup_refusal(error):
         # A guard that never started (dirty tree, source-lock wait exhausted)
         # is a startup refusal, not a red run: rc 2, and the empty directory
         # claim_dir made is withdrawn so a refusal leaves no evidence dir that
-        # looks claimed (specs/negative-controls/README.md:152/:155/:183).
+        # looks claimed (specs/negative-controls/README.md, the exit-code
+        # four-way table and the "guards run before claim_dir" paragraph).
         # rmdir only removes the empty case -- a run that already wrote logs
         # keeps them.
         try:
@@ -181,9 +186,12 @@ def main():
 
     # Startup is everything the guard does before the first mutation; after
     # `started`, an interruption is a red run (INVALID rows, rc 1), never a
-    # refusal, and a delayed cancellation already leaves as
-    # SystemExit(128+signum) -- the bare `except Exception` below lets it pass
-    # untouched (specs/negative-controls/README.md:151/:155/:157-158).
+    # refusal. A delayed cancellation already leaves as SystemExit(128+signum)
+    # and is re-raised by the isinstance check below; a KeyboardInterrupt from
+    # the startup window still reaches `startup_refusal` (rc 2, empty OUT
+    # withdrawn) because the handler catches BaseException
+    # (specs/negative-controls/README.md, the exit-code four-way table, the
+    # boundary rule and the delayed-signal contract paragraph).
     started = False
     try:
         with mutating_sources(root, guarded) as originals:
@@ -220,7 +228,11 @@ def main():
                     row.update(status='INVALID', reason=row['reason'] + f'; restore: {error}')
                 results.append(row)
                 print(f'{name}: {row["status"]}: {row["reason"]}', flush=True)
-    except Exception as error:
+    except BaseException as error:
+        # The guard's delayed cancellation carries its own exit code
+        # (SystemExit(128+signum)); it must survive this handler untouched.
+        if isinstance(error, SystemExit):
+            raise
         if not started:
             startup_refusal(error)
         reason = f'source guard: {type(error).__name__}: {error}'
@@ -229,9 +241,6 @@ def main():
             results.append(dict(mutation=name, test=test, assertion=marker,
                                 status='INVALID', reason=reason, compiled=False))
             print(f'{name}: INVALID: {reason}', flush=True)
-        publish_summary(out, results, states=SUMMARY_STATES)
-        return verdict_exit(results, key='status',
-                            killed='COMPILED' if compile_only else 'KILLED')
     publish_summary(out, results, states=SUMMARY_STATES)
     return verdict_exit(results, key='status',
                         killed='COMPILED' if compile_only else 'KILLED')

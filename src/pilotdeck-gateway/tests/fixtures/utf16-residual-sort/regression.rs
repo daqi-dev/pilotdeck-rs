@@ -232,12 +232,14 @@ fn cache_plan_fingerprint_matches_ts() {
 #[test]
 fn model_usage_provider_order_matches_ts() {
     // #2131: the `distinct-lone-code-units` case is skipped below (bucket-key
-    // collapse, follow-up); guard that at least one case is still replayed so
-    // a future oracle renaming both case ids cannot leave this test empty.
+    // collapse, follow-up); exact accounting so an oracle id rename cannot
+    // silently un-skip it or leave the replay empty.
     let mut checked = 0;
+    let mut skipped = 0;
     for case in cases() {
         let id = text(field(&case, "id"));
         if id == "distinct-lone-code-units" {
+            skipped += 1;
             continue;
         }
         let scratch = crate::test_scratch::Scratch::new("2131-usage");
@@ -283,9 +285,13 @@ fn model_usage_provider_order_matches_ts() {
         crate::negative_assert_eq!(actual, expected, "#2131 modelUsageSnapshot order: {id}");
         checked += 1;
     }
-    assert!(
-        checked >= 1,
-        "#2131 modelUsage must replay at least one case"
+    assert_eq!(
+        skipped, 1,
+        "#2131 the lone-code-units skip must still hit exactly once"
+    );
+    assert_eq!(
+        checked, 1,
+        "#2131 modelUsage must replay exactly the mixed case"
     );
 }
 
