@@ -1226,7 +1226,7 @@ mod tests {
                 snapshot_root: root,
             });
         let gateway = SnapshotGateway::new(Some(provider), HostBoundaryResolver, "/fallback");
-        for (method, input) in [
+        let forward_cases = [
             ("snapshot_list", params(&[("projectKey", "/p".into())])),
             (
                 "snapshot_get",
@@ -1236,7 +1236,15 @@ mod tests {
                 "snapshot_restore",
                 params(&[("projectKey", "/p".into()), ("snapshotId", "s".into())]),
             ),
-        ] {
+        ];
+        // #2308: pin the denominator — deleting or renaming any case must fail
+        // this test, not just shrink the loop silently (review P2-1).
+        assert_eq!(
+            forward_cases.iter().map(|(m, _)| *m).collect::<Vec<_>>(),
+            ["snapshot_list", "snapshot_get", "snapshot_restore"],
+            "#2308 the Forward denominator must keep all three snapshot methods"
+        );
+        for (method, input) in forward_cases {
             assert_eq!(
                 gateway.dispatch(method, &input),
                 Some(SnapshotDispatch::Forward),
