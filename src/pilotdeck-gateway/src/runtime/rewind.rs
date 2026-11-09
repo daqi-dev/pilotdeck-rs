@@ -382,68 +382,81 @@ pub async fn handle(
     services: &crate::routes::GatewayServices,
     params: &JsValue,
 ) -> Result<JsValue, crate::runtime::connection::RequestError> {
+    use crate::metadata::{resolve, text_field};
     use crate::runtime::connection::RequestError;
     use crate::storage::{AsyncTranscriptAdapter, JsonlTranscriptStore};
     use std::sync::Arc;
 
-    fn required_trimmed(
-        params: &JsValue,
-        key: &str,
-        code: &str,
-        message: &str,
-    ) -> Result<JsString, RequestError> {
-        match params.get(key).and_then(JsValue::as_string) {
-            Some(value) if !value.is_empty() => Ok(value.clone()),
-            _ => {
-                let mut error = RequestError::new(message);
-                error.code = code.into();
-                Err(error)
-            }
+    let required = |key: &str, code: &str, message: &str| -> Result<JsString, RequestError> {
+        if matches!(params, JsValue::Null | JsValue::Undefined) {
+            let kind = if params.is_undefined() {
+                "undefined"
+            } else {
+                "null"
+            };
+            return Err(RequestError::new(format!(
+                "Cannot read properties of {kind} (reading '{key}')"
+            )));
         }
-    }
-
-    fn session_error(code: &str, message: &str) -> RequestError {
-        let mut error = RequestError::new(message);
-        error.code = code.into();
-        error
-    }
-
+        if params
+            .get(key)
+            .is_some_and(|v| !matches!(v, JsValue::String(_) | JsValue::Null | JsValue::Undefined))
+        {
+            return Err(RequestError::new(format!(
+                "input.{key}?.trim is not a function"
+            )));
+        }
+        params
+            .get(key)
+            .and_then(JsValue::as_string)
+            .filter(|v| !crate::metadata::js_trim(&String::from_utf16_lossy(v.units())).is_empty())
+            .cloned()
+            .ok_or_else(|| {
+                let mut error = RequestError::new(message);
+                error.code = code.to_owned();
+                error
+            })
+    };
+    let session = required(
+        "sessionKey",
+        "INVALID_SESSION_KEY",
+        "sessionKey is required.",
+    )?;
+    let message = required(
+        "userMessageId",
+        "INVALID_MESSAGE_ID",
+        "userMessageId is required.",
+    )?;
     let home = services.home.clone();
     let cwd = services.cwd.clone();
     let admission = services.admission.clone();
     let params = params.clone();
     tokio::task::spawn_blocking(move || {
-        let session_key = required_trimmed(
-            &params,
-            "sessionKey",
-            "INVALID_SESSION_KEY",
-            "sessionKey is required.",
-        )?;
-        let user_message_id = required_trimmed(
-            &params,
-            "userMessageId",
-            "INVALID_MESSAGE_ID",
-            "userMessageId is required.",
-        )?;
-        if admission.has_active_turn(&session_key) {
-            return Err(session_error(
-                "SESSION_BUSY",
-                "Cannot rewind files while a turn is active.",
+        if !admission.begin_maintenance(&session) {
+            let mut error = RequestError::new("Cannot rewind files while a turn is active.");
+            error.code = "SESSION_BUSY".into();
+            return Err(error);
+        }
+        struct Reservation(
+            std::sync::Arc<crate::runtime::session::SessionAdmission>,
+            JsString,
+        );
+        impl Drop for Reservation {
+            fn drop(&mut self) {
+                self.0.end_maintenance(&self.1);
+            }
+        }
+        let _reservation = Reservation(admission, session.clone());
+        if home.as_os_str().is_empty() {
+            return Err(RequestError::new(
+                "Local gateway requires an explicit PILOT_HOME.",
             ));
         }
-        let dry_run = params
-            .get("dryRun")
-            .and_then(JsValue::as_bool)
-            .unwrap_or(false);
-        let user_message_id = user_message_id
-            .to_utf8()
-            .map_err(|_| RequestError::new("userMessageId must be valid UTF-8."))?;
-        let project_root = match params.get("projectKey").and_then(JsValue::as_string) {
-            Some(key) => crate::metadata::resolve_path(&cwd, std::path::Path::new(
-                &key.to_utf8().map_err(|_| RequestError::new("projectKey must be valid UTF-8."))?,
-            )),
-            None => cwd.clone(),
-        };
+        let project = resolve(
+            &cwd,
+            &text_field(&params, "projectKey")
+                .unwrap_or_else(|| cwd.to_string_lossy().into_owned()),
+        );
         let adapter = AsyncTranscriptAdapter::new(
             Arc::new(JsonlTranscriptStore::new()),
             Arc::new(|key: &crate::storage::ProjectKey| {
@@ -454,16 +467,44 @@ pub async fn handle(
                 )
             }),
         );
-        Ok(rewind_files(RewindFilesInput {
-            adapter: &adapter,
-            project_root: &project_root,
-            pilot_home: &home,
-            session_key: &session_key,
-            user_message_id: &user_message_id,
-            dry_run,
-            now: None,
-        }))
+        Ok(rewind_files_exact(
+            RewindFilesInput {
+                adapter: &adapter,
+                project_root: &project,
+                pilot_home: &home,
+                session_key: &session,
+                user_message_id: "",
+                dry_run: params.get("dryRun").is_some_and(|value| match value {
+                    JsValue::Undefined | JsValue::Null | JsValue::Bool(false) => false,
+                    JsValue::Number(n) => *n != 0.0 && !n.is_nan(),
+                    JsValue::String(s) => !s.is_empty(),
+                    _ => true,
+                }),
+                now: None,
+            },
+            &message,
+        ))
     })
     .await
     .map_err(|error| crate::runtime::connection::RequestError::new(error.to_string()))?
+}
+
+#[cfg(test)]
+mod handle_tests {
+    use crate::runtime::session::SessionAdmission;
+    use pilotdeck_protocol::JsString;
+
+    #[test]
+    fn rewind_admission_uses_maintenance_not_only_active_turn_probe() {
+        let admission = SessionAdmission::default();
+        let key: JsString = "maintenance-session".into();
+        let run: JsString = "run".into();
+        let reservation = admission.begin_turn(&key, &run).expect("turn reservation");
+        assert!(!admission.begin_maintenance(&key));
+        assert!(admission.has_active_turn(&key));
+        admission.end_turn(&key, Some(&run), Some(&reservation));
+        assert!(admission.begin_maintenance(&key));
+        assert!(!admission.begin_maintenance(&key));
+        admission.end_maintenance(&key);
+    }
 }
