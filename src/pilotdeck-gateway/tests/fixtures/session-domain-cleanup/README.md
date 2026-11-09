@@ -1385,3 +1385,35 @@ revert mutants (the Mod rejection back to None, the oversized-format
 pin's expectation reverted, the helper's sentinel arm removed, the
 padding count without the +1, and the controls MemoryError dropped) are
 killed by the named pins.
+
+fix-r16 (anthropic r15 boundary#1 P0, probe-verified) closed the
+one-level-down escape of the string fold: the Add and Mult size
+rejections return None on *exact* bounds, which is sound only while the
+oversized result is consumed directly.  Under an outer `%` a precision
+conversion truncates, so "too long" carries no information about the
+formatted result and the oversized point only has to move one level
+down: a one-over Add or Mult on the right (`'%.6s' % ('sta' + 'tus' +
+'x' * 999995)` is `'status'` at runtime), a zero-padded precision spec
+that keeps the format string oversized while the conversion stays short
+(the left operand), or a constant tuple feeding precision-0 conversions
+that emit nothing — every one a fully constant expression whose refusal
+used to read as negative evidence.  Any operand the fold cannot resolve
+under `%` now stops the fold as the sentinel
+`_FOLD_STRING_UNRESOLVED` (the same fail-closed polarity as budget
+exhaustion and the r15 size refusal).  A JoinedStr conversion with a
+format spec on a constant value (`f'{"statusxx":.6}'` is `'status'` at
+runtime) stops the fold as the sentinel too, instead of the fail-open
+None.  Self-tests added: the six-shape unit pin (any unresolvable-`%`
+shape folding to anything but the sentinel is a red), the six-rogue
+end-to-end pin (one scan, one function per shape, each runtime
+status/PASS write must enter `found`), and the polarity pin
+(`_nested_slot_fail_closed` keeps the bare `in` on purpose — a stopped
+fold must not exempt a nested status slot there, so a tidying pass that
+swaps it for `_folded_status_hit` turns the `[0]`-budget cell probe
+red).  `controls/session_domain.py`'s single-case handler now records
+a RecursionError as a verdict.json FAIL alongside the fix-r15
+MemoryError (pinned statically in test_safety).  Six revert mutants
+(the Mod guard weakened to both-None, the JoinedStr sentinel disabled,
+the shapes pin's expectation reverted, the writes pin's direction
+reverted, the bare `in` swapped for the helper, and the controls
+RecursionError dropped) are killed by the named pins.
