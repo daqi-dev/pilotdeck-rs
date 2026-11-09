@@ -2350,3 +2350,90 @@ subset carries its own red proof.
 | **A walrus update callee with an unproven payload is still an inline status write** (false PASS guard): `(_u := report.update)(payload)` inside a registered point, judged by the same `_unproven_expansion` arm as the plain spelling -- the negctl round-42 driver reverts the `unshared_status_slots` callee hunk alone, and the generic call branch (which already unwraps the callee since round 41) still reads a clean dict literal but not an unproven name, so the probe carries an unproven parameter. | `... did not flag an unproven update payload behind a walrus callee (round 42)` |
 | **A walrus `update` / `__setitem__` callee unbounds dict keys** (false PASS guard): `(_u := d.update)({'common': 1})`; `(_u := d.__setitem__)('common', 1)`. | `... kept dict keys bounded behind a walrus update callee / __setitem__ callee (round 42)` |
 | **Deep factory chains, lambda chains and if-expressions do not crash** (crash guard): a 600-deep factory chain (also clean -- no import reported), a 1100-deep lambda chain, a 1100-deep if-expression. | `... let a deep factory chain crash the import walk / let a deep factory chain report an import / let a deep lambda chain crash the free-name walk / let a deep if-expression crash the capability test (round 42)` |
+
+### Closed by `fix-r1` round 43 (GLM r42 boundary#1..#3 / sibling#1..#6; anthropic r42 boundary#1; probe 2026-11-10)
+
+Every finding was probe-reproduced against the round-42 ruler before any fix
+(probe logs: `_tmp/20261109-issue-1953-revival/` -- `probe-r43-postfix.log`
+carries the pre/post table, `probe-antb1.log` the nested-scope family,
+`probe-s3.py` the unpack-projection discriminator; the "r41" column is the
+round-41 commit kept as a second witness, the current column the fixed
+ruler).  One P0 claim was refuted by measurement and closed without that
+half of the fix: GLM boundary#1 asserted the `pop`/`insert` pricing reads a
+*raw negative* `leading` constant and under-prices (false PASS) -- but
+`ast.parse` never yields `Constant(-1)` for `x[-1]`; the slice is
+`UnaryOp(USub, Constant(1))`, which every `isinstance(slice, ast.Constant)`
+check already declined, so the pre-fix ruler was blanket-conservative
+(probe: every negative-selection shape read R=True, no false PASS possible).
+The real defect was the mirror -- **false reports on every clean
+negative-selection display** (`items[-1]` with no mutation, `pop(0)` or
+`insert(0, ...)` before it) -- now fixed by pricing the trailing selection
+against its end anchor.
+
+The display family.  A negative literal subscript is now read as a
+**trailing selection** anchored at `literal_len - j`: a removal at index
+`k` moves it iff `k >= anchor`, an insertion iff `k > anchor` (GLM
+boundary#1, probe b1a/b1b/b1e/b1f/b1g).  `mutates_display` prices
+`pop()` / `pop(k)` / `insert(k, x)` / `append` / `extend` (the last two
+never move a positive leading selection) and normalizes negative `k`
+(GLM sibling#4a); a whole-target literal `del items[k]` takes the same
+pricing (sibling#4c).  The **mutators alias fixpoint** (GLM boundary#2)
+collects `alias = mutator` names so `_m = _mutate; _m()` convicts.  The
+**`__new__` inheritance** family (GLM boundary#3): a base-resolvable class
+is judged through its parent's own `__new__` (`class_node` resolver inside
+`_import_refused_calls`, single-event/not-rebound guards mirroring
+`factory_returns`, cycle-guarded) -- an inherited module-returning builder
+(one or two levels) and an assigned `__new__ = staticmethod(<builder>)`
+spelling are the import, an inherited *clean* builder stays clean, and an
+unresolvable or rebound base keeps the conservative standing.
+
+The context and callee family.  The **`while` test carries the back edge**
+in both loop-context helpers (GLM sibling#1): `_flow_marks` and
+`_module_call_positions` give the test subtree the loop's id (it
+re-evaluates after every body iteration), while the `for` iterable, the
+`else` blocks and the one-shot positions keep the outer loops.  The
+receiver scan unwraps the callee (sibling#2: `(_g :=
+md.common.aggregate_status)(report)` keeps its receiver).  The write-helper
+event tables **project tuple unpacks per name** through
+`_project_unpack_targets` at all three sites (sibling#3, probe
+`probe-s3.py`: `spare, w = (clean, setattr)` with a prior import alias
+dropped the write-status marker).  `_dict_binding_keys` follows **aliased
+and unbound receiver spellings** (`e = d; e.update(...)`,
+`dict.update(d, ...)`, `dict.__setitem__(d, ...)`, `operator.setitem`,
+sibling#5).  The exit-raise and return-int marker checks unwrap their
+callee (sibling#6; anthropic sibling#1: `raise (_e := SystemExit)(0)`,
+`return (_i := int)('PASS')`).  `_name_rebound_beyond` no longer pierces
+nested scopes (anthropic boundary#1): a nested-only
+`from x import factory` / `def factory` / `factory += 1` leaves the
+module-level name un-rebound (only `global` keeps the whole-tree read), so
+a legitimate factory keeps its refused-call standing; the same fixpoint
+collects `AugAssign` targets.
+
+Known residuals (follow-up issue): `remove` / `popitem` / `dict.update`
+mutations are still un-priced (conservative withdraw, GLM sibling#4 tail);
+a `pop()` or `del` that removes the *selected* element itself still
+withdraws -- the trailing anchor prices `k == anchor` as a move because
+the selection then reads a neighbour the ruler does not re-check (the
+b1d/b1i conservative-mirror pair, false-report direction); the mutators
+`ast.walk` in `_display_mutated_between` still pierces nested scopes
+(anthropic P3#2, conservative direction); the unbound-branch type list in
+`mutates_display` is a hardcoded builtin set (GLM sibling#7, P3); the
+battery's `imp`-call filter reads its callee through `_callee_expr`
+(anthropic P3#3, fixed in passing); and the module_copies source of the
+event tables keeps the round-26 plain-alias reading (deliberately not
+extended to projected unpack elements).
+
+| Shape | Self-test |
+|---|---|
+| **An inherited `__new__` returning the module keeps the import standing** (false PASS guard): `class _B: def __new__(cls, name): return sys` then `class imp(_B)`, one or two levels deep; `__new__ = staticmethod(lambda cls, name: sys)`. | `... dropped the import standing behind an inherited __new__ returning the module / a two-level inherited __new__ returning the module / an assigned __new__ builder (round 43)` |
+| **An unresolvable or rebound base keeps the conservative standing** (floor lock): `class imp(_B)` over an imported `_B`; `_B = dict` after the class. | `... dropped the import standing behind an unresolvable imported base / a base name rebound after its class (round 43)` |
+| **An inherited clean `__new__`, a base cycle and a nested-only factory import do not report** (false FAIL guard): `class _B` returning `SimpleNamespace(modules={})`; `class imp(_A) / class _A(_B) / class _B(_A)` (the guard must terminate); a helper containing `from functools import partial as factory` over a clean factory. | `... kept reporting an import behind an inherited clean __new__ / a self-referential base cycle / a nested-only import of the factory name (round 43)` |
+| **Tail mutations move a trailing selection** (false PASS guard): `pop()` / `del items[2]` / `insert(3, hs[0])` then `items[-1](...)` -- withdraw. | `... lost a receiver behind a pop() moving the handle into a trailing selection / an insert past the tail into a trailing selection / a del moving the handle into a trailing selection (round 43)` |
+| **An alias call of a mutating closure convicts** (false PASS guard): `_m = _mutate; _m()` with `_mutate` reversing the display. | `... lost a receiver behind an alias call of a mutating closure (round 43)` |
+| **Head mutations and no-op aliases do not withdraw** (false FAIL guard): `pop(0)` / `insert(0, None)` before `items[-1]`; a bare `items[-1]`; `pop(-1)` removing the handle before `items[0]`; `append(None)` / `extend([None])` / `del items[1]` before `items[0]`; `_m = _noop; _m()`. | `... withdrew a clean receiver behind a head pop before a trailing selection / a head insert before a trailing selection / a bare trailing selection / a negative-argument pop of the handle / an append after a leading selection / an extend after a leading selection / a del of the handle before a leading selection / an alias call of a no-op closure (round 43)` |
+| **The `while` test carries the loop context, the `else` block does not** (structural guard, `_flow_marks`): the test call subtree and walrus, and the body, carry the while id; the else block keeps the outer loops. | `... lost / leaked the while loop context of the while-test call subtree / the while-test walrus / the while body / the while else block (round 43)` |
+| **The module call positions carry the same loop semantics** (structural guard, `_module_call_positions`): while-test and body calls carry the while id; for-iterable, for-else and while-else calls keep the outer loops. | `... lost / leaked the loop context of the _w43t / _w43b / _w43e / _f43i / _f43b / _f43e call (round 43)` |
+| **A walrus callee on a stub receiver keeps the receiver** (false PASS guard): `(_g := md.common.aggregate_status)(report)` over a module-scope stub `md`. | `... lost a receiver behind a walrus callee on a module-scope stub receiver (round 43)` |
+| **An unpack rebinding onto the write helper keeps the marker, onto a clean callee does not grow one** (both directions, GLM sibling#3): `spare, w = (clean, setattr)` then `w(report, 'status', 'PASS')`; the mirror `spare, w = (setattr, clean)`. | `... lost the write-status marker behind an unpack rebinding onto the write helper / kept the write-status marker behind an unpack rebinding onto a clean callee (round 43)` |
+| **Aliased and unbound dict receivers unbind the keys** (false PASS guard): `e = d; e.update(...)`; `dict.update(d, ...)`; `dict.__setitem__(d, ...)`. | `... kept dict keys bounded behind an aliased receiver update / an unbound dict.update receiver / an unbound dict.__setitem__ receiver (round 43)` |
+| **Walrus exit-raise and return-int callees keep their markers** (false PASS guard): `raise (_e := SystemExit)(0)`; `return (_i := int)('PASS')`. | `... lost the raise-exit-status marker behind a walrus exit callee / the return-int-status marker behind a walrus int callee (round 43)` |
