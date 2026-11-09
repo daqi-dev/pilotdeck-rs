@@ -1,8 +1,10 @@
 //! `execute_code` (baseline `tool/builtin/executeCode.ts`). This owns the
 //! private Python workspace, process deadline/cancellation and result contract.
-//! Nested tool RPC is deliberately exposed as an unavailable helper module
-//! until the session host supplies a recursion hook; direct Python execution
-//! must not silently bypass the normal ToolRuntime permission path.
+//! Nested tool RPC is not wired: the daqi session host offers no recursion
+//! hook, so the generated helper module raises instead of silently bypassing
+//! the normal ToolRuntime permission path. The description says so, and the
+//! script always reaches the generic permission path because arbitrary Python
+//! cannot be judged read-only by name matching.
 
 use super::{field, object, schema, string, text, tool_error};
 use crate::{
@@ -14,6 +16,10 @@ use std::{path::PathBuf, time::Instant};
 
 const DEFAULT_TIMEOUT_SECONDS: f64 = 300.0;
 const DEFAULT_MAX_TOOL_CALLS: f64 = 50.0;
+/// TS `MAX_STDOUT_BYTES` / `MAX_STDERR_BYTES`: the model only sees a summary,
+/// so the retained buffers are capped instead of holding an unbounded run.
+const MAX_STDOUT_BYTES: usize = 50_000;
+const MAX_STDERR_BYTES: usize = 10_000;
 
 pub struct ExecuteCodeTool {
     fields: JsObject,
@@ -65,14 +71,14 @@ fn definition() -> JsObject {
         (
             "description",
             string(
-                "Run a local Python 3 script that can call a small allow-list of PilotDeck tools via `import pilotdeck_tools`. The script runs from the workspace cwd and inherits the same runtime environment as normal tools such as bash, including configured API, proxy, PATH, virtualenv, and conda variables; do not print secrets or dump the full environment. Only the script's final stdout/stderr summary is returned to the model. Before modifying an existing file, call read_file first so PilotDeck can verify freshness. Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available.",
+                "Run a local Python 3 script from the workspace cwd. The script inherits the same runtime environment as normal tools such as bash, including configured API, proxy, PATH, virtualenv, and conda variables; do not print secrets or dump the full environment. Only the script's final stdout/stderr summary is returned to the model. Nested PilotDeck tool RPC is unavailable in this runtime: `pilotdeck_tools` exists but every helper raises RuntimeError, so do the work with plain Python and the standard library. Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available.",
             ),
         ),
         ("kind", string("custom")),
         (
             "inputSchema",
             JsValue::Object(schema(
-                r#"{"type":"object","required":["code"],"additionalProperties":false,"properties":{"code":{"type":"string","description":"Python 3 source code to execute. Use from pilotdeck_tools import ... to call allowed PilotDeck tools."},"description":{"type":"string","description":"Optional human-readable note; ignored by execution."},"timeout_seconds":{"type":"integer","description":"Maximum execution time in seconds. Defaults to 300; maximum 300."},"max_tool_calls":{"type":"integer","description":"Maximum number of PilotDeck tool calls the script may make. Defaults to 50; maximum 50."}}}"#,
+                r#"{"type":"object","required":["code"],"additionalProperties":false,"properties":{"code":{"type":"string","description":"Python 3 source code to execute. `pilotdeck_tools` helpers raise RuntimeError in this runtime; use the standard library."},"description":{"type":"string","description":"Optional human-readable note; ignored by execution."},"timeout_seconds":{"type":"integer","description":"Maximum execution time in seconds. Defaults to 300; maximum 300."},"max_tool_calls":{"type":"integer","description":"Reserved; nested tool calls are unavailable in this runtime."}}}"#,
             )),
         ),
         (
@@ -124,11 +130,43 @@ fn is_read_only(input: &JsValue) -> bool {
     if code.trim().is_empty() {
         return false;
     }
+    // TS `isExecuteCodeReadOnly`: no write-capable helper call and only
+    // read-only string-literal bash calls. Names are matched after stripping
+    // comments and string bodies, so prose cannot vouch for a program.
     let searchable = strip_python_comments_and_strings(&code);
-    !["write_file", "edit_file"]
+    if ["write_file", "edit_file"]
         .iter()
         .any(|name| function_call_offsets(&searchable, name).next().is_some())
-        && read_only_bash_calls_only(&code, &searchable)
+    {
+        return false;
+    }
+    if !read_only_bash_calls_only(&code, &searchable) {
+        return false;
+    }
+    // Named helpers are not the only effect channel: the script runs
+    // unconfined Python, so an import of os/shutil/subprocess/pathlib or a
+    // builtin open() reaches the filesystem without naming a write helper.
+    // Those programs are effectful even though TS would call them read-only,
+    // because TS routes every effect through the helper RPC it can judge.
+    // Calls are matched as `name (`, while the module references below are
+    // plain attribute access (`os.remove`, `subprocess.run`) with no call form.
+    const EFFECT_CALLS: [&str; 2] = ["open", "eval"];
+    const EFFECT_MODULES: [&str; 8] = [
+        "os.",
+        "shutil.",
+        "subprocess.",
+        "pathlib.",
+        "socket.",
+        "urllib.",
+        "requests.",
+        "__import__",
+    ];
+    !EFFECT_CALLS
+        .iter()
+        .any(|name| function_call_offsets(&searchable, name).next().is_some())
+        && !EFFECT_MODULES
+            .iter()
+            .any(|name| searchable.contains(name))
 }
 
 fn read_only_bash_calls_only(code: &str, searchable: &str) -> bool {
@@ -331,21 +369,48 @@ async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput
     command
         .env("PYTHONPATH", pythonpath)
         .env("PILOTDECK_EXECUTE_CODE_TEMP_ROOT", &workspace.0);
+    // The script leads its own group so a timeout or cancel can signal the
+    // whole tree, not only the interpreter that spawned it. TS runs the same
+    // process under a code runtime that terminates the tree on abort.
+    #[cfg(unix)]
+    command.process_group(0);
     let child = command
         .spawn()
         .map_err(|error| tool_error("tool_execution_failed", error.to_string()))?;
-    let wait = child.wait_with_output();
-    let result = tokio::select! {
-        value = wait => value.map_err(|error| tool_error("tool_execution_failed", error.to_string()))?,
-        _ = tokio::time::sleep(std::time::Duration::from_secs_f64(timeout_seconds)) => {
-            return Ok(output("timeout", "", "Script execution timed out.", started, context));
-        }
-        _ = context.cancelled() => {
-            return Ok(output("cancelled", "", "Script execution was cancelled.", started, context));
-        }
+    let group = child
+        .id()
+        .and_then(|pid| rustix::process::Pid::from_raw(pid as i32));
+    let mut guard = crate::process_group::GroupGuard(group);
+    let mut wait = Box::pin(child.wait_with_output());
+    let outcome = tokio::select! {
+        value = wait.as_mut() => Some(value),
+        _ = tokio::time::sleep(std::time::Duration::from_secs_f64(timeout_seconds)) => None,
+        _ = context.cancelled() => None,
     };
-    let stdout = String::from_utf8_lossy(&result.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&result.stderr).into_owned();
+    let Some(result) = outcome else {
+        // Signal the group, then reap the leader so the call leaves no
+        // orphan behind and the pipe buffers are released.
+        guard.signal(rustix::process::Signal::KILL);
+        let _ = wait.as_mut().await;
+        let status = if context.is_aborted() { "cancelled" } else { "timeout" };
+        let message = if context.is_aborted() {
+            "Script execution was cancelled."
+        } else {
+            "Script execution timed out."
+        };
+        return Ok(output(status, "", message, started, context));
+    };
+    guard.disarm();
+    let result =
+        result.map_err(|error| tool_error("tool_execution_failed", error.to_string()))?;
+    let stdout = truncate_bytes(
+        &String::from_utf8_lossy(&result.stdout),
+        MAX_STDOUT_BYTES,
+    );
+    let stderr = truncate_bytes(
+        &String::from_utf8_lossy(&result.stderr),
+        MAX_STDERR_BYTES,
+    );
     if result.status.success() {
         Ok(output("success", &stdout, &stderr, started, context))
     } else {
@@ -356,6 +421,18 @@ async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput
         };
         Ok(output("error", &stdout, &error, started, context))
     }
+}
+
+/// Byte cap with a visible marker, mirroring the TS truncation notice.
+fn truncate_bytes(value: &str, limit: usize) -> String {
+    if value.len() <= limit {
+        return value.to_string();
+    }
+    let mut end = limit;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}[truncated {} bytes]", &value[..end], value.len() - end)
 }
 
 async fn find_python(context: &ToolRunContext) -> Option<&'static str> {
@@ -370,6 +447,9 @@ async fn find_python(context: &ToolRunContext) -> Option<&'static str> {
             value = status => value.is_ok_and(|status| status.success()),
             _ = context.cancelled() => false,
         };
+        if context.is_aborted() {
+            return None;
+        }
         if available {
             return Some(candidate);
         }
@@ -423,7 +503,16 @@ fn output(
             ("tool_calls_made", JsValue::Number(0.0)),
             ("duration_seconds", JsValue::Number(duration)),
             ("cwd", string(super::cwd(context))),
-            ("env_inheritance", string("full")),
+            // Report what actually happened: a caller that supplied `env`
+            // replaced the environment; otherwise the child inherited it.
+            (
+                "env_inheritance",
+                string(if matches!(context.fields.get("env"), Some(JsValue::Object(_))) {
+                    "replaced"
+                } else {
+                    "full"
+                }),
+            ),
             ("python_path_augmented", JsValue::Bool(true)),
         ])),
         supplemental_messages: None,
@@ -463,6 +552,25 @@ mod tests {
             "code",
             string("print('中文')\nbash ( 'git status' )"),
         )]));
+        assert!(is_read_only(&input));
+    }
+
+    /// `open('x', 'w').write('x')` names no write helper, so matching only
+    /// `write_file(` / `edit_file(` would let an arbitrary program run as a
+    /// read in plan and default modes. Effect channels must fail the probe.
+    #[test]
+    fn arbitrary_python_effects_are_not_read_only() {
+        for code in [
+            "open('x', 'w').write('x')",
+            "import os\nos.remove('x')",
+            "import shutil\nshutil.rmtree('x')",
+            "import subprocess\nsubprocess.run(['rm', 'x'])",
+            "__import__('os').remove('x')",
+        ] {
+            let input = JsValue::Object(object([("code", string(code))]));
+            assert!(!is_read_only(&input), "{code} must not be read-only");
+        }
+        let input = JsValue::Object(object([("code", string("print(sum(range(10)))"))]));
         assert!(is_read_only(&input));
     }
 }
