@@ -2070,10 +2070,14 @@ async fn stop_after_the_late_handshake_settles_returns_with_the_directory_remove
 /// handshake cannot settle and the epoch-mismatch cleanup — the only path
 /// that dispatches `spawn_blocking(remove_dir_all)` — never runs; dropping
 /// the runtime cancels the in-flight handshake (kill_on_drop reaps the mock)
-/// with nobody left to remove anything. The after-dispatch shape leaves no
-/// residue instead: tokio 1.48's `Runtime::drop` waits for an already
-/// started blocking task (measured 809.7 ms for an 800 ms task), so by the
-/// time the drop returns the `remove_dir_all` has completed.
+/// with nobody left to remove anything. The after-dispatch shape is NOT
+/// pinned in-tree: per the #2233 S2 delivery's tokio 1.48.0 probe
+/// (`Runtime::drop` returned only after an 800 ms `spawn_blocking` task
+/// finished — measured 809.7 ms), drop waits for an already-started
+/// blocking task, so a dispatched `remove_dir_all` completes before the
+/// drop returns. That is a tokio-version premise recorded in the
+/// `A6.5-MCP-SESSION-DIR-LIFETIME-001` ledger correction (probe-measured,
+/// not a repo-pinned invariant), not something this file asserts.
 #[test]
 fn runtime_teardown_before_the_removal_dispatch_leaves_the_session_directory() {
     let scratch = Scratch::new("mcp-client-teardown-before-dispatch");

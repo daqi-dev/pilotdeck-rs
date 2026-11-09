@@ -119,7 +119,12 @@ pub fn parse_node22_date_with_local(
 }
 /// The production local-wall resolver: the process-TZ TZif bytes (see
 /// `system_tzif`), exported so downstream ports can inject the same policy
-/// into `parse_node22_date_with_local`.
+/// into `parse_node22_date_with_local`. The read-and-parse per call is
+/// intentional, not a missed sibling of the #2314 named-zone cache: the
+/// process TZ has no immutable key the way a named zone does (`TZ` can
+/// change within the process lifetime, and `/etc/localtime` can be
+/// repointed), so caching here would pin a stale offset with no
+/// invalidation signal.
 pub fn resolve_local(wall: i64) -> Result<i64, JsString> {
     let bytes = system_tzif().ok_or_else(|| JsString::from(
         "NODE22_DATE_LOCAL_SYSTEM_TZIF_UNSUPPORTED: no readable safe system TZif establishes the offset for this valid local date."
@@ -346,7 +351,13 @@ fn parse_offset_timezone(value: &str) -> Option<i32> {
     } else if body.len() == 2 {
         (body, "0")
     } else if body.len() == 4 {
-        (&body[..2], &body[2..])
+        // #2314 review r2 boundary#1 (P0): `&body[..2]` panics when byte 2
+        // falls inside a multi-byte character — `+中a` / `+€a` / `+😀` are
+        // four-byte bodies with no char boundary at 2, and the timezone is a
+        // model-controllable free string on the get_current_time tool lane.
+        // `str::get` returns `None` there instead, so admission degrades to
+        // the invalid-timezone error rather than a panic.
+        (body.get(..2)?, body.get(2..)?)
     } else {
         return None;
     };
