@@ -58,7 +58,11 @@ pub(crate) fn decrypt_weixin_media_if_needed(
     }
     let Some(media_owner) = media_owner else {
         if image {
-            return Err(failure("Weixin image decrypt failed").message.into());
+            return Err(
+                failure(&format!("微信图片解密后仍不是可识别图片（{} ）", summarize_weixin_media_key_shape(None)))
+                    .message
+                    .into(),
+            );
         }
         return Ok(buffer.to_vec());
     };
@@ -70,9 +74,86 @@ pub(crate) fn decrypt_weixin_media_if_needed(
         }
     }
     if image {
-        return Err(failure("Weixin image decrypt failed").message.into());
+        let key_diag = summarize_weixin_media_key_shape(Some(media_owner));
+        let candidate_diag = summarize_weixin_decrypt_candidates(buffer, Some(media_owner));
+        return Err(
+            failure(&format!(
+                "微信图片解密后仍不是可识别图片（{key_diag} {candidate_diag}）"
+            ))
+            .message
+            .into(),
+        );
     }
     Ok(buffer.to_vec())
+}
+
+pub(crate) fn summarize_weixin_media_key_shape(media_owner: Option<&Value>) -> String {
+    let Some(media_owner) = media_owner else {
+        return "keyShape=none".into();
+    };
+    let media = media_owner.get("media");
+    let owner_aes = read_string(media_owner.get("aeskey"));
+    let media_aes = media.and_then(|media| read_string(media.get("aes_key")));
+    let owner_len = owner_aes.as_ref().map(|v| v.len()).unwrap_or(0);
+    let owner_hex = owner_aes
+        .as_ref()
+        .is_some_and(|v| v.chars().all(|ch| ch.is_ascii_hexdigit()));
+    let media_len = media_aes.as_ref().map(|v| v.len()).unwrap_or(0);
+    let media_decoded = media_aes.as_ref().map(|v| safe_base64_decoded_length(v));
+    let decoded_part = match media_decoded {
+        Some(Some(len)) => len.to_string(),
+        Some(None) => "err".into(),
+        None => "0".into(),
+    };
+    format!(
+        "keyShape=ownerAesKeyLen={owner_len},ownerAesKeyHex={owner_hex},mediaAesKeyLen={media_len},mediaAesKeyDecodedLen={decoded_part}"
+    )
+}
+
+pub(crate) fn summarize_weixin_decrypt_candidates(
+    buffer: &[u8],
+    media_owner: Option<&Value>,
+) -> String {
+    let Some(media_owner) = media_owner else {
+        return "candidates=[]".into();
+    };
+    let mut summaries = Vec::new();
+    let mut index = 0usize;
+    for key in extract_weixin_media_keys(media_owner) {
+        let algorithm = match key.len() {
+            16 => "aes-128",
+            24 => "aes-192",
+            32 => "aes-256",
+            other => {
+                summaries.push(format!("{index}:aes-{other}:len=0:head=:image=false"));
+                index += 1;
+                continue;
+            }
+        };
+        for candidate in try_decrypt_weixin_media(buffer, &key) {
+            let head = candidate
+                .iter()
+                .take(8)
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            summaries.push(format!(
+                "{}:{}:len={}:head={head}:image={}",
+                index,
+                algorithm,
+                candidate.len(),
+                is_known_image_buffer(&candidate)
+            ));
+            index += 1;
+        }
+    }
+    format!("candidates=[{}]", summaries.join(";"))
+}
+
+fn safe_base64_decoded_length(value: &str) -> Option<usize> {
+    base64::engine::general_purpose::STANDARD
+        .decode(value)
+        .ok()
+        .map(|decoded| decoded.len())
 }
 
 pub(crate) fn aes_ecb_padded_size(plaintext_size: usize) -> usize {
@@ -319,7 +400,10 @@ mod tests {
     fn image_decrypt_failure_returns_err() {
         let buffer = b"not-an-image";
         let owner = serde_json::json!({ "aeskey": "00112233445566778899aabbccddeeff" });
-        assert!(decrypt_weixin_media_if_needed(buffer, Some(&owner), true).is_err());
+        let err = decrypt_weixin_media_if_needed(buffer, Some(&owner), true).unwrap_err();
+        assert!(err.contains("微信图片解密后仍不是可识别图片（"));
+        assert!(err.contains("keyShape="));
+        assert!(err.contains("candidates="));
     }
 
     #[test]

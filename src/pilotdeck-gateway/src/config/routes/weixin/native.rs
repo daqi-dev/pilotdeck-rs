@@ -11,7 +11,10 @@ use crate::config::routes::Result;
 use serde_json::{Value, json};
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::{sync::Mutex, task::JoinHandle, time::Instant};
+mod inbound;
 mod live;
+
+pub(crate) use inbound::{weixin_inbound_text, weixin_inbound_text_and_attachments};
 /// Channel-owned context tokens used by scheduled-result delivery. Credentials
 /// stay in the installed storage owner and are never passed through cron data.
 pub struct WeixinDelivery {
@@ -100,24 +103,36 @@ impl WeixinDelivery {
         let chats: Vec<String> = self
             .pending_replies
             .lock()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .keys()
             .cloned()
             .collect();
         for chat in chats {
             loop {
                 let text = {
-                    let pending = self.pending_replies.lock().unwrap();
+                    let pending = self
+                        .pending_replies
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
                     pending
                         .get(&chat)
                         .and_then(|replies| replies.first())
                         .cloned()
                 };
                 let Some(text) = text else {
-                    self.pending_replies.lock().unwrap().remove(&chat);
+                    self.pending_replies
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .remove(&chat);
                     break;
                 };
-                let Some(context) = self.contexts.lock().unwrap().get(&chat).cloned() else {
+                let Some(context) = self
+                    .contexts
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .get(&chat)
+                    .cloned()
+                else {
                     break;
                 };
                 let Some(current) = self
@@ -140,7 +155,10 @@ impl WeixinDelivery {
                 .await
                 {
                     Ok(()) => {
-                        let mut pending = self.pending_replies.lock().unwrap();
+                        let mut pending = self
+                            .pending_replies
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
                         if let Some(replies) = pending.get_mut(&chat) {
                             if replies.first().is_some_and(|head| head == &text) {
                                 replies.remove(0);
@@ -747,173 +765,13 @@ fn is_high_surrogate(unit: u16) -> bool {
     (0xD800..=0xDBFF).contains(&unit)
 }
 
-fn weixin_inbound_message_type(message: &Value) -> bool {
-    message.get("message_type").and_then(Value::as_i64) == Some(1)
-}
-
-const WEIXIN_IMAGE_MISSING_URL_DIAGNOSTIC: &str =
-    "微信图片附件缺少下载 URL，已跳过。调试信息：image_item 中未找到 url/cdn_url/media.full_url。";
-const WEIXIN_VIDEO_SKIPPED_DIAGNOSTIC: &str = "微信视频附件暂未接入内容理解，已跳过。";
-
-fn weixin_file_missing_url_diagnostic(media_owner: &Value) -> String {
-    let name = media_owner
-        .get("file_name")
-        .or_else(|| media_owner.get("filename"))
-        .and_then(Value::as_str)
-        .unwrap_or("(unknown)");
-    format!(
-        "微信文件 {name} 缺少下载 URL，已跳过。调试信息：file_item 中未找到 url/cdn_url/media.full_url。"
-    )
-}
-
-fn push_weixin_attachment(attachments: &mut Vec<Value>, kind: &str, media_owner: &Value) -> Option<String> {
-    let name = media_owner
-        .get("file_name")
-        .or_else(|| media_owner.get("filename"))
-        .and_then(Value::as_str)
-        .unwrap_or(if kind == "image" { "image" } else { "file" });
-    let mut attachment = json!({
-        "type": kind,
-        "name": name,
-    });
-    let Some(url) = super::media::weixin_media_download_url(media_owner) else {
-        return Some(if kind == "image" {
-            WEIXIN_IMAGE_MISSING_URL_DIAGNOSTIC.into()
-        } else {
-            weixin_file_missing_url_diagnostic(media_owner)
-        });
-    };
-    attachment["url"] = url.into();
-    let mut metadata = json!({ "weixinMediaOwner": media_owner.clone() });
-    if let Some(file_id) = media_owner
-        .get("file_id")
-        .or_else(|| media_owner.get("fileId"))
-        .and_then(Value::as_str)
-    {
-        metadata["fileId"] = file_id.into();
-    }
-    attachment["metadata"] = metadata;
-    attachments.push(attachment);
-    None
-}
-
-pub(crate) fn weixin_inbound_text_and_attachments(message: &Value) -> Option<(String, Vec<Value>)> {
-    if message.get("message_type").and_then(Value::as_i64)? != 1 {
-        return None;
-    }
-    let items = message.get("item_list")?.as_array()?;
-    let mut parts: Vec<String> = Vec::new();
-    let mut attachments = Vec::new();
-    let mut diagnostics = Vec::new();
-    for item in items {
-        match item.get("type").and_then(Value::as_i64) {
-            Some(1) => {
-                if let Some(text) = item
-                    .get("text_item")
-                    .and_then(|value| value.get("text"))
-                    .and_then(Value::as_str)
-                {
-                    parts.push(text.to_owned());
-                }
-            }
-            Some(2) => {
-                if let Some(image) = item.get("image_item") {
-                    if let Some(line) = push_weixin_attachment(&mut attachments, "image", image) {
-                        diagnostics.push(line);
-                    }
-                }
-            }
-            Some(3) => {
-                if let Some(file) = item.get("file_item") {
-                    if let Some(line) = push_weixin_attachment(&mut attachments, "file", file) {
-                        diagnostics.push(line);
-                    }
-                }
-            }
-            Some(4) => {
-                if let Some(voice) = item.get("voice_item").and_then(|v| v.get("text")).and_then(Value::as_str) {
-                    parts.push(format!("[微信语音转文字]\n{voice}"));
-                }
-            }
-            Some(5) => {
-                diagnostics.push(WEIXIN_VIDEO_SKIPPED_DIAGNOSTIC.into());
-            }
-            _ => {}
-        }
-    }
-    if !diagnostics.is_empty() {
-        parts.push(super::attachments::format_attachment_diagnostics_block(&diagnostics));
-    }
-    let text = crate::metadata::js_trim(&parts.join("\n")).to_owned();
-    if text.is_empty() && attachments.is_empty() {
-        return None;
-    }
-    Some((text, attachments))
-}
-
-fn weixin_inbound_text(message: &Value) -> Option<String> {
-    let mut parts = Vec::new();
-    for item in message.get("item_list")?.as_array()? {
-        if item.get("type").and_then(Value::as_i64) != Some(1) {
-            continue;
-        }
-        if let Some(text) = item
-            .get("text_item")
-            .and_then(|value| value.get("text"))
-            .and_then(Value::as_str)
-        {
-            parts.push(text);
-        }
-    }
-    (!parts.is_empty()).then(|| parts.join("\n"))
-}
-
 #[cfg(test)]
-mod inbound_tests {
-    use super::{weixin_inbound_message_type, weixin_inbound_text, weixin_text_chunks};
-    use serde_json::json;
-
-    #[test]
-    fn reads_item_list_text_item_text_like_ts() {
-        let message = json!({
-            "message_type": 1,
-            "from_user_id": "mock-user",
-            "context_token": "ctx",
-            "item_list": [{ "type": 1, "text_item": { "text": "/update check" } }]
-        });
-        assert_eq!(
-            weixin_inbound_text(&message).as_deref(),
-            Some("/update check")
-        );
-    }
-
-    #[test]
-    fn only_message_type_one_is_processed() {
-        assert!(!weixin_inbound_message_type(&json!({ "message_type": 2 })));
-        assert!(weixin_inbound_message_type(&json!({ "message_type": 1 })));
-    }
-
-    #[test]
-    fn collects_image_and_file_items_as_attachments() {
-        let (text, attachments) = super::weixin_inbound_text_and_attachments(&json!({
-            "message_type": 1,
-            "item_list": [
-                {"type": 1, "text_item": {"text": "see file"}},
-                {"type": 2, "image_item": {"file_name": "photo.png", "url": "https://cdn.example/photo.png"}},
-                {"type": 3, "file_item": {"file_name": "doc.pdf", "url": "https://cdn.example/doc.pdf"}}
-            ]
-        }))
-        .unwrap();
-        assert_eq!(text, "see file");
-        assert_eq!(attachments.len(), 2);
-        assert_eq!(attachments[0]["type"], "image");
-        assert_eq!(attachments[0]["name"], "photo.png");
-        assert_eq!(attachments[1]["type"], "file");
-    }
+mod delivery_tests {
+    use super::*;
 
     #[test]
     fn clear_pending_replies_matches_ts_reset() {
-        let delivery = super::super::WeixinDelivery {
+        let delivery = WeixinDelivery {
             storage: crate::config::routes::weixin::storage::Storage::new(std::env::temp_dir()),
             http: crate::config::routes::weixin::http::Http::new(),
             contexts: Default::default(),
@@ -924,60 +782,11 @@ mod inbound_tests {
         delivery.clear_pending_replies("chat");
         assert_eq!(delivery.test_pending_len("chat"), 0);
     }
+}
 
-    #[test]
-    fn cos_url_only_file_item_emits_diagnostics_like_ts() {
-        let (text, attachments) = super::weixin_inbound_text_and_attachments(&json!({
-            "message_type": 1,
-            "item_list": [
-                {"type": 3, "file_item": {
-                    "file_name": "doc.pdf",
-                    "cos_url": "https://cdn.example/doc.pdf",
-                    "file_id": "fid-1"
-                }}
-            ]
-        }))
-        .unwrap();
-        assert!(attachments.is_empty());
-        assert!(text.contains("[Attachment diagnostics]"));
-        assert!(text.contains("微信文件 doc.pdf 缺少下载 URL，已跳过"));
-    }
-
-    #[test]
-    fn prefers_cdn_url_and_keeps_media_owner_for_decrypt() {
-        let (_, attachments) = super::weixin_inbound_text_and_attachments(&json!({
-            "message_type": 1,
-            "item_list": [{
-                "type": 2,
-                "image_item": {
-                    "file_name": "photo.png",
-                    "cdn_url": "https://cdn.example/cdn.png",
-                    "url": "https://cdn.example/url.png",
-                    "aeskey": "0123456789abcdef0123456789abcdef"
-                }
-            }]
-        }))
-        .unwrap();
-        assert_eq!(attachments[0]["url"], "https://cdn.example/cdn.png");
-        assert_eq!(
-            attachments[0]["metadata"]["weixinMediaOwner"]["aeskey"],
-            "0123456789abcdef0123456789abcdef"
-        );
-    }
-
-    #[test]
-    fn chunks_by_utf16_code_units_not_bytes() {
-        let emoji = "😀";
-        assert_eq!(emoji.len(), 4);
-        assert_eq!(emoji.encode_utf16().count(), 2);
-        let body = "x".repeat(2000) + emoji;
-        let chunks = weixin_text_chunks(&body);
-        assert_eq!(chunks.len(), 2);
-        assert_eq!(chunks[0].encode_utf16().count(), 2000);
-        assert_eq!(chunks[1], emoji);
-        assert!(!chunks[0].contains('\u{FFFD}'));
-        assert!(!chunks[1].contains('\u{FFFD}'));
-    }
+#[cfg(test)]
+mod chunk_tests {
+    use super::weixin_text_chunks;
 
     #[test]
     fn chunks_do_not_split_utf16_surrogate_pairs() {
@@ -989,6 +798,7 @@ mod inbound_tests {
         assert!(chunks.iter().all(|chunk| !chunk.contains('\u{FFFD}')));
     }
 }
+
 #[cfg(test)]
 fn collect_reply(events: &[Value]) -> String {
     let mut text = String::new();

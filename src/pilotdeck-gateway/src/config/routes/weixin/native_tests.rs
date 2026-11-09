@@ -592,14 +592,10 @@ async fn production_live_outbox_retries_failed_send_without_new_session_or_secon
         Http::new(),
         gateway.clone(),
         ChannelSessionState::default(),
-        delivery,
+        delivery.clone(),
     ));
-    assert!(
-        owner
-            .process_batch(&credentials, batch.clone())
-            .await
-            .is_err()
-    );
+    owner.process_batch(&credentials, batch.clone()).await.unwrap();
+    assert_eq!(delivery.test_pending_len("chat"), 1);
     let first_session = storage.load_mapper().unwrap()["activeByChatId"]["chat"].clone();
     owner.process_batch(&credentials, batch).await.unwrap();
     assert_eq!(gateway.turns.load(Ordering::SeqCst), 1);
@@ -1084,6 +1080,42 @@ async fn attachment_fallback_without_context_is_queued_not_err() {
     );
     assert_eq!(delivery.test_pending_len("chat"), 1);
     assert!(server.requests.lock().unwrap().is_empty());
+}
+
+/// TS `WeixinChannel.ts:731` + `ImPermissionHelper.ts:99-102` — permission send without queue.
+#[tokio::test]
+async fn permission_prompt_send_failure_sets_prompt_retry_not_queue() {
+    let server = server(true).await;
+    let (storage, credentials, batch) = setup(&server.base, json!([message("start")]));
+    let gateway = Arc::new(InteractiveGateway {
+        requested: Default::default(),
+        answered: Default::default(),
+        requests: Default::default(),
+        elicitation: false,
+    });
+    let delivery = NativeWeixinFactory::new(storage.home.clone(), Some(server.base.clone()))
+        .unwrap()
+        .delivery();
+    let owner = Arc::new(live::LiveOwner::new(
+        storage.clone(),
+        Http::new(),
+        gateway.clone(),
+        ChannelSessionState::default(),
+        delivery.clone(),
+    ));
+    let turn = {
+        let owner = owner.clone();
+        let credentials = credentials.clone();
+        tokio::spawn(async move { owner.process_batch(&credentials, batch).await })
+    };
+    gateway.requested.notified().await;
+    assert_eq!(delivery.test_pending_len("chat"), 0);
+    owner
+        .process_batch(&credentials, second_batch(&storage, "1"))
+        .await
+        .unwrap();
+    assert!(gateway.requests.lock().unwrap().is_empty());
+    turn.abort();
 }
 
 #[tokio::test]

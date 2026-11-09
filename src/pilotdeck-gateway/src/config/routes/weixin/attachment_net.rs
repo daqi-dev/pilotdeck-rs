@@ -197,6 +197,10 @@ fn http_authority(url: &Url) -> String {
     }
 }
 
+fn purge_expired_dns(cache: &mut std::collections::HashMap<String, (IpAddr, Instant)>) {
+    cache.retain(|_, (_, saved)| saved.elapsed() < DNS_CACHE_TTL);
+}
+
 async fn pin_for_host(host: &str) -> Result<IpAddr> {
     if let Ok(ip) = host.parse::<IpAddr>() {
         return Ok(ip);
@@ -205,6 +209,7 @@ async fn pin_for_host(host: &str) -> Result<IpAddr> {
         let mut cache = dns_cache()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        purge_expired_dns(&mut cache);
         if let Some((ip, saved)) = cache.get(host) {
             if saved.elapsed() < DNS_CACHE_TTL {
                 return Ok(*ip);
@@ -376,8 +381,16 @@ fn pool_store(key: PoolKey, sender: HttpSender) {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     pool.retain(|(_, _, idle_since)| idle_since.elapsed() < POOL_IDLE_TIMEOUT);
-    if pool.len() >= MAX_IDLE_CONNECTIONS {
-        return;
+    while pool.len() >= MAX_IDLE_CONNECTIONS {
+        let evict = pool
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, (_, _, idle_since))| *idle_since)
+            .map(|(index, _)| index);
+        let Some(index) = evict else {
+            return;
+        };
+        pool.swap_remove(index);
     }
     pool.push((key, sender, Instant::now()));
 }
@@ -538,6 +551,8 @@ async fn pinned_exchange(
 mod tests {
     use super::*;
     use std::net::{IpAddr, Ipv4Addr};
+    use std::sync::{Arc, Mutex};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
     fn blocks_ipv4_compatible_and_fec0() {
@@ -560,5 +575,41 @@ mod tests {
             authority_for_url("https://cdn.example/path").unwrap(),
             "cdn.example"
         );
+    }
+
+    #[tokio::test]
+    async fn pinned_get_sends_http_host_matching_authority() {
+        let _lock = test_settings_lock();
+        set_test_permit_loopback_fetch(true);
+        let captured = Arc::new(Mutex::new(String::new()));
+        let seen = captured.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = format!("http://{addr}/body.bin");
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = Vec::new();
+            let mut buf = [0u8; 2048];
+            loop {
+                let n = socket.read(&mut buf).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                bytes.extend_from_slice(&buf[..n]);
+                if bytes.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            *seen.lock().unwrap() = String::from_utf8_lossy(&bytes).into_owned();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nhi\n")
+                .await
+                .unwrap();
+        });
+        let body = pinned_get(&url, 64).await.unwrap();
+        assert_eq!(body, b"hi\n");
+        let header = captured.lock().unwrap().clone();
+        assert!(header.to_lowercase().contains(&format!("host: {addr}")));
+        set_test_permit_loopback_fetch(false);
     }
 }

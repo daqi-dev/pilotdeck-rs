@@ -111,22 +111,38 @@ impl LiveOwner {
         let start = receipt["sentIndex"].as_u64().unwrap_or(0) as usize;
         for (index, text) in outbox.iter().enumerate().skip(start) {
             let context = self.chat(chat).lock().await.context.clone();
-            send_reply(
+            let body = text.as_str().unwrap_or("");
+            match super::send_reply(
                 &self.storage,
                 &self.http,
                 credentials,
                 chat,
                 context.as_deref(),
-                text.as_str().unwrap_or(""),
+                body,
             )
-            .await?;
-            receipt["sentIndex"] = json!(index + 1);
-            self.save_receipt(path, receipt)?;
+            .await
+            {
+                Ok(()) => {
+                    receipt["sentIndex"] = json!(index + 1);
+                    self.save_receipt(path, receipt)?;
+                }
+                Err(error) => {
+                    self.delivery.queue_pending_reply(chat, body);
+                    eprintln!("weixin: outbox reply queued after failure: {}", error.message);
+                    return Ok(());
+                }
+            }
         }
         receipt["complete"] = true.into();
         self.save_receipt(path, receipt)
     }
-    async fn reply(&self, credentials: &Value, chat: &str, text: &str) -> Result<()> {
+    async fn reply(
+        &self,
+        credentials: &Value,
+        chat: &str,
+        text: &str,
+        queue_on_failure: bool,
+    ) -> Result<()> {
         let context = self.chat(chat).lock().await.context.clone();
         super::send_reply_with_queue(
             &self.storage,
@@ -136,7 +152,7 @@ impl LiveOwner {
             chat,
             context.as_deref(),
             text,
-            true,
+            queue_on_failure,
         )
         .await
     }
@@ -464,9 +480,19 @@ impl LiveOwner {
             drop(state);
             if let Some(prompt) = retry {
                 let result = self
-                    .reply(credentials, chat_id, "上一条权限提示发送失败，正在重试。")
+                    .reply(
+                        credentials,
+                        chat_id,
+                        "上一条权限提示发送失败，正在重试。",
+                        false,
+                    )
                     .await;
-                if result.is_ok() && self.reply(credentials, chat_id, &prompt).await.is_ok() {
+                if result.is_ok()
+                    && self
+                        .reply(credentials, chat_id, &prompt, false)
+                        .await
+                        .is_ok()
+                {
                     let mut state = chat.lock().await;
                     if state.generation == generation {
                         state.finish_answer();
@@ -486,6 +512,7 @@ impl LiveOwner {
                     } else {
                         "权限决定处理中，请稍候。"
                     },
+                    false,
                 )
                 .await?;
             }
@@ -501,7 +528,7 @@ impl LiveOwner {
                 )
                 .await?;
             if input == "0" {
-                self.reply(credentials, chat_id, "已取消。").await?;
+                self.reply(credentials, chat_id, "已取消。", false).await?;
             }
             return Ok(true);
         }
@@ -514,6 +541,7 @@ impl LiveOwner {
                 credentials,
                 chat_id,
                 "请回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。",
+                false,
             )
             .await?;
             return Ok(true);
@@ -561,6 +589,7 @@ impl LiveOwner {
                         _ => "已允许一次，继续执行。",
                     }
                 },
+                false,
             )
             .await;
         if confirmation.is_err() {
@@ -577,7 +606,7 @@ impl LiveOwner {
             return Ok(true);
         }
         if let Some(next) = next {
-            if let Err(error) = self.reply(credentials, chat_id, &next).await {
+            if let Err(error) = self.reply(credentials, chat_id, &next, false).await {
                 let mut state = chat.lock().await;
                 if state.generation == generation {
                     state.prompt_retry = Some(next);
@@ -696,7 +725,7 @@ impl ChannelEventSink for LiveSink<'_> {
                         super::super::attachments::format_attachment_fallback(&attachment);
                     if self
                         .owner
-                        .reply(self.credentials, self.chat, &fallback)
+                        .reply(self.credentials, self.chat, &fallback, true)
                         .await
                         .is_err()
                     {
@@ -711,7 +740,12 @@ impl ChannelEventSink for LiveSink<'_> {
             };
             drop(state);
             if let Some(prompt) = prompt {
-                let result = self.owner.reply(self.credentials, self.chat, &prompt).await;
+                let queue_on_failure = event["type"] != "permission_request"
+                    && event["type"] != "elicitation_request";
+                let result = self
+                    .owner
+                    .reply(self.credentials, self.chat, &prompt, queue_on_failure)
+                    .await;
                 if event["type"] == "permission_request" {
                     let mut state = chat.lock().await;
                     if state.generation == self.generation {
