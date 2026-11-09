@@ -369,4 +369,68 @@ mod zone_cache_tests {
             "#2314 tool failure re-probe: a failed zone must be re-probed, never memoized as a permanent failure"
         );
     }
+
+    /// #2314 review r2 boundary#1 (P0): a model-supplied offset spelling
+    /// whose bytes have no char boundary at 2 (`+中a` / `+€a` / `+😀` — all
+    /// four-byte bodies) once panicked the admission parser's byte slicing;
+    /// the tool lane must report its invalid-timezone error instead.
+    #[test]
+    fn tool_rejects_multibyte_offset_spellings_without_panicking() {
+        let cache = Arc::new(CronZoneResolverCache::new());
+        let tool = GetCurrentTimeTool::with_zone_cache(Arc::clone(&cache));
+        for label in ["+中a", "+€a", "+😀"] {
+            let error = run_tool(&tool, label).err().unwrap_or_else(|| {
+                panic!("#2314 tool multibyte offset: {label} must fail admission")
+            });
+            assert_eq!(
+                error.message,
+                JsString::from(format!("Invalid timezone: {label}")),
+                "#2314 tool multibyte offset: the error must carry the offending spelling"
+            );
+        }
+    }
+
+    /// #2314 review r2 boundary#2 (P2): the empty / missing / non-string
+    /// `timezone` inputs fall back to `host_timezone`, which admits the
+    /// host zone through the same cache — a path the other tests never
+    /// touch (they all pass an explicit timezone). Two calls must both
+    /// succeed, echo a non-empty host zone, and the second call must add no
+    /// parse (cache hit on the same host zone).
+    #[test]
+    fn tool_empty_timezone_falls_back_to_the_host_zone_through_the_cache() {
+        let cache = Arc::new(CronZoneResolverCache::new());
+        let tool = GetCurrentTimeTool::with_zone_cache(Arc::clone(&cache));
+        let timezone_of = |output: &ToolOutput| {
+            output
+                .data
+                .as_ref()
+                .and_then(JsValue::as_object)
+                .expect("#2314 tool empty zone: output must carry a data object")
+                .get("timezone")
+                .and_then(JsValue::as_string)
+                .expect("#2314 tool empty zone: output must carry its timezone")
+                .to_utf8()
+                .expect("#2314 tool empty zone: timezone must be utf-8")
+        };
+        let first = run_tool(&tool, "")
+            .expect("#2314 tool empty zone: the first call must resolve the host zone");
+        let after_first = cache.parse_count();
+        let second = run_tool(&tool, "")
+            .expect("#2314 tool empty zone: the second call must resolve the host zone");
+        let first_zone = timezone_of(&first);
+        assert_ne!(
+            first_zone, "",
+            "#2314 tool empty zone: the host zone echo must be non-empty"
+        );
+        assert_eq!(
+            first_zone,
+            timezone_of(&second),
+            "#2314 tool empty zone: both calls must agree on the host zone"
+        );
+        assert_eq!(
+            cache.parse_count(),
+            after_first,
+            "#2314 tool empty zone: the second call must only hit the cache"
+        );
+    }
 }

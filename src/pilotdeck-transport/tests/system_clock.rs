@@ -1232,3 +1232,38 @@ fn zone_read_above_the_1mib_cap_is_not_admitted() {
         "#360 a zone file above the 1 MiB cap must not be admitted (nor truncated)"
     );
 }
+
+#[test]
+fn offset_admission_rejects_multibyte_bodies_without_panicking() {
+    // #2314 review r2 boundary#1 (P0): the four-byte body branch once
+    // byte-sliced `&body[..2]`, which panics when byte 2 sits inside a
+    // multi-byte character (`+中a` / `+€a` / `+😀` — model-controllable free
+    // strings on the get_current_time tool lane). Admission must return the
+    // invalid-timezone error, never panic.
+    for tz in ["+中a", "+€a", "+😀"] {
+        let error = system_clock::ZonedPartsResolver::new(tz)
+            .err()
+            .unwrap_or_else(|| panic!("#2314 admission: {tz:?} must be rejected"));
+        assert_eq!(
+            error.to_utf8().unwrap().as_str(),
+            "Invalid time zone specified",
+            "#2314 admission: {tz:?} must be the invalid-timezone error, not a panic"
+        );
+    }
+    // The admitted offset spellings keep their meaning (epoch 0 → offset).
+    for (tz, offset) in [
+        ("+0530", 19_800_i32),
+        ("-0800", -28_800),
+        ("+05:30", 19_800),
+        ("-08:00", -28_800),
+        ("+05", 18_000),
+    ] {
+        let parts = system_clock::ZonedPartsResolver::new(tz)
+            .and_then(|resolver| resolver.parts_at(0))
+            .unwrap_or_else(|_| panic!("#2314 admission: {tz} must be admitted"));
+        assert_eq!(
+            parts.offset_seconds, offset,
+            "#2314 admission: {tz} must keep its offset"
+        );
+    }
+}
