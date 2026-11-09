@@ -35,7 +35,8 @@
 
 use super::{
     ApprovalFailure, ApprovalPendingStore, ResumeSource, StoreAuthority, StoreResumeCommand,
-    StoreResumeInput, StoreStatusInput, js_truthy, state_error, strict_equal_values as strict_equal,
+    StoreResumeInput, StoreStatusInput, js_truthy, state_error,
+    strict_equal_values as strict_equal,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{

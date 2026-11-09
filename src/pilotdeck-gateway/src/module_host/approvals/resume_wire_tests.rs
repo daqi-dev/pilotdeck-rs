@@ -40,7 +40,10 @@ async fn forty_four_real_control_cases_preserve_resume_order_spread_and_receipts
     let mut steps = 0;
     for row in rows {
         let name = prop(row, "name").as_string().unwrap().to_utf8().unwrap();
-        if matches!(name.as_str(), "disabled-invalid" | "session-7" | "session-null" | "session-{}" | "session-[\"s1\"]") {
+        if matches!(
+            name.as_str(),
+            "disabled-invalid" | "session-7" | "session-null" | "session-{}" | "session-[\"s1\"]"
+        ) {
             continue;
         }
         count += 1;

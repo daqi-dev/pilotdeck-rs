@@ -630,7 +630,10 @@ mod tests {
         ]);
         let error = control.resume(&disabled_resume).await.unwrap_err();
         assert_eq!(error.code, Some("SOP_MODULE_DISABLED".into()));
-        assert_eq!(error.message, Some("The StaffDeck SOP module is not enabled for this project.".into()));
+        assert_eq!(
+            error.message,
+            Some("The StaffDeck SOP module is not enabled for this project.".into())
+        );
         let override_input =
             crate::metadata::object([("sessionKey", "s1".into()), ("authority", JsValue::Null)]);
         let error = control.resume(&override_input).await.unwrap_err();
@@ -982,7 +985,10 @@ mod tests {
             // PermissionDenied) to the original invalid-store code. The
             // approval boundary preserves that code while making it a 503.
             assert_eq!(denied.code, Some("PROJECT_BINDING_STORE_INVALID".into()));
-            assert_eq!(denied.message, Some("StaffDeck binding storage is invalid.".into()));
+            assert_eq!(
+                denied.message,
+                Some("StaffDeck binding storage is invalid.".into())
+            );
             println!("SOP_BINDING_PERMISSION_CASE=checked");
         } else {
             println!("SOP_BINDING_PERMISSION_CASE=unsupported-root");

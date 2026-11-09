@@ -2375,26 +2375,39 @@ mod native_refresh_cleanup_tests {
         for unpolled in [false, true] {
             let (_scratch, requests) = crate::native_process::management_tests::setup();
             let settings = crate::native_process::services::native_settings_for_process(
-                requests.owner.clone(), requests.project.clone(), &requests.options.home,
-                &requests.options.project, &requests.env,
-            ).expect("real settings stack");
+                requests.owner.clone(),
+                requests.project.clone(),
+                &requests.options.home,
+                &requests.options.project,
+                &requests.env,
+            )
+            .expect("real settings stack");
             let store = settings.store.clone();
             let weak = Arc::downgrade(&settings.bundle);
             assert_eq!(store.listener_count(), 1, "refresh attached");
             let cleanup = NativeRefreshCleanup(Arc::default());
             assert!(cleanup.0.set(settings.bundle.clone()).is_ok());
             drop(settings);
-            assert!(weak.upgrade().is_some(), "listener and cleanup own the bundle before detach");
+            assert!(
+                weak.upgrade().is_some(),
+                "listener and cleanup own the bundle before detach"
+            );
             if unpolled {
                 // Same ownership shape as a cleanup future dropped before its first poll.
-                let future = async move { cleanup.detach(); };
+                let future = async move {
+                    cleanup.detach();
+                };
                 drop(future);
             } else {
                 cleanup.detach();
                 cleanup.detach(); // explicit shutdown and Drop must be idempotent
                 drop(cleanup);
             }
-            assert_eq!(store.listener_count(), 0, "real ConfigStore listener removed");
+            assert_eq!(
+                store.listener_count(),
+                0,
+                "real ConfigStore listener removed"
+            );
             assert!(weak.upgrade().is_none(), "bundle and owner graph released");
             requests.owner.shutdown().await.unwrap();
             requests.project.dispose().await.unwrap();
