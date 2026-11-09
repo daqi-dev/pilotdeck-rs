@@ -188,16 +188,20 @@ async function partA() {
   await sleep(200);
   // #2662 fix-r3 三角色同撞：干净 FIN 只认 end(FIN/EOF)——allowHalfOpen 下裸 close
   // 事件只可能先经 error（RST 类异常拆链），把 close 算作「观测到 FIN」会让异常
-  // 拆链冒充机制 A 的前提。finObserved=false（含 error→close）时结论降级。
-  const finObserved = rawEvents.some((e) => e.event === "end(FIN/EOF)");
+  // 拆链冒充机制 A 的前提。fix-r4 boundary#1：FIN 判定须有 t0 下界（close() 之前
+  // 到达的 end——如服务端 keepAliveTimeout 自行收尾——不构成机制 A 的证据），
+  // 且每条观察按各自观测窗现算（观察 2 的写之前到达才算「已 FIN 连接上的写」）。
+  const sawCleanFin = (from, to = Infinity) =>
+    rawEvents.some((e) => e.event === "end(FIN/EOF)" && e.at >= from && e.at <= to);
+  const finObserved = sawCleanFin(t0);
   log("A/server-close-idle-keepalive", {
     eventsSoFar: rawEvents.map((e) => ({ ...e, relMs: e.at - t0 })),
     rawPremise,
     finObserved,
     note: rawPremise && finObserved
-      ? "机制 A：close() 主动关空闲 keep-alive（A14① 复核，裸层直接观测）"
+      ? "机制 A：close() 主动关空闲 keep-alive（A14① 复核，裸层直接观测；FIN 在 close() 之后、窗内到达）"
       : rawPremise
-        ? "未观测到干净 FIN（finObserved=false，含 error→close 异常拆链情形）：FIN 时刻结论降级，不得据此引用 A14"
+        ? "close() 之后未观测到干净 FIN（finObserved=false，含 error→close 异常拆链情形）：FIN 时刻结论降级，不得据此引用 A14"
         : "前提未成立（见 A/raw-keepalive-request1 的 headComplete/http11/connHeader 原值）：FIN 时刻不代表 server.close() 对空闲 keep-alive 的处置",
   });
 
@@ -213,16 +217,20 @@ async function partA() {
     write2.error = { code: e.code, message: e.message };
   }
   await sleep(1500);
+  // fix-r4 boundary#1：本条的「已 FIN」指写之前（且 close() 之后）到达的干净 FIN，
+  // 用写时刻上界现算，不复用观察 1 的布尔（FIN 落在 1.5s 观测窗内时与 note 自洽）。
+  const finBeforeWrite = sawCleanFin(t0, writeAt);
   log("A/raw-reuse-after-fin", {
     write2,
     rawPremise,
     finObserved,
+    finBeforeWrite,
     eventsAfterWrite: rawEvents.filter((e) => e.at >= writeAt).map((e) => ({ event: e.event, code: e.code, hadError: e.hadError })),
     socketStillOpen: !raw.sock.destroyed,
-    note: rawPremise && finObserved
+    note: rawPremise && finBeforeWrite
       ? "裸层复用（allowHalfOpen）：对已收 FIN 的 socket 写第二请求的观测（写本身是否报错、随后 RST/EOF/静默）"
       : rawPremise
-        ? "未观测到干净 FIN（finObserved=false，含 error→close 异常拆链情形）：本条按「未 FIN 连接上的写」记录，不作 close 后复用的证据"
+        ? `未观测到写前干净 FIN（finBeforeWrite=false${finObserved ? "，FIN 在写后才到达" : "，含 error→close 异常拆链情形"}）：本条按「未 FIN 连接上的写」记录，不作 close 后复用的证据`
         : "前提未成立（见 A/raw-keepalive-request1；成因以该记录 headComplete/http11/connHeader 为准，可能是响应头不完整/非 1.1/显式 close——不预设）：本条按现状记录，不作 close 后复用的证据",
   });
 
@@ -249,9 +257,9 @@ async function partA() {
     ? "agent 复用直测跳过（前提未成立，见 A/SKIP-agent-reuse）；fetch 新连接与 newTcpRefused 与入池无关，照常记录"
     : agentReuse.ok !== true && agentReuse.code === "ECONNREFUSED"
       ? "同 agent（close 前池化，见 A/agent-pooled-request1）复用直测：ECONNREFUSED 是 connect 相位错误（agent 丢弃已被服务端关闭的 socket 后重建连），非同 socket 报错"
-        + (rawPremise && finObserved
+        + (rawPremise && finBeforeWrite
           ? "；裸层复用对照为静默悬挂（写成功、无回包、无 RST，见 A/raw-reuse-after-fin）"
-          : "；裸层对照前提未成立或未观测到干净 FIN（见 A/raw-reuse-after-fin），不引用其结论")
+          : "；裸层对照前提未成立或写前未观测到干净 FIN（见 A/raw-reuse-after-fin），不引用其结论")
       : "agent 复用直测结果非预期形状（见 agentReuse 原值），不套用 ECONNREFUSED connect 相位解释";
   log("A/agent-reuse-after-close", {
     agentReuse,
