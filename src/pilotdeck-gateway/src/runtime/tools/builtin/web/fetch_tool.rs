@@ -99,14 +99,6 @@ impl WebFetchTool {
 }
 
 impl ToolDefinition for WebFetchTool {
-    fn check_permissions<'a>(
-        &'a self,
-        input: &'a JsValue,
-        context: &'a PermissionContext,
-    ) -> PermissionFuture<'a, Option<JsValue>> {
-        PermissionTool::check_permissions(self, input, context)
-    }
-
     fn fields(&self) -> &JsObject {
         &self.fields
     }
@@ -115,6 +107,13 @@ impl ToolDefinition for WebFetchTool {
     }
     fn is_concurrency_safe(&self, _input: &JsValue) -> Result<JsValue, HostError> {
         Ok(JsValue::Bool(true))
+    }
+    fn check_permissions<'a>(
+        &'a self,
+        _input: &'a JsValue,
+        _context: &'a PermissionContext,
+    ) -> PermissionFuture<'a, Option<JsValue>> {
+        Box::pin(async { Ok(Some(web_fetch_permission())) })
     }
 }
 
@@ -419,9 +418,7 @@ async fn execute(
                 ])),
             ));
         }
-        // TS `webFetch.ts:316-320` wraps only the message; `name` stays on the
-        // thrown error and is not part of the tool error details.
-        Err(FetchError::Other { message, .. }) => {
+        Err(FetchError::Other(message)) => {
             return Err(tool_error(
                 "tool_execution_failed",
                 concat("web_fetch failed: ", &message),

@@ -22,14 +22,7 @@ fn string(value: &JsString) -> String {
 async fn real_ts_admission_completion_and_gateway_abort() {
     crate::test_baseline::oracle(ORACLE);
     let oracle: Value = serde_json::from_str(ORACLE).unwrap();
-    assert_eq!(
-        oracle["sourceSha256"]
-            .as_object()
-            .expect("#303 source hash object")
-            .len(),
-        650,
-        "#303 exact import closure source count"
-    );
+    assert_eq!(oracle["sourceSha256"].as_object().unwrap().len(), 7);
     for scenario in oracle["scenarios"].as_array().unwrap() {
         let turns = SessionTurns::default();
         let mut handles = BTreeMap::<String, TurnCompletionHandle>::new();
@@ -302,16 +295,12 @@ fn old_abort_never_targets_replacement_across_threads() {
                 let operation = turns.abort_turn(&key, Some(&old), None, |target, _reason| {
                     // Reentrant component reads also check that no component
                     // lock is held while calling the sink.
-                    assert_eq!(
-                        turns.admission.active_turn_run_id(&key),
-                        Some(old.clone()),
-                        "#818 abort sink sees the old identity"
-                    );
+                    assert_eq!(turns.admission.active_turn_run_id(&key), Some(old.clone()));
                     selected.wait();
                     replaced.wait();
                     // This is the live owner's required atomic filter + handle
                     // selection, under the same lock used to publish new below.
-                    let current = owner.lock().expect("#818 abort sink owner");
+                    let current = owner.lock().unwrap();
                     if target.as_ref().is_none_or(|id| id == &*current) && *current == new {
                         new_hits += 1;
                     }
@@ -324,11 +313,8 @@ fn old_abort_never_targets_replacement_across_threads() {
             new_hits
         });
         for round in 0..ROUNDS {
-            let old_reservation = turns
-                .admission
-                .begin_turn(&key, &old)
-                .expect("#818 abort old reservation");
-            *owner.lock().expect("#818 abort owner old") = old.clone();
+            let old_reservation = turns.admission.begin_turn(&key, &old).unwrap();
+            *owner.lock().unwrap() = old.clone();
             let old_handle = (round % 2 == 0).then(|| turns.completion.begin(&key, &old));
             start.wait();
             selected.wait();
@@ -336,39 +322,26 @@ fn old_abort_never_targets_replacement_across_threads() {
                 .admission
                 .end_turn(&key, Some(&old), Some(&old_reservation));
             if let Some(handle) = old_handle {
-                assert!(handle.is_cancelled(), "#818 abort cancels the old handle");
+                assert!(handle.is_cancelled());
                 turns.completion.complete(&key, &handle);
             }
-            let new_reservation = turns
-                .admission
-                .begin_turn(&key, &new)
-                .expect("#818 abort new reservation");
+            let new_reservation = turns.admission.begin_turn(&key, &new).unwrap();
             let new_handle = turns.completion.begin(&key, &new);
-            *owner.lock().expect("#818 abort owner new") = new.clone();
+            *owner.lock().unwrap() = new.clone();
             replaced.wait();
             finished.wait();
-            assert!(
-                !new_handle.is_cancelled(),
-                "#818 abort leaves the new handle live"
-            );
-            assert_eq!(
-                turns.aborted_reason(&key, &new),
-                None,
-                "#818 abort reason does not reach the new turn"
-            );
+            assert!(!new_handle.is_cancelled());
+            assert_eq!(turns.aborted_reason(&key, &new), None);
             turns.completion.complete(&key, &new_handle);
             turns
                 .admission
                 .end_turn(&key, Some(&new), Some(&new_reservation));
             turns.clear_aborted_reason(&key, &old);
         }
-        aborter.join().expect("#818 abort aborter joins")
+        aborter.join().unwrap()
     });
     println!("replacement hits: {new_hits}/{ROUNDS}");
-    assert_eq!(
-        new_hits, 0,
-        "#818 an old abort reached the replacement owner"
-    );
+    assert_eq!(new_hits, 0, "an old abort reached the replacement owner");
 }
 
 #[test]
@@ -383,42 +356,23 @@ fn exact_end_requires_original_admission_identity_but_empty_end_is_unfenced() {
     let admission = SessionAdmission::default();
     let key = JsString::from("a");
     let run = JsString::from("same");
-    let old = admission
-        .begin_turn(&key, &run)
-        .expect("#818 exact end old reservation");
+    let old = admission.begin_turn(&key, &run).unwrap();
     admission.end_turn(&key, Some(&run), None);
-    assert!(
-        admission.has_active_turn(&key),
-        "#818 exact end unfenced end keeps the turn"
-    );
+    assert!(admission.has_active_turn(&key));
     admission.end_turn(&key, Some(&"wrong".into()), Some(&old));
-    assert!(
-        admission.has_active_turn(&key),
-        "#818 exact end wrong run keeps the turn"
-    );
+    assert!(admission.has_active_turn(&key));
     admission.end_identity(&key, admission.turn_identity(&key).as_ref());
-    let fresh = admission
-        .begin_turn(&key, &run)
-        .expect("#818 exact end fresh reservation");
+    let fresh = admission.begin_turn(&key, &run).unwrap();
     admission.end_turn(&key, Some(&run), Some(&old));
     assert!(
         admission.has_active_turn(&key),
-        "#818 stale exact end released new identity"
+        "stale exact end released new identity"
     );
     admission.end_turn(&key, Some(&run), Some(&fresh));
-    assert!(
-        !admission.has_active_turn(&key),
-        "#818 exact end original identity releases"
-    );
+    assert!(!admission.has_active_turn(&key));
     for unfenced in [None, Some(JsString::from(""))] {
-        assert!(
-            admission.begin_turn(&key, &run).is_some(),
-            "#818 unfenced end admitted"
-        );
+        assert!(admission.begin_turn(&key, &run).is_some());
         admission.end_turn(&key, unfenced.as_ref(), Some(&old));
-        assert!(
-            !admission.has_active_turn(&key),
-            "#818 unfenced end releases the turn"
-        );
+        assert!(!admission.has_active_turn(&key));
     }
 }

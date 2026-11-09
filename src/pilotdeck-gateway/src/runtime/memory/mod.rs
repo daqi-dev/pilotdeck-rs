@@ -11,6 +11,8 @@ use crate::runtime::project::{
 pub mod edgeclaw;
 pub mod gateway;
 pub mod maintenance;
+mod web_scheduler;
+pub use web_scheduler::{DefaultWebMemoryMaintenanceService, WebMemoryScheduler};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::BTreeMap,

@@ -587,10 +587,7 @@ impl LiveSession for SidecarSession {
             None => {
                 super::module_host::with_context_resources(self.context_resources.clone(), || {
                     super::module_host::with_mcp_owner(self.mcp_owner.clone(), || {
-                        super::module_host::build_registry(
-                            &registry_input,
-                            self.config.services.clone(),
-                        )
+                        super::module_host::build_registry(&registry_input, self.config.services.clone())
                     })
                 })
             }
@@ -1053,7 +1050,6 @@ impl LiveSession for SidecarSession {
         let config_lifecycle = self.config_change_lifecycle.clone();
         let file_lifecycle = self.file_changed_lifecycle.clone();
         let sdk_handlers = &self.sdk_handlers;
-        let embedded_worker = self.embedded_worker.clone();
         Box::pin(async move {
             if let Some(turn) = active {
                 turn.host_cancellation.cancel_synchronously();
@@ -1063,7 +1059,6 @@ impl LiveSession for SidecarSession {
                 let mut completion = turn.completion;
                 let _ = completion.wait_for(|done| *done).await;
             }
-            embedded_worker.shutdown().await;
             if let Some(owner) = mcp_owner {
                 owner.dispose().await?;
             }

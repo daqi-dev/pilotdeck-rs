@@ -1,5 +1,7 @@
-//! Streaming HTTP reverse proxy and upgrade coordination.
-use crate::{Body, HttpClient, ProxyError, acceptor, pairing, upstream};
+//! Native HTTP/WS upgrade coordination; historical proxy fixtures are test-only.
+use crate::{Body, HttpClient, acceptor};
+#[cfg(test)]
+use crate::{ProxyError, pairing, upstream};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{
@@ -9,19 +11,16 @@ use hyper_util::rt::TokioIo;
 use std::{
     convert::Infallible,
     pin::Pin,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
+    sync::{Arc, Mutex},
     task::{Context, Poll, Waker},
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::sync::watch;
 pub struct Proxy {
     pub upstream: String,
     pub client: HttpClient,
 }
 
+#[cfg(test)]
 impl Proxy {
     /// All accepted connections use the same synchronous upgrade read boundary.
     pub async fn serve_connection<S>(self: Arc<Self>, stream: S) -> Result<(), hyper::Error>
@@ -35,7 +34,7 @@ impl Proxy {
         .await
     }
 
-    async fn serve<S>(
+    pub(crate) async fn serve<S>(
         &self,
         request: Request<Incoming>,
         lease: Option<ReadLease>,
@@ -61,7 +60,7 @@ impl Proxy {
         // Node dispatches any Upgrade protocol only when Connection also has
         // an upgrade token, then handleUpgrade checks the pathname and key.
         if is_upgrade(&request) {
-            if request.uri().path() != "/ws" {
+            if !matches!(request.uri().path(), "/ws" | "/runtime/ws") {
                 // A service error makes Hyper close the socket without an HTTP
                 // response, matching TS's socket.destroy() upgrade rejection.
                 return Err(std::io::Error::other("upgrade endpoint not found"));
@@ -154,6 +153,102 @@ impl Proxy {
     }
 }
 
+#[cfg(not(test))]
+impl Proxy {
+    pub async fn serve_connection<S>(self: Arc<Self>, stream: S) -> Result<(), hyper::Error>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        match crate::LocalServer::new(self) {
+            Ok(server) => Arc::new(server).serve_connection(stream).await,
+            Err(_) => {
+                serve_connection_with(stream, |_, _| async {
+                    Ok(plain(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "gateway configuration unavailable",
+                    ))
+                })
+                .await
+            }
+        }
+    }
+}
+
+pub(crate) async fn serve_local_connection<S>(
+    server: Arc<crate::LocalServer>,
+    stream: S,
+) -> Result<(), hyper::Error>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    serve_connection_with(stream, move |mut request, lease| {
+        let server = server.clone();
+        let upgrade = if is_upgrade(&request) {
+            Some(if !matches!(request.uri().path(), "/ws" | "/runtime/ws") {
+                Err(std::io::Error::other("upgrade endpoint not found"))
+            } else if let Some(accept) = acceptor::websocket_accept(request.headers()) {
+                let fallback = (server.allow_upstream_fallback && request.uri().path() == "/ws")
+                    .then(|| crate::runtime::session::routes::passthrough::Upgrade {
+                        origin: server.proxy.upstream.clone(),
+                        path: request
+                            .uri()
+                            .path_and_query()
+                            .map_or("/ws", |p| p.as_str())
+                            .to_owned(),
+                        method: request.method().clone(),
+                        headers: request.headers().clone(),
+                        accept: accept.clone(),
+                    });
+                let upgraded = hyper::upgrade::on(&mut request);
+                let websocket_server = server.clone();
+                tokio::spawn(async move {
+                    let result = async {
+                        let parts = upgraded
+                            .await?
+                            .downcast::<TokioIo<UpgradeReadGate<S>>>()
+                            .map_err(|_| {
+                                std::io::Error::other("unexpected local upgrade IO type")
+                            })?;
+                        drop(parts.read_buf);
+                        drop(lease);
+                        websocket_server
+                            .run_websocket(parts.io.into_inner().stream, fallback)
+                            .await?;
+                        Ok::<_, crate::ProxyError>(())
+                    }
+                    .await;
+                    if let Err(error) = result {
+                        eprintln!("local WS: {error}");
+                    }
+                });
+                Ok(acceptor::websocket_response(
+                    hyper::HeaderMap::new(),
+                    &accept,
+                ))
+            } else {
+                Err(std::io::Error::other("missing websocket key"))
+            })
+        } else {
+            None
+        };
+        async move {
+            if let Some(response) = upgrade {
+                return response;
+            }
+            if crate::cron::http::handles(request.uri().path()) {
+                return Ok(crate::cron::http::serve(
+                    server.automation.as_deref(),
+                    &server.http.token,
+                    request,
+                )
+                .await);
+            }
+            Ok(crate::http::handle(request, &server.http).await)
+        }
+    })
+    .await
+}
+
 /// Node's upgrade head ends at the read that completed the HTTP headers.
 /// Hyper otherwise performs another read while the service awaits upstream 101.
 #[derive(Debug, Default)]
@@ -179,24 +274,9 @@ impl Drop for ReadLease {
     }
 }
 
-struct UpgradeReadGate<S> {
-    stream: S,
+pub(crate) struct UpgradeReadGate<S> {
+    pub(crate) stream: S,
     state: SharedReadState,
-    /// #1250: every successfully read byte is Node socket activity, so a
-    /// segment of the next request head pushes the idle deadline out
-    /// (`node-dribble-valid-segments.out`); without this the connection can
-    /// be closed by the previous response's deadline mid-arrival.
-    activity: watch::Sender<Option<tokio::time::Instant>>,
-    /// #1250 fix-r1: Node arms the keep-alive idle timer only once a
-    /// response has finished, so reads before the first request is served —
-    /// a first head arriving in segments — must not arm the 6 s deadline at
-    /// all (probe `node-first-head-segmented.out`: a first-head segment
-    /// followed by an 8 s gap stays open, the completed head is answered
-    /// `Connection: keep-alive`, and the socket stays reusable). The first
-    /// head is bounded by Node's `headersTimeout` instead (registered in the
-    /// ledger as A8.4-NATIVE-HTTP-002 family, out of scope here). This is
-    /// the same `served` flag the stop-close logic uses.
-    served: Arc<AtomicBool>,
 }
 impl<S: AsyncRead + Unpin> AsyncRead for UpgradeReadGate<S> {
     fn poll_read(
@@ -211,24 +291,7 @@ impl<S: AsyncRead + Unpin> AsyncRead for UpgradeReadGate<S> {
                 return Poll::Pending;
             }
         }
-        let filled = buf.filled().len();
-        match Pin::new(&mut self.stream).poll_read(cx, buf) {
-            Poll::Ready(Ok(())) => {
-                if buf.filled().len() > filled
-                    && !crate::mutants::on("native-http-read-refresh-off")
-                    // The pre-fix-r1 behavior the negative control kills:
-                    // refreshing on any read, so a first head's segments arm
-                    // the idle deadline and poison the socket.
-                    && (crate::mutants::on("native-http-unserved-read-arms-idle")
-                        || self.served.load(Ordering::Relaxed))
-                {
-                    self.activity
-                        .send_replace(Some(tokio::time::Instant::now()));
-                }
-                Poll::Ready(Ok(()))
-            }
-            other => other,
-        }
+        Pin::new(&mut self.stream).poll_read(cx, buf)
     }
 }
 impl<S: AsyncWrite + Unpin> AsyncWrite for UpgradeReadGate<S> {
@@ -267,141 +330,16 @@ where
     F: Fn(Request<Incoming>, Option<ReadLease>) -> Fut,
     Fut: std::future::Future<Output = Result<Response<Body>, std::io::Error>>,
 {
-    serve_connection_configured(stream, handler, false, None).await
-}
-
-/// Node v22.22.0's default `server.keepAliveTimeout` (the TS
-/// `GatewayServer` does not override it and advertises
-/// `Keep-Alive: timeout=5` — the bare value, not this deadline).
-const NODE_KEEP_ALIVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-/// Node v22.22.0's fixed `server.keepAliveTimeoutBuffer` default. Node arms
-/// the idle socket timeout with `keepAliveTimeout + keepAliveTimeoutBuffer`,
-/// so an idle keep-alive connection actually closes 6 s after its last
-/// activity (live TS server read back `keepAliveTimeout=5000`
-/// `keepAliveTimeoutBuffer=1000`; #1250 probes `node-keepalive-matrix.out`
-/// and `node-dribble-valid-segments.out`: the close lands at last activity +
-/// 6000 ms — a response's quiet +5749 ms, a follow-up head's last segment
-/// +6006 ms).
-const NODE_KEEP_ALIVE_TIMEOUT_BUFFER: std::time::Duration = std::time::Duration::from_secs(1);
-
-/// The native listener's connection serving. TS emits literal header cases
-/// (`Date`, `Connection` capitalized), so responses render Title-Case, and
-/// every native_http handler response sets `Date` explicitly, so the
-/// automatic date stays off: the bare parser-level 400s then match TS's
-/// undated ones. The byte-level transport diffs this leaves are registered
-/// in the gateway-parity diff ledger.
-///
-/// `stop` mirrors Node's `server.close()` semantics (probes
-/// `probe-fixr1.out` B, `probe-fixr2.out` D, `probe-fixr3-b.out` B1): a
-/// connection that is idle keep-alive at that instant is closed right away,
-/// while a connection with a request in flight — a parsed head still inside
-/// the handler or a response body still streaming, #1250 — or one that never
-/// sent bytes, including requests it sends only after the stop — is answered
-/// with the normal keep-alive response and never force-closed; such sockets
-/// close at their own 6 s keep-alive idle timeout (below).
-/// `graceful_shutdown` is hyper's equivalent for the idle-at-close case and
-/// is a no-op for an already-upgraded connection. A dropped sender means no
-/// stop signal, and the connection simply runs to its natural end.
-pub(crate) async fn serve_connection_native_with_shutdown<S, F, Fut>(
-    stream: S,
-    handler: F,
-    stop: watch::Receiver<bool>,
-) -> Result<(), hyper::Error>
-where
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    F: Fn(Request<Incoming>, Option<ReadLease>) -> Fut,
-    Fut: std::future::Future<Output = Result<Response<Body>, std::io::Error>>,
-{
-    serve_connection_configured(stream, handler, true, Some(stop)).await
-}
-
-/// Decrements the in-flight request count when the response future is done
-/// or dropped (hyper can cancel a service future when the connection goes
-/// away mid-request), so a stop never mistakes a torn-down request for an
-/// idle connection.
-struct InFlightRequest(Arc<AtomicUsize>);
-impl Drop for InFlightRequest {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::Relaxed);
-    }
-}
-
-/// #1250: a response body that keeps the request's in-flight slot held until
-/// the body has actually finished streaming, and arms the keep-alive idle
-/// deadline at that completion — Node's idle timer arms at the response
-/// `finish`, not at handler return, so a mid-body hold is never closed by a
-/// deadline armed at the head (probe `node-keepalive-matrix.out` cell S4a:
-/// head + one chunk on the wire, no writes for 8 s, the `socket TIMEOUT`
-/// event only fires after the body ends).
-struct IdleBody {
-    body: Body,
-    held: Option<(InFlightRequest, watch::Sender<Option<tokio::time::Instant>>)>,
-}
-impl IdleBody {
-    /// Releases the slot and re-arms the idle deadline at body completion.
-    /// Idempotent: the frame end and the drop can both reach it.
-    fn release(&mut self) {
-        if let Some((guard, activity)) = self.held.take() {
-            drop(guard);
-            activity.send_replace(Some(tokio::time::Instant::now()));
-        }
-    }
-}
-impl hyper::body::Body for IdleBody {
-    type Data = Bytes;
-    type Error = ProxyError;
-    fn poll_frame(
-        mut self: Pin<&mut Self>,
-        context: &mut Context<'_>,
-    ) -> Poll<Option<Result<hyper::body::Frame<Bytes>, ProxyError>>> {
-        let poll = Pin::new(&mut self.body).poll_frame(context);
-        if matches!(poll, Poll::Ready(None)) {
-            self.release();
-        }
-        poll
-    }
-    fn size_hint(&self) -> http_body::SizeHint {
-        // Wrapping must not hide the inner body's exact size (the
-        // parser-level 400/431 bodies are exact-0 and must stay unchunked).
-        self.body.size_hint()
-    }
-}
-impl Drop for IdleBody {
-    fn drop(&mut self) {
-        self.release();
-    }
-}
-
-async fn serve_connection_configured<S, F, Fut>(
-    stream: S,
-    handler: F,
-    native: bool,
-    stop: Option<watch::Receiver<bool>>,
-) -> Result<(), hyper::Error>
-where
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    F: Fn(Request<Incoming>, Option<ReadLease>) -> Fut,
-    Fut: std::future::Future<Output = Result<Response<Body>, std::io::Error>>,
-{
     let state = SharedReadState::default();
-    let served = Arc::new(AtomicBool::new(false));
-    let in_flight = Arc::new(AtomicUsize::new(0));
-    let (activity, mut activity_rx) = watch::channel(None::<tokio::time::Instant>);
     let stream = UpgradeReadGate {
         stream,
         state: state.clone(),
-        activity: activity.clone(),
-        served: served.clone(),
     };
-    let served_in_connection = served.clone();
-    let in_flight_in_connection = in_flight.clone();
-    let activity_in_connection = activity.clone();
     let service = service_fn(move |request| {
-        served_in_connection.store(true, Ordering::Relaxed);
         // This must run before returning a future: Hyper can poll read again
         // before it polls that future. Invalid upgrade requests close anyway.
         let lease = if is_upgrade(&request)
-            && request.uri().path() == "/ws"
+            && matches!(request.uri().path(), "/ws" | "/runtime/ws")
             && acceptor::websocket_accept(request.headers()).is_some()
         {
             state.lock().expect("upgrade read state").paused = true;
@@ -409,159 +347,15 @@ where
         } else {
             None
         };
-        activity_in_connection.send_replace(Some(tokio::time::Instant::now()));
-        in_flight_in_connection.fetch_add(1, Ordering::Relaxed);
-        let in_flight = InFlightRequest(in_flight_in_connection.clone());
-        let activity = activity_in_connection.clone();
-        let handler = handler(request, lease);
-        async move {
-            let result = handler.await;
-            match result {
-                Ok(response) => {
-                    // #1250: Node's keep-alive idle timer arms at the
-                    // response `finish`, not at handler return, so the
-                    // in-flight slot stays held until the body has actually
-                    // finished streaming (`node-keepalive-matrix.out` cell
-                    // S4a: an 8 s mid-body hold with no writes is not closed
-                    // by the idle deadline armed at the response head).
-                    let held = if crate::mutants::on("native-http-inflight-body-off") {
-                        // The pre-#1250 behavior the negative control
-                        // kills: release and re-arm at handler return.
-                        drop(in_flight);
-                        activity.send_replace(Some(tokio::time::Instant::now()));
-                        None
-                    } else {
-                        Some((in_flight, activity))
-                    };
-                    Ok(response.map(|body| IdleBody { body, held }.boxed()))
-                }
-                Err(error) => {
-                    drop(in_flight);
-                    Err(error)
-                }
-            }
-        }
+        handler(request, lease)
     });
-    let mut builder = http1::Builder::new();
-    if native {
-        builder.title_case_headers(true).auto_date_header(false);
-        if !crate::mutants::on("native-http-header-count-off") {
-            // Node v22.22.0 has no header-count limit: its binding constraint
-            // is the 16384-byte URL+header-names+values budget the router
-            // replicates (probe `probe-fixr3-c.out` C4: 16363 one-byte
-            // headers stay served, 16364 hits the byte budget), so a count
-            // cap of 16384 never binds before that budget; it only bounds
-            // hyper's per-parse smallvec allocation. hyper's default of 100
-            // would 431 requests TS serves.
-            if crate::mutants::on("native-http-header-cap-low") {
-                builder.max_headers(3000);
-            } else {
-                builder.max_headers(16384);
-            }
-        }
-    }
-    let connection = builder
+    http1::Builder::new()
         .serve_connection(TokioIo::new(stream), service)
-        .with_upgrades();
-    let Some(stop) = stop else {
-        return connection.await;
-    };
-    tokio::pin!(connection);
-    // Node's keep-alive idle close, in force with or without a stop: the
-    // deadline is the last activity — a request parse, a read segment of the
-    // next request head, or the completion of a response body — plus the
-    // effective `keepAliveTimeout + keepAliveTimeoutBuffer` (6 s), re-armed
-    // on every new activity. Before the first request is served no deadline
-    // exists at all (Node arms the timer only after a response finished;
-    // fix-r1 probes `node-first-head-segmented.out`), and while a request is
-    // in flight, which includes a response body still streaming, the timer
-    // never fires (Node's requestTimeout, not keepAliveTimeout, governs a
-    // busy socket), and the next activity update re-arms it.
-    let idle = async {
-        if crate::mutants::on("native-http-keep-alive-timeout-off") {
-            std::future::pending::<()>().await;
-        }
-        let buffer = if crate::mutants::on("native-http-idle-close-buffer-off") {
-            std::time::Duration::ZERO
-        } else if crate::mutants::on("native-http-idle-close-buffer-half") {
-            // The half-buffer mutant pins the fixed 1 s buffer: a 500 ms
-            // buffer closes at 5.5 s, inside the tightened (5.99, 6.09] test
-            // window's still-open probe.
-            std::time::Duration::from_millis(500)
-        } else {
-            NODE_KEEP_ALIVE_TIMEOUT_BUFFER
-        };
-        loop {
-            let deadline = activity_rx
-                .borrow_and_update()
-                .map(|at| at + NODE_KEEP_ALIVE_TIMEOUT + buffer);
-            let Some(deadline) = deadline else {
-                if activity_rx.changed().await.is_err() {
-                    std::future::pending::<()>().await;
-                }
-                continue;
-            };
-            tokio::select! {
-                _ = tokio::time::sleep_until(deadline) => {
-                    if in_flight.load(Ordering::Relaxed) > 0 {
-                        if activity_rx.changed().await.is_err() {
-                            std::future::pending::<()>().await;
-                        }
-                        continue;
-                    }
-                    return;
-                }
-                _ = activity_rx.changed() => {}
-            }
-        }
-    };
-    tokio::pin!(idle);
-    let mut stop = Some(stop);
-    loop {
-        tokio::select! {
-            result = &mut connection => return result,
-            changed = async {
-                match stop.as_mut() {
-                    Some(receiver) => receiver
-                        .wait_for(|stopped| *stopped)
-                        .await
-                        .map(|stopped| *stopped),
-                    None => std::future::pending::<
-                        Result<bool, tokio::sync::watch::error::RecvError>,
-                    >()
-                    .await,
-                }
-            } => {
-                if changed.is_err() {
-                    // The sender is dropped without a stop: no stop can ever
-                    // arrive, so only the idle close and the peer end this.
-                    stop = None;
-                    continue;
-                }
-                let idle_now = (served.load(Ordering::Relaxed)
-                    && (in_flight.load(Ordering::Relaxed) == 0
-                        || crate::mutants::on("native-http-inflight-close")))
-                    || crate::mutants::on("native-http-unserved-close");
-                if idle_now && !crate::mutants::on("native-http-idle-close-off") {
-                    connection.as_mut().graceful_shutdown();
-                }
-                // close() only destroys the connections that were idle at
-                // that instant; requests in flight — which includes a
-                // response body still streaming — and later requests are
-                // answered normally, and their sockets still end at the
-                // keep-alive idle close below, so the stop is consumed but
-                // the connection keeps being served.
-                stop = None;
-                continue;
-            }
-            _ = &mut idle => {
-                connection.as_mut().graceful_shutdown();
-                return connection.as_mut().await;
-            }
-        }
-    }
+        .with_upgrades()
+        .await
 }
 
+#[cfg(test)]
 async fn pair_upgraded<S, U>(
     downstream: hyper::upgrade::Upgraded,
     upstream: U,
@@ -569,13 +363,6 @@ async fn pair_upgraded<S, U>(
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     U: AsyncRead + AsyncWrite + Unpin,
-{
-    pairing::run(upgraded_stream::<S>(downstream)?, upstream).await
-}
-
-pub(crate) fn upgraded_stream<S>(downstream: hyper::upgrade::Upgraded) -> std::io::Result<S>
-where
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let parts = downstream
         .downcast::<TokioIo<UpgradeReadGate<S>>>()
@@ -585,7 +372,7 @@ where
     // with the HTTP headers, never a later read while waiting for upstream.
     // Upstream response read-ahead remains intact because it is TS output.
     drop(parts.read_buf);
-    Ok(parts.io.into_inner().stream)
+    pairing::run(parts.io.into_inner().stream, upstream, None).await
 }
 
 pub(crate) fn strip_hop_headers(headers: &mut hyper::HeaderMap) {
@@ -630,7 +417,6 @@ pub(crate) fn plain(status: StatusCode, message: &'static str) -> Response<Body>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_native_ws_sample::RFC6455_SAMPLE_NONCE;
     use hyper_util::{client::legacy::Client, rt::TokioExecutor};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -647,7 +433,7 @@ mod tests {
         }
         headers.insert(
             header::SEC_WEBSOCKET_KEY,
-            RFC6455_SAMPLE_NONCE.parse().unwrap(),
+            "dGhlIHNhbXBsZSBub25jZQ==".parse().unwrap(),
         );
         assert_eq!(
             acceptor::websocket_accept(&headers).as_deref(),

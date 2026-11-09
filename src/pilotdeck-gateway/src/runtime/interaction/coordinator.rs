@@ -12,6 +12,8 @@ pub struct InteractionOptions {
     /// the entire registry, like TS. Do not share it between independent owners.
     pub permission_grants: Option<Arc<GatewaySessionPermissionRuleSetRegistry>>,
     pub on_elicitation_delivered: Option<DeliveredObserver>,
+    pub permission_timeout: Option<std::time::Duration>,
+    pub elicitation_timeout: Option<std::time::Duration>,
 }
 pub struct PermissionDecision {
     pub request_id: JsString,
@@ -37,6 +39,8 @@ pub struct GatewayInteractionCoordinator {
     permission_bus: GatewayPermissionBus,
     permission_grants: Arc<GatewaySessionPermissionRuleSetRegistry>,
     on_delivered: Option<DeliveredObserver>,
+    permission_timeout: Option<std::time::Duration>,
+    elicitation_timeout: Option<std::time::Duration>,
 }
 impl Default for GatewayInteractionCoordinator {
     fn default() -> Self {
@@ -56,6 +60,8 @@ impl GatewayInteractionCoordinator {
             reconnect_port,
             permission_grants: options.permission_grants.unwrap_or_default(),
             on_delivered: options.on_elicitation_delivered,
+            permission_timeout: options.permission_timeout,
+            elicitation_timeout: options.elicitation_timeout,
         }
     }
     pub fn elicitation_bus(&self) -> &GatewayElicitationBus {
@@ -66,6 +72,12 @@ impl GatewayInteractionCoordinator {
     }
     pub fn reconnect_port(&self) -> &InteractionReconnectPort {
         &self.reconnect_port
+    }
+    pub fn permission_timeout(&self) -> Option<std::time::Duration> {
+        self.permission_timeout
+    }
+    pub fn elicitation_timeout(&self) -> Option<std::time::Duration> {
+        self.elicitation_timeout
     }
     pub fn get_binding(&self, owner: &JsString) -> Option<InteractionBinding> {
         self.reconnect_port.current_binding(owner)
@@ -126,7 +138,17 @@ impl GatewayInteractionCoordinator {
         answer: JsValue,
         binding: Option<&InteractionBinding>,
     ) -> bool {
-        let Some(entry) = self.elicitation_bus.consume(owner, request, binding) else {
+        let binding = binding.map(InteractionBinding::to_value);
+        self.respond_elicitation_wire(owner, request, answer, binding.as_ref())
+    }
+    pub(crate) fn respond_elicitation_wire(
+        &self,
+        owner: &JsString,
+        request: &JsString,
+        answer: JsValue,
+        binding: Option<&JsValue>,
+    ) -> bool {
+        let Some(entry) = self.elicitation_bus.consume_wire(owner, request, binding) else {
             return false;
         };
         (entry.resolve)(answer);
@@ -141,21 +163,36 @@ impl GatewayInteractionCoordinator {
         decision: PermissionDecision,
         binding: Option<&InteractionBinding>,
     ) -> bool {
-        let Some(entry) = self
-            .permission_bus
-            .consume(owner, &decision.request_id, binding)
-        else {
+        let request = decision.request_id.clone();
+        let binding = binding.map(InteractionBinding::to_value);
+        self.decide_permission_wire(owner, &request, decision.to_value(), binding.as_ref())
+    }
+    pub(crate) fn decide_permission_wire(
+        &self,
+        owner: &JsString,
+        request: &JsString,
+        decision: JsValue,
+        binding: Option<&JsValue>,
+    ) -> bool {
+        let Some(entry) = self.permission_bus.consume_wire(owner, request, binding) else {
             return false;
         };
-        (entry.resolve)(decision.to_value());
+        (entry.resolve)(decision);
         true
     }
     pub fn grant_session_permission(&self, owner: &JsString, entry: &JsString) -> JsValue {
+        self.grant_session_permission_wire(&JsValue::String(owner.clone()), entry)
+    }
+    pub(crate) fn grant_session_permission_wire(
+        &self,
+        owner: &JsValue,
+        entry: &JsString,
+    ) -> JsValue {
         let rule = entry_to_rule(entry);
         if rule.tool_name.is_empty() {
             return object([("granted", JsValue::Bool(false))]);
         }
-        self.permission_grants.grant(owner, rule);
+        self.permission_grants.grant_wire(owner, rule);
         object([
             ("granted", JsValue::Bool(true)),
             ("entry", JsValue::String(entry.clone())),
@@ -221,5 +258,13 @@ fn entry_to_rule(entry: &JsString) -> PermissionRule {
     rule
 }
 fn trim(units: &[u16]) -> &[u16] {
-    crate::runtime::memory::js_trim_units(units)
+    fn space(u: u16) -> bool {
+        matches!(u, 9..=13 | 32 | 0xa0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
+    }
+    let start = units.iter().position(|u| !space(*u)).unwrap_or(units.len());
+    let end = units
+        .iter()
+        .rposition(|u| !space(*u))
+        .map_or(start, |i| i + 1);
+    &units[start..end]
 }

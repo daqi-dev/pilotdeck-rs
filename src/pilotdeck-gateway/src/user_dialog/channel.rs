@@ -60,9 +60,7 @@ pub struct ChannelOptions {
     pub uuid: Arc<dyn Fn() -> String + Send + Sync>,
     pub now_ms: Arc<dyn Fn() -> i64 + Send + Sync>,
     pub poll_interval_ms: i64,
-    /// Schema validation for form answers stays outside this package. Without
-    /// a validator form answers are passed through as TS values, exactly as
-    /// received; local callers still validate before consuming the bus.
+    /// Hosts may supply a validator; the native form validator is the default.
     pub form_accepts: Option<FormAcceptsFn>,
 }
 
@@ -423,9 +421,10 @@ impl GatewayUserDialogChannel {
             "form",
             request.abort.clone(),
             Arc::new(move |value: &JsValue| {
-                validator
-                    .as_ref()
-                    .is_none_or(|accepts| accepts(&schema, value))
+                validator.as_ref().map_or_else(
+                    || super::schema::accepts(&schema, value),
+                    |accepts| accepts(&schema, value),
+                )
             }),
             event,
         )
@@ -554,6 +553,13 @@ impl GatewayUserDialogChannel {
         {
             let mut bus = self.inner.options.bus.lock().unwrap();
             bus.register(&self.inner.options.session_key, pending);
+            let channel = self.clone();
+            let state = state.clone();
+            bus.set_response_check(
+                self.inner.options.session_key.clone(),
+                request_id.clone(),
+                Box::new(move || settle(&channel.inner, &state)),
+            );
         }
         state.registered.store(true, Ordering::SeqCst);
 
@@ -825,10 +831,11 @@ fn finish_poll(inner: &Inner, request_id: &JsString) {
     }
 }
 fn settle(inner: &Inner, state: &RequestState) -> Result<()> {
-    if state.owner_claimed.swap(false, Ordering::SeqCst)
+    if state.owner_claimed.load(Ordering::SeqCst)
         && let Some(release) = &inner.options.release_stored_owner
     {
         release(&state.request_id, &state.owner_id)?;
+        state.owner_claimed.store(false, Ordering::SeqCst);
     }
     if let Some(journal) = &inner.options.journal {
         journal.remove(&state.request_id)?;

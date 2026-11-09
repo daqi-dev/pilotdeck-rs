@@ -121,6 +121,9 @@ fn definition(kind: Kind) -> JsObject {
     if let Some(max) = max_result_bytes {
         fields.insert("maxResultBytes".into(), JsValue::Number(max));
     }
+    if matches!(kind, Kind::Create | Kind::Stop) {
+        fields.insert("isDestructive".into(), JsValue::Bool(true));
+    }
     fields
 }
 
@@ -211,6 +214,54 @@ impl ExecutableTool for TaskTool {
                 Kind::Stop => stop(&runtime, &input, &context).await,
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod descriptor_tests {
+    use super::*;
+
+    #[test]
+    fn mutating_task_tools_preserve_baseline_safety_metadata() {
+        let tools = task_tools(None);
+        let by_name = |name: &str| {
+            tools
+                .iter()
+                .find(|tool| {
+                    tool.fields()
+                        .get("name")
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|value| value.equals_str(name))
+                })
+                .expect("task tool")
+        };
+        for name in ["task_create", "task_stop"] {
+            let tool = by_name(name);
+            assert_eq!(
+                tool.fields().get("isDestructive"),
+                Some(&JsValue::Bool(true))
+            );
+            assert_eq!(
+                tool.is_read_only(&JsValue::Null).unwrap(),
+                JsValue::Bool(false)
+            );
+            assert_eq!(
+                tool.is_concurrency_safe(&JsValue::Null).unwrap(),
+                JsValue::Bool(true)
+            );
+        }
+        for name in ["task_list", "task_output", "task_wait"] {
+            let tool = by_name(name);
+            assert!(tool.fields().get("isDestructive").is_none());
+            assert_eq!(
+                tool.is_read_only(&JsValue::Null).unwrap(),
+                JsValue::Bool(true)
+            );
+            assert_eq!(
+                tool.is_concurrency_safe(&JsValue::Null).unwrap(),
+                JsValue::Bool(true)
+            );
+        }
     }
 }
 

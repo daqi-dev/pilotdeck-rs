@@ -16,3 +16,7 @@ pub mod replay;
 pub mod runner;
 pub mod submit;
 pub mod submit_host;
+pub mod wiring;
+pub(crate) mod submit_uploads;
+pub(crate) mod capabilities;
+pub mod execute_payload;

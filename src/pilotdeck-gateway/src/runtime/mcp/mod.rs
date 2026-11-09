@@ -11,6 +11,7 @@
 //! - [`runtime`], [`bridge`], [`registry`] (A6.5-pr10b): the multi-server
 //!   runtime, the MCP-to-tool bridge, and project/session ownership.
 
+pub mod routes;
 pub mod bridge;
 pub mod client;
 pub mod gateway;

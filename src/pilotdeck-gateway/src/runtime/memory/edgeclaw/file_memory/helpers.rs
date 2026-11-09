@@ -237,10 +237,7 @@ pub(super) fn copy(o: &mut JsObject, source: &JsObject, keys: &[&str]) {
         }
     }
 }
-/// `parseFrontmatterBlock` (`file-memory.ts:159-200`): the `now` fallback for
-/// a missing `updated_at` is read lazily (TS `??` short-circuit), so callers
-/// pass a closure and the clock only ticks when the value is consumed.
-pub(super) fn parse(raw: &str, now: impl FnOnce() -> String) -> Option<(JsObject, String)> {
+pub(super) fn parse(raw: &str, now: &str) -> Option<(JsObject, String)> {
     if !raw.starts_with("---\n") {
         return None;
     }
@@ -258,18 +255,17 @@ pub(super) fn parse(raw: &str, now: impl FnOnce() -> String) -> Option<(JsObject
         ("type", s(text(&values, "type"))),
         ("scope", s(text(&values, "scope"))),
     ]);
-    // `FM_FIELDS` has exactly one `updatedAt` entry, so the lazy fallback is
-    // resolved once up front; the `FnOnce` clock still only ticks when the
-    // frontmatter omits `updated_at`.
-    let updated_at = if values.contains_key("updated_at") {
-        text(&values, "updated_at")
-    } else {
-        now()
-    };
     for (disk, key) in FM_FIELDS {
         let value = text(&values, disk);
         if *key == "updatedAt" {
-            fm.insert((*key).into(), s(updated_at.clone()));
+            fm.insert(
+                (*key).into(),
+                s(if values.contains_key(disk) {
+                    value
+                } else {
+                    now.into()
+                }),
+            );
         } else if !value.is_empty() {
             fm.insert((*key).into(), s(value));
         }
@@ -705,9 +701,6 @@ pub(super) fn merge(primary: &JsObject, incoming: &JsObject) -> JsObject {
     }
     c
 }
-// Only the non-Unix read_file leg reads by path; Unix walks from the pinned
-// root descriptor instead.
-#[cfg(not(unix))]
 pub(super) fn read(path: &Path) -> Result<String> {
     Ok(String::from_utf8_lossy(&fs::read(path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::IsADirectory {
@@ -825,10 +818,5 @@ pub(super) fn io_mkdir(path: impl AsRef<Path>) -> std::io::Result<()> {
 }
 pub(super) fn io_write(path: impl AsRef<Path>, content: impl AsRef<[u8]>) -> std::io::Result<()> {
     let path = path.as_ref();
-    // `writeFileSync`: an open error names the path, a descriptor write error
-    // (EFBIG, ENOSPC, ...) does not. `fs::write` would conflate the two.
-    let mut file =
-        fs::File::create(path).map_err(|e| crate::node_io::path_error(e, "open", path))?;
-    std::io::Write::write_all(&mut file, content.as_ref())
-        .map_err(|e| crate::node_io::descriptor_error(e, "write"))
+    fs::write(path, content).map_err(|e| crate::node_io::path_error(e, "open", path))
 }

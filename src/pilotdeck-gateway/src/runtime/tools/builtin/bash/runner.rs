@@ -11,9 +11,9 @@
 //! Known, documented differences from Node (unapproved):
 //! specs/gateway-parity/accepted-diffs.md A6.5-BASH-OS-001 and
 //! A6.5-BASH-WNOWAIT-001 (only the fallback/early-shutdown paths differ).
-//! - `detached` runs `setsid()` in the child (the #552 half of
-//!   A6.5-BASH-OS-001): the shell leads a new session without a controlling
-//!   terminal, like the baseline; group signalling is unchanged.
+//! - `detached` calls `setsid()`; here the child gets a new process group via
+//!   `process_group(0)` but stays in the parent's session. The sole approved
+//!   `pre_exec` hook only resets child signals.
 //! - Node's stdio pipes are UNIX socket pairs; these are `pipe(2)` FIFOs.
 //! - The baseline's SIGKILL follow-up fires 3 s after termination even when the
 //!   result has already settled. That one bounded timer is the only work that
@@ -376,6 +376,14 @@ impl PreparedSpawn {
     /// `spawn(shell, args, { cwd, env, detached: true })` with `stdin` as
     /// given and piped stdout/stderr. The caller owns kill-on-drop policy.
     pub(crate) fn command(&self, stdin: Stdio) -> Command {
+        self.command_with_options(stdin, false)
+    }
+
+    pub(crate) fn detached_command(&self, stdin: Stdio) -> Command {
+        self.command_with_options(stdin, true)
+    }
+
+    fn command_with_options(&self, stdin: Stdio, detached: bool) -> Command {
         let mut process = Command::new(lossy(&self.shell.shell));
         process
             .args(self.args.iter().map(lossy))
@@ -383,24 +391,24 @@ impl PreparedSpawn {
             .stdin(stdin)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        #[cfg(unix)]
+        if detached {
+            pilotdeck_child_signals::install_detached_child_session(process.as_std_mut());
+        } else {
+            process.process_group(0);
+            pilotdeck_child_signals::install_child_signal_reset(process.as_std_mut());
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = detached;
+            process.process_group(0);
+        }
         if let Some(env) = &self.env {
             process.env_clear();
             for (key, value) in env {
                 process.env(lossy(key), lossy(value));
             }
         }
-        // `detached: !isWindows` (#552): the child calls `setsid()` between
-        // fork and exec, leading a new session — so its own process group,
-        // which replaces `process_group(0)` — with no controlling terminal.
-        // The signal reset stays the last installed hook, per its contract.
-        #[cfg(unix)]
-        pilotdeck_child_signals::install_child_detach_session(process.as_std_mut());
-        #[cfg(unix)]
-        pilotdeck_child_signals::install_child_signal_reset(process.as_std_mut());
-        // Non-Unix keeps the pre-#552 shape: TS detaches only off Windows,
-        // and the existing group here is std's `process_group(0)`.
-        #[cfg(not(unix))]
-        process.process_group(0);
         process
     }
 }
@@ -574,7 +582,6 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
     let mut force_at: Option<tokio::time::Instant> = None;
     let mut exited = false;
     let mut leader_status: Option<Option<i32>> = None;
-    let mut reaped_status: Option<Option<i32>> = None;
 
     let terminate = |guard: &GroupGuard,
                      kill_at: &mut Option<tokio::time::Instant>,
@@ -614,16 +621,7 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
                     _ => stderr = None,
                 }
             }
-            status = child.wait(), if streams_closed && !exited && force_at.is_none() => {
-                if let Ok(status) = status {
-                    // No termination was requested, so no group signal remains.
-                    // Disarm immediately after reaping, before yielding the task.
-                    guard.disarm();
-                    reaped_status = Some(status.code());
-                }
-                exited = true;
-            }
-            status = leader_exited(group), if streams_closed && !exited && force_at.is_some() => {
+            status = leader_exited(group), if streams_closed && !exited => {
                 exited = true;
                 leader_status = status;
             }
@@ -665,15 +663,14 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
     // handler, so its run never settles; the tail is dropped here instead.
     out_text.push(&out_decoder.flush());
     err_text.push(&err_decoder.flush());
-    let exit_code = match (reaped_status, kill_at, leader_status) {
-        (Some(code), _, _) => code,
+    let exit_code = match (kill_at, leader_status) {
         // The baseline's 3 s SIGKILL is still pending after a terminated run
         // settled: it fires on schedule for group members that ignored TERM
         // without holding the pipes. The leader stays unreaped (a zombie)
         // until then, so the group ID cannot be reused. The timer owns only
         // the zombie and the guard; if the runtime drops it, the guard kills
         // the group at once.
-        (None, Some(deadline), Some(code)) => {
+        (Some(deadline), Some(code)) => {
             tokio::spawn(async move {
                 sleep_until(deadline).await;
                 guard.signal(rustix::process::Signal::KILL);
@@ -682,7 +679,7 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
             });
             code
         }
-        (None, pending, _) => {
+        (pending, _) => {
             if pending.is_some() {
                 // Status unobservable without reaping: kill now instead of
                 // signalling a group ID that may be reused after the wait.

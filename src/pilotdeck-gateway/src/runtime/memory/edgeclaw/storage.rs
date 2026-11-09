@@ -19,18 +19,12 @@ use crate::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter, types::Value as SqlValue};
 use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     fmt, fs,
     path::{Path, PathBuf},
-    sync::{
-        Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-
-use super::file_memory::FileMemoryClock;
 
 const INDEXING_SETTINGS_STATE_KEY: &str = "indexingSettings";
 const RECENT_CASE_TRACES_STATE_KEY: &str = "recentCaseTraces";
@@ -116,18 +110,6 @@ impl fmt::Display for StorageError {
     }
 }
 impl std::error::Error for StorageError {}
-impl StorageError {
-    /// JavaScript's SQLite error.message has no Rust diagnostic prefix.
-    pub(crate) fn js_message(&self) -> JsString {
-        if crate::mutants::on("native-storage-error-prefix") {
-            return self.to_string().into();
-        }
-        match self {
-            Self::Sqlite(error) => error.to_string().into(),
-            _ => self.to_string().into(),
-        }
-    }
-}
 impl From<rusqlite::Error> for StorageError {
     fn from(error: rusqlite::Error) -> Self {
         Self::Sqlite(error)
@@ -164,19 +146,14 @@ pub struct RepairMemoryResult {
 }
 
 /// `types.ts:196-200` (`IndexingSettings`).
-///
-/// The interval fields keep JS number semantics: `mergeIndexingSettings` and
-/// `sanitizeIndexingSettings` can return `NaN` and `±Infinity` (the default
-/// merge only floors/clamps finite numbers), so storing `i64` would truncate
-/// values the TS baseline preserves.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IndexingSettings {
     pub reasoning_mode: String,
-    pub auto_index_interval_minutes: f64,
-    pub auto_dream_interval_minutes: f64,
+    pub auto_index_interval_minutes: i64,
+    pub auto_dream_interval_minutes: i64,
 }
 impl IndexingSettings {
-    pub fn to_js(&self) -> JsValue {
+    fn to_js(&self) -> JsValue {
         let mut object = JsObject::new();
         object.insert(
             "reasoningMode".into(),
@@ -184,177 +161,27 @@ impl IndexingSettings {
         );
         object.insert(
             "autoIndexIntervalMinutes".into(),
-            JsValue::Number(self.auto_index_interval_minutes),
+            JsValue::Number(self.auto_index_interval_minutes as f64),
         );
         object.insert(
             "autoDreamIntervalMinutes".into(),
-            JsValue::Number(self.auto_dream_interval_minutes),
+            JsValue::Number(self.auto_dream_interval_minutes as f64),
         );
         JsValue::Object(object)
     }
-}
-
-/// #1082: one in-process serialization point per canonical database file.
-///
-/// Node's single-threaded event loop makes every `DatabaseSync` call of every
-/// generation atomic with respect to every other call in the process. Rust
-/// workers can run two generations' SQLite calls at the same time, which the
-/// TS baseline never does; with `busy_timeout = 0` the second writer would
-/// fail with `database is locked`. This map gives all `EdgeClawStorage`
-/// handles in one process the same per-file lock, reproducing the event-loop
-/// serialization without changing the cross-process `busy_timeout` contract.
-type ProcessLocks = Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>;
-
-fn process_locks() -> &'static ProcessLocks {
-    static LOCKS: OnceLock<ProcessLocks> = OnceLock::new();
-    LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn shared_process_lock(key: &Path) -> Arc<Mutex<()>> {
-    let mut table = process_locks()
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    if !crate::mutants::on("native-same-root-dead-locks-retained") {
-        table.retain(|_, lock| lock.strong_count() > 0);
-    }
-    if crate::mutants::on("native-same-root-live-locks-pruned") {
-        table.clear();
-    }
-    if let Some(existing) = table.get(key).and_then(Weak::upgrade) {
-        return existing;
-    }
-    let lock = Arc::new(Mutex::new(()));
-    table.insert(key.to_path_buf(), Arc::downgrade(&lock));
-    lock
-}
-
-/// #1207 fix-r2 (review P2-1): fires when a caller is about to park on the
-/// contended process lock, before it blocks. Tests use it to prove a thread is
-/// really waiting on the storage guard — a deterministic blocked/completed
-/// discrimination no wall-clock window can give. Production never installs one.
-pub type ProcessWaitObserver = Arc<dyn Fn() + Send + Sync>;
-
-/// Canonical identity of the SQLite file. The path is opened before this is
-/// called, so `canonicalize` normally succeeds; the absolute fallback covers a
-/// host that opened through a now-removed directory entry.
-fn process_lock_key(path: &Path) -> PathBuf {
-    let key = fs::canonicalize(path).unwrap_or_else(|_| {
-        if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            std::env::current_dir()
-                .map(|cwd| cwd.join(path))
-                .unwrap_or_else(|_| path.to_path_buf())
-        }
-    });
-    if crate::mutants::on("native-same-root-lock-not-shared") {
-        static NEXT: AtomicU64 = AtomicU64::new(1);
-        return key.join(format!(
-            ".per-storage-{}",
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-    }
-    key
-}
-
-thread_local! {
-    static HELD_PROCESS_LOCKS: RefCell<HashSet<usize>> = RefCell::default();
-}
-
-fn process_lock_held(key: usize) -> bool {
-    HELD_PROCESS_LOCKS
-        .try_with(|held| held.borrow().contains(&key))
-        .unwrap_or(false)
-}
-
-// Public predicates and clocks run inside a ConnectionGuard and may release
-// another generation's last owner (or explicitly close/read that generation).
-// Reuse this thread's outer lock: the calls stay synchronous and all other
-// threads remain excluded. Each generation still locks its own connection;
-// this does not make recursive access to the *same* connection reentrant.
-struct ProcessGuard<'a> {
-    outer: Option<MutexGuard<'a, ()>>,
-    key: usize,
-}
-impl<'a> ProcessGuard<'a> {
-    fn owned(outer: MutexGuard<'a, ()>, key: usize) -> Self {
-        // During thread-local teardown the set may already be destroyed.
-        // Ordinary storage destruction still closes under the real mutex.
-        let _ = HELD_PROCESS_LOCKS.try_with(|held| held.borrow_mut().insert(key));
-        Self {
-            outer: Some(outer),
-            key,
-        }
-    }
-}
-impl Drop for ProcessGuard<'_> {
-    fn drop(&mut self) {
-        if (self.outer.is_some() || crate::mutants::on("native-same-root-inner-releases-owner"))
-            && !crate::mutants::on("native-same-root-stale-thread-owner")
-        {
-            let _ = HELD_PROCESS_LOCKS.try_with(|held| held.borrow_mut().remove(&self.key));
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum ProcessOperation {
-    Call,
-    Close,
-    Drop,
 }
 
 /// A `MemoryRepository` opened on one SQLite file (`sqlite.ts:490-600`).
 pub struct EdgeClawStorage {
     path: PathBuf,
     conn: Mutex<Option<Connection>>,
-    /// #1082: shared with every other storage opened on the same canonical
-    /// file in this process. Acquired before `conn` and released with the
-    /// connection guard, so one SQLite call block runs at a time.
-    process: Arc<Mutex<()>>,
-    /// The repository's `nowIso()`, used for `pipeline_state.updated_at`
-    /// (`sqlite.ts:921`, read once per `setPipelineState` call) and the L0
-    /// `created_at` fallback (`sqlite.ts:941`); injected so replays observe
-    /// the same clock reads as TS.
-    clock: FileMemoryClock,
-    /// #1207 fix-r2 (review P2-1): test-only, fires on a contended process
-    /// lock. `None` in production and in every test that does not install it.
-    wait_observer: Mutex<Option<ProcessWaitObserver>>,
 }
 
-// Dropping the last service/storage owner closes SQLite too. Serialize that
-// implicit close (and its WAL checkpoint) just like explicit close().
-impl Drop for EdgeClawStorage {
-    fn drop(&mut self) {
-        let _process = if crate::mutants::on("native-same-root-drop-unserialized") {
-            None
-        } else {
-            Some(self.serialized_guard(ProcessOperation::Drop))
-        };
-        let connection = self
-            .conn
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
-        drop(connection);
-        #[cfg(test)]
-        if let Some(sender) = same_root_tests::lock_observer() {
-            let _ = sender.send(same_root_tests::LockEvent::DropClosed);
-        }
-    }
-}
-
-struct ConnectionGuard<'a> {
-    conn: MutexGuard<'a, Option<Connection>>,
-    /// Held for as long as the SQLite call block, like one synchronous
-    /// `DatabaseSync` call on the JS event loop. Lock order is always
-    /// process -> connection; there is no reverse acquisition.
-    _process: Option<ProcessGuard<'a>>,
-}
+struct ConnectionGuard<'a>(std::sync::MutexGuard<'a, Option<Connection>>);
 impl std::ops::Deref for ConnectionGuard<'_> {
     type Target = Connection;
     fn deref(&self) -> &Connection {
-        self.conn.as_ref().expect("checked open under lock")
+        self.0.as_ref().expect("checked open under lock")
     }
 }
 
@@ -362,79 +189,26 @@ impl EdgeClawStorage {
     /// `sqlite.ts:502-566`: create the parent directory, open, enable WAL,
     /// create the base schema, then run the `pipeline_state` migration.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StorageError> {
-        Self::with_clock(path, Arc::new(now_iso))
-    }
-
-    /// [`Self::open`] with the repository's injectable clock.
-    pub fn with_clock(
-        path: impl AsRef<Path>,
-        clock: FileMemoryClock,
-    ) -> Result<Self, StorageError> {
-        let path = path.as_ref();
-        let path = if crate::mutants::on("native-storage-directory-accepted") && path.is_dir() {
-            Path::new(":memory:")
-        } else {
-            path
-        };
-        let storage = Self::connect(path, clock)?;
-        if !crate::mutants::on("native-storage-skip-initialize") {
-            storage.initialize()?;
-        }
-        Ok(storage)
-    }
-
-    /// Node opens DatabaseSync before file-store construction;
-    /// schema initialization follows it. Keep those phases separate (#778).
-    pub(super) fn connect(
-        path: impl AsRef<Path>,
-        clock: FileMemoryClock,
-    ) -> Result<Self, StorageError> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
             fs::create_dir_all(parent)?;
         }
-        let conn = Connection::open(&path).map_err(|error| match error {
-            // rusqlite appends the filename to SQLITE_CANTOPEN; Node exposes
-            // sqlite3_errmsg alone (native-default sqlite-directory probe).
-            rusqlite::Error::SqliteFailure(code, _)
-                if code.code == rusqlite::ErrorCode::CannotOpen =>
-            {
-                rusqlite::Error::SqliteFailure(code, Some("unable to open database file".into()))
-            }
-            other => other,
-        })?;
-        // Node DatabaseSync uses no busy wait. Corruption is first detected
-        // by initialize(), after FileMemoryStore creates its directories;
-        // CANTOPEN is detected here, before those stores (#778 TS probe).
+        let conn = Connection::open(&path)?;
+        // `node:sqlite`'s `DatabaseSync` leaves `PRAGMA busy_timeout` at 0
+        // (measured on Node 22.22.0: a second writer fails immediately with
+        // `ERR_SQLITE_ERROR` / "database is locked"). rusqlite's `open` sets
+        // `sqlite3_busy_timeout(db, 5000)` instead, so overwrite it explicitly.
         conn.busy_timeout(Duration::ZERO)?;
-        if crate::mutants::on("native-database-validate-early") {
-            conn.query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0))?;
-        }
-        let process = shared_process_lock(&process_lock_key(&path));
-        Ok(Self {
+        conn.execute_batch("PRAGMA journal_mode = WAL;")?;
+        conn.execute_batch(INIT_SQL)?;
+        let storage = Self {
             path,
             conn: Mutex::new(Some(conn)),
-            process,
-            clock,
-            wait_observer: Mutex::new(None),
-        })
-    }
-
-    pub(super) fn initialize(&self) -> Result<(), StorageError> {
-        // #1082 control: the rejected "short busy_timeout" fix. It must make a
-        // cross-process lock wait instead of failing immediately, which the
-        // bound test detects; production keeps Node's timeout at zero.
-        if crate::mutants::on("native-same-root-busy-wait") {
-            self.conn()?.busy_timeout(Duration::from_secs(2))?;
-        }
-        {
-            let conn = self.conn()?;
-            conn.execute_batch("PRAGMA journal_mode = WAL;")?;
-            conn.execute_batch(INIT_SQL)?;
-        }
-        self.migrate_pipeline_state()
+        };
+        storage.migrate_pipeline_state()?;
+        Ok(storage)
     }
 
     pub fn path(&self) -> &Path {
@@ -445,11 +219,6 @@ impl EdgeClawStorage {
     /// checkpoints the WAL only when this is the last connection. Node's
     /// DatabaseSync.close() and later SQL operations report an already closed handle.
     pub fn close(&self) -> Result<(), StorageError> {
-        let _process = if crate::mutants::on("native-same-root-close-unserialized") {
-            None
-        } else {
-            self.process_guard(ProcessOperation::Close)
-        };
         let mut guard = self
             .conn
             .lock()
@@ -466,83 +235,7 @@ impl EdgeClawStorage {
         Ok(())
     }
 
-    /// Acquire the per-file in-process lock. Lock order is always
-    /// process -> connection; see [`ConnectionGuard`].
-    fn process_guard(&self, operation: ProcessOperation) -> Option<ProcessGuard<'_>> {
-        if crate::mutants::on("native-same-root-lock-bypassed")
-            || crate::mutants::on("native-same-root-stage-unserialized")
-        {
-            return None;
-        }
-        if crate::mutants::on("native-same-root-lock-poison-fatal") {
-            return Some(ProcessGuard::owned(
-                self.process
-                    .lock()
-                    .expect("#1082 shared write lock poisoned"),
-                std::ptr::from_ref(self.process.as_ref()) as usize,
-            ));
-        }
-        Some(self.serialized_guard(operation))
-    }
-
-    fn serialized_guard(&self, _operation: ProcessOperation) -> ProcessGuard<'_> {
-        let key = std::ptr::from_ref(self.process.as_ref()) as usize;
-        if process_lock_held(key) && !crate::mutants::on("native-same-root-reentrant-lock-blocking")
-        {
-            return ProcessGuard { outer: None, key };
-        }
-        // #1207 fix-r2 (review P2-1): try first, observe only real
-        // contention. The uncontended path keeps the plain acquisition
-        // semantics; a caller that really parks on the process lock fires
-        // the doc-hidden wait observer (test-only; see
-        // [`Self::set_process_wait_observer`]) and the `#[cfg(test)]`
-        // lock observer, instead of tests having to infer blocking from a
-        // wall-clock window.
-        match self.process.try_lock() {
-            Ok(guard) => return ProcessGuard::owned(guard, key),
-            Err(std::sync::TryLockError::Poisoned(error)) => {
-                return ProcessGuard::owned(error.into_inner(), key);
-            }
-            Err(std::sync::TryLockError::WouldBlock) => {
-                if let Some(hook) = self
-                    .wait_observer
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .clone()
-                {
-                    hook();
-                }
-                #[cfg(test)]
-                if let Some(sender) = same_root_tests::lock_observer() {
-                    let event = match _operation {
-                        ProcessOperation::Call => same_root_tests::LockEvent::Contended,
-                        ProcessOperation::Close => same_root_tests::LockEvent::CloseContended,
-                        ProcessOperation::Drop => same_root_tests::LockEvent::DropContended,
-                    };
-                    let _ = sender.send(event);
-                }
-            }
-        }
-        ProcessGuard::owned(
-            self.process.lock().unwrap_or_else(PoisonError::into_inner),
-            key,
-        )
-    }
-
-    /// #1207 fix-r2 (review P2-1): install the process-lock wait observer
-    /// (tests only; production never installs one). It fires on the storage
-    /// instance's own contended acquisitions, so other instances' contention
-    /// stays invisible to the installing test.
-    #[doc(hidden)]
-    pub fn set_process_wait_observer(&self, hook: ProcessWaitObserver) {
-        *self
-            .wait_observer
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(hook);
-    }
-
     fn conn(&self) -> Result<ConnectionGuard<'_>, StorageError> {
-        let process = self.process_guard(ProcessOperation::Call);
         let guard = self
             .conn
             .lock()
@@ -550,45 +243,7 @@ impl EdgeClawStorage {
         if guard.is_none() {
             return Err(StorageError::Closed);
         }
-        Ok(ConnectionGuard {
-            conn: guard,
-            _process: process,
-        })
-    }
-
-    /// #1082 test seam: an in-flight, uncommitted write held on this
-    /// connection so a second generation's stage/write can be interleaved
-    /// deterministically. `entered` fires once the write lock is held and the
-    /// row is written; `release` lets the test commit (or panic).
-    #[cfg(test)]
-    pub(crate) fn test_in_flight_write(
-        &self,
-        key: &str,
-        entered: &std::sync::mpsc::Sender<()>,
-        release: &std::sync::mpsc::Receiver<()>,
-        panic_after_release: bool,
-    ) -> Result<(), StorageError> {
-        let conn = self.conn()?;
-        conn.execute_batch("BEGIN IMMEDIATE;")?;
-        conn.execute(
-            "INSERT INTO pipeline_state (state_key, state_json, updated_at)
-             VALUES (?1, ?2, ?3)",
-            params![key, "{\"in_flight\":true}", "2026-10-22T00:00:00.000Z"],
-        )?;
-        entered
-            .send(())
-            .expect("#1082 INVALID writer entered receiver");
-        release
-            .recv_timeout(Duration::from_secs(5))
-            .expect("#1082 INVALID writer release timeout");
-        if panic_after_release {
-            // Release SQLite's own write lock first: the case under test is a
-            // panic in the surrounding call block, not a leaked transaction.
-            conn.execute_batch("ROLLBACK;")?;
-            panic!("#1082 in-flight writer panic");
-        }
-        conn.execute_batch("COMMIT;")?;
-        Ok(())
+        Ok(ConnectionGuard(guard))
     }
 
     /// `sqlite.ts:567-590`: migrate only when `pipeline_state` still carries a
@@ -670,21 +325,14 @@ impl EdgeClawStorage {
 
     /// `sqlite.ts:923-928`.
     pub fn set_pipeline_state(&self, key: &str, value: &JsValue) -> Result<(), StorageError> {
-        if crate::mutants::on("native-same-root-peer-write-lost") && key == "new-key" {
-            return Ok(());
-        }
-        let now = (self.clock)();
         let conn = self.conn()?;
-        Self::write_pipeline_state(&conn, key, value, &now)
+        Self::write_pipeline_state(&conn, key, value)
     }
 
     fn write_pipeline_state(
         conn: &Connection,
         key: &str,
         value: &JsValue,
-        // Read before the write, like the `nowIso()` argument at
-        // `sqlite.ts:921`: the clock ticks even when the insert fails.
-        now: &str,
     ) -> Result<(), StorageError> {
         let json = stringify_json(value)
             .map_err(|error| StorageError::Json(error.to_string()))?
@@ -693,7 +341,7 @@ impl EdgeClawStorage {
             "INSERT INTO pipeline_state (state_key, state_json, updated_at)
              VALUES (?1, ?2, ?3)
              ON CONFLICT(state_key) DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at",
-            params![key, json, now],
+            params![key, json, now_iso()],
         )?;
         Ok(())
     }
@@ -709,15 +357,6 @@ impl EdgeClawStorage {
 
     /// `sqlite.ts:934-968`.
     pub fn insert_l0_session(&self, record: &L0SessionRecord) -> Result<(), StorageError> {
-        let conn = self.conn()?;
-        Self::insert_l0_session_on(&conn, record, &self.clock)
-    }
-
-    fn insert_l0_session_on(
-        conn: &Connection,
-        record: &L0SessionRecord,
-        clock: &FileMemoryClock,
-    ) -> Result<(), StorageError> {
         let messages = stringify_json(&record.messages)
             .map_err(|error| StorageError::Json(error.to_string()))?
             .ok_or(StorageError::Unstringifiable("l0_sessions.messages_json"))?;
@@ -727,13 +366,11 @@ impl EdgeClawStorage {
             record.source.as_str()
         };
         let created_at = if record.created_at.is_empty() {
-            // `record.createdAt || nowIso()` (`sqlite.ts:941`): the clock is
-            // only read when the record lacks the date.
-            (clock)()
+            now_iso()
         } else {
             record.created_at.clone()
         };
-        conn.execute(
+        self.conn()?.execute(
             "INSERT INTO l0_sessions (
                l0_index_id,
                session_key,
@@ -763,44 +400,15 @@ impl EdgeClawStorage {
         Ok(())
     }
 
-    /// Atomic `captureL0Session` storage step: reads the newest L0 row,
-    /// evaluates the caller's duplicate predicate and inserts, all under one
-    /// connection guard. TS is safe without a transaction because
-    /// `captureL0Session` is synchronous and has no `await`; the Rust indexer
-    /// is shared across threads, so splitting this into `list_recent_l0` +
-    /// `insert_l0_session` lets two callers both observe the same previous row
-    /// and both insert. Returns `false` when the predicate suppressed the
-    /// insert.
-    pub fn insert_l0_session_if_new(
-        &self,
-        record: &L0SessionRecord,
-        is_duplicate: impl FnOnce(&L0SessionRecord) -> bool,
-    ) -> Result<bool, StorageError> {
-        let conn = self.conn()?;
-        let recent = Self::list_recent_l0_on(&conn, 1, 0)?;
-        if let Some(recent) = recent.first()
-            && is_duplicate(recent)
-        {
-            return Ok(false);
-        }
-        Self::insert_l0_session_on(&conn, record, &self.clock)?;
-        Ok(true)
-    }
-
     /// `sqlite.ts:970-1001`: `DISTINCT session_key, MIN(timestamp)` over
     /// pending rows, ascending by first timestamp; the preferred-key branch
     /// applies the limit after fetching, exactly like the TS `.slice`.
     pub fn list_pending_session_keys(
         &self,
-        limit: f64,
+        limit: usize,
         preferred_session_keys: Option<&[String]>,
     ) -> Result<Vec<String>, StorageError> {
-        let limit = pilotdeck_protocol::js_math::max(1.0, limit);
-        let limit = if crate::mutants::on("native-pending-limit-truncated") {
-            (limit as usize) as f64
-        } else {
-            limit
-        };
+        let limit = limit.max(1);
         let preferred = preferred_keys(preferred_session_keys);
         if preferred.is_empty() {
             let conn = self.conn()?;
@@ -812,8 +420,8 @@ impl EdgeClawStorage {
                  ORDER BY first_timestamp ASC
                  LIMIT ?1",
             )?;
-            let rows =
-                statement.query_map([limit], |row| row.get::<_, String>(0).map(node_text))?;
+            let rows = statement
+                .query_map([limit as i64], |row| row.get::<_, String>(0).map(node_text))?;
             return Ok(rows.collect::<Result<Vec<_>, _>>()?);
         }
         let placeholders = placeholders(preferred.len());
@@ -830,15 +438,7 @@ impl EdgeClawStorage {
             row.get::<_, String>(0).map(node_text)
         })?;
         let mut keys = rows.collect::<Result<Vec<_>, _>>()?;
-        // Math.max has already ruled out negative endpoints. Rust's
-        // saturating float cast gives JS slice's NaN=0, +Infinity=len and
-        // positive fraction truncation without changing the SQL branch.
-        let end = if crate::mutants::on("native-pending-preferred-round-up") {
-            limit.ceil() as usize
-        } else {
-            limit as usize
-        };
-        keys.truncate(end);
+        keys.truncate(limit);
         Ok(keys)
     }
 
@@ -935,9 +535,6 @@ impl EdgeClawStorage {
     /// `sqlite.ts:1047-1053`: filter blank ids, dedupe keeping first
     /// occurrence, then one `IN (...)` update.
     pub fn mark_l0_indexed(&self, ids: &[String]) -> Result<(), StorageError> {
-        if crate::mutants::on("native-same-root-flush-not-indexed") {
-            return Ok(());
-        }
         let ids = unique_non_blank_ids(ids);
         if ids.is_empty() {
             return Ok(());
@@ -948,25 +545,6 @@ impl EdgeClawStorage {
         );
         self.conn()?
             .execute(&sql, params_from_iter(ids.iter().copied()))?;
-        Ok(())
-    }
-
-    /// #1207 fix-r1 (review P1): a `clearSession` that aborted after
-    /// `delete_memory_entries` already removed the session's memory files
-    /// re-arms its still-present L0 rows — `indexed` back to 0 — so the next
-    /// heartbeat re-lists them and regenerates the files. Without this an
-    /// indexed row keeps its file deleted forever while its L0 row survives:
-    /// nothing ever re-lists an indexed row. No TS twin (`sqlite.ts:1985-2002`
-    /// runs the statements back-to-back on one synchronous connection, so TS
-    /// has no mid-tail failure face to recover from); this covers the
-    /// Rust-only abort faces (the clearSession seams, a mid-tail storage
-    /// error, and — fix-r2, review P0 — a failure inside the entry deletion
-    /// itself, after its per-file unlinks).
-    pub fn rearm_l0_indexed_for_session(&self, session_key: &str) -> Result<(), StorageError> {
-        self.conn()?.execute(
-            "UPDATE l0_sessions SET indexed = 0 WHERE session_key = ?1",
-            [session_key],
-        )?;
         Ok(())
     }
 
@@ -997,14 +575,6 @@ impl EdgeClawStorage {
         offset: i64,
     ) -> Result<Vec<L0SessionRecord>, StorageError> {
         let conn = self.conn()?;
-        Self::list_recent_l0_on(&conn, limit, offset)
-    }
-
-    fn list_recent_l0_on(
-        conn: &Connection,
-        limit: i64,
-        offset: i64,
-    ) -> Result<Vec<L0SessionRecord>, StorageError> {
         let mut statement = conn.prepare(
             "SELECT * FROM l0_sessions
              ORDER BY timestamp DESC, created_at DESC
@@ -1209,8 +779,7 @@ impl EdgeClawStorage {
         let sanitized = sanitize_trace_array(&JsValue::Array(items), id_key, "startedAt")?;
         let normalized = normalize_traces(sanitized, kind)?;
         let capped = normalized.into_iter().take(limit.max(1)).collect();
-        let now = (self.clock)();
-        Self::write_pipeline_state(&conn, state_key, &JsValue::Array(capped), &now)
+        Self::write_pipeline_state(&conn, state_key, &JsValue::Array(capped))
     }
 
     fn list_traces(
@@ -1260,8 +829,7 @@ impl EdgeClawStorage {
             }
         }
         let next = sanitize_indexing_settings(Some(&JsValue::Object(merged)), defaults);
-        let now = (self.clock)();
-        Self::write_pipeline_state(&conn, INDEXING_SETTINGS_STATE_KEY, &next.to_js(), &now)?;
+        Self::write_pipeline_state(&conn, INDEXING_SETTINGS_STATE_KEY, &next.to_js())?;
         Ok(next)
     }
 }
@@ -1593,35 +1161,14 @@ fn sanitize_indexing_settings(
 
 /// `clampInt` (`sqlite.ts:244-253`): numbers are floored, strings go through
 /// `parseInt(value, 10)`, non-finite values fall back, then clamp to the range.
-/// The clamp is `Math.max(min, Math.min(max, …))` in that order: the final
-/// `Math.max` projects `-0` to `+0`, which Rust's `f64::clamp` does not.
-/// The fallback may itself be non-finite (a merged default), so the result is
-/// kept as a JS number.
-fn clamp_int(value: Option<&JsValue>, fallback: f64, min: i64, max: i64) -> f64 {
+fn clamp_int(value: Option<&JsValue>, fallback: i64, min: i64, max: i64) -> i64 {
     let numeric = match value {
         Some(JsValue::Number(number)) => Some(*number),
         Some(JsValue::String(value)) => js_parse_int_prefix(value),
         _ => None,
     };
     match numeric {
-        Some(number) if number.is_finite() => {
-            let clamped = number.floor().min(max as f64).max(min as f64);
-            // `f64::max` / `min` may return either zero when +0 and -0 compare
-            // equal; JS `Math.max` ranks +0 above -0, so normalise explicitly.
-            if clamped != 0.0 {
-                clamped
-            } else if min >= 0 {
-                if crate::mutants::on("settings-negative-zero") {
-                    number.floor()
-                } else {
-                    0.0 /* Math.max(+0, ±0) is +0 */
-                }
-            } else {
-                // min < 0: only -0 survives Math.min/Math.max; an upper-bound
-                // clamp to zero (e.g. max = 0, n = 3.7) is +0.
-                0.0_f64.copysign(number.floor())
-            }
-        }
+        Some(number) if number.is_finite() => number.floor().clamp(min as f64, max as f64) as i64,
         _ => fallback,
     }
 }
@@ -1685,34 +1232,11 @@ fn now_iso() -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn clamp_int_zero_sign_matches_js_math_max_min() {
-        // Node v22.22.0: `Math.max(min, Math.min(max, Math.floor(n)))`
-        // (#775 r4: min=-1, max=0 rows from the Codex raw probe output).
-        let rows: [(f64, i64, i64, f64, bool); 6] = [
-            (-0.0, -1, 0, 0.0, true),
-            (0.0, -1, 0, 0.0, false),
-            (1.0, -1, 0, 0.0, false),
-            (3.7, -1, 0, 0.0, false),
-            (-0.0, 0, 10080, 0.0, false),
-            (3.7, -1, 10080, 3.0, false),
-        ];
-        for (input, min, max, value, negative) in rows {
-            let got = clamp_int(Some(&JsValue::Number(input)), 5.0, min, max);
-            assert_eq!(got, value, "#775 clampInt({input}, {min}, {max}) value");
-            assert_eq!(
-                got.is_sign_negative(),
-                negative,
-                "#775 clampInt({input}, {min}, {max}) zero sign"
-            );
-        }
-    }
-
     fn defaults() -> IndexingSettings {
         IndexingSettings {
             reasoning_mode: "answer_first".into(),
-            auto_index_interval_minutes: 5.0,
-            auto_dream_interval_minutes: 10.0,
+            auto_index_interval_minutes: 5,
+            auto_dream_interval_minutes: 10,
         }
     }
 
@@ -1735,28 +1259,13 @@ mod tests {
         assert_eq!(number("0x10"), Some(0.0));
         assert_eq!(number("abc"), None);
         assert_eq!(number(""), None);
+        assert_eq!(clamp_int(Some(&JsValue::from(" 60.9")), 5, 0, 10_080), 60);
+        assert_eq!(clamp_int(Some(&JsValue::Number(-3.2)), 5, 0, 10_080), 0);
         assert_eq!(
-            clamp_int(Some(&JsValue::from(" 60.9")), 5.0, 0, 10_080),
-            60.0
+            clamp_int(Some(&JsValue::Number(99_999.0)), 5, 0, 10_080),
+            10_080
         );
-        assert_eq!(clamp_int(Some(&JsValue::Number(-3.2)), 5.0, 0, 10_080), 0.0);
-        // Node v22.22.0 `clampInt(-0 | "-0" | "-0.0")` projects to `+0`.
-        // Compare bits: `-0.0 == 0.0` would hide the sign regression.
-        assert_eq!(
-            clamp_int(Some(&JsValue::Number(-0.0)), 5.0, 0, 10_080).to_bits(),
-            0,
-            "#775 numeric -0 flips to +0"
-        );
-        assert_eq!(
-            clamp_int(Some(&JsValue::from("-0.0")), 5.0, 0, 10_080).to_bits(),
-            0,
-            "#775 string -0.0 flips to +0"
-        );
-        assert_eq!(
-            clamp_int(Some(&JsValue::Number(99_999.0)), 5.0, 0, 10_080),
-            10_080.0
-        );
-        assert_eq!(clamp_int(Some(&JsValue::Bool(true)), 5.0, 0, 10_080), 5.0);
+        assert_eq!(clamp_int(Some(&JsValue::Bool(true)), 5, 0, 10_080), 5);
     }
 
     #[test]
@@ -1769,14 +1278,14 @@ mod tests {
             })),
             &IndexingSettings {
                 reasoning_mode: "accuracy_first".into(),
-                auto_index_interval_minutes: 5.0,
-                auto_dream_interval_minutes: 10.0,
+                auto_index_interval_minutes: 5,
+                auto_dream_interval_minutes: 10,
             },
         );
         // Only "accuracy_first" is recognized; anything else takes the default.
         assert_eq!(sanitized.reasoning_mode, "accuracy_first");
-        assert_eq!(sanitized.auto_index_interval_minutes, 5.0);
-        assert_eq!(sanitized.auto_dream_interval_minutes, 10.0);
+        assert_eq!(sanitized.auto_index_interval_minutes, 5);
+        assert_eq!(sanitized.auto_dream_interval_minutes, 10);
         assert_eq!(defaults().reasoning_mode, "answer_first");
     }
 
@@ -2014,21 +1523,3 @@ pub(crate) mod accessors;
 pub mod snapshots;
 
 pub mod entries;
-
-// Memory bundle export/import with staged swaps and Dream snapshot reads
-// (sqlite.ts:264-353,422-472,1232-1350,1495-1658).
-pub(crate) mod bundle;
-// Dashboard overview, UI snapshot and repository-level list/count
-// (sqlite.ts:1660-1775).
-pub(crate) mod overview;
-
-// #1082 same-rootDir two-generation SQLite matrix; library-only because the
-// deterministic in-flight writer seam is `cfg(test)` and is not part of the
-// public integration-test surface.
-#[cfg(test)]
-#[path = "same_root_tests.rs"]
-mod same_root_tests;
-
-#[cfg(test)]
-#[path = "same_root_lifecycle_tests.rs"]
-mod same_root_lifecycle_tests;

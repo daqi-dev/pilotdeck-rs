@@ -1,285 +1,475 @@
-//! Transport-neutral channel port over the existing serial native TurnGateway.
-//! Internal connections use private handshake credentials; no token/config file is read.
-use super::routes::{ChannelCall, Result, RouteError};
-use crate::runtime::{
-    connection::GatewayTextConnection,
-    turn::gateway::{HostedConnection, TurnGateway},
-};
-use pilotdeck_protocol::{GATEWAY_PROTOCOL_VERSION, JsObject, JsString, JsValue};
-use serde_json::Value;
-use std::{collections::HashMap, path::PathBuf, sync::{Arc, Mutex, Weak, atomic::{AtomicBool, Ordering}}};
-use tokio::sync::{mpsc, watch};
+//! Shared channel command dispatch (ChannelCommandRegistry.ts:68-297).
+//! The channel owns transport, cancellation and persistence; commands use the same
+//! gateway port as ordinary messages and never start an agent turn themselves.
+use super::routes::{ChannelCall, RouteError};
+use pilotdeck_protocol::{JsString, JsValue};
+use serde_json::{Value, json};
+#[path = "channel_commands_ordered.rs"]
+mod ordered;
+pub use ordered::ChannelOrderedEventSink;
+use std::{collections::HashMap, path::Path, sync::Arc};
+#[cfg(test)]
+#[path = "channel_commands_tests.rs"]
+mod tests;
 
-pub trait ChannelEventSink: Send + Sync {
-    fn event(&self, event: Value) -> ChannelCall<'_, ()>;
-}
-pub trait ChannelOrderedEventSink: Send + Sync {
-    fn event_ordered(&self, event: JsValue) -> ChannelCall<'_, ()>;
-}
 pub trait ChannelGateway: Send + Sync {
     fn request<'a>(&'a self, method: &'a str, params: Value) -> ChannelCall<'a, Value>;
     fn turn(&self, params: Value) -> ChannelCall<'_, Vec<Value>>;
-    fn stream_turn<'a>(&'a self, params: Value, sink: &'a dyn ChannelEventSink) -> ChannelCall<'a, ()> {
+    fn stream_turn<'a>(
+        &'a self,
+        params: Value,
+        sink: &'a dyn ChannelEventSink,
+    ) -> ChannelCall<'a, ()> {
         Box::pin(async move {
-            for event in self.turn(params).await? { sink.event(event).await?; }
+            for event in self.turn(params).await? {
+                sink.event(event).await?;
+            }
             Ok(())
         })
     }
-    fn request_ordered<'a>(&'a self, method: &'a str, params: JsValue) -> ChannelCall<'a, JsValue> {
-        Box::pin(async move { from_serde(&self.request(method, serde_view(&params)?).await?) })
+    /// Exact JSON transport for channels whose payloads contain raw UTF-16.
+    /// Native WS overrides this; legacy hosts accept only representable JSON.
+    fn stream_turn_ordered<'a>(
+        &'a self,
+        params: JsValue,
+        sink: &'a dyn ChannelOrderedEventSink,
+    ) -> ChannelCall<'a, ()> {
+        Box::pin(async move {
+            let params = ordered::serde_view(&params)?;
+            self.stream_turn(params, &ordered::LegacySink(sink)).await
+        })
     }
-    fn stream_turn_ordered<'a>(&'a self, params: JsValue, sink: &'a dyn ChannelOrderedEventSink) -> ChannelCall<'a, ()> {
-        Box::pin(async move { self.stream_turn(serde_view(&params)?, &LegacySink(sink)).await })
+    fn update(&self, _check: bool) -> ChannelCall<'_, (i32, String)> {
+        Box::pin(async {
+            Err(RouteError::new(
+                "UPDATE_UNAVAILABLE",
+                "更新命令当前不可用。",
+            ))
+        })
+    }
+    fn status(&self) -> ChannelCall<'_, String> {
+        Box::pin(async {
+            Err(RouteError::new(
+                "STATUS_UNAVAILABLE",
+                "状态提供者当前不可用。",
+            ))
+        })
+    }
+    fn search<'a>(
+        &'a self,
+        _home: &'a Path,
+        _project: Option<&'a str>,
+        _args: SearchArgs,
+    ) -> ChannelCall<'a, String> {
+        Box::pin(async { Ok("聊天记录搜索当前不可用。".into()) })
     }
 }
-fn serde_view(value: &JsValue) -> Result<Value> {
-    let wire = wire(value)?;
-    serde_json::from_str(&wire).map_err(|e| RouteError::new("CHANNEL_ORDERED_REQUIRED", e.to_string()))
-}
-fn from_serde(value: &Value) -> Result<JsValue> {
-    pilotdeck_protocol::parse_json(&value.to_string())
-        .map_err(|e| RouteError::new("CHANNEL_JSON_INVALID", e.to_string()))
-}
-fn wire(value: &JsValue) -> Result<String> {
-    pilotdeck_protocol::stringify_json(value)
-        .map_err(|e| RouteError::new("CHANNEL_JSON_INVALID", e.to_string()))
-        .map(|value| value.unwrap_or_else(|| "null".into()))
-}
-struct LegacySink<'a>(&'a dyn ChannelOrderedEventSink);
-impl ChannelEventSink for LegacySink<'_> {
-    fn event(&self, event: Value) -> ChannelCall<'_, ()> {
-        Box::pin(async move { self.0.event_ordered(from_serde(&event)?).await })
-    }
-}
-struct SerdeSink<'a>(&'a dyn ChannelEventSink);
-impl ChannelOrderedEventSink for SerdeSink<'_> {
-    fn event_ordered(&self, event: JsValue) -> ChannelCall<'_, ()> {
-        Box::pin(async move { self.0.event(serde_view(&event)?).await })
-    }
+pub trait ChannelEventSink: Send + Sync {
+    fn event(&self, event: Value) -> ChannelCall<'_, ()>;
 }
 
-type Frames = mpsc::UnboundedSender<JsValue>;
-#[derive(Default)]
-struct Output { pending: Mutex<HashMap<JsString, Frames>> }
-impl GatewayTextConnection for Output {
-    fn send_text(&self, text: String) {
-        let Ok(frame) = pilotdeck_protocol::parse_json(&text) else {
-            self.close(4002, "invalid_native_json"); return;
-        };
-        let id = if frame.get("type").and_then(JsValue::as_string)
-            .is_some_and(|s| s.equals_str("hello_ok")) {
-            JsString::from("hello")
-        } else if let Some(id) = frame.get("id").and_then(JsValue::as_string) { id.clone() }
-        else { return; }; // Connection notifications are not operation responses.
-        if let Some(sender) = self.pending.lock().unwrap().get(&id) { let _ = sender.send(frame); }
-    }
-    fn close(&self, code: u16, reason: &str) {
-        let mut error = JsObject::new();
-        error.insert("code".into(), "CHANNEL_CONNECTION_CLOSED".into());
-        error.insert("message".into(), format!("native channel connection closed ({code}): {reason}").as_str().into());
-        let mut frame = JsObject::new();
-        frame.insert("ok".into(), JsValue::Bool(false));
-        frame.insert("error".into(), JsValue::Object(error));
-        let frame = JsValue::Object(frame);
-        for sender in self.pending.lock().unwrap().values() { let _ = sender.send(frame.clone()); }
+/// Public WS client bridge. It authenticates once per operation and closes on
+/// both success and failure, including a failed streamed agent turn.
+pub struct WsChannelGateway {
+    origin: String,
+    token: String,
+    started: std::time::Instant,
+    active: std::sync::Mutex<HashMap<JsString, (uuid::Uuid, crate::cron::client::GatewayClient)>>,
+}
+impl WsChannelGateway {
+    pub fn new(origin: String, token: String) -> Arc<Self> {
+        Arc::new(Self {
+            origin,
+            token,
+            started: std::time::Instant::now(),
+            active: Default::default(),
+        })
     }
 }
-struct Pending { output: Arc<Output>, id: JsString }
-impl Drop for Pending {
-    fn drop(&mut self) { self.output.pending.lock().unwrap().remove(&self.id); }
-}
-struct Client {
-    connection: HostedConnection,
-    output: Arc<Output>,
-    executor: tokio::runtime::Handle,
-    closing: AtomicBool,
-    closed: watch::Sender<Option<Result<()>>>,
-}
-impl Client {
-    fn pending(self: &Arc<Self>, id: JsString) -> (Pending, mpsc::UnboundedReceiver<JsValue>) {
-        let (sender, receiver) = mpsc::unbounded_channel();
-        self.output.pending.lock().unwrap().insert(id.clone(), sender);
-        (Pending { output: self.output.clone(), id }, receiver)
+impl ChannelGateway for WsChannelGateway {
+    fn stream_turn_ordered<'a>(
+        &'a self,
+        params: JsValue,
+        sink: &'a dyn ChannelOrderedEventSink,
+    ) -> ChannelCall<'a, ()> {
+        Box::pin(async move {
+            let client = crate::cron::client::GatewayClient::connect(&self.origin, &self.token)
+                .await
+                .map_err(gateway_error)?;
+            let session = params
+                .get("sessionKey")
+                .and_then(JsValue::as_string)
+                .cloned()
+                .unwrap_or_default();
+            let identity = uuid::Uuid::new_v4();
+            self.active
+                .lock()
+                .unwrap()
+                .insert(session.clone(), (identity, client.clone()));
+            let _guard = ActiveClientGuard {
+                active: &self.active,
+                session: session.clone(),
+                identity,
+                client: client.clone(),
+            };
+            let result = async {
+                let mut stream = client
+                    .stream_ordered("submit_turn", &params)
+                    .await
+                    .map_err(gateway_error)?;
+                while let Some(event) = stream.next().await {
+                    sink.event_ordered(event.map_err(gateway_error)?).await?;
+                }
+                Ok(())
+            }
+            .await;
+            client.close().await;
+            result
+        })
     }
-    fn begin_close(self: &Arc<Self>) {
-        if self.closing.swap(true, Ordering::SeqCst) { return; }
-        let client = self.clone();
-        self.executor.spawn(async move {
-            let result = client.connection.closed().await.map_err(RouteError::from);
-            client.output.close(1000, "closed");
-            client.closed.send_replace(Some(result));
-        });
-    }
-    async fn close(self: &Arc<Self>) -> Result<()> {
-        let mut done = self.closed.subscribe();
-        self.begin_close();
-        loop {
-            if let Some(result) = done.borrow().clone() { return result; }
-            done.changed().await.map_err(|_| RouteError::new("CHANNEL_CLOSE_FAILED", "channel cleanup stopped"))?;
-        }
-    }
-    async fn call(self: &Arc<Self>, method: &str, params: JsValue, sink: Option<&dyn ChannelOrderedEventSink>) -> Result<JsValue> {
-        if self.closing.load(Ordering::SeqCst) { return Err(closing()); }
-        let id = JsString::from(uuid::Uuid::new_v4().to_string());
-        let (_pending, mut frames) = self.pending(id.clone());
-        let mut request = JsObject::new();
-        request.insert("type".into(), "request".into());
-        request.insert("id".into(), JsValue::String(id));
-        request.insert("method".into(), method.into());
-        request.insert("params".into(), params);
-        let completion = self.connection.enqueue(wire(&JsValue::Object(request))?).await.map_err(RouteError::from)?;
-        tokio::pin!(completion);
-        let mut completed = false;
-        let mut last_sequence = -1.0;
-        loop {
-            let frame = if completed {
-                frames.try_recv().map_err(|_| RouteError::new("gateway_stream_ended_without_completion", "Gateway stream ended without a terminal result."))?
-            } else {
-                tokio::select! { biased;
-                    frame = frames.recv() => frame.ok_or_else(|| RouteError::new("CHANNEL_CONNECTION_CLOSED", "native channel response channel closed"))?,
-                    result = &mut completion => { result.map_err(RouteError::from)?; completed = true; continue; }
+    fn status(&self) -> ChannelCall<'_, String> {
+        Box::pin(async move {
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+            let git = |args: &'static [&'static str]| {
+                let root = root.clone();
+                async move {
+                    let output = tokio::process::Command::new("git")
+                        .args(args)
+                        .current_dir(root)
+                        .kill_on_drop(true)
+                        .output()
+                        .await
+                        .map_err(|e| RouteError::new("STATUS_FAILED", e.to_string()))?;
+                    if !output.status.success() {
+                        return Err(RouteError::new(
+                            "STATUS_FAILED",
+                            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+                        ));
+                    }
+                    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
                 }
             };
-            if frame.get("ok") == Some(&JsValue::Bool(false)) {
-                return Err(RouteError::from_ordered(frame.get("error").cloned().unwrap_or(JsValue::Undefined)));
+            let branch = git(&["branch", "--show-current"]).await?;
+            let commit = git(&["log", "--oneline", "-1", "HEAD"]).await?;
+            let minutes = self.started.elapsed().as_secs() / 60;
+            let uptime = if minutes >= 60 {
+                format!("{}h {}m", minutes / 60, minutes % 60)
+            } else {
+                format!("{minutes}m")
+            };
+            let platform = match std::env::consts::OS {
+                "macos" => "darwin",
+                "windows" => "win32",
+                other => other,
+            };
+            // ChannelCommandRegistry.ts reports the Node runtime's
+            // `process.version`.  Native gateway builds do not embed a
+            // fabricated version, so query the same `node` executable that
+            // would host the TypeScript implementation.  Keep the command
+            // output contract (`vNN...`) and fail the status request when the
+            // runtime cannot be discovered, matching the TS handler's
+            // catch-and-reply behaviour for a failed status probe.
+            let node_output = tokio::process::Command::new("node")
+                .arg("--version")
+                .kill_on_drop(true)
+                .output()
+                .await
+                .map_err(|e| RouteError::new("STATUS_FAILED", e.to_string()))?;
+            if !node_output.status.success() {
+                return Err(RouteError::new(
+                    "STATUS_FAILED",
+                    String::from_utf8_lossy(&node_output.stderr)
+                        .trim()
+                        .to_owned(),
+                ));
             }
-            if let Some(sink) = sink {
-                let seq = frame.get("seq").and_then(JsValue::as_number)
-                    .filter(|s| s.is_finite() && *s >= 0.0 && s.fract() == 0.0)
-                    .ok_or_else(|| RouteError::new("validation_error", "Gateway event sequence must be a non-negative integer."))?;
-                if seq <= last_sequence { continue; }
-                if seq != last_sequence + 1.0 { return Err(RouteError::new("validation_error", "Gateway event sequence gap.")); }
-                last_sequence = seq;
-                let event = frame.get("event").cloned().unwrap_or(JsValue::Undefined);
-                let mut event = event.as_object().cloned().unwrap_or_default();
-                event.insert("sequence".into(), JsValue::Number(seq));
-                let event = JsValue::Object(event);
-                sink.event_ordered(event.clone()).await?;
-                if frame.get("final") == Some(&JsValue::Bool(true)) { return Ok(event); }
-            } else { return Ok(frame.get("result").cloned().unwrap_or(JsValue::Null)); }
-        }
+            let node_version = String::from_utf8_lossy(&node_output.stdout)
+                .trim()
+                .to_owned();
+            if node_version.is_empty() {
+                return Err(RouteError::new(
+                    "STATUS_FAILED",
+                    "node --version returned no version",
+                ));
+            }
+            Ok(format!(
+                "📊 PilotDeck Status\n\n分支: {branch}\n提交: {commit}\n运行时间: {uptime}\nNode: {node_version}\n平台: {platform}"
+            ))
+        })
     }
-}
-fn closing() -> RouteError { RouteError::new("CHANNEL_HOST_CLOSED", "native channel host is closing") }
-struct ClientGuard(Option<Arc<Client>>);
-impl Drop for ClientGuard { fn drop(&mut self) { if let Some(client) = &self.0 { client.begin_close(); } } }
-type Active = HashMap<JsString, (uuid::Uuid, Arc<Client>)>;
-pub struct NativeChannelGateway {
-    host: TurnGateway,
-    project: PathBuf,
-    active: Mutex<Active>,
-    clients: Mutex<HashMap<uuid::Uuid, Weak<Client>>>,
-    closing: AtomicBool,
-}
-impl NativeChannelGateway {
-    pub fn new(host: TurnGateway, project: PathBuf) -> Arc<Self> {
-        Arc::new(Self { host, project, active: Mutex::default(), clients: Mutex::default(), closing: AtomicBool::new(false) })
-    }
-    async fn open(&self) -> Result<Arc<Client>> {
-        if self.closing.load(Ordering::SeqCst) { return Err(closing()); }
-        let output = Arc::new(Output::default());
-        let token = uuid::Uuid::new_v4().to_string();
-        let client = Arc::new(Client {
-            connection: self.host.connect(output.clone(), token.clone(), env!("CARGO_PKG_VERSION").into()),
-            output, executor: tokio::runtime::Handle::current(), closing: AtomicBool::new(false),
-            closed: watch::channel(None).0,
-        });
-        let mut guard = ClientGuard(Some(client.clone()));
-        {
-            let mut clients = self.clients.lock().unwrap();
-            clients.retain(|_, client| client.strong_count() > 0);
-            clients.insert(uuid::Uuid::new_v4(), Arc::downgrade(&client));
-        }
-        let (_pending, mut hello) = client.pending("hello".into());
-        let mut request = JsObject::new();
-        for (key, value) in [("type", "hello"), ("protocolVersion", GATEWAY_PROTOCOL_VERSION),
-            ("clientName", "native-channel"), ("clientVersion", env!("CARGO_PKG_VERSION")), ("token", token.as_str())] { request.insert(key.into(), value.into()); }
-        client.connection.receive(wire(&JsValue::Object(request))?).await.map_err(RouteError::from)?;
-        let hello = hello.try_recv().map_err(|_| RouteError::new("CHANNEL_HELLO_FAILED", "native handshake did not produce hello_ok"))?;
-        if hello.get("ok") == Some(&JsValue::Bool(false)) { return Err(RouteError::from_ordered(hello.get("error").cloned().unwrap_or(JsValue::Undefined))); }
-        if self.closing.load(Ordering::SeqCst) { return Err(closing()); }
-        guard.0.take(); // Ownership transfers to the request/stream guard.
-        Ok(client)
-    }
-    fn scoped(&self, mut params: JsValue) -> Result<JsValue> {
-        let JsValue::Object(ref mut params) = params else { return Err(RouteError::new("CHANNEL_PARAMS_INVALID", "channel params must be an object")); };
-        if params.get("projectKey").is_none_or(|v| matches!(v, JsValue::Undefined | JsValue::Null)) {
-            params.insert("projectKey".into(), self.project.to_string_lossy().as_ref().into());
-        }
-        Ok(JsValue::Object(params.clone()))
-    }
-    pub async fn close(&self) -> Result<()> {
-        self.closing.store(true, Ordering::SeqCst);
-        let clients: Vec<_> = self.clients.lock().unwrap().values().filter_map(Weak::upgrade).collect();
-        let mut errors = Vec::new();
-        for client in clients { if let Err(error) = client.close().await { errors.push(error.message); } }
-        if errors.is_empty() { Ok(()) } else { Err(RouteError::new("CHANNEL_CLOSE_FAILED", errors.join("; "))) }
-    }
-}
-struct ActiveGuard<'a> { gateway: &'a NativeChannelGateway, session: JsString, id: uuid::Uuid, client: Arc<Client> }
-impl Drop for ActiveGuard<'_> {
-    fn drop(&mut self) {
-        let mut active = self.gateway.active.lock().unwrap();
-        if active.get(&self.session).is_some_and(|(id, _)| *id == self.id) { active.remove(&self.session); }
-        self.client.begin_close();
-    }
-}
-impl ChannelGateway for NativeChannelGateway {
-    fn request<'a>(&'a self, method: &'a str, params: Value) -> ChannelCall<'a, Value> {
-        Box::pin(async move { serde_view(&self.request_ordered(method, from_serde(&params)?).await?) })
-    }
-    fn request_ordered<'a>(&'a self, method: &'a str, params: JsValue) -> ChannelCall<'a, JsValue> {
+    fn update(&self, check: bool) -> ChannelCall<'_, (i32, String)> {
         Box::pin(async move {
-            if self.closing.load(Ordering::SeqCst) { return Err(closing()); }
-            let params = self.scoped(params)?;
-            let active = params.get("sessionKey").and_then(JsValue::as_string)
-                .and_then(|s| self.active.lock().unwrap().get(s).map(|(_, client)| client.clone()));
-            if let Some(client) = active { return client.call(method, params, None).await; }
-            let client = self.open().await?;
-            let _guard = ClientGuard(Some(client.clone()));
-            let result = client.call(method, params, None).await;
-            let closed = client.close().await;
-            match result { Ok(value) => { closed?; Ok(value) }, Err(error) => Err(error) }
+            let executable = std::env::current_exe()
+                .map_err(|e| RouteError::new("UPDATE_UNAVAILABLE", e.to_string()))?
+                .with_file_name("pilotdeck");
+            let output = tokio::process::Command::new(executable)
+                .args(["update", if check { "--check" } else { "--restart" }])
+                .kill_on_drop(true)
+                .output()
+                .await
+                .map_err(|e| RouteError::new("UPDATE_FAILED", e.to_string()))?;
+            let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+            text.push_str(&String::from_utf8_lossy(&output.stderr));
+            Ok((output.status.code().unwrap_or(1), text))
+        })
+    }
+    fn search<'a>(
+        &'a self,
+        home: &'a Path,
+        project: Option<&'a str>,
+        args: SearchArgs,
+    ) -> ChannelCall<'a, String> {
+        Box::pin(async move {
+            if args.query.is_empty() {
+                return Ok(SEARCH_USAGE.into());
+            }
+            let executable = std::env::current_exe()
+                .map_err(|e| RouteError::new("SEARCH_UNAVAILABLE", e.to_string()))?
+                .with_file_name("pilotdeck");
+            let mut command = tokio::process::Command::new(executable);
+            command
+                .args(["chat", "search", &args.query, "--json", "--pilot-home"])
+                .arg(home)
+                .kill_on_drop(true);
+            match project {
+                Some(project) => {
+                    command.args(["--project", project]);
+                }
+                None => {
+                    command.arg("--all-projects");
+                }
+            }
+            if let Some(limit) = args.limit {
+                command.args(["--limit", &limit.to_string()]);
+            }
+            if let Some(role) = &args.role {
+                command.args(["--role", role]);
+            }
+            if let Some(session) = &args.session_id {
+                command.args(["--session", session]);
+            }
+            if args.regex {
+                command.arg("--regex");
+            }
+            if args.case_sensitive {
+                command.arg("--case-sensitive");
+            }
+            let output = command
+                .output()
+                .await
+                .map_err(|e| RouteError::new("SEARCH_FAILED", e.to_string()))?;
+            if !output.status.success() {
+                return Err(RouteError::new(
+                    "SEARCH_FAILED",
+                    String::from_utf8_lossy(&output.stderr)
+                        .trim()
+                        .trim_start_matches("Error: ")
+                        .to_owned(),
+                ));
+            }
+            let result: Value = serde_json::from_slice(&output.stdout)
+                .map_err(|e| RouteError::new("SEARCH_FAILED", e.to_string()))?;
+            Ok(format_search_result(&result, project.is_none()))
+        })
+    }
+    fn request<'a>(&'a self, method: &'a str, params: Value) -> ChannelCall<'a, Value> {
+        Box::pin(async move {
+            let active = params["sessionKey"].as_str().and_then(|key| {
+                self.active
+                    .lock()
+                    .unwrap()
+                    .get(&JsString::from(key))
+                    .map(|(_, client)| client.clone())
+            });
+            if let Some(client) = active {
+                return client.request(method, &params).await.map_err(gateway_error);
+            }
+            let client = crate::cron::client::GatewayClient::connect(&self.origin, &self.token)
+                .await
+                .map_err(gateway_error)?;
+            let result = client.request(method, &params).await.map_err(gateway_error);
+            client.close().await;
+            result
         })
     }
     fn turn(&self, params: Value) -> ChannelCall<'_, Vec<Value>> {
         Box::pin(async move {
-            let sink = Collect(Mutex::new(Vec::new()));
-            self.stream_turn(params, &sink).await?;
-            Ok(sink.0.into_inner().unwrap())
+            let client = crate::cron::client::GatewayClient::connect(&self.origin, &self.token)
+                .await
+                .map_err(gateway_error)?;
+            let result = async {
+                let mut stream = client
+                    .stream("submit_turn", &params)
+                    .await
+                    .map_err(gateway_error)?;
+                let mut events = Vec::new();
+                while let Some(event) = stream.next().await {
+                    events.push(event.map_err(gateway_error)?);
+                }
+                Ok(events)
+            }
+            .await;
+            client.close().await;
+            result
         })
     }
-    fn stream_turn<'a>(&'a self, params: Value, sink: &'a dyn ChannelEventSink) -> ChannelCall<'a, ()> {
-        Box::pin(async move { self.stream_turn_ordered(from_serde(&params)?, &SerdeSink(sink)).await })
-    }
-    fn stream_turn_ordered<'a>(&'a self, params: JsValue, sink: &'a dyn ChannelOrderedEventSink) -> ChannelCall<'a, ()> {
+    fn stream_turn<'a>(
+        &'a self,
+        params: Value,
+        sink: &'a dyn ChannelEventSink,
+    ) -> ChannelCall<'a, ()> {
         Box::pin(async move {
-            let params = self.scoped(params)?;
-            let session = params.get("sessionKey").and_then(JsValue::as_string).cloned()
-                .filter(|s| !s.is_empty()).ok_or_else(|| RouteError::new("INVALID_SESSION_KEY", "sessionKey is required"))?;
-            let client = self.open().await?;
-            let _client_guard = ClientGuard(Some(client.clone()));
-            let id = uuid::Uuid::new_v4();
-            {
-                let mut active = self.active.lock().unwrap();
-                if active.contains_key(&session) { return Err(RouteError::new("session_busy", "Session already processing a request")); }
-                active.insert(session.clone(), (id, client.clone()));
+            let client = crate::cron::client::GatewayClient::connect(&self.origin, &self.token)
+                .await
+                .map_err(gateway_error)?;
+            let session = JsString::from(params["sessionKey"].as_str().unwrap_or(""));
+            let identity = uuid::Uuid::new_v4();
+            self.active
+                .lock()
+                .unwrap()
+                .insert(session.clone(), (identity, client.clone()));
+            let _guard = ActiveClientGuard {
+                active: &self.active,
+                session: session.clone(),
+                identity,
+                client: client.clone(),
+            };
+            let result = async {
+                let mut stream = client
+                    .stream("submit_turn", &params)
+                    .await
+                    .map_err(gateway_error)?;
+                while let Some(event) = stream.next().await {
+                    sink.event(event.map_err(gateway_error)?).await?;
+                }
+                Ok(())
             }
-            let _active = ActiveGuard { gateway: self, session, id, client: client.clone() };
-            let result = client.call("submit_turn", params, Some(sink)).await;
-            let closed = client.close().await;
-            match result { Ok(_) => closed, Err(error) => Err(error) }
+            .await;
+            client.close().await;
+            result
         })
     }
 }
-struct Collect(Mutex<Vec<Value>>);
-impl ChannelEventSink for Collect {
-    fn event(&self, event: Value) -> ChannelCall<'_, ()> {
-        Box::pin(async move { self.0.lock().unwrap().push(event); Ok(()) })
+struct ActiveClientGuard<'a> {
+    active:
+        &'a std::sync::Mutex<HashMap<JsString, (uuid::Uuid, crate::cron::client::GatewayClient)>>,
+    session: JsString,
+    identity: uuid::Uuid,
+    client: crate::cron::client::GatewayClient,
+}
+impl Drop for ActiveClientGuard<'_> {
+    fn drop(&mut self) {
+        self.active
+            .lock()
+            .unwrap()
+            .retain(|key, (identity, _)| key != &self.session || identity != &self.identity);
+        let client = self.client.clone();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                client.close().await;
+            });
+        }
     }
+}
+const SEARCH_USAGE: &str =
+    "用法：/search <关键词> [--all] [--limit N] [--role user|assistant]\n示例：/search docker 部署";
+pub fn format_search_result(result: &Value, include_project: bool) -> String {
+    let query = result["query"].as_str().unwrap_or("");
+    if crate::metadata::js_trim(query).is_empty() {
+        return SEARCH_USAGE.into();
+    }
+    let matches = result["matches"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    if matches.is_empty() {
+        return format!(
+            "未找到包含「{query}」的聊天记录。\n已扫描 {} 个会话。",
+            result["sessionsScanned"].as_u64().unwrap_or(0)
+        );
+    }
+    let mut lines = vec![
+        format!(
+            "🔍 找到 {} 条匹配「{query}」{}",
+            matches.len(),
+            if result["truncated"] == true {
+                "（结果已截断，可加大 --limit）"
+            } else {
+                ""
+            }
+        ),
+        String::new(),
+    ];
+    for (index, item) in matches.iter().enumerate() {
+        let field = |key| item[key].as_str().unwrap_or("");
+        let id = field("sessionId");
+        let units: Vec<_> = id.encode_utf16().collect();
+        let short = if units.len() > 12 {
+            format!("{}…", String::from_utf16_lossy(&units[..8]))
+        } else {
+            id.into()
+        };
+        let project = if include_project && !field("projectKey").is_empty() {
+            format!(
+                " · {}",
+                field("projectKey")
+                    .rsplit(['/', '\\'])
+                    .next()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(field("projectKey"))
+            )
+        } else {
+            String::new()
+        };
+        lines.push(format!(
+            "{}. **{}** (`{short}`){project}\n   {} · {}\n   > {}",
+            index + 1,
+            field("sessionTitle"),
+            if field("role") == "user" {
+                "用户"
+            } else {
+                "助手"
+            },
+            format_when(field("createdAt")),
+            field("snippet")
+        ));
+        lines.push(String::new());
+    }
+    lines.push("提示：在 Web UI 中打开对应会话后，可用 /search 结果中的片段定位消息。".into());
+    lines.join("\n").trim_end().into()
+}
+fn format_when(value: &str) -> String {
+    if value.is_empty() {
+        return "未知时间".into();
+    }
+    let Ok(Some(ms)) = pilotdeck_transport::system_clock::parse_node22_date(&value.into()) else {
+        return value.into();
+    };
+    let local = (|| {
+        let path =
+            pilotdeck_transport::system_clock::system_tzif_path(std::env::var_os("TZ").as_deref())?;
+        let bytes = std::fs::read(path).ok()?;
+        let zone = tz::TimeZone::from_tz_data(&bytes).ok()?;
+        tz::DateTime::from_timespec((ms / 1000.0).floor() as i64, 0, zone.as_ref()).ok()
+    })();
+    match local {
+        Some(local) => format!(
+            "{}月{}日 {:02}:{:02}",
+            local.month(),
+            local.month_day(),
+            local.hour(),
+            local.minute()
+        ),
+        None => value.into(),
+    }
+}
+fn gateway_error(error: crate::cron::client::GatewayClientError) -> RouteError {
+    RouteError::new(error.code, error.message)
+}
+pub trait ChannelReply: Send + Sync {
+    fn reply<'a>(&'a self, text: &'a str) -> ChannelCall<'a, ()>;
 }
 
-/// Shared IM mapper; HTTP transports retain their source-specific session rules.
 #[derive(Clone, Default)]
 pub struct ChannelSessionState {
     pub active_by_chat_id: HashMap<String, String>,
@@ -287,20 +477,323 @@ pub struct ChannelSessionState {
 }
 impl ChannelSessionState {
     pub fn from_value(value: &Value) -> Self {
-        let map = |key| value.get(key).and_then(Value::as_object).map(|v| v.iter()
-            .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.into()))).collect()).unwrap_or_default();
-        Self { active_by_chat_id: map("activeByChatId"), project_by_chat_id: map("projectByChatId") }
+        let map = |name| {
+            value
+                .get(name)
+                .and_then(Value::as_object)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        Self {
+            active_by_chat_id: map("activeByChatId"),
+            project_by_chat_id: map("projectByChatId"),
+        }
     }
-    pub fn snapshot(&self) -> Value { serde_json::json!({"activeByChatId":self.active_by_chat_id,"projectByChatId":self.project_by_chat_id}) }
+    pub fn snapshot(&self) -> Value {
+        json!({"activeByChatId":self.active_by_chat_id,"projectByChatId":self.project_by_chat_id})
+    }
     pub fn session(&self, channel: &str, chat: &str) -> String {
-        self.active_by_chat_id.get(chat).cloned().unwrap_or_else(|| format!("{channel}:chat={chat}:general"))
+        self.active_by_chat_id
+            .get(chat)
+            .cloned()
+            .unwrap_or_else(|| format!("{channel}:chat={chat}:general"))
     }
     pub fn reset(&mut self, channel: &str, chat: &str) -> String {
         let session = format!("{channel}:chat={chat}:s_{}", uuid::Uuid::new_v4());
-        self.active_by_chat_id.insert(chat.into(), session.clone()); session
+        self.active_by_chat_id.insert(chat.into(), session.clone());
+        session
     }
-    pub fn project(&self, chat: &str) -> Option<&str> { self.project_by_chat_id.get(chat).map(String::as_str) }
-    pub fn persist_channel_mapper(state: &Self, save: &Option<Arc<dyn Fn(Value) + Send + Sync>>) {
-        if let Some(save) = save { save(state.snapshot()); }
+    pub fn persist_channel_mapper(
+        state: &ChannelSessionState,
+        on_state_change: &Option<Arc<dyn Fn(Value) + Send + Sync>>,
+    ) {
+        if let Some(save) = on_state_change {
+            save(state.snapshot());
+        }
+    }
+    pub fn project(&self, chat: &str) -> Option<&str> {
+        self.project_by_chat_id.get(chat).map(String::as_str)
+    }
+}
+
+const COMMANDS: &[(&str, &[&str], &str, bool)] = &[
+    ("new", &[], "Create a new conversation session", true),
+    ("plan", &[], "先生成计划并请求确认", false),
+    ("projects", &["项目列表"], "List available projects", true),
+    (
+        "switch-project",
+        &["切换项目"],
+        "Switch active project for this chat",
+        true,
+    ),
+    (
+        "update",
+        &["升级", "更新"],
+        "Install the latest supported Release and request a Web service restart",
+        true,
+    ),
+    (
+        "status",
+        &["状态"],
+        "Show PilotDeck status and version",
+        true,
+    ),
+    (
+        "search",
+        &["find", "grep", "搜索"],
+        "Search chat history across sessions",
+        true,
+    ),
+    ("help", &["帮助"], "Show available commands", true),
+];
+pub fn resolve_command(text: &str) -> Option<(&'static str, &str)> {
+    let text = crate::metadata::js_trim(text).strip_prefix('/')?;
+    let (name, arg) = text.split_once(' ').unwrap_or((text, ""));
+    let name = name.to_lowercase();
+    COMMANDS
+        .iter()
+        .find(|(n, aliases, _, _)| *n == name || aliases.contains(&name.as_str()))
+        .map(|(n, _, _, _)| (*n, crate::metadata::js_trim(arg)))
+}
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SearchArgs {
+    pub query: String,
+    pub all_projects: bool,
+    pub limit: Option<usize>,
+    pub regex: bool,
+    pub case_sensitive: bool,
+    pub role: Option<String>,
+    pub session_id: Option<String>,
+}
+/// Preserve the TS parser's invalid-option behavior: an invalid flag operand is
+/// reconsidered as a query token on the next iteration.
+pub fn parse_search_args(raw: &str) -> SearchArgs {
+    let tokens: Vec<_> = raw.split_whitespace().collect();
+    let mut out = SearchArgs::default();
+    let mut query = Vec::new();
+    let mut at = 0;
+    while at < tokens.len() {
+        let next = tokens.get(at + 1).copied();
+        match tokens[at] {
+            "--all" | "-a" => out.all_projects = true,
+            "--regex" | "-E" => out.regex = true,
+            "--case-sensitive" => out.case_sensitive = true,
+            "--limit" | "-n" => {
+                if let Some(value) = next
+                    .and_then(js_number)
+                    .filter(|n| n.is_finite() && *n > 0.0)
+                {
+                    out.limit = Some(value.floor().min(100.0) as usize);
+                    at += 1;
+                }
+            }
+            "--role" | "-r" => {
+                if let Some(value @ ("user" | "assistant" | "all")) = next {
+                    out.role = Some(value.into());
+                    at += 1;
+                }
+            }
+            "--session" | "-s" => {
+                if let Some(value) = next {
+                    out.session_id = Some(value.into());
+                    at += 1;
+                }
+            }
+            token => query.push(token),
+        }
+        at += 1;
+    }
+    out.query = query.join(" ");
+    out
+}
+fn js_number(raw: &str) -> Option<f64> {
+    for (prefix, radix) in [
+        ("0x", 16),
+        ("0X", 16),
+        ("0b", 2),
+        ("0B", 2),
+        ("0o", 8),
+        ("0O", 8),
+    ] {
+        if let Some(value) = raw.strip_prefix(prefix) {
+            return u64::from_str_radix(value, radix).ok().map(|n| n as f64);
+        }
+    }
+    raw.parse().ok()
+}
+
+pub struct CommandContext<'a> {
+    pub gateway: &'a dyn ChannelGateway,
+    pub reply: &'a dyn ChannelReply,
+    pub state: &'a mut ChannelSessionState,
+    pub channel: &'a str,
+    pub chat: &'a str,
+    pub home: &'a Path,
+}
+pub async fn execute_channel_command(
+    text: &str,
+    ctx: &mut CommandContext<'_>,
+) -> super::routes::Result<bool> {
+    let Some((name, arg)) = resolve_command(text) else {
+        return Ok(false);
+    };
+    if matches!(name, "new" | "plan") {
+        return Ok(false);
+    }
+    let result = execute(name, arg, ctx).await;
+    if let Err(error) = result {
+        ctx.reply
+            .reply(&format!("命令执行失败: {}", error.message))
+            .await?;
+    }
+    Ok(true)
+}
+async fn execute(name: &str, arg: &str, ctx: &mut CommandContext<'_>) -> super::routes::Result<()> {
+    match name {
+        "projects" | "switch-project" => {
+            if name == "switch-project" && arg.is_empty() {
+                return ctx
+                    .reply
+                    .reply("用法：/switch-project <项目名>\n\n发送 /projects 查看可用项目。")
+                    .await;
+            }
+            let result = ctx.gateway.request("list_projects", json!({})).await?;
+            let projects = result
+                .get("projects")
+                .and_then(Value::as_array)
+                .ok_or_else(|| RouteError::new("INVALID_PROJECTS", "Invalid projects response"))?;
+            let field =
+                |p: &Value, k: &str| p.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
+            if name == "projects" {
+                if projects.is_empty() {
+                    return ctx
+                        .reply
+                        .reply("暂无项目。使用 Web UI 创建 WorkSpace 后即可在此切换。")
+                        .await;
+                }
+                let mut lines = vec!["📂 项目列表：".into(), "".into()];
+                for p in projects {
+                    let marker = if ctx.state.project(ctx.chat)
+                        == p.get("projectKey").and_then(Value::as_str)
+                    {
+                        " ✅"
+                    } else {
+                        ""
+                    };
+                    lines.push(format!("• {}{marker}", field(p, "name")));
+                }
+                lines.extend([
+                    "".into(),
+                    "发送 /switch-project <项目名> 切换 WorkSpace".into(),
+                ]);
+                ctx.reply.reply(&lines.join("\n")).await
+            } else {
+                let lower = arg.to_lowercase();
+                let target = projects
+                    .iter()
+                    .find(|p| field(p, "name") == arg)
+                    .or_else(|| {
+                        projects
+                            .iter()
+                            .find(|p| field(p, "name").to_lowercase() == lower)
+                    })
+                    .or_else(|| {
+                        projects
+                            .iter()
+                            .find(|p| field(p, "name").to_lowercase().contains(&lower))
+                    });
+                let Some(target) = target else {
+                    return ctx
+                        .reply
+                        .reply(&format!(
+                            "未找到匹配「{arg}」的项目。\n\n发送 /projects 查看可用项目。"
+                        ))
+                        .await;
+                };
+                ctx.state
+                    .project_by_chat_id
+                    .insert(ctx.chat.into(), field(target, "projectKey"));
+                ctx.state.reset(ctx.channel, ctx.chat);
+                ctx.reply
+                    .reply(&format!(
+                        "已切换到项目：{}\n路径：{}\n（已自动创建新会话）",
+                        field(target, "name"),
+                        field(target, "fullPath")
+                    ))
+                    .await
+            }
+        }
+        "help" => {
+            let mut lines = vec!["📋 可用命令：".into(), "".into()];
+            for (name, aliases, description, _) in COMMANDS {
+                let aliases = if aliases.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        " ({})",
+                        aliases
+                            .iter()
+                            .map(|a| format!("/{a}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                lines.push(format!("/{name}{aliases} — {description}"));
+            }
+            ctx.reply.reply(&lines.join("\n")).await
+        }
+        "search" => {
+            if arg.is_empty() {
+                return ctx.reply.reply("用法：/search <关键词> [--all] [--limit N] [--role user|assistant]\n示例：/search docker 部署").await;
+            }
+            let args = parse_search_args(arg);
+            let project = if args.all_projects {
+                None
+            } else {
+                ctx.state.project(ctx.chat)
+            };
+            let text = ctx.gateway.search(ctx.home, project, args).await?;
+            ctx.reply.reply(&text).await
+        }
+        "status" => match ctx.gateway.status().await {
+            Ok(text) => ctx.reply.reply(&text).await,
+            Err(e) => {
+                ctx.reply
+                    .reply(&format!("获取状态失败: {}", e.message))
+                    .await
+            }
+        },
+        "update" => {
+            if !arg.is_empty() && arg != "check" {
+                return ctx.reply.reply("用法：/update check 检查 Release；/update 更新并请求重启。未运行 Web 服务时，请使用 CLI 手动更新。").await;
+            }
+            ctx.reply
+                .reply(if arg == "check" {
+                    "⏳ 正在检查 Release 更新..."
+                } else {
+                    "⏳ 正在检查部署资格并更新 Release，完成后向 Web 服务请求重启..."
+                })
+                .await?;
+            let text = match ctx.gateway.update(arg == "check").await {
+                Ok((2, _)) => "✅ 已是最新 Release，无需更新。".into(),
+                Ok((code, output)) => format!(
+                    "{} {}",
+                    if code == 0 { "✅" } else { "❌" },
+                    output
+                        .lines()
+                        .filter(|line| !line.is_empty())
+                        .next_back()
+                        .unwrap_or("更新命令未返回结果，请查看设置页。")
+                ),
+                Err(e) => format!("❌ 更新失败：{}", e.message),
+            };
+            ctx.reply.reply(&text).await
+        }
+        _ => Ok(()),
     }
 }

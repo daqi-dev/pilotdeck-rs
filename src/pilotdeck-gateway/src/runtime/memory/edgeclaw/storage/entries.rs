@@ -1,8 +1,6 @@
 //! Repository entry operations and non-transactional clear ordering.
 //! Fixed TS baseline: `core/storage/sqlite.ts:1752-2004`.
-use super::super::file_memory::{
-    ClearSessionHook, ClearSessionStage, EdgeClawFileStores, FileMemoryError,
-};
+use super::super::file_memory::{EdgeClawFileStores, FileMemoryError};
 use crate::metadata::js_trim;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 use sha1::{Digest, Sha1};
@@ -65,48 +63,19 @@ fn map_record(v: JsValue) -> Result<JsValue> {
 fn ids_input(ids: Vec<JsValue>, key: &str) -> JsObject {
     object(&[(key, JsValue::Array(ids))])
 }
-/// `ids.filter(...)` at the TS repository boundary. A missing or non-array ids
-/// argument throws `TypeError` before the first store call; array elements are
-/// returned verbatim for the caller's own element checks.
-fn batch_ids(ids: &JsValue) -> Result<&[JsValue]> {
-    match ids {
-        JsValue::Array(items) => Ok(items),
-        JsValue::Undefined => Err(FileMemoryError::Type(
-            "Cannot read properties of undefined (reading 'filter')".into(),
-        )),
-        JsValue::Null => Err(FileMemoryError::Type(
-            "Cannot read properties of null (reading 'filter')".into(),
-        )),
-        _ => Err(FileMemoryError::Type("ids.filter is not a function".into())),
-    }
-}
-/// `deleteMemoryEntries` / `deprecateMemoryEntries` / `restoreMemoryEntries`
-/// call `isGlobalRelativePath(id)` through `Array.prototype.filter`, whose
-/// `normalizeRelativePath` reaches `String.prototype.replace`. Validate every
-/// element before any snapshot or store work, in TS element order.
-fn mutation_ids(ids: &JsValue) -> Result<Vec<JsString>> {
-    batch_ids(ids)?
-        .iter()
-        .map(|value| match value {
-            JsValue::String(id) => Ok(id.clone()),
-            JsValue::Undefined => Err(FileMemoryError::Type(
-                "Cannot read properties of undefined (reading 'replace')".into(),
-            )),
-            JsValue::Null => Err(FileMemoryError::Type(
-                "Cannot read properties of null (reading 'replace')".into(),
-            )),
-            _ => Err(FileMemoryError::Type(
-                "relativePath.replace is not a function".into(),
-            )),
-        })
-        .collect()
-}
 
 impl EdgeClawFileStores {
-    /// The both-store query shared by `listMemoryEntries` /
-    /// `countMemoryEntries` (`sqlite.ts:1720-1775`): each store is capped at
-    /// its own 5000-entry page. The public ports live in `storage/overview.rs`;
-    /// `clearSessionMemoryData` (`sqlite.ts:1989`) reuses this internal one.
+    pub fn list_memory_entries(&self, limit: usize) -> Result<Vec<JsValue>> {
+        let mut entries = self.entry_query(&JsObject::new())?;
+        super::accessors::sort_entry_values(&mut entries)?;
+        entries.truncate(limit.max(1));
+        Ok(entries)
+    }
+
+    /// Count independently capped workspace/global queries (5000 per store).
+    pub fn count_memory_entries(&self, options: &JsObject) -> Result<usize> {
+        Ok(self.entry_query(options)?.len())
+    }
     fn entry_query(&self, options: &JsObject) -> Result<Vec<JsValue>> {
         let mut input = options.clone();
         input.insert("limit".into(), JsValue::Number(5000.0));
@@ -131,28 +100,7 @@ impl EdgeClawFileStores {
         Ok(entries)
     }
     /// Filter/dedupe only for reading, then replay original ids (duplicates retained).
-    /// `ids` is the raw JS argument: `ids.filter` throws before any read when it
-    /// is not an array; non-string elements are ignored exactly as TS.
-    pub fn get_memory_records_by_ids(&self, ids: &JsValue, max_lines: f64) -> Result<JsValue> {
-        self.get_memory_records_by_ids_raw(ids, &JsValue::Number(max_lines))
-    }
-    pub(crate) fn get_memory_records_by_ids_raw(
-        &self,
-        ids: &JsValue,
-        max_lines: &JsValue,
-    ) -> Result<JsValue> {
-        let ids = batch_ids(ids)?
-            .iter()
-            .filter_map(JsValue::as_string)
-            .cloned()
-            .collect::<Vec<_>>();
-        self.get_memory_records_by_id_strings(&ids, max_lines)
-    }
-    fn get_memory_records_by_id_strings(
-        &self,
-        ids: &[JsString],
-        max_lines: &JsValue,
-    ) -> Result<JsValue> {
+    pub fn get_memory_records_by_ids(&self, ids: &[JsString], max_lines: f64) -> Result<JsValue> {
         let mut seen = HashSet::new();
         let unique = ids
             .iter()
@@ -178,7 +126,7 @@ impl EdgeClawFileStores {
         }
         let read = |store: &super::super::file_memory::FileMemoryStore, ids| {
             let mut input = ids_input(ids, "ids");
-            input.insert("maxLines".into(), max_lines.clone());
+            input.insert("maxLines".into(), JsValue::Number(max_lines));
             store.get_memory_records_by_ids(&input)
         };
         let mut records = array(read(&self.workspace_memory, workspace)?);
@@ -285,17 +233,14 @@ impl EdgeClawFileStores {
             ])))
         })
     }
-    pub fn delete_memory_entries(&self, ids: &JsValue) -> Result<JsValue> {
-        let ids = mutation_ids(ids)?;
-        self.mutate_entries(&ids, "deleteEntries")
+    pub fn delete_memory_entries(&self, ids: &[JsString]) -> Result<JsValue> {
+        self.mutate_entries(ids, "deleteEntries")
     }
-    pub fn deprecate_memory_entries(&self, ids: &JsValue) -> Result<JsValue> {
-        let ids = mutation_ids(ids)?;
-        self.mutate_entries(&ids, "markEntriesDeprecated")
+    pub fn deprecate_memory_entries(&self, ids: &[JsString]) -> Result<JsValue> {
+        self.mutate_entries(ids, "markEntriesDeprecated")
     }
-    pub fn restore_memory_entries(&self, ids: &JsValue) -> Result<JsValue> {
-        let ids = mutation_ids(ids)?;
-        self.mutate_entries(&ids, "restoreEntries")
+    pub fn restore_memory_entries(&self, ids: &[JsString]) -> Result<JsValue> {
+        self.mutate_entries(ids, "restoreEntries")
     }
     pub fn archive_tmp_entries(&self, input: &JsObject) -> Result<JsValue> {
         let mut next = input.clone();
@@ -400,37 +345,11 @@ impl EdgeClawFileStores {
             ))
         })
     }
-    /// #917 fix-r2: install the `clearSession` seam (tests only; production
-    /// never calls this).
-    #[doc(hidden)]
-    pub fn set_clear_session_hook(&self, hook: ClearSessionHook) {
-        *self
-            .clear_session_hook
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(hook);
-    }
     pub fn clear_session_memory_data(&self, session: &str) -> Result<JsValue> {
         self.snapshot_operation(|| {
             let session = js_trim(session);
             if session.is_empty() {
                 return Err(FileMemoryError::Invalid("sessionKey is required.".into()));
-            }
-            // #917 fix-r2 seam: fires exactly at the pre-fix-r2 bump
-            // position — before the L0 count, before any data is removed. A
-            // hook that returns an error aborts the clear with nothing
-            // deleted (the mid-clear storage failure shape); one that blocks
-            // parks the clear inside its critical section (the in-flight
-            // window shape). Production never installs a hook.
-            // #917 fix-r3 (review P3-3): the hook is cloned out of its slot
-            // before the call — a hook that re-enters `set_clear_session_hook`
-            // or the same store would self-deadlock on the slot's mutex.
-            let hook = self
-                .clear_session_hook
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clone();
-            if let Some(hook) = hook {
-                hook(ClearSessionStage::BeforeRemoveData, session)?;
             }
             let l0 = self.storage.conn()?.query_row(
                 "SELECT COUNT(*) FROM l0_sessions WHERE session_key = ?",
@@ -444,61 +363,15 @@ impl EdgeClawFileStores {
             let mut entries = self.entry_query(&options)?;
             super::accessors::sort_entry_values(&mut entries)?;
             entries.truncate(5000);
-            let ids = JsValue::Array(
-                entries
-                    .iter()
-                    .filter(|e| field(e, "sourceSessionKey") == &s(session))
-                    .filter_map(|e| field(e, "relativePath").as_string().cloned())
-                    .map(JsValue::String)
-                    .collect(),
-            );
-            // #1207 fix-r2 (review P0): the deletion itself can fail after the
-            // session's files are (partially) removed — a later unlink, the
-            // manifest `repair()` rewriting MEMORY.md, or `repair_manifests`
-            // — which is the same indexed-row-without-its-file shape the tail
-            // below recovers from. No connection guard is held here
-            // (`mutate_entries` takes only the reentrant snapshot scopes), so
-            // the same re-arm applies; a failure before any unlink resets rows
-            // whose files still exist, which is idempotent.
-            let deleted = match self.delete_memory_entries(&ids) {
-                Ok(deleted) => deleted,
-                Err(error) => {
-                    self.storage.rearm_l0_indexed_for_session(session)?;
-                    return Err(error);
-                }
-            };
-            // #1207 fix-r1 (review P1): everything below can still fail while
-            // the session's memory files are already gone. It runs in a
-            // helper whose connection guard is released when the helper
-            // returns — the recovery in the error arm must not reenter a
-            // guard this thread still holds (the conn mutex is not reentrant).
-            let removed_l0_ids = match self.clear_session_l0_tail(session) {
-                Ok(ids) => ids,
-                Err(error) => {
-                    // The clear aborted with the session's memory files
-                    // already removed but its L0 rows still present. An
-                    // indexed row would keep its file deleted forever —
-                    // nothing ever re-lists an indexed row — so re-arm the
-                    // session's rows: `indexed` back to 0 lets the next
-                    // heartbeat re-list them and regenerate the files, the
-                    // same recovery an unindexed row already gets.
-                    self.storage.rearm_l0_indexed_for_session(session)?;
-                    return Err(error);
-                }
-            };
-            // #917 fix-r2 (review P1-1): the generation means "this session's
-            // clear completed", never "it started". Bump only after the L0 rows
-            // are actually gone: a clear that fails anywhere above must leave
-            // the generation untouched, so an in-flight heartbeat neither
-            // discards the turn nor marks its still-present L0 row indexed
-            // (the silent-turn-loss shape), and a baseline read inside a live
-            // clear's critical section can only predate the deletion — after
-            // the bump that run's own list predates the deletion too, so what
-            // it lists are rows the clear has not claimed. fix-r3: the bump
-            // carries the removed ids, so the heartbeat recheck discards only
-            // those rows and keeps a turn captured after the completed clear
-            // (review P0: the session-level comparison used to drop it).
-            self.session_clears.bump(session, &removed_l0_ids);
+            let ids = entries
+                .iter()
+                .filter(|e| field(e, "sourceSessionKey") == &s(session))
+                .filter_map(|e| field(e, "relativePath").as_string().cloned())
+                .collect::<Vec<_>>();
+            let deleted = self.delete_memory_entries(&ids)?;
+            self.storage
+                .conn()?
+                .execute("DELETE FROM l0_sessions WHERE session_key = ?", [session])?;
             Ok(self.clear_result(
                 "session",
                 l0 as usize,
@@ -507,84 +380,6 @@ impl EdgeClawFileStores {
                 array(field(&deleted, "deletedProjectIds").clone()).len(),
             ))
         })
-    }
-    /// #1207 fix-r1 (review P1): the tail of [`Self::clear_session_memory_data`]
-    /// between the session's file removal and the bump — the `BeforeDeleteL0`
-    /// and `L0IdsSelected` seams, the removed-id selection and the L0 DELETE —
-    /// as one unit, so an error at any of them makes the caller re-arm the
-    /// still-present rows instead of leaving an indexed row whose file is
-    /// already gone.
-    fn clear_session_l0_tail(&self, session: &str) -> Result<Vec<String>> {
-        // #917 fix-r3 (review P2) seam: the session's memory files are
-        // already removed but its L0 rows are not — the "bump after the
-        // file removal, before the L0 DELETE" half-fix position. A hook
-        // that parks here observes the partial-clear state (generation
-        // still at its baseline, rows still present); one that errors
-        // aborts the clear with the files already gone, which must still
-        // leave the generation untouched and the L0 rows in place.
-        // Production never installs a hook.
-        let hook = self
-            .clear_session_hook
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        if let Some(hook) = hook {
-            hook(ClearSessionStage::BeforeDeleteL0, session)?;
-        }
-        // #917 fix-r3 (review P0): remember exactly which L0 rows this
-        // clear deletes, selected immediately before the DELETE inside
-        // the same exclusive snapshot operation — a row that somehow
-        // lands between the selection and the DELETE escapes the record
-        // and can only be resurrected (the TS shape), never silently
-        // dropped.
-        // #1207: the selection and the DELETE must also share one
-        // connection guard (the `insert_l0_session_if_new` shape). As two
-        // `conn()?` statements the guard dropped in between, so a
-        // concurrent capture could insert a row this DELETE then removed
-        // without recording — a heartbeat that had already listed it
-        // re-checked `removed_since` as false and resurrected it. Under
-        // one guard that insert lands only after the DELETE, as new
-        // data: exactly the TS shape, where `clearSessionMemoryData` runs
-        // the two statements back-to-back on one synchronous connection.
-        let conn = self.storage.conn()?;
-        let removed_l0_ids: Vec<String> = conn
-            .prepare("SELECT l0_index_id FROM l0_sessions WHERE session_key = ?")?
-            .query_map([session], |row| row.get::<_, String>(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        // #1207 seam: fires between the id selection and the DELETE, with
-        // the connection guard held. A hook that parks here keeps the
-        // guarded segment open, so a capture that started meanwhile blocks
-        // until the clear releases the guard; one that errors aborts the
-        // clear with the L0 rows still present and the generation
-        // untouched (the same shape as a `BeforeDeleteL0` failure).
-        // Production never installs a hook; like the other seams it is
-        // cloned out of its slot before the call.
-        let hook = self
-            .clear_session_hook
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        if let Some(hook) = hook {
-            hook(ClearSessionStage::L0IdsSelected, session)?;
-        }
-        conn.execute("DELETE FROM l0_sessions WHERE session_key = ?", [session])?;
-        Ok(removed_l0_ids)
-    }
-    /// #917 fix-r1: the clear generation a heartbeat run captured as its
-    /// baseline; see [`SessionClears`].
-    pub fn session_clear_generation(&self, session: &str) -> u64 {
-        self.session_clears.generation_of(session)
-    }
-    /// #917 fix-r3 (review P0): did a `clearSession` complete after
-    /// `baseline` and delete this exact L0 row? See [`SessionClears`].
-    pub fn session_clear_removed_since(
-        &self,
-        session: &str,
-        baseline: u64,
-        l0_index_id: &str,
-    ) -> bool {
-        self.session_clears
-            .removed_since(session, baseline, l0_index_id)
     }
     fn clear_result(
         &self,

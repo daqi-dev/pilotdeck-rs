@@ -37,6 +37,7 @@ pub struct GatewayUserDialogBus {
     leases: HashMap<(JsString, JsString), ActiveLease>,
     runtime: DialogRuntime,
     on_change: Option<Observer>,
+    response_checks: HashMap<(JsString, JsString), SettleHook>,
 }
 impl GatewayUserDialogBus {
     pub fn new(runtime: DialogRuntime, on_change: Option<Observer>) -> Self {
@@ -45,23 +46,13 @@ impl GatewayUserDialogBus {
             leases: HashMap::new(),
             runtime,
             on_change,
+            response_checks: HashMap::new(),
         }
     }
 
-    /// Returns `true` when the bus is wired to a live dialog runtime (i.e.
-    /// `on_change` was supplied at construction time).  Native-process builds
-    /// always pass `None`, so this returns `false` there.
-    ///
-    /// Unconnected semantics differ by method:
-    /// - `list`, `claim`, `release`: surface `CAPABILITY_UNAVAILABLE`.
-    /// - `respond`: return `{delivered: false}` silently — matches TS
-    ///   `GatewayWsConnection.ts:490` (no guard) and
-    ///   `InProcessGateway.ts:2672` (`delivered: false`).
-    pub fn is_connected(&self) -> bool {
-        self.on_change.is_some()
-    }
-
     pub fn register(&mut self, session: &JsString, entry: PendingDialog) {
+        self.response_checks
+            .remove(&(session.clone(), entry.request_id.clone()));
         let change = object([
             ("type", "requested".into()),
             ("sessionKey", JsValue::String(session.clone())),
@@ -77,6 +68,15 @@ impl GatewayUserDialogBus {
             bucket.push(entry);
         }
         self.emit(change);
+    }
+
+    pub(super) fn set_response_check(
+        &mut self,
+        session: JsString,
+        request: JsString,
+        check: SettleHook,
+    ) {
+        self.response_checks.insert((session, request), check);
     }
 
     pub fn peek(&self, session: &JsString, request: &JsString) -> Option<&PendingDialog> {
@@ -118,6 +118,8 @@ impl GatewayUserDialogBus {
             self.pending.remove(session);
         }
         self.leases.remove(&(session.clone(), request.clone()));
+        self.response_checks
+            .remove(&(session.clone(), request.clone()));
         self.emit(object([
             ("type", "settled".into()),
             ("sessionKey", JsValue::String(session.clone())),
@@ -128,6 +130,30 @@ impl GatewayUserDialogBus {
     }
 
     /// As in TS this does not validate values: callers must call `accepts` first.
+    pub(super) fn response_requires_lease(
+        &mut self,
+        session: &JsString,
+        request: &JsString,
+        lease_id: Option<&JsString>,
+    ) -> bool {
+        self.active_lease(session, request)
+            .is_some_and(|lease| Some(&lease.lease_id) != lease_id)
+    }
+
+    pub(super) fn check_response_persistence(
+        &self,
+        session: &JsString,
+        request: &JsString,
+    ) -> Result<()> {
+        if let Some(check) = self
+            .response_checks
+            .get(&(session.clone(), request.clone()))
+        {
+            check()?;
+        }
+        Ok(())
+    }
+
     pub fn consume_for_response(
         &mut self,
         session: &JsString,
@@ -138,9 +164,7 @@ impl GatewayUserDialogBus {
         if !self.has_pending(session, request) {
             return Ok(ConsumeResult::NotPending);
         }
-        if let Some(lease) = self.active_lease(session, request)
-            && Some(&lease.lease_id) != lease_id
-        {
+        if self.response_requires_lease(session, request, lease_id) {
             return Ok(ConsumeResult::LeaseRequired);
         }
         Ok(ConsumeResult::Entry(Box::new(
@@ -239,6 +263,7 @@ impl GatewayUserDialogBus {
         }
         self.pending.remove(session);
         self.leases.retain(|(key, _), _| key != session);
+        self.response_checks.retain(|(key, _), _| key != session);
     }
 
     fn active_lease(&mut self, session: &JsString, request: &JsString) -> Option<Lease> {

@@ -5,6 +5,7 @@ pub(crate) mod cpu;
 pub mod fallback;
 pub mod health;
 pub mod http;
+pub mod invocation;
 mod json_walk;
 mod jsonrepair;
 pub mod provider_registry;

@@ -105,14 +105,6 @@ fn read_only(input: &JsValue) -> bool {
 }
 
 impl ToolDefinition for BashTool {
-    fn check_permissions<'a>(
-        &'a self,
-        input: &'a JsValue,
-        context: &'a PermissionContext,
-    ) -> PermissionFuture<'a, Option<JsValue>> {
-        PermissionTool::check_permissions(self, input, context)
-    }
-
     fn fields(&self) -> &JsObject {
         &self.fields
     }
@@ -121,6 +113,13 @@ impl ToolDefinition for BashTool {
     }
     fn is_concurrency_safe(&self, input: &JsValue) -> Result<JsValue, HostError> {
         Ok(JsValue::Bool(read_only(input)))
+    }
+    fn check_permissions<'a>(
+        &'a self,
+        input: &'a JsValue,
+        _context: &'a PermissionContext,
+    ) -> PermissionFuture<'a, Option<JsValue>> {
+        Box::pin(async move { Ok(Some(check_bash_permissions(input))) })
     }
 }
 

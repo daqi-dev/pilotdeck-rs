@@ -78,6 +78,8 @@ impl Harness {
                         GatewaySessionPermissionRuleSetRegistry::default(),
                     )),
                     on_elicitation_delivered: Some(delivered),
+                    permission_timeout: None,
+                    elicitation_timeout: None,
                 }
             } else {
                 InteractionOptions {
@@ -722,7 +724,17 @@ fn interaction_injected_options_share_the_supplied_components() {
         elicitation_bus: Some(elicitation_bus.clone()),
         permission_grants: Some(grants.clone()),
         on_elicitation_delivered: None,
+        permission_timeout: Some(std::time::Duration::from_millis(17)),
+        elicitation_timeout: Some(std::time::Duration::from_millis(23)),
     });
+    assert_eq!(
+        coordinator.permission_timeout(),
+        Some(std::time::Duration::from_millis(17))
+    );
+    assert_eq!(
+        coordinator.elicitation_timeout(),
+        Some(std::time::Duration::from_millis(23))
+    );
     let entry = |id: &str| PendingEntry {
         request_id: id.into(),
         tool_call_id: id.into(),

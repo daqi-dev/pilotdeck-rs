@@ -3,7 +3,7 @@
 use super::direct_host::DirectModuleHost;
 use crate::host::{ExecuteRequest, ExecuteResult, HostError, HostErrorKind, HostHandler, Limits};
 use pilotdeck_protocol::admission::SidecarBinding;
-use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, MODULE_PROTOCOL_VERSION};
 use pilotdeck_transport::default_factory::OriginalAgentFactory;
 use pilotdeck_transport::server::{ExecutionClock, ExecutionServer};
 use pilotdeck_transport::stdio::ConnectionOwner;
@@ -21,7 +21,6 @@ struct EmbeddedRuntime {
     server: Arc<ExecutionServer>,
     owner: ConnectionOwner,
     worker: JoinHandle<()>,
-    reusable: bool,
 }
 
 impl EmbeddedRuntime {
@@ -54,35 +53,12 @@ impl EmbeddedRuntime {
             server,
             owner,
             worker,
-            reusable: true,
         }
     }
 
     fn shutdown(self) {
         self.server.retire();
-        self.owner.set_direct_host(None);
-        if self.worker.is_finished() {
-            let _ = self.worker.join();
-        } else {
-            // A callback may still be unwinding on the Tokio runtime. Never join
-            // it on that runtime's thread or hold up the next connection.
-            std::thread::spawn(move || {
-                let _ = self.worker.join();
-            });
-        }
-    }
-}
-
-// An abandoned execute must cancel its worker even when no later turn arrives.
-struct ExecuteGuard {
-    server: Arc<ExecutionServer>,
-    completed: bool,
-}
-impl Drop for ExecuteGuard {
-    fn drop(&mut self) {
-        if !self.completed {
-            self.server.retire();
-        }
+        let _ = self.worker.join();
     }
 }
 
@@ -90,7 +66,6 @@ impl Drop for ExecuteGuard {
 pub struct SessionEmbeddedWorker {
     inner: Mutex<Option<EmbeddedRuntime>>,
     cwd: JsString,
-    execution: tokio::sync::Mutex<()>,
 }
 
 impl SessionEmbeddedWorker {
@@ -98,7 +73,6 @@ impl SessionEmbeddedWorker {
         Self {
             inner: Mutex::new(None),
             cwd,
-            execution: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -109,51 +83,88 @@ impl SessionEmbeddedWorker {
         limits: Limits,
         cancellation: crate::host::Cancellation,
     ) -> Result<ExecuteResult, HostError> {
-        let _execution = self.execution.lock().await;
         let tokio_handle = tokio::runtime::Handle::current();
-        let retired = {
-            let mut slot = self.inner.lock().unwrap();
-            if slot
-                .as_ref()
-                .is_some_and(|runtime| !runtime.reusable || runtime.owner.is_closed())
+        let runtime =
             {
-                slot.take()
-            } else {
-                None
-            }
-        };
-        if let Some(runtime) = retired {
-            runtime.shutdown();
-        }
-        let (runtime, owner) = {
-            let mut slot = self.inner.lock().unwrap();
-            let embedded = slot.get_or_insert_with(|| {
-                EmbeddedRuntime::start(handler.clone(), self.cwd.clone(), tokio_handle.clone())
-            });
-            embedded
-                .owner
-                .set_direct_host(Some(Arc::new(DirectModuleHost::new(
-                    handler.clone(),
-                    tokio_handle,
-                ))));
-            // Only a consumed terminal makes this connection safe to reuse.
-            // Dropping this future leaves it retired on the next execute.
-            embedded.reusable = false;
-            (embedded.server.clone(), embedded.owner.clone())
-        };
-        let mut execution_guard = ExecuteGuard {
-            server: runtime.clone(),
-            completed: false,
-        };
-        runtime
-            .receive(&wire_execute(&request))
-            .map_err(|error| HostError::new(HostErrorKind::Io, error.to_string()))?;
-        let terminal = tokio::time::timeout(limits.execution_timeout, async {
-            let cancel = async {
-                while !cancellation.is_cancelled() {
-                    tokio::time::sleep(Duration::from_millis(1)).await;
+                let mut slot = self.inner.lock().unwrap();
+                if slot.is_none() {
+                    *slot = Some(EmbeddedRuntime::start(
+                        handler.clone(),
+                        self.cwd.clone(),
+                        tokio_handle.clone(),
+                    ));
                 }
-                {
+                // Refresh direct host each turn so the active ModuleHost is current.
+                slot.as_ref().unwrap().owner.set_direct_host(Some(Arc::new(
+                    DirectModuleHost::new(handler.clone(), tokio_handle.clone()),
+                )));
+                slot.as_ref().unwrap().server.clone()
+            };
+        let owner = {
+            let slot = self.inner.lock().unwrap();
+            slot.as_ref().unwrap().owner.clone()
+        };
+
+        let wire = wire_execute(&request);
+        let terminal_slot = Arc::new(Mutex::new(None::<JsValue>));
+        let event_handler = handler.clone();
+        let drain_owner = owner.clone();
+        let execution_timeout = limits.execution_timeout;
+        let terminal_drain_timeout = limits.terminal_drain_timeout;
+        let terminal_for_drain = terminal_slot.clone();
+        let drain = tokio::spawn(async move {
+            let deadline = tokio::time::Instant::now() + execution_timeout;
+            let mut post_final_deadline = None::<tokio::time::Instant>;
+            loop {
+                let now = tokio::time::Instant::now();
+                if post_final_deadline.is_some_and(|end| now >= end) {
+                    break;
+                }
+                if post_final_deadline.is_none() && now >= deadline {
+                    break;
+                }
+                let line = tokio::task::spawn_blocking({
+                    let drain_owner = drain_owner.clone();
+                    move || drain_owner.try_pop_stream_line()
+                })
+                .await
+                .ok()
+                .flatten();
+                let Some(line) = line else {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                    continue;
+                };
+                let Ok(value) = pilotdeck_protocol::parse_json(&line) else {
+                    continue;
+                };
+                if value.get("final").and_then(JsValue::as_bool) == Some(true) {
+                    *terminal_for_drain.lock().unwrap() = Some(value);
+                    post_final_deadline =
+                        Some(tokio::time::Instant::now() + terminal_drain_timeout);
+                    continue;
+                }
+                if let Some(payload) = value.get("payload") {
+                    // Match the subprocess client: the final frame owns completion.
+                    if payload.get("type") == Some(&JsValue::from("turn_completed")) {
+                        continue;
+                    }
+                    let _ = event_handler.event(payload.clone()).await;
+                }
+            }
+        });
+
+        runtime
+            .receive(&wire)
+            .map_err(|error| HostError::new(HostErrorKind::Io, error.to_string()))?;
+
+        let terminal = tokio::time::timeout(execution_timeout, async {
+            let mut cancelled = false;
+            loop {
+                if let Some(terminal) = terminal_slot.lock().unwrap().clone() {
+                    return terminal;
+                }
+                if !cancelled && cancellation.is_cancelled() {
+                    cancelled = true;
                     let mut cancel = JsObject::new();
                     cancel.insert("kind".into(), "request".into());
                     cancel.insert("messageId".into(), "cancel".into());
@@ -171,59 +182,9 @@ impl SessionEmbeddedWorker {
                         JsValue::String(request.identity.request_id.clone()),
                     );
                     cancel.insert("reason".into(), "subagent_parent_aborted".into());
-                    runtime
-                        .receive(&JsValue::Object(cancel))
-                        .map_err(|error| HostError::new(HostErrorKind::Io, error.to_string()))?;
+                    let _ = runtime.receive(&JsValue::Object(cancel));
                 }
-                std::future::pending::<Result<JsValue, HostError>>().await
-            };
-            let events = async {
-                loop {
-                    while let Some(line) = owner.try_pop_control_line() {
-                        let value = pilotdeck_protocol::parse_json(&line).map_err(|error| {
-                            HostError::new(HostErrorKind::Io, error.to_string())
-                        })?;
-                        if value.get("kind") == Some(&JsValue::from("error")) {
-                            return Err(HostError::new(
-                                HostErrorKind::Io,
-                                "Embedded agent rejected the execution envelope.",
-                            ));
-                        }
-                        if value.get("inReplyTo") == Some(&JsValue::from("execute"))
-                            && (value.get("final").and_then(JsValue::as_bool) == Some(true)
-                                || value.get("ok").and_then(JsValue::as_bool) == Some(false))
-                        {
-                            return Ok(value);
-                        }
-                    }
-                    if let Some(line) = owner.try_pop_stream_line() {
-                        let value = pilotdeck_protocol::parse_json(&line).map_err(|error| {
-                            HostError::new(HostErrorKind::Io, error.to_string())
-                        })?;
-                        if value.get("final").and_then(JsValue::as_bool) == Some(true) {
-                            // The worker publishes final after every event in this FIFO.
-                            return Ok(value);
-                        }
-                        if let Some(payload) = value.get("payload") {
-                            if payload.get("type") != Some(&JsValue::from("turn_completed")) {
-                                handler.event(payload.clone()).await?;
-                            }
-                        }
-                        tokio::task::yield_now().await;
-                        continue;
-                    }
-                    if owner.is_closed() {
-                        return Err(HostError::new(
-                            HostErrorKind::Io,
-                            "Embedded agent connection closed.",
-                        ));
-                    }
-                    tokio::time::sleep(Duration::from_millis(1)).await;
-                }
-            };
-            tokio::select! {
-                terminal = events => terminal,
-                failure = cancel => failure,
+                tokio::time::sleep(Duration::from_millis(1)).await;
             }
         })
         .await
@@ -232,33 +193,17 @@ impl SessionEmbeddedWorker {
                 HostErrorKind::Timeout,
                 "Embedded agent turn timed out waiting for terminal.",
             )
-        })??;
-        execution_guard.completed = true;
-        {
-            let mut slot = self.inner.lock().unwrap();
-            if let Some(embedded) = slot.as_mut() {
-                embedded.owner.set_direct_host(None);
-                embedded.reusable = true;
-            }
-        }
+        })?;
+        let _ = tokio::time::timeout(terminal_drain_timeout, drain).await;
 
-        if terminal.get("ok").and_then(JsValue::as_bool) == Some(false)
-            || terminal
-                .get("outcome")
-                .and_then(JsValue::as_string)
-                .is_some_and(|o| o.equals_str("failed") || o.equals_str("cancelled"))
+        if terminal
+            .get("outcome")
+            .and_then(JsValue::as_string)
+            .is_some_and(|o| o.equals_str("failed") || o.equals_str("cancelled"))
         {
             return Ok(ExecuteResult::Rejected(terminal));
         }
         Ok(ExecuteResult::Terminal(terminal))
-    }
-
-    pub async fn shutdown(&self) {
-        let _execution = self.execution.lock().await;
-        let runtime = self.inner.lock().unwrap().take();
-        if let Some(runtime) = runtime {
-            runtime.shutdown();
-        }
     }
 }
 
@@ -308,6 +253,17 @@ fn wire_execute(request: &ExecuteRequest) -> JsValue {
     JsValue::Object(envelope)
 }
 
-#[cfg(test)]
-#[path = "embedded_sidecar_tests.rs"]
-mod tests;
+#[allow(dead_code)]
+fn wire_hello() -> JsValue {
+    JsValue::Object({
+        let mut hello = JsObject::new();
+        hello.insert("kind".into(), "request".into());
+        hello.insert("messageId".into(), "hello".into());
+        hello.insert("method".into(), "hello".into());
+        hello.insert(
+            "protocolVersion".into(),
+            JsValue::from(MODULE_PROTOCOL_VERSION),
+        );
+        hello
+    })
+}

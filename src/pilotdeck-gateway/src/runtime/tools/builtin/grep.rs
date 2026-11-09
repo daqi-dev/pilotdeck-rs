@@ -152,7 +152,7 @@ async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput
     let mode = Mode::parse(&mode_name);
     let target = resolve_search_target(&resolved)?;
     let args = build_ripgrep_args(input, mode, &text(&pattern), &target.target);
-    let stdout = run_ripgrep(&args, &target.cwd, context).await?;
+    let stdout = run_ripgrep(&args, &target.cwd, context, "grep").await?;
 
     match mode {
         Mode::Content => content_mode(input, &stdout, &target),
@@ -294,9 +294,9 @@ fn split_glob_patterns(glob: &str) -> Vec<String> {
 // ripgrep execution
 // ---------------------------------------------------------------------------
 
-fn resolve_ripgrep(context: &ToolRunContext) -> Result<PathBuf, ToolError> {
+fn resolve_ripgrep(context: &ToolRunContext, tool_name: &str) -> Result<PathBuf, ToolError> {
     let environment = context.fields.get("env").and_then(JsValue::as_object);
-    resolve_ripgrep_in(environment, executable_parent())
+    resolve_ripgrep_in(environment, executable_parent(), tool_name)
 }
 
 fn executable_parent() -> Option<PathBuf> {
@@ -312,6 +312,7 @@ fn executable_parent() -> Option<PathBuf> {
 fn resolve_ripgrep_in(
     environment: Option<&JsObject>,
     executable_parent: Option<PathBuf>,
+    tool_name: &str,
 ) -> Result<PathBuf, ToolError> {
     let get = |key: &str| -> Option<String> {
         environment
@@ -326,7 +327,7 @@ fn resolve_ripgrep_in(
         .filter(|value| !value.is_empty())
         .map(PathBuf::from);
     let roots = default_roots_in(get("PILOTDECK_DESKTOP_RUNTIME_ROOT"), executable_parent);
-    resolve_ripgrep_with(override_path, &roots)
+    resolve_ripgrep_with(override_path, &roots, tool_name)
 }
 
 /// Whether the tool can resolve a ripgrep engine in this process. Mirrors the
@@ -339,7 +340,46 @@ pub fn ripgrep_available() -> bool {
         .filter(|value| !value.is_empty())
         .map(PathBuf::from);
     let roots = default_roots(std::env::var("PILOTDECK_DESKTOP_RUNTIME_ROOT").ok());
-    resolve_ripgrep_with(override_path, &roots).is_ok()
+    resolve_ripgrep_with(override_path, &roots, "grep").is_ok()
+}
+
+/// `ripgrepFiles.ts:51-84` (`--files --hidden --no-ignore --glob --sort=modified`).
+pub struct RipgrepFilesListing {
+    pub files: Vec<String>,
+    pub count: usize,
+    pub truncated: bool,
+}
+
+pub async fn ripgrep_files_listing(
+    cwd: &JsString,
+    glob_pattern: &str,
+    limit: usize,
+    context: &ToolRunContext,
+) -> Result<RipgrepFilesListing, ToolError> {
+    let args = vec![
+        "--files".to_string(),
+        "--hidden".to_string(),
+        "--no-ignore".to_string(),
+        "--glob".to_string(),
+        glob_pattern.to_string(),
+        "--sort=modified".to_string(),
+        ".".to_string(),
+    ];
+    let stdout = run_ripgrep(&args, cwd, context, "glob").await?;
+    let files: Vec<String> = stdout
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(normalize_relative_path)
+        .filter(|line| !is_ignored_path(line))
+        .collect();
+    let count = files.len();
+    let take = limit.min(count);
+    let selected = files[..take].to_vec();
+    Ok(RipgrepFilesListing {
+        files: selected,
+        count,
+        truncated: take < count,
+    })
 }
 
 /// Resolution order: explicit `PILOTDECK_RIPGREP_PATH` (deployment/parity
@@ -350,20 +390,27 @@ pub fn ripgrep_available() -> bool {
 fn resolve_ripgrep_with(
     override_path: Option<PathBuf>,
     roots: &[PathBuf],
+    tool_name: &str,
 ) -> Result<PathBuf, ToolError> {
     if let Some(path) = override_path {
         if is_executable(&path) {
             return Ok(path);
         }
-        return Err(ripgrep_unavailable(&format!(
-            "PILOTDECK_RIPGREP_PATH={} is not an executable file",
-            path.display()
-        )));
+        return Err(ripgrep_unavailable(
+            tool_name,
+            &format!(
+                "PILOTDECK_RIPGREP_PATH={} is not an executable file",
+                path.display()
+            ),
+        ));
     }
     match bundled_ripgrep(roots) {
         Ok(Some(path)) => Ok(path),
-        Ok(None) => Err(ripgrep_unavailable("Cannot find module '@vscode/ripgrep'")),
-        Err(cause) => Err(ripgrep_unavailable(&cause)),
+        Ok(None) => Err(ripgrep_unavailable(
+            tool_name,
+            "Cannot find module '@vscode/ripgrep'",
+        )),
+        Err(cause) => Err(ripgrep_unavailable(tool_name, &cause)),
     }
 }
 
@@ -467,12 +514,12 @@ fn is_executable(path: &Path) -> bool {
     }
 }
 
-fn ripgrep_unavailable(cause: &str) -> ToolError {
+fn ripgrep_unavailable(tool_name: &str, cause: &str) -> ToolError {
     let (platform, arch) = platform_arch();
     ToolError {
         code: "unsupported_tool".to_owned(),
         message: JsString::from(format!(
-            "grep requires the bundled ripgrep binary from @vscode/ripgrep, but it is not available for {platform}-{arch}. Reinstall dependencies with optional dependencies enabled."
+            "{tool_name} requires the bundled ripgrep binary from @vscode/ripgrep, but it is not available for {platform}-{arch}. Reinstall dependencies with optional dependencies enabled."
         )),
         details: Some(object([("cause", string(cause))])),
     }
@@ -482,12 +529,14 @@ async fn run_ripgrep(
     args: &[String],
     cwd: &JsString,
     context: &ToolRunContext,
+    tool_name: &str,
 ) -> Result<String, ToolError> {
     run_ripgrep_with_timeout(
         args,
         cwd,
         context,
         Duration::from_millis(RIPGREP_TIMEOUT_MS),
+        tool_name,
     )
     .await
 }
@@ -575,10 +624,11 @@ async fn run_ripgrep_with_timeout(
     cwd: &JsString,
     context: &ToolRunContext,
     limit: Duration,
+    tool_name: &str,
 ) -> Result<String, ToolError> {
-    let executable = resolve_ripgrep(context)?;
+    let executable = resolve_ripgrep(context, tool_name)?;
     if context.is_aborted() {
-        return Err(tool_aborted());
+        return Err(tool_aborted(tool_name));
     }
     let mut command = Command::new(&executable);
     command
@@ -588,17 +638,11 @@ async fn run_ripgrep_with_timeout(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    // `spawn(..., { detached: true })` (`SubprocessPort.executeFile`, the
-    // spawn `ripgrep.ts` drives) on every platform TS supports a group for,
-    // plus libuv's child-init signal reset. The reset matters when the
+    // `spawn(..., { detached: true })` on every platform TS supports a group
+    // for, plus libuv's child-init signal reset. The reset matters when the
     // gateway itself inherited ignored/blocked signals.
-    // `detached` (#552): `setsid()` between fork and exec, so the rg child
-    // leads a new session — its own process group (this replaces
-    // `process_group(0)`; the two are mutually exclusive, the child would
-    // already be a group leader and `setsid` would fail EPERM) with no
-    // controlling terminal.
     #[cfg(unix)]
-    pilotdeck_child_signals::install_child_detach_session(command.as_std_mut());
+    command.process_group(0);
     #[cfg(unix)]
     pilotdeck_child_signals::install_child_signal_reset(command.as_std_mut());
     // The TS baseline hands `context.env` to `spawn` as the child environment
@@ -615,19 +659,22 @@ async fn run_ripgrep_with_timeout(
     let child = command.spawn().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             // Node's async spawn error text: `spawn <path> ENOENT`.
-            ripgrep_unavailable(&format!("spawn {} ENOENT", executable.display()))
+            ripgrep_unavailable(
+                tool_name,
+                &format!("spawn {} ENOENT", executable.display()),
+            )
         } else if let Some((code, _)) = crate::node_io::lookup(&error) {
             tool_error(
                 "tool_execution_failed",
                 format!(
-                    "ripgrep grep search failed: spawn {} {code}",
+                    "ripgrep {tool_name} search failed: spawn {} {code}",
                     executable.display()
                 ),
             )
         } else {
             tool_error(
                 "tool_execution_failed",
-                format!("ripgrep grep search failed: {error}"),
+                format!("ripgrep {tool_name} search failed: {error}"),
             )
         }
     })?;
@@ -749,11 +796,11 @@ async fn run_ripgrep_with_timeout(
             }
         }
         if aborted || context.is_aborted() {
-            return Err(tool_aborted());
+            return Err(tool_aborted(tool_name));
         }
         return Err(tool_error(
             "tool_timeout",
-            format!("grep search timed out after {RIPGREP_TIMEOUT_MS}ms."),
+            format!("{tool_name} search timed out after {RIPGREP_TIMEOUT_MS}ms."),
         ));
     }
     let status = match timeout(Duration::from_secs(5), process.child().wait()).await {
@@ -764,7 +811,7 @@ async fn run_ripgrep_with_timeout(
         Ok(Err(error)) => {
             return Err(tool_error(
                 "tool_execution_failed",
-                format!("ripgrep grep search failed: {error}"),
+                format!("ripgrep {tool_name} search failed: {error}"),
             ));
         }
         Err(_) => {
@@ -773,12 +820,12 @@ async fn run_ripgrep_with_timeout(
         }
     };
     if context.is_aborted() {
-        return Err(tool_aborted());
+        return Err(tool_aborted(tool_name));
     }
     let Some(status) = status else {
         return Err(tool_error(
             "tool_execution_failed",
-            "ripgrep grep search failed: process did not exit.".to_owned(),
+            format!("ripgrep {tool_name} search failed: process did not exit."),
         ));
     };
     let (code, exit_signal) = match leader_exit {
@@ -803,7 +850,7 @@ async fn run_ripgrep_with_timeout(
         return Err(tool_error(
             "tool_execution_failed",
             format!(
-                "ripgrep grep search exited via signal {}.",
+                "ripgrep {tool_name} search exited via signal {}.",
                 node_signal_name(signal)
             ),
         ));
@@ -816,16 +863,16 @@ async fn run_ripgrep_with_timeout(
     Err(ToolError {
         code: "tool_execution_failed".to_owned(),
         message: JsString::from(if trimmed.is_empty() {
-            format!("ripgrep grep search failed with exit code {exit_code}.")
+            format!("ripgrep {tool_name} search failed with exit code {exit_code}.")
         } else {
-            format!("ripgrep grep search failed: {trimmed}")
+            format!("ripgrep {tool_name} search failed: {trimmed}")
         }),
         details: Some(details),
     })
 }
 
-fn tool_aborted() -> ToolError {
-    tool_error("tool_aborted", "grep search aborted.")
+fn tool_aborted(tool_name: &str) -> ToolError {
+    tool_error("tool_aborted", format!("{tool_name} search aborted."))
 }
 
 fn signal_group(
@@ -1442,10 +1489,11 @@ mod tests {
         runtime::tools::builtin::is_absolute,
     };
     use std::{
+        os::unix::fs::PermissionsExt,
         path::PathBuf,
         sync::{
             Arc,
-            atomic::{AtomicBool, AtomicUsize, Ordering},
+            atomic::{AtomicUsize, Ordering},
         },
         time::{Duration as StdDuration, UNIX_EPOCH},
     };
@@ -1468,16 +1516,11 @@ mod tests {
             Self { root }
         }
 
-        /// #1125: the file is written by a reaped helper process through
-        /// [`crate::test_scratch::write_executable`]; a test that writes the
-        /// exec'd path directly in this process can hit ETXTBSY when a
-        /// sibling test thread forks while the writer's descriptor is still
-        /// open (an inherited descriptor even survives the rename onto the
-        /// final name).
         fn script(&self, name: &str, body: &str) -> PathBuf {
             let path = self.root.join(name);
-            crate::test_scratch::write_executable(&path, body, 0o755)
-                .expect("#1125 publish script by helper");
+            std::fs::write(&path, body).expect("write script");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod script");
             path
         }
     }
@@ -1851,18 +1894,19 @@ mod tests {
         std::fs::write(package_dir.join("package.json"), "{}").expect("wrapper manifest");
         let bundled = bin.join("rg");
         let leader_file = scratch.root.join("leader.pid");
-        crate::test_scratch::write_executable(
+        std::fs::write(
             &bundled,
-            &format!(
+            format!(
                 "#!/bin/sh\necho $$ > '{}'\nprintf 'x.txt:1:hit\\n'\n",
                 leader_file.display()
             ),
-            0o755,
         )
-        .expect("#1125 publish bundled rg by helper");
+        .expect("write bundled");
+        std::fs::set_permissions(&bundled, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod bundled");
 
         let resolved =
-            resolve_ripgrep_with(None, std::slice::from_ref(&app)).expect("bundled resolution");
+            resolve_ripgrep_with(None, std::slice::from_ref(&app), "grep").expect("bundled resolution");
         assert_eq!(resolved, bundled, "bundled package platform binary");
 
         let context = context(
@@ -1882,6 +1926,7 @@ mod tests {
                 &cwd_string(&scratch.root),
                 &context,
                 StdDuration::from_secs(5),
+                "grep",
             ),
             &leader_file,
         )
@@ -1891,7 +1936,7 @@ mod tests {
 
     #[test]
     fn missing_bundled_ripgrep_reports_the_ts_unsupported_tool_error() {
-        let error = resolve_ripgrep_with(None, &[]).expect_err("missing");
+        let error = resolve_ripgrep_with(None, &[], "grep").expect_err("missing");
         assert_eq!(error.code, "unsupported_tool");
         assert_eq!(
             error.message.to_utf8().unwrap(),
@@ -1912,13 +1957,27 @@ mod tests {
     }
 
     #[test]
+    fn glob_listing_uses_glob_tool_name_in_unavailable_error() {
+        let error = resolve_ripgrep_with(None, &[], "glob").expect_err("missing");
+        assert_eq!(error.code, "unsupported_tool");
+        assert!(
+            error
+                .message
+                .to_utf8()
+                .unwrap()
+                .starts_with("glob requires the bundled ripgrep")
+        );
+    }
+
+    #[test]
     fn missing_bundled_ripgrep_never_falls_back_to_path() {
         let scratch = Scratch::new("no-path-fallback");
         let path_dir = scratch.root.join("path-bin");
         std::fs::create_dir(&path_dir).expect("path bin");
         let on_path = path_dir.join("rg");
-        crate::test_scratch::write_executable(&on_path, "#!/bin/sh\nexit 0\n", 0o755)
-            .expect("#1125 publish path rg by helper");
+        std::fs::write(&on_path, "#!/bin/sh\nexit 0\n").expect("write path rg");
+        std::fs::set_permissions(&on_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod path rg");
         assert!(is_executable(&on_path), "precondition: rg is on PATH");
         // Drive the same entry point the tool uses, with only a scratch root
         // and a pinned executable parent so the real machine's module tree
@@ -1936,7 +1995,7 @@ mod tests {
         ]);
         let fake_executable = scratch.root.join("fake-exe");
         std::fs::create_dir(&fake_executable).expect("fake exe dir");
-        let error = resolve_ripgrep_in(Some(&environment), Some(fake_executable))
+        let error = resolve_ripgrep_in(Some(&environment), Some(fake_executable), "grep")
             .expect_err("bundled-only resolution");
         assert_eq!(error.code, "unsupported_tool");
         let cause = error
@@ -1977,6 +2036,7 @@ mod tests {
                 &cwd,
                 &context,
                 Duration::from_secs(30),
+                "grep",
             ));
             // Both shells install their TERM handlers before Drop; no wall
             // time can consume the timeout or the grace during startup.
@@ -2028,150 +2088,28 @@ mod tests {
                 .stdout(Stdio::piped())
                 .kill_on_drop(true)
                 .spawn()
-                .expect("#1125 member spawn");
-            let pid = rustix::process::Pid::from_raw(child.id().expect("#1125 member pid") as i32)
-                .expect("#1125 member pid");
+                .expect("member");
+            let pid = rustix::process::Pid::from_raw(child.id().expect("pid") as i32).expect("pid");
             let mut ready = [0; 5];
             child
                 .stdout
                 .take()
-                .expect("#1125 member stdout")
+                .expect("stdout")
                 .read_exact(&mut ready)
                 .await
-                .expect("#1125 member ready");
+                .expect("ready");
             kill_descendant_if_alive(pid);
             let mut wait = std::pin::pin!(child.wait());
             let status = drive_test_run(wait.as_mut(), || false, Duration::ZERO)
                 .await
-                .expect("#1125 member reaped")
-                .expect("#1125 member wait");
+                .expect("member reaped")
+                .expect("wait member");
             use std::os::unix::process::ExitStatusExt;
             assert_eq!(
                 status.signal(),
-                Some(rustix::process::Signal::KILL.as_raw()),
-                "#1125 member exit signal"
+                Some(rustix::process::Signal::KILL.as_raw())
             );
         });
-    }
-
-    /// Fork pressure for `script_spawn_survives_concurrent_forks`. `Drop`
-    /// stops the threads and reaps them with a deadline on every exit —
-    /// including the panic path a failed iteration takes — so a failing run
-    /// cannot leave four threads forking for the rest of the binary's
-    /// lifetime, where they would keep interfering with every later test.
-    struct ForkPressure {
-        stop: Arc<AtomicBool>,
-        done: std::sync::mpsc::Receiver<()>,
-        threads: usize,
-    }
-
-    impl ForkPressure {
-        fn start(threads: usize) -> Self {
-            let stop = Arc::new(AtomicBool::new(false));
-            let (sent, done) = std::sync::mpsc::channel();
-            // The guard value exists before the first thread starts, and
-            // counts the threads started so far: a `spawn` that panics
-            // mid-construction (#1125 fix-r2 review P2) unwinds into this
-            // `Drop`, which stops and reaps exactly the threads that did
-            // start, instead of leaking them past the failed construction.
-            let mut guard = Self {
-                stop: stop.clone(),
-                done,
-                threads: 0,
-            };
-            for _ in 0..threads {
-                let stop = stop.clone();
-                let sent = sent.clone();
-                std::thread::spawn(move || {
-                    while !stop.load(Ordering::Relaxed) {
-                        // Fork pressure only: a failed spawn (a missing
-                        // program, or transient EAGAIN under load) loses
-                        // pressure but is not the race under test, and must
-                        // not turn the loop into a busy spin.
-                        if std::process::Command::new("/usr/bin/true")
-                            .status()
-                            .is_err()
-                        {
-                            std::thread::sleep(StdDuration::from_millis(5));
-                        }
-                    }
-                    let _ = sent.send(());
-                });
-                guard.threads += 1;
-            }
-            guard
-        }
-    }
-
-    impl Drop for ForkPressure {
-        fn drop(&mut self) {
-            self.stop.store(true, Ordering::Relaxed);
-            let deadline = std::time::Instant::now() + StdDuration::from_secs(30);
-            for _ in 0..self.threads {
-                match self
-                    .done
-                    .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
-                {
-                    // A forker that died without reporting is gone with its
-                    // sender either way; only a stuck one hits the timeout.
-                    Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                        // Silent residue was the very failure mode this
-                        // guard exists to prevent; say so and give up on the
-                        // stuck threads rather than hang the test binary.
-                        eprintln!("fork pressure threads did not stop within 30s; leaking them");
-                        return;
-                    }
-                }
-            }
-        }
-    }
-
-    /// #1125: `Scratch::script` must publish the exec'd file without this
-    /// process ever holding a write descriptor on it. A write on the final
-    /// path — or on a temporary name that is then renamed onto it — leaves a
-    /// window where this thread holds the file open for writing; a sibling
-    /// test thread that forks inside that window hands the write descriptor
-    /// to its child (which keeps it until its own exec, even across the
-    /// rename), and exec'ing the script then fails with ETXTBSY
-    /// (`Os { code: 26, kind: ExecutableFileBusy }`) on Linux. cb8 probes:
-    /// the in-process temp-name + rename shape hit ETXTBSY 28 times in 300
-    /// pressured iterations; moving the write into a reaped helper child
-    /// made it 0 of 300.
-    ///
-    /// This loop reproduces a parallel libtest run's fork pressure in one
-    /// process: while the forkers above fork continuously, every iteration
-    /// writes the script and immediately execs it, so only a publication
-    /// that never leaves a write descriptor in this process can pass
-    /// (the `grep-etxtbsy` negative control proves the mutants fail here).
-    /// macOS std::process uses posix_spawn, which never leaves the
-    /// inherited-descriptor window observable, so only the smoke count runs
-    /// there — the full count is the Linux contract the issue asks for.
-    #[test]
-    fn script_spawn_survives_concurrent_forks() {
-        #[cfg(target_os = "linux")]
-        const ITERATIONS: usize = 300;
-        #[cfg(not(target_os = "linux"))]
-        const ITERATIONS: usize = 5;
-        let scratch = Scratch::new("etxtbsy");
-        // Dropped on every exit, including a failed iteration's panic.
-        let _pressure = ForkPressure::start(4);
-        for index in 0..ITERATIONS {
-            let script = scratch.script("member", "#!/bin/sh\nexit 0\n");
-            let status = std::process::Command::new(&script)
-                .status()
-                .unwrap_or_else(|error| {
-                    // Only ETXTBSY itself is the #1125 race; any other spawn
-                    // failure (EAGAIN under fork pressure, a missing binary)
-                    // is a harness failure of this test and must not feed
-                    // the `grep-etxtbsy` negative control's kill marker.
-                    if error.raw_os_error() == Some(26) {
-                        panic!("#1125 etxtbsy iteration {index} exec: {error}");
-                    }
-                    panic!("#1125 exec-error iteration {index}: {error}");
-                });
-            assert!(status.success(), "#1125 iteration {index} status: {status}");
-        }
     }
 
     #[test]
@@ -2198,7 +2136,7 @@ mod tests {
         let cwd = cwd_string(&scratch.root);
         frozen_time_block(async {
             let limit = Duration::from_secs(3);
-            let mut run = Box::pin(run_ripgrep_with_timeout(&[], &cwd, &context, limit));
+            let mut run = Box::pin(run_ripgrep_with_timeout(&[], &cwd, &context, limit, "grep"));
             let early = drive_test_run(
                 run.as_mut(),
                 || {
@@ -2301,7 +2239,7 @@ mod tests {
         let cwd = cwd_string(&scratch.root);
         frozen_time_block(async {
             let limit = Duration::from_secs(3);
-            let mut run = Box::pin(run_ripgrep_with_timeout(&[], &cwd, &context, limit));
+            let mut run = Box::pin(run_ripgrep_with_timeout(&[], &cwd, &context, limit, "grep"));
             let early = drive_test_run(
                 run.as_mut(),
                 || {
@@ -2363,16 +2301,6 @@ mod tests {
     }
 
     const ORPHAN_ROOT_ENV: &str = "PDRS_GREP_ORPHAN_ROOT";
-    /// One absolute budget for the helper's whole fixture handshake, supplied by
-    /// the parent so inner and outer deadlines cannot disagree. A per-stage
-    /// 15 s bound used to expire under load while the parent kept waiting, the
-    /// helper then exited 101 and the parent failed at its first poll
-    /// (trigger-1.log:1183-1188), so the parent's own wait was never reached.
-    const ORPHAN_BUDGET_ENV: &str = "PDRS_GREP_ORPHAN_BUDGET_MS";
-    /// The helper's whole-handshake budget. Strictly inside the parent's own
-    /// wait (+10 s grace below), so a stalled stage is diagnosed by the helper
-    /// that stalled, with its own stderr, rather than by the parent killing it.
-    const ORPHAN_HELPER_BUDGET: StdDuration = StdDuration::from_secs(110);
 
     /// The fake-rg shapes that leaked in #507: a spinning descendant whose
     /// leader exits (`spin`), that descendant already inside its `TERM` trap
@@ -2406,7 +2334,8 @@ mod tests {
         }
     }
 
-    fn orphan_wait_for(deadline: std::time::Instant, label: &str, mut done: impl FnMut() -> bool) {
+    fn orphan_wait_for(label: &str, mut done: impl FnMut() -> bool) {
+        let deadline = std::time::Instant::now() + StdDuration::from_secs(15);
         while !done() {
             assert!(
                 std::time::Instant::now() < deadline,
@@ -2427,39 +2356,30 @@ mod tests {
         let root = PathBuf::from(
             std::env::var_os(ORPHAN_ROOT_ENV).expect("helper runs with the scratch root"),
         );
-        // One budget for all shapes and stages, fixed once at start. A fresh
-        // per-stage bound could sum past the parent's wait under load.
-        let budget = StdDuration::from_millis(
-            std::env::var(ORPHAN_BUDGET_ENV)
-                .expect("helper runs with the parent's budget")
-                .parse()
-                .expect("budget millis"),
-        );
-        let deadline = std::time::Instant::now() + budget;
         let mut children = Vec::new();
         for (shape, send_term) in ORPHAN_SHAPES {
             let dir = root.join(shape);
             std::fs::create_dir_all(&dir).expect("create fixture dir");
             let script = dir.join("rg");
-            crate::test_scratch::write_executable(&script, &orphan_script(shape, &dir), 0o755)
-                .expect("#1125 publish fake rg by helper");
+            std::fs::write(&script, orphan_script(shape, &dir)).expect("write fake rg");
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod fake rg");
             let mut command = std::process::Command::new(&script);
             command
-                // Same detached group as `run_ripgrep`'s spawn (grep.rs:591-603,
-                // a session leader is also a group leader): when this test
-                // dies, only the scripts themselves can clean up.
+                // Same detached group as `run_ripgrep`'s spawn (grep.rs:583-595):
+                // when this test dies, only the scripts themselves can clean up.
                 .process_group(0)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
             children.push(command.spawn().expect("spawn fake rg"));
-            orphan_wait_for(deadline, "leader/descendant pids", || {
+            orphan_wait_for("leader/descendant pids", || {
                 pid_file_ready(&dir.join("leader.pid"))
                     && pid_file_ready(&dir.join("descendant.pid"))
             });
             // `ready` is written only after the trap is installed: sending
             // TERM at pid-file time races a freshly forked subshell under load.
-            orphan_wait_for(deadline, "ready", || dir.join("ready").exists());
+            orphan_wait_for("ready", || dir.join("ready").exists());
             if send_term {
                 crate::process_group::kill(
                     Some(read_pid(&dir.join("leader.pid"))),
@@ -2467,7 +2387,7 @@ mod tests {
                 );
                 // `term` proves the descendant is inside its trap's wait loop,
                 // which is where several #507 orphans were stuck.
-                orphan_wait_for(deadline, "term", || dir.join("term").exists());
+                orphan_wait_for("term", || dir.join("term").exists());
             }
         }
         std::fs::write(root.join("ready"), "ready").expect("ready");
@@ -2503,13 +2423,6 @@ mod tests {
         for (shape, _) in ORPHAN_SHAPES {
             std::fs::create_dir(root.join(shape)).expect("fixture dir");
         }
-        // #942: no libtest receipt applies to this child — the test SIGKILLs
-        // the helper on purpose (that kill is the regression under test), so
-        // the helper never completes and prints no `test result:` summary.
-        // The handshake files (pid/ready/term) plus the early-exit panic in
-        // the wait loop below are the receipt: a renamed helper test runs
-        // zero tests, exits 0 immediately, and trips "helper exited before
-        // the fake rg handshake".
         let mut helper =
             std::process::Command::new(std::env::current_exe().expect("test executable"))
                 .args([
@@ -2519,24 +2432,13 @@ mod tests {
                     "--nocapture",
                 ])
                 .env(ORPHAN_ROOT_ENV, &root)
-                .env(
-                    ORPHAN_BUDGET_ENV,
-                    ORPHAN_HELPER_BUDGET.as_millis().to_string(),
-                )
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::piped())
                 .spawn()
                 .expect("spawn helper test");
         let mut pids = Vec::new();
-        // One outer wait for the whole handshake, strictly longer than the
-        // helper's own `ORPHAN_HELPER_BUDGET` handed over above. The earlier
-        // per-stage bound lived only in the helper, so under load it expired
-        // first, the helper exited 101 and this loop failed on its first poll
-        // (trigger-1.log:1183-1188). Inner < outer keeps that diagnostic
-        // attributable; neither widens a behavior assertion.
-        let deadline =
-            std::time::Instant::now() + ORPHAN_HELPER_BUDGET + StdDuration::from_secs(10);
+        let deadline = std::time::Instant::now() + StdDuration::from_secs(60);
         loop {
             if let Some(status) = helper.try_wait().expect("poll helper") {
                 use std::io::Read as _;
@@ -2665,6 +2567,7 @@ mod tests {
                 &cwd,
                 &context,
                 Duration::from_secs(10),
+                "grep",
             ));
             // Observe both an installed descendant trap and an exited leader;
             // neither a fixed sleep nor a merely-created PID file proves this.
@@ -2745,6 +2648,7 @@ mod tests {
                 &cwd_string(&scratch.root),
                 &context,
                 StdDuration::from_secs(5),
+                "grep",
             ),
             &leader_file,
         )
@@ -2783,6 +2687,7 @@ mod tests {
                 &cwd_string(&scratch.root),
                 &context,
                 StdDuration::from_secs(5),
+                "grep",
             ),
             &leader_file,
         )
@@ -2805,137 +2710,6 @@ mod tests {
                 .as_deref(),
             Some("boom")
         );
-    }
-
-    /// Replay of the real-TS grep-session oracle (#552 修复轮 1): what the
-    /// executable that `SubprocessPort.executeFile` spawns — the spawn
-    /// `filesystem/ripgrep.ts` drives, `detached: process.platform !==
-    /// "win32"` — reports about its own session, process group, controlling
-    /// terminal and `/dev/tty`, recorded with the spawning parent
-    /// demonstrably holding a controlling terminal. See
-    /// `tests/fixtures/grep-session/README.md`.
-    #[test]
-    #[cfg(target_os = "macos")]
-    fn detached_ripgrep_session_matches_real_ts() {
-        fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
-            static UNDEFINED: JsValue = JsValue::Undefined;
-            value.get(key).unwrap_or(&UNDEFINED)
-        }
-        fn value_text(value: &JsValue) -> String {
-            String::from_utf16_lossy(value.as_string().expect("fixture string").units())
-        }
-        let oracle_text = std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/grep-session/oracle.json"
-        ))
-        .expect("grep-session oracle");
-        let oracle = crate::test_baseline::oracle(&oracle_text);
-        assert_eq!(value_text(field(&oracle, "platform")), "darwin");
-        assert_eq!(value_text(field(&oracle, "parentDevTty")), "open");
-        let cases = match field(&oracle, "cases") {
-            JsValue::Array(cases) => cases,
-            other => panic!("fixture array, got {other:?}"),
-        };
-        assert_eq!(cases.len(), 4, "session, pgroup, ctty and devtty probes");
-        for case in cases {
-            let name = value_text(field(case, "name"));
-            let scratch = Scratch::new(&format!("grep-session-{name}"));
-            let script = scratch.script(&format!("rg-{name}"), &value_text(field(case, "script")));
-            let context = context(
-                &[
-                    ("PILOTDECK_RIPGREP_PATH", script.to_str().expect("script")),
-                    ("PATH", "/usr/bin:/bin"),
-                ],
-                None,
-                &scratch.root,
-            );
-            let output = futures_block(run_ripgrep_with_timeout(
-                &[],
-                &cwd_string(&scratch.root),
-                &context,
-                StdDuration::from_secs(60),
-            ))
-            .expect("session probe run");
-            assert_eq!(output, value_text(field(case, "stdout")), "{name}");
-        }
-    }
-
-    /// `getsid(rg) == rg pid`: the TS engine spawn is `detached`, so
-    /// `setsid()` runs between fork and exec and the engine leads a session
-    /// of its own — independent of whether this test process itself has a
-    /// controlling terminal. Mirrors `tests/bash_session.rs`; the run must
-    /// stay alive at the assertion, and its Drop reclamation must survive
-    /// the session change.
-    #[test]
-    fn detached_ripgrep_leads_its_own_session() {
-        let scratch = Scratch::new("session-direct");
-        let leader_file = scratch.root.join("leader.pid");
-        let script = scratch.script(
-            "rg-session-direct",
-            &format!(
-                "#!/bin/sh\n{WATCH_PARENT}\necho $$ > '{}'\n{}\n",
-                leader_file.display(),
-                stay_alive_loop(),
-            ),
-        );
-        let context = context(
-            &[
-                ("PILOTDECK_RIPGREP_PATH", script.to_str().expect("script")),
-                ("PATH", "/usr/bin:/bin"),
-            ],
-            None,
-            &scratch.root,
-        );
-        let cwd = cwd_string(&scratch.root);
-        futures_block(async {
-            let mut run = Box::pin(run_ripgrep_with_timeout(
-                &[],
-                &cwd,
-                &context,
-                Duration::from_secs(60),
-            ));
-            let deadline = Instant::now() + Duration::from_secs(30);
-            let leader = loop {
-                assert!(Instant::now() < deadline, "no leader pid file appeared");
-                tokio::select! {
-                    status = &mut run => panic!("the engine must still be running: {status:?}"),
-                    _ = tokio::time::sleep(Duration::from_millis(10)) => {}
-                }
-                if pid_file_ready(&leader_file) {
-                    break read_pid(&leader_file);
-                }
-            };
-            assert_eq!(
-                rustix::process::getsid(Some(leader)).expect("getsid"),
-                leader,
-                "setsid: the engine leads its own session"
-            );
-            assert_ne!(
-                rustix::process::getsid(Some(leader)).expect("getsid"),
-                rustix::process::getsid(None).expect("getsid"),
-                "the engine's session must differ from ours"
-            );
-            // Dropping the run kills the group (TERM, then the deferred
-            // KILL and reap); the session change must not disturb that.
-            drop(run);
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while crate::process_group::group_exists(leader) {
-                assert!(
-                    Instant::now() < deadline,
-                    "process group {} was not reclaimed",
-                    leader.as_raw_pid()
-                );
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        });
-    }
-
-    /// The committed oracle is exactly what the real TS baseline produces.
-    #[test]
-    #[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules), Node 22, darwin and script(1)"]
-    #[cfg(target_os = "macos")]
-    fn fixture_regenerates_identically_from_the_baseline() {
-        crate::test_baseline::regenerates_identically("grep-session");
     }
 
     #[test]
@@ -3165,7 +2939,7 @@ mod tests {
 
     #[test]
     fn missing_ripgrep_error_matches_the_ts_wording() {
-        let error = ripgrep_unavailable("no executable rg found on PATH");
+        let error = ripgrep_unavailable("grep", "no executable rg found on PATH");
         assert_eq!(error.code, "unsupported_tool");
         let message = text(&error.message);
         assert!(

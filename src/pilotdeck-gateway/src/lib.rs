@@ -1,7 +1,11 @@
 //! Parsed WebSocket proxy. TS owns authentication and methods outside the verified local whitelist.
 mod acceptor;
 pub mod channel_runtime;
+pub mod application;
 pub mod config;
+pub mod cron;
+pub mod http;
+mod routes;
 mod dispatch;
 mod fetch_redirect;
 mod frame;
@@ -74,6 +78,7 @@ mod test_write_stage;
 pub mod upload;
 mod upstream;
 pub mod user_dialog;
+pub mod web_cli;
 
 use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
@@ -158,6 +163,433 @@ pub fn session_chat_dir(
     .chat_dir(project)
 }
 
+/// Native HTTP and authenticated WS entry point.
+pub use routes::GatewayServices;
+
+pub struct LocalServer {
+    services: std::sync::Arc<GatewayServices>,
+    proxy: std::sync::Arc<http_proxy::Proxy>,
+    config_state: Option<config::routes::native::SharedConfigRoutes>,
+    mcp: Option<std::sync::Arc<runtime::mcp::routes::McpRoutes>>,
+    interactions: std::sync::Arc<runtime::interaction::GatewayInteractionCoordinator>,
+    dialogs: std::sync::Arc<user_dialog::GatewayUserDialogs>,
+    pub(crate) http: http::HttpState,
+    automation: Option<std::sync::Arc<cron::Automation>>,
+    allow_upstream_fallback: bool,
+    pub(crate) memory_scheduler: Option<std::sync::Arc<runtime::memory::WebMemoryScheduler>>,
+}
+impl Drop for LocalServer {
+    fn drop(&mut self) {
+        if let Some(scheduler) = &self.memory_scheduler {
+            scheduler.close_memory_services(|| ());
+        }
+        if let Some(state) = self.config_state.take() {
+            config::routes::native::request_shutdown(state);
+        }
+    }
+}
+
+impl LocalServer {
+    pub fn new(proxy: std::sync::Arc<http_proxy::Proxy>) -> Result<Self, ProxyError> {
+        let token = Self::token_from_env()?;
+        let mcp = metadata::Metadata::from_env().map(|metadata| {
+            std::sync::Arc::new(runtime::mcp::routes::McpRoutes::native(
+                metadata.home,
+                metadata.cwd,
+            ))
+        });
+        let mut server = Self::with_token(proxy, token)?;
+        server.mcp = mcp;
+        Ok(server)
+    }
+
+    pub fn from_env() -> Result<Self, ProxyError> {
+        use hyper_util::{client::legacy::Client, rt::TokioExecutor};
+        Self::new(std::sync::Arc::new(http_proxy::Proxy {
+            upstream: "http://127.0.0.1:1".into(),
+            client: Client::builder(TokioExecutor::new()).build_http(),
+        }))
+    }
+
+    pub(crate) async fn run_websocket<S>(
+        &self,
+        stream: S,
+        fallback: Option<runtime::session::routes::passthrough::Upgrade>,
+    ) -> std::io::Result<()>
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    {
+        let metadata = self
+            .config_state
+            .as_ref()
+            .map(|state| {
+                let state = state.lock().unwrap();
+                metadata::Metadata {
+                    home: state.home.clone(),
+                    cwd: state.cwd.clone(),
+                    files: metadata::NativeFiles,
+                }
+            })
+            .or_else(|| {
+                self.http.home.as_ref().map(|home| metadata::Metadata {
+                    home: home.clone(),
+                    cwd: self.http.cwd.clone(),
+                    files: metadata::NativeFiles,
+                })
+            })
+            .or_else(metadata::Metadata::from_env);
+        if let Some(gateway) = self.http.ws_gateway.clone() {
+            pairing::run_local_with_gateway(stream, self.http.token.clone(), gateway).await
+        } else {
+            pairing::run_local_with_state(
+                stream,
+                self.http.token.clone(),
+                pairing::LocalState {
+                    metadata,
+                    interactions: self.interactions.clone(),
+                    dialogs: self.dialogs.clone(),
+                    mcp: self.mcp.clone(),
+                    services: self.services.clone(),
+                    automation: self.automation.clone(),
+                    fallback,
+                },
+            )
+            .await
+        }
+    }
+
+    /// Reuse G0 token resolution for the native runtime endpoint.
+    pub fn token_from_env() -> Result<String, ProxyError> {
+        let home = std::env::var_os("PILOT_HOME")
+            .filter(|p| !p.is_empty())
+            .map(std::path::PathBuf::from);
+        let token = ["PILOTDECK_GATEWAY_TOKEN", "PILOTDECK_TOKEN"]
+            .iter()
+            .find_map(|key| std::env::var(key).ok().filter(|s| !s.trim().is_empty()))
+            .map(Ok)
+            .unwrap_or_else(|| {
+                let home = home
+                    .as_ref()
+                    .ok_or("local gateway requires an explicit token or isolated PILOT_HOME")?;
+                let bytes = std::fs::read_to_string(home.join("server-token"))?;
+                let token = metadata::js_trim(&bytes).to_owned();
+                if token.is_empty() {
+                    return Err("gateway token file is empty".into());
+                }
+                Ok::<_, ProxyError>(token)
+            })?;
+        Ok(token)
+    }
+    pub fn with_token(
+        proxy: std::sync::Arc<http_proxy::Proxy>,
+        token: String,
+    ) -> Result<Self, ProxyError> {
+        if metadata::js_trim(&token).is_empty() {
+            return Err("gateway token is empty".into());
+        }
+        Ok(Self {
+            proxy,
+            interactions: Default::default(),
+            dialogs: Default::default(),
+            services: std::sync::Arc::new(GatewayServices::from_env()),
+            http: http::HttpState::new(
+                token.clone(),
+                std::env::var_os("PILOT_HOME")
+                    .filter(|p| !p.is_empty())
+                    .map(std::path::PathBuf::from),
+                std::env::current_dir().unwrap_or_default(),
+            ),
+            automation: None,
+            allow_upstream_fallback: true,
+            config_state: None,
+            mcp: None,
+            memory_scheduler: None,
+        })
+    }
+
+    /// Production listeners return native unknown-method errors. Legacy
+    /// embedders may explicitly retain a migration proxy via with_token.
+    pub fn without_upstream_fallback(mut self) -> Self {
+        self.allow_upstream_fallback = false;
+        self
+    }
+
+    /// Embed a gateway using the host's real admission and hook owners.
+    pub fn with_runtime(
+        proxy: std::sync::Arc<http_proxy::Proxy>,
+        token: String,
+        services: std::sync::Arc<GatewayServices>,
+    ) -> Result<Self, ProxyError> {
+        let mut server = Self::with_token(proxy, token)?;
+        server.services = services;
+        Ok(server)
+    }
+
+    /// Assemble CONFIG with the host's existing turn owner and channel lifecycle.
+    /// Retain `config_state()` for turn-start snapshot/SDK override consumption.
+    pub fn with_config_host(
+        mut self,
+        mut routes: config::routes::ConfigRoutes,
+        host: config::routes::ConfigHost,
+    ) -> Self {
+        routes.bind_host(host);
+        if let Some(scheduler) = &self.memory_scheduler {
+            routes.memory_scheduler = Some(scheduler.clone());
+        }
+        let state = config::routes::native::install(routes);
+        self.http.config = Some(state.clone());
+        self.config_state = Some(state);
+        self
+    }
+    /// Retain the bootstrap outside the listener for session admission/shutdown.
+    pub fn with_native_config(
+        mut self,
+        bootstrap: &config::routes::bootstrap::ConfigBootstrap,
+    ) -> Self {
+        {
+            let mut config = bootstrap.state.lock().unwrap();
+            if let Some(automation) = &self.automation {
+                config.session_owner = Some(automation.owner.clone());
+                config.interactions = Some(automation.interactions.clone());
+                config.shared_sdk = automation.sdk.clone();
+            }
+            if let Some(scheduler) = &self.memory_scheduler {
+                config.memory_scheduler = Some(scheduler.clone());
+            }
+        }
+        self.http.config = Some(bootstrap.state.clone());
+        self.config_state = Some(bootstrap.state.clone());
+        if let Some(home) = self.http.home.clone() {
+            let cwd = self.http.cwd.clone();
+            self = self.with_feishu_webhook(
+                config::routes::channel_webhook::production_feishu_webhook(home.clone(), cwd.clone()),
+            );
+            self = self.with_wecom_webhook(
+                config::routes::channel_webhook::production_wecom_webhook(home, cwd),
+            );
+        }
+        self
+    }
+    pub fn config_state(&self) -> Option<config::routes::native::SharedConfigRoutes> {
+        self.config_state.clone()
+    }
+
+    pub async fn shutdown(&self) -> Result<(), ProxyError> {
+        if let Some(state) = self.config_state.clone() {
+            config::routes::native::shutdown(state)
+                .await
+                .map_err(|e| std::io::Error::other(e.message))?;
+        }
+        Ok(())
+    }
+
+    /// Embed the gateway with an explicit token and shared MCP domain state.
+    pub fn with_mcp(
+        proxy: std::sync::Arc<http_proxy::Proxy>,
+        token: String,
+        mcp: std::sync::Arc<runtime::mcp::routes::McpRoutes>,
+    ) -> Self {
+        Self {
+            proxy,
+            mcp: Some(mcp),
+            interactions: Default::default(),
+            dialogs: Default::default(),
+            services: std::sync::Arc::new(GatewayServices::from_env()),
+            http: http::HttpState::new(
+                token.clone(),
+                std::env::var_os("PILOT_HOME")
+                    .filter(|p| !p.is_empty())
+                    .map(std::path::PathBuf::from),
+                std::env::current_dir().unwrap_or_default(),
+            ),
+            automation: None,
+            config_state: None,
+            allow_upstream_fallback: true,
+            memory_scheduler: None,
+        }
+    }
+
+    /// Share the host's pending requests and session grants with every socket.
+    /// Supply the same coordinator used by `GatewayServices::interactions`.
+    pub fn with_interactions(
+        mut self,
+        interactions: std::sync::Arc<runtime::interaction::GatewayInteractionCoordinator>,
+    ) -> Self {
+        self.interactions = interactions;
+        self
+    }
+
+    /// Share the channel's bus and persistent host with every socket.
+    pub fn user_dialogs(&self) -> std::sync::Arc<user_dialog::GatewayUserDialogs> {
+        self.dialogs.clone()
+    }
+
+    /// Share the channel's bus and persistent host with every socket.
+    pub fn with_user_dialogs(
+        mut self,
+        dialogs: std::sync::Arc<user_dialog::GatewayUserDialogs>,
+    ) -> Self {
+        self.dialogs = dialogs;
+        self
+    }
+
+    pub fn with_gateway(
+        mut self,
+        gateway: std::sync::Arc<dyn runtime::connection::ConnectionGateway>,
+    ) -> Self {
+        self.http.ws_gateway = Some(gateway);
+        self
+    }
+
+    pub fn with_module_host(mut self, bindings: http::module_host::Bindings) -> Self {
+        self.http.module_host = bindings;
+        self
+    }
+
+    pub fn with_static_assets(mut self, root: impl Into<std::path::PathBuf>) -> Self {
+        self.http.static_root = Some(root.into());
+        self
+    }
+
+    pub fn with_feishu_webhook(mut self, callback: http::FeishuWebhook) -> Self {
+        self.http.feishu_webhook = Some(callback);
+        self
+    }
+
+    pub fn with_wecom_webhook(mut self, callback: http::WecomWebhook) -> Self {
+        self.http.wecom_webhook = Some(callback);
+        self
+    }
+
+    pub fn authenticated(
+        proxy: std::sync::Arc<http_proxy::Proxy>,
+        token: String,
+    ) -> Result<Self, ProxyError> {
+        Self::with_token(proxy, token)
+    }
+    pub fn with_automation(mut self, automation: std::sync::Arc<cron::Automation>) -> Self {
+        self.interactions = automation.interactions.clone();
+        let mut services = GatewayServices::new(
+            self.services.home.clone(),
+            self.services.cwd.clone(),
+            self.services.admission.clone(),
+            automation.async_hooks.clone(),
+        );
+        services.browsers = self.services.browsers.clone();
+        self.services = std::sync::Arc::new(services);
+        self.automation = Some(automation);
+        self
+    }
+    pub fn with_home(mut self, home: std::path::PathBuf, cwd: std::path::PathBuf) -> Self {
+        self.http.home = Some(home.clone());
+        self.http.cwd = cwd.clone();
+        let mut services = GatewayServices::new(
+            home.clone(),
+            cwd.clone(),
+            self.services.admission.clone(),
+            self.services.async_hooks.clone(),
+        );
+        services.browsers = self.services.browsers.clone();
+        self.services = std::sync::Arc::new(services);
+        self.mcp = Some(std::sync::Arc::new(
+            runtime::mcp::routes::McpRoutes::native(home.clone(), cwd),
+        ));
+        self.memory_scheduler = Some(std::sync::Arc::new(
+            runtime::memory::WebMemoryScheduler::with_workspace_root(home.join("workspaces")),
+        ));
+        self
+    }
+    pub fn memory_scheduler(&self) -> Option<std::sync::Arc<runtime::memory::WebMemoryScheduler>> {
+        self.memory_scheduler.clone()
+    }
+    pub fn resolve_memory_config_flags(
+        &self,
+    ) -> (
+        bool,
+        bool,
+        Option<std::sync::Arc<dyn runtime::memory::edgeclaw::NativeEdgeClawLlm>>,
+    ) {
+        let snapshot = if let Some(state) = &self.config_state {
+            let routes = state.lock().unwrap();
+            Some(routes.store.snapshot())
+        } else if let Some(home) = &self.http.home {
+            crate::config::load_snapshot(
+                home,
+                &self.http.cwd,
+                &std::env::vars().collect(),
+                None,
+                1.0,
+                "",
+            )
+            .ok()
+            .map(std::sync::Arc::new)
+        } else {
+            None
+        };
+
+        let enabled = snapshot
+            .as_deref()
+            .and_then(|s| s.get("config"))
+            .and_then(|c| c.get("memory"))
+            .and_then(|m| m.get("enabled"))
+            .and_then(pilotdeck_protocol::JsValue::as_bool)
+            .unwrap_or(true);
+        let llm = snapshot
+            .as_deref()
+            .and_then(runtime::memory::edgeclaw::native_llm_from_snapshot);
+        let has_model = llm.is_some();
+        (enabled, has_model, llm)
+    }
+
+    /// Starts background memory scheduler for auto index/dream (aligns with `ui/server/index.js:3712`).
+    pub fn start_memory_scheduler(&self) {
+        if let Some(scheduler) = &self.memory_scheduler {
+            let (enabled, has_model, llm) = self.resolve_memory_config_flags();
+            if let Some(llm) = llm {
+                scheduler.set_llm(llm);
+            }
+            scheduler.start_memory_scheduler(None, enabled, has_model);
+        }
+    }
+
+    /// Closes all active web memory services on graceful shutdown (aligns with `ui/server/index.js:3740-3741`).
+    pub fn close_memory_services(&self) {
+        if let Some(scheduler) = &self.memory_scheduler {
+            scheduler.close_memory_services(|| ());
+        }
+    }
+
+    /// Reloads web memory scheduler on external config reload (aligns with `pilotdeckConfigReloader.js:17-20`).
+    pub fn on_config_reload(&self, enabled: bool, has_model: bool) {
+        if let Some(scheduler) = &self.memory_scheduler {
+            let (_, _, llm) = self.resolve_memory_config_flags();
+            if let Some(llm) = llm {
+                scheduler.set_llm(llm);
+            }
+            scheduler.on_config_reload(|| (), None, enabled, has_model);
+        }
+    }
+    pub async fn stop(&self) -> Result<(), ProxyError> {
+        self.close_memory_services();
+        if let Some(automation) = &self.automation {
+            automation
+                .stop()
+                .await
+                .map_err(|e| std::io::Error::other(format!("{}: {}", e.code, e.message)))?;
+        }
+        self.shutdown().await
+    }
+    pub async fn serve_connection<S>(
+        self: std::sync::Arc<Self>,
+        stream: S,
+    ) -> Result<(), hyper::Error>
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    {
+        http_proxy::serve_local_connection(self, stream).await
+    }
+}
+
 /// Register this process's SIGXFSZ handler, aligning it with Node (#621).
 /// Node's platform init ignores SIGXFSZ process-wide, so a write past
 /// RLIMIT_FSIZE surfaces as an `EFBIG` error from the syscall; Rust std
@@ -209,5 +641,3 @@ fn register_sigxfsz() -> Result<tokio::signal::unix::Signal, String> {
     tokio::signal::unix::signal(tokio::signal::unix::SignalKind::from_raw(libc::SIGXFSZ))
         .map_err(|error| format!("tokio signal registration failed: {error}"))
 }
-pub mod application;
-pub mod web_cli;

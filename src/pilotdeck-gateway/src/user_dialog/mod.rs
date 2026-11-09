@@ -1,6 +1,6 @@
 //! Opt-in user-dialog persistence and in-process ownership primitives.
 //!
-//! This module does not register Gateway methods or attach a WS/session runtime.
+//! Gateway routes share the host's bus and optional persistent session state.
 //! Values remain in the JS boundary model to preserve TS disk key order, numbers,
 //! undefined fields and UTF-16 strings. Answer validation belongs to the caller,
 //! before consuming the bus or submitting to the hosted store.
@@ -9,14 +9,24 @@ mod bus;
 mod channel;
 #[cfg(test)]
 mod channel_tests;
+mod gateway;
 mod http_store;
 mod journal;
+mod recovery;
+mod respond;
+#[cfg(test)]
+mod respond_tests;
+pub mod routes;
+mod schema;
 mod store;
 
 pub use bus::{ConsumeResult, GatewayUserDialogBus, PendingDialog};
 pub use channel::{
     AbortSignal, ChannelOptions, ChannelRequest, ConfirmRequest, FormRequest,
     GatewayUserDialogChannel, InputRequest, SelectChoice, SelectRequest, UserDialogStore,
+};
+pub use gateway::{
+    DialogPersistence, DialogSession, DialogSessionResolver, DialogStore, GatewayUserDialogs,
 };
 pub use http_store::{
     GatewayUserDialogStoreHttpHandler, GatewayUserDialogStoreHttpServer,
@@ -29,6 +39,7 @@ pub use http_store::{
 pub use journal::{
     GatewayUserDialogJournal, JournalOptions, UserDialogJournal, create_gateway_user_dialog_journal,
 };
+pub use recovery::DialogRecoveryStorageResolver;
 pub use store::{FileGatewayUserDialogStore, StoreOptions};
 
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};

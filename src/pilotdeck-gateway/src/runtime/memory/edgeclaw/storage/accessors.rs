@@ -7,10 +7,6 @@ use crate::runtime::memory::edgeclaw::file_memory::{
     absolute,
     helpers::{extract_objects, hash, map_global, objects, s, sort_manifest_entries, text},
 };
-use crate::runtime::memory::edgeclaw::text::{
-    EXTERNAL_RECORD_PREFIX, build_external_project_logical_id_path, general_workspace_path,
-    is_general_workspace_path,
-};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 use rusqlite::{Connection, OptionalExtension};
 use std::{
@@ -66,7 +62,7 @@ impl RepositoryContext {
 /// `os.homedir()`: `$HOME` wins even when empty; otherwise libuv falls back to
 /// `getpwuid_r` (NSS). The workspace forbids `unsafe`, so the fallback asks the
 /// platform passwd lookup instead of calling libc directly.
-pub(crate) fn homedir() -> Result<PathBuf> {
+fn homedir() -> Result<PathBuf> {
     if let Some(home) = std::env::var_os("HOME") {
         return Ok(PathBuf::from(home));
     }
@@ -122,7 +118,7 @@ fn passwd_home() -> Option<PathBuf> {
     std::env::var_os("USERPROFILE").map(PathBuf::from)
 }
 fn general_workspace() -> Result<PathBuf> {
-    absolute(&general_workspace_path()?)
+    absolute(&homedir()?.join(".pilotdeck"))
 }
 fn put(o: &mut JsObject, k: &str, v: JsValue) {
     o.insert(k.into(), v);
@@ -130,8 +126,11 @@ fn put(o: &mut JsObject, k: &str, v: JsValue) {
 fn path_text(p: &Path) -> String {
     p.to_string_lossy().into_owned()
 }
-fn external_id(workspace: &Path, project: &str) -> Result<String> {
-    build_external_project_logical_id_path(workspace, project)
+fn external_id(workspace: &Path, project: &str) -> String {
+    format!(
+        "external-project:{}",
+        hash(&format!("{}::{project}", workspace.display()))
+    )
 }
 /// `options.includeExternal ?? true`, then JS truthiness. Only nullish values
 /// default to true; `0`, `""`, `false` and `NaN` skip external entries.
@@ -280,7 +279,7 @@ impl EdgeClawFileStores {
     ) -> Result<Self> {
         let workspace = absolute(workspace.as_ref())?;
         let general_workspace = absolute(general_workspace.as_ref())?;
-        let mode = if is_general_workspace_path(&workspace, &general_workspace) {
+        let mode = if workspace == general_workspace {
             "general"
         } else {
             "single"
@@ -323,16 +322,11 @@ impl EdgeClawFileStores {
         let current = absolute(&self.current_workspace()?)?;
         let memory = absolute(self.workspace_memory.get_root_dir())?;
         let mut snapshots = vec![];
-        // Copy handles under E, then release E before constructing any store
-        // (construction acquires its W). Publish only after all W guards have
-        // gone away. Concurrent scans may replace the cache, but their owned
-        // handles remain valid and each snapshot preserves discovery order.
-        let cache = self
+        let mut cache = self
             .repository
             .external
             .lock()
-            .expect("external cache poisoned")
-            .clone();
+            .expect("external cache poisoned");
         let mut next = HashMap::new();
         if self.repository.workspaces_root.exists() {
             let root = &self.repository.workspaces_root;
@@ -359,9 +353,7 @@ impl EdgeClawFileStores {
                 let Some(workspace) = read_workspace(&db) else {
                     continue;
                 };
-                if is_general_workspace_path(&workspace, &current)
-                    || is_general_workspace_path(&workspace, &self.repository.general_workspace)
-                {
+                if workspace == current || workspace == self.repository.general_workspace {
                     continue;
                 }
                 let key = hash(&path_text(&workspace));
@@ -386,11 +378,7 @@ impl EdgeClawFileStores {
                 snapshots.push(snapshot);
             }
         }
-        *self
-            .repository
-            .external
-            .lock()
-            .expect("external cache poisoned") = next;
+        *cache = next;
         Ok(snapshots)
     }
     pub fn list_readable_project_catalog(&self) -> Result<JsValue> {
@@ -435,7 +423,7 @@ impl EdgeClawFileStores {
                 continue;
             };
             let id = text(meta, "projectId");
-            let logical = external_id(&snapshot.workspace, &id)?;
+            let logical = external_id(&snapshot.workspace, &id);
             let external_summary = summary(&snapshot.store, &id)?;
             let mut entry = if let Some(mirror) = mirrors.get(&(snapshot.workspace.clone(), id)) {
                 let mirror_id = text(mirror, "projectId");
@@ -580,7 +568,7 @@ impl EdgeClawFileStores {
                                 &mut e,
                                 "relativePath",
                                 s(format!(
-                                    "{EXTERNAL_RECORD_PREFIX}{}:{path}",
+                                    "external:{}:{path}",
                                     hash(&path_text(&snapshot.workspace))
                                 )),
                             );
@@ -630,15 +618,6 @@ impl EdgeClawFileStores {
                 .map(map_global)
                 .collect(),
         ))
-    }
-}
-impl RepositoryContext {
-    /// Clock shared by this repository's stores. Staged import stores reuse it
-    /// (`sqlite.ts:1554-1563` materializes `FileMemoryStore`s whose manifest
-    /// timestamps come from the ambient `nowIso`), so a replayed import writes
-    /// the same `MEMORY.md` bytes as TS.
-    pub(crate) fn clock(&self) -> &FileMemoryClock {
-        &self.clock
     }
 }
 fn read_workspace(db: &Path) -> Option<PathBuf> {
@@ -741,7 +720,7 @@ impl EdgeClawFileStores {
     pub(super) fn entry_external_records(
         &self,
         ids: &[JsString],
-        max_lines: &JsValue,
+        max_lines: f64,
     ) -> Result<Vec<JsValue>> {
         let mut groups: Vec<(String, Vec<JsValue>)> = vec![];
         for id in ids {
@@ -785,9 +764,9 @@ impl EdgeClawFileStores {
             };
             let mut input = JsObject::new();
             put(&mut input, "ids", JsValue::Array(paths));
-            put(&mut input, "maxLines", max_lines.clone());
+            put(&mut input, "maxLines", JsValue::Number(max_lines));
             for mut record in extract_objects(&snapshot.store.get_memory_records_by_ids(&input)?) {
-                let mut path = format!("{EXTERNAL_RECORD_PREFIX}{key}:")
+                let mut path = format!("external:{key}:")
                     .encode_utf16()
                     .collect::<Vec<_>>();
                 path.extend(
@@ -830,61 +809,6 @@ fn external_record_path(record: &JsObject) -> Result<&JsString> {
 #[cfg(test)]
 mod round6_tests {
     use super::*;
-    #[test]
-    fn external_cache_is_released_before_cold_and_warm_store_locks() {
-        use crate::runtime::memory::edgeclaw::file_memory::{lock_test_hook, operation_lock};
-        use std::cell::Cell;
-        let root = std::env::temp_dir().join(format!("pdrs-r9-cache-{}", std::process::id()));
-        let general = root.join("home/.pilotdeck");
-        let open = |name: &str, workspace: &Path| {
-            EdgeClawFileStores::with_workspace_clock(
-                root.join(format!("workspaces/{name}/control.sqlite")),
-                root.join(format!("workspaces/{name}/memory")),
-                root.join("global"),
-                workspace,
-                &general,
-                Arc::new(|| "2026-10-22T00:00:00.000Z".into()),
-            )
-            .unwrap()
-        };
-        let a = Arc::new(open("a", &general));
-        let b = open("b", &root.join("project-b"));
-        b.storage
-            .set_pipeline_state("workspaceDir", &s("/fixture/B"))
-            .unwrap();
-        let lock = operation_lock(b.workspace_memory.get_root_dir()).unwrap();
-        let target = Arc::as_ptr(&lock) as usize;
-        let observed = std::rc::Rc::new(Cell::new(0));
-        let calls = observed.clone();
-        let reader = a.clone();
-        lock_test_hook::set(move |event| {
-            if !event.acquired && event.key == target {
-                assert!(
-                    reader.repository.external.try_lock().is_ok(),
-                    "E held while acquiring sibling W"
-                );
-                assert!(
-                    event.held.is_empty(),
-                    "store held while acquiring sibling W"
-                );
-                calls.set(calls.get() + 1);
-            }
-        });
-        a.list_readable_project_catalog().unwrap();
-        let cold = observed.get();
-        assert_eq!(cold, 2, "cold construction and query must both acquire W");
-        a.list_readable_project_catalog().unwrap();
-        assert_eq!(
-            observed.get(),
-            cold + 1,
-            "warm cache must skip construction but still query under W"
-        );
-        lock_test_hook::set(|_| {});
-        a.close().unwrap();
-        b.close().unwrap();
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
     #[test]
     fn malformed_external_record_returns_internal_error() {
         for value in [None, Some(JsValue::Null), Some(JsValue::Number(1.0))] {

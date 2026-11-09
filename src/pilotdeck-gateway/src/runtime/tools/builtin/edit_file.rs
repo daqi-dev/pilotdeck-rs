@@ -8,7 +8,10 @@ use super::{
 };
 use crate::{
     host::{HostError, modules::capability::ToolDefinition},
-    runtime::tools::{ExecutableTool, ToolError, ToolFuture, ToolOutput, ToolRunContext, js_space},
+    runtime::{
+        permission::{PermissionContext, PermissionFuture},
+        tools::{ExecutableTool, ToolError, ToolFuture, ToolOutput, ToolRunContext, js_space},
+    },
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
@@ -40,6 +43,20 @@ impl ToolDefinition for EditFileTool {
     fn is_concurrency_safe(&self, _input: &JsValue) -> Result<JsValue, HostError> {
         Ok(JsValue::Bool(false))
     }
+    fn check_permissions<'a>(
+        &'a self,
+        input: &'a JsValue,
+        context: &'a PermissionContext,
+    ) -> PermissionFuture<'a, Option<JsValue>> {
+        Box::pin(async move {
+            Ok(Some(super::send_attachment::check_file_permission(
+                "edit_file",
+                input,
+                context,
+                false,
+            )))
+        })
+    }
 }
 
 impl ExecutableTool for EditFileTool {
@@ -52,7 +69,7 @@ impl ExecutableTool for EditFileTool {
     }
 
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
-        Box::pin(async move { execute(&input, &context) })
+        Box::pin(async move { execute(&input, &context).await })
     }
 }
 
@@ -154,7 +171,7 @@ fn is_read_state_error(error: &ToolError) -> bool {
             ))
 }
 
-fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, ToolError> {
+async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, ToolError> {
     let path = input_string(input, "file_path");
     let old = input_string(input, "old_string");
     let new = input_string(input, "new_string");
@@ -242,6 +259,14 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
         write.mtime_ms,
         None,
     );
+    crate::runtime::hooks::session::notify_file_save(
+        context,
+        &resolved.absolute,
+        &resolved.relative,
+        &resolved.root,
+        Some(&content),
+    )
+    .await;
 
     let replacements = if old_text.is_empty() {
         0

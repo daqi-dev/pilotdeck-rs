@@ -14,6 +14,7 @@ pdrs-mutants = []
 workspace = true
 
 [dependencies]
+image = { version = "=0.25.8", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 pilotdeck-child-signals = { path = "../pilotdeck-child-signals" }
 pilotdeck-agent = { path = "../pilotdeck-agent" }
 base64 = "=0.22.1"

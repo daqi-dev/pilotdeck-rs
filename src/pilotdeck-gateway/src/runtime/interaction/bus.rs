@@ -82,26 +82,6 @@ impl<const P: bool> PendingBus<P> {
         entry: PendingEntry,
         payload: Option<JsValue>,
     ) -> Result<Registration, JsString> {
-        self.register_with_payload(owner, entry, || Ok(reconnect::replay_payload(payload)))
-            .map_err(|error| error.message)
-    }
-    /// Adapt host values after registration validation, before publishing pending
-    /// state. The arena is only borrowed for this synchronous call.
-    pub fn register_producer(
-        &self,
-        owner: &JsString,
-        entry: PendingEntry,
-        nodes: &[ProducerValue],
-        root: usize,
-    ) -> Result<Registration, ReplayValueError> {
-        self.register_with_payload(owner, entry, || to_interaction_replay_value(nodes, root))
-    }
-    fn register_with_payload(
-        &self,
-        owner: &JsString,
-        entry: PendingEntry,
-        payload: impl FnOnce() -> Result<Option<JsValue>, ReplayValueError>,
-    ) -> Result<Registration, ReplayValueError> {
         let mut state = self.port.state.lock().unwrap();
         let bucket = if let Some(index) = state
             .buckets
@@ -131,14 +111,10 @@ impl<const P: bool> PendingBus<P> {
                 " is already pending for session ".into(),
                 owner.clone(),
                 ".".into(),
-            ])
-            .into());
+            ]));
         }
         if owner.is_empty() || entry.request_id.is_empty() {
-            return Err(JsString::from(
-                "Interaction pending request requires ownerId and requestId.",
-            )
-            .into());
+            return Err("Interaction pending request requires ownerId and requestId.".into());
         }
         if state.requests.iter().any(|r| {
             &r.owner == owner && r.kind == self.kind() && r.entry.request_id == entry.request_id
@@ -149,11 +125,8 @@ impl<const P: bool> PendingBus<P> {
                 " is already pending for ".into(),
                 owner.clone(),
                 ".".into(),
-            ])
-            .into());
+            ]));
         }
-        state.replay_owners.insert(owner.clone());
-        let payload = payload()?;
         let token = state.serial();
         let active = Arc::new(AtomicBool::new(true));
         let binding = reconnect::current(&state, owner);
@@ -162,7 +135,7 @@ impl<const P: bool> PendingBus<P> {
             owner: owner.clone(),
             kind: self.kind(),
             entry: entry.clone(),
-            payload,
+            payload: reconnect::replay_payload(payload),
             binding,
         });
         state.buckets[bucket].entries.lock().unwrap().push(Stored {
@@ -185,10 +158,22 @@ impl<const P: bool> PendingBus<P> {
         request: &JsString,
         binding: Option<&InteractionBinding>,
     ) -> Option<PendingEntry> {
+        let binding = binding.map(InteractionBinding::to_value);
+        self.consume_wire(owner, request, binding.as_ref())
+    }
+    pub(crate) fn consume_wire(
+        &self,
+        owner: &JsString,
+        request: &JsString,
+        binding: Option<&JsValue>,
+    ) -> Option<PendingEntry> {
         let mut state = self.port.state.lock().unwrap();
-        if binding.is_some_and(|binding| {
-            !reconnect::is_current(&state, owner, self.kind(), request, binding)
-        }) {
+        if binding
+            .filter(|binding| truthy(binding))
+            .is_some_and(|binding| {
+                !reconnect::is_current(&state, owner, self.kind(), request, binding)
+            })
+        {
             return None;
         }
         let index = state
@@ -368,6 +353,16 @@ impl<const P: bool> PendingBus<P> {
                 ("reason", JsValue::String(reason.clone())),
             ]));
         }
+    }
+}
+
+fn truthy(value: &JsValue) -> bool {
+    match value {
+        JsValue::Undefined | JsValue::Null => false,
+        JsValue::Bool(value) => *value,
+        JsValue::Number(value) => *value != 0.0 && !value.is_nan(),
+        JsValue::String(value) => !value.is_empty(),
+        JsValue::Object(_) | JsValue::Array(_) => true,
     }
 }
 impl PendingBus<true> {
