@@ -27,7 +27,7 @@ use tokio::{
     task::JoinSet,
 };
 mod http;
-mod inbound;
+pub(crate) mod inbound;
 mod live;
 mod stream;
 #[cfg(test)]

@@ -366,11 +366,20 @@ impl LocalServer {
         self.config_state = Some(bootstrap.state.clone());
         if let Some(home) = self.http.home.clone() {
             let cwd = self.http.cwd.clone();
+            let gateway_token = self.http.token.clone();
             self = self.with_feishu_webhook(
-                config::routes::channel_webhook::production_feishu_webhook(home.clone(), cwd.clone()),
+                config::routes::channel_webhook::production_feishu_webhook(
+                    home.clone(),
+                    cwd.clone(),
+                    gateway_token.clone(),
+                ),
             );
             self = self.with_wecom_webhook(
-                config::routes::channel_webhook::production_wecom_webhook(home, cwd),
+                config::routes::channel_webhook::production_wecom_webhook(
+                    home,
+                    cwd,
+                    gateway_token,
+                ),
             );
         }
         self

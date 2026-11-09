@@ -1,5 +1,6 @@
 //! Production HTTP inbound for IM adapters (`submit_host.rs:236-268`, `FeishuChannel.ts:306-333`).
 use super::channel_inbound::{self, ProductionRouteInputResult};
+use super::feishu::inbound::{self, Parsed};
 use crate::{Body, ProxyError};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
@@ -11,23 +12,42 @@ use std::{path::Path, sync::Arc};
 pub fn production_feishu_webhook(
     home: std::path::PathBuf,
     cwd: std::path::PathBuf,
+    gateway_token: String,
 ) -> crate::http::FeishuWebhook {
     Arc::new(move |request| {
         let home = home.clone();
         let cwd = cwd.clone();
-        Box::pin(async move { handle_channel_webhook(request, &home, &cwd, "feishu").await })
+        let gateway_token = gateway_token.clone();
+        Box::pin(async move {
+            handle_channel_webhook(request, &home, &cwd, "feishu", &gateway_token).await
+        })
     })
 }
 
 pub fn production_wecom_webhook(
     home: std::path::PathBuf,
     cwd: std::path::PathBuf,
+    gateway_token: String,
 ) -> crate::http::WecomWebhook {
     Arc::new(move |request| {
         let home = home.clone();
         let cwd = cwd.clone();
-        Box::pin(async move { handle_channel_webhook(request, &home, &cwd, "wecom").await })
+        let gateway_token = gateway_token.clone();
+        Box::pin(async move {
+            handle_channel_webhook(request, &home, &cwd, "wecom", &gateway_token).await
+        })
     })
+}
+
+fn feishu_options(home: &Path, cwd: &Path) -> super::feishu::FeishuOptions {
+    let env = super::Env::from([(
+        "PILOT_HOME".into(),
+        home.to_string_lossy().into_owned(),
+    )]);
+    crate::config::load_snapshot(home, cwd, &env, None, 1.0, "1970-01-01T00:00:00.000Z")
+        .ok()
+        .and_then(|snapshot| crate::application::feishu_options(&snapshot, home))
+        .unwrap_or_default()
 }
 
 async fn handle_channel_webhook(
@@ -35,6 +55,7 @@ async fn handle_channel_webhook(
     home: &Path,
     cwd: &Path,
     channel_key: &str,
+    gateway_token: &str,
 ) -> Result<Option<Response<Body>>, ProxyError> {
     if request.method() != hyper::Method::POST {
         return Ok(None);
@@ -58,6 +79,26 @@ async fn handle_channel_webhook(
             StatusCode::OK,
             serde_json::json!({ "challenge": challenge }),
         )));
+    }
+    if !gateway_token.is_empty() && !crate::http::authorized(request.headers(), gateway_token) {
+        return Ok(Some(webhook_json(
+            StatusCode::UNAUTHORIZED,
+            serde_json::json!({"error":{"code":"unauthorized","message":"Bearer token required"}}),
+        )));
+    }
+    if channel_key == "feishu" {
+        let options = feishu_options(home, cwd);
+        return Ok(Some(match inbound::parse(body, &options) {
+            Parsed::Challenge(challenge) => webhook_json(
+                StatusCode::OK,
+                serde_json::json!({ "challenge": challenge }),
+            ),
+            Parsed::Ignore => webhook_json(StatusCode::OK, serde_json::json!({ "ok": true })),
+            Parsed::Message(message) => webhook_json(
+                StatusCode::OK,
+                route_input_webhook_body(home, cwd, channel_key, &message.text),
+            ),
+        }));
     }
     let Some(text) = extract_inbound_text(&value) else {
         return Ok(Some(webhook_json(
@@ -153,7 +194,9 @@ mod tests {
 
     const CONFIG: &str = "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: {deterministic: {}}\n";
 
-    fn installed_root() -> (
+    const FEISHU_CONFIG: &str = "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: {deterministic: {}}\nadapters:\n  feishu:\n    enabled: true\n    verifyToken: vt-hook\n";
+
+    fn installed_root(yaml: &str) -> (
         std::path::PathBuf,
         crate::config::routes::native::SharedConfigRoutes,
     ) {
@@ -161,7 +204,7 @@ mod tests {
             std::env::temp_dir().join(format!("channel-webhook-prod-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let root = root.canonicalize().unwrap();
-        std::fs::write(root.join("pilotdeck.yaml"), CONFIG).unwrap();
+        std::fs::write(root.join("pilotdeck.yaml"), yaml).unwrap();
         let owner = install(
             ConfigRoutes::new(
                 root.clone(),
@@ -173,9 +216,13 @@ mod tests {
         (root, owner)
     }
 
+    fn bearer(token: &str) -> String {
+        format!("Bearer {token}")
+    }
+
     #[test]
     fn production_route_input_non_slash_passes_through() {
-        let (root, _owner) = installed_root();
+        let (root, _owner) = installed_root(CONFIG);
         let result = channel_inbound::production_route_input(&root, &root, "feishu", "你好", |_| {});
         assert!(result.pass_through);
         assert!(!result.slash_handled);
@@ -186,11 +233,12 @@ mod tests {
 
     #[tokio::test]
     async fn feishu_webhook_production_route_input_slash_command() {
-        let (root, _owner) = installed_root();
-        let callback = production_feishu_webhook(root.clone(), root.clone());
+        let (root, _owner) = installed_root(CONFIG);
+        let callback = production_feishu_webhook(root.clone(), root.clone(), "hook-secret".into());
         let request = hyper::Request::builder()
             .method("POST")
             .uri("/feishu/webhook")
+            .header(header::AUTHORIZATION, bearer("hook-secret"))
             .body(r#"{"chatId":"c1","text":"/update check"}"#.into())
             .unwrap();
         let response = callback(request).await.unwrap().expect("handled");
@@ -203,12 +251,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unauthenticated_slash_update_is_rejected() {
+        let (root, _owner) = installed_root(CONFIG);
+        let callback = production_feishu_webhook(root.clone(), root.clone(), "hook-secret".into());
+        let request = hyper::Request::builder()
+            .method("POST")
+            .uri("/feishu/webhook")
+            .body(r#"{"chatId":"c1","text":"/update check"}"#.into())
+            .unwrap();
+        let response = callback(request).await.unwrap().expect("handled");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn feishu_webhook_rejects_wrong_event_token_without_routing() {
+        let (root, _owner) = installed_root(FEISHU_CONFIG);
+        let callback = production_feishu_webhook(root.clone(), root.clone(), "hook-secret".into());
+        let request = hyper::Request::builder()
+            .method("POST")
+            .uri("/feishu/webhook")
+            .header(header::AUTHORIZATION, bearer("hook-secret"))
+            .body(r#"{"header":{"event_type":"im.message.receive_v1","token":"wrong"},"event":{"message":{"message_type":"text","chat_id":"c1","content":"{\"text\":\"/update check\"}"}}}"#.into())
+            .unwrap();
+        let response = callback(request).await.unwrap().expect("handled");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], true);
+        assert!(json.get("handled").is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn wecom_webhook_production_route_input_slash_command() {
-        let (root, _owner) = installed_root();
-        let callback = production_wecom_webhook(root.clone(), root.clone());
+        let (root, _owner) = installed_root(CONFIG);
+        let callback = production_wecom_webhook(root.clone(), root.clone(), "hook-secret".into());
         let request = hyper::Request::builder()
             .method("POST")
             .uri("/wecom/webhook")
+            .header(header::AUTHORIZATION, bearer("hook-secret"))
             .body(r#"{"chatId":"c1","text":"/update check"}"#.into())
             .unwrap();
         let response = callback(request).await.unwrap().expect("handled");

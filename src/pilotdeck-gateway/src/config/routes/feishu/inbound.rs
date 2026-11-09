@@ -5,19 +5,19 @@ use aes::{
 };
 use base64::Engine;
 use sha2::{Digest, Sha256};
-pub(super) enum Parsed {
+pub(crate) enum Parsed {
     Challenge(String),
     Message(Inbound),
     Ignore,
 }
 #[derive(Clone)]
-pub(super) struct Inbound {
+pub(crate) struct Inbound {
     pub chat: String,
     pub text: String,
     pub event_id: String,
     pub message_id: Option<String>,
 }
-pub(super) fn parse(body: &str, options: &FeishuOptions) -> Parsed {
+pub(crate) fn parse(body: &str, options: &FeishuOptions) -> Parsed {
     let Ok(mut raw) = serde_json::from_str::<Value>(body) else {
         return Parsed::Ignore;
     };
