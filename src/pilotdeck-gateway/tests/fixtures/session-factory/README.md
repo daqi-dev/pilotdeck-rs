@@ -1,6 +1,6 @@
 # #745 SessionFactory 生命周期金样与负控
 
-`oracle.json` 记录固定 TS commit / 源码闭包 SHA / Node v22.22.0、20 格生命周期矩阵、13 个完整投影探针、16 行 hydrate 投影输出（#1985 第 1 块）、14 格 `subagentReferences` 投影（#2042）和 3 个默认 storage hydrate 错误。原始 20 格探针来自协调者 `_tmp/20261028-issue-745-matrix/`；`probe.mts` 保留其操作和确定性门闩，基线/输出路径为参数；fix-r1 增加两个 writer 交错、仅内存状态覆盖探针。`normalize.mts` 只归一登记的临时路径、运行目录和耗时，`check.py` 先验证物理证据再归一。
+`oracle.json` 记录固定 TS commit / 源码闭包 SHA / Node v22.22.0、20 格生命周期矩阵、13 个完整投影探针、16 行 hydrate 投影输出（#1985 第 1 块）、14 格 `subagentReferences` 投影（#2042）和 5 个默认 storage hydrate 错误（#2058 增 `file_artifacts` 条目 `artifacts:null` 与缺键两行，真 TS 实测 `reading 'length'` 文案）。原始 20 格探针来自协调者 `_tmp/20261028-issue-745-matrix/`；`probe.mts` 保留其操作和确定性门闩，基线/输出路径为参数；fix-r1 增加两个 writer 交错、仅内存状态覆盖探针。`normalize.mts` 只归一登记的临时路径、运行目录和耗时，`check.py` 先验证物理证据再归一。
 
 `projections.mts` 调真实 AgentTranscriptProjections、AgentLoop.snapshotFileState、SessionRuntime / 默认 SessionProjectionDriver。`projections` 行走 `projectAgentTranscriptEntries`（reduce+finalize，conversation finalize 的 `cloneTurnResult` 会先 `.map` denials）；`hydrated` 行走 `SessionRuntime.restore` + `SessionProjectionDriver.hydrate` 再 `stateOf` 读原始 cell state（只跑 reduce），对应 Rust `factory.rs::project()` 的 usage/permissionDenials/metadata 落地输出：字符串 denials 按 code point 展开、`errors` 不读、metadata 合并。原矩阵的 readFiles/writtenFiles 是测试注入的非生产形状；现已改成无 seed 时返回 `{}` 的 stdio 语义。`file-state.mts` 用真实 TS stdio、工具 checkpoint 与用户可见终态实测 initial/running/terminal/after，非空 SeedState 的字段与保留另由 Rust 用例对照。
 
@@ -15,7 +15,7 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib r
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --audit
 ```
 
-178 项变异绑定完整 Rust 测试名和专属失败消息（`--audit` 机检该数与用例表一致，漂移即失败）。先应用补丁并提交，使所有变异目标等于 HEAD（未提交的沙箱候选可用 `PDRS_NEGATIVE_BASELINE=<目标>` 指定自己的快照，默认仍是 HEAD）；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
+179 项变异绑定完整 Rust 测试名和专属失败消息（`--audit` 机检该数与用例表一致，漂移即失败）。先应用补丁并提交，使所有变异目标等于 HEAD（未提交的沙箱候选可用 `PDRS_NEGATIVE_BASELINE=<目标>` 指定自己的快照，默认仍是 HEAD）；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --compile "$OUT_COMPILE"
