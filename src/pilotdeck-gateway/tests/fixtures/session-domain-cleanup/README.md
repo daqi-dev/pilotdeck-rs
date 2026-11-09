@@ -2528,3 +2528,99 @@ unchanged; the fifth/sixth walks stay For-only by the recorded exemption.
 | **The third walk carries the canonical loop semantics** (structural guard, `_module_open_calls`): for-iter and both `else` calls stay outer; the for body, the while test and the while body carry the loop id. | `... lost the open-call site at (line, col) entirely / read the open-call site at (line, col) with the wrong loop context (round 44)` |
 | **The fourth walk carries the same semantics** (structural guard, `_name_bindings`): a for-else binding shares no loop id with the body call; the body call keeps the loop id. | `... leaked the loop id onto a for-else binding / lost the loop id of a for body call (round 44)` |
 | **Walrus exit callees keep shape and spelling** (false PASS guard): `(_i := int)('PASS') if c else 0` shaped; `code = (_i := int)('PASS')` / `code = (_i := bool)(x)` spelled; the `len` mirror stays unshaped. | `... lost the exit shape behind a walrus int callee / kept the exit shape behind a walrus len callee / lost the int spelling behind a walrus callee / lost the bool spelling behind a walrus callee (round 44)` |
+
+### Closed by `fix-r1` round 45 (GLM r44 boundary#1 P0 / concurrency#1 / boundary#2 / sibling#1..#3; anthropic r44 sibling#1..#3 / sibling#5; probe 2026-11-10)
+
+Every finding was probe-reproduced against the round-44 committed ruler
+(`probe-r45.log`; the "r44" column there is the round-44 commit, the "r43"
+column the round-43 commit kept as a second witness, the "tree" column the
+fixed ruler, and every dirty row carries a runtime oracle line).  One probe
+expectation was corrected by measurement and no ruler change came of it: the
+clean *assigned* `__new__` builder over-reports exactly the way round 43
+registered for the Assign spelling (`c-control`), so the AnnAssign extension
+inherits the same conservative trade-off rather than widening the
+value-analyzed spelling set.
+
+The evaluation-order family (GLM boundary#1, P0).  The round-44 composite
+replay collected events in *source* order, so `_items.insert(2,
+_items.pop(0))` replayed the outer insert first and laundered the move --
+at runtime the inner (argument) call runs first, and `IfExp` evaluates its
+test before either arm.  The simulation now walks each statement through
+`_eval_order_nodes`, an explicit-stack **post-order** traversal (children
+before parents, `field`-order left-to-right) that skips nested scope *bodies*
+while still descending their definition headers.  The window itself was
+scoped at the same time (GLM concurrency#1): it reads only the scope's own
+statements (`_scoped_nodes`), because a nested scope's body runs at its
+*invocation*, not its definition -- a never-called closure's body events
+were a false report (probe `f-nested-def`); an invocation still convicts
+through the mutator collection, the standing fail-closed floor.
+
+The double-count fix (found by the `d-for-else` probe).  Round 44 iterated
+`ast.walk(scope)` for statements and `ast.walk(statement)` for nodes, so an
+event inside a compound statement entered the replay once as part of its
+enclosing compound statement and once as its own outer-loop statement --
+two clean `remove(1)`-safe events composited into a conviction.  Round 43
+was immune (its per-event check was idempotent).  The events list is now
+deduplicated (`priced`, keyed on `id(node)`).
+
+The else-block family (GLM sibling#2 + boundary#3; anthropic sibling#2).
+`_repeated_between` now pushes For/While `orelse` children with the `carried`
+flag, not `inner`: the `else` block runs once after the loop, so its single
+clean event carries the outer verdict (it used to ride the loop's inner
+flag and report), while a composite inside it still convicts.  The dead
+`repeated.add(id(node))` for def/lambda/class statements is gone.
+
+The alias-closure family (GLM sibling#1 + anthropic sibling#1, P1, two
+lineages).  `_name_alias_closure` additionally reads a **whole-subject match
+capture** (`match _items: case _n2:` -- the walrus-unwrapped Name subject
+joins the seeds, so `MatchAs(pattern=None, name=...)` captures it) and a
+**for/comprehension target over a literal Tuple/List whose every element is
+a seed Name** (`for _n2 in (_items,):`).  The mutator *definitions* were
+extended at the same time (anthropic sibling#1): the seeding reads
+`_local_bound_values` (AnnAssign, multi-target, unpack projection) and the
+walrus `(_g := lambda: ...)` spelling, so every binding spelling of a
+mutating lambda closes.  Nested-element captures (`case [_n3]`) and
+non-literal or mixed iterables stay outside the closure by design.
+
+The `__new__` spelling family (GLM boundary#2; anthropic sibling#3).  The
+class-body capability walk reads every binding spelling, not only the
+single-Name `ast.Assign`: AnnAssign, tuple/multi-target, the bare walrus,
+and `from m import f as __new__` all take the conservative-capable
+assignment reading round 43 registered for the Assign spelling (a clean
+*assigned* builder over-reports -- the registered trade-off; only the
+`def __new__` spelling is judged through its own body).  The walk itself is
+a direct `value.body` traversal, not `_scoped_nodes`: that generator yields
+nested definition *headers* only, so the `def __new__` statement itself
+would never surface (caught by the round-42/43 battery rows, which the
+first draft of this fix regressed before the body walk was restored).
+
+The walrus-callee family (GLM sibling#3; anthropic sibling#3).  Eight more
+`.func` reads route through the shared `_callee_expr` walrus unwrap:
+`_has_passed_aggregate`, `_loads_shared_module`, `_loop_target_used_as_handle`,
+`_fresh_value`, the read-only walk, `_proven_source`, `_is_shared_call` and
+`_assigns_clean_status`.  The rebind family closes its tuple spelling at
+the same time (anthropic sibling#5): `del (_B, _x)` rebinds the base name
+through `_target_names`, matching the round-44 bare-`del` fix.
+
+Known residuals (follow-up issue): a callback-passed mutator (`map(_mutate,
+...)`) is not an invocation for the mutator collection; nested-element
+match captures and non-literal for iterables stay outside the alias
+closure (the battery pins both); comprehension later-parts keep their
+conservative reading; the walk consolidation (GLM/anthropic simplify#1),
+the battery dedup between the self-test and the 331-mutant table, lazy
+event computation, the fourth inline `USub` normalizer, the dead
+`if not priceable: return True` branch and the `_unwrap_named` micro-helper
+are unchanged from round 44.
+
+| Shape | Self-test |
+|---|---|
+| **A same-statement composite replays in evaluation order** (false PASS guard): `insert(2, pop(0))` in one statement, and `insert(2, h) if pop(0) else None` (the `IfExp` test runs first) -- withdraw. | `... lost a receiver behind a same-statement insert(2, pop(0)) composite / an IfExp test-first composite (round 45)` |
+| **The clean twins stay clean, deduped** (false FAIL guard): `insert(1, pop(0))`; a never-called closure body; a single clean pop inside an `if` branch (an event enters the replay once, not once per enclosing statement). | `... withdrew a clean receiver behind a same-statement insert(1, pop(0)) composite / a never-called closure body between binding and use / a single clean pop inside an if branch (deduped window) (round 45)` |
+| **A loop `else` block runs once** (false FAIL guard / false PASS guard): a for-else or while-else single clean pop does not withdraw; a for-else two-pop composite still withdraws. | `... withdrew a clean receiver behind a for-else single clean pop / a while-else single clean pop (round 45)`; `... lost a receiver behind a for-else two-pop composite (round 45)` |
+| **A whole-subject match capture and a literal-seed for target join the alias closure** (false PASS guard): `match _items: case _n2: _n2.reverse()`; `for _n2 in (_items,): _n2.reverse()`; and a match-capture mutator alias `match _mutate: case _m: _m()` -- withdraw. | `... lost a receiver behind a whole-subject match capture mutation / a for-target over a single-seed literal / a match-capture mutator alias call (round 45)` |
+| **A writeless or element capture stays outside** (false FAIL guard): `case _n2:` without a mutation; `case [_n3]`; a for target over a mixed literal. | `... withdrew a clean receiver behind a writeless match capture / a nested-element match capture (binds an element) / a for target over a mixed literal (round 45)` |
+| **A match-capture dict receiver write unbinds the keys** (false PASS guard): `match d: case e:` with `e['common'] = 1` reads unbounded; the writeless capture keeps `{'x'}`. | `... kept dict keys bounded behind a match-capture receiver write (round 45)`; `... withdrew dict keys behind a writeless match capture (round 45)` |
+| **Every binding spelling of a mutating lambda seeds the mutators** (false PASS guard): AnnAssign, walrus, multi-target and unpack projections of `lambda: _items.pop(1)` -- withdraw; a read-only AnnAssign lambda stays clean. | `... lost a receiver behind an AnnAssign lambda mutator / a walrus lambda mutator / a multi-target lambda mutator / an unpack lambda mutator (round 45)`; `... withdrew a clean receiver behind a read-only AnnAssign lambda (round 45)` |
+| **Every binding spelling of the class-body `__new__` keeps the import standing** (false PASS guard): AnnAssign, tuple-target, walrus, `from m import f as __new__`, and the clean *assigned* builder (the registered conservative standing) -- registered; a clean `def __new__` stays value-analyzed. | `... dropped the import standing behind an AnnAssign __new__ / a tuple-target __new__ / a walrus __new__ / an imported __new__ / a clean AnnAssign __new__ builder (conservative standing) (round 45)`; `... kept the import standing behind a clean def __new__ builder (value-analyzed) (round 45)` |
+| **The walrus callee keeps its reading at the six helper sites** (false PASS guard / false FAIL guard): `(_a := all)(r.passed ...)`, `(_c := md.common.aggregate_status)(report)`, `(_l := load)('x')`, `(_s := str)('a')`, `(_h := h)()`, `(_p := load_pristine_common)()` all read; the `len`/`other`/`open`/pure-read mirrors do not. | `... lost the aggregate marker / the shared call / the guard loader / the fresh value / the loop-target handle use / the proven source behind a walrus callee (round 45)`; the four negative mirrors each carry their own `kept ... behind a walrus non-X / pure read` message (round 45) |
+| **A tuple-target `del` rebinds the base name** (floor lock): `del (_B, _x)` before `class imp(_B)` keeps the conservative import standing. | `... dropped the import standing behind a tuple-target del rebind (round 45)` |

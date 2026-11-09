@@ -1042,9 +1042,18 @@ def _status_literals(node):
 
 
 def _has_passed_aggregate(node):
-    return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-               and n.func.id in ('all', 'any') and 'passed' in ast.unparse(n)
-               for n in ast.walk(node))
+    # #1953 fix-r1 round 45 (GLM r44 sibling#3 / anthropic r44 sibling#3,
+    # probe e1): the callee reads through :func:`_callee_expr`, so a
+    # walrus callee ``(_a := all)(r.passed for r in rs)`` keeps the
+    # aggregate marker instead of reading as a call to nothing.
+    for n in ast.walk(node):
+        if not isinstance(n, ast.Call):
+            continue
+        callee = _callee_expr(n)
+        if (isinstance(callee, ast.Name) and callee.id in ('all', 'any')
+                and 'passed' in ast.unparse(n)):
+            return True
+    return False
 
 
 def _is_status_target(target):
@@ -1176,12 +1185,18 @@ def _loads_shared_module(value, name, loaders=frozenset(), rebound=frozenset()):
     shadows the module alias exactly like a same-named ``def`` does at module
     scope, so *rebound* withdraws the trust in that function.
     """
-    return (isinstance(value, ast.Call) and bool(value.args)
+    # #1953 fix-r1 round 45 (GLM r44 sibling#3, probe e3): the callee reads
+    # through :func:`_callee_expr` -- ``(_l := load)('x')`` keeps the
+    # loader spelling (r44 read no shared call and failed a good tree
+    # closed).
+    if not (isinstance(value, ast.Call) and bool(value.args)
             and isinstance(value.args[0], ast.Constant)
-            and value.args[0].value == name
-            and isinstance(value.func, ast.Name)
-            and value.func.id in loaders
-            and value.func.id not in rebound)
+            and value.args[0].value == name):
+        return False
+    callee = _callee_expr(value)
+    return (isinstance(callee, ast.Name)
+            and callee.id in loaders
+            and callee.id not in rebound)
 
 
 # #892 r23: the file that defines the apparatus loader itself.  ``load`` there
@@ -1317,6 +1332,39 @@ def _definition_header_nodes(node):
         if node.returns is not None:
             nodes.append(node.returns)
     return nodes
+
+
+def _eval_order_nodes(root):
+    """Post-order over *root*'s scoped tree: children before parents (r45).
+
+    #1953 fix-r1 round 45 (GLM r44 boundary#1, probe a-dirty): Python runs a
+    nested call's arguments before the outer call, so replaying priced events
+    in source (column) order reverses them -- ``items.insert(2,
+    items.pop(0))`` pops first at run time, and the source-order replay read
+    the laundered composite as clean (a false PASS).  Post-order over the
+    field order (left to right, ``IfExp`` test first) matches the evaluation
+    order of the expressions a statement runs.  A nested scope's *body* does
+    not run at its definition, so only the header expressions are descended
+    (GLM r44 concurrency#1, probe f-nested-def): a closure that mutates the
+    display is in ``mutators`` and its *invocation* is what convicts, while a
+    never-called closure's body events stay out of the window (they were a
+    false report); a mutator handed to ``map`` as a callback keeps the
+    pre-r44 clean read -- the registered residual.
+    """
+    stack = [(root, False)]
+    while stack:
+        node, expanded = stack.pop()
+        if expanded:
+            yield node
+            continue
+        stack.append((node, True))
+        children = (list(_definition_header_nodes(node))
+                    if isinstance(node, (ast.FunctionDef,
+                                         ast.AsyncFunctionDef,
+                                         ast.Lambda, ast.ClassDef))
+                    else list(ast.iter_child_nodes(node)))
+        for child in reversed(children):
+            stack.append((child, False))
 
 
 def _walrus_names(scope):
@@ -2426,23 +2474,47 @@ def _import_value_capable(value, kinds, factory=None, seen=frozenset(),
             # pierced nested scopes -- a *method-local* ``__new__ = ...``
             # is not a class attribute and made the whole class read
             # capable.  Only the class body's own statements bind
-            # ``__new__``; nested scope bodies are not descended (their
-            # header expressions still are, the same rule the module
-            # walks carry).
+            # ``__new__``; ``_scoped_nodes`` walks exactly that (nested
+            # scope bodies skipped, their header expressions still run,
+            # the same rule the module walks carry).  #1953 fix-r1 round
+            # 45 (GLM r44 boundary#2, probe c-ann/c-tuple): the assign
+            # spelling check read only single-Name ``ast.Assign`` targets
+            # -- the AnnAssign (``__new__: object = staticmethod(...)``)
+            # and tuple-target (``__new__, _q = ...``) spellings of the
+            # same class attribute dropped the guard.
+            # #1953 fix-r1 round 45 (GLM r44 boundary#2, probes
+            # c-ann/c-tuple; anthropic r44 sibling#3, probes
+            # c-walrus/c-import): every binding spelling of the class
+            # attribute takes the conservative-capable assignment
+            # reading the round-43 fix registered for ``__new__ =
+            # staticmethod(<builder>)`` -- the AnnAssign, the tuple /
+            # multi-target, the walrus and the ``from m import f as
+            # __new__`` spellings all build through the attribute just
+            # as well (a clean *assigned* builder over-reports, the
+            # same registered trade-off the Assign spelling already
+            # carries; only the ``def __new__`` spelling above is
+            # judged through its own body).  ``_scoped_nodes`` cannot
+            # serve this walk -- it yields nested definition *headers*
+            # only, so the ``def __new__`` statement itself would never
+            # surface; the body is walked directly instead, descending
+            # compound statements but not nested scopes, exactly the
+            # r44 shape.
             pending = list(value.body)
             while pending:
                 node = pending.pop()
-                if (isinstance(node, ast.Assign)
-                        and any(isinstance(target, ast.Name)
-                                and target.id == '__new__'
-                                for target in node.targets)):
-                    return True
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if isinstance(node, (ast.FunctionDef,
+                                    ast.AsyncFunctionDef)):
                     if node.name == '__new__':
                         stack.append((node, path))
                     continue
                 if isinstance(node, (ast.Lambda, ast.ClassDef)):
                     continue
+                if '__new__' in _local_bound_names(node)[0]:
+                    return True
+                if (isinstance(node, ast.NamedExpr)
+                        and isinstance(node.target, ast.Name)
+                        and node.target.id == '__new__'):
+                    return True
                 pending.extend(ast.iter_child_nodes(node))
             continue
         if isinstance(value, (ast.Lambda, ast.FunctionDef,
@@ -2594,18 +2666,17 @@ def _name_rebound_beyond(tree, name, skip):
         # stale ClassDef and read the class path clean while the run
         # imported), and a bare ``del name`` removes the binding the event
         # walk priced.  Every capture spelling counts: a ``MatchAs``, a
-        # ``MatchStar`` rest and a ``MatchMapping`` rest.
-        if isinstance(node, ast.Match):
-            for case in node.cases:
-                for pattern in ast.walk(case.pattern):
-                    if ((isinstance(pattern, (ast.MatchAs, ast.MatchStar))
-                            and pattern.name == name)
-                            or (isinstance(pattern, ast.MatchMapping)
-                                and pattern.rest == name)):
-                        return True
+        # ``MatchStar`` rest and a ``MatchMapping`` rest (r45: read through
+        # the shared :func:`_match_capture_names`, the same table the
+        # binding walks use).  #1953 fix-r1 round 45 (anthropic r44
+        # sibling#5): a tuple-target ``del (_B, _x)`` removes the binding
+        # the same way -- the target names read through
+        # :func:`_target_names`.
+        if isinstance(node, ast.Match) and name in _match_capture_names(node):
+            return True
         if isinstance(node, ast.Delete):
             for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == name:
+                if name in _target_names(target):
                     return True
         if isinstance(node, (ast.For, ast.AsyncFor)):
             if name in _target_names(node.target):
@@ -3680,26 +3751,40 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
     # the binding, so the *call* inside the window is what convicts (and a
     # lambda bound to a mutating body counts under its own name).
     mutators = set()
+
+    def _body_mutates(body):
+        for inner in ast.walk(body):
+            if (isinstance(inner, ast.Call)
+                    and mutates_display(_callee_expr(inner), inner,
+                                        price=False)):
+                return True
+        return False
+
     for statement in ast.walk(scope):
         if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if statement.name in mutators:
-                continue
-            for inner in ast.walk(statement):
-                if (isinstance(inner, ast.Call)
-                        and mutates_display(_callee_expr(inner), inner,
-                                            price=False)):
-                    mutators.add(statement.name)
-                    break
-        elif (isinstance(statement, ast.Assign)
-                and len(statement.targets) == 1
-                and isinstance(statement.targets[0], ast.Name)
-                and isinstance(statement.value, ast.Lambda)):
-            for inner in ast.walk(statement.value):
-                if (isinstance(inner, ast.Call)
-                        and mutates_display(_callee_expr(inner), inner,
-                                            price=False)):
-                    mutators.add(statement.targets[0].id)
-                    break
+            if statement.name not in mutators and _body_mutates(statement):
+                mutators.add(statement.name)
+        elif isinstance(statement, ast.NamedExpr):
+            # #1953 fix-r1 round 45 (anthropic r44 sibling#1, probe
+            # g-walrus): a bare walrus ``(_g := lambda: _items.pop(1))``
+            # binds a mutating lambda the single-target Assign read never
+            # saw, so its call stayed outside ``mutators`` and read clean.
+            if (isinstance(statement.target, ast.Name)
+                    and isinstance(statement.value, ast.Lambda)
+                    and _body_mutates(statement.value)):
+                mutators.add(statement.target.id)
+        elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            # #1953 fix-r1 round 45 (anthropic r44 sibling#1, probes
+            # g-ann/g-multi/g-tuple): every binding spelling of a mutating
+            # lambda -- the AnnAssign ``_g: object = lambda: ...``, the
+            # multi-target ``_g = _h = lambda: ...`` and the unpack
+            # projection ``_g, _x = (lambda: ..., 0)`` -- seeds the mutator
+            # set the same way the alias closure below reads alias
+            # spellings, through :func:`_local_bound_values`.
+            for name, bound in _local_bound_values(statement).items():
+                if (isinstance(bound, ast.Lambda)
+                        and _body_mutates(bound)):
+                    mutators.add(name)
     # #1953 fix-r1 round 43 (GLM r42 boundary#2, probe 2026-11-10): a
     # mutating closure called through an alias -- ``_m = _mutate; _m()`` --
     # is a call *to it*, and the contract convicts on any call to the
@@ -3717,18 +3802,37 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
     repeated = _repeated_between(scope, binding_pos)
 
     # The window: every priced event between the certain binding and the
-    # use, replayed in source order against the length in force.
+    # use, replayed in evaluation order against the length in force.
+    # #1953 fix-r1 round 45 (GLM r44 boundary#1, probe a-dirty): the events
+    # of one statement run in *evaluation* order -- post-order over the
+    # scoped tree, so a nested call's arguments precede the outer call --
+    # not in source (column) order, which reversed them and laundered the
+    # same-statement composite.  #1953 fix-r1 round 45 (GLM r44
+    # concurrency#1, probe f-nested-def): the statements the window reads
+    # are the scope's own (``_scoped_nodes`` skips nested scope *bodies*;
+    # their headers still run at the ``def`` site), because a nested body
+    # executes at its invocation, not at its definition -- a mutating
+    # closure is in ``mutators`` and the call to it convicts above, while
+    # a never-called closure's body events were a false report.  #1953
+    # fix-r1 round 45 (probe d-for-else after the ``else`` fix): the
+    # statement loop walks every statement of the scope while each
+    # statement's own subtree walk also reaches its nested statements --
+    # round 43 was immune (its per-event check was idempotent), but the
+    # round-44 composite *replay* appended an event inside a compound
+    # statement twice, and the doubled event simulated a composite the
+    # run never executes (a clean single ``else`` pop read as two).  Each
+    # priced event node enters the replay exactly once.
     events = []
-    for statement in ast.walk(scope):
+    priced = set()
+    for statement in _scoped_nodes(scope):
         if not isinstance(statement, ast.stmt):
             continue
         position = (getattr(statement, 'lineno', 0),
                     getattr(statement, 'col_offset', 0))
         if not binding_pos < position < use_pos:
             continue
-        for node in ast.walk(statement):
-            node_position = (getattr(node, 'lineno', position[0]),
-                             getattr(node, 'col_offset', position[1]))
+        for order, node in enumerate(_eval_order_nodes(statement)):
+            node_position = (position, order)
             if isinstance(node, ast.Call):
                 callee = _callee_expr(node)
                 if (isinstance(callee, ast.Name) and callee.id in mutators):
@@ -3743,7 +3847,9 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
                     return True
                 if id(node) in repeated:
                     return True
-                events.append((node_position, event))
+                if id(node) not in priced:
+                    priced.add(id(node))
+                    events.append((node_position, event))
                 continue
             if isinstance(node, (ast.For, ast.AsyncFor)):
                 # GLM r41 boundary P0#1: a For *target* is a subscript write
@@ -4706,9 +4812,13 @@ def _loop_target_used_as_handle(body, name):
     """
     for node in body:
         for child in ast.walk(node):
-            if (isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
-                    and child.func.id == name):
-                return True
+            # #1953 fix-r1 round 45 (GLM r44 sibling#3, probe e5): the
+            # callee reads through :func:`_callee_expr` -- ``(_h := h)()``
+            # is a handle call the raw ``child.func`` read missed.
+            if isinstance(child, ast.Call):
+                callee = _callee_expr(child)
+                if isinstance(callee, ast.Name) and callee.id == name:
+                    return True
             if (isinstance(child, (ast.Subscript, ast.Attribute))
                     and isinstance(child.value, ast.Name)
                     and child.value.id == name
@@ -4946,9 +5056,13 @@ def _fresh_value(node, scope_bound=()):
     enclosing chain (``_enclosing_bound_names``), not the innermost scope.
     """
     if isinstance(node, ast.Call):
-        return (isinstance(node.func, ast.Name)
-                and node.func.id in _FRESH_CALLS
-                and node.func.id not in scope_bound)
+        # #1953 fix-r1 round 45 (GLM r44 sibling#3, probe e4): the callee
+        # reads through :func:`_callee_expr` -- ``(_s := str)('a')`` is a
+        # fresh value the raw ``node.func`` read missed.
+        callee = _callee_expr(node)
+        return (isinstance(callee, ast.Name)
+                and callee.id in _FRESH_CALLS
+                and callee.id not in scope_bound)
     return isinstance(node, (ast.Constant, ast.List, ast.Tuple, ast.Set,
                              ast.Dict, ast.ListComp, ast.SetComp, ast.DictComp,
                              ast.GeneratorExp, ast.Lambda, ast.JoinedStr))
@@ -5146,7 +5260,9 @@ def _handle_use(node, tracked, scope_bound, aliases, read_only=False):
             stack.append((node.value, read_only))
             continue
         if isinstance(node, ast.Call):
-            callee = node.func
+            # #1953 fix-r1 round 45 (GLM r44 sibling#3): the callee reads
+            # through :func:`_callee_expr` (same family as e1-e6).
+            callee = _callee_expr(node)
             pure = (isinstance(callee, ast.Name)
                     and callee.id in _READ_ONLY_CALLS
                     and callee.id not in scope_bound)
@@ -7827,10 +7943,16 @@ def _proven_source(value, rel=None, proven=frozenset(), local=frozenset()):
     set, so a caller that has no binding graph fails closed instead of trusting
     the spelling.
     """
-    return (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
-            and (rel, value.func.id) in PROVEN_SHARED_SOURCES
-            and value.func.id in proven
-            and value.func.id not in local)
+    # #1953 fix-r1 round 45 (GLM r44 sibling#3, probe e6): the callee reads
+    # through :func:`_callee_expr` -- ``(_p := load_pristine_common)()`` is
+    # the proven source the raw ``value.func`` read missed.
+    if not isinstance(value, ast.Call):
+        return False
+    callee = _callee_expr(value)
+    return (isinstance(callee, ast.Name)
+            and (rel, callee.id) in PROVEN_SHARED_SOURCES
+            and callee.id in proven
+            and callee.id not in local)
 
 
 def _local_bound_names(node):
@@ -7910,9 +8032,34 @@ def _name_alias_closure(scope, seeds):
     An augmented assignment is not an alias (``f += d`` hands *f* d's
     items, not the object *d* is), and a ``for``/``with``/``except``/import
     target has no single value to follow.
+
+    #1953 fix-r1 round 45 (GLM r44 sibling#1 + anthropic r44 sibling#1,
+    probes b-disp/b-dict/b-mut/b-for): a ``match`` whose subject is a seed
+    hands the whole subject to a bare ``case name:`` capture (the same
+    binding :func:`_alias_assignments` reads for its own pairs), and a
+    ``for``/comprehension target over a literal whose *every* element is
+    the seed (``for _n2 in (_items,):``) binds the seed itself each
+    iteration.  Both spellings kept the alias out of the set and the write
+    through it read clean.  A capture *nested inside* a pattern
+    (``case [_n3]:``) binds an element, not the subject, and a
+    non-literal / mixed iterable has no single value to project -- both
+    stay outside the closure.
     """
     names = set(seeds)
     changed = True
+
+    def literal_seed_iterable(iterable):
+        """True when *iterable* is a literal whose every element is a seed."""
+        if not isinstance(iterable, (ast.Tuple, ast.List)):
+            return False
+        for element in iterable.elts:
+            while isinstance(element, ast.NamedExpr):
+                element = element.value
+            if not (isinstance(element, ast.Name)
+                    and element.id in names):
+                return False
+        return True
+
     while changed:
         changed = False
         for node in ast.walk(scope):
@@ -7927,6 +8074,28 @@ def _name_alias_closure(scope, seeds):
                         and node.target.id not in names):
                     names.add(node.target.id)
                     changed = True
+                continue
+            if isinstance(node, ast.Match):
+                subject = node.subject
+                while isinstance(subject, ast.NamedExpr):
+                    subject = subject.value
+                if isinstance(subject, ast.Name) and subject.id in names:
+                    for case in node.cases:
+                        pattern = case.pattern
+                        if (isinstance(pattern, ast.MatchAs)
+                                and pattern.pattern is None
+                                and pattern.name
+                                and pattern.name not in names):
+                            names.add(pattern.name)
+                            changed = True
+                continue
+            if isinstance(node, (ast.For, ast.AsyncFor,
+                                  ast.comprehension)):
+                if literal_seed_iterable(node.iter):
+                    for target in _target_names(node.target):
+                        if target not in names:
+                            names.add(target)
+                            changed = True
                 continue
             for target, value in _local_bound_values(node).items():
                 while isinstance(value, ast.NamedExpr):
@@ -7950,8 +8119,10 @@ def _repeated_between(scope, binding_pos):
     the display every iteration, so the window stays per-iteration linear
     (probe b1-loop-clean is the shape that must keep its clean read when
     the binding joins the loop).  The ``for`` iterable evaluates once, so
-    it keeps the outer verdict; the ``while`` test and the ``else`` blocks
-    re-run / run once like the round-43 walk spellings.  A nested scope's
+    it keeps the outer verdict; the ``while`` test re-runs per iteration,
+    and the ``else`` blocks run once after the loop, carrying the outer
+    verdict like the round-43 walk spellings (r45: they used to ride the
+    loop's inner flag and convict a clean single event).  A nested scope's
     body runs on its own terms (its *header* expressions still re-run per
     enclosing iteration), and a comprehension's later parts run once per
     item (the first iterable, whenever the expression does).
@@ -7965,15 +8136,25 @@ def _repeated_between(scope, binding_pos):
                      if node.body else (node.lineno, node.col_offset))
             inner = carried or binding_pos < start
             stack.append((node.iter, carried))
-            for child in node.body + node.orelse:
+            for child in node.body:
                 stack.append((child, inner))
+            # #1953 fix-r1 round 45 (GLM r44 sibling#2 + boundary#3 /
+            # anthropic r44 sibling#2, probe d-for-else): the ``else`` block
+            # runs once after the loop finishes -- it does not re-run per
+            # iteration, so it carries the outer verdict like the round-43
+            # walk spellings, not ``inner`` (marking it inner convicted the
+            # clean single event in it -- a false report).
+            for child in node.orelse:
+                stack.append((child, carried))
             continue
         if isinstance(node, ast.While):
             start = ((node.body[0].lineno, node.body[0].col_offset)
                      if node.body else (node.lineno, node.col_offset))
             inner = carried or binding_pos < start
-            for child in [node.test] + node.body + node.orelse:
+            for child in [node.test] + node.body:
                 stack.append((child, inner))
+            for child in node.orelse:
+                stack.append((child, carried))
             continue
         if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp,
                              ast.GeneratorExp)):
@@ -7992,9 +8173,9 @@ def _repeated_between(scope, binding_pos):
                             ast.Lambda, ast.ClassDef)):
             # the nested scope's body runs on its own terms; its header
             # expressions (defaults, decorators) re-run per enclosing
-            # iteration
-            if carried:
-                repeated.add(id(node))
+            # iteration.  (The definition node itself is never added to
+            # ``repeated``: its consumers only test Call and Delete/Assign
+            # statement ids, r45 simplify.)
             for child in ast.iter_child_nodes(node):
                 stack.append((child, carried
                               if not isinstance(child, ast.stmt) else False))
@@ -8113,7 +8294,11 @@ def _is_shared_call(node, shared=None, rebound=frozenset()):
     """
     if not isinstance(node, ast.Call):
         return False
-    func = node.func
+    # #1953 fix-r1 round 45 (GLM r44 sibling#3, probe e2): the callee reads
+    # through :func:`_callee_expr` -- ``(_c := md.common.aggregate_status)
+    # (report)`` is the shared call the raw ``node.func`` read missed (a
+    # clean tree failed closed).
+    func = _callee_expr(node)
     if not (isinstance(func, ast.Attribute) and func.attr == 'aggregate_status'):
         return False
     trusted = _SHARED_MODULES if shared is None else shared
@@ -11083,7 +11268,8 @@ def _assigns_clean_status(value, bindings, seen=None, module=None,
             return True
         if isinstance(arm, ast.Call) and not _proven_callee(arm, bindings,
                                                             module, rel) and (
-                _status_literals(arm) or isinstance(arm.func, ast.Name)
+                _status_literals(arm)
+                or isinstance(_callee_expr(arm), ast.Name)
                 or status_slot):
             # ``report['status'] = report.get('status', 'PASS')`` hides the
             # clean literal one call deep; the write family treated every call
@@ -18160,6 +18346,385 @@ def aggregation_audit():
         failures.append('#1953 aggregation-audit: detector self-test lost '
                         'the bool spelling behind a walrus callee '
                         '(round 44)')
+    # #1953 fix-r1 round 45 (GLM r44 boundary#1 P0 / concurrency#1, probes
+    # a-dirty/a-dirty2/a-clean/f-nested-def): a same-statement composite
+    # replays in evaluation order -- the inner (argument) call runs before
+    # the outer one, ``IfExp`` test first -- and the window reads only the
+    # scope's own statements (a nested scope's body runs at its invocation,
+    # not its definition, so a never-called closure's body events were a
+    # false report).
+    for _m45_kind, _m45_src in (
+            ("a same-statement insert(2, pop(0)) composite",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _items.insert(2, _items.pop(0))\n"
+             "    _items[-1]('common', object())\n"),
+            ("an IfExp test-first composite",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _items.insert(2, _hs[0]) if _items.pop(0) else None\n"
+             "    _items[-1]('common', object())\n")):
+        _m45_display = ast.parse(
+            "def _m45a(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m45_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' not in _withdrawn_receivers(_m45_display):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost a receiver behind ' + _m45_kind
+                            + ' (round 45)')
+    # The clean twins, including the deduped window: an event inside a
+    # compound statement enters the replay once, not once per enclosing
+    # statement.
+    for _m45_kind, _m45_src in (
+            ("a same-statement insert(1, pop(0)) composite",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _items.insert(1, _items.pop(0))\n"
+             "    _items[-1]('common', object())\n"),
+            ("a never-called closure body between binding and use",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    def _later():\n"
+             "        _items.pop(1)\n"
+             "        _items.pop(1)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a single clean pop inside an if branch (deduped window)",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    if _flag:\n"
+             "        _items.pop(1)\n"
+             "    _items[-1]('common', object())\n")):
+        _m45_clean = ast.parse(
+            "def _m45b(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m45_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' in _withdrawn_receivers(_m45_clean):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'withdrew a clean receiver behind ' + _m45_kind
+                            + ' (round 45)')
+    # #1953 fix-r1 round 45 (GLM r44 sibling#2 + boundary#3 / anthropic r44
+    # sibling#2, probes d-for-else/d-while-else/d-for-else-dirty): the loop
+    # ``else`` block runs once after the loop -- its single clean event
+    # carries the outer verdict (it used to ride the loop's inner flag and
+    # convict), while the composite inside it still convicts.
+    for _m45_kind, _m45_src in (
+            ("a for-else two-pop composite",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    for _ in (0,):\n"
+             "        pass\n"
+             "    else:\n"
+             "        _items.pop(1)\n"
+             "        _items.pop(1)\n"
+             "    _items[-1]('common', object())\n"),):
+        _m45_display = ast.parse(
+            "def _m45c(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m45_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' not in _withdrawn_receivers(_m45_display):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost a receiver behind ' + _m45_kind
+                            + ' (round 45)')
+    for _m45_kind, _m45_src in (
+            ("a for-else single clean pop",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    for _ in ():\n"
+             "        pass\n"
+             "    else:\n"
+             "        _items.pop(1)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a while-else single clean pop",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    while False:\n"
+             "        pass\n"
+             "    else:\n"
+             "        _items.pop(1)\n"
+             "    _items[-1]('common', object())\n")):
+        _m45_clean = ast.parse(
+            "def _m45d(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m45_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' in _withdrawn_receivers(_m45_clean):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'withdrew a clean receiver behind ' + _m45_kind
+                            + ' (round 45)')
+    # #1953 fix-r1 round 45 (GLM r44 sibling#1 + anthropic r44 sibling#1,
+    # probes b-disp/b-for/b-mut/b-dict): the alias closure reads a
+    # whole-subject match capture and a for target over a literal whose
+    # every element is the seed.
+    for _m45_kind, _m45_src in (
+            ("a whole-subject match capture mutation",
+             "    _items = [lambda *a: None, _hs[0]]\n"
+             "    match _items:\n"
+             "        case _n2:\n"
+             "            _n2.reverse()\n"
+             "    _items[0]('common', object())\n"),
+            ("a for-target over a single-seed literal",
+             "    _items = [lambda *a: None, _hs[0]]\n"
+             "    for _n2 in (_items,):\n"
+             "        _n2.reverse()\n"
+             "    _items[0]('common', object())\n"),
+            ("a match-capture mutator alias call",
+             "    def _mutate():\n"
+             "        _it.reverse()\n"
+             "    _items = [lambda *a: None, _hs[0]]\n"
+             "    _it = _items\n"
+             "    match _mutate:\n"
+             "        case _m:\n"
+             "            _m()\n"
+             "    _items[0]('common', object())\n")):
+        _m45_display = ast.parse(
+            "def _m45e(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m45_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' not in _withdrawn_receivers(_m45_display):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost a receiver behind ' + _m45_kind
+                            + ' (round 45)')
+    for _m45_kind, _m45_src in (
+            ("a writeless match capture",
+             "    _items = [lambda *a: None, _hs[0]]\n"
+             "    match _items:\n"
+             "        case _n2:\n"
+             "            pass\n"
+             "    _items[0]('common', object())\n"),
+            ("a nested-element match capture (binds an element)",
+             "    _items = [lambda *a: None, _hs[0]]\n"
+             "    match _items:\n"
+             "        case [_n3]:\n"
+             "            pass\n"
+             "    _items[0]('common', object())\n"),
+            ("a for target over a mixed literal (no single value)",
+             "    _other = [lambda *a: None]\n"
+             "    _items = [lambda *a: None, _hs[0]]\n"
+             "    for _n2 in (_items, _other):\n"
+             "        pass\n"
+             "    _items[0]('common', object())\n")):
+        _m45_clean = ast.parse(
+            "def _m45f(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m45_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' in _withdrawn_receivers(_m45_clean):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'withdrew a clean receiver behind ' + _m45_kind
+                            + ' (round 45)')
+    if _dict_binding_keys(
+            'd', ast.parse("d = {'x': 1}\n"
+                           "match d:\n"
+                           "    case e:\n"
+                           "        pass\n"
+                           "e['common'] = 1\n")) is not None:
+        failures.append('#1953 aggregation-audit: detector self-test '
+                        'kept dict keys bounded behind a match-capture '
+                        'receiver write (round 45)')
+    if _dict_binding_keys(
+            'd', ast.parse("d = {'x': 1}\n"
+                           "match d:\n"
+                           "    case e:\n"
+                           "        pass\n")) != {'x'}:
+        failures.append('#1953 aggregation-audit: detector self-test '
+                        'withdrew dict keys behind a writeless '
+                        'match capture (round 45)')
+    # #1953 fix-r1 round 45 (anthropic r44 sibling#1, probes
+    # g-ann/g-walrus/g-multi/g-tuple): every binding spelling of a
+    # mutating lambda seeds the mutator set -- the AnnAssign, the walrus,
+    # the multi-target and the unpack projection.
+    for _m45_kind, _m45_src in (
+            ("an AnnAssign lambda mutator",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _g: object = lambda: _items.pop(1)\n"
+             "    _g()\n"
+             "    _g()\n"
+             "    _items[-1]('common', object())\n"),
+            ("a walrus lambda mutator",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    (_g := lambda: _items.pop(1))\n"
+             "    _g()\n"
+             "    _g()\n"
+             "    _items[-1]('common', object())\n"),
+            ("a multi-target lambda mutator",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _g = _h = lambda: _items.pop(1)\n"
+             "    _g()\n"
+             "    _h()\n"
+             "    _items[-1]('common', object())\n"),
+            ("an unpack lambda mutator",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _g, _x = (lambda: _items.pop(1), 0)\n"
+             "    _g()\n"
+             "    _g()\n"
+             "    _items[-1]('common', object())\n")):
+        _m45_display = ast.parse(
+            "def _m45g(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m45_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' not in _withdrawn_receivers(_m45_display):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost a receiver behind ' + _m45_kind
+                            + ' (round 45)')
+    _m45_mut_clean = ast.parse(
+        "def _m45h(report):\n"
+        "    _n = '__setattr__'\n"
+        "    _hs = [getattr(md, _k) for _k in (_n,)]\n"
+        "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+        "    _g: object = lambda: len(_items)\n"
+        "    _g()\n"
+        "    _g()\n"
+        "    _items[-1]('common', object())\n"
+        "    return md.common.aggregate_status(report)\n")
+    if 'md' in _withdrawn_receivers(_m45_mut_clean):
+        failures.append('#1953 aggregation-audit: detector self-test '
+                        'withdrew a clean receiver behind a read-only '
+                        'AnnAssign lambda (round 45)')
+    # #1953 fix-r1 round 45 (GLM r44 boundary#2 + anthropic r44 sibling#3,
+    # probes c-ann/c-tuple/c-walrus/c-import): every binding spelling of
+    # the class-body ``__new__`` keeps the import standing -- the
+    # AnnAssign, the tuple target, the walrus and the ``from m import f
+    # as __new__`` spellings (a clean *assigned* builder keeps the
+    # registered conservative standing; only the ``def`` spelling is
+    # value-analyzed).
+    for _m45_kind, _m45_src, _m45_want in (
+            ("an AnnAssign __new__",
+             "class _B:\n"
+             "    __new__: object = staticmethod(lambda cls, name: sys)\n"
+             "class imp(_B):\n"
+             "    pass\n", True),
+            ("a tuple-target __new__",
+             "class _B:\n"
+             "    __new__, _q = staticmethod(lambda cls, name: sys), 0\n"
+             "class imp(_B):\n"
+             "    pass\n", True),
+            ("a walrus __new__",
+             "class _B:\n"
+             "    (__new__ := staticmethod(lambda cls, name: sys))\n"
+             "class imp(_B):\n"
+             "    pass\n", True),
+            ("an imported __new__",
+             "class _B:\n"
+             "    from _probe_m import mk as __new__\n"
+             "class imp(_B):\n"
+             "    pass\n", True),
+            ("a clean AnnAssign __new__ builder (conservative standing)",
+             "class _B:\n"
+             "    __new__: object = staticmethod(\n"
+             "        lambda cls, name: SimpleNamespace(modules={}))\n"
+             "class imp(_B):\n"
+             "    pass\n", True),
+            ("a clean def __new__ builder (value-analyzed)",
+             "class _B:\n"
+             "    def __new__(cls, name):\n"
+             "        return SimpleNamespace(modules={})\n"
+             "class imp(_B):\n"
+             "    pass\n", False)):
+        _m45_new = ast.parse(
+            "import sys\n"
+            "from builtins import __import__ as imp\n"
+            "from types import SimpleNamespace\n" + _m45_src +
+            "s = imp('sys')\n"
+            "s.modules['_guard'] = object()\n"
+            "_guard = sys.modules.get('_guard')\n")
+        if ('_guard' in _sys_modules_write_values(_m45_new)) != _m45_want:
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            + ('dropped the import standing behind '
+                               if _m45_want else
+                               'kept the import standing behind ')
+                            + _m45_kind + ' (round 45)')
+    # #1953 fix-r1 round 45 (GLM r44 sibling#3 / anthropic r44 sibling#3,
+    # probes e1-e6): the callee reads through the shared walrus unwrap at
+    # the helper sites that still read the raw ``.func`` -- the aggregate
+    # marker, the shared call, the guard loader, the fresh value, the
+    # loop-target handle use and the proven source.
+    if not _has_passed_aggregate(
+            ast.parse("(_a := all)(r.passed for r in rs)").body[0].value):
+        failures.append('#1953 aggregation-audit: detector self-test lost '
+                        'the aggregate marker behind a walrus callee '
+                        '(round 45)')
+    if _has_passed_aggregate(
+            ast.parse("(_a := len)(r.passed for r in rs)").body[0].value):
+        failures.append('#1953 aggregation-audit: detector self-test kept '
+                        'the aggregate marker behind a walrus len callee '
+                        '(round 45)')
+    if not _is_shared_call(
+            ast.parse("(_c := md.common.aggregate_status)(report)")
+            .body[0].value):
+        failures.append('#1953 aggregation-audit: detector self-test lost '
+                        'the shared call behind a walrus callee '
+                        '(round 45)')
+    if _is_shared_call(
+            ast.parse("(_c := md.other.aggregate_status)(report)")
+            .body[0].value):
+        failures.append('#1953 aggregation-audit: detector self-test kept '
+                        'the shared call behind a walrus non-shared '
+                        'callee (round 45)')
+    if not _loads_shared_module(
+            ast.parse("(_l := load)('x')").body[0].value, 'x', {'load'},
+            frozenset()):
+        failures.append('#1953 aggregation-audit: detector self-test lost '
+                        'the guard loader behind a walrus callee '
+                        '(round 45)')
+    if _loads_shared_module(
+            ast.parse("(_l := other)('x')").body[0].value, 'x', {'load'},
+            frozenset()):
+        failures.append('#1953 aggregation-audit: detector self-test kept '
+                        'the guard loader behind a walrus non-loader '
+                        'callee (round 45)')
+    if not _fresh_value(
+            ast.parse("(_s := str)('a')").body[0].value, frozenset()):
+        failures.append('#1953 aggregation-audit: detector self-test lost '
+                        'the fresh value behind a walrus callee '
+                        '(round 45)')
+    if _fresh_value(
+            ast.parse("(_s := len)('a')").body[0].value, frozenset()):
+        failures.append('#1953 aggregation-audit: detector self-test kept '
+                        'the fresh value behind a walrus non-fresh '
+                        'callee (round 45)')
+    if not _loop_target_used_as_handle(
+            [ast.parse("(_h := h)()").body[0]], 'h'):
+        failures.append('#1953 aggregation-audit: detector self-test lost '
+                        'the loop-target handle use behind a walrus '
+                        'callee (round 45)')
+    if _loop_target_used_as_handle(
+            [ast.parse("print(h)").body[0]], 'h'):
+        failures.append('#1953 aggregation-audit: detector self-test kept '
+                        'the loop-target handle use behind a pure read '
+                        '(round 45)')
+    if not _proven_source(
+            ast.parse("(_p := load_pristine_common)()").body[0].value,
+            'src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/'
+            'negative_controls.py',
+            {'load_pristine_common'}, frozenset()):
+        failures.append('#1953 aggregation-audit: detector self-test lost '
+                        'the proven source behind a walrus callee '
+                        '(round 45)')
+    if _proven_source(
+            ast.parse("(_p := other)()").body[0].value,
+            'src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/'
+            'negative_controls.py',
+            {'load_pristine_common'}, frozenset()):
+        failures.append('#1953 aggregation-audit: detector self-test kept '
+                        'the proven source behind a walrus unproven '
+                        'callee (round 45)')
+    # #1953 fix-r1 round 45 (anthropic r44 sibling#5): a tuple-target
+    # ``del (_B, _x)`` removes the base binding the same way a bare
+    # ``del _B`` does.
+    _m45_del = ast.parse(
+        "import sys\n"
+        "from builtins import __import__ as imp\n"
+        "from types import SimpleNamespace\n"
+        "class _B:\n"
+        "    def __new__(cls, name):\n"
+        "        return SimpleNamespace(modules={})\n"
+        "del (_B, _x)\n"
+        "class imp(_B):\n"
+        "    pass\n"
+        "s = imp('sys')\n"
+        "s.modules['_guard'] = object()\n"
+        "_guard = sys.modules.get('_guard')\n")
+    if '_guard' not in _sys_modules_write_values(_m45_del):
+        failures.append('#1953 aggregation-audit: detector self-test '
+                        'dropped the import standing behind a tuple-target '
+                        'del rebind (round 45)')
     for _label, _source, _want in (
             ("a handle certainly overwritten in a finally block",
              "def _w42_use():\n"
