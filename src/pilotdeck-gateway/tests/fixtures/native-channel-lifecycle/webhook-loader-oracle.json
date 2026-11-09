@@ -1,0 +1,102 @@
+{
+  "fixed": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/adapters/channel/loadEnabledChannels.ts": "e07a6a2241194d4683f0d015c98947dfe8d896d63cdae1be075be7b0f5002158",
+    "src/adapters/channel/webhook/WebhookChannel.ts": "4fcfea01f431ecb5bc7a10580630f4871894cf4f81ab6ef33198d809dfc1e1e8",
+    "src/adapters/channel/protocol/ImCronDelivery.ts": "3e505b3fa1205993089e3ed6854541fb6e7d332b7b33173d3c351880de7e8c14",
+    "src/adapters/channel/webhook/WebhookSessionMapper.ts": "d4f56f12372c9840e50c4431fa3a1264c558fab66beb498417c491628f1fa67c",
+    "src/adapters/channel/webhook/webhook-render.ts": "ce1c9a513699d2d03a7618695edeeb438bc4fc859789bb7a9bf065ede0ca9dd0",
+    "src/status/agentStatus.ts": "9b3f11e574fc33652594afa0a7b74f574542df57b50bb7226111cc40f2d6233b"
+  },
+  "environment": {
+    "node": "22.22.0",
+    "acorn": "8.15.0",
+    "ada": "2.9.2",
+    "amaro": "1.1.4",
+    "ares": "1.34.6",
+    "brotli": "1.1.0",
+    "cjs_module_lexer": "2.1.0",
+    "cldr": "48.0",
+    "icu": "78.2",
+    "llhttp": "9.3.0",
+    "modules": "127",
+    "napi": "10",
+    "nbytes": "0.1.1",
+    "ncrypto": "0.0.1",
+    "nghttp2": "1.64.0",
+    "openssl": "3.5.4",
+    "simdjson": "3.13.0",
+    "simdutf": "6.4.2",
+    "sqlite": "3.50.4",
+    "tz": "2025c",
+    "undici": "6.23.0",
+    "unicode": "17.0",
+    "uv": "1.52.1",
+    "uvwasi": "0.0.23",
+    "v8": "12.4.254.21-node.33",
+    "zlib": "1.3.1-470d3a2",
+    "zstd": "1.5.7"
+  },
+  "formalAcceptance": false,
+  "declaredMocks": [
+    "Gateway submitTurn only"
+  ],
+  "cases": [
+    {
+      "kind": "production-loader",
+      "configuredRoutes": [
+        "main"
+      ],
+      "constructedRoutes": [],
+      "response": {
+        "status": 404,
+        "body": "{\"error\":{\"message\":\"Unknown route: main\",\"type\":\"invalid_request_error\",\"code\":\"unknown_route\",\"userHint\":\"Check the webhook route name and retry.\",\"status\":404,\"scope\":\"http\",\"source\":\"webhook\",\"event\":\"webhook_unknown_route\"},\"agent_status\":{\"type\":\"agent_status\",\"event\":\"webhook_unknown_route\",\"detail\":{\"message\":\"Unknown route: main\",\"code\":\"unknown_route\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Check the webhook route name and retry.\",\"scope\":\"http\",\"source\":\"webhook\",\"status\":404}}}"
+      },
+      "submits": [],
+      "logs": [
+        [
+          "info",
+          "webhook: listening on http://127.0.0.1:$PORT — routes: (none configured)"
+        ],
+        [
+          "info",
+          "webhook: stopping (fixture)"
+        ]
+      ]
+    },
+    {
+      "kind": "direct-constructor",
+      "configuredRoutes": [
+        "main"
+      ],
+      "constructedRoutes": [
+        "main"
+      ],
+      "response": {
+        "status": 200,
+        "body": "{\"status\":\"accepted\",\"delivery_id\":\"fixed-event\"}"
+      },
+      "submits": [
+        {
+          "sessionKey": "webhook:chat=webhook:main:fixed-event:general",
+          "channelKey": "webhook",
+          "message": "Webhook TS route input"
+        }
+      ],
+      "logs": [
+        [
+          "info",
+          "webhook: listening on http://127.0.0.1:$PORT — routes: main"
+        ],
+        [
+          "info",
+          "webhook: response for webhook:main:fixed-event: Webhook TS reply"
+        ],
+        [
+          "info",
+          "webhook: stopping (fixture)"
+        ]
+      ]
+    }
+  ]
+}

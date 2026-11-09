@@ -1155,6 +1155,26 @@ impl SessionOwner {
         }))
     }
 
+    /// Track short IO belonging to an already admitted turn without taking its
+    /// exclusive maintenance slot. Project deletion and shutdown still await
+    /// the blocking job even if its async waiter has been cancelled.
+    pub(crate) fn begin_background_io(
+        &self,
+        key: &JsString,
+        project: &JsString,
+    ) -> Result<BackgroundIoReservation, RuntimeError> {
+        let mut state = self.0.state.lock().unwrap();
+        if state.stopped {
+            return Err(RuntimeError::new("Session router is shut down."));
+        }
+        if project_paused(&state, Some(project)) {
+            return Err(RuntimeError::new("Project is being deleted."));
+        }
+        let (done, completion) = watch::channel(None);
+        track(&mut state, key.clone(), Some(project.clone()), completion);
+        Ok(BackgroundIoReservation { done })
+    }
+
     /// The guard owns only admission. Actual seed/compact consumers are A7.5/6.
     pub fn begin_maintenance(
         &self,
@@ -2088,6 +2108,15 @@ impl Drop for ArchiveReservation {
             }));
             self.done.send_replace(Some(Ok(())));
         }
+    }
+}
+
+pub(crate) struct BackgroundIoReservation {
+    done: watch::Sender<Option<RuntimeResult>>,
+}
+impl Drop for BackgroundIoReservation {
+    fn drop(&mut self) {
+        self.done.send_replace(Some(Ok(())));
     }
 }
 

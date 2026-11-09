@@ -41,6 +41,10 @@ pub struct WeComChannel {
     state: Option<Arc<super::weixin::ChannelStatePersistence>>,
 }
 impl WeComChannel {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "preserve the explicit channel dependency-injection API"
+    )]
     pub fn new(
         options: &JsValue,
         interaction: Arc<dyn InteractionPort>,
@@ -423,10 +427,9 @@ impl ChannelAdapter for WeComChannel {
                         .get("command")
                         .and_then(JsValue::as_string)
                         .is_some_and(|s| s.equals_str("new"))
+                        && let Some(state) = &state
                     {
-                        if let Some(state) = &state {
-                            state.save(&state_key, mapper.snapshot());
-                        }
+                        state.save(&state_key, mapper.snapshot());
                     }
                     if deps.turn_gateway.is_some() {
                         if search_command::matches(&command_text) {
@@ -447,8 +450,8 @@ impl ChannelAdapter for WeComChannel {
                             });
                             continue;
                         }
-                        if let Some(control) = &control {
-                            if project_commands::execute(
+                        if let Some(control) = &control
+                            && project_commands::execute(
                                 &command_text,
                                 &scope,
                                 &mut mapper,
@@ -457,12 +460,11 @@ impl ChannelAdapter for WeComChannel {
                                 &request_id,
                             )
                             .await
-                            {
-                                if let Some(state) = &state {
-                                    state.save(&state_key, mapper.snapshot());
-                                }
-                                continue;
+                        {
+                            if let Some(state) = &state {
+                                state.save(&state_key, mapper.snapshot());
                             }
+                            continue;
                         }
                     }
                     let Some(session) = mapped
@@ -535,7 +537,7 @@ impl ChannelAdapter for WeComChannel {
                             let pilot_home = pilot_home.as_ref().map(std::path::PathBuf::from).unwrap_or_else(|| home.join(".pilotdeck"));
                             let extraction = media::extract_deliverables(&answer, &home, &pilot_home).await;
                             let mut visible = String::from_utf16_lossy(extraction.text.units()).trim().to_string();
-                            for warning in extraction.warnings { if !visible.is_empty() { visible.push_str("\n"); } visible.push_str(warning.trim()); }
+                            for warning in extraction.warnings { if !visible.is_empty() { visible.push('\n'); } visible.push_str(warning.trim()); }
                             if !visible.is_empty() { delivery::reply(&transport, request_id.clone(), visible.into()).await; }
                             else if !extraction.deliverables.is_empty() { delivery::reply(&transport, request_id.clone(), "我已生成附件，正在发送。".into()).await; }
                             for item in extraction.deliverables {

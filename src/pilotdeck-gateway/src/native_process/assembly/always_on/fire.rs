@@ -24,6 +24,7 @@ pub(super) struct NativeFireFactory {
     workspaces: Mutex<HashMap<String, Arc<NativeWorkspace>>>,
     catalog: Arc<dyn SessionCatalogPort>,
     max_frame_bytes: usize,
+    broadcast: Option<crate::runtime::always_on::event_sink::TurnEventBroadcast>,
 }
 impl NativeFireFactory {
     pub(super) fn stage(
@@ -32,6 +33,8 @@ impl NativeFireFactory {
         registry: &ProjectRuntimeRegistry,
         env: &crate::config::Env,
         max_frame_bytes: usize,
+        broadcast: Option<crate::runtime::always_on::event_sink::TurnEventBroadcast>,
+        worktree_observer: Option<crate::runtime::always_on::WorktreeObserver>,
     ) -> io::Result<Arc<Self>> {
         let mut workspaces = HashMap::new();
         for (key, enabled) in &config.projects {
@@ -52,6 +55,10 @@ impl NativeFireFactory {
                         .collect(),
                 ),
             )?;
+            let workspace = match &worktree_observer {
+                Some(observer) => workspace.with_worktree_observer(observer.clone()),
+                None => workspace,
+            };
             workspaces.insert(key.clone(), Arc::new(workspace));
         }
         let catalog = Arc::new(TranscriptSessionCatalog::new_bounded(|project| {
@@ -66,6 +73,7 @@ impl NativeFireFactory {
             workspaces: Mutex::new(workspaces),
             catalog,
             max_frame_bytes,
+            broadcast,
         }))
     }
 }
@@ -87,7 +95,7 @@ impl FireFactory for NativeFireFactory {
         let sink = Arc::new(PhaseEventSink::new(
             input.project_key.as_str().into(),
             DiscoveryReportStore::new(input.paths.clone()),
-            None,
+            self.broadcast.clone(),
             Arc::new(|message| eprintln!("{message}")),
         ));
         let history = HistoryFiles {

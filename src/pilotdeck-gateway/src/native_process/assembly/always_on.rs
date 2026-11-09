@@ -36,6 +36,8 @@ pub(super) fn native_factory(
     project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
     env: crate::config::Env,
     max_frame_bytes: usize,
+    broadcast: Option<crate::runtime::always_on::event_sink::TurnEventBroadcast>,
+    worktree_observer: Option<crate::runtime::always_on::WorktreeObserver>,
 ) -> AlwaysOnFactory {
     Arc::new(move |input| {
         let home = input.pilot_home.clone();
@@ -45,6 +47,8 @@ pub(super) fn native_factory(
             &project,
             &env,
             max_frame_bytes,
+            broadcast.clone(),
+            worktree_observer.clone(),
         )?;
         let manager = AlwaysOnManager::new_with_resolver(
             AlwaysOnManagerOptions {

@@ -5,7 +5,7 @@ import argparse,hashlib,json,sys
 from pathlib import Path
 COLD_HERE=Path(__file__).resolve().parent
 p=argparse.ArgumentParser(add_help=False);p.add_argument('--source-receipt',required=True,type=Path);p.add_argument('--inject-missing-drain-receipt',action='store_true');p.add_argument('--force-real-drain-failure',action='store_true');cold,args=p.parse_known_args();sys.argv=[sys.argv[0],*args]
-shared=COLD_HERE.parent/'native-business-loop/probe.py';shared_bytes=shared.read_bytes();assert hashlib.sha256(shared_bytes).hexdigest()=='c07c62a1816692709f57e6bb1a860597f092f1282fada935f93283f268af2a7d','shared process helper drift'
+shared=COLD_HERE.parent/'native-business-loop/probe.py';shared_bytes=shared.read_bytes();assert hashlib.sha256(shared_bytes).hexdigest()=='ee43dbb95e8be6dce2b21663e4564ced000e75aca18eeeb64b68ab56a32c8bde','shared process helper drift'
 source=shared_bytes.decode();prefix=source[:source.index('lease=None;lease_acquired=False;alignment=None')]
 original_file=__file__;__file__=str(shared)
 try:exec(compile(prefix,str(shared),'exec'),globals())

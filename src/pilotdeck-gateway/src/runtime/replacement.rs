@@ -16,18 +16,18 @@ use tokio::task::AbortHandle;
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReplacementError {
     pub code: Option<String>,
-    pub message: String,
+    pub message: JsString,
     pub details: Option<Box<JsValue>>,
 }
 impl ReplacementError {
-    pub fn new(message: impl Into<String>) -> Self {
+    pub fn new(message: impl Into<JsString>) -> Self {
         Self {
             code: None,
             message: message.into(),
             details: None,
         }
     }
-    fn dialog(code: &'static str, message: impl Into<String>) -> Self {
+    fn dialog(code: &'static str, message: impl Into<JsString>) -> Self {
         Self {
             code: Some(code.into()),
             ..Self::new(message)
@@ -36,7 +36,7 @@ impl ReplacementError {
 }
 impl std::fmt::Display for ReplacementError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
+        f.write_str(&String::from_utf16_lossy(self.message.units()))
     }
 }
 impl std::error::Error for ReplacementError {}

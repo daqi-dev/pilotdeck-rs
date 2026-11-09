@@ -209,11 +209,18 @@ impl GatewayUserDialogBus {
     /// it, otherwise registration-free zero-pending calls wrongly answer
     /// `CAPABILITY_UNAVAILABLE` where TS returns `{dialogs: []}`.
     pub fn connected(runtime: DialogRuntime) -> Self {
+        Self::connected_with_observer(runtime, None)
+    }
+
+    pub(crate) fn connected_with_observer(
+        runtime: DialogRuntime,
+        on_change: Option<Arc<ObserverFn>>,
+    ) -> Self {
         Self {
             pending: HashMap::new(),
             leases: HashMap::new(),
             runtime,
-            on_change: None,
+            on_change,
             outbox: Vec::new(),
             connected: true,
             next_generation: 0,

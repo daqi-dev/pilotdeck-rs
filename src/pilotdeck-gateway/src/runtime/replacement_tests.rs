@@ -74,7 +74,7 @@ impl Probe {
                     .events
                     .lock()
                     .unwrap()
-                    .push(json!({"warn": warn, "error": error.message}));
+                    .push(json!({"warn": warn, "error": text(&error.message)}));
             })),
         )
     }
@@ -126,7 +126,7 @@ fn wire(value: &JsValue) -> Value {
 fn result(result: ReplacementResult) -> Value {
     match result {
         Ok(value) => json!({"ok": wire(&value)}),
-        Err(error) => json!({"error": error.code, "message": error.message,
+        Err(error) => json!({"error": error.code, "message": text(&error.message),
             "details": error.details.as_deref().map(wire)}),
     }
 }
@@ -469,7 +469,7 @@ async fn unexpected_task_panic_returns_error_to_waiter() {
     })
     .await
     .unwrap_err();
-    assert!(error.message.contains("unexpected task panic"));
+    assert!(text(&error.message).contains("unexpected task panic"));
 }
 
 // Rust warning callbacks may unwind; diagnostics must not strand a transaction.

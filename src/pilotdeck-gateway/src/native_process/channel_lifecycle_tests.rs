@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-fn real_options(base: &super::Options) -> super::Options {
+pub(super) fn real_options(base: &super::Options) -> super::Options {
     let mut options = base.clone();
     options.sidecar = std::env::var_os("PDRS_CHANNEL_SIDECAR")
         .map(std::path::PathBuf::from)
@@ -94,7 +94,7 @@ async fn mock() -> Mock {
                      let platform=if String::from_utf8_lossy(&peek).contains("/discord/stream"){"discord"}else if String::from_utf8_lossy(&peek).contains("/qq/stream"){"qq"}else{"dingtalk"};
              let mut ws=tokio_tungstenite::accept_async(socket).await.unwrap();let generation=state.generation.load(Ordering::SeqCst);
              if platform!="dingtalk"{
-              let hello=if platform=="discord"{json!({"op":10,"d":{"heartbeat_interval":1000}})}else{json!({"op":10,"d":{"heartbeat_interval":1000}})};
+              let hello=json!({"op":10,"d":{"heartbeat_interval":1000}});
               ws.send(tokio_tungstenite::tungstenite::Message::Text(hello.to_string().into())).await.unwrap();
               while let Some(frame)=ws.next().await{
                match frame{

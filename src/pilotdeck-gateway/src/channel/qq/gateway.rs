@@ -109,10 +109,10 @@ impl QQBotGateway {
     pub async fn ensure_access_token(&self) -> Result<JsString, ChannelError> {
         let mut state = self.token.lock().await;
         let now = Instant::now();
-        if let (Some(token), Some(expires)) = (&state.token, state.expires) {
-            if expires.saturating_duration_since(now) > Duration::from_secs(120) {
-                return Ok(token.clone());
-            }
+        if let (Some(token), Some(expires)) = (&state.token, state.expires)
+            && expires.saturating_duration_since(now) > Duration::from_secs(120)
+        {
+            return Ok(token.clone());
         }
         let (status, text) = self
             .request(
@@ -304,17 +304,17 @@ impl QQBotGateway {
                         tokio::select! {biased;
                          _=stop.changed()=>{let _=tokio::time::timeout(Duration::from_secs(2),socket.close(None)).await;return;},
                          _=async{if let Some(at)=identify_at{tokio::time::sleep_until(at).await;}else{std::future::pending::<()>().await;}}=>{
-                          identify_at=None;if let Ok(value)=self.identify(None,None).await{if let Some(text)=stringify_json(&value).ok().flatten(){if socket.send(Message::Text(text.into())).await.is_err(){break;}}}
+                          identify_at=None;if let Ok(value)=self.identify(None,None).await&& let Some(text)=stringify_json(&value).ok().flatten()&& socket.send(Message::Text(text.into())).await.is_err(){break;}
                          },
                          _=async{if let Some(timer)=heartbeat.as_mut(){timer.tick().await;}else{std::future::pending::<()>().await;}}=>{
-                          let beat=object([("op",JsValue::Number(1.0)),("d",sequence.map_or(JsValue::Null,JsValue::Number))]);if let Some(text)=stringify_json(&beat).ok().flatten(){if socket.send(Message::Text(text.into())).await.is_err(){break;}}
+                          let beat=object([("op",JsValue::Number(1.0)),("d",sequence.map_or(JsValue::Null,JsValue::Number))]);if let Some(text)=stringify_json(&beat).ok().flatten()&& socket.send(Message::Text(text.into())).await.is_err(){break;}
                          },
                          frame=socket.next()=>{
                           let raw=match frame{Some(Ok(Message::Text(text)))=>text.to_string(),Some(Ok(Message::Binary(bytes)))=>String::from_utf8_lossy(&bytes).into_owned(),Some(Ok(Message::Ping(bytes)))=>{if socket.send(Message::Pong(bytes)).await.is_err(){break;}continue;},Some(Ok(Message::Close(_)))|None=>break,Some(Err(e))=>{emit("error",&format!("qq: error: {e}"));break;},_=>continue};let Ok(value)=parse_json(&raw)else{continue;};
                           if let Some(JsValue::Number(seq))=value.get("s"){sequence=Some(*seq);}
                           match value.get("op"){
                            Some(JsValue::Number(op)) if *op==10.0=>{
-                            if let Some(JsValue::Number(ms))=value.get("d").and_then(|d|d.get("heartbeat_interval")){if ms.is_finite()&&*ms>=1.0&&*ms<=86_400_000.0{heartbeat_ms=*ms;}}
+                            if let Some(JsValue::Number(ms))=value.get("d").and_then(|d|d.get("heartbeat_interval"))&& ms.is_finite()&&*ms>=1.0&&*ms<=86_400_000.0{heartbeat_ms = *ms;}
                             if let Ok(identify)=self.identify(session.as_ref(),sequence).await{let text=stringify_json(&identify).ok().flatten().expect("identify");if socket.send(Message::Text(text.into())).await.is_err(){break;}}
                            },
                            Some(JsValue::Number(op)) if *op==0.0=>{

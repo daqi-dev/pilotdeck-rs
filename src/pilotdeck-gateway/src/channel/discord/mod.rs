@@ -323,10 +323,13 @@ impl Inner {
             return;
         }
         // Discord SDK marks non-user system message types. Replies retain type19.
-        if let Some(JsValue::Number(kind)) = update.get("type") {
-            if *kind != 0.0 && *kind != 19.0 && *kind != 20.0 && *kind != 23.0 {
-                return;
-            }
+        if let Some(JsValue::Number(kind)) = update.get("type")
+            && *kind != 0.0
+            && *kind != 19.0
+            && *kind != 20.0
+            && *kind != 23.0
+        {
+            return;
         }
         if author
             .get("id")

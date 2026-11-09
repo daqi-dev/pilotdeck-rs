@@ -103,39 +103,42 @@ async fn feishu_resource_cache_and_multipart_delivery_match_fixed_ts() {
             row["ok"].as_bool().unwrap()
         );
     }
-    let wire = wire.lock().unwrap();
-    let uploads = wire
-        .iter()
-        .filter(|(p, _, _)| p.ends_with("/files") || p.ends_with("/images"))
-        .collect::<Vec<_>>();
-    assert_eq!(uploads.len(), 2);
-    for ((path, header, body), expected) in uploads.into_iter().zip(
-        gold["wire"]
-            .as_array()
-            .unwrap()
+    {
+        let wire = wire.lock().unwrap();
+        let uploads = wire
             .iter()
-            .filter(|r| r.get("parts").is_some()),
-    ) {
-        assert_eq!(path, expected["path"].as_str().unwrap());
-        assert!(
-            header
-                .to_lowercase()
-                .contains("authorization: bearer mock-token")
-        );
-        for part in expected["parts"].as_array().unwrap() {
+            .filter(|(p, _, _)| p.ends_with("/files") || p.ends_with("/images"))
+            .collect::<Vec<_>>();
+        assert_eq!(uploads.len(), 2);
+        for ((path, header, body), expected) in uploads.into_iter().zip(
+            gold["wire"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|r| r.get("parts").is_some()),
+        ) {
+            assert_eq!(path, expected["path"].as_str().unwrap());
             assert!(
-                String::from_utf8_lossy(body)
-                    .contains(&format!("name=\"{}\"", part["name"].as_str().unwrap()))
+                header
+                    .to_lowercase()
+                    .contains("authorization: bearer mock-token")
             );
-            if let Some(value) = part["value"].as_str() {
-                assert!(String::from_utf8_lossy(body).contains(value));
-            }
-            if let Some(file) = part["filename"].as_str() {
-                assert!(String::from_utf8_lossy(body).contains(&format!("filename=\"{file}\"")));
+            for part in expected["parts"].as_array().unwrap() {
+                assert!(
+                    String::from_utf8_lossy(body)
+                        .contains(&format!("name=\"{}\"", part["name"].as_str().unwrap()))
+                );
+                if let Some(value) = part["value"].as_str() {
+                    assert!(String::from_utf8_lossy(body).contains(value));
+                }
+                if let Some(file) = part["filename"].as_str() {
+                    assert!(
+                        String::from_utf8_lossy(body).contains(&format!("filename=\"{file}\""))
+                    );
+                }
             }
         }
     }
-    drop(wire);
     handle.stop("fixture").await.unwrap();
     server.abort();
     let _ = server.await;

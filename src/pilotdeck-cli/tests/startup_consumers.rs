@@ -223,7 +223,22 @@ async fn six_fixed_ts_consumers_match_exact_process_bytes_and_all_product_files(
     listener.set_nonblocking(true).unwrap();
     let address = listener.local_addr().unwrap();
     let positive = TcpStream::connect_timeout(&address, Duration::from_secs(2)).unwrap();
-    drop(listener.accept().expect("owned listener positive control"));
+    let accept_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        match listener.accept() {
+            Ok(connection) => {
+                drop(connection);
+                break;
+            }
+            Err(error)
+                if error.kind() == ErrorKind::WouldBlock
+                    && tokio::time::Instant::now() < accept_deadline =>
+            {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            Err(error) => panic!("owned listener positive control: {error}"),
+        }
+    }
     drop(positive);
     fs::write(
         scratch.root.join("harness/network-positive.json"),

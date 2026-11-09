@@ -325,6 +325,15 @@ impl NativeArchive {
                 SNAPSHOT_BYTES / (1024 * 1024)
             )));
         }
+        // The pinned root is a traversal descriptor (O_PATH/O_SEARCH), which
+        // cannot be fsynced on Linux. Acquire a readable directory descriptor
+        // before publishing so an open failure leaves the old snapshot intact.
+        let sync_root = File::from(openat(
+            &self.root,
+            ".",
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?);
         let temporary = format!("state.{}.tmp", uuid::Uuid::new_v4());
         let result = (|| {
             let mut file = open_file(
@@ -336,7 +345,7 @@ impl NativeArchive {
             file.sync_all()?;
             self.verify_owner_file()?;
             renameat(&self.root, temporary.as_str(), &self.root, "state.json")?;
-            self.root.sync_all()?;
+            sync_root.sync_all()?;
             Ok(())
         })();
         if result.is_err() {

@@ -153,10 +153,10 @@ impl NativeAutomationLifetime {
                     }
                 }
             }
-            if let Some(input) = input {
-                if let Err(error) = owner.reload(input).await {
-                    eprintln!("[automation] reload failed: {error}");
-                }
+            if let Some(input) = input
+                && let Err(error) = owner.reload(input).await
+            {
+                eprintln!("[automation] reload failed: {error}");
             }
         }));
     }

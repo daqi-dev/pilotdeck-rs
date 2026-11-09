@@ -5480,3 +5480,8 @@ Draft #2786 当前已推f855107a；工作候选r34（源码清单679d5eb1）Gate
 ### 2026-11-10 · r37 业务闭环与完整回归接续
 
 共同工作候选r37（输入清单b06498c7、远端fmt增量单列）在mbp2完成Gateway/CLI全目标check和四bin，Gateway SHA f92f3d7c；Gateway+CLI nextest全回归仍在跑，不预填通过。r36定向50/51通过，飞书真实Server protobuf/A7/reload/关闭已通过；剩余恢复测试的v1活owner仍应跳过，固定TS实测已证明，修正了缺backup用例的owner输入。r37真实TS/Rust会话fork、replace准备/回滚、冷恢复、三aux目录字节/mode及内部/legacy路径对拍通过，0模型请求，不冒充正式suite。微信命令、真实helper及实际A7权限/elicitation测试已接，待全回归结果；BlueBubbles真实进程两代与停机另已通过。复核发现SMS虽有注册但生产factory/gateway仍None，属于明确未完成消费者，已派Sol补第一方传输和真实A7桥，不能按全部19渠道已有注册认完整。已保存并应用逐文件带前像的渠道/数据/负控候选；旧快照和规范目录未触。本地提交保全当前候选，负控需干净HEAD运行，正式host/session/retirement及最终独立评审继续。
+
+
+### 2026-11-10 · r38 数据保护与 r39 回归接续
+
+Draft #2786 保持2b72c477未合并。mbp2 r37完整Gateway/CLI nextest实际7753运行、7747通过、6失败、770跳过；严格clippy失败原件均在主仓 _tmp/20261110-gateway-integration/received-r37-full-regression/。已定位缺rg、源码包无Git索引及安全守卫拒CARGO_BUILD_JOBS三项环境问题，SDK oracle重复持同一mutex已修；MCP IPv6错误文本待实测，startup accept有界重试已修。r38 Linux全目标check及四bin完成；真实进程oversize/missing恢复保护和TS/Rust lineage活跃commit、11错误码、aux字节、回滚/冷恢复已通过，原2b72失败原件未覆盖；正式suite未通过。r39已接UTF16错误/ID保真、飞书真实媒体/交互夹具、Server广播与后台IO保活，mbp2 check通过、正清严格检查并运行新网络测试。Sol继续微信出站媒体及余下交互，Terra继续正式session采集（仍INCOMPLETE），另一路接host四拓扑与101入口；cb8/mbp2独立target，本机不构建。新main e123a6df2仅脚本/批准/状态增量，#2737 R5已MERGED待批量接收；原CLI/app/GPUI/file_edit工作与快照继续保留，未切规范目录。

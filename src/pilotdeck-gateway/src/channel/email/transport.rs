@@ -68,7 +68,7 @@ impl EmailConfig {
             _ => f64::NAN,
         };
         let port = |n: f64| {
-            if n.is_finite() && n >= 0.0 && n <= 65535.0 && n.fract() == 0.0 {
+            if n.is_finite() && (0.0..=65535.0).contains(&n) && n.fract() == 0.0 {
                 n as u16
             } else {
                 0

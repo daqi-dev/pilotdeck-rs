@@ -1,0 +1,434 @@
+//! Real Server + Feishu binary WS/resources + A7/model/tools + multipart/output.
+use super::channels::ChannelEndpointOverrides;
+use futures_util::{SinkExt, StreamExt};
+use serde_json::{Value, json};
+use std::{
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio_tungstenite::tungstenite::Message;
+const FILE_IN: &str = "feishu-inbound-file-marker";
+const FILE_OUT: &str = "feishu-outbound-file-marker";
+const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+struct Wire {
+    incoming: tokio::sync::broadcast::Sender<Value>,
+    sockets: AtomicUsize,
+    seq: AtomicUsize,
+    acks: AtomicUsize,
+    phase: AtomicUsize,
+    generation: AtomicUsize,
+    http: Mutex<Vec<(String, String, Vec<u8>)>>,
+    models: Mutex<Vec<Value>>,
+    sent: Mutex<Vec<Value>>,
+}
+impl Default for Wire {
+    fn default() -> Self {
+        Self {
+            incoming: tokio::sync::broadcast::channel(32).0,
+            sockets: AtomicUsize::new(0),
+            seq: AtomicUsize::new(0),
+            acks: AtomicUsize::new(0),
+            phase: AtomicUsize::new(0),
+            generation: AtomicUsize::new(0),
+            http: Mutex::new(vec![]),
+            models: Mutex::new(vec![]),
+            sent: Mutex::new(vec![]),
+        }
+    }
+}
+impl Wire {
+    fn event(&self, kind: &str, content: Value) {
+        let id = self.seq.fetch_add(1, Ordering::SeqCst);
+        self.incoming.send(json!({"schema":"2.0","header":{"event_id":format!("event-{id}"),"event_type":"im.message.receive_v1"},"event":{"sender":{"sender_id":{"open_id":"human"},"sender_type":"user"},"message":{"message_id":format!("message-{id}"),"chat_id":"room","chat_type":"p2p","message_type":kind,"content":content.to_string()}}})).expect("active Feishu Socket Mode");
+    }
+    fn text(&self, s: &str) {
+        self.event("text", json!({"text":s}));
+    }
+    fn sent(&self, s: &str) -> bool {
+        self.sent
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|v| v.to_string().contains(s))
+    }
+}
+struct Peer {
+    origin: String,
+    state: Arc<Wire>,
+    task: tokio::task::JoinHandle<()>,
+}
+impl Drop for Peer {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            eprintln!(
+                "Feishu REST paths={:#?}; sent={:#?}; models={:#?}",
+                self.state
+                    .http
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .iter()
+                    .map(|(p, a, b)| (p, a, b.len()))
+                    .collect::<Vec<_>>(),
+                self.state.sent.lock().unwrap_or_else(|e| e.into_inner()),
+                self.state.models.lock().unwrap_or_else(|e| e.into_inner())
+            );
+        }
+        self.task.abort();
+    }
+}
+async fn until(state: &Wire, label: &str, mut check: impl FnMut() -> bool) {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while !check() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "{label}; sent={:#?}; models={:#?}",
+            state.sent.lock().unwrap_or_else(|e| e.into_inner()),
+            state.models.lock().unwrap_or_else(|e| e.into_inner())
+        )
+    });
+}
+// External peer encoder: pbbp2 fields pinned by the independent SDK golden,
+// with a fresh JSON event payload; not an invocation of product Frame::encode.
+fn varint(mut n: u64, out: &mut Vec<u8>) {
+    while n >= 128 {
+        out.push((n as u8) | 128);
+        n >>= 7;
+    }
+    out.push(n as u8);
+}
+fn bytes(field: u64, value: &[u8], out: &mut Vec<u8>) {
+    varint(field * 8 + 2, out);
+    varint(value.len() as u64, out);
+    out.extend_from_slice(value);
+}
+fn frame(event: &Value, seq: u64) -> Vec<u8> {
+    let mut out = vec![];
+    for (field, value) in [(1, seq), (2, seq + 100), (3, 77), (4, 1)] {
+        varint(field * 8, &mut out);
+        varint(value, &mut out);
+    }
+    for (k, v) in [
+        ("type", "event".to_owned()),
+        ("message_id", format!("wire-{seq}")),
+        ("sum", "1".into()),
+        ("seq", "0".into()),
+    ] {
+        let mut header = vec![];
+        bytes(1, k.as_bytes(), &mut header);
+        bytes(2, v.as_bytes(), &mut header);
+        bytes(5, &header, &mut out);
+    }
+    bytes(6, b"utf8", &mut out);
+    bytes(7, b"json", &mut out);
+    bytes(8, event.to_string().as_bytes(), &mut out);
+    out
+}
+async fn peer(
+    output: std::path::PathBuf,
+    approved: std::path::PathBuf,
+    denied: std::path::PathBuf,
+) -> Peer {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let origin = format!("http://{address}");
+    let state = Arc::new(Wire::default());
+    let shared = state.clone();
+    let task = tokio::spawn(async move {
+        let mut tasks = tokio::task::JoinSet::new();
+        loop {
+            tokio::select! {
+            incoming=listener.accept()=>{let(mut socket,_)=incoming.unwrap();let state=shared.clone();let(output,approved,denied)=(output.clone(),approved.clone(),denied.clone());tasks.spawn(async move{
+            let mut peek=[0;8192];loop{let n=match socket.peek(&mut peek).await{Ok(n)if n>0=>n,_=>return};if peek[..n].windows(4).any(|w|w==b"\r\n\r\n"){break;}tokio::time::sleep(Duration::from_millis(1)).await;}
+            if String::from_utf8_lossy(&peek).to_ascii_lowercase().contains("upgrade: websocket"){
+            let mut ws=tokio_tungstenite::accept_async(socket).await.unwrap();let mut incoming=state.incoming.subscribe();state.sockets.fetch_add(1,Ordering::SeqCst);let mut seq=0;
+            loop{tokio::select!{event=incoming.recv()=>{let Ok(event)=event else{break};seq+=1;if ws.send(Message::Binary(frame(&event,seq).into())).await.is_err(){break;}},
+            message=ws.next()=>match message{Some(Ok(Message::Binary(raw)))=>{if raw.windows(12).any(|w|w==br#"{"code":200}"#){state.acks.fetch_add(1,Ordering::SeqCst);}},Some(Ok(Message::Close(_)))=>{let _=ws.close(None).await;break},Some(Ok(_))=>{},_=>break}
+            }}state.sockets.fetch_sub(1,Ordering::SeqCst);return;}
+            let mut raw=vec![];while !raw.ends_with(b"\r\n\r\n"){let mut b=[0];if socket.read_exact(&mut b).await.is_err(){return}raw.push(b[0]);assert!(raw.len()<65536);}
+            let header=String::from_utf8(raw).unwrap();let path=header.lines().next().unwrap().split_whitespace().nth(1).unwrap().to_owned();let authorization=header.lines().find_map(|l|l.split_once(':').filter(|(k,_)|k.eq_ignore_ascii_case("authorization")).map(|(_,v)|v.trim().to_owned())).unwrap_or_default();let size=header.lines().find_map(|l|l.to_ascii_lowercase().strip_prefix("content-length:").map(|v|v.trim().parse::<usize>().unwrap())).unwrap_or(0);let mut raw=vec![0;size];if socket.read_exact(&mut raw).await.is_err(){return}state.http.lock().unwrap().push((path.clone(),authorization,raw.clone()));
+            let body:Value=serde_json::from_slice(&raw).unwrap_or(Value::Null);
+            let(status,mime,data)=if path=="/callback/ws/endpoint"{("200 OK","application/json",json!({"code":0,"data":{"URL":format!("ws://{address}/feishu?service_id=77&device_id=fixture"),"ClientConfig":{"PingInterval":1,"ReconnectCount":2,"ReconnectInterval":0.01,"ReconnectNonce":0}}}).to_string().into_bytes())
+            }else if path.contains("tenant_access_token"){("200 OK","application/json",json!({"code":0,"tenant_access_token":"mock-tenant-token","expire":7200}).to_string().into_bytes())
+            }else if path.contains("/resources/img-bad"){("404 Not Found","application/json",b"{}".to_vec())
+            }else if path.contains("/resources/img-key"){use base64::Engine;("200 OK","image/png",base64::engine::general_purpose::STANDARD.decode(PNG).unwrap())
+            }else if path.contains("/resources/file-key"){("200 OK","text/plain",FILE_IN.as_bytes().to_vec())
+            }else if path=="/open-apis/im/v1/files"{("200 OK","application/json",json!({"code":0,"data":{"file_key":"uploaded-file-key"}}).to_string().into_bytes())
+            }else if path=="/open-apis/im/v1/images"{("200 OK","application/json",json!({"code":0,"data":{"image_key":"uploaded-image-key"}}).to_string().into_bytes())
+            }else if path.starts_with("/open-apis/im/v1/"){state.sent.lock().unwrap().push(body);("200 OK","application/json",json!({"code":0,"data":{"message_id":"reply","reaction_id":"reaction"}}).to_string().into_bytes())
+            }else if body["stream"]==true{
+            state.models.lock().unwrap().push(body);let phase=state.phase.fetch_add(1,Ordering::SeqCst);let generation=state.generation.load(Ordering::SeqCst);
+            let(delta,finish)=match phase{
+            0=>(json!({"role":"assistant","tool_calls":[{"index":0,"id":"feishu-send-file","type":"function","function":{"name":"send_attachment","arguments":json!({"file_path":output,"name":"reply.txt","mime_type":"text/plain"}).to_string()}}]}),"tool_calls"),
+            2|5=>{let path=if phase==2{approved}else{denied};(json!({"role":"assistant","tool_calls":[{"index":0,"id":format!("feishu-permission-{phase}"),"type":"function","function":{"name":"bash","arguments":json!({"command":format!("printf approved > '{}'",path.display())}).to_string()}}]}),"tool_calls")},
+            3=>(json!({"role":"assistant","tool_calls":[{"index":0,"id":"feishu-question","type":"function","function":{"name":"ask_user_question","arguments":json!({"questions":[{"header":"Choice","question":"Feishu choose mock option","options":[{"label":"One","description":"Mock one"},{"label":"Two","description":"Mock two"}],"multiSelect":false}]}).to_string()}}]}),"tool_calls"),
+            _=>(json!({"role":"assistant","content":format!("feishu-actual-final-{generation}-{phase}")}),"stop")};
+            ("200 OK","text/event-stream",format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",json!({"id":"mock","choices":[{"index":0,"delta":delta,"finish_reason":null}]}),json!({"id":"mock","choices":[{"index":0,"delta":{},"finish_reason":finish}]})).into_bytes())
+            }else{("200 OK","application/json",json!({"choices":[{"message":{"role":"assistant","content":"{\"title\":\"Feishu media actual\"}"},"finish_reason":"stop"}]}).to_string().into_bytes())};
+            let headers=format!("HTTP/1.1 {status}\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",data.len());let _=socket.write_all(headers.as_bytes()).await;let _=socket.write_all(&data).await;
+            });},Some(_)=tasks.join_next(),if !tasks.is_empty()=>{}
+            }
+        }
+    });
+    Peer {
+        origin,
+        state,
+        task,
+    }
+}
+#[derive(Default)]
+struct Frames(Mutex<Vec<Value>>);
+impl crate::runtime::connection::GatewayTextConnection for Frames {
+    fn send_text(&self, text: String) {
+        self.0
+            .lock()
+            .unwrap()
+            .push(serde_json::from_str(&text).unwrap());
+    }
+    fn close(&self, _code: u16, _reason: &str) {}
+}
+#[tokio::test]
+async fn feishu_actual_server_media_a7_upload_interactions_new_reload_shutdown() {
+    let (_scratch, requests) = super::management_tests::setup();
+    requests.project.dispose().await.unwrap();
+    requests.owner.shutdown().await.unwrap();
+    let output = requests.options.project.join("feishu-outgoing.txt");
+    std::fs::write(&output, FILE_OUT).unwrap();
+    let approved = requests.options.project.join("feishu-approved.txt");
+    let denied = requests.options.project.join("feishu-denied.txt");
+    let peer = peer(output, approved.clone(), denied.clone()).await;
+    let path = requests.options.home.join("pilotdeck.yaml");
+    let mut config = json!({"schemaVersion":1,"agent":{"model":"test/test"},"model":{"providers":{"test":{"protocol":"openai","url":format!("{}/v1",peer.origin),"apiKey":"mock-only","models":{"test":{}}}}},"adapters":{"feishu":{"enabled":true,"appId":"cli_0123456789abcdef","appSecret":"mock-secret","connectionMode":"stream"}}});
+    std::fs::write(&path, config.to_string()).unwrap();
+    let mut options = requests.options.clone();
+    options.sidecar = std::env::var_os("PDRS_CHANNEL_SIDECAR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("pilotdeck-agent-loop-sidecar")
+        });
+    let bytes = std::fs::read(&options.sidecar).expect("real sidecar required");
+    assert!(bytes.len() > 1024);
+    use sha2::Digest;
+    eprintln!(
+        "Feishu media actual sidecar={} sha256={:x}",
+        options.sidecar.display(),
+        sha2::Sha256::digest(&bytes)
+    );
+    let (host, _channels) = super::assembly::start_with_channel_endpoints(
+        options.clone(),
+        requests.env.clone(),
+        ChannelEndpointOverrides {
+            feishu_api_base: Some(peer.origin.clone()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    until(&peer.state, "real Feishu Server stream transport", || {
+        peer.state.sockets.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    peer.state.event("image", json!({"image_key":"img-key"}));
+    peer.state.event(
+        "file",
+        json!({"file_key":"file-key","file_name":"inbound.txt","size":FILE_IN.len()}),
+    );
+    until(
+        &peer.state,
+        "inbound media reaches actual A7 and final output",
+        || peer.state.sent("feishu-actual-final-0-1"),
+    )
+    .await;
+    let models = peer.state.models.lock().unwrap().clone();
+    assert!(
+        models[0].to_string().contains(PNG),
+        "image bytes must reach actual model as image content"
+    );
+    assert!(
+        models[0].to_string().contains(FILE_IN),
+        "text attachment content must reach actual model"
+    );
+    assert!(
+        peer.state
+            .http
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(p, a, b)| p == "/open-apis/im/v1/files"
+                && a == "Bearer mock-tenant-token"
+                && b.windows(FILE_OUT.len()).any(|w| w == FILE_OUT.as_bytes())),
+        "actual send_attachment bytes uploaded"
+    );
+    assert!(
+        peer.state
+            .sent
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|v| v["msg_type"] == "file"
+                && v["content"]
+                    .as_str()
+                    .is_some_and(|c| c.contains("uploaded-file-key"))),
+        "actual uploaded file key sent to chat"
+    );
+    let files = walk(&options.home.join("im-attachments"));
+    assert!(
+        files.iter().any(|p| std::fs::read(p)
+            .ok()
+            .is_some_and(|b| b == FILE_IN.as_bytes())),
+        "attachment stored in isolated pilot home"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for p in &files {
+            assert_eq!(
+                std::fs::metadata(p).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
+    peer.state.text("interaction-start");
+    until(&peer.state, "actual Feishu permission prompt", || {
+        peer.state.sent("回复 1 允许一次")
+    })
+    .await;
+    assert!(!approved.exists());
+    peer.state.text("1");
+    until(&peer.state, "actual Feishu elicitation prompt", || {
+        peer.state.sent("Feishu choose mock option")
+    })
+    .await;
+    peer.state.text("1");
+    until(
+        &peer.state,
+        "actual Feishu same A7 interactive continuation",
+        || peer.state.sent("feishu-actual-final-0-4"),
+    )
+    .await;
+    assert_eq!(std::fs::read_to_string(&approved).unwrap(), "approved");
+    assert!(
+        peer.state.models.lock().unwrap()[4]
+            .to_string()
+            .contains("One")
+    );
+    let count = peer
+        .state
+        .sent
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|v| v.to_string().contains("回复 1 允许一次"))
+        .count();
+    peer.state.text("pending-new");
+    until(&peer.state, "new pending Feishu permission", || {
+        peer.state
+            .sent
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|v| v.to_string().contains("回复 1 允许一次"))
+            .count()
+            > count
+    })
+    .await;
+    peer.state.text("/new");
+    until(&peer.state, "Feishu new resets actual pending turn", || {
+        peer.state.sent("已创建新会话")
+    })
+    .await;
+    peer.state.text("post-new");
+    until(&peer.state, "new Feishu session enters real A7", || {
+        peer.state.sent("feishu-actual-final-0-6")
+    })
+    .await;
+    assert!(!denied.exists());
+    peer.state.event("image", json!({"image_key":"img-bad"}));
+    until(
+        &peer.state,
+        "failed media download remains diagnosable actual A7 input",
+        || peer.state.sent("feishu-actual-final-0-7"),
+    )
+    .await;
+    assert!(
+        peer.state.models.lock().unwrap()[7]
+            .to_string()
+            .contains("Attachment diagnostics")
+    );
+    let frames = Arc::new(Frames::default());
+    let connection = host.connect(frames.clone(), "token".into(), "fixture".into());
+    connection.receive(json!({"type":"hello","protocolVersion":pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,"token":"token","clientName":"web","clientVersion":"feishu-media"}).to_string()).await.unwrap();
+    config["adapters"]["feishu"]["enabled"] = false.into();
+    std::fs::write(&path, config.to_string()).unwrap();
+    connection.receive(json!({"type":"request","id":"disable-feishu-media","method":"reload_config","params":{}}).to_string()).await.unwrap();
+    until(&peer.state, "public disable closes Feishu stream", || {
+        peer.state.sockets.load(Ordering::SeqCst) == 0
+    })
+    .await;
+    peer.state.generation.store(1, Ordering::SeqCst);
+    config["adapters"]["feishu"]["enabled"] = true.into();
+    std::fs::write(&path, config.to_string()).unwrap();
+    connection.receive(json!({"type":"request","id":"enable-feishu-media","method":"reload_config","params":{}}).to_string()).await.unwrap();
+    until(
+        &peer.state,
+        "public reload creates fresh Feishu transport",
+        || peer.state.sockets.load(Ordering::SeqCst) == 1,
+    )
+    .await;
+    peer.state.text("reload-start");
+    until(&peer.state, "reloaded Feishu still reaches A7", || {
+        peer.state.sent("feishu-actual-final-1-8")
+    })
+    .await;
+    connection.closed().await.unwrap();
+    host.shutdown(options.drain_budget).await.unwrap();
+    until(&peer.state, "shutdown closes Feishu transport", || {
+        peer.state.sockets.load(Ordering::SeqCst) == 0
+    })
+    .await;
+    let sent = peer.state.sent.lock().unwrap().len();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(sent, peer.state.sent.lock().unwrap().len());
+    let mut logs = String::new();
+    for p in walk(&options.home.join("projects")) {
+        if p.extension().is_some_and(|e| e == "jsonl") {
+            logs.push_str(&std::fs::read_to_string(p).unwrap());
+        }
+    }
+    for marker in [
+        "feishu-actual-final-0-1",
+        "feishu-actual-final-0-4",
+        "feishu-actual-final-0-6",
+        "feishu-actual-final-0-7",
+        "feishu-actual-final-1-8",
+    ] {
+        assert!(logs.contains(marker), "durable {marker}");
+    }
+}
+fn walk(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = vec![];
+    if let Ok(dir) = std::fs::read_dir(root) {
+        for row in dir {
+            let p = row.unwrap().path();
+            if p.is_dir() {
+                out.extend(walk(&p))
+            } else {
+                out.push(p)
+            }
+        }
+    }
+    out
+}

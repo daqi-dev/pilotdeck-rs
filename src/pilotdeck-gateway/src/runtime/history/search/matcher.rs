@@ -544,7 +544,7 @@ fn translate(pattern: &JsString, sensitive: bool) -> Result<String, &'static str
             92 => {
                 assertion =
                     matches!(units.get(index), Some(98 | 66)).then_some("Nothing to repeat");
-                match escape(&units, &mut index, false, captures, !names.is_empty())? {
+                match escape(units, &mut index, false, captures, !names.is_empty())? {
                     Atom::Unit(u) => out.push_str(&escaped_unit(u, sensitive)),
                     Atom::Dash => unreachable!(),
                     Atom::Set(set) => out.push_str(&emit_set(set, sensitive, false)),
@@ -554,7 +554,7 @@ fn translate(pattern: &JsString, sensitive: bool) -> Result<String, &'static str
             }
             91 => {
                 assertion = None;
-                out.push_str(&character_class(&units, &mut index, sensitive)?);
+                out.push_str(&character_class(units, &mut index, sensitive)?);
                 repeated = false;
             }
             40 => {
@@ -599,14 +599,14 @@ fn translate(pattern: &JsString, sensitive: bool) -> Result<String, &'static str
                 }
                 repeated = false;
             }
-            123 if quantifier(&units, index - 1).is_some() => {
+            123 if quantifier(units, index - 1).is_some() => {
                 if repeated {
                     return Err("Nothing to repeat");
                 }
                 if let Some(detail) = assertion {
                     return Err(detail);
                 }
-                let end = quantifier(&units, index - 1).unwrap();
+                let end = quantifier(units, index - 1).unwrap();
                 if quantifier_out_of_order(&units[index - 1..end]) {
                     return Err("numbers out of order in {} quantifier");
                 }

@@ -139,3 +139,63 @@ pub trait SmsGateway: Send + Sync {
 }
 
 pub type GatewayRef = Arc<dyn SmsGateway>;
+
+/// Production adapter for the same A7 acceptor and shared interaction coordinator.
+pub struct MountedSmsGateway {
+    turns: Arc<dyn crate::channel::protocol::TurnGateway>,
+    responder: Arc<dyn crate::channel::bluebubbles::InteractionResponder>,
+}
+impl MountedSmsGateway {
+    pub fn new(
+        turns: Arc<dyn crate::channel::protocol::TurnGateway>,
+        responder: Arc<dyn crate::channel::bluebubbles::InteractionResponder>,
+    ) -> Self {
+        Self { turns, responder }
+    }
+}
+struct MountedStream(Arc<tokio::sync::Mutex<Box<dyn crate::channel::protocol::TurnEventStream>>>);
+impl TurnEventStream for MountedStream {
+    fn next_event(&mut self) -> BoxFuture<Option<Result<JsValue, ChannelError>>> {
+        let stream = self.0.clone();
+        Box::pin(async move {
+            match stream.lock().await.next().await {
+                Ok(Some(value)) => Some(Ok(value)),
+                Ok(None) => None,
+                Err(error) => Some(Err(error)),
+            }
+        })
+    }
+}
+impl SmsGateway for MountedSmsGateway {
+    fn submit_turn(
+        &self,
+        request: SubmitTurnRequest,
+    ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>> {
+        let turns = self.turns.clone();
+        Box::pin(async move {
+            let stream = turns
+                .submit(crate::channel::protocol::TurnRequest {
+                    session_key: request.session_key,
+                    channel_key: crate::channel::protocol::ChannelKey::new(request.channel_key),
+                    message: request.message,
+                })
+                .await?;
+            Ok(
+                Box::new(MountedStream(Arc::new(tokio::sync::Mutex::new(stream))))
+                    as Box<dyn TurnEventStream>,
+            )
+        })
+    }
+    fn respond_elicitation(
+        &self,
+        response: ElicitationResponse,
+    ) -> BoxFuture<Result<(), ChannelError>> {
+        self.responder.respond_elicitation(response)
+    }
+    fn permission_decide(
+        &self,
+        decision: PermissionDecision,
+    ) -> BoxFuture<Result<PermissionDecisionOutcome, ChannelError>> {
+        self.responder.permission_decide(decision)
+    }
+}

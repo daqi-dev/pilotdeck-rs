@@ -277,16 +277,15 @@ impl StreamHandle {
                     let bytes=match frame{Some(Ok(Message::Binary(bytes)))=>bytes,Some(Ok(Message::Ping(bytes)))=>{let _=socket.send(Message::Pong(bytes)).await;continue},Some(Ok(Message::Close(_)))|None|Some(Err(_))=>break,_=>continue};
                     let Ok(mut frame)=Frame::decode(&bytes)else{continue};
                     if frame.method==0{
-                        if frame.headers.iter().find(|(key,_)|key=="type").is_some_and(|(_,value)|value=="pong")&&!frame.payload.is_empty(){
-                            if let Ok(value)=parse_json(&String::from_utf8_lossy(&frame.payload)){
+                        if frame.headers.iter().find(|(key,_)|key=="type").is_some_and(|(_,value)|value=="pong")&&!frame.payload.is_empty()
+                            && let Ok(value)=parse_json(&String::from_utf8_lossy(&frame.payload)){
                                 if let Some(interval)=value.get("PingInterval").and_then(JsValue::as_number).filter(|n|n.is_finite()&&*n>=0.0){
                                     config.ping=Duration::from_millis(((interval*1000.0)as u64).max(1));heartbeat=tokio::time::interval(config.ping);heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                                 }
                                 if let Some(count)=value.get("ReconnectCount").and_then(JsValue::as_number).filter(|n|n.is_finite()){config.attempts=count as i64;}
                                 if let Some(interval)=value.get("ReconnectInterval").and_then(JsValue::as_number).filter(|n|n.is_finite()&&*n>=0.0){config.reconnect=Duration::from_millis((interval*1000.0)as u64);}
                                 if let Some(nonce)=value.get("ReconnectNonce").and_then(JsValue::as_number).filter(|n|n.is_finite()&&*n>=0.0){config.nonce=Duration::from_millis((nonce*1000.0)as u64);}
-                            }
-                        }continue;
+                            }continue;
                     }
                     if frame.method!=1||frame.header("type")!=Some("event"){continue;}
                     cache.retain(|_,p|p.started.elapsed()<Duration::from_secs(120));

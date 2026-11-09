@@ -22,9 +22,8 @@ fn replacement_error(error: ReplacementError) -> RequestError {
     RequestError {
         code: error
             .code
-            .unwrap_or_else(|| "gateway_request_failed".into())
-            .into(),
-        message: error.message.into(),
+            .unwrap_or_else(|| "gateway_request_failed".into()),
+        message: error.message,
         details: error.details.map(|d| Box::new(*d)),
         validation: None,
     }
@@ -162,6 +161,17 @@ mod portable_wire_tests {
     use super::*;
     use crate::runtime::turn::gateway::GatewayRequests;
     use pilotdeck_protocol::{JsString, parse_json};
+
+    #[test]
+    fn replacement_error_keeps_lone_surrogates_until_wire_encoding() {
+        let message = JsString::from_utf16(vec![b'x' as u16, 0xd800, b'y' as u16]);
+        let error = replacement_error(ReplacementError::new(message.clone()));
+        assert_eq!(error.message, message);
+        assert_eq!(
+            pilotdeck_protocol::stringify_json(&JsValue::String(error.message)).unwrap(),
+            Some(r#""x\ud800y""#.into()),
+        );
+    }
 
     #[tokio::test]
     async fn archive_wire_roundtrip_conflict_and_busy_match_ts_oracle() {

@@ -37,7 +37,7 @@ pub(crate) mod storage;
 mod watcher;
 mod workspace;
 mod workspace_copy;
-pub(crate) use workspace::{NativeWorkspace, WorkspaceError, WorkspaceHandle};
+pub(crate) use workspace::{NativeWorkspace, WorkspaceError, WorkspaceHandle, WorktreeObserver};
 
 pub(crate) use control::{AlwaysOnControl, StandaloneApply, create_control};
 pub(crate) use cycles::{DiscoveryPlanRecord, DiscoveryPlanStore, WorkCycleRecord, WorkCycleStore};

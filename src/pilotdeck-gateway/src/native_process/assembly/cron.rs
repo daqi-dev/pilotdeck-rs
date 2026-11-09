@@ -156,8 +156,17 @@ pub(super) fn bind_callbacks(
     server: crate::channel::server::ChannelServer,
     runtime: tokio::runtime::Handle,
     shutdown: crate::runtime::network::Cancellation,
+    broadcast: Option<crate::runtime::always_on::event_sink::TurnEventBroadcast>,
 ) -> Result<(), CronError> {
     let callbacks = crate::runtime::cron::CronExecutionCallbacks {
+        on_turn_event: broadcast.map(|broadcast| {
+            Arc::new(
+                move |session: &JsString, channel: &JsString, event: &JsValue| {
+                    broadcast(session, channel, event);
+                    Ok(())
+                },
+            ) as crate::runtime::cron::CronTurnEventHandler
+        }),
         assistant_text_limit_units: Some(
             crate::runtime::cron::NATIVE_CRON_MAX_ASSISTANT_TEXT_UNITS,
         ),
@@ -353,6 +362,7 @@ mod delivery_completion_tests {
             server.clone(),
             tokio::runtime::Handle::current(),
             shutdown.clone(),
+            None,
         )
         .unwrap();
         manager.bind_agent_gateway(Arc::new(Gateway)).unwrap();

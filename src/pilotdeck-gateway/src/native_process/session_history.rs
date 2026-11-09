@@ -16,7 +16,7 @@ use std::{
     fs::{self, File},
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::UNIX_EPOCH,
 };
 const MAX_BYTES: u64 = 50 * 1024 * 1024;
@@ -33,7 +33,7 @@ fn text(v: &JsValue, k: &str) -> String {
 fn string(s: impl Into<JsString>) -> JsValue {
     JsValue::String(s.into())
 }
-fn error(code: &'static str, message: impl Into<String>) -> ReplacementError {
+fn error(code: &'static str, message: impl Into<JsString>) -> ReplacementError {
     ReplacementError {
         code: Some(code.into()),
         message: message.into(),
@@ -46,9 +46,25 @@ fn io(e: impl std::fmt::Display) -> ReplacementError {
 fn request_error(e: crate::runtime::connection::RequestError) -> ReplacementError {
     ReplacementError {
         code: Some(e.code),
-        message: String::from_utf16_lossy(e.message.units()),
+        message: e.message,
         details: e.details,
     }
+}
+fn strict_id(left: &JsValue, right: &JsValue) -> bool {
+    match (left, right) {
+        (JsValue::String(a), JsValue::String(b)) => a == b,
+        (JsValue::Number(a), JsValue::Number(b)) => a == b,
+        (JsValue::Bool(a), JsValue::Bool(b)) => a == b,
+        (JsValue::Null, JsValue::Null) | (JsValue::Undefined, JsValue::Undefined) => true,
+        _ => false,
+    }
+}
+fn prefixed_value(prefix: &str, value: &JsValue) -> Result<JsString, ReplacementError> {
+    let suffix =
+        crate::js_value::property_key(value).map_err(|e| ReplacementError::new(e.message()))?;
+    let mut units = prefix.encode_utf16().collect::<Vec<_>>();
+    units.extend_from_slice(suffix.units());
+    Ok(JsString::from_utf16(units))
 }
 fn set(v: &mut JsValue, k: &str, value: JsValue) {
     if let JsValue::Object(o) = v {
@@ -162,15 +178,21 @@ fn write_new_mode(path: &Path, bytes: &[u8], mode: u32) -> Result<(), Replacemen
     operation
 }
 fn remove(path: &Path) -> Result<(), ReplacementError> {
-    let result = (|| {
-        let (fd, name) = parent(path)?;
-        unlinkat(&fd, name, AtFlags::empty()).map_err(io)
-    })();
-    match result {
-        Err(e) if e.message.contains("No such file or directory") => Ok(()),
-        result => result,
+    let directory = path.parent().ok_or_else(|| io("Artifact has no parent."))?;
+    let fd = match crate::project_files::open_directory_beneath(Path::new("/"), directory) {
+        Ok(fd) => fd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(io(e)),
+    };
+    let name = path
+        .file_name()
+        .ok_or_else(|| io("Artifact has no name."))?;
+    match unlinkat(&fd, name, AtFlags::empty()) {
+        Ok(()) | Err(rustix::io::Errno::NOENT) => Ok(()),
+        Err(e) => Err(io(e)),
     }
 }
+
 fn remove_tree(path: &Path) -> Result<(), ReplacementError> {
     let (fd, name) = parent(path)?;
     crate::project_files::remove_tree_at(&fd, Path::new(name), path).map_err(io)
@@ -219,7 +241,6 @@ struct State {
     fallback: PathBuf,
     owner: SessionOwner,
     instance: String,
-    gate: Mutex<()>,
 }
 /// The composition owner resolves projectKey through its catalog before calling
 /// these storage operations; the fallback is the application-selected project.
@@ -230,7 +251,6 @@ pub(super) fn storage(home: PathBuf, fallback: PathBuf, owner: SessionOwner) -> 
         fallback,
         owner,
         instance: uuid(),
-        gate: Mutex::new(()),
     });
     fn operation(state: &Arc<State>, kind: u8) -> StorageOperation {
         let state = state.clone();
@@ -243,8 +263,12 @@ pub(super) fn storage(home: PathBuf, fallback: PathBuf, owner: SessionOwner) -> 
                 } else {
                     field(&input, "projectKey").clone()
                 };
-                let project = tokio::task::spawn_blocking(move || {
+                let permit = super::methods::session_dir::session_io_permit()
+                    .await
+                    .map_err(request_error)?;
+                let (project, permit) = tokio::task::spawn_blocking(move || {
                     super::project_scope::registered(&home, &requested)
+                        .map(|project| (project, permit))
                 })
                 .await
                 .map_err(io)?
@@ -256,7 +280,20 @@ pub(super) fn storage(home: PathBuf, fallback: PathBuf, owner: SessionOwner) -> 
                 let project_js = JsString::from(project.to_string_lossy().as_ref());
                 // ReplacementCoordinator has already closed/drained before invoking
                 // replace. Its reservation is separate from the owner's IO admission.
-                let guard = if kind == 0 {
+                // Accepted-input commit only unlinks its own sidecars. It must
+                // coexist with the active writer and still join owner drain.
+                let committing = kind == 2 && text(&input, "action") == "commit";
+                let background = if committing {
+                    Some(
+                        state
+                            .owner
+                            .begin_background_io(&key, &project_js)
+                            .map_err(io)?,
+                    )
+                } else {
+                    None
+                };
+                let guard = if kind == 0 || committing {
                     None
                 } else {
                     Some(
@@ -267,13 +304,10 @@ pub(super) fn storage(home: PathBuf, fallback: PathBuf, owner: SessionOwner) -> 
                             .ok_or_else(|| error("SESSION_BUSY", "Session is busy."))?,
                     )
                 };
-                let permit = super::methods::session_dir::session_io_permit()
-                    .await
-                    .map_err(request_error)?;
                 tokio::task::spawn_blocking(move || {
                     let _guard = guard;
+                    let _background = background;
                     let _permit = permit;
-                    let _gate = state.gate.lock().map_err(io)?;
                     let chat = super::methods::session_dir::bounded_chat_dir(&state.home, &project)
                         .map_err(request_error)?;
                     let path = chat.join(format!("{}.jsonl", sanitize_session_id(&key)));
@@ -362,7 +396,7 @@ fn replacement_plan(
     entries: &[JsValue],
     input: &JsValue,
     time: &str,
-) -> Result<(String, usize, Vec<JsValue>), ReplacementError> {
+) -> Result<(JsString, usize, Vec<JsValue>), ReplacementError> {
     let index = entries
         .iter()
         .rposition(|e| text(e, "type") == "accepted_input")
@@ -372,8 +406,14 @@ fn replacement_plan(
                 "No user turn is available to replace.",
             )
         })?;
-    let turn = text(&entries[index], "turnId");
-    if turn != text(input, "expectedTurnId") {
+    let turn = field(&entries[index], "turnId")
+        .as_string()
+        .cloned()
+        .unwrap_or_default();
+    if !strict_id(
+        field(&entries[index], "turnId"),
+        field(input, "expectedTurnId"),
+    ) {
         return Err(error(
             "replace_turn_conflict",
             "The selected message is no longer the latest user turn.",
@@ -456,7 +496,9 @@ fn replace(state: &State, input: &JsValue, chat: &Path, path: &Path) -> Replacem
 }
 fn finalize(input: &JsValue, chat: &Path, path: &Path) -> ReplacementResult {
     let id = text(input, "transactionId");
-    if text(input, "sessionKey").trim().is_empty() || id.trim().is_empty() {
+    if crate::metadata::js_trim(&text(input, "sessionKey")).is_empty()
+        || crate::metadata::js_trim(&id).is_empty()
+    {
         return Err(error(
             "replace_invalid_transaction",
             "sessionKey and transactionId are required.",
@@ -925,39 +967,39 @@ fn fork(
             "Cannot fork an empty session transcript.",
         ));
     }
-    let from = text(input, "fromEntryId");
-    let target = all
+    let target = match all
         .iter()
-        .find(|e| text(e, "entryId") == from)
-        .ok_or_else(|| {
-            error(
+        .find(|e| strict_id(field(e, "entryId"), field(input, "fromEntryId")))
+    {
+        Some(target) => target,
+        None => {
+            return Err(error(
                 "fork_entry_not_found",
-                format!("Transcript entry not found: {from}"),
-            )
-        })?;
+                prefixed_value("Transcript entry not found: ", field(input, "fromEntryId"))?,
+            ));
+        }
+    };
     let preserve = text(target, "type") != "accepted_input"
         || field(input, "resumeAt") == &JsValue::Bool(true);
     let accepted = if !preserve {
         target
     } else {
-        all.iter()
-            .find(|e| {
-                text(e, "type") == "accepted_input" && field(e, "turnId") == field(target, "turnId")
-            })
-            .ok_or_else(|| {
-                error(
+        match all.iter().find(|e| {
+            text(e, "type") == "accepted_input"
+                && strict_id(field(e, "turnId"), field(target, "turnId"))
+        }) {
+            Some(accepted) => accepted,
+            None => {
+                return Err(error(
                     "fork_turn_not_found",
-                    format!(
-                        "No accepted_input found for turn {}",
-                        text(target, "turnId")
-                    ),
-                )
-            })?
+                    prefixed_value("No accepted_input found for turn ", field(target, "turnId"))?,
+                ));
+            }
+        }
     };
     let sequence = |e: &JsValue| field(e, "sequence").as_number().unwrap_or(0.);
     if !matches!(field(input, "resumeDropsTurn"), JsValue::Undefined) {
-        let id = text(input, "resumeDropsTurn");
-        let dropped=all.iter().find(|e|text(e,"entryId")==id&&text(e,"type")=="accepted_input").ok_or_else(||error("resume_drops_turn_invalid","Resume rejected by --resume-drops-turn: the supplied UUID is not an accepted-input entry."))?;
+        let dropped=all.iter().find(|e|strict_id(field(e,"entryId"),field(input,"resumeDropsTurn"))&&text(e,"type")=="accepted_input").ok_or_else(||error("resume_drops_turn_invalid","Resume rejected by --resume-drops-turn: the supplied UUID is not an accepted-input entry."))?;
         if sequence(dropped) <= sequence(target) {
             return Err(error(
                 "resume_drops_turn_invalid",
@@ -971,7 +1013,7 @@ fn fork(
         if discarded.is_empty()
             || discarded
                 .iter()
-                .any(|e| field(e, "turnId") != field(dropped, "turnId"))
+                .any(|e| !strict_id(field(e, "turnId"), field(dropped, "turnId")))
         {
             return Err(error(
                 "resume_drops_turn_mismatch",
@@ -1014,7 +1056,7 @@ fn fork(
                 sequence(e) < sequence(accepted)
             } else {
                 sequence(e) <= sequence(target)
-                    || field(e, "turnId") == field(target, "turnId")
+                    || strict_id(field(e, "turnId"), field(target, "turnId"))
                         && matches!(text(e, "type").as_str(), "turn_result" | "file_artifacts")
             }
         })
@@ -1167,8 +1209,8 @@ fn read_journal(path: &Path, id: &str) -> Option<JsValue> {
     let version = field(&value, "version").as_number()?;
     if !matches!(version, 1. | 2.)
         || text(&value, "transactionId") != id
-        || text(&value, "sessionKey").trim().is_empty()
-        || text(&value, "replacementTurnId").trim().is_empty()
+        || crate::metadata::js_trim(&text(&value, "sessionKey")).is_empty()
+        || crate::metadata::js_trim(&text(&value, "replacementTurnId")).is_empty()
         || field(&value, "preparedAt").as_string().is_none()
     {
         return None;
@@ -1176,7 +1218,7 @@ fn read_journal(path: &Path, id: &str) -> Option<JsValue> {
     if version == 2. {
         let owner = field(&value, "owner");
         let pid = field(owner, "pid").as_number()?;
-        if text(owner, "instanceId").trim().is_empty()
+        if crate::metadata::js_trim(&text(owner, "instanceId")).is_empty()
             || pid <= 0.
             || pid.fract() != 0.
             || pid > 9_007_199_254_740_991.
@@ -1258,10 +1300,11 @@ fn recover_chats(chats: &[PathBuf]) -> RecoveryReport {
             {
                 return Ok(0);
             }
-            let current = match read_bytes(&path) {
-                Ok(body) => accepted_ids(&body),
-                Err(_) => HashSet::new(),
-            };
+            // A read failure is not evidence that replacement input is absent.
+            // In particular our native size bound must never turn a committed
+            // large transcript (or a deleted/unreadable path) into a rollback.
+            // Preserve current data and every sidecar for explicit recovery.
+            let current = accepted_ids(&read_bytes(&path)?);
             let committed = if let Some(record) = &latest.record {
                 current.contains(&text(record, "replacementTurnId"))
             } else {

@@ -137,7 +137,7 @@ async fn imap_connection(socket: tokio::net::TcpStream, messages: Arc<Mutex<Vec<
         if read.read_line(&mut line).await.unwrap_or(0) == 0 {
             return;
         }
-        let parts: Vec<_> = line.trim_end().split_whitespace().collect();
+        let parts: Vec<_> = line.split_whitespace().collect();
         if parts.len() < 2 {
             continue;
         }
@@ -223,12 +223,13 @@ fn decode_mail(raw: &str) -> (String, String) {
         let mut out = Vec::new();
         let mut i = 0;
         while i < b.len() {
-            if b[i] == b'=' && i + 2 < b.len() {
-                if let Ok(n) = u8::from_str_radix(&folded[i + 1..i + 3], 16) {
-                    out.push(n);
-                    i += 3;
-                    continue;
-                }
+            if b[i] == b'='
+                && i + 2 < b.len()
+                && let Ok(n) = u8::from_str_radix(&folded[i + 1..i + 3], 16)
+            {
+                out.push(n);
+                i += 3;
+                continue;
             }
             out.push(b[i]);
             i += 1;

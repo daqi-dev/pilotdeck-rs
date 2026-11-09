@@ -807,7 +807,7 @@ mod tests {
                 panic!("entries")
             };
             assert_eq!(
-                &project_archive(&entries).unwrap(),
+                &project_archive(entries).unwrap(),
                 case.get("value").unwrap(),
                 "{:?}",
                 case.get("name")

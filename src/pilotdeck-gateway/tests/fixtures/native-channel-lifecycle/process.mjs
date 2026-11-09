@@ -12,7 +12,7 @@ const require=createRequire(join(process.env.PDRS_BASELINE,'package.json'));
 const WebSocket=require('ws');
 const [binary,sidecar,out]=process.argv.slice(2).map(p=>resolve(p));
 await mkdir(out,{recursive:true});
-const kind=process.env.PDRS_CHANNEL??'matrix';assert(['matrix','signal','mattermost','homeassistant','whatsapp','email'].includes(kind));
+const kind=process.env.PDRS_CHANNEL??'matrix';assert(['matrix','signal','mattermost','homeassistant','whatsapp','email','bluebubbles'].includes(kind));
 const probeSha=createHash('sha256').update(await readFile(fileURLToPath(import.meta.url))).digest('hex');
 const rows=[]; let child,ws; const sockets=new Set(); let generation=0;
 const deadline=Date.now()+90000;
@@ -28,6 +28,7 @@ let sent=new Set();let activeReceivers=0;
 const channel=createServer(async(req,res)=>{
  let data='';for await(const chunk of req)data+=chunk;
  const url=new URL(req.url,'http://loopback');rows.push({channel:{method:req.method,path:url.pathname,body:data}});
+ if(kind==='bluebubbles'&&url.pathname==='/api/v1/message'){res.setHeader('content-type','application/json');return res.end(JSON.stringify({data:[{guid:'event-'+generation,dateCreated:Date.now(),isFromMe:false,chatGuid:'room',text:'channel-lifecycle-input-'+generation}]}));}
  if(kind==='whatsapp'&&url.pathname==='/messages'){res.setHeader('content-type','application/json');return res.end(JSON.stringify({messages:[{id:'event-'+generation,chatId:'room',text:'channel-lifecycle-input-'+generation}]}));}
  if(kind==='signal'&&url.pathname.startsWith('/v1/receive/')){activeReceivers++;res.once('close',()=>{activeReceivers--;rows.push({receiveClosed:kind});});res.setHeader('content-type','text/event-stream');res.write('data: '+JSON.stringify({envelope:{source:'+human',dataMessage:{message:'channel-lifecycle-input-'+generation}}})+'\r\n\n');return;}
  res.setHeader('content-type','application/json');
@@ -67,9 +68,9 @@ if(kind==='whatsapp'){
  await writeFile(join(home,'lifecycle-bridge-target'),'http://127.0.0.1:'+channel.address().port,{flag:'wx'});
 }
 const email=kind==='email'?await (await import('./email-mock.mjs')).startEmail(()=>generation,rows,sockets):null;
-const config=enabled=>kind==='matrix'?matrixConfig(enabled):kind==='email'?base+'adapters:\n  email:\n    enabled: '+enabled+'\n    extra:\n'+email.config:kind==='whatsapp'?base+'adapters:\n  whatsapp:\n    enabled: '+enabled+'\n    extra:\n      bridgePath: '+join(fileURLToPath(new URL('.',import.meta.url)),'bridge.mjs')+'\n      bridgeUrl: http://127.0.0.1:'+bridgePort+'\n':kind==='homeassistant'?base+'adapters:\n  homeassistant:\n    enabled: '+enabled+'\n    token: mock-token\n    extra:\n      url: http://127.0.0.1:'+channel.address().port+'\n':base+'adapters:\n  '+kind+':\n    enabled: '+enabled+'\n    token: mock-token\n    extra:\n'+(kind==='signal'?'      restUrl: http://127.0.0.1:'+channel.address().port+'\n      account: "+123"\n':'      serverUrl: http://127.0.0.1:'+channel.address().port+'\n');
+const config=enabled=>kind==='matrix'?matrixConfig(enabled):kind==='bluebubbles'?base+'adapters:\n  bluebubbles:\n    enabled: '+enabled+'\n    extra:\n      serverUrl: http://127.0.0.1:'+channel.address().port+'\n      password: mock-only\n':kind==='email'?base+'adapters:\n  email:\n    enabled: '+enabled+'\n    extra:\n'+email.config:kind==='whatsapp'?base+'adapters:\n  whatsapp:\n    enabled: '+enabled+'\n    extra:\n      bridgePath: '+join(fileURLToPath(new URL('.',import.meta.url)),'bridge.mjs')+'\n      bridgeUrl: http://127.0.0.1:'+bridgePort+'\n':kind==='homeassistant'?base+'adapters:\n  homeassistant:\n    enabled: '+enabled+'\n    token: mock-token\n    extra:\n      url: http://127.0.0.1:'+channel.address().port+'\n':base+'adapters:\n  '+kind+':\n    enabled: '+enabled+'\n    token: mock-token\n    extra:\n'+(kind==='signal'?'      restUrl: http://127.0.0.1:'+channel.address().port+'\n      account: "+123"\n':'      serverUrl: http://127.0.0.1:'+channel.address().port+'\n');
 const path=join(home,'pilotdeck.yaml');await writeFile(path,config(true),{flag:'wx'});const token=join(home,'token');await writeFile(token,'channel-lifecycle-token\n',{flag:'wx'});
-let stderr='';let exit; const outbound=()=>kind==='email'?rows.filter(r=>r.mailSent).map(r=>({channel:{body:JSON.stringify(r.mailSent)}})):kind==='homeassistant'?rows.filter(r=>r.haFrame?.type==='call_service').map(r=>({channel:{body:JSON.stringify(r.haFrame)}})):rows.filter(r=>(kind==='matrix'?r.channel?.path.includes('/send/m.room.message/'):kind==='signal'?r.channel?.path==='/v2/send':kind==='whatsapp'?r.channel?.path==='/send':r.channel?.path==='/posts'));
+let stderr='';let exit; const outbound=()=>kind==='email'?rows.filter(r=>r.mailSent).map(r=>({channel:{body:JSON.stringify(r.mailSent)}})):kind==='homeassistant'?rows.filter(r=>r.haFrame?.type==='call_service').map(r=>({channel:{body:JSON.stringify(r.haFrame)}})):rows.filter(r=>(kind==='bluebubbles'?r.channel?.path==='/api/v1/message/text':kind==='matrix'?r.channel?.path.includes('/send/m.room.message/'):kind==='signal'?r.channel?.path==='/v2/send':kind==='whatsapp'?r.channel?.path==='/send':r.channel?.path==='/posts'));
 try{
  child=spawn(binary,['--native','--home',home,'--project',project,'--listen','127.0.0.1:0','--token-file',token,'--sidecar',sidecar,'--drain-ms','1500'],{cwd:project,env:{PATH:process.env.PATH,HOME:home,PILOT_HOME:home,LANG:'en_US.UTF-8'},stdio:['ignore','pipe','pipe']});
  exit=new Promise(r=>child.once('exit',(code,signal)=>r({code,signal})));child.stderr.on('data',b=>stderr+=b);child.on('error',e=>stderr+=String(e));
@@ -83,10 +84,10 @@ try{
  assert(rows.some(r=>r.provider?.stream&&JSON.stringify(r.provider).includes('channel-lifecycle-input-0')),'provider saw channel input');
  async function reload(id,enabled){await writeFile(path,config(enabled));ws.send(JSON.stringify({type:'request',id,method:'reload_config',params:{}}));await wait(()=>frames.some(f=>f.type==='response'&&f.id===id),'reload response');assert.equal(frames.find(f=>f.type==='response'&&f.id===id).ok,true);}
  await reload('disable',false);const count=outbound().length;
- const receives=()=>kind==='email'?rows.filter(r=>r.mailWire?.protocol==='imap'&&r.mailWire.line.includes('SEARCH')).length:rows.filter(r=>r.channel&&(kind==='matrix'?r.channel.path.endsWith('/sync'):kind==='signal'?r.channel.path.startsWith('/v1/receive/'):kind==='whatsapp'?r.channel.path==='/messages':false)).length;
+ const receives=()=>kind==='email'?rows.filter(r=>r.mailWire?.protocol==='imap'&&r.mailWire.line.includes('SEARCH')).length:rows.filter(r=>r.channel&&(kind==='matrix'?r.channel.path.endsWith('/sync'):kind==='signal'?r.channel.path.startsWith('/v1/receive/'):kind==='whatsapp'?r.channel.path==='/messages':kind==='bluebubbles'?r.channel.path==='/api/v1/message':false)).length;
  // Fixed TS reload queues adapter reconciliation; RPC completion is not a barrier.
  let previous=receives();let stable=Date.now();const stopDeadline=Date.now()+10000;
- while(Date.now()-stable<500||(!['matrix','whatsapp','email'].includes(kind)&&activeReceivers!==0)){
+ while(Date.now()-stable<(kind==='bluebubbles'?3000:500)||(!['matrix','whatsapp','email','bluebubbles'].includes(kind)&&activeReceivers!==0)){
   assert(Date.now()<stopDeadline,'queued disable must stop inbound transport within 10 seconds');
   await new Promise(r=>setTimeout(r,50));const current=receives();if(current!==previous){stable=Date.now();previous=current;}
  }
@@ -96,7 +97,7 @@ try{
  await wait(()=>outbound().some(r=>r.channel.body.includes('channel-lifecycle-output-1')),'reloaded channel enters actual A7 and replies');
  ws.close();child.kill('SIGTERM');const stopped=await Promise.race([exit,new Promise((_,reject)=>setTimeout(()=>reject(Error('shutdown timeout')),10000))]);
  assert.equal(stopped.code,0,'graceful native shutdown');
- const after=rows.length;await new Promise(r=>setTimeout(r,200));assert.equal(rows.length,after,'no transport work after shutdown');
+ const after=rows.length;await new Promise(r=>setTimeout(r,kind==='bluebubbles'?3000:200));assert.equal(rows.length,after,'no transport work after shutdown');
  rows.push({result:'PASS',scope:kind+' real Server/A7 outbound/reload/shutdown',formalAcceptance:false,environment:{node:process.version,icu:process.versions.icu}});
 }finally{
  ws?.terminate();if(child&&child.exitCode===null)child.kill('SIGTERM');

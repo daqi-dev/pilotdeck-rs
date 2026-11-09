@@ -73,6 +73,8 @@ pub(crate) struct NativeWorkspaceDiff {
     pub file_count: usize,
     pub truncated: bool,
 }
+pub(crate) type WorktreeObserver = Arc<dyn Fn(&str, JsValue) + Send + Sync>;
+
 type PreparedWorkspace = (PathBuf, JsObject, Arc<File>, Option<Arc<File>>);
 type Done = watch::Receiver<Option<Result<(), WorkspaceError>>>;
 struct Jobs {
@@ -87,6 +89,7 @@ struct Inner {
     env: Option<Vec<(JsString, JsString)>>,
     jobs: Mutex<Jobs>,
     serial: tokio::sync::Mutex<()>,
+    worktree_observer: Option<WorktreeObserver>,
 }
 #[derive(Clone)]
 pub(crate) struct NativeWorkspace(Arc<Inner>);
@@ -115,8 +118,23 @@ impl NativeWorkspace {
                 running: Vec::new(),
             }),
             serial: tokio::sync::Mutex::new(()),
+            worktree_observer: None,
         })))
     }
+    /// Set on a freshly constructed owner before it is shared.
+    pub(crate) fn with_worktree_observer(mut self, observer: WorktreeObserver) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("fresh workspace owner")
+            .worktree_observer = Some(observer);
+        self
+    }
+
+    fn notify_worktree(&self, name: &str, payload: JsValue) {
+        if let Some(observer) = &self.0.worktree_observer {
+            observer(name, payload);
+        }
+    }
+
     async fn owned<T: Send + 'static>(
         &self,
         operation: impl FnOnce(
@@ -361,6 +379,12 @@ impl NativeWorkspace {
                 ));
             }
         };
+        if selected == "git-worktree" {
+            let mut payload = JsObject::new();
+            payload.insert("runId".into(), JsValue::String(run_id.clone()));
+            payload.insert("cwd".into(), cwd.to_string_lossy().as_ref().into());
+            self.notify_worktree("worktree_created", JsValue::Object(payload));
+        }
         Ok(WorkspaceHandle {
             run_id,
             project_key: self.0.paths.project_key.as_str().into(),
@@ -908,6 +932,11 @@ impl NativeWorkspace {
         }
         self.owned(move |owner| {
             Box::pin(async move {
+                if handle.strategy == "git-worktree" {
+                    let mut payload = JsObject::new();
+                    payload.insert("cwd".into(), JsValue::String(handle.cwd.clone()));
+                    owner.notify_worktree("worktree_removed", JsValue::Object(payload));
+                }
                 let result: Result<(), WorkspaceError> = async {
                     let cwd = native_path(&handle.cwd)?;
                     let paths = owner.0.paths.clone();

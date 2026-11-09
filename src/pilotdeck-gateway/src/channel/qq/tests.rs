@@ -75,19 +75,20 @@ async fn oauth_native_ws_group_and_c2c_use_one_gateway_and_passive_receipts() {
         let mut tasks = JoinSet::new();
         loop {
             tokio::select! {
-             accepted=listener.accept()=>{let(mut socket,_)=accepted.unwrap();let sends=record.clone();let tokens=token_count.clone();let closed=close_signal.clone();tasks.spawn(async move{
-              let mut peek=vec![0;16384];let headers=loop{let n=socket.peek(&mut peek).await.unwrap();if n==0{return;}if let Some(end)=peek[..n].windows(4).position(|v|v==b"\r\n\r\n"){break String::from_utf8(peek[..end+4].to_vec()).unwrap();}tokio::task::yield_now().await;};let path=headers.lines().next().unwrap().split_whitespace().nth(1).unwrap();
-              if path=="/socket"{
-               let mut ws=tokio_tungstenite::accept_async(socket).await.unwrap();ws.send(Message::Text(r#"{"op":10,"d":{"heartbeat_interval":1000}}"#.into())).await.unwrap();let frame=ws.next().await.unwrap().unwrap();let Message::Text(frame)=frame else{panic!("QQ identify")};let identify=pilotdeck_protocol::parse_json(frame.as_str()).unwrap();assert_eq!(identify.get("op"),Some(&JsValue::Number(2.0)));assert_eq!(identify.get("d").and_then(|d|d.get("token")),Some(&JsValue::from("QQBot access")));assert_eq!(identify.get("d").and_then(|d|d.get("intents")),Some(&JsValue::Number(33_554_432.0)));
-               for raw in [r#"{"op":0,"s":1,"t":"READY","d":{"session_id":"session"}}"#,r#"{"op":0,"s":2,"t":"GROUP_AT_MESSAGE_CREATE","d":{"id":"g1","group_openid":"blocked","author":{"member_openid":"u"},"content":"hi"}}"#,r#"{"op":0,"s":3,"t":"GROUP_AT_MESSAGE_CREATE","d":{"id":"g2","group_openid":"g","author":{"member_openid":"u"},"content":"/ask hello"}}"#,r#"{"op":0,"s":4,"t":"C2C_MESSAGE_CREATE","d":{"id":"c1","author":{"user_openid":"u2"},"content":"/new"}}"#]{ws.send(Message::Text(raw.into())).await.unwrap();}
-               while let Some(frame)=ws.next().await{match frame{Ok(Message::Close(_))=>{let _=ws.close(None).await;closed.notify_one();return;},Ok(Message::Text(_))=>(),Err(_)=>return,_=>()}}
-              }else{
-               let mut header=vec![0;headers.len()];socket.read_exact(&mut header).await.unwrap();let n:usize=headers.lines().find_map(|l|l.to_ascii_lowercase().strip_prefix("content-length:").map(|s|s.trim().parse().unwrap())).unwrap_or(0);let mut body=vec![0;n];socket.read_exact(&mut body).await.unwrap();
-               let response=if path=="/token"{tokens.fetch_add(1,Ordering::SeqCst);let body=pilotdeck_protocol::parse_json(&String::from_utf8(body).unwrap()).unwrap();assert_eq!(body.get("appId"),Some(&JsValue::from("app")));assert_eq!(body.get("clientSecret"),Some(&JsValue::from("fixture")));r#"{"access_token":"access","expires_in":"3600"}"#.to_owned()}else{assert!(headers.to_ascii_lowercase().contains("authorization: qqbot access"));if path=="/gateway"{format!(r#"{{"url":"ws://{addr}/socket"}}"#)}else{sends.lock().unwrap().push((path.to_owned(),pilotdeck_protocol::parse_json(&String::from_utf8(body).unwrap()).unwrap()));"{}".into()}};
-               let _=socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",response.len(),response).as_bytes()).await;
-              }
-             });},Some(_)=tasks.join_next(),if !tasks.is_empty()=>{},
-            }
+                         accepted=listener.accept()=>{let(mut socket,_)=accepted.unwrap();let sends=record.clone();let tokens=token_count.clone();let closed=close_signal.clone();tasks.spawn(async move{
+                          let mut peek=vec![0;16384];let headers=loop{let n=socket.peek(&mut peek).await.unwrap();if n==0{return;}
+            if let Some(end)=peek[..n].windows(4).position(|v|v==b"\r\n\r\n"){break String::from_utf8(peek[..end+4].to_vec()).unwrap();}tokio::task::yield_now().await;};let path=headers.lines().next().unwrap().split_whitespace().nth(1).unwrap();
+                          if path=="/socket"{
+                           let mut ws=tokio_tungstenite::accept_async(socket).await.unwrap();ws.send(Message::Text(r#"{"op":10,"d":{"heartbeat_interval":1000}}"#.into())).await.unwrap();let frame=ws.next().await.unwrap().unwrap();let Message::Text(frame)=frame else{panic!("QQ identify")};let identify=pilotdeck_protocol::parse_json(frame.as_str()).unwrap();assert_eq!(identify.get("op"),Some(&JsValue::Number(2.0)));assert_eq!(identify.get("d").and_then(|d|d.get("token")),Some(&JsValue::from("QQBot access")));assert_eq!(identify.get("d").and_then(|d|d.get("intents")),Some(&JsValue::Number(33_554_432.0)));
+                           for raw in [r#"{"op":0,"s":1,"t":"READY","d":{"session_id":"session"}}"#,r#"{"op":0,"s":2,"t":"GROUP_AT_MESSAGE_CREATE","d":{"id":"g1","group_openid":"blocked","author":{"member_openid":"u"},"content":"hi"}}"#,r#"{"op":0,"s":3,"t":"GROUP_AT_MESSAGE_CREATE","d":{"id":"g2","group_openid":"g","author":{"member_openid":"u"},"content":"/ask hello"}}"#,r#"{"op":0,"s":4,"t":"C2C_MESSAGE_CREATE","d":{"id":"c1","author":{"user_openid":"u2"},"content":"/new"}}"#]{ws.send(Message::Text(raw.into())).await.unwrap();}
+                           while let Some(frame)=ws.next().await{match frame{Ok(Message::Close(_))=>{let _=ws.close(None).await;closed.notify_one();return;},Ok(Message::Text(_))=>(),Err(_)=>return,_=>()}}
+                          }else{
+                           let mut header=vec![0;headers.len()];socket.read_exact(&mut header).await.unwrap();let n:usize=headers.lines().find_map(|l|l.to_ascii_lowercase().strip_prefix("content-length:").map(|s|s.trim().parse().unwrap())).unwrap_or(0);let mut body=vec![0;n];socket.read_exact(&mut body).await.unwrap();
+                           let response=if path=="/token"{tokens.fetch_add(1,Ordering::SeqCst);let body=pilotdeck_protocol::parse_json(&String::from_utf8(body).unwrap()).unwrap();assert_eq!(body.get("appId"),Some(&JsValue::from("app")));assert_eq!(body.get("clientSecret"),Some(&JsValue::from("fixture")));r#"{"access_token":"access","expires_in":"3600"}"#.to_owned()}else{assert!(headers.to_ascii_lowercase().contains("authorization: qqbot access"));if path=="/gateway"{format!(r#"{{"url":"ws://{addr}/socket"}}"#)}else{sends.lock().unwrap().push((path.to_owned(),pilotdeck_protocol::parse_json(&String::from_utf8(body).unwrap()).unwrap()));"{}".into()}};
+                           let _=socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",response.len(),response).as_bytes()).await;
+                          }
+                         });},Some(_)=tasks.join_next(),if !tasks.is_empty()=>{},
+                        }
         }
     });
     let gateway = Arc::new(Gateway::default());

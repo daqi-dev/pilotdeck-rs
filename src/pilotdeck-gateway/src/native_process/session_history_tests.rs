@@ -50,7 +50,7 @@ fn recovery_restores_exact_backup_when_replacement_never_was_accepted() {
     let scratch = Scratch::new();
     let original = b"{\"type\":\"accepted_input\",\"turnId\":\"original\"}\n\n";
     let (path, backup, journal) = transaction(&scratch.0, original, b"", None);
-    let report = recover_chats(&[scratch.0.clone()]);
+    let report = recover_chats(std::slice::from_ref(&scratch.0));
     assert_eq!(report.rolled_back, 1);
     assert!(report.failures.is_empty());
     assert_eq!(fs::read(path).unwrap(), original);
@@ -62,7 +62,7 @@ fn recovery_commits_existing_new_turn_without_replacing_its_data() {
     let scratch = Scratch::new();
     let current = b"{\"type\":\"accepted_input\",\"turnId\":\"new-turn\"}\n";
     let (path, backup, journal) = transaction(&scratch.0, b"original", current, None);
-    let report = recover_chats(&[scratch.0.clone()]);
+    let report = recover_chats(std::slice::from_ref(&scratch.0));
     assert_eq!(report.committed, 1);
     assert_eq!(fs::read(path).unwrap(), current);
     assert!(!backup.exists());
@@ -76,7 +76,7 @@ fn recovery_preserves_live_owner_and_reports_missing_backup() {
         ("pid", JsValue::Number(std::process::id() as f64)),
     ]);
     let (path, backup, journal) = transaction(&scratch.0, b"original", b"current", Some(owner));
-    let report = recover_chats(&[scratch.0.clone()]);
+    let report = recover_chats(std::slice::from_ref(&scratch.0));
     assert_eq!(report.skipped, 1);
     assert!(backup.exists() && journal.exists());
     let mut record = read_journal(
@@ -93,7 +93,7 @@ fn recovery_preserves_live_owner_and_reports_missing_backup() {
     record = omit(&record, &["owner"]);
     fs::write(&journal, body(&[record]).unwrap()).unwrap();
     fs::remove_file(&backup).unwrap();
-    let report = recover_chats(&[scratch.0.clone()]);
+    let report = recover_chats(std::slice::from_ref(&scratch.0));
     assert_eq!(report.failures.len(), 1);
     assert!(journal.exists());
     assert_eq!(fs::read(path).unwrap(), b"current");
@@ -104,7 +104,7 @@ fn finalize_rollback_restores_original_raw_bytes_and_commit_keeps_new_bytes() {
     let (path, backup, journal) = transaction(&scratch.0, b"original\n\n", b"rewritten\n", None);
     let id = read_journal(
         &journal,
-        &journal
+        journal
             .file_name()
             .unwrap()
             .to_string_lossy()
@@ -245,7 +245,7 @@ fn recovery_does_not_wrap_an_out_of_range_owner_pid_into_a_live_pid() {
         ("pid", JsValue::Number(4_294_967_297.)),
     ]);
     let (path, _, _) = transaction(&scratch.0, b"original", b"prepared", Some(owner));
-    let report = recover_chats(&[scratch.0.clone()]);
+    let report = recover_chats(std::slice::from_ref(&scratch.0));
     assert_eq!(report.rolled_back, 1);
     assert_eq!(fs::read(path).unwrap(), b"original");
 }
@@ -337,10 +337,80 @@ fn recovery_ignores_malformed_unicode_artifact_names_without_slicing_inside_a_co
     let name = format!(".session汉{}.replace.json", "a".repeat(34));
     let path = scratch.0.join(name);
     fs::write(&path, b"{}").unwrap();
-    let report = recover_chats(&[scratch.0.clone()]);
+    let report = recover_chats(std::slice::from_ref(&scratch.0));
     assert!(report.failures.is_empty());
     assert_eq!(report.cleaned, 0);
     assert_eq!(fs::read(path).unwrap(), b"{}");
+}
+#[test]
+fn recovery_preserves_new_current_and_all_sidecars_when_native_read_bound_is_exceeded() {
+    let scratch = Scratch::new();
+    let first = b"{\"type\":\"accepted_input\",\"turnId\":\"new-turn\"}\n";
+    let (path, backup, journal) = transaction(&scratch.0, b"old-backup", first, None);
+    File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(MAX_BYTES + 1)
+        .unwrap();
+    let before = fs::metadata(&path).unwrap();
+    let backup_bytes = fs::read(&backup).unwrap();
+    let journal_bytes = fs::read(&journal).unwrap();
+    let report = recover_chats(std::slice::from_ref(&scratch.0));
+    assert_eq!(report.failures.len(), 1);
+    assert_eq!(report.rolled_back, 0);
+    assert_eq!(report.committed, 0);
+    assert_eq!(report.cleaned, 0);
+    assert_eq!(fs::metadata(&path).unwrap().len(), before.len());
+    let mut observed = vec![0; first.len()];
+    File::open(&path)
+        .unwrap()
+        .read_exact(&mut observed)
+        .unwrap();
+    assert_eq!(observed, first);
+    assert_eq!(fs::read(&backup).unwrap(), backup_bytes);
+    assert_eq!(fs::read(&journal).unwrap(), journal_bytes);
+}
+#[test]
+fn recovery_does_not_resurrect_a_missing_current_transcript() {
+    let scratch = Scratch::new();
+    let (path, backup, journal) =
+        transaction(&scratch.0, b"deleted-conversation", b"current", None);
+    fs::remove_file(&path).unwrap();
+    let backup_bytes = fs::read(&backup).unwrap();
+    let journal_bytes = fs::read(&journal).unwrap();
+    let report = recover_chats(std::slice::from_ref(&scratch.0));
+    assert_eq!(report.failures.len(), 1);
+    assert_eq!(report.rolled_back, 0);
+    assert!(!path.exists());
+    assert_eq!(fs::read(backup).unwrap(), backup_bytes);
+    assert_eq!(fs::read(journal).unwrap(), journal_bytes);
+}
+#[test]
+fn error_message_and_requested_ids_preserve_raw_utf16_units() {
+    let value = JsValue::String(JsString::from_utf16(vec![0xd800]));
+    let message = prefixed_value("Transcript entry not found: ", &value).unwrap();
+    let error = error("fork_entry_not_found", message);
+    let mut expected = "Transcript entry not found: "
+        .encode_utf16()
+        .collect::<Vec<_>>();
+    expected.push(0xd800);
+    assert_eq!(error.message.units(), expected);
+    let other = JsValue::String(JsString::from_utf16(vec![0xdc00]));
+    assert!(!strict_id(&value, &other));
+    assert_eq!(
+        text(&object([("id", value.clone())]), "id"),
+        text(&object([("id", other)]), "id"),
+        "lossy display collides but identity must not"
+    );
+    let request = crate::runtime::connection::RequestError {
+        code: "PROJECT_NOT_FOUND".into(),
+        message: JsString::from_utf16(vec![0xd800, 0x0041]),
+        details: None,
+        validation: None,
+    };
+    let converted = request_error(request);
+    assert_eq!(converted.message.units(), [0xd800, 0x0041]);
 }
 #[cfg(unix)]
 #[test]

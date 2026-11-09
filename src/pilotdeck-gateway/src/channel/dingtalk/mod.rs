@@ -44,6 +44,8 @@ fn obj(rows: impl IntoIterator<Item = (&'static str, JsValue)>) -> JsValue {
     }
     JsValue::Object(o)
 }
+pub type WebhookRoute = Arc<dyn Fn(&str) -> String + Send + Sync>;
+
 #[derive(Default)]
 pub struct DingTalkOptions {
     pub client_id: Option<JsString>,
@@ -53,7 +55,7 @@ pub struct DingTalkOptions {
     /// Default production endpoint; override only for loopback transport tests.
     pub stream_endpoint: Option<String>,
     /// Tests preserve origin validation on the original webhook, then route to a loopback mock.
-    pub webhook_route: Option<Arc<dyn Fn(&str) -> String + Send + Sync>>,
+    pub webhook_route: Option<WebhookRoute>,
 }
 impl DingTalkOptions {
     pub fn from_object(o: &JsObject) -> Self {
@@ -68,7 +70,7 @@ struct Shared {
     id: String,
     secret: String,
     endpoint: String,
-    route: Option<Arc<dyn Fn(&str) -> String + Send + Sync>>,
+    route: Option<WebhookRoute>,
     mapper: Mutex<DingTalkSessionMapper>,
     interaction: Arc<dyn InteractionPort>,
     deps: Mutex<ChannelStartDeps>,
@@ -192,12 +194,11 @@ impl Shared {
             }
             seen.0.insert(id.clone());
             seen.1.push_back(id);
-            if seen.0.len() > 2000 {
-                if let Some(first) = seen.1.pop_front() {
-                    if !first.is_empty() {
-                        seen.0.remove(&first);
-                    }
-                }
+            if seen.0.len() > 2000
+                && let Some(first) = seen.1.pop_front()
+                && !first.is_empty()
+            {
+                seen.0.remove(&first);
             }
         }
         let text = extract_text(&data);
@@ -216,12 +217,11 @@ impl Shared {
         let url = js(data.get("sessionWebhook"));
         if shown(&url).starts_with("https://api.dingtalk.com/") {
             let mut w = lock(&self.webhooks);
-            if w.0.len() >= 500 {
-                if let Some(k) = w.1.pop_front() {
-                    if !k.is_empty() {
-                        w.0.remove(&k);
-                    }
-                }
+            if w.0.len() >= 500
+                && let Some(k) = w.1.pop_front()
+                && !k.is_empty()
+            {
+                w.0.remove(&k);
             }
             if !w.0.contains_key(&chat) {
                 w.1.push_back(chat.clone());

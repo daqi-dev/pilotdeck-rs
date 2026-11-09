@@ -20,12 +20,16 @@ pub(crate) fn standalone_factory(
     options: super::super::super::Options,
     env: crate::config::Env,
     gateway: Arc<NativeAlwaysOnGatewayBody>,
+    broadcast: Option<crate::runtime::always_on::event_sink::TurnEventBroadcast>,
+    worktree_observer: Option<crate::runtime::always_on::WorktreeObserver>,
 ) -> Arc<dyn StandaloneApply> {
     new_standalone(Arc::new(Factory {
         project,
         options,
         env,
         gateway,
+        broadcast,
+        worktree_observer,
     }))
 }
 struct Factory {
@@ -33,6 +37,8 @@ struct Factory {
     options: super::super::super::Options,
     env: crate::config::Env,
     gateway: Arc<NativeAlwaysOnGatewayBody>,
+    broadcast: Option<crate::runtime::always_on::event_sink::TurnEventBroadcast>,
+    worktree_observer: Option<crate::runtime::always_on::WorktreeObserver>,
 }
 fn failure(message: impl Into<String>) -> ControlError {
     ControlError {
@@ -89,10 +95,14 @@ impl StandaloneProjectFactory for Factory {
                 ),
             )
             .map_err(|error| failure(error.to_string()))?;
+            let workspace = match &self.worktree_observer {
+                Some(observer) => workspace.with_worktree_observer(observer.clone()),
+                None => workspace,
+            };
             let sink = Arc::new(PhaseEventSink::new(
                 project.clone(),
                 DiscoveryReportStore::new(paths.clone()),
-                None,
+                self.broadcast.clone(),
                 Arc::new(|message| eprintln!("{message}")),
             ));
             Ok(StandaloneProject {

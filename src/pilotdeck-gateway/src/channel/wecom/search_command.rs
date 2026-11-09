@@ -189,10 +189,8 @@ pub(crate) async fn execute(
     }
     put(&mut params, "query", terms.join(" "));
     let include_project = all || project.is_none();
-    if !all {
-        if let Some(project) = project {
-            params.insert("projectRoot".into(), JsValue::String(project));
-        }
+    if !all && let Some(project) = project {
+        params.insert("projectRoot".into(), JsValue::String(project));
     }
     let answer = match search.search(JsValue::Object(params)).await {
         Ok(result) => format_result(&result, include_project),

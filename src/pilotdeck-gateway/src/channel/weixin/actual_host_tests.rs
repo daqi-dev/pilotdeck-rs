@@ -259,10 +259,10 @@ async fn weixin_actual_server_a7_permissions_elicitation_commands_new_and_shutdo
             let p = entry.unwrap().path();
             if p.is_dir() {
                 collect(&p, out)
-            } else if p.extension().is_some_and(|e| e == "jsonl") {
-                if let Ok(s) = std::fs::read_to_string(p) {
-                    out.push_str(&s)
-                }
+            } else if p.extension().is_some_and(|e| e == "jsonl")
+                && let Ok(s) = std::fs::read_to_string(p)
+            {
+                out.push_str(&s)
             }
         }
     }

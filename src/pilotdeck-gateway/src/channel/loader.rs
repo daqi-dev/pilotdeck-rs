@@ -358,8 +358,46 @@ fn build_options(key: &str, cfg: &JsValue, options: &LoadEnabledChannelsOptions)
         "webhook" => {
             insert(&mut built, "port", extra_field(cfg, "port"));
             insert(&mut built, "secret", extra_field(cfg, "secret"));
+            // The fixed TS loader drops configured routes even though its
+            // adapter implements them. Preserve the absent shape, but carry
+            // explicitly configured routes to the real HTTP consumer.
+            // A8.3-CH-WEBHOOK-LOADER-ROUTES-001 records this narrow repair.
+            let routes = extra_field(cfg, "routes");
+            if !matches!(routes, JsValue::Undefined) {
+                insert(&mut built, "routes", routes);
+            }
         }
         _ => unreachable!("key comes from CHANNEL_LOADER_KEYS"),
     }
     built
+}
+
+#[cfg(test)]
+mod configured_webhook_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_routes_reach_the_adapter_without_changing_the_absent_shape() {
+        let config = pilotdeck_protocol::parse_json(
+            r#"{"extra":{"port":0,"secret":"fixture-secret","routes":{"main":{"sessionKey":"webhook:main"}}}}"#,
+        ).unwrap();
+        let built = build_options(
+            "webhook",
+            &config,
+            &LoadEnabledChannelsOptions { pilot_home: None },
+        );
+        assert_eq!(
+            built.get("routes"),
+            config.get("extra").unwrap().get("routes")
+        );
+        assert_eq!(built.get("secret"), Some(&"fixture-secret".into()));
+        let absent = build_options(
+            "webhook",
+            &JsValue::Null,
+            &LoadEnabledChannelsOptions { pilot_home: None },
+        );
+        assert!(absent.get("routes").is_none());
+        assert_eq!(absent.get("port"), Some(&JsValue::Undefined));
+        assert_eq!(absent.get("secret"), Some(&JsValue::Undefined));
+    }
 }

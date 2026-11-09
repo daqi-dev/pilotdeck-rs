@@ -136,7 +136,7 @@ impl Mock {
                 let (mut socket, _) = http.accept().await.unwrap();
                 let mut bytes = Vec::new();
                 let mut buf = [0u8; 1024];
-                let header_end;
+
                 loop {
                     let n = socket.read(&mut buf).await.unwrap();
                     if n == 0 {
@@ -150,7 +150,7 @@ impl Mock {
                 let Some(end) = bytes.windows(4).position(|s| s == b"\r\n\r\n") else {
                     continue;
                 };
-                header_end = end + 4;
+                let header_end = end + 4;
                 let headers = String::from_utf8_lossy(&bytes[..end]).into_owned();
                 let path = headers
                     .lines()

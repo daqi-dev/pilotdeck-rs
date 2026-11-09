@@ -876,6 +876,19 @@ impl WeComCallbackChannel {
     /// too-deep array join all report the TS error text. The field list is
     /// [`STRING_FIELDS`], the same one `from_object` coerces.
     pub fn constructor(interaction: Arc<dyn InteractionPort>) -> ChannelAdapterConstructor {
+        Self::constructor_inner(interaction, DEFAULT_QYAPI.to_owned())
+    }
+    #[cfg(test)]
+    pub fn constructor_with_base(
+        interaction: Arc<dyn InteractionPort>,
+        qyapi: String,
+    ) -> ChannelAdapterConstructor {
+        Self::constructor_inner(interaction, qyapi)
+    }
+    fn constructor_inner(
+        interaction: Arc<dyn InteractionPort>,
+        qyapi: String,
+    ) -> ChannelAdapterConstructor {
         Arc::new(move |options: &JsObject| {
             for (field, _) in STRING_FIELDS {
                 if let Some(value) = options.get(field).filter(|value| !nullish(Some(value)))
@@ -893,11 +906,10 @@ impl WeComCallbackChannel {
             {
                 return Err(ChannelError::Plain(error));
             }
-            Ok(Arc::new(Self::from_object(
-                options,
-                interaction.clone(),
-                DEFAULT_QYAPI,
-            )) as Arc<dyn ChannelAdapter>)
+            Ok(
+                Arc::new(Self::from_object(options, interaction.clone(), &qyapi))
+                    as Arc<dyn ChannelAdapter>,
+            )
         })
     }
 }

@@ -98,7 +98,7 @@ pub(super) async fn execute(runtime: &Arc<Runtime>, chat: &str, input: &str) -> 
  "update"=>{
  if !arg.is_empty()&&arg!="check"{runtime.send(chat,"用法：/update check 检查 Release；/update 更新并请求重启。未运行 Web 服务时，请使用 CLI 手动更新。").await;return Ok(());}
  runtime.send(chat,if arg=="check"{"⏳ 正在检查 Release 更新..."}else{"⏳ 正在检查部署资格并更新 Release，完成后向 Web 服务请求重启..."}).await;
- let answer=match ports.update.as_ref(){Some(port)=>match port.run(arg=="check").await{Ok(result)if result.code==2=>"✅ 已是最新 Release，无需更新。".into(),Ok(result)=>format!("{} {}",if result.code==0{"✅"}else{"❌"},result.output.lines().filter(|s|!s.is_empty()).last().unwrap_or("更新命令未返回结果，请查看设置页。")),Err(error)=>format!("❌ 更新失败：{}",error.message())},None=>"❌ 更新失败：Update service unavailable".into()};
+ let answer=match ports.update.as_ref(){Some(port)=>match port.run(arg=="check").await{Ok(result)if result.code==2=>"✅ 已是最新 Release，无需更新。".into(),Ok(result)=>format!("{} {}",if result.code==0{"✅"}else{"❌"},result.output.lines().rfind(|s|!s.is_empty()).unwrap_or("更新命令未返回结果，请查看设置页。")),Err(error)=>format!("❌ 更新失败：{}",error.message())},None=>"❌ 更新失败：Update service unavailable".into()};
  runtime.send(chat,&answer).await;
  },
  "search"=>{
@@ -167,10 +167,8 @@ pub(crate) fn parse_search(
         i += 1;
     }
     options["query"] = terms.join(" ").into();
-    if !all {
-        if let Some(project) = project {
-            options["projectRoot"] = project.into();
-        }
+    if !all && let Some(project) = project {
+        options["projectRoot"] = project.into();
     }
     (js(options), all)
 }

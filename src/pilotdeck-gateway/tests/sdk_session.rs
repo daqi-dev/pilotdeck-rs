@@ -950,28 +950,24 @@ fn encoded_state(registry: &SdkSessionRegistry, root: &Path) -> JsValue {
         ])]),
         None => array(Vec::new()),
     };
+    // handlers() returns a mutex guard. Snapshot both lists under one guard;
+    // two temporaries in the same vec! expression keep the first lock alive
+    // until the statement ends and deadlock on the second acquisition.
+    let (config_handlers, hook_handlers) = {
+        let handlers = registry.handlers();
+        (
+            handlers.config_change_sessions(),
+            handlers.session_hook_sessions(),
+        )
+    };
     let handlers = obj(vec![
         (
             "config",
-            array(
-                registry
-                    .handlers()
-                    .config_change_sessions()
-                    .into_iter()
-                    .map(JsValue::String)
-                    .collect(),
-            ),
+            array(config_handlers.into_iter().map(JsValue::String).collect()),
         ),
         (
             "hook",
-            array(
-                registry
-                    .handlers()
-                    .session_hook_sessions()
-                    .into_iter()
-                    .map(JsValue::String)
-                    .collect(),
-            ),
+            array(hook_handlers.into_iter().map(JsValue::String).collect()),
         ),
     ]);
     obj(vec![

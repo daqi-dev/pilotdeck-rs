@@ -144,9 +144,8 @@ fn replacement_error(error: crate::runtime::replacement::ReplacementError) -> Re
     RequestError {
         code: error
             .code
-            .unwrap_or_else(|| "gateway_request_failed".into())
-            .into(),
-        message: error.message.into(),
+            .unwrap_or_else(|| "gateway_request_failed".into()),
+        message: error.message,
         details: None,
         validation: None,
     }

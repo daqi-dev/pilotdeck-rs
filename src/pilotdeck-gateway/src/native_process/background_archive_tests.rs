@@ -17,6 +17,18 @@ fn fixture() -> Scratch {
     std::fs::create_dir_all(&root.0).unwrap();
     root
 }
+
+#[test]
+fn snapshot_publication_syncs_readable_pinned_directory_on_each_replace() {
+    let root = fixture();
+    let archive = NativeArchive::open(&root.0).unwrap();
+    archive.replace(b"[]").unwrap();
+    archive.replace(b"[ ]").unwrap();
+    let mut published = open_file(&archive.root, "state.json", OFlags::RDONLY).unwrap();
+    let mut bytes = Vec::new();
+    published.read_to_end(&mut bytes).unwrap();
+    assert_eq!(bytes, b"[ ]");
+}
 fn runtime(
     project: &Path,
     store: Arc<ArchiveHandle>,

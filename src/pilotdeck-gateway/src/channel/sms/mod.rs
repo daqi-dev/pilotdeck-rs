@@ -2,11 +2,10 @@
 //! #1327 lifecycle. All external services are loopback mocks; the Twilio REST
 //! boundary is an injected [`sender::TwilioFactory`].
 //!
-//! TS `start(deps)` reads `deps.gateway`; when this unit was written #1327's
-//! `ChannelStartDeps` had no gateway field, so the A7 boundary is a constructor
-//! option ([`SmsChannelOptions::gateway`]). #1333's api-server port later added
-//! `turn_gateway` to the deps; the sms adapter still does not read it — the
-//! difference is recorded in the #1339 diffs ledger (A8.3-CH-SMS-004).
+//! Native production mounting supplies the first-party Twilio REST sender and
+//! a responder into the same Gateway interaction coordinator. At start the
+//! shared `deps.turn_gateway` becomes the A7 input; an explicitly injected
+//! constructor gateway remains the isolated-test override.
 pub mod elicitation;
 pub mod gateway;
 #[cfg(test)]
@@ -408,9 +407,17 @@ pub struct SmsChannel {
     key: ChannelKey,
     shared: Arc<SmsShared>,
     inputs: StdMutex<SmsStartInputs>,
+    responder: Option<Arc<dyn crate::channel::bluebubbles::InteractionResponder>>,
 }
 
 impl SmsChannel {
+    pub fn with_responder(
+        mut self,
+        responder: Arc<dyn crate::channel::bluebubbles::InteractionResponder>,
+    ) -> Self {
+        self.responder = Some(responder);
+        self
+    }
     pub fn new(options: SmsChannelOptions) -> Self {
         let SmsChannelOptions {
             extra,
@@ -423,6 +430,7 @@ impl SmsChannel {
         } = options;
         Self {
             key: ChannelKey::new("sms"),
+            responder: None,
             shared: Arc::new(SmsShared {
                 boundaries: StdMutex::new(Boundaries {
                     logger: None,
@@ -493,6 +501,7 @@ impl ChannelAdapter for SmsChannel {
         deps: ChannelStartDeps,
     ) -> BoxFuture<Result<Arc<dyn ChannelHandle>, ChannelError>> {
         let shared = self.shared.clone();
+        let responder = self.responder.clone();
         let inputs = {
             let guard = self.inputs.lock().expect("#1339 inputs mutex");
             (
@@ -502,6 +511,13 @@ impl ChannelAdapter for SmsChannel {
             )
         };
         Box::pin(async move {
+            if let (Some(turns), Some(responder)) = (deps.turn_gateway, responder) {
+                let mut boundaries = shared.boundaries.lock().expect("#1339 boundaries mutex");
+                if boundaries.gateway.is_none() {
+                    boundaries.gateway =
+                        Some(Arc::new(gateway::MountedSmsGateway::new(turns, responder)));
+                }
+            }
             if let Some(logger) = deps.log {
                 shared
                     .boundaries
@@ -1973,3 +1989,33 @@ pub(crate) async fn raw_request(
     });
     Ok(serde_json::json!({"status": status, "contentType": content_type, "body": body}))
 }
+
+/// Production mount: native transport is available independently of Node SDK installation.
+pub fn register_native(
+    mounts: &mut super::loader::ChannelLoaderMounts,
+    responder: Arc<dyn crate::channel::bluebubbles::InteractionResponder>,
+    factory: TwilioFactory,
+) {
+    mounts.register(
+        "sms",
+        Arc::new(move |options: &JsObject| {
+            Ok(Arc::new(
+                SmsChannel::new(SmsChannelOptions {
+                    extra: options.get("extra").and_then(JsValue::as_object).cloned(),
+                    mapper: None,
+                    gateway: None,
+                    env: Some(Arc::new(|name| {
+                        std::env::var(name).ok().map(JsString::from)
+                    })),
+                    twilio_factory: Some(factory.clone()),
+                    record_unhandled: None,
+                    request_timeout: None,
+                })
+                .with_responder(responder.clone()),
+            ) as Arc<dyn ChannelAdapter>)
+        }),
+    );
+}
+
+#[cfg(test)]
+mod native_tests;

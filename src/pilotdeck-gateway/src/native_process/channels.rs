@@ -118,7 +118,11 @@ fn production_loader_mounts_with_interactions(
     responder: &Arc<super::channel_interaction::NativeInteractionResponder>,
 ) -> ChannelLoaderMounts {
     let mut mounts = ChannelLoaderMounts::default();
-    crate::channel::sms::register(&mut mounts);
+    crate::channel::sms::register_native(
+        &mut mounts,
+        responder.clone(),
+        crate::channel::sms::sender::native_twilio_factory(),
+    );
     crate::channel::telegram::register_with_interaction(&mut mounts, responder.port());
     crate::channel::matrix::register_with_interaction(&mut mounts, responder.port());
     crate::channel::signal::register_with_interaction(&mut mounts, responder.port());
@@ -167,7 +171,7 @@ fn production_loader_mounts_with_interactions(
         }),
     );
     crate::channel::bluebubbles::register_with_interaction(&mut mounts, responder.port());
-    crate::channel::slack::register(&mut mounts);
+    crate::channel::slack::register_native(&mut mounts, responder.clone());
     crate::channel::api_server::register(&mut mounts);
     crate::channel::webhook::register(&mut mounts);
     mounts.register(
@@ -188,13 +192,16 @@ fn default_weixin_maker() -> WeixinChannelMaker {
 #[cfg(test)]
 #[derive(Clone, Default)]
 pub struct ChannelEndpointOverrides {
+    pub sms_twilio_api_base: Option<String>,
+    pub slack_api_base: Option<String>,
+    pub wecom_callback_api_base: Option<String>,
     pub feishu_api_base: Option<String>,
     pub telegram_api_root: Option<String>,
     pub discord_api_root: Option<String>,
     pub qq_api_base: Option<String>,
     pub qq_token_url: Option<String>,
     pub dingtalk_stream_endpoint: Option<String>,
-    pub dingtalk_webhook_route: Option<Arc<dyn Fn(&str) -> String + Send + Sync>>,
+    pub dingtalk_webhook_route: Option<crate::channel::dingtalk::WebhookRoute>,
 }
 
 pub struct NativeChannelsOptions {
@@ -500,6 +507,29 @@ impl NativeChannels {
 
     #[cfg(test)]
     fn with_test_endpoints(&self, mut mounts: ChannelLoaderMounts) -> ChannelLoaderMounts {
+        if let Some(base) = self.endpoints.slack_api_base.clone() {
+            crate::channel::slack::register_native_with_base(
+                &mut mounts,
+                self.interaction.clone(),
+                base,
+            );
+        }
+        if let Some(base) = self.endpoints.wecom_callback_api_base.clone() {
+            mounts.register(
+                "wecomCallback",
+                crate::channel::wecom_callback::WeComCallbackChannel::constructor_with_base(
+                    self.interaction.port(),
+                    base,
+                ),
+            );
+        }
+        if let Some(base) = self.endpoints.sms_twilio_api_base.clone() {
+            crate::channel::sms::register_native(
+                &mut mounts,
+                self.interaction.clone(),
+                crate::channel::sms::sender::native_twilio_factory_with_base(base),
+            );
+        }
         if let Some(api_root) = self.endpoints.telegram_api_root.clone() {
             let interaction = self.interaction.port();
             mounts.register(

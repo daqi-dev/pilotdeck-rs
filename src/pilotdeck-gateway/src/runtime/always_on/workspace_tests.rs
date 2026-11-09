@@ -107,6 +107,83 @@ impl Fixture {
 }
 
 #[tokio::test]
+async fn real_git_observer_reports_created_and_pre_remove_but_not_keep_or_snapshot() {
+    let fixture = Fixture::new();
+    let source = Path::new(&fixture.paths.project_key);
+    fixture.initialize_git(source).await;
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed = events.clone();
+    let provider = fixture
+        .provider(Arc::new(NativeOwnedShellCommandRunner))
+        .with_worktree_observer(Arc::new(move |name, payload| {
+            let cwd = payload
+                .get("cwd")
+                .and_then(JsValue::as_string)
+                .unwrap()
+                .to_utf8()
+                .unwrap();
+            observed
+                .lock()
+                .unwrap()
+                .push((name.to_string(), payload, Path::new(&cwd).exists()));
+        }));
+    let handle = provider
+        .prepare(
+            "git-worktree",
+            "notify-run".into(),
+            "notification".into(),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(events.lock().unwrap().len(), 1);
+    let created = events.lock().unwrap()[0].clone();
+    assert_eq!(created.0, "worktree_created");
+    assert_eq!(created.1.get("runId"), Some(&JsValue::from("notify-run")));
+    assert_eq!(
+        created.1.get("cwd"),
+        Some(&JsValue::String(handle.cwd.clone()))
+    );
+    assert!(
+        created.2,
+        "created notification follows actual git worktree add"
+    );
+    provider.dispose(handle.clone(), true).await.unwrap();
+    assert_eq!(events.lock().unwrap().len(), 1, "keep suppresses removal");
+    provider.dispose(handle.clone(), false).await.unwrap();
+    assert_eq!(events.lock().unwrap().len(), 2);
+    let removed = events.lock().unwrap()[1].clone();
+    assert_eq!(removed.0, "worktree_removed");
+    assert_eq!(
+        removed.1.get("cwd"),
+        Some(&JsValue::String(handle.cwd.clone()))
+    );
+    assert!(
+        removed.2,
+        "removed notification precedes the actual removal, as TS"
+    );
+    assert!(!Path::new(&handle.cwd.to_utf8().unwrap()).exists());
+    let snapshot = provider
+        .prepare("snapshot-copy", "notify-copy".into(), "copy".into(), None)
+        .await
+        .unwrap();
+    provider.dispose(snapshot, false).await.unwrap();
+    assert!(
+        provider
+            .prepare("git-worktree", "../invalid".into(), "failure".into(), None)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        events.lock().unwrap().len(),
+        2,
+        "snapshot and rejected preparation emit nothing"
+    );
+    provider.close().await.unwrap();
+    fixture.registry.dispose().await.unwrap();
+}
+
+#[tokio::test]
 async fn snapshot_provider_persists_and_re_admits_a_real_old_generation_cycle() {
     let fixture = Fixture::new();
     let source = Path::new(&fixture.paths.project_key);

@@ -84,10 +84,9 @@ impl WeixinChannel {
             if matches!(crate::metadata::js_trim(&text), "1" | "2")
                 && reply.starts_with("已允许")
                 && !helper.permission_pending(&chat)
+                && let Some((_, resume)) = self.lock_inner().active_live.get(&user)
             {
-                if let Some((_, resume)) = self.lock_inner().active_live.get(&user) {
-                    let _ = resume.send(());
-                }
+                let _ = resume.send(());
             }
         }
     }

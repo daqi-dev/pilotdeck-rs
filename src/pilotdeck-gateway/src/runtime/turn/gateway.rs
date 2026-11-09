@@ -35,6 +35,8 @@ use tokio::{
     task::{AbortHandle, JoinSet},
 };
 
+mod notifications;
+
 type Callback = Arc<dyn Fn() + Send + Sync>;
 type Job = Pin<Box<dyn Future<Output = ()> + Send>>;
 type Deadlines = Arc<Mutex<HashMap<JsString, u64>>>;
@@ -305,6 +307,7 @@ impl ConnectionGateway for ConnectionTurnGateway {
 pub struct TurnGateway {
     jobs: mpsc::UnboundedSender<Job>,
     gateway: Arc<ConnectionTurnGateway>,
+    notifications: Arc<notifications::HostNotifications>,
     stop: watch::Sender<Option<Duration>>,
     stopped: watch::Receiver<Option<Result<(), String>>>,
 }
@@ -425,11 +428,14 @@ impl TurnGateway {
             .enable_all()
             .build()?;
         let (jobs, mut receive) = mpsc::unbounded_channel::<Job>();
+        let notifications = notifications::HostNotifications::new(jobs.clone());
+        let host_notifications = notifications.clone();
         let (ready, initialized) = std::sync::mpsc::sync_channel(1);
         let (stop, mut stopping) = watch::channel(None::<Duration>);
         let (finished, stopped) = watch::channel(None);
         std::thread::Builder::new().name("turn-gateway-host".into()).spawn(move || {
             runtime.block_on(async move {
+                host_notifications.bind_host_thread();
                 let timer = Arc::new(clock.map_or_else(HostSerialTimer::new, HostSerialTimer::with_clock));
                 let coordinator = Arc::new(TurnEventCoordinator::with_replay_store(
                     TurnReplayStore::with_options(options.with_timer(timer)),
@@ -530,6 +536,7 @@ impl TurnGateway {
         Ok(Self {
             jobs,
             gateway,
+            notifications,
             stop,
             stopped,
         })
@@ -588,20 +595,29 @@ impl TurnGateway {
             .await
             .map_err(|_| RequestError::new("Gateway host operation stopped."))
     }
+    pub(crate) fn notification_server(
+        &self,
+    ) -> Arc<dyn crate::runtime::refresh::NotificationServer> {
+        self.notifications.clone()
+    }
+
     pub fn connect(
         &self,
         text: Arc<dyn GatewayTextConnection>,
         token: String,
         server_version: String,
     ) -> HostedConnection {
+        let connection = Arc::new(GatewayConnection::new(
+            text,
+            self.gateway.clone(),
+            token,
+            server_version,
+        ));
+        let registration = self.notifications.register(&connection);
         HostedConnection {
             host: self.clone(),
-            connection: Arc::new(GatewayConnection::new(
-                text,
-                self.gateway.clone(),
-                token,
-                server_version,
-            )),
+            connection,
+            registration,
         }
     }
     /// External permission/hooks also enter on the host; never expose the
@@ -616,6 +632,7 @@ impl TurnGateway {
 pub struct HostedConnection {
     host: TurnGateway,
     connection: Arc<GatewayConnection>,
+    registration: Arc<notifications::Registration>,
 }
 impl HostedConnection {
     /// Admit in caller order before returning the completion waiter. Only the
@@ -703,6 +720,7 @@ impl HostedConnection {
             .await?
     }
     pub async fn closed(&self) -> Result<(), RequestError> {
+        self.registration.close();
         let connection = self.connection.clone();
         self.host
             .call(async move { connection.closed().await })

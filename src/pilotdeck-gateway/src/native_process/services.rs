@@ -2050,17 +2050,8 @@ pub struct NativeSettingsOptions {
 pub struct NativeSettings {
     pub gateway: Arc<SettingsGateway>,
     pub(crate) store: ConfigStore,
-    // Nothing in production reads the handle yet: the delegates inside the
-    // gateway keep the bundle alive. #1320 fix-r1 F2: the production
-    // composition never binds a notification server — the isolated native
-    // process has no server-push channel, so the bundle's broadcasts are
-    // simply lost (the connection registry is #1669, deliberately not built
-    // here). Tests that need to observe the dirty/broadcast order must
-    // `bind_server` a recording server themselves AND assert both
-    // `has_notification_server()` and the difference from the production
-    // assembly (`native_settings_production_binds_no_notification_server`).
-    // Keep `dead_code`: only those tests read the handle.
-    #[allow(dead_code)]
+    // The Server assembly binds this bundle to its hosted notification registry
+    // and owns its disposal. LocalHost and isolated compositions stay unbound.
     pub bundle: Arc<RefreshBundle>,
 }
 
@@ -2132,13 +2123,8 @@ fn native_settings_with_writer(
 /// other config reads (`NativeConfigSource`: PILOT_HOME from the
 /// environment, the served project as cwd and `projectRoot`).
 ///
-/// #1320 fix-r1 F2: this composition never binds a notification server —
-/// the isolated native process has no server-push channel, so the bundle's
-/// broadcasts are lost (the connection registry is #1669, deliberately not
-/// built here). Tests that need to observe the dirty/broadcast order must
-/// `bind_server` a recording server themselves AND assert both
-/// `has_notification_server()` and the difference from the production
-/// assembly.
+/// This isolated composition leaves notification binding to the embedding.
+/// Server assembly binds the shared host registry; LocalHost stays unbound.
 #[cfg(test)]
 pub fn native_settings_for_process(
     owner: SessionOwner,

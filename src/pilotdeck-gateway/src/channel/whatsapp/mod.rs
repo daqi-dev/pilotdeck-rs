@@ -427,10 +427,10 @@ async fn cleanup_child(child: &mut Child) {
         Ok(None) => {}
     }
     #[cfg(unix)]
-    if let Some(pid) = child.id() {
-        if let Some(pid) = rustix::process::Pid::from_raw(pid as i32) {
-            let _ = rustix::process::kill_process(pid, rustix::process::Signal::TERM);
-        }
+    if let Some(pid) = child.id()
+        && let Some(pid) = rustix::process::Pid::from_raw(pid as i32)
+    {
+        let _ = rustix::process::kill_process(pid, rustix::process::Signal::TERM);
     }
     #[cfg(not(unix))]
     let _ = child.start_kill();
@@ -622,7 +622,7 @@ impl ChannelAdapter for WhatsAppChannel {
                 );
                 let mut exited = false;
                 loop {
-                    tokio::select! {biased;_=async{drop(stopped.wait_for(|s|*s).await);}=>break,status=child.wait(),if !exited=>{exited=true;if let Some(shared)=weak.upgrade(){if !shared.closed.load(Ordering::SeqCst){let(code,signal)=match status{Ok(s)=>{#[cfg(unix)]{use std::os::unix::process::ExitStatusExt;(s.code().map(|n|n.to_string()).unwrap_or_else(||"null".into()),s.signal().map(|n|if n==libc::SIGTERM{"SIGTERM".into()}else if n==libc::SIGKILL{"SIGKILL".into()}else{n.to_string()}).unwrap_or_else(||"none".into()))}#[cfg(not(unix))]{(s.code().map(|n|n.to_string()).unwrap_or_else(||"null".into()),"none".into())}},Err(_)=>("null".into(),"none".into())};shared.log("error",format!("whatsapp: bridge exited (code={code}, signal={signal})"));}}},_=interval.tick()=>{if let Some(shared)=weak.upgrade(){polls.spawn(shared.poll());}else{break}},_=polls.join_next(),if !polls.is_empty()=>{}}
+                    tokio::select! {biased;_=async{drop(stopped.wait_for(|s|*s).await);}=>break,status=child.wait(),if !exited=>{exited=true;if let Some(shared)=weak.upgrade()&& !shared.closed.load(Ordering::SeqCst){let(code,signal)=match status{Ok(s)=>{#[cfg(unix)]{use std::os::unix::process::ExitStatusExt;(s.code().map(|n|n.to_string()).unwrap_or_else(||"null".into()),s.signal().map(|n|if n==libc::SIGTERM{"SIGTERM".into()}else if n==libc::SIGKILL{"SIGKILL".into()}else{n.to_string()}).unwrap_or_else(||"none".into()))}#[cfg(not(unix))]{(s.code().map(|n|n.to_string()).unwrap_or_else(||"null".into()),"none".into())}},Err(_)=>("null".into(),"none".into())};shared.log("error",format!("whatsapp: bridge exited (code={code}, signal={signal})"));}},_=interval.tick()=>{if let Some(shared)=weak.upgrade(){polls.spawn(shared.poll());}else{break}},_=polls.join_next(),if !polls.is_empty()=>{}}
                 }
                 polls.abort_all();
                 while polls.join_next().await.is_some() {}

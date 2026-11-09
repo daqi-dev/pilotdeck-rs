@@ -50,6 +50,9 @@ pub(crate) mod input_admission;
 mod knowledge;
 mod management;
 mod methods;
+mod notifications;
+#[cfg(test)]
+mod notifications_tests;
 pub(crate) mod plan_todo;
 mod skills;
 pub use methods::registered_methods;
@@ -483,8 +486,32 @@ mod channel_search;
 mod channel_system;
 
 #[cfg(test)]
+#[path = "channel/feishu/actual_host_tests.rs"]
+mod feishu_actual_host_tests;
+#[cfg(test)]
+#[path = "channel/slack/actual_host_tests.rs"]
+mod slack_actual_host_tests;
+#[cfg(test)]
+#[path = "channel/sms/actual_host_tests.rs"]
+mod sms_actual_host_tests;
+#[cfg(test)]
+#[path = "channel/wecom/actual_elicitation_tests.rs"]
+mod wecom_actual_elicitation_tests;
+#[cfg(test)]
 #[path = "channel/wecom/actual_host_tests.rs"]
 mod wecom_actual_host_tests;
+#[cfg(test)]
+#[path = "channel/wecom/actual_media_tests.rs"]
+mod wecom_actual_media_tests;
+#[cfg(test)]
+#[path = "channel/wecom/actual_permission_allow_tests.rs"]
+mod wecom_actual_permission_allow_tests;
+#[cfg(test)]
+#[path = "channel/wecom/actual_permission_tests.rs"]
+mod wecom_actual_permission_tests;
+#[cfg(test)]
+#[path = "channel/wecom_callback/actual_host_tests.rs"]
+mod wecom_callback_actual_host_tests;
 #[cfg(test)]
 #[path = "channel/weixin/actual_host_tests.rs"]
 mod weixin_actual_host_tests;

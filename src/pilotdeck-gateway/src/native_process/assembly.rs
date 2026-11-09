@@ -601,7 +601,18 @@ async fn start_assembly(
         })),
         ..InteractionOptions::default()
     }));
-    let user_dialog_bus = user_dialog::build_user_dialog_bus();
+    let notifications = (mode == AssemblyMode::Server)
+        .then(|| Arc::new(super::notifications::NativeNotifications::default()));
+    let server_notifications = notifications.as_ref().map(|notifications| {
+        notifications.clone() as Arc<dyn crate::runtime::refresh::NotificationServer>
+    });
+    let turn_broadcast = notifications
+        .as_ref()
+        .map(|notifications| notifications.turn_events());
+    let worktree_broadcast = notifications
+        .as_ref()
+        .map(|notifications| notifications.worktree_events());
+    let user_dialog_bus = user_dialog::build_user_dialog_bus(server_notifications.clone());
     // #1864: the per-gateway session selection store. One instance serves
     // both writers (the three selector methods on `Requests`) and the reader
     // (the prepare closure composing each session's agent config).
@@ -1613,6 +1624,8 @@ async fn start_assembly(
     let automation_frame_bytes = native_host_limits(options.drain_budget)
         .max_frame_bytes
         .min(crate::native_ws::MAX_OUTPUT_PAYLOAD);
+    let automation_broadcast = turn_broadcast.clone();
+    let automation_worktrees = worktree_broadcast.clone();
     let automation_bundle = crate::runtime::always_on::storage::run(move || {
         automation::ProjectAutomationBundle::new(automation::ProjectAutomationBundleOptions {
             config: automation_config,
@@ -1621,6 +1634,8 @@ async fn start_assembly(
                 automation_project,
                 automation_env,
                 automation_frame_bytes,
+                automation_broadcast,
+                automation_worktrees,
             ),
             make_cron: cron::native_factory(),
         })
@@ -1758,6 +1773,9 @@ async fn start_assembly(
                     ))),
                 ),
             )?;
+            if let Some(notifications) = &server_notifications {
+                settings.bundle.bind_server(notifications.clone());
+            }
             let config_reload = Arc::downgrade(&build_automation);
             let channels_reload = Arc::downgrade(&build_channels);
             publish_refresh
@@ -1913,6 +1931,8 @@ async fn start_assembly(
                 standalone_options,
                 standalone_env,
                 automation_body.clone(),
+                turn_broadcast.clone(),
+                worktree_broadcast.clone(),
             );
             let plain_cron = Arc::new(crate::runtime::cron::SessionAdmissionCronGateway::new(
                 cron_admission.clone(),
@@ -1961,6 +1981,7 @@ async fn start_assembly(
                                 cron_channels.server().clone(),
                                 cron_runtime.clone(),
                                 shutdown.clone(),
+                                turn_broadcast.clone(),
                             )
                             .map_err(cron::cron_io_error)?;
                             let stop = Arc::new(crate::switch::CronStopHandle::new_native(
@@ -2113,6 +2134,9 @@ async fn start_assembly(
     );
     match host {
         Ok(host) => {
+            if let Some(notifications) = notifications {
+                notifications.bind(host.notification_server());
+            }
             // #1328: start config-enabled channels (pilotdeckServer.ts:288-296)
             // once the builder has published the gateway port. #2301: the
             // configured half — `loadEnabledChannels(config.adapters)` — joins

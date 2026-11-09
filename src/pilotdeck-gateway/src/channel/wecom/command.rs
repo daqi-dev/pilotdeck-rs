@@ -84,8 +84,7 @@ impl HostCommands {
                         let last = result
                             .output
                             .lines()
-                            .filter(|line| !line.is_empty())
-                            .last()
+                            .rfind(|line| !line.is_empty())
                             .unwrap_or("更新命令未返回结果，请查看设置页。");
                         format!("{} {last}", if result.code == 0 { "✅" } else { "❌" })
                     }

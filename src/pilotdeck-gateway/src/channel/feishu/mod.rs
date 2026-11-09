@@ -939,7 +939,7 @@ impl Runtime {
             state.batches.remove(chat_id);
         }
         self.interaction.elicitation_clear(chat_id);
-        self.interaction.permission_clear_after_turn(chat_id);
+        self.interaction.permission_clear(chat_id);
     }
 
     fn generation(&self, chat_id: &str) -> u64 {

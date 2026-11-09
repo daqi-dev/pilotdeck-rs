@@ -1,0 +1,126 @@
+{
+  "fixed": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/adapters/channel/sms/SmsChannel.ts": "2d49f86c8ea86a61db0d24d4d33e7190b48184754bf02db5a551f8d37d7210e0",
+    "src/adapters/channel/protocol/ImCronDelivery.ts": "3e505b3fa1205993089e3ed6854541fb6e7d332b7b33173d3c351880de7e8c14",
+    "src/adapters/channel/sms/SmsSessionMapper.ts": "6a7cac1223fada63d1ca3b0bdbf891dee3da2af36b2213e876b13e77e8b965ad",
+    "src/adapters/channel/sms/sms-render.ts": "7d5d1433866288d8da41db2022d67e7c54b38384e597275599d9bc264e3a2eaf",
+    "src/adapters/channel/protocol/ImElicitationHelper.ts": "cb743ce32129e33c65cbee9ff5c613b057b65d8a642a0fc11b1e1362fb458cf4",
+    "src/adapters/channel/protocol/ImPermissionHelper.ts": "40a6e25f143e9973d2cef836bb40d47f8e693424ad9aac5f2391be6514193477"
+  },
+  "environment": {
+    "node": "22.22.0",
+    "acorn": "8.15.0",
+    "ada": "2.9.2",
+    "amaro": "1.1.4",
+    "ares": "1.34.6",
+    "brotli": "1.1.0",
+    "cjs_module_lexer": "2.1.0",
+    "cldr": "48.0",
+    "icu": "78.2",
+    "llhttp": "9.3.0",
+    "modules": "127",
+    "napi": "10",
+    "nbytes": "0.1.1",
+    "ncrypto": "0.0.1",
+    "nghttp2": "1.64.0",
+    "openssl": "3.5.4",
+    "simdjson": "3.13.0",
+    "simdutf": "6.4.2",
+    "sqlite": "3.50.4",
+    "tz": "2025c",
+    "undici": "6.23.0",
+    "unicode": "17.0",
+    "uv": "1.52.1",
+    "uvwasi": "0.0.23",
+    "v8": "12.4.254.21-node.33",
+    "zlib": "1.3.1-470d3a2",
+    "zstd": "1.5.7"
+  },
+  "formalAcceptance": false,
+  "declaredMocks": [
+    "optional require(twilio) availability",
+    "twilio SDK factory/messages.create",
+    "Gateway submitTurn"
+  ],
+  "cases": [
+    {
+      "kind": "sdk-absent",
+      "sdk": [],
+      "submits": [],
+      "sent": [],
+      "logs": [
+        [
+          "error",
+          "sms: twilio not installed; run `npm install twilio`"
+        ]
+      ]
+    },
+    {
+      "kind": "config-missing",
+      "sdk": [],
+      "submits": [],
+      "sent": [],
+      "logs": [
+        [
+          "error",
+          "sms: missing config; need TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER"
+        ]
+      ]
+    },
+    {
+      "kind": "configured",
+      "sdk": [
+        {
+          "sid": "AC00000000000000000000000000000000",
+          "token": "mock-token"
+        }
+      ],
+      "submits": [
+        {
+          "sessionKey": "sms:chat=+15550000002:general",
+          "channelKey": "sms",
+          "message": "SMS mock input"
+        }
+      ],
+      "sent": [
+        {
+          "body": "SMS mock reply",
+          "from": "+15550000001",
+          "to": "+15550000002"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>"
+      },
+      "logs": [
+        [
+          "info",
+          "sms: Twilio webhook http://127.0.0.1:$PORT/sms/incoming"
+        ],
+        [
+          "info",
+          "sms: stopping (fixture)"
+        ]
+      ]
+    },
+    {
+      "kind": "factory-error",
+      "sdk": [
+        {
+          "sid": "AC00000000000000000000000000000000",
+          "token": "mock-token"
+        }
+      ],
+      "submits": [],
+      "sent": [],
+      "logs": [
+        [
+          "error",
+          "sms: twilio init failed: Error: mock SDK constructor failed"
+        ]
+      ]
+    }
+  ]
+}

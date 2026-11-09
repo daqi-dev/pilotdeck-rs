@@ -247,16 +247,16 @@ impl MediaClient {
                     .await
                     .map_err(|e| error(e.to_string()))?;
                 let status = response.status();
-                if matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308) {
-                    if let Some(location) = response.headers().get("location") {
-                        if redirects == 20 {
-                            return Err(error("redirect count exceeded"));
-                        }
-                        url = url
-                            .join(location.to_str().map_err(|e| error(e.to_string()))?)
-                            .map_err(|e| error(e.to_string()))?;
-                        continue;
+                if matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308)
+                    && let Some(location) = response.headers().get("location")
+                {
+                    if redirects == 20 {
+                        return Err(error("redirect count exceeded"));
                     }
+                    url = url
+                        .join(location.to_str().map_err(|e| error(e.to_string()))?)
+                        .map_err(|e| error(e.to_string()))?;
+                    continue;
                 }
                 if !status.is_success() {
                     return Err(error(format!("HTTP {}", status.as_u16())));
@@ -797,11 +797,12 @@ pub async fn extract_deliverables(text: &JsString, home: &Path, pilot_home: &Pat
     {
         spans.push((m.start(), m.end()));
     }
+    let media_marker = regex::Regex::new(r"(?i)MEDIA:\s*$").unwrap();
     for m in regex::Regex::new(r"\x60[^\x60\n]+\x60")
         .unwrap()
         .find_iter(&source)
     {
-        if !regex::Regex::new(r"(?i)MEDIA:\s*$").unwrap().is_match(
+        if !media_marker.is_match(
             &source[..m.start()]
                 .chars()
                 .rev()

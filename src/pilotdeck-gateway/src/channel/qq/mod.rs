@@ -312,10 +312,10 @@ impl Inner {
                 } else {
                     mapper.resolve(&group, &user, &text)
                 };
-                if mapped.command_new {
-                    if let Some(callback) = &self.on_state_change {
-                        callback(mapper.snapshot());
-                    }
+                if mapped.command_new
+                    && let Some(callback) = &self.on_state_change
+                {
+                    callback(mapper.snapshot());
                 }
                 let guard = if mapped.message.is_empty() {
                     None

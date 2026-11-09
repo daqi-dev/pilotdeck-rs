@@ -49,10 +49,10 @@ impl TurnGateway for Gateway {
     }
 }
 fn normalize(mut row: Value) -> Value {
-    if let Some(body) = row.get_mut("body") {
-        if let Some(content) = body.get("content").and_then(Value::as_str) {
-            body["content"] = serde_json::from_str(content).unwrap();
-        }
+    if let Some(body) = row.get_mut("body")
+        && let Some(content) = body.get("content").and_then(Value::as_str)
+    {
+        body["content"] = serde_json::from_str(content).unwrap();
     }
     row
 }

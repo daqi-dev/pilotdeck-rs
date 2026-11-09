@@ -119,10 +119,10 @@ pub(crate) async fn run(
                     ("message", "OK".into()),
                     ("data", r#"{"status":"SUCCESS"}"#.into()),
                 ]);
-                if let Ok(Some(raw)) = stringify_json(&ack) {
-                    if socket.send(Message::Text(raw.into())).await.is_err() {
-                        break;
-                    }
+                if let Ok(Some(raw)) = stringify_json(&ack)
+                    && socket.send(Message::Text(raw.into())).await.is_err()
+                {
+                    break;
                 }
             } else if kind.is_some_and(|s| s.equals_str("SYSTEM")) {
                 let topic = v

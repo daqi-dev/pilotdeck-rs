@@ -3493,3 +3493,23 @@ mod network_timing_tests;
 #[cfg(test)]
 #[path = "http_encoding_tests.rs"]
 mod encoding_tests;
+
+#[tokio::test]
+async fn direct_ipv6_refusal_preserves_the_socket_cause() {
+    let listener = std::net::TcpListener::bind(("::1", 0)).expect("IPv6 loopback required");
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let connector = ConnectDeadline::new(
+        proxy_https_connector(crate::runtime::model::http::webpki_client_config(), None),
+        MCP_CONNECT_TIMEOUT,
+    );
+    let client: HttpClient = Client::builder(TokioExecutor::new()).build(connector);
+    let request = Request::get(format!("https://{address}/sse"))
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let error = client.request(request).await.unwrap_err();
+    assert!(
+        matches!(classify_failure(&error), FailureCause::Refused),
+        "{error:?}"
+    );
+}

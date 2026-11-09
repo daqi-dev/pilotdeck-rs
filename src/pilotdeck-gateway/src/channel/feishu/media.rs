@@ -47,25 +47,25 @@ async fn exchange(
                 .request(request)
                 .await
                 .map_err(|e| AttachmentError::error(e.to_string()))?;
-            if matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) && method == "GET"
+            if matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308)
+                && method == "GET"
+                && let Some(location) = response.headers().get("location")
             {
-                if let Some(location) = response.headers().get("location") {
-                    if redirects == 20 {
-                        return Err(AttachmentError::error("redirect count exceeded"));
-                    }
-                    let next = url
-                        .join(
-                            location
-                                .to_str()
-                                .map_err(|e| AttachmentError::error(e.to_string()))?,
-                        )
-                        .map_err(|e| AttachmentError::error(e.to_string()))?;
-                    if next.origin() != url.origin() {
-                        headers.remove("authorization");
-                    }
-                    url = next;
-                    continue;
+                if redirects == 20 {
+                    return Err(AttachmentError::error("redirect count exceeded"));
                 }
+                let next = url
+                    .join(
+                        location
+                            .to_str()
+                            .map_err(|e| AttachmentError::error(e.to_string()))?,
+                    )
+                    .map_err(|e| AttachmentError::error(e.to_string()))?;
+                if next.origin() != url.origin() {
+                    headers.remove("authorization");
+                }
+                url = next;
+                continue;
             }
             let status = response.status().as_u16();
             let headers = response.headers().clone();

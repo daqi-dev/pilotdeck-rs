@@ -7,9 +7,9 @@
 //! `auth.test`, inbound `message` frames, `chat.postMessage` replies, and the
 //! client-initiated `close(1000)` on stop.
 //!
-//! TS `start(deps)` reads `deps.gateway`; the #1327 port carries no gateway
-//! field, so like the sms adapter (#1339) the A7 boundary is a constructor
-//! option ([`SlackChannelOptions::gateway`]).
+//! Native production mounting reads the common A7 `deps.turn_gateway` and
+//! shares its interaction coordinator; constructor gateway injection remains
+//! available for the original isolated replay tests.
 //!
 //! The baseline's `@slack/bolt not installed` branch has no Rust counterpart
 //! (the module is always present — a product enhancement, registered in the
@@ -20,7 +20,10 @@ pub mod render;
 mod tests;
 
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{
+    Arc, Mutex as StdMutex,
+    atomic::{AtomicU64, Ordering},
+};
 
 use futures_util::{SinkExt, StreamExt};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
@@ -43,7 +46,7 @@ pub use mapper::{MappedSession, SlackSessionMapper, SlackSessionMapperState};
 /// `MAX_MESSAGE_LENGTH` (`SlackChannel.ts:16`).
 const MAX_MESSAGE_LENGTH: usize = 39_000;
 /// The SDK REST base the stub contract speaks; production Slack traffic.
-const DEFAULT_BASE_URL: &str = "https://slack.com/api";
+const DEFAULT_BASE_URL: &str = "https://slack.com";
 /// The stub contract's WS failure text: the committed `bolt-stub.mjs`
 /// rejects `start()` with `new Error("websocket error")`, so the native
 /// client reports the same bytes (only observable when the endpoint refuses
@@ -84,6 +87,9 @@ struct Boundaries {
 }
 
 struct SlackShared {
+    generation: AtomicU64,
+    stopping: tokio::sync::watch::Sender<bool>,
+    readers: StdMutex<Vec<tokio::task::JoinHandle<()>>>,
     boundaries: StdMutex<Boundaries>,
     runtime: tokio::sync::Mutex<SlackRuntime>,
     /// The permission state machine behind its own `std` mutex, the #1790
@@ -94,7 +100,7 @@ struct SlackShared {
     /// already applied — the values are immutable afterwards).
     bot_token: JsValue,
     app_token: JsValue,
-    /// The REST base: `https://slack.com/api` in production, the loopback
+    /// The REST origin: `https://slack.com` in production, the loopback
     /// mock in tests.
     base_url: JsString,
     http: super::http_client::HttpClient,
@@ -132,6 +138,17 @@ impl ChannelHandle for SlackHandle {
         let reason = reason.to_owned();
         Box::pin(async move {
             shared.log("info", format!("slack: stopping ({reason})"));
+            shared.generation.fetch_add(1, Ordering::SeqCst);
+            shared.stopping.send_replace(true);
+            let readers = std::mem::take(&mut *shared.readers.lock().expect("Slack reader mutex"));
+            // Cancel an ACK/reconnect before taking runtime: an ACK may be
+            // blocked writing while holding its short-lived sink guard.
+            for reader in &readers {
+                reader.abort();
+            }
+            for reader in readers {
+                let _ = reader.await;
+            }
             // The sink is taken out before any `await` on it: holding the
             // runtime mutex across `send(Close)` would stall every reader
             // frame and `send_reply` gate on a peer that stopped reading
@@ -142,14 +159,16 @@ impl ChannelHandle for SlackHandle {
                 runtime.app.take().and_then(|app| app.sink)
             };
             if let Some(mut sink) = sink {
-                let _ = sink
-                    .send(Message::Close(Some(
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(1),
+                    sink.send(Message::Close(Some(
                         tokio_tungstenite::tungstenite::protocol::CloseFrame {
                             code: 1000.into(),
                             reason: String::new().into(),
                         },
-                    )))
-                    .await;
+                    ))),
+                )
+                .await;
             }
             Ok(())
         })
@@ -168,18 +187,26 @@ pub struct SlackChannelOptions {
     pub gateway: Option<GatewayRef>,
     /// `process.env` replacement; `None` means no variable is ever set.
     pub env: Option<EnvLookup>,
-    /// The SDK REST base; `None` is the real `https://slack.com/api`. This is
+    /// The REST origin; `None` is `https://slack.com`, followed by `/api/…`. This is
     /// the stub-contract seam the tests point at the loopback mock (the TS
     /// side's equivalent is the stub's `PDRS_SLACK_MOCK` variable).
     pub base_url: Option<JsString>,
 }
 
 pub struct SlackChannel {
+    responder: Option<Arc<dyn crate::channel::bluebubbles::InteractionResponder>>,
     key: ChannelKey,
     shared: Arc<SlackShared>,
 }
 
 impl SlackChannel {
+    pub fn with_responder(
+        mut self,
+        responder: Arc<dyn crate::channel::bluebubbles::InteractionResponder>,
+    ) -> Self {
+        self.responder = Some(responder);
+        self
+    }
     pub fn new(options: SlackChannelOptions) -> Self {
         let SlackChannelOptions {
             bot_token,
@@ -207,8 +234,12 @@ impl SlackChannel {
             _ => env_value("SLACK_APP_TOKEN"),
         };
         Self {
+            responder: None,
             key: ChannelKey::new("slack"),
             shared: Arc::new(SlackShared {
+                generation: AtomicU64::new(0),
+                stopping: tokio::sync::watch::channel(false).0,
+                readers: StdMutex::new(Vec::new()),
                 boundaries: StdMutex::new(Boundaries {
                     logger: None,
                     gateway,
@@ -240,7 +271,17 @@ impl ChannelAdapter for SlackChannel {
         deps: ChannelStartDeps,
     ) -> BoxFuture<Result<Arc<dyn ChannelHandle>, ChannelError>> {
         let shared = self.shared.clone();
+        let responder = self.responder.clone();
+        let owns_transport = responder.is_some();
         Box::pin(async move {
+            if let (Some(turns), Some(responder)) = (deps.turn_gateway, responder) {
+                let mut boundaries = shared.boundaries.lock().expect("#1344 boundaries mutex");
+                if boundaries.gateway.is_none() {
+                    boundaries.gateway = Some(Arc::new(
+                        super::sms::gateway::MountedSmsGateway::new(turns, responder),
+                    ));
+                }
+            }
             if let Some(logger) = deps.log {
                 shared
                     .boundaries
@@ -270,8 +311,20 @@ impl ChannelAdapter for SlackChannel {
             // after the WS opened (auth.test and later), and empty for a
             // failed `connections.open` / handshake — the registered
             // divergence (A8.3-CH-SLACK-001 范围 item 6).
-            if let Err(error) = start_session(&shared).await {
+            let generation = shared.generation.fetch_add(1, Ordering::SeqCst) + 1;
+            shared.stopping.send_replace(false);
+            if let Err(error) = start_session(&shared, generation).await {
                 shared.log("error", format!("slack: start failed: {error}"));
+                // Native assembly owns every transport it starts. Preserve the
+                // explicit legacy constructor's recorded no-op handle, while
+                // its native mounted form releases a partially opened socket.
+                if owns_transport {
+                    SlackHandle {
+                        shared: shared.clone(),
+                    }
+                    .stop("start-failed")
+                    .await?;
+                }
                 return Ok(Arc::new(NoopHandle) as Arc<dyn ChannelHandle>);
             }
             Ok(Arc::new(SlackHandle { shared }) as Arc<dyn ChannelHandle>)
@@ -285,16 +338,16 @@ async fn post_json(shared: &SlackShared, path: &str, body: &JsValue) -> Result<J
     let text = stringify_json(body)
         .map_err(|_| "SyntaxError: JSON stringify failure".to_owned())?
         .ok_or("JSON.stringify returned undefined")?;
-    let url = format!(
-        "{}{path}",
-        String::from_utf16_lossy(shared.base_url.units())
-    );
+    let url = endpoint_url(&shared.base_url, path);
+    let token = super::sms::js_string_of(body.get("token").unwrap_or(&shared.bot_token));
+    let token = String::from_utf16_lossy(token.units());
     let response = shared
         .http
-        .request(
+        .request_bearer(
             "POST",
             &url,
             Some("application/json"),
+            &token,
             &text,
             super::http_client::UNDICI_DEFAULT_TIMEOUT,
         )
@@ -306,7 +359,10 @@ async fn post_json(shared: &SlackShared, path: &str, body: &JsValue) -> Result<J
 
 /// `app.start()` + `auth.test`: the exact TS order — connections.open, WS
 /// open (handlers already registered), auth.test, the connected log.
-async fn start_session(shared: &Arc<SlackShared>) -> Result<(), String> {
+async fn start_session(shared: &Arc<SlackShared>, generation: u64) -> Result<(), String> {
+    if !is_current_transport(shared, generation) {
+        return Err("Slack transport stopped".into());
+    }
     // `app.start()`: POST `/api/apps.connections.open` with `{"token":appToken}`.
     let mut open_body = JsObject::new();
     open_body.insert("token".into(), shared.app_token.clone());
@@ -342,9 +398,13 @@ async fn start_session(shared: &Arc<SlackShared>) -> Result<(), String> {
     let (sink, stream) = ws.split();
     {
         let mut runtime = shared.runtime.lock().await;
+        if !is_current_transport(shared, generation) {
+            return Err("Slack transport stopped".into());
+        }
         runtime.app = Some(LiveApp { sink: Some(sink) });
     }
-    spawn_reader(shared.clone(), stream);
+    let (ready, ready_rx) = tokio::sync::watch::channel(false);
+    spawn_reader(shared.clone(), stream, generation, ready_rx);
     // `app.client.auth.test({token})`: POST `/api/auth.test`.
     let mut auth_body = JsObject::new();
     auth_body.insert("token".into(), shared.bot_token.clone());
@@ -366,8 +426,12 @@ async fn start_session(shared: &Arc<SlackShared>) -> Result<(), String> {
         .unwrap_or_else(|| user_id.clone());
     {
         let mut runtime = shared.runtime.lock().await;
+        if !is_current_transport(shared, generation) {
+            return Err("Slack transport stopped".into());
+        }
         runtime.bot_user_id = user_id;
     }
+    ready.send_replace(true);
     shared.log(
         "info",
         format!(
@@ -386,9 +450,20 @@ async fn start_session(shared: &Arc<SlackShared>) -> Result<(), String> {
 fn spawn_reader(
     shared: Arc<SlackShared>,
     mut stream: futures_util::stream::SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
+    generation: u64,
+    mut ready: tokio::sync::watch::Receiver<bool>,
 ) {
-    tokio::spawn(async move {
-        while let Some(frame) = stream.next().await {
+    let owner = shared.clone();
+    let task = tokio::spawn(async move {
+        let mut stop = shared.stopping.subscribe();
+        loop {
+            let frame =
+                tokio::select! {biased;_=stop.changed()=>{return},frame=stream.next()=>frame};
+            let Some(frame) = frame else { break };
+            if !is_current_transport(&shared, generation) {
+                return;
+            }
+
             match frame {
                 Ok(Message::Text(text)) => {
                     let Ok(value) = pilotdeck_protocol::parse_json(text.as_str()) else {
@@ -405,11 +480,17 @@ fn spawn_reader(
                     if stopped {
                         continue;
                     }
-                    let is_message = value
-                        .get("type")
-                        .and_then(JsValue::as_string)
-                        .is_some_and(|kind| kind.equals_str("message"));
-                    if !is_message {
+                    let kind = value.get("type").and_then(JsValue::as_string);
+                    if kind.is_some_and(|k| k.equals_str("disconnect"))
+                        && !value
+                            .get("reason")
+                            .and_then(JsValue::as_string)
+                            .is_some_and(|r| r.equals_str("warning"))
+                    {
+                        break;
+                    }
+                    let official = kind.is_some_and(|kind| kind.equals_str("events_api"));
+                    if !official && !kind.is_some_and(|kind| kind.equals_str("message")) {
                         continue;
                     }
                     let event = value
@@ -417,6 +498,36 @@ fn spawn_reader(
                         .and_then(|payload| payload.get("event"))
                         .cloned()
                         .unwrap_or(JsValue::Undefined);
+                    if official {
+                        let Some(envelope) = value.get("envelope_id").and_then(JsValue::as_string)
+                        else {
+                            continue;
+                        };
+                        let mut ack = JsObject::new();
+                        ack.insert("envelope_id".into(), JsValue::String(envelope.clone()));
+                        let encoded = stringify_json(&JsValue::Object(ack))
+                            .ok()
+                            .flatten()
+                            .expect("Slack envelope ACK");
+                        let mut runtime = shared.runtime.lock().await;
+                        let Some(app) = runtime.app.as_mut() else {
+                            continue;
+                        };
+                        let Some(sink) = app.sink.as_mut() else {
+                            continue;
+                        };
+                        if sink.send(Message::Text(encoded.into())).await.is_err() {
+                            continue;
+                        }
+                        drop(runtime);
+                        if !event
+                            .get("type")
+                            .and_then(JsValue::as_string)
+                            .is_some_and(|kind| kind.equals_str("message"))
+                        {
+                            continue;
+                        }
+                    }
                     let shared = shared.clone();
                     tokio::spawn(async move {
                         if let Err(error) = handle_message(&shared, event).await {
@@ -435,7 +546,72 @@ fn spawn_reader(
                 }
             }
         }
+        // Authentication can still be finishing when a peer closes. A failed
+        // start never enters auto-reconnect; an owned stop invalidates first.
+        while !*ready.borrow() {
+            tokio::select! {biased;_=stop.changed()=>return,result=ready.changed()=>{if result.is_err(){return;}}}
+        }
+        reconnect(shared, generation).await;
     });
+    let mut readers = owner.readers.lock().expect("Slack reader mutex");
+    readers.retain(|task| !task.is_finished());
+    if is_current_transport(&owner, generation) {
+        readers.push(task);
+    } else {
+        task.abort();
+    }
+}
+fn is_current_transport(shared: &SlackShared, generation: u64) -> bool {
+    shared.generation.load(Ordering::SeqCst) == generation && !*shared.stopping.borrow()
+}
+fn reconnect(
+    shared: Arc<SlackShared>,
+    generation: u64,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+    Box::pin(async move {
+        let mut stop = shared.stopping.subscribe();
+        let mut backoff = std::time::Duration::from_millis(100);
+        while is_current_transport(&shared, generation) {
+            tokio::select! {biased;_=stop.changed()=>return,_=tokio::time::sleep(backoff)=>{}}
+            if !is_current_transport(&shared, generation) {
+                return;
+            }
+            // The same owner and mapper/helpers survive a transient disconnect.
+            let result = tokio::select! {biased;_=stop.changed()=>return,result=start_session(&shared,generation)=>result};
+            match result {
+                Ok(()) => return,
+                Err(error) => {
+                    // A reconnect that opened a socket but failed auth must
+                    // not leave its reader behind while the owner retries.
+                    let orphans = {
+                        let mut readers = shared.readers.lock().expect("Slack reader mutex");
+                        let mut retained = Vec::new();
+                        let mut orphans = Vec::new();
+                        for task in readers.drain(..) {
+                            if task.id() == tokio::task::id() {
+                                retained.push(task)
+                            } else {
+                                orphans.push(task)
+                            }
+                        }
+                        *readers = retained;
+                        orphans
+                    };
+                    for task in &orphans {
+                        task.abort();
+                    }
+                    for task in orphans {
+                        let _ = task.await;
+                    }
+                    if is_current_transport(&shared, generation) {
+                        shared.runtime.lock().await.app.take();
+                    }
+                    shared.log("warn", format!("slack: reconnect failed: {error}"));
+                }
+            }
+            backoff = (backoff * 2).min(std::time::Duration::from_secs(5));
+        }
+    })
 }
 
 fn boundaries(shared: &SlackShared) -> Boundaries {
@@ -1162,3 +1338,48 @@ pub fn register(mounts: &mut super::loader::ChannelLoaderMounts) {
         }),
     );
 }
+
+pub fn register_native(
+    mounts: &mut super::loader::ChannelLoaderMounts,
+    responder: Arc<dyn crate::channel::bluebubbles::InteractionResponder>,
+) {
+    register_native_inner(mounts, responder, None)
+}
+#[cfg(test)]
+pub fn register_native_with_base(
+    mounts: &mut super::loader::ChannelLoaderMounts,
+    responder: Arc<dyn crate::channel::bluebubbles::InteractionResponder>,
+    base: String,
+) {
+    register_native_inner(mounts, responder, Some(base.into()))
+}
+fn register_native_inner(
+    mounts: &mut super::loader::ChannelLoaderMounts,
+    responder: Arc<dyn crate::channel::bluebubbles::InteractionResponder>,
+    base: Option<JsString>,
+) {
+    mounts.register(
+        "slack",
+        Arc::new(move |options: &JsObject| {
+            Ok(Arc::new(
+                SlackChannel::new(SlackChannelOptions {
+                    bot_token: options.get("botToken").cloned(),
+                    app_token: options.get("appToken").cloned(),
+                    mapper: None,
+                    gateway: None,
+                    env: Some(Arc::new(|name| {
+                        std::env::var(name).ok().map(JsString::from)
+                    })),
+                    base_url: base.clone(),
+                })
+                .with_responder(responder.clone()),
+            ) as Arc<dyn ChannelAdapter>)
+        }),
+    );
+}
+
+fn endpoint_url(base: &JsString, path: &str) -> String {
+    format!("{}{path}", String::from_utf16_lossy(base.units()))
+}
+#[cfg(test)]
+mod native_tests;

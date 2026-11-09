@@ -288,12 +288,8 @@ impl RefreshBundle {
         *lock(&self.inner.server) = Some(server);
     }
 
-    /// #1320 fix-r1 F2: whether a notification server is bound. Production
-    /// (`native_settings_for_process`) never binds one — the isolated native
-    /// process has no server-push channel, so its broadcasts are lost (the
-    /// connection registry is #1669); tests that observe the dirty/broadcast
-    /// order bind a recording server themselves and assert this against the
-    /// production assembly.
+    /// Whether an embedding has attached a notification sink. Native Server
+    /// binds its connection registry; isolated stacks and LocalHost do not.
     pub fn has_notification_server(&self) -> bool {
         lock(&self.inner.server).is_some()
     }

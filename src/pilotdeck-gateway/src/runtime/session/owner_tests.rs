@@ -19,6 +19,68 @@ use tokio::sync::watch;
 
 const ORACLE: &str = include_str!("../../../tests/fixtures/session-owner/oracle.json");
 
+#[tokio::test]
+async fn accepted_turn_background_io_is_drained_after_waiter_cancellation() {
+    let owner = Probe::default().owner();
+    let key = JsString::from("commit");
+    let project = JsString::from("project");
+    let run = JsString::from("run");
+    let turn = owner.begin_turn(&key, &run).unwrap();
+    assert!(
+        owner
+            .try_reserve_archive_with_project(&key, &project, false)
+            .unwrap()
+            .is_none()
+    );
+    let ticket = owner.begin_background_io(&key, &project).unwrap();
+    let (started, ready) = tokio::sync::oneshot::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let worker = tokio::task::spawn_blocking(move || {
+        let _ticket = ticket;
+        let _ = started.send(());
+        released.recv().unwrap();
+    });
+    ready.await.unwrap();
+    // Losing the blocking job's waiter does not release its owner ticket.
+    drop(worker);
+    owner.end_turn(&key, Some(&run), Some(&turn));
+    let mut shutdown = owner.shutdown();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut shutdown)
+            .await
+            .is_err()
+    );
+    assert!(owner.begin_background_io(&key, &project).is_err());
+    release.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), shutdown)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn project_close_waits_for_background_io_and_fences_later_tickets() {
+    let owner = Probe::default().owner();
+    let key = JsString::from("commit");
+    let project = JsString::from("project");
+    let ticket = owner.begin_background_io(&key, &project).unwrap();
+    let mut closing = owner.close_project(&project);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut closing)
+            .await
+            .is_err()
+    );
+    assert!(owner.begin_background_io(&key, &project).is_err());
+    drop(ticket);
+    tokio::time::timeout(Duration::from_secs(2), closing)
+        .await
+        .unwrap()
+        .unwrap();
+    owner.resume_project(&project);
+    drop(owner.begin_background_io(&key, &project).unwrap());
+    owner.shutdown().await.unwrap();
+}
+
 #[derive(Clone)]
 struct Gate(watch::Sender<bool>);
 impl Gate {

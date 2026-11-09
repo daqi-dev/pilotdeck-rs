@@ -15,10 +15,11 @@ use tokio::{
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 
 type Sink = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
+type PendingResponse = (Arc<()>, oneshot::Sender<Result<JsValue, String>>);
 #[derive(Default)]
 struct PendingState {
     closed: bool,
-    requests: HashMap<JsString, (Arc<()>, oneshot::Sender<Result<JsValue, String>>)>,
+    requests: HashMap<JsString, PendingResponse>,
 }
 type Pending = Arc<Mutex<PendingState>>;
 struct Reservation {
@@ -193,6 +194,52 @@ impl Drop for Transport {
     }
 }
 
+/// Shared connection slot lets in-flight turns use the newly connected socket
+/// after the owner has authenticated a replacement.
+pub(crate) struct ActiveTransport {
+    current: tokio::sync::RwLock<Option<Arc<Transport>>>,
+}
+impl ActiveTransport {
+    pub(crate) fn new(connection: Transport) -> Self {
+        Self {
+            current: tokio::sync::RwLock::new(Some(Arc::new(connection))),
+        }
+    }
+    pub(crate) async fn request(
+        &self,
+        id: JsString,
+        payload: JsValue,
+        timeout: Duration,
+    ) -> Result<JsValue, String> {
+        let connection = self
+            .current
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| "WeCom connection interrupted".to_string())?;
+        connection.request(id, payload, timeout).await
+    }
+    pub(crate) async fn send(&self, payload: JsValue) -> Result<(), String> {
+        let connection = self
+            .current
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| "WeCom connection interrupted".to_string())?;
+        connection.send(payload).await
+    }
+    pub(crate) async fn replace(&self, connection: Option<Transport>) {
+        *self.current.write().await = connection.map(Arc::new);
+    }
+    pub(crate) async fn stop(&self) {
+        if let Some(connection) = self.current.write().await.take()
+            && let Ok(connection) = Arc::try_unwrap(connection)
+        {
+            connection.stop().await;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,51 +339,5 @@ mod tests {
         ));
         transport.stop().await;
         server.await.unwrap();
-    }
-}
-
-/// Shared connection slot lets in-flight turns use the newly connected socket
-/// after the owner has authenticated a replacement.
-pub(crate) struct ActiveTransport {
-    current: tokio::sync::RwLock<Option<Arc<Transport>>>,
-}
-impl ActiveTransport {
-    pub(crate) fn new(connection: Transport) -> Self {
-        Self {
-            current: tokio::sync::RwLock::new(Some(Arc::new(connection))),
-        }
-    }
-    pub(crate) async fn request(
-        &self,
-        id: JsString,
-        payload: JsValue,
-        timeout: Duration,
-    ) -> Result<JsValue, String> {
-        let connection = self
-            .current
-            .read()
-            .await
-            .clone()
-            .ok_or_else(|| "WeCom connection interrupted".to_string())?;
-        connection.request(id, payload, timeout).await
-    }
-    pub(crate) async fn send(&self, payload: JsValue) -> Result<(), String> {
-        let connection = self
-            .current
-            .read()
-            .await
-            .clone()
-            .ok_or_else(|| "WeCom connection interrupted".to_string())?;
-        connection.send(payload).await
-    }
-    pub(crate) async fn replace(&self, connection: Option<Transport>) {
-        *self.current.write().await = connection.map(Arc::new);
-    }
-    pub(crate) async fn stop(&self) {
-        if let Some(connection) = self.current.write().await.take() {
-            if let Ok(connection) = Arc::try_unwrap(connection) {
-                connection.stop().await;
-            }
-        }
     }
 }
