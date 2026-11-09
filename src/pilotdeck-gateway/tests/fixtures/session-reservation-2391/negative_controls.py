@@ -142,19 +142,21 @@ def main():
     # `specs/negative-controls/README.md`.
     try:
         registered(mutations, EXPECTED_NAMES)
-    except ValueError as error:
+    except (ValueError, OSError) as error:
         refuse(f'mutation roster drifted: {error}')
     if args == ['--check']:
         # Guard first (native-config shape): it reports an unreadable scanned
         # source as a clean refusal, while the anchor count probe below would
-        # raise a bare OSError on the same tree. A stale anchor reaches this
-        # branch as a ValueError, refused the same #1433 way so --check never
-        # reports "ran, not green" (rc 1) for a run that never started.
+        # raise a bare OSError on the same tree. A stale anchor is a
+        # ValueError, and a source that becomes unreadable between the two
+        # reads is an OSError (#297 r7 shape) -- both are refused the same
+        # #1433 way so --check never reports "ran, not green" (rc 1) for a
+        # run that never started.
         try:
             check_literal_anchors(selected_rows, bound_rows=every_row)
             for case in selected_rows:
                 mutate(case, case.path.read_text())
-        except ValueError as error:
+        except (ValueError, OSError) as error:
             refuse(str(error))
         print(f'#2391 {len(selected_rows)} mutation anchors OK; '
               f'{len(LITERAL_ANCHORS)} literal anchors OK')
