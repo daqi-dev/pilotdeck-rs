@@ -3525,7 +3525,11 @@ replay_cases! {
 /// holds the hyper side to its measured shape.
 #[tokio::test]
 async fn http10_request_closes_the_connection() {
-    const PORT: u16 = 18904;
+    // #2257 fix-r4 (review r4 P1): 18904 sat inside the wecom-callback golden
+    // replay segment (18900–18921 — its post-rejects case listens on 18904)
+    // and the two tests run in parallel in the same lib binary; the pin owns
+    // a port in the free gap above that segment (18922 is the 404 pin).
+    const PORT: u16 = 18923;
     let case = case_by_name("http10");
     let steps = recorded_steps(&case).expect("#1339 steps validated array");
     let request = build_raw(
@@ -5334,6 +5338,9 @@ async fn json_null_body_is_unhandled_destroy() {
             .unhandled
             .push(message.to_owned());
     });
+    // #2257 fix-r4 (review r4 P2a): same preflight as the http10 pins — a
+    // NoopHandle fallback on a busy port would test a foreign listener.
+    ensure_replay_port_free(PORT).await;
     let channel = SmsChannel::new(SmsChannelOptions {
         extra: Some(to_js_object(&json!({
             "accountSid": "AC1", "authToken": "tok", "phoneNumber": "+15550000",

@@ -54,8 +54,10 @@ use tokio::net::TcpStream;
 use super::super::protocol::{ChannelLog, ChannelStartDeps};
 use super::*;
 
-/// Ports not used by the gold-master cases (18800–18856, 18929, 18941) or the
-/// WeCom lane (18993–18998).
+/// Ports not used by the gold-master cases (18800–18856, 18929, 18941), the
+/// WeCom lane (18993–18998), or the wecom-callback golden replay segment
+/// (18900–18921). The feishu lane registers 18960–18999 — the pre-existing
+/// 18973 overlap is tracked in #2446 (cross-lane fixed-port follow-up).
 const PORT_HALF_HEAD: u16 = 18971;
 const PORT_POSITIVE: u16 = 18972;
 const PORT_DEFAULT_WIRING: u16 = 18973;
