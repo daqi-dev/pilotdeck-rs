@@ -460,15 +460,22 @@ mutations = [
     # _tmp/20261026-issue-2195/review-r1/); the issue's recipe said the bare
     # form compiled, which the first host run disproved.
     # Re-anchored after #2641 merged: the closure body is now
-    # `dispatch_under_management_gate(&cron, ...)` — same handoff, the gate
-    # wraps the same `cron::dispatch` call, so the kill semantics are
-    # unchanged (turbofish kept for the same E0282 reason as above).
+    # `dispatch_under_management_gate(&cron, ...)` — same handoff. The
+    # mutant inlines the underlying `cron::dispatch`, not the gate wrapper:
+    # the wrapper's `enter_dispatch()` is a blocking-only API (`blocking_read`
+    # panics "Cannot block the current thread from within a runtime" when run
+    # on the async worker — cb8 r4 judged that shape INVALID as a wrong panic,
+    # `_tmp/20261026-issue-2195/review-r4/`), and a mutant is already-broken
+    # code whose only contract is failing the bound test at its bound
+    # assertion; the gate also has its own race test in `switch_tests.rs`, so
+    # bypassing it here leaves no dead code (turbofish kept for the same
+    # E0282 reason as above).
     ('cron-inline-sync', CRON,
      '            let dispatched = tokio::task::spawn_blocking(move || {\n'
      '                dispatch_under_management_gate(&cron, &dispatch_method, &params)\n'
      '            })\n'
      '            .await;',
-     '            let dispatched = Ok::<_, tokio::task::JoinError>(dispatch_under_management_gate(&cron, &dispatch_method, &params));',
+     '            let dispatched = Ok::<_, tokio::task::JoinError>(cron::dispatch(cron.as_deref(), &dispatch_method, &params));',
      'native_process::methods::cron::cron_tests::cron_request_dispatches_off_the_async_worker',
      '#1509 cron dispatch must yield the async worker before answering'),
 ]
