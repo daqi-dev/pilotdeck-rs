@@ -54,9 +54,12 @@ preflight. Refusals before the run (unknown or repeated name, roster drift,
 missing/unusable CARGO_TARGET_DIR, existing output directory) exit 2,
 distinct from 1 ("some control did not kill"); a source-guard failure while
 restoring revokes every recorded row and exits 2 (#979, #1076, #1734).
+Once the stop handlers installed in `main` are in place,
 SIGINT/SIGTERM/SIGHUP/SIGQUIT raise `SystemExit(2)`: a cancel outside the
 shared guard's write-back window is a refusal, the same code `run_cases`
-itself normalizes to. A cancel landing inside the restore window still
+itself normalizes to. The startup segment before that installation
+follows the default disposition (SIGTERM 143, SIGINT an uncaught
+KeyboardInterrupt 130). A cancel landing inside the restore window still
 unwinds and re-verifies the tree first; the guard raises
 `SystemExit(128+signum)` on exit (the `negative_process.mutating_sources`
 deferred-signal contract). In the judging phase `run_cases` normalizes
