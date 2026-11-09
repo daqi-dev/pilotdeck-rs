@@ -1398,6 +1398,21 @@ def _irrefutable_capture(match_node, case_node):
     return pattern is None and bool(names)
 
 
+def _capture_subject_resolvable(subject):
+    """True when the match subject names something the resolver can read (r38).
+
+    #1953 fix-r1 round 38 (codex r37 P0-1): :func:`_irrefutable_capture`
+    proves the *pattern* always binds, but an exotic subject decides *what*
+    it binds.  ``match (_sa if flag else None): case _sa:`` reads the capture
+    as certain and cleared the imported helper through a value the resolver
+    never made (false PASS).  A plain name, or a provably inert subject,
+    keeps the certain reading; anything else stays conditional.
+    """
+    while isinstance(subject, ast.NamedExpr):
+        subject = subject.value
+    return isinstance(subject, ast.Name) or _provably_inert(subject)
+
+
 def _default_bound_parameters(function):
     """Parameter names whose default value is supplied by the function itself.
 
@@ -2133,7 +2148,14 @@ def _builtins_subscript_literal(node, kinds):
 
 
 def _callable_name(func, kinds):
-    """The builtin a call target denotes, or ``None`` (#892 r27)."""
+    """The builtin a call target denotes, or ``None`` (#892 r27).
+
+    #1953 fix-r1 round 38 (GLM r37 sibling P2-2): a walrus callee denotes
+    the same builtin the plain spelling does -- ``(_g := getattr)(md, k)``
+    unwraps here once instead of in each decoder separately.
+    """
+    while isinstance(func, ast.NamedExpr):
+        func = func.value
     if isinstance(func, ast.Name):
         for helper in _CALLABLE_KINDS + ('getattr', 'partial', 'itemgetter'):
             if 'fn:' + helper in kinds.get(func.id, ()):
@@ -2503,18 +2525,28 @@ def _container_handle_roots(value, kinds, simple):
     return roots
 
 
-def _container_base(node):
-    """The container name *node* evaluates to, through wrappers (#1953 r7)."""
+def _container_base(node, wrapper_fresh=None):
+    """The container name *node* evaluates to, through wrappers (#1953 r7).
+
+    #1953 fix-r1 round 38 (codex r37 P1-1): the wrapper spelling is trusted
+    only while the name still denotes the builtin.  A locally rebound
+    ``iter = lambda hs: ...`` is not the builtin wrapper, and reading the
+    spelling alone descended into its argument anyway, so a clean module was
+    flagged (false FAIL).  *wrapper_fresh* -- a callable taking the wrapper
+    ``Name`` -- reports that rebinding; callers without a scope in hand pass
+    nothing and keep the r37 behaviour.
+    """
     if isinstance(node, ast.Subscript):
-        return _container_base(node.value)
+        return _container_base(node.value, wrapper_fresh)
     if isinstance(node, ast.Call):
         # #1953 fix-r1 round 37 (codex r36 P0-5): the wrapper callee can sit
         # behind a walrus -- ``next((_h := iter)(hs))`` -- and reading the raw
         # ``node.func`` returned None for the whole chain (missed write).
         func = _callee_expr(node)
         if (isinstance(func, ast.Name) and func.id in _CONTAINER_WRAPPERS
-                and len(node.args) == 1):
-            return _container_base(node.args[0])
+                and len(node.args) == 1
+                and (wrapper_fresh is None or not wrapper_fresh(func))):
+            return _container_base(node.args[0], wrapper_fresh)
         if (isinstance(func, ast.Attribute) and func.attr == 'copy'
                 and isinstance(func.value, ast.Name)):
             return func.value.id
@@ -2522,19 +2554,22 @@ def _container_base(node):
     return node.id if isinstance(node, ast.Name) else None
 
 
-def _container_callee(func):
+def _container_callee(func, wrapper_fresh=None):
     """The container name whose element *func* takes out and calls (#1953)."""
     # #1953 fix-r1 round 36 (GLM r35 sibling P2-2): a walrus callee unwraps
     # here too, like every call table does.
     while isinstance(func, ast.NamedExpr):
         func = func.value
     if isinstance(func, ast.Subscript):
-        return _container_base(func.value)
+        return _container_base(func.value, wrapper_fresh)
     if isinstance(func, ast.Call):
         callee = _callee_expr(func)
         func_id = callee.id if isinstance(callee, ast.Name) else None
-        if func_id in _CONTAINER_WRAPPERS and len(func.args) == 1:
-            return _container_base(func.args[0])
+        if (func_id in _CONTAINER_WRAPPERS and len(func.args) == 1
+                and (wrapper_fresh is None or not wrapper_fresh(callee))):
+            # #1953 fix-r1 round 38 (codex r37 P1-1): same rebinding guard
+            # as :func:`_container_base`.
+            return _container_base(func.args[0], wrapper_fresh)
         if (isinstance(callee, ast.Attribute) and callee.attr == 'copy'
                 and isinstance(callee.value, ast.Name)):
             return callee.value.id
@@ -4457,7 +4492,10 @@ def _receiver_attribute_writes(tree, receivers, shared):
                     and not _getattribute_pure_read(node, kinds, simple, parents)
                     and _handle_escapes(node, parents)):
                 dynamic_targets.append((scope, node.args[0]))
-            callee = node.func
+            # #1953 fix-r1 round 38 (GLM r37 sibling P2-2): read the callee
+            # through the walrus unwrap -- ``(_g := operator.attrgetter(k))
+            # (md)`` takes its object at call time like the plain spelling.
+            callee = _callee_expr(node)
             if (isinstance(callee, ast.Call)
                     and 'fn:attrgetter' in _expr_kinds(callee.func, kinds)
                     and _attrgetter_is_dynamic(callee) and node.args):
@@ -4465,7 +4503,8 @@ def _receiver_attribute_writes(tree, receivers, shared):
         elif isinstance(node, ast.Assign):
             value = node.value
             if (isinstance(value, ast.Call)
-                    and 'fn:attrgetter' in _expr_kinds(value.func, kinds)
+                    and 'fn:attrgetter' in _expr_kinds(
+                        _callee_expr(value), kinds)
                     and _attrgetter_is_dynamic(value)):
                 # ``h = op.attrgetter(name)`` takes its object at call time.
                 for leaf in _leaf_targets(node.targets):
@@ -4553,7 +4592,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
         for generator in node.generators:
             if element.id not in set(_target_names(generator.target)):
                 continue
-            name = _container_base(generator.iter)
+            name = _container_base(generator.iter, _wrapper_fresh(scope))
             if name is None:
                 continue
             for level in _chain(scope):
@@ -4677,7 +4716,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
         seen.add(id(value))
         if _container_handle_roots(value, kinds, simple):
             return True
-        called = _container_callee(value)
+        called = _container_callee(value, _wrapper_fresh(scope))
         if called is not None and _carries_at(called, scope, value, seen):
             return True
         if (isinstance(value, ast.Name)
@@ -4769,7 +4808,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
         """
         if not isinstance(value, ast.Call):
             return False
-        base = _container_callee(value)
+        base = _container_callee(value, _wrapper_fresh(scope))
         if base is None:
             return False
         return _carries_at(base, scope, value)
@@ -4841,6 +4880,16 @@ def _receiver_attribute_writes(tree, receivers, shared):
             if _carried_container(last[0].id, scope) is not None:
                 return not _carries_at(last[0].id, scope, last[0])
         return _fresh_value(last[0], _bound_names(scope))
+
+    def _wrapper_fresh(scope):
+        """The rebinding guard the container decoders take (r38).
+
+        #1953 fix-r1 round 38 (codex r37 P1-1): ``iter = lambda hs: ...``
+        keeps the wrapper *spelling* but not the builtin, so the container
+        walk must not descend through it.
+        """
+        return lambda wrapper: _freshly_rebound(
+            wrapper.id, scope, wrapper, allow_container=False)
 
     def _handle_receivers(name, scope, use):
         """Receivers a bound write handle *name* denotes at *use*, or ``None``.
@@ -4938,7 +4987,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 continue
             carried = _container_handle_roots(value, kinds, simple)
             if not carried:
-                called = _container_callee(value)
+                called = _container_callee(value, _wrapper_fresh(scope))
                 if called is not None:
                     for level in _chain(scope):
                         if (level, called) in handle_containers:
@@ -4977,7 +5026,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
         # through the walrus unwrap -- ``(_g := hs[0])(...)`` relays the same
         # handles the plain spelling does.
         callee = _callee_expr(node)
-        called = _container_callee(node.func)
+        called = _container_callee(node.func, _wrapper_fresh(scope))
         if called is None and isinstance(callee, ast.Name):
             # ``f = hs[0]; f('common', <stub>)`` launders one handle into a
             # plain name first; the alias fixpoint above already recorded it.
@@ -5027,7 +5076,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
         if isinstance(node.iter, ast.Name):
             iter_name = node.iter.id
         else:
-            iter_name = _container_callee(node.iter)
+            iter_name = _container_callee(node.iter, _wrapper_fresh(scope))
         if iter_name is None:
             continue
         if _freshly_rebound(iter_name, scope, node, allow_container=False):
@@ -5097,7 +5146,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
             continue
         if not isinstance(getattr(node, 'ctx', None), ast.Store):
             continue
-        called = _container_callee(node.value)
+        called = _container_callee(node.value, _wrapper_fresh(scope))
         if called is None and isinstance(node.value, ast.Name):
             called = node.value.id
         if called is None:
@@ -5120,14 +5169,18 @@ def _receiver_attribute_writes(tree, receivers, shared):
         if not isinstance(node, ast.Call):
             continue
         target_expr = None
-        if isinstance(node.func, ast.Name):
-            if _freshly_rebound(node.func.id, scope, node, allow_container=False):
+        # #1953 fix-r1 round 38 (GLM r37 sibling P1-1): the walrus callee
+        # relays the dynamic handle the same way -- ``_h = (_g := _f)(md)``
+        # after ``_f = op.attrgetter(name)`` took its object at call time.
+        callee = _callee_expr(node)
+        if isinstance(callee, ast.Name):
+            if _freshly_rebound(callee.id, scope, node, allow_container=False):
                 # Round 17 (sibling r16 P1-3): a certain fresh rebinding ends
                 # the dynamic-handle relay too.
                 continue
             for level in _chain(scope):
-                if (level, node.func.id) in dynamic_handles:
-                    target_expr = dynamic_handles[(level, node.func.id)]
+                if (level, callee.id) in dynamic_handles:
+                    target_expr = dynamic_handles[(level, callee.id)]
                     break
             if target_expr == 'call-time':
                 target_expr = node.args[0] if node.args else None
@@ -5263,8 +5316,10 @@ def _receiver_attribute_writes(tree, receivers, shared):
                     for name in _match_capture_names(case.pattern):
                         items = add(name, case, None, False,
                                     position=_match_case_position(case),
-                                    force_conditional=not _irrefutable_capture(
-                                        node, case))
+                                    force_conditional=not (
+                                        _irrefutable_capture(node, case)
+                                        and _capture_subject_resolvable(
+                                            node.subject)))
                         # The subject is *read* at the statement, so the
                         # helper resolution asks the bindings in force there.
                         pending.append((items, len(items) - 1,
@@ -6462,11 +6517,40 @@ def _static_truth(node):
     (globals := ...)`` always executes the right operand -- so the flow marks
     need the literal's truth value.  ``ast.literal_eval`` answers exactly the
     constant family ``_provably_inert`` already trusts.
+
+    #1953 fix-r1 round 38 (codex r37 P0-7): ``ast.literal_eval`` answers the
+    *syntax*, but the runtime builds ``set()`` with the module's own binding --
+    ``set = lambda: True; set() or (globals := ...)`` read truthy through the
+    rebound ``set`` and marked the walrus certain (false PASS: the tail never
+    ran and the builtin stayed in force).  An expression containing any call
+    is unknown; the ``set()`` display a clean module writes is unknown too,
+    which keeps the tail conditional (fail-closed).
     """
+    for child in ast.walk(node):
+        if isinstance(child, ast.Call):
+            return None
     try:
         return bool(ast.literal_eval(node))
     except Exception:
         return None
+
+
+def _static_nonempty(node):
+    """``True``/``False`` for a literal container's emptiness, ``None`` (r38).
+
+    #1953 fix-r1 round 38 (GLM r37 sibling P2-4): the comprehension parts of
+    :func:`_flow_marks` need to know whether an iterable provably yields at
+    least one item.  Only literal containers answer; anything else is
+    unknown and the parts stay conditional (fail-closed).
+    """
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return bool(node.elts)
+    if isinstance(node, ast.Dict):
+        return bool(node.keys)
+    if (isinstance(node, ast.Constant)
+            and isinstance(node.value, (str, bytes, frozenset, tuple))):
+        return bool(node.value)
+    return None
 
 
 def _flow_marks(statements):
@@ -6533,10 +6617,58 @@ def _flow_marks(statements):
                     marks[id(node)] = (certainty, loops)
                     truth = _static_truth(node.test)
                     stack.append((node.test, certainty))
+                    # #1953 fix-r1 round 38 (codex r37 P0-6, GLM boundary
+                    # P0-1): only the arm the literal test settles may keep
+                    # the parent certainty.  The r37 spelling read "is not
+                    # False" / "is not True", which let an *unknown* test
+                    # keep both arms certain -- ``... if flag else ...``
+                    # runs each arm conditionally, in both directions.
                     stack.append((node.body,
-                                  certainty if truth is not False else True))
+                                  certainty if truth is True else True))
                     stack.append((node.orelse,
-                                  certainty if truth is not True else True))
+                                  certainty if truth is False else True))
+                    continue
+                if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp,
+                                     ast.GeneratorExp)):
+                    marks[id(node)] = (certainty, loops)
+                    # #1953 fix-r1 round 38 (GLM r37 sibling P2-4): the
+                    # first iterable runs whenever the expression does, but
+                    # every later part -- the target, the later iterables,
+                    # the ifs, the element -- runs once per item, so a
+                    # walrus in them is conditional even inside an
+                    # unconditional statement
+                    # (``[x for x in () if (globals := lambda: ...)]``
+                    # never runs it at all).  A part keeps the parent
+                    # certainty only while every iterable so far provably
+                    # yields an item and no unknown filter sits in front of
+                    # it; anything less stays conditional (fail-closed).
+                    pushes = []
+                    certain_items = True
+                    elt_runs = True
+                    for index, generator in enumerate(node.generators):
+                        if index:
+                            pushes.append((generator.iter,
+                                           certainty if certain_items
+                                           else True))
+                        else:
+                            pushes.append((generator.iter, certainty))
+                        nonempty = _static_nonempty(generator.iter)
+                        runs = (certainty
+                                if certain_items and nonempty is True
+                                else True)
+                        pushes.append((generator.target, runs))
+                        for if_clause in generator.ifs:
+                            pushes.append((if_clause, runs))
+                            runs = True
+                        elt_runs = runs
+                        certain_items = (certain_items and nonempty is True
+                                        and not generator.ifs)
+                    if isinstance(node, ast.DictComp):
+                        pushes.append((node.key, elt_runs))
+                        pushes.append((node.value, elt_runs))
+                    else:
+                        pushes.append((node.elt, elt_runs))
+                    stack.extend(reversed(pushes))
                     continue
                 marks[id(node)] = (certainty, loops)
                 stack.extend((child, certainty)
@@ -6970,30 +7102,36 @@ def _alias_pairs(node):
 
 
 def _inert_literal_expr(node):
-    """True when *node* is built only from literals and inert lambdas (r36)."""
-    if isinstance(node, ast.Lambda):
-        args = node.args
-        for default in (list(args.defaults)
-                        + [item for item in args.kw_defaults if item is not None]):
-            if not _inert_literal_expr(default):
-                return False
-        return _inert_literal_expr(node.body)
-    if isinstance(node, ast.Constant):
-        return True
-    if isinstance(node, ast.UnaryOp) and isinstance(
-            node.op, (ast.USub, ast.UAdd, ast.Invert, ast.Not)):
-        # #1953 fix-r1 round 37 (codex r36 P1-1): a signed literal is as inert
-        # as the bare one -- ``lambda: -1`` cannot reach a name without spelling
-        # it, and ``ast.literal_eval`` already accepts ``-1`` on the non-lambda
-        # side, so the two inert rulings stay equivalent.
-        return _inert_literal_expr(node.operand)
-    if isinstance(node, ast.Dict):
-        return all(key is None or _inert_literal_expr(key)
-                   for key in node.keys) and all(
-                       _inert_literal_expr(item) for item in node.values)
-    if isinstance(node, (ast.List, ast.Set, ast.Tuple)):
-        return all(_inert_literal_expr(item) for item in node.elts)
-    return False
+    """True when *node* is built only from literals and inert lambdas (r36).
+
+    #1953 fix-r1 round 38 (codex r37 P0-5): the walk is an explicit stack --
+    a deep unary chain in a lambda body (``globals = lambda: ----…1``) must
+    not grow the interpreter stack (same rule as :func:`_flow_marks`).  The
+    accepted node family is unchanged: #1953 fix-r1 round 37 (codex r36
+    P1-1) keeps a signed literal as inert as the bare one.
+    """
+    stack = [node]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.Lambda):
+            args = node.args
+            stack.extend(args.defaults)
+            stack.extend(item for item in args.kw_defaults
+                         if item is not None)
+            stack.append(node.body)
+        elif isinstance(node, ast.Constant):
+            continue
+        elif isinstance(node, ast.UnaryOp) and isinstance(
+                node.op, (ast.USub, ast.UAdd, ast.Invert, ast.Not)):
+            stack.append(node.operand)
+        elif isinstance(node, ast.Dict):
+            stack.extend(key for key in node.keys if key is not None)
+            stack.extend(node.values)
+        elif isinstance(node, (ast.List, ast.Set, ast.Tuple)):
+            stack.extend(node.elts)
+        else:
+            return False
+    return True
 
 
 def _provably_inert(value):
@@ -7147,9 +7285,14 @@ def _contains_dynamic_lookup(value, heads, bindings=None, dead=(), loops=()):
                                     dead=dead, loops=loops)):
                             return True
                     elif bindings is not None:
+                        # #1953 fix-r1 round 38 (GLM r37 boundary P2-3):
+                        # the site-table twin passes ``loops``; the alias
+                        # resolver without it never saw a back-edge rebind
+                        # (``for ...: held = lk()['main']; lk = globals``).
                         reads = _module_alias_head_reads(
                             bindings, func.id,
-                            (node.lineno, node.col_offset), dead=dead)
+                            (node.lineno, node.col_offset), loops,
+                            dead=dead)
                         hits = [(head, read) for head, read in reads
                                 if head in _OPEN_CALL_HEADS]
                         if hits and (deferred or any(
@@ -7184,6 +7327,13 @@ def _contains_dynamic_lookup(value, heads, bindings=None, dead=(), loops=()):
                     # The iterable is read before this generator's target
                     # binds; the ifs are read after it does.
                     parts.append((generator.iter, frozenset(seen),
+                                  gen_deferred))
+                    # #1953 fix-r1 round 38 (codex r37 P0-4): the target is
+                    # an expression too -- ``[v for globals()['v'] in (...)]``
+                    # reads the mapping on the way to the store, and the
+                    # walk stopped at the comprehension branch instead of
+                    # descending into the target.
+                    parts.append((generator.target, frozenset(seen),
                                   gen_deferred))
                     seen.update(_target_names(generator.target))
                     for if_clause in generator.ifs:
@@ -7282,7 +7432,20 @@ def _head_binding_names(node, heads):
                 if (alias.asname or alias.name.split('.')[0]) in heads]
     if isinstance(node, ast.ImportFrom):
         if any(alias.name == '*' for alias in node.names):
-            return sorted(heads)
+            # #1953 fix-r1 round 38 (GLM r37 boundary P1-2): a star import
+            # only unshadows heads the source module really exports.
+            # ``from json import *`` binds no ``globals``, so the local
+            # shadow stays in force and must keep hiding the site; only
+            # ``builtins`` is known to carry the public head spellings, and
+            # even a builtins star skips underscore names (``__import__``),
+            # so a shadowed ``__import__`` stays shadowed too.  A module
+            # that *does* re-export a head name under a star import is not
+            # statically knowable and stays unregistered (documented
+            # trade-off, round-38 README).
+            if getattr(node, 'module', None) == 'builtins':
+                return [name for name in sorted(heads)
+                        if not name.startswith('_')]
+            return []
         return [alias.asname or alias.name for alias in node.names
                 if (alias.asname or alias.name) in heads]
     if isinstance(node, ast.Delete):
@@ -7359,10 +7522,28 @@ def _module_alias_bindings(tree, dynamic_heads=None):
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
             declared = set()
-            for stmt in node.body:
+            # #1953 fix-r1 round 38 (codex r37 P0-3): a ``global`` statement
+            # anywhere in the class body -- under an ``if``, a ``try`` --
+            # declares the module binding at compile time, not only the
+            # direct statements.  Nested scopes answer to their own spans.
+            body = list(node.body)
+            while body:
+                stmt = body.pop()
                 if isinstance(stmt, ast.Global):
                     declared.update(stmt.names)
-            class_spans.append(((node.lineno, node.col_offset),
+                elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                       ast.ClassDef)):
+                    continue
+                body.extend(child for child in ast.iter_child_nodes(stmt)
+                            if isinstance(child, ast.stmt))
+            # #1953 fix-r1 round 38 (codex r37 P0-2): the span starts at the
+            # first body statement, not the ``class`` header -- the bases and
+            # keywords run in the *enclosing* scope, so
+            # ``class C(*((globals := saved) and ())):`` binds at module
+            # scope and the span must not swallow it.
+            start = ((node.body[0].lineno, node.body[0].col_offset)
+                     if node.body else (node.lineno, node.col_offset))
+            class_spans.append((start,
                                 (node.end_lineno, node.end_col_offset),
                                 declared))
 
@@ -7464,33 +7645,14 @@ def _module_alias_sources(bindings, name, position, loops=(), seen=(),
     ``if False: saved = main`` still handed ``main`` to a live ``saved(x)``
     and reported a write (false FAIL).  The alias resolver drops the same
     unreachable bindings now.
+
+    #1953 fix-r1 round 38 (GLM r37 concurrency P2-3 / boundary P2-4 /
+    # simplify P2-1): the sources and head-reads resolvers were line-for-line
+    # twins, so every fix had to land twice.  The sources answer is now the
+    # head-reads walk reduced to names -- one algorithm, one place.
     """
-    key = (name, position, strict)
-    if key in seen:
-        return {name}
-    all_items = bindings.get(name, ())
-    entries = [item for item in all_items
-               if ((item[0] < position if strict else item[0] <= position)
-                   or (loops and item[3] and set(item[3]) & set(loops)))
-               and not (dead and _dead_shadowed(item[0], position, dead))]
-    if not entries:
-        return {name}
-    chosen_index = -1
-    for index, item in enumerate(entries):
-        if not item[1] and item[0] <= position:
-            chosen_index = index
-    candidates = [item for index, item in enumerate(entries)
-                  if index == chosen_index
-                  or (item[1] and index > chosen_index)
-                  or (loops and item[3] and set(item[3]) & set(loops))]
-    found = set()
-    for item in candidates:
-        if item[2] is None:
-            continue
-        found |= _module_alias_sources(bindings, item[2], item[0], loops,
-                                       seen + (key,), item[2] == name,
-                                       dead)
-    return found or {name}
+    return {head for head, _ in _module_alias_head_reads(
+        bindings, name, position, loops, seen, strict, dead)}
 
 
 def _module_alias_head_reads(bindings, name, position, loops=(), seen=(),
@@ -7503,37 +7665,51 @@ def _module_alias_head_reads(bindings, name, position, loops=(), seen=(),
     the binding; a later ``globals = lambda: ...`` does not reach backwards
     into the alias, so ``lk()`` still calls the builtin -- testing the shadow
     at the *call* position saw the rebind and dropped the site (false PASS).
-    The resolution mirrors ``_module_alias_sources`` (last certain binding,
-    later conditionals, loop back edges, dead ranges); the terminal fallback
-    keeps the position the name was read at, which is the *use* position for
-    the initial name and the *binding* position for every hop down the chain.
+    The resolution (last certain binding, later conditionals, loop back
+    edges, dead ranges) keeps the position the name was read at, which is
+    the *use* position for the initial name and the *binding* position for
+    every hop down the chain.
+
+    #1953 fix-r1 round 38 (GLM r37 concurrency P2-3 / boundary P2-4): the
+    per-hop recursion grew the interpreter stack on a deep alias chain
+    (``a1 = a2; ...; a999 = globals``) and took the whole audit down.  The
+    walk keeps an explicit worklist of ``(name, position, strict, seen)``
+    hops instead -- same rule as :func:`_flow_marks`.
     """
-    key = (name, position, strict)
-    if key in seen:
-        return [(name, position)]
-    all_items = bindings.get(name, ())
-    entries = [item for item in all_items
-               if ((item[0] < position if strict else item[0] <= position)
-                   or (loops and item[3] and set(item[3]) & set(loops)))
-               and not (dead and _dead_shadowed(item[0], position, dead))]
-    if not entries:
-        return [(name, position)]
-    chosen_index = -1
-    for index, item in enumerate(entries):
-        if not item[1] and item[0] <= position:
-            chosen_index = index
-    candidates = [item for index, item in enumerate(entries)
-                  if index == chosen_index
-                  or (item[1] and index > chosen_index)
-                  or (loops and item[3] and set(item[3]) & set(loops))]
     found = []
-    for item in candidates:
-        if item[2] is None:
+    stack = [(name, position, strict, seen)]
+    while stack:
+        name, position, strict, seen = stack.pop()
+        key = (name, position, strict)
+        if key in seen:
+            found.append((name, position))
             continue
-        found.extend(_module_alias_head_reads(
-            bindings, item[2], item[0], loops, seen + (key,),
-            item[2] == name, dead))
-    return found or [(name, position)]
+        all_items = bindings.get(name, ())
+        entries = [item for item in all_items
+                   if ((item[0] < position if strict else item[0] <= position)
+                       or (loops and item[3] and set(item[3]) & set(loops)))
+                   and not (dead and _dead_shadowed(item[0], position, dead))]
+        if not entries:
+            found.append((name, position))
+            continue
+        chosen_index = -1
+        for index, item in enumerate(entries):
+            if not item[1] and item[0] <= position:
+                chosen_index = index
+        candidates = [item for index, item in enumerate(entries)
+                      if index == chosen_index
+                      or (item[1] and index > chosen_index)
+                      or (loops and item[3] and set(item[3]) & set(loops))]
+        pushed = False
+        for item in candidates:
+            if item[2] is None:
+                continue
+            stack.append((item[2], item[0], item[2] == name,
+                          seen + (key,)))
+            pushed = True
+        if not pushed:
+            found.append((name, position))
+    return found
 
 
 def _module_alias_calls(tree, calls):
@@ -7852,7 +8028,13 @@ def _helper_from_value(value, events, position, loops=()):
     binding there falls back to the builtin when it spells one.  Anything
     else -- an attribute, a call, a name bound to something unknown -- stays
     unresolved, and the pass keeps its round-14 answer.
+
+    #1953 fix-r1 round 38 (codex r37 P0-1): a walrus subject names the same
+    value the capture binds -- ``match (_sa := _sa):`` unwraps to the name
+    instead of resolving to nothing.
     """
+    while isinstance(value, ast.NamedExpr):
+        value = value.value
     if not isinstance(value, ast.Name):
         return None
     # #1953 fix-r1 round 16 (codex r15 P0-4): a binding written *after* the
@@ -8079,8 +8261,10 @@ def _module_binding_events(tree):
                 for name in _match_capture_names(case.pattern):
                     items = add(name, case, None, False,
                                 position=_match_case_position(case),
-                                force_conditional=not _irrefutable_capture(
-                                    node, case))
+                                force_conditional=not (
+                                    _irrefutable_capture(node, case)
+                                    and _capture_subject_resolvable(
+                                        node.subject)))
                     items[-1] = items[-1][:1] + (-1,) + items[-1][2:]
                     pending.append((items, len(items) - 1,
                                     (node.lineno, node.col_offset),
@@ -8271,8 +8455,10 @@ def _imported_write_aliases(function, outer_imports=None):
             for case in node.cases:
                 for name in _match_capture_names(case.pattern):
                     items = add(name, _match_case_position(case), None,
-                                 conditional if _irrefutable_capture(node, case)
-                                 else True,
+                                 conditional if (
+                                     _irrefutable_capture(node, case)
+                                     and _capture_subject_resolvable(
+                                         node.subject)) else True,
                                  loops, certain=False)
                     pending.append((items, len(items) - 1,
                                     (node.lineno, node.col_offset), loops,
@@ -13756,6 +13942,279 @@ def aggregation_audit():
         failures.append('#1953 aggregation-audit: detector self-test withdrew '
                         'a receiver on a walrus callee freshly rebound to '
                         'nothing (round 37)')
+    # #1953 fix-r1 round 38 (codex r37 P0-1..P0-7 / P1-1; GLM r37 sibling
+    # P1-1 / P2-2 / P2-4, boundary P1-2 / P2-3 / P2-4, concurrency P2-3,
+    # simplify P2-1): the shapes the two r37 reviews left open, pinned on
+    # the real detector paths.  Every row reproduced against the r37 head
+    # before the fix and flipped by it (probe evidence with the PR).
+    _m38_ifexp_unknown = ast.parse(
+        "flag = report is None\n"
+        "_x = (globals := lambda: {'main': lambda x: None}) if flag else None\n"
+        "held = globals()['main']\n"
+        "held(report)\n")
+    if not _module_open_calls(_m38_ifexp_unknown)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test let an '
+                        'unknown IfExp test keep both arms certain '
+                        '(round 38)')
+    _m38_ifexp_true = ast.parse(
+        "_x = (globals := lambda: {'main': lambda x: None}) if True else None\n"
+        "held = globals()['main']\n"
+        "held(report)\n")
+    if _module_open_calls(_m38_ifexp_true)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test dropped '
+                        'the certain IfExp arm a literal-True test settles '
+                        '(round 38)')
+    _m38_ifexp_false = ast.parse(
+        "_x = None if False else (globals := "
+        "lambda: {'main': lambda x: None})\n"
+        "held = globals()['main']\n"
+        "held(report)\n")
+    if _module_open_calls(_m38_ifexp_false)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test dropped '
+                        'the certain IfExp orelse a literal-False test '
+                        'settles (round 38)')
+    _m38_set_truth = ast.parse(
+        "set = lambda: True\n"
+        "set() or (globals := lambda: {'main': lambda x: None})\n"
+        "held = globals()['main']\n"
+        "held(report)\n")
+    if not _module_open_calls(_m38_set_truth)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test trusted '
+                        'literal_eval on a call the module had rebound '
+                        '(round 38)')
+    _m38_const_or = ast.parse(
+        "0 or (globals := lambda: {'main': lambda x: None})\n"
+        "held = globals()['main']\n"
+        "held(report)\n")
+    if _module_open_calls(_m38_const_or)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'certain tail a falsy literal keeps running '
+                        '(round 38)')
+    _m38_deep_inert = ast.parse(
+        "globals = lambda: " + "-" * 1100 + "1\n"
+        "held = globals()['main']\n"
+        "held(report)\n")
+    try:
+        _m38_deep_sites = _module_open_calls(_m38_deep_inert)[0]
+    except RecursionError:
+        _m38_deep_sites = None
+        failures.append('#1953 aggregation-audit: detector self-test let a '
+                        'deep unary literal crash the inert walk '
+                        '(round 38)')
+    if _m38_deep_sites:
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'inertness of a deep unary lambda shadow '
+                        '(round 38)')
+    _m38_class_header = ast.parse(
+        "saved = globals\n"
+        "globals = lambda: {'main': lambda x: None}\n"
+        "class C(*((globals := saved) and ())):\n"
+        "    pass\n"
+        "held = globals()['main']\n"
+        "held(report)\n")
+    if not _module_open_calls(_m38_class_header)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test read a '
+                        'class-header walrus as a class-local binding '
+                        '(round 38)')
+    _m38_class_body = ast.parse(
+        "saved = globals\n"
+        "globals = lambda: {'main': lambda x: None}\n"
+        "class C:\n"
+        "    globals = saved\n"
+        "held = globals()['main']\n"
+        "held(report)\n")
+    if _module_open_calls(_m38_class_body)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test let a '
+                        'class-body binding clear the module shadow '
+                        '(round 38)')
+    _m38_class_nested_global = ast.parse(
+        "saved = globals\n"
+        "globals = lambda: {'main': lambda x: None}\n"
+        "class C:\n"
+        "    if False:\n"
+        "        global globals\n"
+        "    globals = saved\n"
+        "held = globals()['main']\n"
+        "held(report)\n")
+    if not _module_open_calls(_m38_class_nested_global)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test missed a '
+                        'global statement nested in the class body '
+                        '(round 38)')
+    _m38_comp_target = ast.parse(
+        "holder = globals()\n"
+        "held = [value for globals()['value'] in (holder.get('main'),)][0]\n"
+        "held(report)\n")
+    _m38_comp_target_held = next(
+        (node for node in ast.walk(_m38_comp_target)
+         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+         and node.func.id == 'held'), None)
+    if (_m38_comp_target_held is None
+            or not any(site[0] == (_m38_comp_target_held.lineno,
+                                   _m38_comp_target_held.col_offset)
+                       for site in _module_open_calls(_m38_comp_target)[0])):
+        failures.append('#1953 aggregation-audit: detector self-test dropped '
+                        'the carrier a comprehension target reads '
+                        '(round 38)')
+    for _m38_subject in (
+            "(_sa38 := _sa38)",
+            "(_sa38 if True else None)",
+            "(_sa38 or None)"):
+        _m38_match = ast.parse(
+            "from builtins import setattr as _sa38\n"
+            "match " + _m38_subject + ":\n"
+            "    case _sa38:\n"
+            "        pass\n"
+            "def _m38m(report):\n"
+            "    _sa38(md, 'common', object())\n"
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' not in _withdrawn_receivers(_m38_match):
+            failures.append('#1953 aggregation-audit: detector self-test let '
+                            'an exotic match subject clear a real write '
+                            'helper (round 38)')
+    _m38_match_inert = ast.parse(
+        "from builtins import setattr as _sa38\n"
+        "match 0:\n"
+        "    case _sa38:\n"
+        "        pass\n"
+        "def _m38i(report):\n"
+        "    _sa38(md, 'common', object())\n"
+        "    return md.common.aggregate_status(report)\n")
+    if 'md' in _withdrawn_receivers(_m38_match_inert):
+        failures.append('#1953 aggregation-audit: detector self-test kept a '
+                        'helper through a capture bound to an inert '
+                        'subject (round 38)')
+    _m38_wrapper_rebound = ast.parse(
+        "def _m38w(report):\n"
+        "    hs = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+        "    iter = lambda hs: (h for h in (lambda *a: None,))\n"
+        "    next((_h := iter)(hs))('common', object())\n"
+        "    return md.common.aggregate_status(report)\n")
+    if 'md' in _withdrawn_receivers(_m38_wrapper_rebound):
+        failures.append('#1953 aggregation-audit: detector self-test trusted '
+                        'a wrapper spelling the scope had rebound '
+                        '(round 38)')
+    _m38_attrgetter_walrus = ast.parse(
+        "def _m38a(report):\n"
+        "    import operator\n"
+        "    _k = report.name\n"
+        "    _f = operator.attrgetter(_k)\n"
+        "    _h = (_g := _f)(md)\n"
+        "    _h('common', object())\n"
+        "    return md.common.aggregate_status(report)\n")
+    if 'md' not in _withdrawn_receivers(_m38_attrgetter_walrus):
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'receiver a walrus callee handed a dynamic '
+                        'attrgetter (round 38)')
+    _m38_getattr_walrus = ast.parse(
+        "def _m38g(report):\n"
+        "    _k = report.name\n"
+        "    _f = (_q := getattr)(md, _k)\n"
+        "    _f('common', object())\n"
+        "    return md.common.aggregate_status(report)\n")
+    if 'md' not in _withdrawn_receivers(_m38_getattr_walrus):
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'receiver a walrus getattr callee took '
+                        '(round 38)')
+    _m38_star_json = ast.parse(
+        "import json\n"
+        "globals = lambda: {'main': lambda x: None}\n"
+        "from json import *\n"
+        "held = globals()['main']\n"
+        "held(report)\n")
+    if _module_open_calls(_m38_star_json)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test let a '
+                        'json star import unshadow a head json never '
+                        'exports (round 38)')
+    _m38_star_builtins = ast.parse(
+        "globals = lambda: {'main': lambda x: None}\n"
+        "from builtins import *\n"
+        "held = globals()['main']\n"
+        "held(report)\n")
+    if not _module_open_calls(_m38_star_builtins)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'builtin a builtins star import restores '
+                        '(round 38)')
+    _m38_star_underscore = ast.parse(
+        "__import__ = lambda: {'main': lambda x: None}\n"
+        "from builtins import *\n"
+        "held = __import__()['main']\n"
+        "held(report)\n")
+    if _module_open_calls(_m38_star_underscore)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test let a '
+                        'builtins star import unshadow the underscore '
+                        '``__import__`` (round 38)')
+    _m38_comp_if_empty = ast.parse(
+        "held = [x for x in () if (globals := "
+        "lambda: {'main': lambda x: None})]\n"
+        "held2 = globals()['main']\n"
+        "held2(report)\n")
+    if not _module_open_calls(_m38_comp_if_empty)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test kept a '
+                        'comprehension-if walrus certain over an empty '
+                        'iterable (round 38)')
+    _m38_comp_if_full = ast.parse(
+        "held = [x for x in (0,) if (globals := "
+        "lambda: {'main': lambda x: None})]\n"
+        "held2 = globals()['main']\n"
+        "held2(report)\n")
+    if _module_open_calls(_m38_comp_if_full)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test dropped '
+                        'the certain walrus a non-empty literal iterable '
+                        'runs (round 38)')
+    _m38_loop_backedge = ast.parse(
+        "_inert = lambda: {'main': lambda x: None}\n"
+        "lk = _inert\n"
+        "for _ in (0, 1):\n"
+        "    held = lk()['main']\n"
+        "    lk = globals\n"
+        "held(report)\n")
+    _m38_backedge_held = next(
+        (node for node in ast.walk(_m38_loop_backedge)
+         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+         and node.func.id == 'held'), None)
+    if (_m38_backedge_held is None
+            or not any(site[0] == (_m38_backedge_held.lineno,
+                                   _m38_backedge_held.col_offset)
+                       for site in _module_open_calls(
+                           _m38_loop_backedge)[0])):
+        failures.append('#1953 aggregation-audit: detector self-test dropped '
+                        'the carrier a loop back-edge alias rebinds '
+                        '(round 38)')
+    _m38_loop_control = ast.parse(
+        "_inert = lambda: {'main': lambda x: None}\n"
+        "lk = _inert\n"
+        "for _ in (0, 1):\n"
+        "    held = lk()['main']\n"
+        "held(report)\n")
+    if _module_open_calls(_m38_loop_control)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test kept a '
+                        'site behind an alias that never reaches a head '
+                        '(round 38)')
+    # A backward alias chain (each copy reads a name bound before it) is the
+    # one that can reach a head; a forward chain copies values that do not
+    # exist yet.
+    _m38_chain_src = ["a1200 = globals\n"]
+    _m38_chain_src.extend(f"a{_i} = a{_i + 1}\n" for _i in range(1199, 0, -1))
+    _m38_chain_src.append("held = a1()['main']\nheld(report)\n")
+    _m38_chain = ast.parse("".join(_m38_chain_src))
+    try:
+        _m38_chain_sites = _module_open_calls(_m38_chain)[0]
+    except RecursionError:
+        _m38_chain_sites = None
+        failures.append('#1953 aggregation-audit: detector self-test let a '
+                        'deep alias chain crash the head resolver '
+                        '(round 38)')
+    if _m38_chain_sites is not None and not _m38_chain_sites:
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'head a deep alias chain reaches (round 38)')
+    _m38_chain_control_src = ["a1200 = print\n"]
+    _m38_chain_control_src.extend(
+        f"a{_i} = a{_i + 1}\n" for _i in range(1199, 0, -1))
+    _m38_chain_control_src.append("held = a1()['main']\nheld(report)\n")
+    if _module_open_calls(ast.parse("".join(_m38_chain_control_src)))[0]:
+        failures.append('#1953 aggregation-audit: detector self-test kept a '
+                        'site behind a deep chain that never reaches a '
+                        'head (round 38)')
     for _label, _source, _want in (
             ("a handle certainly overwritten in a finally block",
              "def _w42_use():\n"
