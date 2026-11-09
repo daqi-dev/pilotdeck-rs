@@ -963,7 +963,11 @@ mod native_skills_proxy_limit_tests {
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut request = [0; 4096];
-            assert!(stream.read(&mut request).await.unwrap()>0);
+            let n = stream.read(&mut request).await.unwrap();
+            assert!(std::str::from_utf8(&request[..n]).unwrap().starts_with("CONNECT skills.invalid:80 "));
+            stream.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n").await.unwrap();
+            let n = stream.read(&mut request).await.unwrap();
+            assert!(std::str::from_utf8(&request[..n]).unwrap().starts_with("GET /manifest "));
             let size = 8 * 1024 * 1024 + 1;
             let headers = format!("HTTP/1.1 200 OK\r\nContent-Length: {size}\r\nConnection: close\r\n\r\n");
             stream.write_all(headers.as_bytes()).await.unwrap();
@@ -973,12 +977,12 @@ mod native_skills_proxy_limit_tests {
         });
         let env = crate::config::Env::new();
         let settings = crate::runtime::model::http::ProxySettings::from_config(&crate::metadata::object([
-            ("url", "http://127.0.0.1:1".into()),
+            ("url", format!("http://{addr}").as_str().into()),
         ]));
         let transport = HyperModuleTransport::skills_with_proxy_settings(settings.as_ref(), &env);
         assert_eq!(transport.body_limit(), crate::fetch_redirect::MAX_STRING_LENGTH);
         let response = tokio::time::timeout(Duration::from_secs(10), transport.send(ModuleHttpRequest {
-            method: "GET", url: format!("http://{addr}/manifest"), content_type: None,
+            method: "GET", url: "http://skills.invalid/manifest".to_string(), content_type: None,
             authorization: None, body: vec![], timeout: Duration::from_secs(10),
         })).await.unwrap().unwrap();
         assert_eq!(response.body.len(), 8 * 1024 * 1024 + 1);
