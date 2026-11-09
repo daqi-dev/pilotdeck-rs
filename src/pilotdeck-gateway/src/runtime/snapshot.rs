@@ -1193,6 +1193,58 @@ mod tests {
         );
     }
 
+    /// A resolver whose project resolution hits the R19 host boundary: every
+    /// snapshot method must surface as `Forward`, never a synthesized error or
+    /// a flattened response. Same shape as the memory family's
+    /// `HostBoundaryRegistry`.
+    struct HostBoundaryResolver;
+    impl SnapshotProjectResolver for HostBoundaryResolver {
+        fn resolve_project_key(
+            &self,
+            _project_key: &[u16],
+        ) -> Result<String, SnapshotProjectionError> {
+            Err(SnapshotProjectionError::node_io_required())
+        }
+        fn workspace_id(&self, _project_key: &str) -> String {
+            String::new()
+        }
+    }
+
+    /// #2308: the `Forward` arm of `dispatch` had zero coverage — no test
+    /// asserted `SnapshotDispatch::Forward` even though the coverage list
+    /// claimed it. A requires_host boundary (the `node_io_required` errno
+    /// shape) must forward every snapshot method to the Node host.
+    #[test]
+    fn dispatch_forwards_requires_host_boundary() {
+        // The provider is never exercised: the resolver boundary fires before
+        // any provider I/O, so any configured root works.
+        let scratch = TempDir::new();
+        let root = scratch.0.to_string_lossy().into_owned();
+        let provider =
+            crate::storage::create_workspace_snapshot_provider(WorkspaceSnapshotConfig {
+                root: root.clone(),
+                snapshot_root: root,
+            });
+        let gateway = SnapshotGateway::new(Some(provider), HostBoundaryResolver, "/fallback");
+        for (method, input) in [
+            ("snapshot_list", params(&[("projectKey", "/p".into())])),
+            (
+                "snapshot_get",
+                params(&[("projectKey", "/p".into()), ("snapshotId", "s".into())]),
+            ),
+            (
+                "snapshot_restore",
+                params(&[("projectKey", "/p".into()), ("snapshotId", "s".into())]),
+            ),
+        ] {
+            assert_eq!(
+                gateway.dispatch(method, &input),
+                Some(SnapshotDispatch::Forward),
+                "#2308 {method} must forward a requires_host boundary to the Node host"
+            );
+        }
+    }
+
     /// A8.2-pr2 keeps the native component unregistered: default dispatch must
     /// keep forwarding all three methods to the TS host.
     #[test]
