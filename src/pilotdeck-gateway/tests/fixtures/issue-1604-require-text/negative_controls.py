@@ -7,7 +7,8 @@ are committed, the shared source guard refuses to run (the whole src tree
 must equal HEAD), so the coordinator runs this after the commit lands.
 
 Three mutants (taskbook §2.3, PR #1593 review comment #1 item 3; third added
-for the r2 ledger machine-criteria requirement):
+for the r2 ledger machine-criteria requirement; fourth for the r4 claim-gate
+criteria):
   - not-a-string-folds-to-domain: the `TrimGuard::NotAString` arm of
     `require_text` folds back into the domain error instead of the boundary's
     `input.<key>?.trim is not a function` TypeError — the shape the steer /
@@ -18,9 +19,12 @@ for the r2 ledger machine-criteria requirement):
     GatewayInteractionCoordinator.ts:128).
   - item-id-guard-reintroduced: `item_id_string` regains a self-invented
     non-string guard instead of the unchecked `String()` coercion — the
-    response frame and mailbox identity of every non-string steer cell
-    (5 / [1,2] / {toString:null} / absent / null, ledger
-    A7.2-STEER-INPUT-001) break.
+    binding test fails at its first cell (the number-5 response frame
+    `expect`), covering the "no self-invented guards" invariant.
+  - claim-gate-truthiness-restored: the durable claim gate
+    (`TurnSteers::on_durable_message`) regains a truthiness-shaped rejection
+    of the coerced "undefined"/"null" texts — the claim cells of ledger
+    A7.2-STEER-INPUT-001 差异 6 break.
 
 Usage: negative_controls.py --check | OUT_DIR [mutation ...]
 """
@@ -35,6 +39,7 @@ from negative_suite import Case, run_cases
 METHODS_MOD = root / 'src/pilotdeck-gateway/src/native_process/methods/mod.rs'
 PERMISSION = root / 'src/pilotdeck-gateway/src/native_process/methods/permission.rs'
 STEER = root / 'src/pilotdeck-gateway/src/native_process/methods/steer.rs'
+RUNTIME_STEER = root / 'src/pilotdeck-gateway/src/runtime/steer.rs'
 
 TEST = 'native_process::methods::tests::'
 
@@ -78,6 +83,21 @@ mutations = [
      '    js_value::to_string_units(value)',
      TEST + 'steer_item_id_coerces_to_text_for_the_mailbox_identity',
      '#1604 non-string item ids stay Ok'),
+    # r4 (DS sibling#2, ledger A7.2-STEER-INPUT-001 差异 6): the durable
+    # claim gate must keep the non-empty-text filter — the coerced
+    # "undefined"/"null" ids still claim. Reinstating a truthiness-shaped
+    # rejection of the coerced literals is the divergence this round pinned.
+    ('claim-gate-truthiness-restored', RUNTIME_STEER,
+     '                .and_then(JsValue::as_string)\n'
+     '                .filter(|id| !id.is_empty())',
+     '                .and_then(JsValue::as_string)\n'
+     '                .filter(|id| {\n'
+     '                    !id.is_empty()\n'
+     '                        && **id != JsString::from("undefined")\n'
+     '                        && **id != JsString::from("null")\n'
+     '                })',
+     TEST + 'steer_item_id_coerces_to_text_for_the_mailbox_identity',
+     '#1604 the coerced id claims the mailbox entry'),
 ]
 
 
