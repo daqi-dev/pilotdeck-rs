@@ -103,11 +103,11 @@ impl LiveSession for BoundSession {
         &self,
         turn: &SessionQueuedTurn,
     ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
-        // The queue is the single source of truth for FIFO admission. Pop only
-        // after the turn was actually submitted: a failed validation or
-        // `submit_inner` used to leave the session queue one item shorter than
-        // the handle's `pending` copy, so the next admission skipped a turn and
-        // `pump_blocked` stuck.
+        // TS `AgentSession.submitQueuedTurn`: peek, validate, commit
+        // `turn_started` with `inboxItemId`, drop the item, then run the turn.
+        // The claim and the dequeue are one transition: leaving the item
+        // behind after `turn_started` was durable made a restart replay drop
+        // it while memory still held it.
         let next = {
             let queued = self.queued.lock().unwrap();
             queued
@@ -128,14 +128,18 @@ impl LiveSession for BoundSession {
             .recorder
             .start_queued_turn(&self.state.session_key, &next.turn_id, &next.item_id)
             .map_err(runtime_error)?;
-        let stream = self.submit_inner(input, JsValue::Object(options), Some(&turn.item_id))?;
-        let mut queued = self.queued.lock().unwrap();
-        if queued
-            .front()
-            .is_some_and(|head| head.item_id == turn.item_id && head.turn_id == turn.turn_id)
+        // The durable claim is written; retire the in-memory head in the same
+        // step so replay and memory agree even if submission fails below.
         {
-            queued.pop_front();
+            let mut queued = self.queued.lock().unwrap();
+            if queued
+                .front()
+                .is_some_and(|head| head.item_id == turn.item_id && head.turn_id == turn.turn_id)
+            {
+                queued.pop_front();
+            }
         }
+        let stream = self.submit_inner(input, JsValue::Object(options), Some(&turn.item_id))?;
         Ok(stream)
     }
     fn discard_queued_turns(&self, reason: &str) -> RuntimeResult {
@@ -595,10 +599,113 @@ mod tests {
             queued: Mutex::new(VecDeque::from([turn.clone()])),
             input_template: Mutex::new(None),
         };
-        assert!(session.submit_queued_turn(&turn).is_err());
+        let error = match session.submit_queued_turn(&turn) {
+            Ok(_) => panic!("submission must fail after the claim"),
+            Err(error) => error,
+        };
+        assert!(!error.to_string().is_empty(), "{error}");
         let pending = session.pending_queued_turns().unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].turn_id, turn.turn_id);
+        if root.exists() {
+            std::fs::remove_dir_all(root).unwrap();
+        }
+        Ok(())
+    }
+
+    /// A turn whose `turn_started` was committed but whose submission then
+    /// failed must not be resurrected by replay and must not stay queued: the
+    /// durable claim and the in-memory dequeue are one transition, matching
+    /// TS `AgentSession.submitQueuedTurn` (startTurn then markStarted).
+    #[tokio::test]
+    async fn claimed_queued_turn_leaves_the_queue_even_if_submit_fails()
+    -> Result<(), Box<dyn std::error::Error>> {
+        struct Active;
+        impl LiveSession for Active {
+            fn snapshot(&self) -> JsValue {
+                JsValue::Null
+            }
+            fn abort(&self, _: &JsString) -> RuntimeResult {
+                Ok(())
+            }
+            fn dispose(&self) -> DisposeFuture<'_> {
+                Box::pin(async { Ok(()) })
+            }
+            // A submission that fails after the claim was written.
+            fn submit(&self, _: JsValue, _: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+                Err(RuntimeError::new("submit failed after claim"))
+            }
+        }
+        let root = std::env::temp_dir().join(format!(
+            "pdrs-bound-claimed-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let adapter = AsyncTranscriptAdapter::new(
+            Arc::new(crate::storage::JsonlTranscriptStore::new()),
+            Arc::new(|key| key.pilot_home.join("chats")),
+        );
+        let storage = adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: root.clone(),
+                pilot_home: root.clone(),
+                session_id: "s".into(),
+                now: None,
+            })
+            .map_err(runtime_error)?;
+        let turn = SessionQueuedTurn {
+            item_id: "item".into(),
+            turn_id: "turn".into(),
+            input: pilotdeck_protocol::parse_json(r#"{"type":"text","text":"hi"}"#).unwrap(),
+            submit_options: pilotdeck_protocol::parse_json("{}").unwrap(),
+        };
+        let session = BoundSession {
+            inner: Arc::new(Active),
+            state: LiveSessionState::new(
+                "s".into(),
+                root.to_string_lossy().as_ref().into(),
+                storage,
+            )
+            .unwrap(),
+            live: Arc::new(LiveBindings::default()),
+            execution_error: None,
+            // Start empty: the enqueue below is what makes the claim valid.
+            queued: Mutex::new(VecDeque::new()),
+            input_template: Mutex::new(Some(
+                pilotdeck_protocol::parse_json(
+                    r#"{"agent":{},"messages":[{"role":"user","content":[]}]}"#,
+                )
+                .unwrap(),
+            )),
+        };
+        session.enqueue_queued_turn(&turn).map_err(runtime_error)?;
+        let error = match session.submit_queued_turn(&turn) {
+            Ok(_) => panic!("submission must fail after the claim"),
+            Err(error) => error,
+        };
+        assert!(!error.to_string().is_empty(), "{error}");
+        // The claim was durable, so the item is no longer pending anywhere.
+        assert!(session.pending_queued_turns().unwrap().is_empty());
+        // Replay agrees with memory: the claim retired the queued item.
+        // Re-read the same store `bind` restores from.
+        let adapter = AsyncTranscriptAdapter::new(
+            Arc::new(crate::storage::JsonlTranscriptStore::new()),
+            Arc::new(|key| key.pilot_home.join("chats")),
+        );
+        let transcript = adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: root.clone(),
+                pilot_home: root.clone(),
+                session_id: "s".into(),
+                now: None,
+            })
+            .map_err(runtime_error)?
+            .read_transcript(None)
+            .map_err(runtime_error)?;
+        let restored = SessionQueuedTurn::restore(&transcript.entries).map_err(runtime_error)?;
+        assert!(
+            restored.iter().all(|entry| entry.item_id != turn.item_id),
+            "replay must not resurrect a claimed turn: {restored:?}"
+        );
         if root.exists() {
             std::fs::remove_dir_all(root).unwrap();
         }
