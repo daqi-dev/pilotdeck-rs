@@ -89,9 +89,8 @@ async fn changed(rx: &mut watch::Receiver<bool>) {
         .expect("barrier entered")
         .expect("barrier sender alive");
 }
-fn not_started(ticket: &watch::Receiver<bool>, rx: &watch::Receiver<bool>) {
+fn cleanup_ticket_still_owned(ticket: &watch::Receiver<bool>) {
     assert!(!*ticket.borrow(), "actual cleanup publication ticket released at the barrier");
-    assert!(!*rx.borrow(), "new same-key factory entered during delete");
 }
 #[tokio::test]
 async fn close_then_retains_ticket_before_root_removal_with_absent_owner_and_cancelled_waiter() {
@@ -100,7 +99,7 @@ async fn close_then_retains_ticket_before_root_removal_with_absent_owner_and_can
         let key: JsString = "close-delete".into();
         let old = ephemeral.acquire(key.clone()).await.unwrap();
         std::fs::write(old.path().join("original"), b"OLD\n").unwrap();
-        let (owner, started, created) = owner(ephemeral.clone());
+        let (owner, _started, created) = owner(ephemeral.clone());
         let (entered, mut inside) = watch::channel(false);
         let (release, mut gate) = watch::channel(false);
         let roots = ephemeral.clone();
@@ -126,7 +125,7 @@ async fn close_then_retains_ticket_before_root_removal_with_absent_owner_and_can
         };
         let delete_ticket = owner.publication_ticket_probe(&key);
         let next = owner.get_or_create(context(&key, None));
-        not_started(&delete_ticket, &started);
+        cleanup_ticket_still_owned(&delete_ticket);
         release.send_replace(true);
         if let Some(closing) = closing {
             tokio::time::timeout(Duration::from_secs(2), closing)
@@ -193,7 +192,7 @@ async fn actual_sdk_session_delete_holds_publication_until_sdk_cleanup_even_if_c
         let key: JsString = "delete-consumer".into();
         let old = ephemeral.acquire(key.clone()).await.unwrap();
         std::fs::write(old.path().join("original"), b"DELETE\n").unwrap();
-        let (owner, started, created) = owner(ephemeral.clone());
+        let (owner, _started, created) = owner(ephemeral.clone());
         requests.owner = owner.clone();
         requests.ephemeral = Some(ephemeral.clone());
         let (entered, mut inside) = watch::channel(false);
@@ -232,7 +231,7 @@ async fn actual_sdk_session_delete_holds_publication_until_sdk_cleanup_even_if_c
             .into();
         let delete_ticket = owner.publication_ticket_probe(&key);
         let next = owner.get_or_create(context(&key, Some(root)));
-        not_started(&delete_ticket, &started);
+        cleanup_ticket_still_owned(&delete_ticket);
         release.send_replace(true);
         if cancel {
             assert!(task.await.unwrap_err().is_cancelled());

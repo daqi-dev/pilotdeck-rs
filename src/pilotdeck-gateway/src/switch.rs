@@ -30,7 +30,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, Weak,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -423,21 +423,22 @@ impl<F: SwitchFaces> SwitchMachine<F> {
 /// exactly one `CronManager`, so in production this is process-global in
 /// effect (the RPC routing seam, `native_process/methods/cron.rs`, has no
 /// per-request state to thread through), while parallel test assemblies —
-/// each with its own manager — cannot observe one another's switches. The
-/// entries hold their manager alive, so a freed and reallocated address can
-/// never alias a closed one.
-static CRON_MANAGEMENT_CLOSED: Mutex<Vec<Arc<CronManager>>> = Mutex::new(Vec::new());
+/// each with its own manager — cannot observe one another's switches. Weak
+/// entries retain allocation identity without retaining the manager and its
+/// entire gateway after shutdown. Expired entries are pruned under the lock.
+static CRON_MANAGEMENT_CLOSED: Mutex<Vec<Weak<CronManager>>> = Mutex::new(Vec::new());
 
 /// Whether this manager's management methods must reject (A6). `None` (no
 /// `cron:` section) is never closed — the `requireCron` gate owns that shape.
 pub fn cron_management_closed(manager: Option<&Arc<CronManager>>) -> bool {
     match manager {
         None => false,
-        Some(manager) => CRON_MANAGEMENT_CLOSED
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .iter()
-            .any(|closed| Arc::ptr_eq(closed, manager)),
+        Some(manager) => {
+            let mut closed = CRON_MANAGEMENT_CLOSED.lock().unwrap_or_else(|e| e.into_inner());
+            closed.retain(|entry| entry.strong_count() != 0);
+            let identity = Arc::downgrade(manager);
+            closed.iter().any(|entry| Weak::ptr_eq(entry, &identity))
+        }
     }
 }
 
@@ -448,8 +449,10 @@ pub fn close_cron_management(manager: &Arc<CronManager>) {
     let mut closed = CRON_MANAGEMENT_CLOSED
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    if !closed.iter().any(|entry| Arc::ptr_eq(entry, manager)) {
-        closed.push(manager.clone());
+    closed.retain(|entry| entry.strong_count() != 0);
+    let identity = Arc::downgrade(manager);
+    if !closed.iter().any(|entry| Weak::ptr_eq(entry, &identity)) {
+        closed.push(identity);
     }
 }
 

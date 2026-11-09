@@ -5213,3 +5213,8 @@ r128 SOP17/AO119/确定性Notify回归通过；native550过2失败，其中SDK�
 ### 2026-11-09 08:21 · SOP首编修复与负控重定位
 
 r129首编发现raw revision引用临时Undefined寿命不足，已用局部值延长，不改比较语义；接r130。owner三条负控按当前产品结构重定位，13项/test/marker/等价表不变，静态13锚点过，实际执行分给第二镜像。SOP补真实8MiB精确边界，资源差异R1选测入口更正；生命周期审仍在跑，已知SDK旧断言失败已在8bb逐层修正待实测。
+
+
+### 2026-11-09 08:41 · 两小时接续与最终缺陷修复
+
+r130 固定357034288：SOP18/AO119/admission13/owner66及四bin通过，native554过2失败、approvals130过1失败、project189过1失败；已逐SHA接Cron closed Weak清第五真实引用环、resume事务避免二次migration丢numeric receipt，补503真实JSONL前提及Read真实文件fixture，strict八进制字面修复。AO缺目录重试接真实原fd/common-dir/registration/old-tip CAS四源及两真实Git回归，待r131；不承诺与外部Git新增注册原子事务，该边界正在审。SOP模型项目proxy真实9项全过；旧源FD峰native63/末53 KQUEUE的失败原件保留。第二镜像运行原owner负控，Notify only-enable与真旧顺序分别记录，绝不改marker求绿。下一步r131相关测试、FD曲线、独立增量终审；源码安装两代功能通过但原PID监视器总FAIL保留。仅本机提交、Rust只mbp2，CLI工程收口尚未完成，阶段人签仍待。

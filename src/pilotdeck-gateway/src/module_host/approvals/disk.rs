@@ -161,8 +161,16 @@ impl DiskSopStore {
         let session = prop(value, "sessionId")
             .as_string()
             .ok_or_else(|| failed("SOP state has no session id."))?;
-        let value = Self::normalize(session, value)?;
-        let text = stringify_json(&value)
+        self.write_current(&Self::normalize(session, value)?)
+    }
+    // Fresh receipts must be published before the next read-time migration.
+    // Re-normalizing here would erase a raw requestId/message immediately,
+    // unlike SopStateStore.write (which only JSON-serializes its next record).
+    fn write_current(&self, value: &JsValue) -> Result<(), SopFailure> {
+        let session = prop(value, "sessionId")
+            .as_string()
+            .ok_or_else(|| failed("SOP state has no session id."))?;
+        let text = stringify_json(value)
             .map_err(|_| failed("SOP state cannot be serialized."))?
             .ok_or_else(|| failed("SOP state cannot be serialized."))?;
         let mut bytes = text.into_bytes();
@@ -639,7 +647,7 @@ impl DiskSopStore {
                     .map_err(|_| failed("SOP resume export failed."))?
                     .ok_or_else(|| failed("SOP resume export produced no state."))?;
                 set(&mut next, "updatedAt", (store.clock)().as_str().into());
-                store.write(&next)?;
+                store.write_current(&next)?;
             }
             Ok(result)
         })

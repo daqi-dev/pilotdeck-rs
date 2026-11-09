@@ -603,3 +603,19 @@ async fn cron_stop_face_surfaces_manager_rejection() {
         .stop_once()
         .expect("#1353 the failed stop is still observed as done");
 }
+
+#[test]
+fn closed_cron_gate_does_not_retain_manager_or_close_another_manager() {
+    let scratch = Scratch::new("switch-cron-weak-close");
+    let manager = cron_manager(&scratch);
+    let other = cron_manager(&scratch);
+    let weak = Arc::downgrade(&manager);
+    assert!(!crate::switch::cron_management_closed(Some(&manager)));
+    crate::switch::close_cron_management(&manager);
+    crate::switch::close_cron_management(&manager);
+    assert!(crate::switch::cron_management_closed(Some(&manager)));
+    assert!(!crate::switch::cron_management_closed(Some(&other)));
+    drop(manager);
+    assert!(weak.upgrade().is_none(), "closed gate must not keep the gateway alive");
+    assert!(!crate::switch::cron_management_closed(Some(&other)));
+}

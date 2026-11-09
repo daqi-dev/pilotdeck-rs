@@ -183,6 +183,15 @@ async fn deny_cancel_and_replacement_cannot_leave_an_execution_grant() {
 
 #[tokio::test]
 async fn session_grant_updates_the_same_registry_handle_used_by_execution() {
+    struct Fixture(std::path::PathBuf);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let fixture = Fixture(std::env::temp_dir().join(format!("pdrs-session-grant-{}", uuid::Uuid::new_v4())));
+    std::fs::create_dir(&fixture.0).unwrap();
+    std::fs::write(fixture.0.join("a"), b"session grant fixture\n").unwrap();
     let registry =
         Arc::new(crate::config::permission::GatewaySessionPermissionRuleSetRegistry::new());
     let lease = registry.acquire(&"s".into(), None);
@@ -206,7 +215,7 @@ async fn session_grant_updates_the_same_registry_handle_used_by_execution() {
                 profile: profile(InteractionProfileName::Interactive),
                 context: permission::create_default_permission_context(
                     permission::DefaultPermissionContextOptions {
-                        cwd: "/workspace".into(),
+                        cwd: fixture.0.to_string_lossy().into_owned().into(),
                         can_prompt: Some(true),
                         ..Default::default()
                     },

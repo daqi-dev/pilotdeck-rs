@@ -897,6 +897,8 @@ mod tests {
             ("type", "session_metadata".into()),
             ("sessionId", JsValue::String(session.clone())),
             ("turnId", "host-admission".into()),
+            ("createdAt", "2026-01-02T03:04:05.000Z".into()),
+            ("sequence", JsValue::Number(1.0)),
             (
                 "metadata",
                 crate::metadata::object([("staffDeckAdmission", admission)]),
@@ -910,6 +912,14 @@ mod tests {
             pilotdeck_protocol::stringify_json(&entry).unwrap().unwrap()
         );
         std::fs::write(&transcript, &bytes).unwrap();
+        let decoded = crate::storage::read_transcript_bounded(&transcript).unwrap();
+        assert!(
+            decoded.read.diagnostics.is_empty(),
+            "{:?}",
+            decoded.read.diagnostics
+        );
+        assert_eq!(decoded.read.entries.len(), 1);
+        assert!(read_admission(&decoded.read.entries, &session).is_some());
         let input = crate::metadata::object([
             ("sessionKey", JsValue::String(session)),
             ("projectKey", JsValue::String(project)),
@@ -950,7 +960,7 @@ mod tests {
         if !rustix::process::geteuid().is_root() {
             use std::os::unix::fs::PermissionsExt;
             let permissions = std::fs::metadata(&binding).unwrap().permissions();
-            std::fs::set_permissions(&binding, std::fs::Permissions::from_mode(0)).unwrap();
+            std::fs::set_permissions(&binding, std::fs::Permissions::from_mode(0o0)).unwrap();
             assert_eq!(
                 std::fs::read(&binding).unwrap_err().kind(),
                 std::io::ErrorKind::PermissionDenied
