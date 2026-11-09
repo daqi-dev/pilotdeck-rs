@@ -17,6 +17,37 @@ pub(crate) use super::attachment_net::set_test_permit_loopback_fetch;
 
 const LIMIT: usize = 50 * 1024 * 1024;
 
+static PATH_PART_SANITIZER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+
+fn path_part_sanitizer() -> &'static regex::Regex {
+    PATH_PART_SANITIZER.get_or_init(|| {
+        regex::Regex::new("[^a-zA-Z0-9._-]+").expect("valid regex")
+    })
+}
+
+pub(crate) fn format_attachment_diagnostics_block(lines: &[String]) -> String {
+    format!(
+        "[Attachment diagnostics]\n{}",
+        lines
+            .iter()
+            .map(|line| format!("- {line}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
+}
+
+pub(crate) fn merge_attachment_diagnostics(text: String, lines: &[String]) -> String {
+    if lines.is_empty() {
+        return text;
+    }
+    let block = format_attachment_diagnostics_block(lines);
+    if text.is_empty() {
+        block
+    } else {
+        format!("{text}\n{block}")
+    }
+}
+
 fn sanitize_filename(name: &str) -> String {
     name.chars()
         .map(|ch| {
@@ -39,8 +70,7 @@ fn path_part(value: &str) -> Result<String> {
     {
         return Err(failure("Invalid attachment path component"));
     }
-    let replaced = regex::Regex::new("[^a-zA-Z0-9._-]+")
-        .expect("valid regex")
+    let replaced = path_part_sanitizer()
         .replace_all(trimmed, "_")
         .chars()
         .take(120)
@@ -116,7 +146,7 @@ fn write_attachment_bytes(store_dir: &Path, filename: &str, data: &[u8]) -> Resu
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        options.custom_flags(libc::O_NOFOLLOW);
     }
     let mut file = match options.open(&path) {
         Ok(file) => file,
@@ -171,8 +201,9 @@ pub(crate) async fn materialize_inbound(
     chat: &str,
     message_id: &str,
     attachments: &mut Vec<Value>,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     let store_dir = attachment_store_dir(home, chat, message_id)?;
+    let mut diagnostics = Vec::new();
     let mut index = 0usize;
     while index < attachments.len() {
         let Some(url) = attachments[index]
@@ -238,12 +269,12 @@ pub(crate) async fn materialize_inbound(
                 index += 1;
             }
             Err(error) => {
-                eprintln!("weixin: attachment materialize failed: {}", error.message);
+                diagnostics.push(format!("微信附件处理失败：{}", error.message));
                 attachments.remove(index);
             }
         }
     }
-    Ok(())
+    Ok(diagnostics)
 }
 
 async fn download_bytes(url: &str) -> Result<Vec<u8>> {
@@ -378,8 +409,18 @@ async fn upload_encrypted_cdn(upload_url: &str, data: &[u8], aeskey: &[u8; 16]) 
         ciphertext.len().saturating_add(4096),
     )
     .await?;
-    if !response.status.is_success() {
-        return Err(failure("Attachment upload HTTP error"));
+    if response.status != hyper::StatusCode::OK {
+        let detail = response
+            .headers
+            .get("x-error-message")
+            .and_then(|value| value.to_str().ok())
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| String::from_utf8_lossy(&response.body).into_owned());
+        return Err(failure(&format!(
+            "weixin CDN upload HTTP {}: {detail}",
+            response.status.as_u16()
+        )));
     }
     response
         .headers
@@ -649,13 +690,21 @@ mod tests {
             }),
             json!({"type":"file","name":"doc.bin","url":good_url}),
         ];
-        materialize_inbound(&home, "user-1", "m1", &mut attachments)
+        let diags = materialize_inbound(&home, "user-1", "m1", &mut attachments)
             .await
             .unwrap();
         let store = attachment_store_dir(&home, "user-1", "m1").unwrap();
         assert!(!store.join("bad.jpg").exists());
         assert_eq!(attachments.len(), 1);
         assert!(attachments[0]["path"].as_str().is_some());
+        assert!(
+            diags
+                .iter()
+                .any(|line| line.starts_with("微信附件处理失败：")),
+            "expected materialize diagnostics, got {diags:?}"
+        );
+        let merged = merge_attachment_diagnostics(String::new(), &diags);
+        assert!(merged.contains("[Attachment diagnostics]"));
         set_test_permit_loopback_fetch(false);
         let _ = std::fs::remove_dir_all(home);
     }
@@ -780,8 +829,147 @@ mod tests {
         assert_eq!(response.body, b"hello");
         let posted = bodies.lock().unwrap();
         assert_eq!(posted.len(), 2);
-        assert_eq!(posted[1], payload.as_ref());
+        assert_eq!(posted[1].as_slice(), payload.as_ref());
         set_test_permit_loopback_fetch(false);
+    }
+
+    #[tokio::test]
+    async fn get_after_302_does_not_replay_post_body_on_307() {
+        let _lock = super::attachment_net::test_settings_lock();
+        set_test_permit_loopback_fetch(true);
+        let methods = Arc::new(StdMutex::new(Vec::new()));
+        let bodies = Arc::new(StdMutex::new(Vec::new()));
+        let recorded_methods = methods.clone();
+        let recorded_bodies = bodies.clone();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base = format!("http://{addr}");
+        let mid = format!("{base}/mid");
+        let final_url = format!("{base}/final");
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                let mut buf = [0u8; 4096];
+                loop {
+                    let count = socket.read(&mut buf).await.unwrap();
+                    if count == 0 {
+                        break;
+                    }
+                    bytes.extend_from_slice(&buf[..count]);
+                    if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let header = String::from_utf8_lossy(&bytes);
+                let method = header.split_whitespace().next().unwrap_or("").to_string();
+                let path = header.split_whitespace().nth(1).unwrap_or("/");
+                let body_start = bytes
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                    .map(|index| index + 4)
+                    .unwrap_or(bytes.len());
+                recorded_methods.lock().unwrap().push(method);
+                recorded_bodies
+                    .lock()
+                    .unwrap()
+                    .push(bytes[body_start..].to_vec());
+                if path.contains("/final") {
+                    socket
+                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                        .await
+                        .unwrap();
+                    continue;
+                }
+                if path.contains("/mid") {
+                    socket
+                        .write_all(
+                            format!(
+                                "HTTP/1.1 307 Temporary Redirect\r\nLocation: {final_url}\r\nContent-Length: 0\r\n\r\n"
+                            )
+                            .as_bytes(),
+                        )
+                        .await
+                        .unwrap();
+                    continue;
+                }
+                socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 302 Found\r\nLocation: {mid}\r\nContent-Length: 0\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            }
+        });
+        let payload = Bytes::from_static(b"payload-bytes");
+        let payload_len = payload.len();
+        attachment_net::pinned_post(&format!("{base}/start"), payload, 1024)
+            .await
+            .unwrap();
+        let posted_methods = methods.lock().unwrap();
+        let posted_bodies = bodies.lock().unwrap();
+        assert_eq!(posted_methods.as_slice(), ["POST", "GET", "GET"]);
+        assert_eq!(posted_bodies[0].len(), payload_len);
+        assert!(posted_bodies[1].is_empty());
+        assert!(posted_bodies[2].is_empty());
+        set_test_permit_loopback_fetch(false);
+    }
+
+    #[tokio::test]
+    async fn upload_rejects_non_200_with_error_header() {
+        let _lock = super::attachment_net::test_settings_lock();
+        set_test_permit_loopback_fetch(true);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let upload_url = format!("http://{addr}/upload");
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                socket
+                    .write_all(
+                        b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\nx-error-message: denied\r\n\r\n",
+                    )
+                    .await
+                    .unwrap();
+            }
+        });
+        let key = [0u8; 16];
+        let error = upload_encrypted_cdn(&upload_url, b"x", &key).await.unwrap_err();
+        assert!(error.message.contains("weixin CDN upload HTTP 201"));
+        assert!(error.message.contains("denied"));
+        set_test_permit_loopback_fetch(false);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn rejects_hard_link_without_truncate() {
+        set_test_permit_loopback_fetch(true);
+        let home = std::env::temp_dir().join(format!("weixin-hardlink-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        let (fixture, url) = fixture(b"payload").await;
+        let _ = fixture;
+        let mut attachments = vec![json!({"type":"file","name":"doc.bin","url":url})];
+        materialize_inbound(&home, "user-1", "m1", &mut attachments)
+            .await
+            .unwrap();
+        let store = attachment_store_dir(&home, "user-1", "m1").unwrap();
+        let link = store.join("doc.bin");
+        let outside = home.join("outside.bin");
+        std::fs::write(&outside, b"victim").unwrap();
+        std::fs::remove_file(&link).unwrap();
+        std::fs::hard_link(&outside, &link).unwrap();
+        let mut again = vec![json!({"type":"file","name":"doc.bin","url":url})];
+        let diags = materialize_inbound(&home, "user-1", "m1", &mut again)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&outside).unwrap(), b"victim");
+        assert!(again.is_empty());
+        assert!(!diags.is_empty());
+        set_test_permit_loopback_fetch(false);
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[tokio::test]

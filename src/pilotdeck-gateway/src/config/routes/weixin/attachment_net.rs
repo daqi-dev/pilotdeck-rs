@@ -65,13 +65,14 @@ const MAX_REDIRECTS: u32 = 5;
 const BODY_READ_TIMEOUT: Duration = Duration::from_secs(30);
 const DNS_CACHE_TTL: Duration = Duration::from_secs(120);
 const MAX_IDLE_CONNECTIONS: usize = 32;
+const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 type BoxBody = http_body_util::combinators::BoxBody<Bytes, hyper::Error>;
 type HttpSender = hyper::client::conn::http1::SendRequest<BoxBody>;
 
 static TLS_CONNECTOR: OnceLock<TlsConnector> = OnceLock::new();
 static DNS_CACHE: OnceLock<Mutex<HashMap<String, (IpAddr, Instant)>>> = OnceLock::new();
-static CONNECTION_POOL: Mutex<Vec<(PoolKey, HttpSender)>> = Mutex::new(Vec::new());
+static CONNECTION_POOL: Mutex<Vec<(PoolKey, HttpSender, Instant)>> = Mutex::new(Vec::new());
 
 fn dns_cache() -> &'static Mutex<HashMap<String, (IpAddr, Instant)>> {
     DNS_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -114,6 +115,7 @@ pub(crate) fn is_blocked_ipv4(addr: Ipv4Addr) -> bool {
         || octets[0] == 0
         || (octets[0] == 100 && (64..=127).contains(&octets[1]))
         || (240..=254).contains(&octets[0])
+        || octets[0] == 255
 }
 
 fn ipv4_compatible(v6: std::net::Ipv6Addr) -> Option<Ipv4Addr> {
@@ -182,16 +184,32 @@ async fn resolve_host_ips(host: &str) -> Result<Vec<IpAddr>> {
     Ok(ips)
 }
 
+fn http_authority(url: &Url) -> String {
+    let host = url.host_str().unwrap_or("");
+    let port = url
+        .port()
+        .unwrap_or(if url.scheme() == "https" { 443 } else { 80 });
+    let default = if url.scheme() == "https" { 443 } else { 80 };
+    if port == default {
+        host.to_owned()
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
 async fn pin_for_host(host: &str) -> Result<IpAddr> {
     if let Ok(ip) = host.parse::<IpAddr>() {
         return Ok(ip);
     }
     {
-        let cache = dns_cache().lock().unwrap();
+        let mut cache = dns_cache()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some((ip, saved)) = cache.get(host) {
             if saved.elapsed() < DNS_CACHE_TTL {
                 return Ok(*ip);
             }
+            cache.remove(host);
         }
     }
     let ips = resolve_host_ips(host).await?;
@@ -204,7 +222,7 @@ async fn pin_for_host(host: &str) -> Result<IpAddr> {
         .ok_or_else(|| failure("Attachment URL host is not permitted"))?;
     dns_cache()
         .lock()
-        .unwrap()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
         .insert(host.into(), (pin, Instant::now()));
     Ok(pin)
 }
@@ -262,14 +280,7 @@ impl PinnedTarget {
     }
 
     fn authority(&self) -> String {
-        let host = self.host();
-        let port = self.port();
-        let default = if self.url.scheme() == "https" { 443 } else { 80 };
-        if port == default {
-            host.to_owned()
-        } else {
-            format!("{host}:{port}")
-        }
+        http_authority(&self.url)
     }
 
     fn pool_key(&self) -> PoolKey {
@@ -285,16 +296,10 @@ impl PinnedTarget {
 #[cfg(test)]
 pub(crate) fn authority_for_url(url: &str) -> Result<String> {
     let parsed = Url::parse(url).map_err(|_| failure("Invalid attachment URL"))?;
-    let host = parsed.host_str().ok_or_else(|| failure("Attachment URL must include a host"))?;
-    let port = parsed
-        .port()
-        .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
-    let default = if parsed.scheme() == "https" { 443 } else { 80 };
-    Ok(if port == default {
-        host.to_owned()
-    } else {
-        format!("{host}:{port}")
-    })
+    if parsed.host_str().is_none() {
+        return Err(failure("Attachment URL must include a host"));
+    }
+    Ok(http_authority(&parsed))
 }
 
 fn redirect_status(status: StatusCode) -> bool {
@@ -356,19 +361,25 @@ async fn connect_sender(target: &PinnedTarget) -> Result<HttpSender> {
 }
 
 fn pool_take(key: &PoolKey) -> Option<HttpSender> {
-    let mut pool = CONNECTION_POOL.lock().unwrap();
-    if let Some(index) = pool.iter().position(|(entry, _)| entry == key) {
+    let mut pool = CONNECTION_POOL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    pool.retain(|(_, _, idle_since)| idle_since.elapsed() < POOL_IDLE_TIMEOUT);
+    if let Some(index) = pool.iter().position(|(entry, _, _)| entry == key) {
         return Some(pool.swap_remove(index).1);
     }
     None
 }
 
 fn pool_store(key: PoolKey, sender: HttpSender) {
-    let mut pool = CONNECTION_POOL.lock().unwrap();
+    let mut pool = CONNECTION_POOL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    pool.retain(|(_, _, idle_since)| idle_since.elapsed() < POOL_IDLE_TIMEOUT);
     if pool.len() >= MAX_IDLE_CONNECTIONS {
         return;
     }
-    pool.push((key, sender));
+    pool.push((key, sender, Instant::now()));
 }
 
 async fn acquire_sender(target: &PinnedTarget) -> Result<HttpSender> {
@@ -496,7 +507,11 @@ async fn pinned_exchange(
                     body = None;
                 }
                 StatusCode::TEMPORARY_REDIRECT | StatusCode::PERMANENT_REDIRECT => {
-                    body = post_body.clone();
+                    if method == Method::POST {
+                        body = post_body.clone();
+                    } else {
+                        body = None;
+                    }
                 }
                 _ => body = None,
             }
@@ -531,6 +546,7 @@ mod tests {
         let fec0: IpAddr = "fec0::1".parse().unwrap();
         assert!(is_blocked_ip(fec0));
         assert!(is_blocked_ipv4(Ipv4Addr::new(240, 0, 0, 1)));
+        assert!(is_blocked_ipv4(Ipv4Addr::new(255, 1, 2, 3)));
         assert!(!is_blocked_ipv4(Ipv4Addr::new(8, 8, 8, 8)));
     }
 

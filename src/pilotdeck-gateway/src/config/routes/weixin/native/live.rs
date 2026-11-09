@@ -110,8 +110,16 @@ impl LiveOwner {
         let outbox = receipt["outbox"].as_array().cloned().unwrap_or_default();
         let start = receipt["sentIndex"].as_u64().unwrap_or(0) as usize;
         for (index, text) in outbox.iter().enumerate().skip(start) {
-            self.reply(credentials, chat, text.as_str().unwrap_or(""))
-                .await?;
+            let context = self.chat(chat).lock().await.context.clone();
+            send_reply(
+                &self.storage,
+                &self.http,
+                credentials,
+                chat,
+                context.as_deref(),
+                text.as_str().unwrap_or(""),
+            )
+            .await?;
             receipt["sentIndex"] = json!(index + 1);
             self.save_receipt(path, receipt)?;
         }
@@ -120,13 +128,15 @@ impl LiveOwner {
     }
     async fn reply(&self, credentials: &Value, chat: &str, text: &str) -> Result<()> {
         let context = self.chat(chat).lock().await.context.clone();
-        send_reply(
+        super::send_reply_with_queue(
             &self.storage,
             &self.http,
+            &self.delivery,
             credentials,
             chat,
             context.as_deref(),
             text,
+            true,
         )
         .await
     }
@@ -210,7 +220,7 @@ impl LiveOwner {
         let Some(chat_id) = text(message, "from_user_id") else {
             return Ok(());
         };
-        let Some((input, mut attachments)) =
+        let Some((mut input, mut attachments)) =
             crate::config::routes::weixin::native::weixin_inbound_text_and_attachments(message)
         else {
             return Ok(());
@@ -222,13 +232,14 @@ impl LiveOwner {
                 .and_then(Value::as_str)
                 .filter(|id| !id.is_empty())
                 .unwrap_or(id);
-            super::super::attachments::materialize_inbound(
+            let materialize_diags = super::super::attachments::materialize_inbound(
                 &self.storage.home,
                 chat_id,
                 message_id,
                 &mut attachments,
             )
             .await?;
+            input = super::super::attachments::merge_attachment_diagnostics(input, &materialize_diags);
         }
         let chat = self.chat(chat_id);
         if let Some(context) = text(message, "context_token").filter(|context| !context.is_empty()) {
@@ -276,6 +287,7 @@ impl LiveOwner {
                     state.changed.notify_waiters();
                     state.active_session.take()
                 };
+                self.delivery.clear_pending_replies(chat_id);
                 let previous = previous
                     .unwrap_or_else(|| self.mapper.lock().unwrap().session("weixin", chat_id));
                 let _ = self
@@ -682,11 +694,17 @@ impl ChannelEventSink for LiveSink<'_> {
                     }
                     let fallback =
                         super::super::attachments::format_attachment_fallback(&attachment);
-                    return self
+                    if self
                         .owner
                         .reply(self.credentials, self.chat, &fallback)
                         .await
-                        .map(|_| ());
+                        .is_err()
+                    {
+                        self.owner
+                            .delivery
+                            .queue_pending_reply(self.chat, &fallback);
+                    }
+                    return Ok(());
                 }
                 Some("error") => event["message"].as_str().map(str::to_owned),
                 _ => None,

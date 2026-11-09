@@ -28,8 +28,19 @@ impl WeixinDelivery {
         self.queue_pending_reply(chat, &text);
     }
 
+    pub(crate) fn clear_pending_replies(&self, chat: &str) {
+        let mut pending = self
+            .pending_replies
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        pending.remove(chat);
+    }
+
     pub(crate) fn queue_pending_reply(&self, chat: &str, text: &str) {
-        let mut pending = self.pending_replies.lock().unwrap();
+        let mut pending = self
+            .pending_replies
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let replies = pending.entry(chat.into()).or_default();
         replies.push(text.into());
         if replies.len() > MAX_PENDING_REPLIES_PER_CHAT {
@@ -157,7 +168,7 @@ impl WeixinDelivery {
     pub(crate) fn test_pending_len(&self, chat: &str) -> usize {
         self.pending_replies
             .lock()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(chat)
             .map(|v| v.len())
             .unwrap_or(0)
@@ -740,7 +751,22 @@ fn weixin_inbound_message_type(message: &Value) -> bool {
     message.get("message_type").and_then(Value::as_i64) == Some(1)
 }
 
-fn push_weixin_attachment(attachments: &mut Vec<Value>, kind: &str, media_owner: &Value) {
+const WEIXIN_IMAGE_MISSING_URL_DIAGNOSTIC: &str =
+    "微信图片附件缺少下载 URL，已跳过。调试信息：image_item 中未找到 url/cdn_url/media.full_url。";
+const WEIXIN_VIDEO_SKIPPED_DIAGNOSTIC: &str = "微信视频附件暂未接入内容理解，已跳过。";
+
+fn weixin_file_missing_url_diagnostic(media_owner: &Value) -> String {
+    let name = media_owner
+        .get("file_name")
+        .or_else(|| media_owner.get("filename"))
+        .and_then(Value::as_str)
+        .unwrap_or("(unknown)");
+    format!(
+        "微信文件 {name} 缺少下载 URL，已跳过。调试信息：file_item 中未找到 url/cdn_url/media.full_url。"
+    )
+}
+
+fn push_weixin_attachment(attachments: &mut Vec<Value>, kind: &str, media_owner: &Value) -> Option<String> {
     let name = media_owner
         .get("file_name")
         .or_else(|| media_owner.get("filename"))
@@ -751,7 +777,11 @@ fn push_weixin_attachment(attachments: &mut Vec<Value>, kind: &str, media_owner:
         "name": name,
     });
     let Some(url) = super::media::weixin_media_download_url(media_owner) else {
-        return;
+        return Some(if kind == "image" {
+            WEIXIN_IMAGE_MISSING_URL_DIAGNOSTIC.into()
+        } else {
+            weixin_file_missing_url_diagnostic(media_owner)
+        });
     };
     attachment["url"] = url.into();
     let mut metadata = json!({ "weixinMediaOwner": media_owner.clone() });
@@ -764,6 +794,7 @@ fn push_weixin_attachment(attachments: &mut Vec<Value>, kind: &str, media_owner:
     }
     attachment["metadata"] = metadata;
     attachments.push(attachment);
+    None
 }
 
 pub(crate) fn weixin_inbound_text_and_attachments(message: &Value) -> Option<(String, Vec<Value>)> {
@@ -771,8 +802,9 @@ pub(crate) fn weixin_inbound_text_and_attachments(message: &Value) -> Option<(St
         return None;
     }
     let items = message.get("item_list")?.as_array()?;
-    let mut parts = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
     let mut attachments = Vec::new();
+    let mut diagnostics = Vec::new();
     for item in items {
         match item.get("type").and_then(Value::as_i64) {
             Some(1) => {
@@ -781,21 +813,36 @@ pub(crate) fn weixin_inbound_text_and_attachments(message: &Value) -> Option<(St
                     .and_then(|value| value.get("text"))
                     .and_then(Value::as_str)
                 {
-                    parts.push(text);
+                    parts.push(text.to_owned());
                 }
             }
             Some(2) => {
                 if let Some(image) = item.get("image_item") {
-                    push_weixin_attachment(&mut attachments, "image", image);
+                    if let Some(line) = push_weixin_attachment(&mut attachments, "image", image) {
+                        diagnostics.push(line);
+                    }
                 }
             }
             Some(3) => {
                 if let Some(file) = item.get("file_item") {
-                    push_weixin_attachment(&mut attachments, "file", file);
+                    if let Some(line) = push_weixin_attachment(&mut attachments, "file", file) {
+                        diagnostics.push(line);
+                    }
                 }
+            }
+            Some(4) => {
+                if let Some(voice) = item.get("voice_item").and_then(|v| v.get("text")).and_then(Value::as_str) {
+                    parts.push(format!("[微信语音转文字]\n{voice}"));
+                }
+            }
+            Some(5) => {
+                diagnostics.push(WEIXIN_VIDEO_SKIPPED_DIAGNOSTIC.into());
             }
             _ => {}
         }
+    }
+    if !diagnostics.is_empty() {
+        parts.push(super::attachments::format_attachment_diagnostics_block(&diagnostics));
     }
     let text = crate::metadata::js_trim(&parts.join("\n")).to_owned();
     if text.is_empty() && attachments.is_empty() {
@@ -865,20 +912,35 @@ mod inbound_tests {
     }
 
     #[test]
-    fn skips_cos_url_only_file_items_like_ts() {
-        assert!(
-            super::weixin_inbound_text_and_attachments(&json!({
-                "message_type": 1,
-                "item_list": [
-                    {"type": 3, "file_item": {
-                        "file_name": "doc.pdf",
-                        "cos_url": "https://cdn.example/doc.pdf",
-                        "file_id": "fid-1"
-                    }}
-                ]
-            }))
-            .is_none()
-        );
+    fn clear_pending_replies_matches_ts_reset() {
+        let delivery = super::super::WeixinDelivery {
+            storage: crate::config::routes::weixin::storage::Storage::new(std::env::temp_dir()),
+            http: crate::config::routes::weixin::http::Http::new(),
+            contexts: Default::default(),
+            pending_replies: Default::default(),
+        };
+        delivery.queue_pending_reply("chat", "keep-me");
+        assert_eq!(delivery.test_pending_len("chat"), 1);
+        delivery.clear_pending_replies("chat");
+        assert_eq!(delivery.test_pending_len("chat"), 0);
+    }
+
+    #[test]
+    fn cos_url_only_file_item_emits_diagnostics_like_ts() {
+        let (text, attachments) = super::weixin_inbound_text_and_attachments(&json!({
+            "message_type": 1,
+            "item_list": [
+                {"type": 3, "file_item": {
+                    "file_name": "doc.pdf",
+                    "cos_url": "https://cdn.example/doc.pdf",
+                    "file_id": "fid-1"
+                }}
+            ]
+        }))
+        .unwrap();
+        assert!(attachments.is_empty());
+        assert!(text.contains("[Attachment diagnostics]"));
+        assert!(text.contains("微信文件 doc.pdf 缺少下载 URL，已跳过"));
     }
 
     #[test]
@@ -952,6 +1014,27 @@ fn collect_reply(events: &[Value]) -> String {
     }
     text
 }
+pub(crate) async fn send_reply_with_queue(
+    storage: &Storage,
+    http: &Http,
+    delivery: &WeixinDelivery,
+    credentials: &Value,
+    chat: &str,
+    context: Option<&str>,
+    reply: &str,
+    queue_on_failure: bool,
+) -> Result<()> {
+    match send_reply(storage, http, credentials, chat, context, reply).await {
+        Ok(()) => Ok(()),
+        Err(error) if queue_on_failure => {
+            delivery.queue_pending_reply(chat, reply);
+            eprintln!("weixin: reply queued after failure: {}", error.message);
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
 async fn send_reply(
     storage: &Storage,
     http: &Http,
