@@ -48,7 +48,10 @@ fn turn_mismatch(field: &'static str) -> JsValue {
 /// non-string id travels as its unchecked `String()` form: objects become
 /// `[object Object]` instead of throwing the ToPrimitive TypeError TS never
 /// raises here. The durable `queueItemId` therefore shows the coerced text —
-/// ledger A7.2-STEER-INPUT-001.
+/// ledger A7.2-STEER-INPUT-001. Because the coerced text also keys the
+/// `seen` / `cancelled` sets, cross-type same-text interleavings alias in
+/// Rust while TS keys by the raw wire value — the interleaved response
+/// frames may differ (ledger §交错 A/B).
 fn item_id_string(value: &JsValue) -> Result<JsString, RequestError> {
     js_value::to_string_units(value)
         .map(JsString::from_utf16)
