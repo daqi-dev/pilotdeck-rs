@@ -226,6 +226,7 @@ impl Harness {
                     })
                 });
                 if name == "create-dispose-before-mcp"
+                    || name == "concurrent-prepare-overlap"
                     || (name == "snapshot-before-prepare" && id == 2)
                 {
                     gate.wait().await;
@@ -1427,6 +1428,54 @@ async fn never_finishing_predecessor_does_not_block_other_keys() {
     );
     // The consumer cancellation is the explicit terminal condition for drain.
     drop(activity);
+    h.finish(name).await;
+}
+
+/// #2442: creations for two different session keys overlap inside the
+/// factory's `prepare` — the section that in production composes
+/// `session_mcp_tools` against the factory-level per-session MCP registry.
+/// The owner releases its state lock before its worker calls `create`, so
+/// nothing serializes the two prepares; the per-session cap must therefore
+/// be re-checked atomically with the registration (`register_below_cap`). If
+/// that ever changed (creations serialized per factory), the second `entered`
+/// below would never resolve and the bounded wait would panic.
+#[tokio::test]
+async fn two_different_session_keys_can_overlap_inside_prepare() {
+    let name = "concurrent-prepare-overlap";
+    let h = Harness::new(name);
+    let mut other = h.context();
+    other.session_key = "other".into();
+    let first = h.owner.get_or_create(h.context());
+    let second = h.owner.get_or_create(other);
+    // Both prepares must be parked inside the factory simultaneously, right
+    // before the per-session MCP registration section; if the owner
+    // serialized creations, the second `entered` would never resolve
+    // (bounded above by the 8 s deadline).
+    h.gate.entered().await;
+    h.gate.entered().await;
+    h.gate.open();
+    h.gate.open();
+    let a = bounded(name, first)
+        .await
+        .unwrap_or_else(|e| panic!("#745 {name} first: {e}"));
+    let b = bounded(name, second)
+        .await
+        .unwrap_or_else(|e| panic!("#745 {name} second: {e}"));
+    assert_eq!(
+        a.state(),
+        HandleState::Active,
+        "#745 the overlapped creation publishes its session"
+    );
+    assert_eq!(
+        b.state(),
+        HandleState::Active,
+        "#745 the overlapping creation publishes its session"
+    );
+    assert_eq!(
+        h.observed.creates.load(Ordering::SeqCst),
+        2,
+        "#745 both concurrent creations ran their own prepare"
+    );
     h.finish(name).await;
 }
 #[tokio::test]
