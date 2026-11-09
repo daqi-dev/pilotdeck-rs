@@ -30,7 +30,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, Weak,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -475,10 +475,16 @@ pub(crate) struct CronManagementGate {
 }
 
 /// The managers' management-admission gates, keyed by manager identity like
-/// [`CRON_MANAGEMENT_CLOSED`]: parallel test assemblies cannot observe one
-/// another's switches, and the entries hold their manager alive, so a freed
-/// and reallocated address can never alias another manager's gate.
-static CRON_MANAGEMENT_GATES: Mutex<Vec<(Arc<CronManager>, Arc<CronManagementGate>)>> =
+/// [`CRON_MANAGEMENT_CLOSED`] except the key is weak: parallel test
+/// assemblies cannot observe one another's switches, and a stale entry is
+/// swept on the next lookup (a dead key can never match a live manager), so
+/// a freed and reallocated address can never alias another manager's gate
+/// while the registry itself never keeps a manager — and with it the
+/// manager's scheduler cleanup, `CronRuntime::drop` — alive past the host's
+/// own references. Every management dispatch registers here, so a strong
+/// key would retire the cleanup of an ordinary host that never closes the
+/// face to process exit (#2363 codex concurrency P1).
+static CRON_MANAGEMENT_GATES: Mutex<Vec<(Weak<CronManager>, Arc<CronManagementGate>)>> =
     Mutex::new(Vec::new());
 
 /// The manager's management-admission gate, created on first use.
@@ -486,14 +492,34 @@ pub(crate) fn cron_management_gate(manager: &Arc<CronManager>) -> Arc<CronManage
     let mut gates = CRON_MANAGEMENT_GATES
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    if let Some((_, gate)) = gates.iter().find(|(held, _)| Arc::ptr_eq(held, manager)) {
+    // Sweep the dead keys first — that is what keeps the registry from
+    // owning the managers' lifetimes: an entry only survives while its
+    // manager is alive somewhere else.
+    gates.retain(|(held, _)| held.strong_count() > 0);
+    if let Some((_, gate)) = gates.iter().find(|(held, _)| {
+        held.upgrade()
+            .is_some_and(|held| Arc::ptr_eq(&held, manager))
+    }) {
         return gate.clone();
     }
     let gate = Arc::new(CronManagementGate {
         admission: tokio::sync::RwLock::new(()),
     });
-    gates.push((manager.clone(), gate.clone()));
+    gates.push((Arc::downgrade(manager), gate.clone()));
     gate
+}
+
+/// #2363 codex concurrency P1: the census that pins the gate registry's
+/// lifetime contract — every entry's key must be live. Test-only; the
+/// contract itself is enforced by the sweep in [`cron_management_gate`].
+#[cfg(test)]
+pub(crate) fn cron_management_gate_live_entries() -> usize {
+    CRON_MANAGEMENT_GATES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .filter(|(held, _)| held.strong_count() > 0)
+        .count()
 }
 
 impl CronManagementGate {
