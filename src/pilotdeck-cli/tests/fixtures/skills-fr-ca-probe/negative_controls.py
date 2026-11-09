@@ -83,6 +83,18 @@ def check_roster():
         refuse(str(error))
 
 
+def row_error(name, count, old, new, test, marker):
+    """One validator for BOTH anchor paths (fix-r3, DS r3 sibling#1 /
+    simplify#1 / boundary#1: the run loop used to check only count and
+    old == new, so an empty marker survived into classify(), where
+    `'' in evidence` matches ANY panic -- a kill for the wrong reason)."""
+    if count != 1 or old == new:
+        return f'{name}: stale/invalid anchor: expected=1 actual={count}'
+    if not test or not marker:
+        return f'{name}: empty test or marker binding'
+    return None
+
+
 def check_anchors(stdout=None, stderr=None):
     """Exit non-zero on any expired anchor; an empty manifest never passes."""
     stdout = sys.stdout if stdout is None else stdout
@@ -90,12 +102,9 @@ def check_anchors(stdout=None, stderr=None):
     errors = []
     for name, path, old, new, test, marker in mutations:
         count = path.read_text(encoding='utf-8').count(old)
-        if count != 1 or old == new:
-            errors.append(f'{name}: stale/invalid anchor: expected=1 actual={count}')
-        elif not test or not marker:
-            # fix-r2 (DS simplify#1): an empty marker makes classify's
-            # substring test match ANY panic, killing for the wrong reason.
-            errors.append(f'{name}: empty test or marker binding')
+        error = row_error(name, count, old, new, test, marker)
+        if error:
+            errors.append(error)
     for error in errors:
         print(error, file=stdout)
     if not mutations:
@@ -124,7 +133,22 @@ def self_check():
         print('self-check FAILED: empty manifest did not report the explicit error',
               file=sys.stderr)
         return 1
+    # fix-r3 (DS r3 boundary#2): the empty test/marker branch itself needs a
+    # negative control -- deleting row_error's second clause must turn
+    # self-check red, not silently keep the gate green.
+    first = list(mutations[0])
+    out2 = io.StringIO()
+    try:
+        mutations[0] = (*first[:5], '')
+        status2 = check_anchors(stdout=out2)
+    finally:
+        mutations[0] = tuple(first)
+    if status2 == 0 or first[0] not in out2.getvalue():
+        print('self-check FAILED: an empty marker binding passed the anchor gate',
+              file=sys.stderr)
+        return 1
     print(f'self-check: empty manifest fails closed (rc={status}); '
+          f'empty marker binding fails closed (rc={status2}); '
           f'shipped manifest still has {len(mutations)} anchors: ok')
     return 0
 
@@ -205,8 +229,11 @@ def main():
                 arguments = [test, '--', '--exact']
                 try:
                     original = originals[path].decode()
-                    if original.count(old) != 1 or old == new:
-                        raise ValueError('expired or invalid anchor')
+                    # fix-r3: shared validator with check_anchors -- an empty
+                    # marker must refuse HERE too, not only in --check mode.
+                    error = row_error(name, original.count(old), old, new, test, marker)
+                    if error:
+                        raise ValueError(error)
                     if not compile_only and not passed(run(name + '-positive', arguments), test):
                         raise RuntimeError('positive control did not pass')
                     # #1903: a truncating write here would leave a half-file
