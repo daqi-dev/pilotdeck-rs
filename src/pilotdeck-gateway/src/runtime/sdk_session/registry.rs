@@ -89,14 +89,23 @@ pub trait SdkTaskBudget: Send + Sync {
 
 /// Adapter over the merged [`TaskBudgetStore`].
 pub struct TaskBudgetStorePort {
-    store: Mutex<TaskBudgetStore>,
+    /// Shared because B dc123d18 lets the submit host and the SDK session
+    /// registry spend against one budget; owning a private mutex here would
+    /// give each caller its own ledger.
+    store: Arc<Mutex<TaskBudgetStore>>,
 }
 
 impl TaskBudgetStorePort {
     pub fn new(store: TaskBudgetStore) -> Self {
         Self {
-            store: Mutex::new(store),
+            store: Arc::new(Mutex::new(store)),
         }
+    }
+    /// B dc123d18 `with_shared`: several producers (SDK session config, submit
+    /// host) spend against one budget store, so ownership stays with the
+    /// caller instead of being moved into this port.
+    pub fn with_shared(store: Arc<Mutex<TaskBudgetStore>>) -> Self {
+        Self { store }
     }
 }
 
@@ -265,6 +274,37 @@ impl SdkSessionRegistry {
 
     pub fn options(&self) -> &SdkSessionOptions {
         &self.options
+    }
+
+    /// B dc123d18: the organization policy arrives with a settings snapshot
+    /// that can change mid-session, so it is replaced rather than only set at
+    /// construction.
+    pub fn set_organization_policy(&mut self, policy: Option<OrganizationPolicy>) {
+        self.options.organization_policy = policy;
+    }
+
+    /// B dc123d18 `storeOutputStyle`: replace only the `outputStyle` key and
+    /// rebind the session to the project that produced it, keeping every other
+    /// stored config entry as-is.
+    pub(crate) fn store_output_style(
+        &mut self,
+        key: &JsString,
+        name: Option<&JsString>,
+        project: PathBuf,
+    ) {
+        let mut next = pilotdeck_protocol::JsObject::new();
+        if let Some(previous) = self.session_config(key).and_then(JsValue::as_object) {
+            for (k, v) in previous.entries() {
+                if !k.equals_str("outputStyle") {
+                    next.insert(k.clone(), v.clone());
+                }
+            }
+        }
+        if let Some(name) = name {
+            next.insert("outputStyle".into(), JsValue::String(name.clone()));
+        }
+        self.set_config(key, JsValue::Object(next));
+        self.set_project(key, project);
     }
 
     pub fn set_agent_mcp_resolver(&mut self, resolver: Weak<dyn SdkAgentMcpResolver>) {
@@ -646,6 +686,57 @@ impl SdkSessionRegistry {
         self.delete_project(session_key);
         self.handlers.clear_session(session_key);
         Ok(())
+    }
+
+    /// B dc123d18 acquireHookSettings: one project/plugin generation for the
+    /// whole live session, so SDK hook callbacks cannot leak across projects.
+    /// Base settings come from the resolved project snapshot; the session SDK
+    /// overlay is merged on top minus the two events the SDK layer owns.
+    pub async fn acquire_hook_settings(
+        &self,
+        session_key: &JsString,
+        project_key: Option<&JsString>,
+    ) -> Result<
+        (
+            crate::hooks::protocol::HooksSettings,
+            Option<JsValue>,
+            crate::runtime::plugins::PluginSessionContributionLease,
+        ),
+        SdkSessionError,
+    > {
+        let runtime = self.options.resolver.resolve(project_key)?;
+        runtime
+            .plugin_runtime
+            .refresh_with_report()
+            .await
+            .map_err(plugin_error)?;
+        let lease = runtime
+            .plugin_runtime
+            .acquire_session_contributions(self.session_plugins(session_key).to_vec())
+            .await
+            .map_err(plugin_error)?;
+        let mut settings = crate::hooks::config::parse_hooks_config(field(
+            field(&runtime.snapshot, "config"),
+            "hooks",
+        ))
+        .settings;
+        crate::runtime::hooks::session::merge_settings(
+            &mut settings,
+            lease.contributions.hooks.clone(),
+        );
+        let config = self.resolve_session_config(session_key, &runtime)?;
+        crate::runtime::hooks::session::merge_settings(
+            &mut settings,
+            crate::runtime::hooks::session::sdk_hook_settings(
+                config.as_ref().and_then(|config| config.get("hooks")),
+            )
+            .into_iter()
+            .filter(|(event, _)| {
+                !event.equals_str("ConfigChange") && !event.equals_str("FileChanged")
+            })
+            .collect(),
+        );
+        Ok((settings, config, lease))
     }
 
     async fn resolve_session_plugins(
