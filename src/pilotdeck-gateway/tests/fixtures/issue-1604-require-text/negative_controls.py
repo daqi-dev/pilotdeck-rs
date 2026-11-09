@@ -6,7 +6,7 @@ production files that are already on HEAD. Until the #1604 tests themselves
 are committed, the shared source guard refuses to run (the whole src tree
 must equal HEAD), so the coordinator runs this after the commit lands.
 
-Three mutants (taskbook §2.3, PR #1593 review comment #1 item 3; third added
+Four mutants (taskbook §2.3, PR #1593 review comment #1 item 3; third added
 for the r2 ledger machine-criteria requirement; fourth for the r4 claim-gate
 criteria):
   - not-a-string-folds-to-domain: the `TrimGuard::NotAString` arm of

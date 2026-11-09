@@ -42,21 +42,37 @@ fn start_steer_run(
         .expect("#1307 steer turn start")
 }
 
-/// Captures the durable `claim` mutations the mailbox records through the
-/// injected `MutationRecorder` (A7.2-STEER-INPUT-001 差异 6).
+/// A recorded mailbox discard: `(coerced item id, reason)`.
+type RecordedDiscard = (
+    pilotdeck_protocol::JsString,
+    Option<pilotdeck_protocol::JsString>,
+);
+
+/// Captures the durable `claim` / `discard` mutations the mailbox records
+/// through the injected `MutationRecorder` (A7.2-STEER-INPUT-001 差异 6/7):
+/// claims keep the mutated id text, discards keep `(id, reason)`.
 #[derive(Default)]
-struct RecordedClaims(std::sync::Mutex<Vec<pilotdeck_protocol::JsString>>);
+struct RecordedClaims {
+    claims: std::sync::Mutex<Vec<pilotdeck_protocol::JsString>>,
+    discards: std::sync::Mutex<Vec<RecordedDiscard>>,
+}
 impl crate::runtime::steer::MutationRecorder for RecordedClaims {
     fn record(
         &self,
         _turn_id: pilotdeck_protocol::JsString,
         mutation: pilotdeck_protocol::JsObject,
     ) -> crate::host::HostFuture<()> {
-        if mutation.get("mutation").and_then(JsValue::as_string)
-            == Some(&pilotdeck_protocol::JsString::from("claim"))
-            && let Some(JsValue::String(id)) = mutation.get("itemId")
-        {
-            self.0.lock().unwrap().push(id.clone());
+        let kind = mutation.get("mutation").and_then(JsValue::as_string);
+        if let Some(JsValue::String(id)) = mutation.get("itemId") {
+            if kind == Some(&pilotdeck_protocol::JsString::from("claim")) {
+                self.claims.lock().unwrap().push(id.clone());
+            } else if kind == Some(&pilotdeck_protocol::JsString::from("discard")) {
+                let reason = match mutation.get("reason") {
+                    Some(JsValue::String(reason)) => Some(reason.clone()),
+                    _ => None,
+                };
+                self.discards.lock().unwrap().push((id.clone(), reason));
+            }
         }
         Box::pin(async { Ok::<(), crate::host::HostError>(()) })
     }
@@ -4856,7 +4872,7 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
     // v22.22.0——`""` 双方都跳过，对齐）。经 `start_turn` 装进 router 的
     // drain 端口（TurnSteer 路径，填充 unacknowledged）后再
     // `persist_and_apply`，钉住两侧方向相反的 claim 分歧。
-    for (session, run, turn, item_id, mailbox_id, claim) in [
+    for (session, run, turn_id, item_id, mailbox_id, claim, close_discard) in [
         (
             "ig",
             "igr",
@@ -4864,6 +4880,7 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
             None::<JsValue>,
             "undefined",
             Some("undefined"),
+            false,
         ),
         (
             "ih",
@@ -4872,6 +4889,7 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
             Some(JsValue::Null),
             "null",
             Some("null"),
+            false,
         ),
         (
             "ii",
@@ -4880,6 +4898,7 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
             Some(JsValue::Number(0.0)),
             "0",
             Some("0"),
+            false,
         ),
         (
             "ij",
@@ -4888,8 +4907,17 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
             Some(JsValue::Bool(false)),
             "false",
             Some("false"),
+            false,
         ),
-        ("ik", "ikr", "ikt", Some(JsValue::Array(vec![])), "", None),
+        (
+            "ik",
+            "ikr",
+            "ikt",
+            Some(JsValue::Array(vec![])),
+            "",
+            None,
+            true,
+        ),
         (
             "il",
             "ilr",
@@ -4897,6 +4925,7 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
             Some(JsValue::String(pilotdeck_protocol::JsString::from(""))),
             "",
             None,
+            false,
         ),
     ] {
         let _reservation = requests
@@ -4910,7 +4939,7 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
             .bind_session(session.into(), Some(recorder))
             .expect("#1604 claim-gate session binding")
             .start_turn(
-                turn.into(),
+                turn_id.into(),
                 run.into(),
                 vec![],
                 crate::runtime::hooks::Cancellation::new(),
@@ -4953,17 +4982,30 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
             ))),
             "#1604 the claim-gate mailbox identity is the coerced text"
         );
+        // The durable record is written whether or not the claim gate passes
+        // (probe6 `durable_recorded_count: 10` — all ten TS cells record);
+        // counting it pins that the skipped-claim cells still persist.
+        let durable_records = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let durable_counter = durable_records.clone();
         turn.persist_and_apply(
             pilotdeck_protocol::JsString::from(mailbox_id),
             drained[0]
                 .get("message")
                 .expect("#1604 claim-gate canonical message")
                 .clone(),
-            |_| Box::pin(async { Ok::<(), crate::host::HostError>(()) }),
+            move |_| {
+                durable_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Box::pin(async { Ok::<(), crate::host::HostError>(()) })
+            },
         )
         .await
         .expect("#1604 the durable apply of the coerced id succeeds");
-        let claims = recorded.0.lock().unwrap().clone();
+        negative_assert_eq!(
+            durable_records.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "#1604 the durable record is written even when the claim gate skips (probe6 durable_recorded_count: 10)"
+        );
+        let claims = recorded.claims.lock().unwrap().clone();
         if let Some(claim) = claim {
             negative_assert_eq!(
                 claims.len(),
@@ -4979,6 +5021,40 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
             negative_assert!(
                 claims.is_empty(),
                 "#1604 the empty coerced text skips the claim gate like the TS empty string (A7.2-STEER-INPUT-001 差异 6)"
+            );
+        }
+        // The skipped-claim `[]` entry stays Offered — the applied-path ack
+        // only removes Claimed entries — so closing the turn records a
+        // `turn_ended` discard for it, while TS's `[]` is claimed (probe6)
+        // and acked on apply, leaving nothing to discard (probe8 A;
+        // A7.2-STEER-INPUT-001 差异 6 下游).
+        if close_discard {
+            let discarded = steer
+                .mailbox_for_test(&session.into())
+                .expect("#1604 claim-gate mailbox")
+                .close(pilotdeck_protocol::JsString::from(turn_id))
+                .await
+                .expect("#1604 the turn-end close of the skipped-claim entry");
+            negative_assert_eq!(
+                discarded.len(),
+                1,
+                "#1604 the skipped-claim entry is discarded at turn end while TS's claimed-and-acked empty array is not (A7.2-STEER-INPUT-001 差异 6)"
+            );
+            let discards = recorded.discards.lock().unwrap().clone();
+            negative_assert_eq!(
+                discards.len(),
+                1,
+                "#1604 the turn-end close records exactly one discard mutation"
+            );
+            negative_assert_eq!(
+                discards[0].0,
+                pilotdeck_protocol::JsString::from(""),
+                "#1604 the discard mutation keys by the coerced empty text"
+            );
+            negative_assert_eq!(
+                discards[0].1,
+                Some(pilotdeck_protocol::JsString::from("turn_ended")),
+                "#1604 the discard mutation carries the turn_ended reason"
             );
         }
     }
@@ -5050,6 +5126,57 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
             .len(),
         0,
         "#1604 the empty-array message is silently lost (TS drains [[]])"
+    );
+    // §差异 7 反向格：先 steer `[]` 再 cancel `[]`——Rust 的 cancel 折成
+    // `""`、命中同键条目（cancelled:true、drain 0）；TS 的 cancel 收到的是
+    // 新数组引用，SameValueZero 永不匹配（cancelled:true 但条目存活，
+    // drain 回 [[]]，probe output7 `empty_cancel_array*`）。
+    let _reservation_n = requests
+        .owner
+        .begin_turn(&"in".into(), &"inr".into())
+        .expect("#1604 reverse empty-text admission slot");
+    let _turn_n = start_steer_run(&steer, "in", "tnt", "inr");
+    let reverse_steer = requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", "in".into()),
+                ("runId", "inr".into()),
+                ("itemId", JsValue::Array(vec![])),
+                ("message", "m".into()),
+            ]),
+        )
+        .await
+        .expect("#1604 the reverse empty-text steer stays Ok");
+    negative_assert_eq!(
+        reverse_steer.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1604 the reverse empty-text steer is accepted like TS"
+    );
+    let reverse_cancel = requests
+        .request(
+            "cancel_steer".into(),
+            crate::metadata::object([
+                ("sessionKey", "in".into()),
+                ("runId", "inr".into()),
+                ("itemId", JsValue::Array(vec![])),
+            ]),
+        )
+        .await
+        .expect("#1604 the reverse empty-text cancel stays Ok");
+    negative_assert_eq!(
+        reverse_cancel.get("cancelled"),
+        Some(&JsValue::Bool(true)),
+        "#1604 the empty-array cancel answers cancelled like TS"
+    );
+    negative_assert_eq!(
+        steer
+            .mailbox_for_test(&"in".into())
+            .expect("#1604 reverse empty-text mailbox")
+            .drain(&"tnt".into())
+            .len(),
+        0,
+        "#1604 the empty-array cancel removes the empty-array entry (TS's new reference never matches, drain [[]])"
     );
     requests
         .owner
