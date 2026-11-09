@@ -303,6 +303,12 @@ class ReviewControls(unittest.TestCase):
             ('english-not-done', '| 1 | DS | P1: foo | not done |\n', False),
             ('english-not-resolved', '| 1 | DS | P1: foo | not resolved |\n', False),
             ('english-unfixed', '| 1 | DS | P1: foo | unfixed |\n', False),
+            ('english-not-merged', '| 1 | DS | P1: foo | not merged |\n', False),
+            ('pending-not-fixed', '| 1 | DS | P1: foo | 没修 |\n', False),
+            ('pending-fix-awaiting-review', '| 1 | DS | P1：foo | 修复待评审 |\n', False),
+            ('pending-awaiting-acceptance', '| 1 | DS | P1：foo | 已修，待人工验收 |\n', False),
+            ('identifier-not-level', '| 1 | DS | case_p1 复核 | 已修（c1） |\n', True),
+            ('closed-level-in-handling', '| 1 | DS | P1：foo | 已修（原 P1，降级 P3） |\n', True),
         ]
         for name, row, expected in row_cases:
             with self.subTest(name=name):
@@ -329,6 +335,26 @@ class ReviewControls(unittest.TestCase):
             ('cr-only-endings', (table + conclusion).replace('\n', '\r'), True),
             ('cr-only-poison', ((table + '| 1 | DS | P1：foo | — |\n') + conclusion)
              .replace('\n', '\r'), False),
+            ('unclosed-fence-hides-poison',
+             table + conclusion + '```python\n| 轮 | 结论 | 处理 |\n'
+             '|---|---|---|\n| 2 | P1：x | — |\n', False),
+            ('conclusion-only-inside-fence',
+             table + '```\n结论：**无 P0/P1/P2。**\n```\n', False),
+            ('level-in-separate-column',
+             '# 记录\n\n| 轮 | 等级 | 结论 | 处理 |\n|---|---|---|---|\n'
+             '| 2 | P1 | foo | — |\n' + conclusion, False),
+            ('adjacent-tables-no-blank-line',
+             table + '| 项 | 描述 | 处理 |\n|---|---|---|\n'
+             '| 5 | 某问题 | P1 未处置 |\n' + conclusion, False),
+            ('fullwidth-level-poison',
+             '# 记录\n\n| 轮 | 审查方 | 结论 | 处理 |\n|---|---|---|---|\n'
+             '| 1 | DS | Ｐ1：foo | — |\n' + conclusion, False),
+            ('fullwidth-digit-poison',
+             '# 记录\n\n| 轮 | 审查方 | 结论 | 处理 |\n|---|---|---|---|\n'
+             '| 1 | DS | P１：foo | — |\n' + conclusion, False),
+            ('second-review-table-clean',
+             table + '\n| 轮 | 审查方 | 结论 | 处理 |\n|---|---|---|---|\n'
+             '| 2 | MM | 无 P0/P1/P2 | 已复核 |\n' + conclusion, True),
         ]
         for name, body, expected in record_cases:
             with self.subTest(name=name):

@@ -32,6 +32,7 @@ import argparse
 import importlib.util
 import json
 import re
+import unicodedata
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
@@ -68,18 +69,23 @@ check_frozen = _load('check_frozen', _HERE / 'check_frozen.py').check
 # binds to a disposal verb (待X修 / 未修 / 计划修复 / 修复中 / not fixed …),
 # closure covers the CLAUDE.md disposal kinds (合入/并入/降级/升级), and both
 # level scanning and negation are case-insensitive and share one token shape.
+# fix-r3 (r2 reviews): the level scan reads every cell of a review row (a
+# 等级 column must not hide a finding), full-width Ｐ１ folds to P1 before
+# matching, and the conclusion sentence obeys the same fence visibility as
+# the tables — an unclosed fence makes the whole record unreadable.
 _NEGATED_LEVELS = re.compile(r'(?:无|没有|未发现|不含|未见)\s*P[012]'
                              r'(?:\s*[/／、]\s*P[012])*', re.IGNORECASE)
-_LEVEL_TOKEN = re.compile(r'(?<![0-9A-Za-z])p[012](?![0-9A-Za-z])', re.IGNORECASE)
+# Word boundaries keep identifiers (`case_p1`) from reading as a level.
+_LEVEL_TOKEN = re.compile(r'(?<![0-9A-Za-z_])p[012](?![0-9A-Za-z_])', re.IGNORECASE)
 _CLOSED_HANDLING = ('修', '解决', '关闭', '拒', '保留', '无需', '完成', '合入',
                     '并入', '降级', '升级', 'done', 'fixed', 'resolved', 'closed',
                     'wontfix')
 # Pending must bind to the same disposal verbs the closure list knows (r2
-# review: 待合入/未完成/not done let a finding read as closed). The gap
-# between marker and verb is bounded but wide enough for dates etc.
+# review: 待合入/未完成/not done/没修/修复待评审 let a finding read as closed).
+# The gap between marker and verb is bounded but wide enough for dates etc.
 _IN_PROGRESS_HANDLING = re.compile(
-    r'(?:待|计划|拟|暂不?|暂缓|未|后续|尚未|正在)[^，,。;；）)]{0,16}'
-    r'(?:修|解决|关闭|处置|处理|完成|合入|并入|降级|升级)'
+    r'(?:待|计划|拟|暂不?|暂缓|未|没|后续|尚未|正在)[^，,。;；）)]{0,16}'
+    r'(?:修|解决|关闭|处置|处理|评审|复核|验收|完成|合入|并入|降级|升级)'
     r'|修复中|进行中|观察中|保留观察|继续观察|待定|待办'
     r'|\bin[ -]progress\b|\bnot[ -]?(?:fixed|done|resolved|closed|merged)\b'
     r'|\bun[- ]?resolved\b|\bun[- ]?done\b|\bunfixed\b'
@@ -101,63 +107,100 @@ def _row_cells(stripped):
     return [cell.replace('\\|', '|') for cell in cells]
 
 
+def _is_delimiter(cells):
+    """A `|---|---|` row between a table's header and its data rows."""
+    return bool(cells) and all(not cell.strip('-: ') for cell in cells)
+
+
+def _row_has_level(cells):
+    """Any cell still names a P0/P1/P2 level after negation is stripped.
+
+    Every cell is scanned, not just the 结论 column: a review table that
+    carries the level in a separate 等级 column must not hide the finding
+    (#2245 r2 boundary #2).
+    """
+    return any(_LEVEL_TOKEN.search(_NEGATED_LEVELS.sub('', cell))
+               for cell in cells)
+
+
+def _scan_table(run):
+    """Rows one table leaves open, and whether it is a readable review table.
+
+    A readable table is one header row, one delimiter row and then data rows
+    (each with its leading pipe). Any other shape — headerless, a dropped
+    leading pipe, or two tables run together with no blank line between
+    them — cannot be read column-wise, so every row that names a level is
+    open (#2245 r2 boundary #2). In a readable table with both 结论 and
+    处理 header cells, a row closes only when its 处理 cell names a
+    closure and is not still pending; misaligned rows are unreadable.
+    """
+    def levels(rows):
+        return [cells for lead, cells in rows
+                if not lead or _row_has_level(cells)]
+
+    if not (len(run) >= 2 and run[0][0] and _is_delimiter(run[1][1])
+            and not any(_is_delimiter(row[1]) for row in run[2:])):
+        return levels(run), False  # unreadable shape: every level row is open
+    header, data = run[0][1], run[2:]
+    if '结论' not in header or '处理' not in header:
+        return levels(data), False  # well-formed, but not a review table
+    handling_at, width = header.index('处理'), len(header)
+    open_rows = []
+    for lead, cells in data:
+        if not lead:
+            open_rows.append(cells)  # unreadable row, fail-closed
+        elif len(cells) != width:
+            open_rows.append(cells)  # misaligned: unreadable, fail-closed
+        elif _row_has_level(cells):
+            handling = cells[handling_at].replace('*', '').lower()
+            if (not any(closed in handling for closed in _CLOSED_HANDLING)
+                    or _IN_PROGRESS_HANDLING.search(handling)):
+                open_rows.append(cells)
+    return open_rows, True
+
+
+def _visible_text(text):
+    """Record lines outside fenced code blocks; None while a fence stays unclosed.
+
+    The conclusion sentence and the tables obey one visibility rule: what a
+    reader cannot see inside a fence cannot count, and a record whose fence
+    is never closed is unreadable, not clean (#2245 r2 boundary #3).
+    """
+    visible, fence = [], False
+    for line in G.jsonl_lines(text):
+        if line.strip().startswith('```'):
+            fence = not fence
+            continue
+        if not fence:
+            visible.append(line)
+    return None if fence else '\n'.join(visible)
+
+
 def _open_review_rows(text):
     """Review-table rows whose P0/P1/P2 finding the 处理 cell leaves open (#2245).
 
     Returns those rows, or None when the record has no readable 结论/处理
     table: unverifiable is not clean. Lines come from the shared LF-only
     splitter, so a U+2028 inside a cell cannot hide half of a finding (CR/CRLF
-    are normalised first). Fenced code blocks are skipped. Each table is
-    classified by its own header: one with both 结论 and 处理 cells is a
-    review table (rows read per its columns, misaligned rows open); any other
-    table cannot show a disposition, so its P-level rows are open. A row that
-    drops its leading pipe while a table is open is unreadable and open.
+    are normalised first). Full-width Ｐ１ folds to P1 before matching, and
+    the text must already be fence-free (see _visible_text). Each run of
+    consecutive pipe lines is one table block classified by its own header.
     """
-    open_rows, review_table = [], False
-    fence, table = False, None  # table: None while outside, set at its header
-    columns = None
-    for line in G.jsonl_lines(text.replace('\r\n', '\n').replace('\r', '\n')):
+    text = unicodedata.normalize('NFKC', text)
+    open_rows, review_table, run = [], False, []
+    for line in G.jsonl_lines(re.sub(r'\r\n?', '\n', text)):
         stripped = line.strip()
-        if stripped.startswith('```'):
-            fence = not fence
-            table, columns = None, None  # a table cannot span a fence
-            continue
-        if fence:
-            continue
-        if not stripped.startswith('|'):
-            if table is not None and re.search(r'(?<!\\)\|', stripped):
-                # A row that drops its leading pipe while a table is open
-                # cannot be read reliably: unreadable is not clean (r2).
-                open_rows.append(_row_cells(stripped))
-            table, columns = None, None  # prose or blank line ends the table
-            continue
-        cells = _row_cells(stripped)
-        if all(not cell.strip('-: ') for cell in cells):
-            continue  # |---|---| delimiter, not a review round
-        if table is None:
-            if '结论' in cells and '处理' in cells:
-                table, review_table = 'review', True
-                columns = (cells.index('结论'), cells.index('处理'), len(cells))
-            else:
-                # Any other table cannot show a disposition; a P-level row in
-                # it is therefore open (fail-closed, r2 review boundary #2).
-                table = 'opaque'
-            continue  # the header row itself carries no finding
-        if table == 'review':
-            finding_at, handling_at, width = columns
-            if len(cells) != width:
-                open_rows.append(cells)  # misaligned: unreadable, fail-closed
-                continue
-            finding = _NEGATED_LEVELS.sub('', cells[finding_at])
-            handling = cells[handling_at].replace('*', '').lower()
-            if _LEVEL_TOKEN.search(finding) and (
-                    not any(closed in handling for closed in _CLOSED_HANDLING)
-                    or _IN_PROGRESS_HANDLING.search(handling)):
-                open_rows.append(cells)
-        else:  # opaque table: no readable 结论/处理 columns
-            if any(_LEVEL_TOKEN.search(_NEGATED_LEVELS.sub('', cell))
-                   for cell in cells):
-                open_rows.append(cells)
+        if re.search(r'(?<!\\)\|', stripped):
+            run.append((stripped.startswith('|'), _row_cells(stripped)))
+        elif run:  # prose or blank line ends the table block
+            rows, is_review = _scan_table(run)
+            open_rows.extend(rows)
+            review_table = review_table or is_review
+            run = []
+    if run:
+        rows, is_review = _scan_table(run)
+        open_rows.extend(rows)
+        review_table = review_table or is_review
     return open_rows if review_table else None
 
 
@@ -168,9 +211,12 @@ def independent_review():
         text = record.read_text(encoding='utf-8')
     except (OSError, UnicodeError):
         return False
-    if '结论：**无 P0/P1/P2。**' not in text:
+    visible = _visible_text(text)
+    # The conclusion sentence is matched before NFKC folding: the record
+    # contract fixes its exact bytes, and only fenced-off text is excluded.
+    if visible is None or '结论：**无 P0/P1/P2。**' not in visible:
         return False
-    return _open_review_rows(text) == []
+    return _open_review_rows(visible) == []
 
 
 def check_self_comparison(path):
