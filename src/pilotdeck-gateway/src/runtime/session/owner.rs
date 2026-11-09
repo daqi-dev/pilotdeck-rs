@@ -57,6 +57,12 @@ pub trait SessionFactory: Send + Sync {
     fn can_recreate(&self) -> bool {
         false
     }
+    /// B dc123d18: a factory that owns a published memory registry exposes it
+    /// here so the turn wiring can reuse the same generation instead of opening
+    /// a second one. No factory means no shared registry.
+    fn memory_registry(&self) -> Option<crate::runtime::session::context_resources::ProjectMemoryRegistry> {
+        None
+    }
     fn setup(
         &self,
         _context: SessionContext,
@@ -475,6 +481,13 @@ impl SessionOwner {
             .records
             .get(key)
             .map(|record| record.handle.clone())
+    }
+
+    /// The memory generation this owner's factory publishes, if any.
+    pub fn memory_registry(
+        &self,
+    ) -> Option<crate::runtime::session::context_resources::ProjectMemoryRegistry> {
+        self.0.options.factory.memory_registry()
     }
 
     pub fn active_turn_run_id(&self, key: &JsString) -> Option<JsString> {
