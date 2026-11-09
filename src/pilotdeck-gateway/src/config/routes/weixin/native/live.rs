@@ -100,7 +100,7 @@ impl LiveOwner {
     fn save_receipt(&self, path: &std::path::Path, value: &Value) -> Result<()> {
         super::super::storage::write(path, value)
     }
-    async fn deliver_outbox(
+    pub(crate) async fn deliver_outbox(
         &self,
         credentials: &Value,
         chat: &str,
@@ -109,6 +109,7 @@ impl LiveOwner {
     ) -> Result<()> {
         let outbox = receipt["outbox"].as_array().cloned().unwrap_or_default();
         let start = receipt["sentIndex"].as_u64().unwrap_or(0) as usize;
+        let mut sent = start;
         for (index, text) in outbox.iter().enumerate().skip(start) {
             let context = self.chat(chat).lock().await.context.clone();
             let body = text.as_str().unwrap_or("");
@@ -123,17 +124,19 @@ impl LiveOwner {
             .await
             {
                 Ok(()) => {
-                    receipt["sentIndex"] = json!(index + 1);
+                    sent = index + 1;
+                    receipt["sentIndex"] = json!(sent);
                     self.save_receipt(path, receipt)?;
                 }
                 Err(error) => {
                     self.delivery.queue_pending_reply(chat, body);
                     eprintln!("weixin: outbox reply queued after failure: {}", error.message);
-                    return Ok(());
                 }
             }
         }
-        receipt["complete"] = true.into();
+        if sent >= outbox.len() {
+            receipt["complete"] = true.into();
+        }
         self.save_receipt(path, receipt)
     }
     async fn reply(
@@ -321,11 +324,22 @@ impl LiveOwner {
                 self.save_receipt(&receipt_path, &receipt)?;
             }
             if input == "/new" {
+                // `WeixinChannel.ts:431` — no queueOnFailure for session confirmation.
+                let context = chat.lock().await.context.clone();
+                let _ = super::send_reply(
+                    &self.storage,
+                    &self.http,
+                    credentials,
+                    chat_id,
+                    context.as_deref(),
+                    "已创建新会话。",
+                )
+                .await;
                 receipt["outbox"] = json!(["已创建新会话。"]);
+                receipt["sentIndex"] = json!(1);
+                receipt["complete"] = true.into();
                 self.save_receipt(&receipt_path, &receipt)?;
-                return self
-                    .deliver_outbox(credentials, chat_id, &receipt_path, &mut receipt)
-                    .await;
+                return Ok(());
             }
             queued_generation = chat.lock().await.generation;
         } else if self
@@ -504,17 +518,18 @@ impl LiveOwner {
                     }
                 }
             } else {
-                self.reply(
-                    credentials,
-                    chat_id,
-                    if initial {
-                        "权限提示发送中，请稍候。"
-                    } else {
-                        "权限决定处理中，请稍候。"
-                    },
-                    false,
-                )
-                .await?;
+                let _ = self
+                    .reply(
+                        credentials,
+                        chat_id,
+                        if initial {
+                            "权限提示发送中，请稍候。"
+                        } else {
+                            "权限决定处理中，请稍候。"
+                        },
+                        false,
+                    )
+                    .await;
             }
             return Ok(true);
         }
@@ -595,23 +610,29 @@ impl LiveOwner {
         if confirmation.is_err() {
             let mut state = chat.lock().await;
             if state.generation == generation {
+                state.answering = false;
                 state.prompt_retry = next;
                 if state.prompt_retry.is_none() {
                     state.finish_answer();
                 }
             }
-            return confirmation.map(|_| true);
+            return Ok(true);
         }
         if chat.lock().await.generation != generation {
             return Ok(true);
         }
         if let Some(next) = next {
-            if let Err(error) = self.reply(credentials, chat_id, &next, false).await {
+            if self
+                .reply(credentials, chat_id, &next, false)
+                .await
+                .is_err()
+            {
                 let mut state = chat.lock().await;
                 if state.generation == generation {
+                    state.answering = false;
                     state.prompt_retry = Some(next);
                 }
-                return Err(error);
+                return Ok(true);
             }
         }
         {
@@ -723,16 +744,10 @@ impl ChannelEventSink for LiveSink<'_> {
                     }
                     let fallback =
                         super::super::attachments::format_attachment_fallback(&attachment);
-                    if self
+                    let _ = self
                         .owner
                         .reply(self.credentials, self.chat, &fallback, true)
-                        .await
-                        .is_err()
-                    {
-                        self.owner
-                            .delivery
-                            .queue_pending_reply(self.chat, &fallback);
-                    }
+                        .await;
                     return Ok(());
                 }
                 Some("error") => event["message"].as_str().map(str::to_owned),
@@ -759,6 +774,10 @@ impl ChannelEventSink for LiveSink<'_> {
                     }
                     // Delivery failure retains the request and prevents an
                     // unseen permission from being decided by the next input.
+                    return Ok(());
+                }
+                if event["type"] == "elicitation_request" && result.is_err() {
+                    // `WeixinChannel.ts:722-726` — elicitation prompt failure does not fail the turn.
                     return Ok(());
                 }
                 result?;

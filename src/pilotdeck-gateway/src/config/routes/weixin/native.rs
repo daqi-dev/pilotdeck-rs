@@ -68,7 +68,12 @@ impl WeixinDelivery {
             return Ok(false);
         };
         let text = delivery["text"].as_str().unwrap_or("");
-        let context = self.contexts.lock().unwrap().get(chat).cloned();
+        let context = self
+            .contexts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(chat)
+            .cloned();
         let Some(context) = context else {
             self.queue_pending_reply(chat, text);
             return Ok(false);
@@ -194,7 +199,7 @@ impl WeixinDelivery {
 }
 
 #[cfg(test)]
-#[path = "native_tests.rs"]
+#[path = "native_tests/mod.rs"]
 mod tests;
 
 pub struct NativeWeixinFactory {

@@ -6,6 +6,17 @@ use base64::Engine;
 
 const WEIXIN_CDN_BASE_URL: &str = "https://novac2c.cdn.weixin.qq.com/c2c";
 
+/// `WeixinChannel.ts:1034-1047` (`formatWeixinError`).
+pub(crate) fn format_weixin_error(message: &str) -> String {
+    format!(
+        "Error: {message}; at=decryptWeixinImageOrThrow (config/routes/weixin/media.rs)"
+    )
+}
+
+pub(crate) fn weixin_attachment_failure_diagnostic(message: &str) -> String {
+    format!("微信附件处理失败：{}", format_weixin_error(message))
+}
+
 pub(crate) fn weixin_media_download_url(media_owner: &Value) -> Option<String> {
     read_string(media_owner.get("cdn_url"))
         .or_else(|| read_string(media_owner.get("url")))
@@ -402,8 +413,11 @@ mod tests {
         let owner = serde_json::json!({ "aeskey": "00112233445566778899aabbccddeeff" });
         let err = decrypt_weixin_media_if_needed(buffer, Some(&owner), true).unwrap_err();
         assert!(err.contains("微信图片解密后仍不是可识别图片（"));
-        assert!(err.contains("keyShape="));
-        assert!(err.contains("candidates="));
+        let formatted = weixin_attachment_failure_diagnostic(&err);
+        assert!(formatted.starts_with("微信附件处理失败：Error: "));
+        assert!(formatted.contains("; at=decryptWeixinImageOrThrow"));
+        assert!(formatted.contains("keyShape="));
+        assert!(formatted.contains("candidates="));
     }
 
     #[test]

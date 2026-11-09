@@ -155,13 +155,21 @@ fn write_attachment_bytes(store_dir: &Path, filename: &str, data: &[u8]) -> Resu
     {
         return Err(failure("Attachment path escapes storage root"));
     }
+    #[cfg(unix)]
+    if path.exists() {
+        let meta = std::fs::metadata(&path).map_err(|error| failure(&error.to_string()))?;
+        use std::os::unix::fs::FileTypeExt;
+        if meta.file_type().is_fifo() {
+            return Err(failure("Attachment path escapes storage root"));
+        }
+    }
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
-        options.custom_flags(libc::O_NOFOLLOW);
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
     let mut file = match options.open(&path) {
         Ok(file) => file,
@@ -284,7 +292,9 @@ pub(crate) async fn materialize_inbound(
                 index += 1;
             }
             Err(error) => {
-                diagnostics.push(format!("微信附件处理失败：{}", error.message));
+                diagnostics.push(super::media::weixin_attachment_failure_diagnostic(
+                    &error.message,
+                ));
                 attachments.remove(index);
             }
         }
@@ -371,7 +381,7 @@ pub(crate) async fn send_outbound(
     });
     let item = if image {
         json!({
-            "type": 2,
+            "type": super::item_types::MESSAGE_ITEM_IMAGE,
             "image_item": {
                 "media": media,
                 "mid_size": aes_ecb_padded_size(data.len()),
@@ -379,7 +389,7 @@ pub(crate) async fn send_outbound(
         })
     } else {
         json!({
-            "type": 3,
+            "type": super::item_types::MESSAGE_ITEM_FILE,
             "file_item": {
                 "file_name": name,
                 "len": data.len().to_string(),

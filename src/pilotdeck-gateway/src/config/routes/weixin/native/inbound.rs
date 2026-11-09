@@ -1,4 +1,8 @@
 //! Inbound message parsing (`WeixinChannel.ts:560-628`, `weixin-ilink` `MessageItemType`).
+use super::super::item_types::{
+    MESSAGE_ITEM_FILE, MESSAGE_ITEM_IMAGE, MESSAGE_ITEM_TEXT, MESSAGE_ITEM_VIDEO,
+    MESSAGE_ITEM_VOICE,
+};
 use serde_json::{Value, json};
 
 const WEIXIN_IMAGE_MISSING_URL_DIAGNOSTIC: &str =
@@ -21,13 +25,19 @@ fn weixin_file_missing_url_diagnostic(media_owner: &Value) -> String {
 
 fn push_weixin_attachment(
     attachments: &mut Vec<Value>,
+    message_id: &str,
     kind: &str,
     media_owner: &Value,
 ) -> Option<String> {
-    let name = media_owner
-        .get("file_name")
-        .and_then(Value::as_str)
-        .unwrap_or(if kind == "image" { "image" } else { "file" });
+    let name = if kind == "image" {
+        format!("image-{message_id}.jpg")
+    } else {
+        media_owner
+            .get("file_name")
+            .and_then(Value::as_str)
+            .unwrap_or("file")
+            .to_owned()
+    };
     let mut attachment = json!({
         "type": kind,
         "name": name,
@@ -60,12 +70,18 @@ pub(crate) fn weixin_inbound_text_and_attachments(
         return None;
     }
     let items = message.get("item_list")?.as_array()?;
+    let message_id = message
+        .get("message_id")
+        .or_else(|| message.get("client_id"))
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .unwrap_or("(unknown)");
     let mut parts: Vec<String> = Vec::new();
     let mut attachments = Vec::new();
     let mut diagnostics = Vec::new();
     for item in items {
         match item.get("type").and_then(Value::as_i64) {
-            Some(1) => {
+            Some(t) if t == MESSAGE_ITEM_TEXT => {
                 if let Some(text) = item
                     .get("text_item")
                     .and_then(|value| value.get("text"))
@@ -74,15 +90,16 @@ pub(crate) fn weixin_inbound_text_and_attachments(
                     parts.push(text.to_owned());
                 }
             }
-            Some(2) => {
+            Some(t) if t == MESSAGE_ITEM_IMAGE => {
                 if let Some(image) = item.get("image_item") {
-                    if let Some(line) = push_weixin_attachment(&mut attachments, "image", image) {
+                    if let Some(line) =
+                        push_weixin_attachment(&mut attachments, message_id, "image", image)
+                    {
                         diagnostics.push(line);
                     }
                 }
             }
-            // `weixin-ilink@0.1.0` `dist/types.js:13-19`: VOICE=3, FILE=4, VIDEO=5
-            Some(3) => {
+            Some(t) if t == MESSAGE_ITEM_VOICE => {
                 if let Some(voice) = item
                     .get("voice_item")
                     .and_then(|v| v.get("text"))
@@ -92,14 +109,16 @@ pub(crate) fn weixin_inbound_text_and_attachments(
                     parts.push(format!("[微信语音转文字]\n{voice}"));
                 }
             }
-            Some(4) => {
+            Some(t) if t == MESSAGE_ITEM_FILE => {
                 if let Some(file) = item.get("file_item") {
-                    if let Some(line) = push_weixin_attachment(&mut attachments, "file", file) {
+                    if let Some(line) =
+                        push_weixin_attachment(&mut attachments, message_id, "file", file)
+                    {
                         diagnostics.push(line);
                     }
                 }
             }
-            Some(5) => {
+            Some(t) if t == MESSAGE_ITEM_VIDEO => {
                 diagnostics.push(WEIXIN_VIDEO_SKIPPED_DIAGNOSTIC.into());
             }
             _ => {}
@@ -166,7 +185,7 @@ mod tests {
             "message_type": 1,
             "item_list": [
                 {"type": 1, "text_item": {"text": "see file"}},
-                {"type": 2, "image_item": {"file_name": "photo.png", "url": "https://cdn.example/photo.png"}},
+                {"type": 2, "image_item": {"url": "https://cdn.example/photo.png"}},
                 {"type": 4, "file_item": {"file_name": "doc.pdf", "url": "https://cdn.example/doc.pdf"}}
             ]
         }))
@@ -174,6 +193,7 @@ mod tests {
         assert_eq!(text, "see file");
         assert_eq!(attachments.len(), 2);
         assert_eq!(attachments[0]["type"], "image");
+        assert_eq!(attachments[0]["name"], "image-(unknown).jpg");
         assert_eq!(attachments[1]["type"], "file");
     }
 
@@ -248,5 +268,21 @@ mod tests {
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0].encode_utf16().count(), 2000);
         assert_eq!(chunks[1], emoji);
+        assert!(!chunks[0].contains('\u{FFFD}'));
+        assert!(!chunks[1].contains('\u{FFFD}'));
+    }
+
+    #[test]
+    fn inbound_image_name_matches_ts_message_id_pattern() {
+        let (_, attachments) = weixin_inbound_text_and_attachments(&json!({
+            "message_type": 1,
+            "message_id": "mid-42",
+            "item_list": [{
+                "type": 2,
+                "image_item": {"file_name": "photo.png", "url": "https://cdn.example/x.png"}
+            }]
+        }))
+        .unwrap();
+        assert_eq!(attachments[0]["name"], "image-mid-42.jpg");
     }
 }

@@ -273,10 +273,10 @@ fn merge_inbound_and_materialize_into_one_diagnostics_block() {
         assert!(attachments[0]["path"].as_str().is_some());
         assert!(
             diags.iter().any(|line| {
-                line.starts_with("微信附件处理失败：")
-                    && line.contains("微信图片解密后仍不是可识别图片（")
+                line.starts_with("微信附件处理失败：Error: 微信图片解密后仍不是可识别图片（")
+                    && line.contains("; at=decryptWeixinImageOrThrow")
             }),
-            "expected TS image decrypt diagnostic, got {diags:?}"
+            "expected TS formatWeixinError diagnostic, got {diags:?}"
         );
         let merged = merge_attachment_diagnostics(String::new(), &diags);
         assert!(merged.contains("[Attachment diagnostics]"));
@@ -619,6 +619,10 @@ fn merge_inbound_and_materialize_into_one_diagnostics_block() {
             .find(|(name, _)| name == "sendmessage")
             .map(|(_, body)| body.clone())
             .unwrap();
+        assert_eq!(
+            send["msg"]["item_list"][0]["type"].as_i64(),
+            Some(super::super::item_types::MESSAGE_ITEM_FILE)
+        );
         assert!(send["msg"]["item_list"][0]["file_item"]["media"]["encrypt_query_param"]
             .as_str()
             .is_some_and(|s| !s.is_empty()));

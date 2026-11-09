@@ -1,6 +1,7 @@
 mod attachment_net;
 mod attachments;
 mod http;
+mod item_types;
 mod media;
 mod inbox;
 pub use inbox::WeixinInbox;
