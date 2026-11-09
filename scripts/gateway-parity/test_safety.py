@@ -2432,6 +2432,33 @@ class WsProjection(unittest.TestCase):
             self.project(self.envelope(0, event, final='no'))
 
 
+def count_name_bindings(source, name):
+    """Count every binding of ``name`` in ``source``, semantically.
+
+    r5-r8 showed a lexical pin on one spelling of an assignment always
+    leaves an equivalent-spelling hole open (tail anchor, left space,
+    delimiter, no-space spelling -- the same spot four times).  This walks
+    the AST instead and counts every node that binds the name: Assign
+    (including chained targets), AugAssign, AnnAssign and the walrus
+    NamedExpr, in any spacing, parenthesisation or right-hand spelling.
+    Attribute/subscript targets (``self.clock``, ``globals()['clock']``)
+    are different names as far as binding goes and are not counted -- the
+    guarded fixtures carry a separate byte ban on dynamic-namespace writes
+    (``globals(`` / ``setattr(``) for those.
+    """
+    import ast
+    tree = ast.parse(source)
+    count = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            count += sum(1 for target in node.targets
+                         if isinstance(target, ast.Name) and target.id == name)
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.NamedExpr)):
+            if isinstance(node.target, ast.Name) and node.target.id == name:
+                count += 1
+    return count
+
+
 class SameJsonSurfaces(unittest.TestCase):
     """#2039: registered expectations and replay ledgers are JSON values, so
     their comparisons go through the strict ``same_json`` walk (#1372), never
@@ -2735,10 +2762,31 @@ class SameJsonSurfaces(unittest.TestCase):
         # itself: exec the module, call install_terminate_handlers(), and
         # require each handler to be live, restoring the saved dispositions
         # afterwards (the save/restore form the #2431 pins already use).
+        #
+        # #2552 r9 (DS r9 sibling#2 + boundary#1, coordinator arbitration
+        # design-change round): two more legs.  (a) Binding drift -- the
+        # direct call above proves the *module-level* function registers;
+        # a local shadow inside main() (install_terminate_handlers =
+        # lambda: None before the call site), a globals()/setattr rebind,
+        # or a dead main would leave every pin green while the guarded
+        # batch runs on default dispositions.  So main() itself is driven
+        # through a guard that refuses at entry, and the live dispositions
+        # are *recorded* at that moment (asserting inside __enter__ would
+        # be swallowed by main's except into an rc2 refusal) and checked
+        # afterwards.  (b) Structure -- the name must have exactly one
+        # binding in the whole file (the module-level def, no
+        # Assign/AugAssign/AnnAssign/walrus binding anywhere, count_name_
+        # bindings) and the fixture must not contain dynamic-namespace
+        # writes (globals( / setattr( -- zero in the healthy file), which
+        # would rebind names invisibly to every AST and byte pin here
+        # (the same vector as the clock count, DS r8 boundary#1).
+        import io
         import signal
+        import sys
         marker = '#2425/#2552 install_terminate_handlers registers all three signals'
         path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
         try:
+            source = path.read_bytes().decode()
             spec = importlib.util.spec_from_file_location('samejson_install_pins', path)
             module = importlib.util.module_from_spec(spec)
             exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
@@ -2751,7 +2799,70 @@ class SameJsonSurfaces(unittest.TestCase):
                                      for name in names), marker)
             finally:
                 for name, disposition in saved.items():
-                    signal.signal(name, disposition)
+                    # getsignal returns None when a non-Python handler holds
+                    # the signal; signal.signal refuses None, so map that
+                    # back to the default disposition (Claude r8 boundary#1
+                    # P2b, DS r9 boundary#3 -- one-line guard).
+                    signal.signal(name, disposition if disposition is not None
+                                  else signal.SIG_DFL)
+
+            import ast
+            tree = ast.parse(source)
+            module_defs = [node for node in tree.body
+                           if isinstance(node, ast.FunctionDef)
+                           and node.name == 'install_terminate_handlers']
+            self.assertTrue(len(module_defs) == 1
+                           and count_name_bindings(source, 'install_terminate_handlers') == 0
+                           and 'globals(' not in source
+                           and 'setattr(' not in source, marker)
+
+            with tempfile.TemporaryDirectory(prefix='pdrs-2552-r9-') as folder:
+                out = Path(folder) / 'out'
+                spec = importlib.util.spec_from_file_location('samejson_install_main', path)
+                main_module = importlib.util.module_from_spec(spec)
+                exec(compile(path.read_bytes(), str(path), 'exec'), main_module.__dict__)
+                recorded = {}
+
+                class recording_guard:
+                    def __enter__(self):
+                        # plain subscript writes: a .update({...}) call here
+                        # reads as an incremental status write to the #991
+                        # aggregation audit, which then demands registration
+                        # for a test that aggregates nothing.
+                        for name in names:
+                            recorded[name] = signal.getsignal(name)
+                        raise RuntimeError('probe: refuse before the first mutation')
+
+                    def __exit__(self, *_exc):
+                        return False
+
+                try:
+                    with patch.object(main_module, 'preflight', lambda: True), \
+                            patch.object(main_module, 'mutating_sources',
+                                         lambda *_a, **_k: recording_guard()), \
+                            patch('sys.stdout', new_callable=io.StringIO), \
+                            patch('sys.stderr', new_callable=io.StringIO), \
+                            patch.object(sys, 'argv', [str(path), str(out),
+                                                       'surfaces-frames-bare-not-equal']):
+                        try:
+                            main_module.main()
+                            raised = None
+                        except (SystemExit, RuntimeError) as error:
+                            raised = error
+                    # A dead or shadowed call site records nothing (or records
+                    # the default dispositions); the guard refuses before the
+                    # first mutation, so main exits rc 2 either way and only
+                    # the recorded table tells the two apart.
+                    self.assertTrue(raised is not None
+                                    and len(recorded) == len(names)
+                                    and all(recorded[name] is main_module.terminate_cleanly
+                                             for name in names), marker)
+                finally:
+                    # main() installs without uninstalling; restore so the
+                    # handler does not leak into the tests that follow.
+                    for name, disposition in saved.items():
+                        signal.signal(name, disposition if disposition is not None
+                                      else signal.SIG_DFL)
         except (Exception, SystemExit) as error:
             self.fail(marker + ': ' + repr(error))
 
@@ -2972,15 +3083,19 @@ class SameJsonSurfaces(unittest.TestCase):
         # memory-mode loop at the same depth is followed by one(row)
         # instead, so the anchor names the guarded branch, DS r4
         # boundary#2), or by duplicating it inside the loop body, where
-        # a per-case reset would silently rearm the budget (unique
-        # count as a regex with a negative lookbehind and no right
-        # anchor: any delimiter-preceded duplicate -- a ';' glued to
-        # the previous statement (DS r7 boundary#1), a space, a fresh
-        # line, or a trailing ';' (DS r5 boundary#1) -- is counted,
-        # while a word-character-prefixed name such as saved_clock
+        # a per-case reset would silently rearm the budget -- the
+        # duplicate is counted semantically, by AST bindings
+        # (count_name_bindings: Assign including chained targets,
+        # AugAssign, AnnAssign, walrus NamedExpr, any spacing or
+        # right-hand spelling -- DS r8 boundary#1, the same spot a
+        # fourth time: no-space clock=time.monotonic() and the RHS
+        # alias clock = monotonic() both survived the r7 regex, live
+        # output in _tmp/20261109-2552-harvest/fix-r8-suspension-report.md;
+        # design-change round authorised by coordinator arbitration,
+        # fix-r9), while a different name such as saved_clock
         # (Claude r5 boundary#1) or an attribute form such as
-        # self.clock is not and cannot false-red it;
-        # the adjacency's clock and for
+        # self.clock is not a binding of clock and cannot false-red
+        # it; the adjacency's clock and for
         # lines are 16-space with-body lines and its budget-check line
         # is a 20-space loop-body line, DS r4 simplify#2 + DS r5
         # boundary#2).
@@ -3004,7 +3119,7 @@ class SameJsonSurfaces(unittest.TestCase):
                 and source.count("results.append({'name': row[0], 'status': 'INVALID',") == 1
                 and source.count("' by name'})\n                        continue") == 1
                 and source.count('mutating_sources(root, GUARDED_PATHS,') == 1
-                and len(re.findall(r'(?<![\w.])clock = time\.monotonic\(\)', source)) == 1
+                and count_name_bindings(source, 'clock') == 1
                 and source.count('\n                clock = time.monotonic()\n'
                                 '                for row in selected:\n'
                                 '                    if lease_budget_left(clock, '
