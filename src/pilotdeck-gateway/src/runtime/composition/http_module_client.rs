@@ -51,9 +51,10 @@ impl HttpModuleClient {
     }
 
     fn endpoint_url(&self, path: &str) -> Result<Url, ModuleClientError> {
-        let endpoint = Self::string(Self::field(&self.binding, "endpoint").unwrap_or(&JsValue::Null))
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| protocol_error("Module endpoint is missing."))?;
+        let endpoint =
+            Self::string(Self::field(&self.binding, "endpoint").unwrap_or(&JsValue::Null))
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| protocol_error("Module endpoint is missing."))?;
         let base = if endpoint.ends_with('/') {
             endpoint
         } else {
@@ -65,8 +66,7 @@ impl HttpModuleClient {
     }
 
     fn credential(&self) -> Result<Option<String>, ModuleClientError> {
-        let Some(env_name) = Self::field(&self.binding, "credentialEnv")
-            .and_then(Self::string)
+        let Some(env_name) = Self::field(&self.binding, "credentialEnv").and_then(Self::string)
         else {
             return Ok(None);
         };
@@ -125,16 +125,13 @@ impl HttpModuleClient {
         let mut request_body = JsObject::new();
         request_body.insert("kind".into(), JsValue::from("request"));
         request_body.insert("method".into(), JsValue::from("module_call"));
-        request_body.insert("messageId".into(), JsValue::String(message_id.clone().into()));
+        request_body.insert(
+            "messageId".into(),
+            JsValue::String(message_id.clone().into()),
+        );
         request_body.insert("runId".into(), JsValue::String(run_id.into()));
-        request_body.insert(
-            "operationId".into(),
-            JsValue::String(operation_id.into()),
-        );
-        request_body.insert(
-            "requestId".into(),
-            JsValue::String(request_id.into()),
-        );
+        request_body.insert("operationId".into(), JsValue::String(operation_id.into()));
+        request_body.insert("requestId".into(), JsValue::String(request_id.into()));
         request_body.insert("module".into(), JsValue::String(module.into()));
         request_body.insert("payload".into(), JsValue::Object(payload));
         let call_path = Self::field(&self.binding, "callPath")
@@ -151,9 +148,10 @@ impl HttpModuleClient {
             .await?;
         let envelope = parse_response(&response, &message_id, request_id)?;
         if !response_ok(&envelope) {
-            return Err(module_failure(&envelope, &format!(
-                "Knowledge module {operation} failed."
-            )));
+            return Err(module_failure(
+                &envelope,
+                &format!("Knowledge module {operation} failed."),
+            ));
         }
         Ok(envelope
             .get("payload")
@@ -206,9 +204,8 @@ impl HttpModuleClient {
             let value = if bytes.is_empty() {
                 JsValue::Null
             } else {
-                parse_json(&String::from_utf8_lossy(&bytes)).map_err(|_| {
-                    protocol_error("Module HTTP response must contain JSON.")
-                })?
+                parse_json(&String::from_utf8_lossy(&bytes))
+                    .map_err(|_| protocol_error("Module HTTP response must contain JSON."))?
             };
             if !status.is_success()
                 && !(accept_structured_error
@@ -225,10 +222,7 @@ impl HttpModuleClient {
             Ok(result) => result,
             Err(_) => Err(ModuleClientError {
                 code: "MODULE_TIMEOUT".into(),
-                message: format!(
-                    "Module HTTP request exceeded {}ms.",
-                    timeout.as_millis()
-                ),
+                message: format!("Module HTTP request exceeded {}ms.", timeout.as_millis()),
                 retryability: None,
                 details: None,
             }),
@@ -339,7 +333,10 @@ fn validate_manifest(binding: &JsValue, value: &JsValue) -> Result<(), ModuleCli
 }
 
 fn is_module_response(value: &JsValue) -> bool {
-    value.get("kind").and_then(|k| k.as_string()).is_some_and(|k| k.equals_str("response"))
+    value
+        .get("kind")
+        .and_then(|k| k.as_string())
+        .is_some_and(|k| k.equals_str("response"))
 }
 
 fn parse_response(
@@ -381,7 +378,10 @@ fn validate_response_semantics(value: &JsValue) -> Result<(), ModuleClientError>
     if response_ok(value) {
         if value.get("code").is_some()
             || value.get("error").is_some()
-            || value.get("outcome").and_then(|o| o.as_string()).is_some_and(|o| o.equals_str("failed"))
+            || value
+                .get("outcome")
+                .and_then(|o| o.as_string())
+                .is_some_and(|o| o.equals_str("failed"))
         {
             return Err(protocol_error(
                 "Successful module response contains failure fields.",
@@ -399,17 +399,21 @@ fn validate_response_semantics(value: &JsValue) -> Result<(), ModuleClientError>
             "Failed module response requires code and error details.",
         ));
     }
-    let error_code = error.and_then(|e| e.get("code")).and_then(|v| v.as_string());
-    let message = error.and_then(|e| e.get("message")).and_then(|v| v.as_string());
+    let error_code = error
+        .and_then(|e| e.get("code"))
+        .and_then(|v| v.as_string());
+    let message = error
+        .and_then(|e| e.get("message"))
+        .and_then(|v| v.as_string());
     let retry = error
         .and_then(|e| e.get("retryability"))
         .and_then(|v| v.as_string())
         .and_then(|s| s.to_utf8().ok());
     if error_code != code
         || message.as_ref().is_none_or(|m| m.is_empty())
-        || retry.as_deref().is_none_or(|r| {
-            !["safe", "unsafe", "retry_after_status"].contains(&r)
-        })
+        || retry
+            .as_deref()
+            .is_none_or(|r| !["safe", "unsafe", "retry_after_status"].contains(&r))
     {
         return Err(protocol_error(
             "Failed module response error fields are inconsistent.",
@@ -429,14 +433,22 @@ fn module_failure(response: &JsValue, fallback: &str) -> ModuleClientError {
         .and_then(|e| e.get("message"))
         .and_then(|m| m.as_string())
         .and_then(|s| s.to_utf8().ok())
-        .or_else(|| response.get("code").and_then(|c| c.as_string()).and_then(|s| s.to_utf8().ok()))
+        .or_else(|| {
+            response
+                .get("code")
+                .and_then(|c| c.as_string())
+                .and_then(|s| s.to_utf8().ok())
+        })
         .unwrap_or_else(|| fallback.to_string());
     let retryability = response
         .get("error")
         .and_then(|e| e.get("retryability"))
         .and_then(|v| v.as_string())
         .and_then(|s| s.to_utf8().ok());
-    let details = response.get("error").and_then(|e| e.get("details")).cloned();
+    let details = response
+        .get("error")
+        .and_then(|e| e.get("details"))
+        .cloned();
     ModuleClientError {
         code,
         message,

@@ -25,6 +25,7 @@ pub mod rewind;
 pub mod sdk_session;
 pub mod session;
 pub mod snapshot;
+pub mod sop;
 pub mod steer;
 pub mod tools;
 pub mod turn;
