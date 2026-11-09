@@ -138,8 +138,11 @@ pub(crate) async fn serve_with_body(
 ) -> Result<hyper::Response<Body>, io::Error> {
     let version = request.version();
     if let Some(approvals) = &config.approvals {
-        if let Some(rejection) = node_parser_admission(&request)? { return finish(version, rejection); }
-        if let Some(response) = crate::module_host::approvals::serve(&mut request, approvals).await {
+        if let Some(rejection) = node_parser_admission(&request)? {
+            return finish(version, rejection);
+        }
+        if let Some(response) = crate::module_host::approvals::serve(&mut request, approvals).await
+        {
             return finish(version, response?);
         }
     }

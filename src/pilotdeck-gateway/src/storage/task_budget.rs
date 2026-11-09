@@ -146,7 +146,9 @@ impl TaskBudgetStore {
     /// Native CLI IO is descriptor-relative, bounded and durably replaced.
     #[cfg(unix)]
     pub(crate) fn with_native_home(mut self, home: &Path) -> io::Result<Self> {
-        self.native_files = Some(crate::user_dialog::native_journal::NativeJournalFiles::new(home, &self.path)?);
+        self.native_files = Some(crate::user_dialog::native_journal::NativeJournalFiles::new(
+            home, &self.path,
+        )?);
         Ok(self)
     }
     pub fn path(&self) -> &Path {
@@ -178,7 +180,10 @@ impl TaskBudgetStore {
     }
     fn load_records(&mut self) -> Result<()> {
         #[cfg(unix)]
-        let read = match &self.native_files { Some(files) => files.read_raw(), None => fs::read(&self.path) };
+        let read = match &self.native_files {
+            Some(files) => files.read_raw(),
+            None => fs::read(&self.path),
+        };
         #[cfg(not(unix))]
         let read = fs::read(&self.path);
         let bytes = match read {
@@ -190,7 +195,9 @@ impl TaskBudgetStore {
         // without LF is valid; malformed/unknown lines stay on disk until compact.
         for line in String::from_utf8_lossy(&bytes).split('\n') {
             #[cfg(unix)]
-            if self.native_files.is_some() { crate::user_dialog::native_journal::check_json_bounds(line.as_bytes())?; }
+            if self.native_files.is_some() {
+                crate::user_dialog::native_journal::check_json_bounds(line.as_bytes())?;
+            }
             let Ok(record) = parse_json(line) else {
                 continue;
             };
@@ -425,7 +432,9 @@ impl TaskBudgetStore {
         // native failed write must never turn an unpersisted in-memory run into
         // a successful duplicate settlement on retry.
         #[cfg(unix)]
-        if self.native_files.is_some() && let Err(error) = &result {
+        if self.native_files.is_some()
+            && let Err(error) = &result
+        {
             self.load_error = Some(copy_load_error(error));
         }
         result
@@ -446,7 +455,9 @@ impl TaskBudgetStore {
         #[cfg(not(unix))]
         self.append_generic(&record)?;
         self.record_count += 1;
-        if self.record_count >= self.compact_after { self.compact()?; }
+        if self.record_count >= self.compact_after {
+            self.compact()?;
+        }
         Ok(())
     }
     fn append_generic(&self, record: &JsValue) -> Result<()> {
@@ -459,47 +470,47 @@ impl TaskBudgetStore {
         Ok(())
     }
     fn compact(&mut self) -> Result<()> {
-            let mut contents = String::new();
-            for (key, ledger) in &self.ledgers {
-                let mut fields = vec![
-                    ("version", JsValue::Number(1.0)),
-                    ("kind", text("snapshot")),
-                ];
-                fields.extend(identity(key));
-                let mut ids = ledger.settled_run_ids.clone();
-                ids.sort(); // JsString orders UTF-16 code units, like Array#sort.
+        let mut contents = String::new();
+        for (key, ledger) in &self.ledgers {
+            let mut fields = vec![
+                ("version", JsValue::Number(1.0)),
+                ("kind", text("snapshot")),
+            ];
+            fields.extend(identity(key));
+            let mut ids = ledger.settled_run_ids.clone();
+            ids.sort(); // JsString orders UTF-16 code units, like Array#sort.
+            fields.extend([
+                ("spentUsd", JsValue::Number(ledger.spent_usd)),
+                (
+                    "settledRunIds",
+                    JsValue::Array(ids.into_iter().map(JsValue::String).collect()),
+                ),
+                ("totalUsd", ledger.total_usd.clone()),
+            ]);
+            if !absent(&ledger.project_retention_ms) {
                 fields.extend([
-                    ("spentUsd", JsValue::Number(ledger.spent_usd)),
-                    (
-                        "settledRunIds",
-                        JsValue::Array(ids.into_iter().map(JsValue::String).collect()),
-                    ),
-                    ("totalUsd", ledger.total_usd.clone()),
+                    ("projectRetentionMs", ledger.project_retention_ms.clone()),
+                    ("lastActivityAtMs", ledger.last_activity_at_ms.clone()),
                 ]);
-                if !absent(&ledger.project_retention_ms) {
-                    fields.extend([
-                        ("projectRetentionMs", ledger.project_retention_ms.clone()),
-                        ("lastActivityAtMs", ledger.last_activity_at_ms.clone()),
-                    ]);
-                }
-                contents.push_str(&json_line(&object(fields))?);
             }
-            #[cfg(unix)]
-            if let Some(files) = &self.native_files {
-                files.write(contents.as_bytes())?;
-                self.record_count = self.ledgers.len();
-                return Ok(());
-            }
-            let mut temporary_name = self.path.file_name().unwrap().to_os_string();
-            temporary_name.push(format!(".{}.tmp", uuid::Uuid::new_v4()));
-            let temporary = self.path.with_file_name(temporary_name);
-            // Same durability assumption as TS writeFileSync + renameSync:
-            // neither the file nor its directory is fsynced. Load reads only the
-            // ledger; load and later compactions leave crash-residual .tmp files
-            // untouched. A successful rename consumes only this new temporary.
-            fs::write(&temporary, contents)?;
-            fs::rename(temporary, &self.path)?;
+            contents.push_str(&json_line(&object(fields))?);
+        }
+        #[cfg(unix)]
+        if let Some(files) = &self.native_files {
+            files.write(contents.as_bytes())?;
             self.record_count = self.ledgers.len();
+            return Ok(());
+        }
+        let mut temporary_name = self.path.file_name().unwrap().to_os_string();
+        temporary_name.push(format!(".{}.tmp", uuid::Uuid::new_v4()));
+        let temporary = self.path.with_file_name(temporary_name);
+        // Same durability assumption as TS writeFileSync + renameSync:
+        // neither the file nor its directory is fsynced. Load reads only the
+        // ledger; load and later compactions leave crash-residual .tmp files
+        // untouched. A successful rename consumes only this new temporary.
+        fs::write(&temporary, contents)?;
+        fs::rename(temporary, &self.path)?;
+        self.record_count = self.ledgers.len();
         Ok(())
     }
 }

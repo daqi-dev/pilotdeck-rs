@@ -1105,7 +1105,10 @@ impl SessionOwner {
     #[cfg(test)]
     pub(crate) fn publication_ticket_probe(&self, key: &JsString) -> watch::Receiver<bool> {
         let state = self.0.state.lock().unwrap();
-        let serial = state.gates.get(key).and_then(Weak::upgrade)
+        let serial = state
+            .gates
+            .get(key)
+            .and_then(Weak::upgrade)
             .expect("session has an owned publication ticket");
         serial.tail.lock().unwrap().clone()
     }
@@ -1157,12 +1160,20 @@ impl SessionOwner {
                 state.closings.insert(key.clone(), phase.clone());
             }
             let identity = Arc::new(());
-            state.cleanup_closings.insert(key.clone(), (identity.clone(), phase));
+            state
+                .cleanup_closings
+                .insert(key.clone(), (identity.clone(), phase));
             (
-                Some(super::super::cleanup_task::Completion::new(phase_done,
-                    RuntimeError::new("Session eviction task was dropped or panicked before completion."))),
+                Some(super::super::cleanup_task::Completion::new(
+                    phase_done,
+                    RuntimeError::new(
+                        "Session eviction task was dropped or panicked before completion.",
+                    ),
+                )),
                 Some(CleanupClosingRegistration {
-                    owner: Arc::downgrade(&self.0), key: key.clone(), identity,
+                    owner: Arc::downgrade(&self.0),
+                    key: key.clone(),
+                    identity,
                 }),
             )
         } else {
@@ -1200,7 +1211,9 @@ impl SessionOwner {
                     None => Ok(()),
                 };
                 if let Err(error) = predecessor {
-                    if let Some(phase) = close_phase.take() { phase.finish(Err(error.clone())); }
+                    if let Some(phase) = close_phase.take() {
+                        phase.finish(Err(error.clone()));
+                    }
                     return closing.settle(Err(error));
                 }
                 let (record, identity) = {
@@ -1229,7 +1242,9 @@ impl SessionOwner {
                 } else {
                     Ok(())
                 };
-                if let Some(phase) = close_phase.take() { phase.finish(outcome.clone()); }
+                if let Some(phase) = close_phase.take() {
+                    phase.finish(outcome.clone());
+                }
                 let outcome = match outcome {
                     Ok(()) => match after {
                         Some(after) => after().await,
@@ -1530,9 +1545,15 @@ struct CleanupClosingRegistration {
 impl Drop for CleanupClosingRegistration {
     fn drop(&mut self) {
         if let Some(owner) = self.owner.upgrade() {
-            let mut state = owner.state.lock().unwrap_or_else(|error| error.into_inner());
-            if state.cleanup_closings.get(&self.key)
-                .is_some_and(|(identity, _)| Arc::ptr_eq(identity, &self.identity)) {
+            let mut state = owner
+                .state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if state
+                .cleanup_closings
+                .get(&self.key)
+                .is_some_and(|(identity, _)| Arc::ptr_eq(identity, &self.identity))
+            {
                 state.cleanup_closings.remove(&self.key);
             }
         }

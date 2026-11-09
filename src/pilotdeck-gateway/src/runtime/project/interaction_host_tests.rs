@@ -199,7 +199,7 @@ fn adapter_with_recorder(
         let lease = registry.acquire(None).expect("#741 notice factory lease");
         Box::pin(async move {
             Ok(InteractionHost {
-                        node_template: None,
+                node_template: None,
                 client: Box::pin(client(mode)),
                 lease,
                 router: router(&identity),
@@ -588,7 +588,7 @@ async fn host_drop_stream_immediately_resubmits_same_session_before_old_dispose(
             let lease = owner.acquire(None).unwrap();
             Box::pin(async move {
                 Ok(InteractionHost {
-                        node_template: None,
+                    node_template: None,
                     client: Box::pin(async move { Ok(client) }),
                     lease,
                     router: router(&identity),
@@ -1282,23 +1282,78 @@ async fn recording_shared_lease_outlives_handler_cleanup() {
 
 #[tokio::test]
 async fn sop_node_disposal_preserves_parent_authority_and_rejects_late_callbacks() {
-    let scratch = Scratch::new(); let registry = interaction_registry(&scratch);
-    let parent = Arc::new(InteractionTurn::bind(registry.acquire(None).unwrap(), &identity(), router(&identity()), options()).await.unwrap());
+    let scratch = Scratch::new();
+    let registry = interaction_registry(&scratch);
+    let parent = Arc::new(
+        InteractionTurn::bind(
+            registry.acquire(None).unwrap(),
+            &identity(),
+            router(&identity()),
+            options(),
+        )
+        .await
+        .unwrap(),
+    );
     let ports = parent.ports();
     let old = registry.resolve(None).unwrap();
     bounded(registry.reload()).await.unwrap();
     let node_lease = Arc::new(parent.fork_generation().unwrap());
-    assert!(Arc::ptr_eq(node_lease.runtime(), &old), "SOP nodes must remain in their parent's selected generation");
-    let node = parent.borrow_node(router(&identity()), node_lease, &identity(), test_recorder(), Cancellation::new(), Default::default()).await.unwrap();
+    assert!(
+        Arc::ptr_eq(node_lease.runtime(), &old),
+        "SOP nodes must remain in their parent's selected generation"
+    );
+    let node = parent
+        .borrow_node(
+            router(&identity()),
+            node_lease,
+            &identity(),
+            test_recorder(),
+            Cancellation::new(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
     bounded(node.dispose()).await.unwrap();
-    assert!(node.module_call(JsValue::Null).await.is_err(), "closed node must reject late callbacks");
-    assert!(ports.events.as_ref().unwrap().drain().is_ok(), "node cleanup must not revoke parent events");
-    assert!(ports.hooks.as_ref().unwrap().pending_receipts().is_ok(), "node cleanup must not revoke parent hooks");
-    assert!(ports.steer.as_ref().unwrap().async_hook_info().is_some(), "node cleanup must not revoke parent steer");
+    assert!(
+        node.module_call(JsValue::Null).await.is_err(),
+        "closed node must reject late callbacks"
+    );
+    assert!(
+        ports.events.as_ref().unwrap().drain().is_ok(),
+        "node cleanup must not revoke parent events"
+    );
+    assert!(
+        ports.hooks.as_ref().unwrap().pending_receipts().is_ok(),
+        "node cleanup must not revoke parent hooks"
+    );
+    assert!(
+        ports.steer.as_ref().unwrap().async_hook_info().is_some(),
+        "node cleanup must not revoke parent steer"
+    );
     let permission = ports.permission.as_ref().unwrap();
-    assert!(crate::host::modules::permission::PermissionContext::prepare(permission, JsValue::Object(JsObject::new())).await.is_ok(), "parent permission must remain usable");
+    assert!(
+        crate::host::modules::permission::PermissionContext::prepare(
+            permission,
+            JsValue::Object(JsObject::new())
+        )
+        .await
+        .is_ok(),
+        "parent permission must remain usable"
+    );
     bounded(parent.dispose()).await.unwrap();
-    assert!(parent.fork_generation().is_err(), "closed outer turn cannot authorize a new node");
-    assert!(crate::host::modules::permission::PermissionContext::prepare(permission, JsValue::Object(JsObject::new())).await.is_err());
-    drop(node); drop(parent); bounded(registry.dispose()).await.unwrap();
+    assert!(
+        parent.fork_generation().is_err(),
+        "closed outer turn cannot authorize a new node"
+    );
+    assert!(
+        crate::host::modules::permission::PermissionContext::prepare(
+            permission,
+            JsValue::Object(JsObject::new())
+        )
+        .await
+        .is_err()
+    );
+    drop(node);
+    drop(parent);
+    bounded(registry.dispose()).await.unwrap();
 }

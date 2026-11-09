@@ -69,9 +69,14 @@ impl HyperJsonTransport {
     }
 }
 
-async fn before_deadline<F: Future>(deadline: Option<tokio::time::Instant>, future: F) -> Result<F::Output, ()> {
+async fn before_deadline<F: Future>(
+    deadline: Option<tokio::time::Instant>,
+    future: F,
+) -> Result<F::Output, ()> {
     match deadline {
-        Some(deadline) => tokio::time::timeout_at(deadline, future).await.map_err(|_| ()),
+        Some(deadline) => tokio::time::timeout_at(deadline, future)
+            .await
+            .map_err(|_| ()),
         None => Ok(future.await),
     }
 }
@@ -111,7 +116,9 @@ impl JsonTransport for HyperJsonTransport {
             }
             let body = Bytes::from(input.body.unwrap_or_default());
             let method = Method::from_bytes(input.method.as_bytes()).map_err(|_| failed())?;
-            let deadline = input.timeout.map(|timeout| tokio::time::Instant::now() + timeout);
+            let deadline = input
+                .timeout
+                .map(|timeout| tokio::time::Instant::now() + timeout);
             let response = before_deadline(deadline, async {
                 if input.redirect_error {
                     let mut request = Request::builder()

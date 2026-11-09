@@ -142,10 +142,12 @@ async fn native_project_background_owner_is_shared_with_sdk_and_drained_on_dispo
 }
 
 #[tokio::test]
-async fn readonly_unregistered_project_stage_leaves_no_archive_and_existing_foreign_lock_is_rejected() {
-    let scratch = Scratch(
-        std::env::temp_dir().join(format!("pdrs-native-background-readonly-{}", uuid::Uuid::new_v4())),
-    );
+async fn readonly_unregistered_project_stage_leaves_no_archive_and_existing_foreign_lock_is_rejected()
+ {
+    let scratch = Scratch(std::env::temp_dir().join(format!(
+        "pdrs-native-background-readonly-{}",
+        uuid::Uuid::new_v4()
+    )));
     let project = scratch.0.join("project-a");
     let other = scratch.0.join("unregistered-b");
     let locked = scratch.0.join("unregistered-locked");
@@ -174,10 +176,25 @@ async fn readonly_unregistered_project_stage_leaves_no_archive_and_existing_fore
     let locked_result = registry.resolve(Some(&locked));
     let closed = tokio::time::timeout(Duration::from_secs(10), registry.dispose()).await;
     assert!(closed.unwrap().is_ok());
-    assert!(other_runtime.is_ok(), "an unregistered read-only project must stage normally");
-    assert!(untouched_after_stage, "read-only staging wrote into the unregistered project");
-    assert!(!other.join(".pilotdeck").exists(), "read-only disposal created an archive");
-    let error = locked_result.err().expect("existing foreign archive lock must reject staging");
-    assert!(error.to_string().contains("Another process owns this project's background archive."));
+    assert!(
+        other_runtime.is_ok(),
+        "an unregistered read-only project must stage normally"
+    );
+    assert!(
+        untouched_after_stage,
+        "read-only staging wrote into the unregistered project"
+    );
+    assert!(
+        !other.join(".pilotdeck").exists(),
+        "read-only disposal created an archive"
+    );
+    let error = locked_result
+        .err()
+        .expect("existing foreign archive lock must reject staging");
+    assert!(
+        error
+            .to_string()
+            .contains("Another process owns this project's background archive.")
+    );
     drop(foreign);
 }

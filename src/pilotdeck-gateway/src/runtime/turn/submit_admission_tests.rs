@@ -1249,53 +1249,127 @@ async fn a_non_string_owner_does_not_gate_a_second_connection() {
 
 #[tokio::test]
 async fn native_budget_admission_captures_once_settles_before_projection_and_clears_failed_runs() {
-    struct Budget { spent: Mutex<f64>, writes: Mutex<Vec<JsString>> }
+    struct Budget {
+        spent: Mutex<f64>,
+        writes: Mutex<Vec<JsString>>,
+    }
     impl SubmitTaskBudgetSnapshot for Budget {
-        fn snapshot<'a>(&'a self,_: &'a JsString,_: Option<&'a JsString>)->SubmitFuture<'a,Result<JsValue,SubmitError>> {
-            Box::pin(async move { Ok(object([("totalUsd",JsValue::Number(2.0)),("spentUsd",JsValue::Number(*self.spent.lock().unwrap()))])) })
+        fn snapshot<'a>(
+            &'a self,
+            _: &'a JsString,
+            _: Option<&'a JsString>,
+        ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
+            Box::pin(async move {
+                Ok(object([
+                    ("totalUsd", JsValue::Number(2.0)),
+                    ("spentUsd", JsValue::Number(*self.spent.lock().unwrap())),
+                ]))
+            })
         }
-        fn settle<'a>(&'a self,_:&'a JsString,_:Option<&'a JsString>,run:&'a JsString,spent:f64)->SubmitFuture<'a,Result<(),SubmitError>> {
-            Box::pin(async move { self.writes.lock().unwrap().push(run.clone());*self.spent.lock().unwrap()+=spent;Ok(()) })
+        fn settle<'a>(
+            &'a self,
+            _: &'a JsString,
+            _: Option<&'a JsString>,
+            run: &'a JsString,
+            spent: f64,
+        ) -> SubmitFuture<'a, Result<(), SubmitError>> {
+            Box::pin(async move {
+                self.writes.lock().unwrap().push(run.clone());
+                *self.spent.lock().unwrap() += spent;
+                Ok(())
+            })
         }
     }
-    let budget=Arc::new(Budget{spent:Mutex::new(0.5),writes:Mutex::new(vec![])});
-    let mut options=SubmitAdmissionOptions::new(replacement_coordinator(&RecordingStorage::default()));options.task_budget=Some(budget.clone());
-    let admission=GatewaySubmitAdmission::new(options);
-    let input=js(&json!({"sessionKey":"s","runId":"r","projectKey":"p","message":"hello"}));
-    let run=RunRef{session_key:"s".into(),run_id:"r".into(),project_key:Some("p".into())};
-    assert!(admission.admitted_preflight(&input,&run,&stub_completion()).await.unwrap().is_empty());
-    *budget.spent.lock().unwrap()=1.0;
+    let budget = Arc::new(Budget {
+        spent: Mutex::new(0.5),
+        writes: Mutex::new(vec![]),
+    });
+    let mut options =
+        SubmitAdmissionOptions::new(replacement_coordinator(&RecordingStorage::default()));
+    options.task_budget = Some(budget.clone());
+    let admission = GatewaySubmitAdmission::new(options);
+    let input = js(&json!({"sessionKey":"s","runId":"r","projectKey":"p","message":"hello"}));
+    let run = RunRef {
+        session_key: "s".into(),
+        run_id: "r".into(),
+        project_key: Some("p".into()),
+    };
+    assert!(
+        admission
+            .admitted_preflight(&input, &run, &stub_completion())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    *budget.spent.lock().unwrap() = 1.0;
     let captured = admission.take_turn_budget(&run);
-    assert_eq!(captured.get("totalUsd").and_then(JsValue::as_number), Some(2.0));
-    assert_eq!(captured.get("spentUsd").and_then(JsValue::as_number), Some(0.5), "turn keeps its admission snapshot");
+    assert_eq!(
+        captured.get("totalUsd").and_then(JsValue::as_number),
+        Some(2.0)
+    );
+    assert_eq!(
+        captured.get("spentUsd").and_then(JsValue::as_number),
+        Some(0.5),
+        "turn keeps its admission snapshot"
+    );
     admission.observe_event(&input,&js(&json!({"type":"turn_completed","runId":"r","result":{"budget":{"taskBudgetUsd":2,"turnSpentUsd":1.0}}}))).await.unwrap();
-    assert_eq!(*budget.writes.lock().unwrap(),vec![JsString::from("r")]);
-    let events=admission.admitted_preflight(&input,&run,&stub_completion()).await.unwrap();
-    assert_eq!(events[0].get("code"),Some(&"agent_task_budget_reached".into()));
-    assert_eq!(events[1].get("finishReason"),Some(&"task_budget".into()));
-    admission.release_turn(&run.session_key,&run.run_id);
-    assert!(admission.take_turn_budget(&run).is_undefined(),"preflight failures release captured budget through claim cleanup");
+    assert_eq!(*budget.writes.lock().unwrap(), vec![JsString::from("r")]);
+    let events = admission
+        .admitted_preflight(&input, &run, &stub_completion())
+        .await
+        .unwrap();
+    assert_eq!(
+        events[0].get("code"),
+        Some(&"agent_task_budget_reached".into())
+    );
+    assert_eq!(events[1].get("finishReason"), Some(&"task_budget".into()));
+    admission.release_turn(&run.session_key, &run.run_id);
+    assert!(
+        admission.take_turn_budget(&run).is_undefined(),
+        "preflight failures release captured budget through claim cleanup"
+    );
     admission.observe_event(&input,&js(&json!({"type":"turn_completed","runId":"other","result":{"budget":{"turnSpentUsd":5.0}}}))).await.unwrap();
-    assert_eq!(budget.writes.lock().unwrap().len(),1,"unbudgeted terminal does not settle ledger");
+    assert_eq!(
+        budget.writes.lock().unwrap().len(),
+        1,
+        "unbudgeted terminal does not settle ledger"
+    );
 }
 
-#[tokio::test(flavor="multi_thread",worker_threads=2)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn compaction_abort_reaches_all_waiters_and_late_subscribers() {
     for _ in 0..128 {
-        let signal=CompactionAbort::default();
-        let one=signal.clone();let two=signal.clone();
-        let a=tokio::spawn(async move{one.aborted().await});
-        let b=tokio::spawn(async move{two.aborted().await});
+        let signal = CompactionAbort::default();
+        let one = signal.clone();
+        let two = signal.clone();
+        let a = tokio::spawn(async move { one.aborted().await });
+        let b = tokio::spawn(async move { two.aborted().await });
         signal.abort("bounded-fixture".into());
-        let results=tokio::time::timeout(std::time::Duration::from_secs(2),async { (a.await.unwrap(),b.await.unwrap(),signal.aborted().await) }).await.unwrap();
-        assert_eq!(results,("bounded-fixture".into(),"bounded-fixture".into(),"bounded-fixture".into()));
+        let results = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            (a.await.unwrap(), b.await.unwrap(), signal.aborted().await)
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            results,
+            (
+                "bounded-fixture".into(),
+                "bounded-fixture".into(),
+                "bounded-fixture".into()
+            )
+        );
     }
 }
 
 #[tokio::test]
 async fn compaction_abort_between_state_read_and_first_wait_poll_is_not_lost() {
-    let signal=CompactionAbort::default();let writer=signal.clone();
-    *signal.state.before_wait.lock().unwrap()=Some(Box::new(move||writer.abort("after-state-read".into())));
-    let result=tokio::time::timeout(std::time::Duration::from_secs(1),signal.aborted()).await;
-    assert_eq!(result.expect("abort between reason read and first wait poll must wake"),JsString::from("after-state-read"));
+    let signal = CompactionAbort::default();
+    let writer = signal.clone();
+    *signal.state.before_wait.lock().unwrap() =
+        Some(Box::new(move || writer.abort("after-state-read".into())));
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), signal.aborted()).await;
+    assert_eq!(
+        result.expect("abort between reason read and first wait poll must wake"),
+        JsString::from("after-state-read")
+    );
 }

@@ -217,11 +217,11 @@ fn node(
         && !["email", "uri", "uuid", "date", "time", "date-time"]
             .iter()
             .any(|x| fmt.equals_str(x))
-        {
-            return Err(format!(
-                "{path}.format must be one of email, uri, uuid, date, time, date-time."
-            ));
-        }
+    {
+        return Err(format!(
+            "{path}.format must be one of email, uri, uuid, date, time, date-time."
+        ));
+    }
     if let Some(p) = strval(value, "pattern") {
         if p.len_utf16() > 4096 {
             return Err(format!("{path}.pattern must not exceed 4096 characters."));
@@ -457,9 +457,10 @@ fn node(
         return Err(format!("{path}.if requires {path}.then or {path}.else."));
     }
     if let Some(e) = value.get("enum").filter(|v| !v.is_undefined())
-        && !matches!(e, JsValue::Array(a) if !a.is_empty() && a.len()<=64) {
-            return Err(format!("{path}.enum must contain 1-64 JSON values."));
-        }
+        && !matches!(e, JsValue::Array(a) if !a.is_empty() && a.len()<=64)
+    {
+        return Err(format!("{path}.enum must contain 1-64 JSON values."));
+    }
     Ok(())
 }
 pub(crate) fn validate_schema(value: &JsValue) -> Result<(), String> {
@@ -764,9 +765,10 @@ fn check(
         return false;
     }
     if let Some(JsValue::Array(a)) = schema.get("enum")
-        && !a.iter().any(|v| equal(v, value, 0, budget)) {
-            return false;
-        }
+        && !a.iter().any(|v| equal(v, value, 0, budget))
+    {
+        return false;
+    }
     if let Some(s) = value.as_string() {
         let len = s.len_utf16() as f64;
         if numeric(schema, "minLength").is_some_and(|n| len < n)
@@ -787,9 +789,9 @@ fn check(
             || numeric(schema, "exclusiveMaximum").is_some_and(|x| n >= x)
             || numeric(schema, "multipleOf")
                 .is_some_and(|x| ((n / x) - (n / x).round()).abs() >= 1e-10))
-        {
-            return false;
-        }
+    {
+        return false;
+    }
     if let JsValue::Array(items) = value {
         let n = items.len() as f64;
         if numeric(schema, "minItems").is_some_and(|x| n < x)
@@ -817,10 +819,10 @@ fn check(
                 } else {
                     None
                 }
-            })
-                && !check(item, child, root, depth + 1, budget) {
-                    return false;
-                }
+            }) && !check(item, child, root, depth + 1, budget)
+            {
+                return false;
+            }
         }
         if let Some(contains) = schema.get("contains") {
             let count = items
@@ -846,9 +848,9 @@ fn check(
             && req
                 .iter()
                 .any(|r| r.as_string().is_some_and(|s| map.get_key(s).is_none()))
-            {
-                return false;
-            }
+        {
+            return false;
+        }
         let props = schema.get("properties").and_then(object);
         let patterns = schema.get("patternProperties").and_then(object);
         for (key, item) in &entries {
@@ -860,9 +862,9 @@ fn check(
                 && (additional.as_bool() == Some(false)
                     || (object(additional).is_some()
                         && !check(item, additional, root, depth + 1, budget)))
-                {
-                    return false;
-                }
+            {
+                return false;
+            }
             if let Some(patterns) = patterns {
                 for (p, child) in patterns.own_entries() {
                     if match_pattern(p, key, budget) && !check(item, child, root, depth + 1, budget)
@@ -878,20 +880,21 @@ fn check(
                     root,
                     depth + 1,
                     budget,
-                ) {
-                    return false;
-                }
+                )
+            {
+                return false;
+            }
         }
         if let Some(deps) = schema.get("dependentRequired").and_then(object) {
             for (key, values) in deps.own_entries() {
                 if map.get_key(key).is_some()
                     && let JsValue::Array(values) = values
-                        && values
-                            .iter()
-                            .any(|v| v.as_string().is_some_and(|s| map.get_key(s).is_none()))
-                        {
-                            return false;
-                        }
+                    && values
+                        .iter()
+                        .any(|v| v.as_string().is_some_and(|s| map.get_key(s).is_none()))
+                {
+                    return false;
+                }
             }
         }
         if let Some(deps) = schema.get("dependentSchemas").and_then(object) {

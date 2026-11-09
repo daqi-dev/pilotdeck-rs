@@ -99,9 +99,16 @@ struct SchedulerShared {
     signal_task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
-struct StartAdmission<'a> { started: &'a AtomicBool, committed: bool }
+struct StartAdmission<'a> {
+    started: &'a AtomicBool,
+    committed: bool,
+}
 impl Drop for StartAdmission<'_> {
-    fn drop(&mut self) { if !self.committed { self.started.store(false, Ordering::SeqCst); } }
+    fn drop(&mut self) {
+        if !self.committed {
+            self.started.store(false, Ordering::SeqCst);
+        }
+    }
 }
 
 pub(crate) struct DiscoveryScheduler {
@@ -133,10 +140,16 @@ impl DiscoveryScheduler {
         {
             return Ok(());
         }
-        let mut admission = StartAdmission { started: &self.shared.started, committed: false };
+        let mut admission = StartAdmission {
+            started: &self.shared.started,
+            committed: false,
+        };
         self.maybe_restore_dormancy().await?;
         let mut slot = self.shared.task.lock().unwrap_or_else(|e| e.into_inner());
-        if self.shared.stopped.load(Ordering::SeqCst) { self.dispose_watcher(); return Ok(()); }
+        if self.shared.stopped.load(Ordering::SeqCst) {
+            self.dispose_watcher();
+            return Ok(());
+        }
         let scheduler = Arc::clone(self);
         let task = tokio::spawn(async move {
             scheduler.run_ticker().await;
@@ -165,8 +178,15 @@ impl DiscoveryScheduler {
         if let Some(task) = task {
             let _ = task.await;
         }
-        let signal = self.shared.signal_task.lock().unwrap_or_else(|error| error.into_inner()).take();
-        if let Some(task) = signal { let _ = task.await; }
+        let signal = self
+            .shared
+            .signal_task
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take();
+        if let Some(task) = signal {
+            let _ = task.await;
+        }
     }
 
     /// `runTickOnce` (DiscoveryScheduler.ts:70-73), public for tests: after a
@@ -234,8 +254,14 @@ impl DiscoveryScheduler {
         let project = self.deps.project_key.clone();
         let lock_path = self.deps.paths.discovery_lock_file.clone();
         let (state, project_exists, lock_held) = super::storage::run(move || {
-            Ok((state_store.read(now_ms)?, Path::new(&project).exists(), lock_path.exists()))
-        }).await.map_err(TickError::Io)?;
+            Ok((
+                state_store.read(now_ms)?,
+                Path::new(&project).exists(),
+                lock_path.exists(),
+            ))
+        })
+        .await
+        .map_err(TickError::Io)?;
         let fresh = self.deps.leases.list_fresh(
             &self.deps.project_key,
             self.deps.config.heartbeat_stale_seconds,
@@ -272,10 +298,13 @@ impl DiscoveryScheduler {
         // cycle must exist, be active, and hold fewer than the bound.
         let active_cycle_id = state
             .get("activeWorkCycleId")
-            .and_then(JsValue::as_string).cloned();
+            .and_then(JsValue::as_string)
+            .cloned();
         if let Some(cycle_id) = active_cycle_id {
             let store = self.deps.cycle_store.clone();
-            let active_cycle = super::storage::run(move || store.get_record_js(&cycle_id)).await.map_err(TickError::Io)?;
+            let active_cycle = super::storage::run(move || store.get_record_js(&cycle_id))
+                .await
+                .map_err(TickError::Io)?;
             if active_cycle.is_some_and(|cycle| {
                 cycle.status == "active" && cycle.plan_ids.len() >= DEFAULT_MAX_PLANS_PER_CYCLE
             }) {
@@ -294,9 +323,16 @@ impl DiscoveryScheduler {
         let started_at_ms = (self.deps.now)();
         let paths = self.deps.paths.clone();
         let lock_run_id = run_id.clone();
-        let acquired = super::storage::run(move || acquire_discovery_lock(
-            &paths, std::process::id(), &lock_run_id, &iso_from_epoch_ms(started_at_ms),
-        )).await.map_err(TickError::Io)?;
+        let acquired = super::storage::run(move || {
+            acquire_discovery_lock(
+                &paths,
+                std::process::id(),
+                &lock_run_id,
+                &iso_from_epoch_ms(started_at_ms),
+            )
+        })
+        .await
+        .map_err(TickError::Io)?;
         if !acquired {
             self.log_info(
                 "always-on lock_busy",
@@ -318,7 +354,9 @@ impl DiscoveryScheduler {
                 store.mark_fire_started(&state_run_id, started_at_ms)?;
                 store.clear_dormant(started_at_ms)?;
                 Ok(())
-            }).await.map_err(TickError::Io)?;
+            })
+            .await
+            .map_err(TickError::Io)?;
             self.dispose_watcher();
             let result = self
                 .deps
@@ -345,7 +383,11 @@ impl DiscoveryScheduler {
                     self.ensure_dormancy_watcher().await;
                 }
                 let paths = self.deps.paths.clone();
-                let _ = super::storage::run(move || { release_discovery_lock(&paths); Ok(()) }).await;
+                let _ = super::storage::run(move || {
+                    release_discovery_lock(&paths);
+                    Ok(())
+                })
+                .await;
                 Ok(TickOutcome {
                     outcome: "fired",
                     reason: None,
@@ -361,7 +403,11 @@ impl DiscoveryScheduler {
                     ],
                 );
                 let paths = self.deps.paths.clone();
-                let _ = super::storage::run(move || { release_discovery_lock(&paths); Ok(()) }).await;
+                let _ = super::storage::run(move || {
+                    release_discovery_lock(&paths);
+                    Ok(())
+                })
+                .await;
                 Err(match error {
                     TickError::Fire(fire) => TickError::Fire(fire),
                     TickError::Io(_) => TickError::Fire(AlwaysOnError::new("internal", message)),
@@ -414,9 +460,17 @@ impl DiscoveryScheduler {
             .watcher
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = Some(watcher.clone());
-        if let Err(error) = super::storage::run(move || { watcher.start(); Ok(()) }).await {
+        if let Err(error) = super::storage::run(move || {
+            watcher.start();
+            Ok(())
+        })
+        .await
+        {
             self.dispose_watcher();
-            self.log_warn("always-on signal watcher error", &[("error", JsValue::String(error.to_string().as_str().into()))]);
+            self.log_warn(
+                "always-on signal watcher error",
+                &[("error", JsValue::String(error.to_string().as_str().into()))],
+            );
         }
     }
 
@@ -425,12 +479,20 @@ impl DiscoveryScheduler {
     /// one. A clearDormant fs failure is swallowed the way the TS `void`
     /// leaves it an unhandled rejection — the reschedule still happens.
     fn handle_signal(&self) {
-        let mut slot = self.shared.signal_task.lock().unwrap_or_else(|error| error.into_inner());
-        if self.shared.stopped.load(Ordering::SeqCst) { return; }
+        let mut slot = self
+            .shared
+            .signal_task
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if self.shared.stopped.load(Ordering::SeqCst) {
+            return;
+        }
         if slot.as_ref().is_none_or(|task| task.is_finished()) {
             let store = self.deps.state_store.clone();
             let now = (self.deps.now)();
-            *slot = Some(tokio::spawn(async move { let _ = store.clear_dormant_async(now).await; }));
+            *slot = Some(tokio::spawn(async move {
+                let _ = store.clear_dormant_async(now).await;
+            }));
         }
         drop(slot);
         self.dispose_watcher();
@@ -506,7 +568,10 @@ mod tests {
     async fn wait_real(mut ready: impl FnMut() -> bool) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while !ready() {
-            assert!(std::time::Instant::now() < deadline, "storage milestone timed out");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "storage milestone timed out"
+            );
             tokio::task::yield_now().await;
         }
     }
@@ -1105,7 +1170,13 @@ mod tests {
         // equal deadline the test task can resume before the ticker's tick
         // completes.
         tokio::time::sleep(std::time::Duration::from_millis(51)).await;
-        wait_real(|| harness.log().iter().any(|line| line.contains("always-on fire complete"))).await;
+        wait_real(|| {
+            harness
+                .log()
+                .iter()
+                .any(|line| line.contains("always-on fire complete"))
+        })
+        .await;
         let after = harness.fire_calls().len();
         negative_assert_eq!(
             serde_json::json!({"before": before, "after": after}),
@@ -1136,7 +1207,13 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(119_999)).await;
         let before = harness.fire_calls().len();
         tokio::time::sleep(std::time::Duration::from_millis(1_001)).await;
-        wait_real(|| harness.log().iter().any(|line| line.contains("always-on fire complete"))).await;
+        wait_real(|| {
+            harness
+                .log()
+                .iter()
+                .any(|line| line.contains("always-on fire complete"))
+        })
+        .await;
         let after = harness.fire_calls().len();
         negative_assert_eq!(
             serde_json::json!({"before": before, "after": after}),
@@ -1169,7 +1246,13 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(999)).await;
         let before = harness.fire_calls().len();
         tokio::time::sleep(std::time::Duration::from_millis(51)).await;
-        wait_real(|| harness.log().iter().any(|line| line.contains("always-on fire complete"))).await;
+        wait_real(|| {
+            harness
+                .log()
+                .iter()
+                .any(|line| line.contains("always-on fire complete"))
+        })
+        .await;
         let after = harness.fire_calls().len();
         negative_assert_eq!(
             before,
@@ -1262,7 +1345,13 @@ mod tests {
         // start() restores the dormancy watcher (its baseline at t=0).
         scheduler.start().await.expect("#2294 start");
         tokio::time::sleep(std::time::Duration::from_millis(1_000)).await;
-        wait_real(|| harness.log().iter().any(|line| line.contains("dormant_no_signal"))).await;
+        wait_real(|| {
+            harness
+                .log()
+                .iter()
+                .any(|line| line.contains("dormant_no_signal"))
+        })
+        .await;
         tokio::task::yield_now().await;
         tokio::time::sleep(std::time::Duration::from_millis(600)).await;
         let fired_while_dormant = harness.fire_calls().len();
@@ -1274,15 +1363,53 @@ mod tests {
         // the dormancy and drops the pending tick, and the fresh interval's
         // next two ticks fire.
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-        wait_real(|| harness.log().iter().filter(|line| line.contains("dormant_no_signal")).count() >= 2).await;
+        wait_real(|| {
+            harness
+                .log()
+                .iter()
+                .filter(|line| line.contains("dormant_no_signal"))
+                .count()
+                >= 2
+        })
+        .await;
         tokio::time::sleep(std::time::Duration::from_millis(1_000)).await;
-        wait_real(|| harness.log().iter().filter(|line| line.contains("dormant_no_signal")).count() >= 3).await;
+        wait_real(|| {
+            harness
+                .log()
+                .iter()
+                .filter(|line| line.contains("dormant_no_signal"))
+                .count()
+                >= 3
+        })
+        .await;
         tokio::time::sleep(std::time::Duration::from_millis(1_000)).await;
-        wait_real(|| harness.read_json(&harness.paths.state_file).get("dormant").is_none_or(serde_json::Value::is_null)).await;
+        wait_real(|| {
+            harness
+                .read_json(&harness.paths.state_file)
+                .get("dormant")
+                .is_none_or(serde_json::Value::is_null)
+        })
+        .await;
         tokio::time::sleep(std::time::Duration::from_millis(1_000)).await;
-        wait_real(|| harness.log().iter().filter(|line| line.contains("always-on fire complete")).count() >= 1).await;
+        wait_real(|| {
+            harness
+                .log()
+                .iter()
+                .filter(|line| line.contains("always-on fire complete"))
+                .count()
+                >= 1
+        })
+        .await;
         tokio::time::sleep(std::time::Duration::from_millis(1_000)).await;
-        wait_real(|| harness.log().iter().filter(|line| line.contains("always-on fire complete")).count() >= 2).await;
+        wait_real(|| {
+            harness
+                .log()
+                .iter()
+                .filter(|line| line.contains("always-on fire complete"))
+                .count()
+                >= 2
+        })
+        .await;
         let dormant_after = harness
             .read_json(&harness.paths.state_file)
             .get("dormant")

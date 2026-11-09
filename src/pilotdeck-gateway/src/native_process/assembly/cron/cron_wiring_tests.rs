@@ -49,7 +49,14 @@ async fn startup_failure_finishes_each_resource_after_any_stalled_observer() {
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
         assert_eq!(
             *seen.lock().unwrap(),
-            ["cron", "automation", "channels", "session", "temporary sessions", "project"],
+            [
+                "cron",
+                "automation",
+                "channels",
+                "session",
+                "temporary sessions",
+                "project"
+            ],
             "{stalled}"
         );
     }
@@ -446,7 +453,14 @@ async fn cleanup_stops_cron_before_the_channels() {
     let recorded = order.lock().expect("#1326 cleanup order lock").clone();
     negative_assert_eq!(
         recorded,
-        ["cron", "automation", "channels", "session", "temporary sessions", "project"],
+        [
+            "cron",
+            "automation",
+            "channels",
+            "session",
+            "temporary sessions",
+            "project"
+        ],
         "#1326 cron stops first, then the channels, sessions, and project"
     );
 }
@@ -806,10 +820,20 @@ async fn shutdown_releases_the_real_assembly_submission_graph() {
         let factory = harness.host.weak_session_factory();
         assert!(factory.upgrade().is_some());
         assert!(submission.upgrade().is_some());
-        harness.host.shutdown(harness.options.drain_budget).await.unwrap();
+        harness
+            .host
+            .shutdown(harness.options.drain_budget)
+            .await
+            .unwrap();
         // Both handles intentionally retain GatewayServices until dropped.
         // Keep Scratch alive until the host's final references have gone.
-        let Harness { host, connection, text, options, _scratch } = harness;
+        let Harness {
+            host,
+            connection,
+            text,
+            options,
+            _scratch,
+        } = harness;
         drop(connection);
         drop(host);
         drop(text);

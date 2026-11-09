@@ -204,7 +204,14 @@ impl DiscoveryStateStore {
     /// an invalid byte becomes U+FFFD, which fails `JSON.parse` and reads
     /// as the default, not an `InvalidData` error (`read_to_string`).
     pub(crate) fn read(&self, now_ms: f64) -> io::Result<JsObject> {
-        let Some(raw) = super::storage::read(&super::storage::root_for(&self.paths.state_file), &self.paths.state_file, super::storage::INDEX_BYTES)? else { return Ok(default_state(now_ms)); };
+        let Some(raw) = super::storage::read(
+            &super::storage::root_for(&self.paths.state_file),
+            &self.paths.state_file,
+            super::storage::INDEX_BYTES,
+        )?
+        else {
+            return Ok(default_state(now_ms));
+        };
         let raw = String::from_utf8_lossy(&raw);
         super::storage::check_json(&raw)?;
         let mut state = match parse_json(&raw) {
@@ -221,7 +228,12 @@ impl DiscoveryStateStore {
         super::storage::check_object(state)?;
         let text = stringify_pretty(&JsValue::Object(state.clone()));
         super::storage::check_json(&text)?;
-        super::storage::write(&super::storage::root_for(&self.paths.state_file), &self.paths.state_file, text.as_bytes(), super::storage::INDEX_BYTES)
+        super::storage::write(
+            &super::storage::root_for(&self.paths.state_file),
+            &self.paths.state_file,
+            text.as_bytes(),
+            super::storage::INDEX_BYTES,
+        )
     }
 
     pub(crate) async fn read_async(&self, now_ms: f64) -> io::Result<JsObject> {
@@ -431,9 +443,14 @@ mod tests {
     fn completed_plan_identity_preserves_unpaired_utf16() {
         let (_home, store) = store("completed-js-id");
         let id = JsString::from_utf16(vec![b'p' as u16, 0xd800]);
-        store.mark_fire_completed_js("executed", "run", Some(&id), NOW_MS).unwrap();
+        store
+            .mark_fire_completed_js("executed", "run", Some(&id), NOW_MS)
+            .unwrap();
         let restored = store.read(NOW_MS).unwrap();
-        assert_eq!(restored.get("lastPlanId").and_then(JsValue::as_string), Some(&id));
+        assert_eq!(
+            restored.get("lastPlanId").and_then(JsValue::as_string),
+            Some(&id)
+        );
     }
 
     // The s1-s10 sequence replays the TS probe byte for byte: the default

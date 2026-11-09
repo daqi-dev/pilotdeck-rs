@@ -1527,7 +1527,7 @@ async fn requests_registry_switch_gates_run_reads() {
             // #1600: match production (connected), not the retired
             // observer-coupled bus.
             dialog_recovery: None,
-        sop: None,
+            sop: None,
             user_dialog_bus: Arc::new(std::sync::Mutex::new(
                 crate::user_dialog::GatewayUserDialogBus::connected(
                     crate::user_dialog::DialogRuntime::default(),
@@ -1536,11 +1536,11 @@ async fn requests_registry_switch_gates_run_reads() {
             upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
             prepare_weixin_login: None,
             cron: None,
-        automation: None,
+            automation: None,
             settings: requests::Requests::stub_settings(&owner),
             session_overrides: Arc::default(),
             clear_sdk_state: None,
-        ephemeral: None,
+            ephemeral: None,
         };
         let described = requests
             .describe_server()

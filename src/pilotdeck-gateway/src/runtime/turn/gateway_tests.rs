@@ -1686,11 +1686,18 @@ async fn owned_producer_initializer_precedes_ready_and_failure_disposes_owner() 
         let cleanup_done = cleaned.clone();
         let (host_thread, initialized_thread) = oneshot::channel();
         let host = TurnGateway::start_with_initializer(
-            TurnReplayOptions::new(), Duration::from_millis(100),
+            TurnReplayOptions::new(),
+            Duration::from_millis(100),
             move |coordinator| {
-                let session = Arc::new(Session { thread: std::thread::current().id(),
-                    native: vec![], coordinator: coordinator.clone(), accepted: Gate::new(),
-                    terminal: Gate::new(), end: Gate::new(), aborts: AtomicUsize::new(0) });
+                let session = Arc::new(Session {
+                    thread: std::thread::current().id(),
+                    native: vec![],
+                    coordinator: coordinator.clone(),
+                    accepted: Gate::new(),
+                    terminal: Gate::new(),
+                    end: Gate::new(),
+                    aborts: AtomicUsize::new(0),
+                });
                 let mut options = SessionOwnerOptions::new(Arc::new(Factory(session)));
                 options.idle_sweep_interval_ms = 0;
                 let owner = SessionOwner::new(options);
@@ -1698,23 +1705,42 @@ async fn owned_producer_initializer_precedes_ready_and_failure_disposes_owner() 
                 host_thread.send(std::thread::current().id()).unwrap();
                 let interactions = Arc::new(GatewayInteractionCoordinator::default());
                 Ok(GatewayServices {
-                    submitter: Arc::new(TurnSubmitter { owner, coordinator, registry: None,
-                        projector: Arc::new(GatewayAgentEventProjector::new(Default::default()).unwrap()),
-                        host: Arc::new(Host { interactions: interactions.clone(), finally_failure: false }),
-                        workspace_admissions: WorkspaceAdmissions::default() }),
-                    interactions, requests: Arc::new(Requests),
+                    submitter: Arc::new(TurnSubmitter {
+                        owner,
+                        coordinator,
+                        registry: None,
+                        projector: Arc::new(
+                            GatewayAgentEventProjector::new(Default::default()).unwrap(),
+                        ),
+                        host: Arc::new(Host {
+                            interactions: interactions.clone(),
+                            finally_failure: false,
+                        }),
+                        workspace_admissions: WorkspaceAdmissions::default(),
+                    }),
+                    interactions,
+                    requests: Arc::new(Requests),
                 })
             },
             async move {
-                assert_eq!(initialized_thread.await.unwrap(), std::thread::current().id());
+                assert_eq!(
+                    initialized_thread.await.unwrap(),
+                    std::thread::current().id()
+                );
                 tokio::time::sleep(Duration::from_millis(2)).await;
                 match outcome {
-                    "ready" => { initialize_ready.store(true, Ordering::SeqCst); Ok(()) },
+                    "ready" => {
+                        initialize_ready.store(true, Ordering::SeqCst);
+                        Ok(())
+                    }
                     "failure" => Err("producer refused startup".into()),
                     _ => std::future::pending().await,
                 }
             },
-            async move { cleanup_done.store(true, Ordering::SeqCst); Ok(()) },
+            async move {
+                cleanup_done.store(true, Ordering::SeqCst);
+                Ok(())
+            },
         );
         match outcome {
             "ready" => {
@@ -1724,12 +1750,26 @@ async fn owned_producer_initializer_precedes_ready_and_failure_disposes_owner() 
                 host.shutdown(Duration::from_secs(1)).await.unwrap();
             }
             _ => {
-                let error = host.err().expect("failed producer cannot publish a usable gateway");
+                let error = host
+                    .err()
+                    .expect("failed producer cannot publish a usable gateway");
                 assert!(!ready.load(Ordering::SeqCst));
-                assert!(error.to_string().contains(if outcome == "failure" { "producer refused" } else { "deadline" }));
+                assert!(error.to_string().contains(if outcome == "failure" {
+                    "producer refused"
+                } else {
+                    "deadline"
+                }));
             }
         }
         assert!(cleaned.load(Ordering::SeqCst));
-        assert!(owner_slot.lock().unwrap().as_ref().unwrap().begin_turn(&"s".into(), &"r".into()).is_none());
+        assert!(
+            owner_slot
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .begin_turn(&"s".into(), &"r".into())
+                .is_none()
+        );
     }
 }

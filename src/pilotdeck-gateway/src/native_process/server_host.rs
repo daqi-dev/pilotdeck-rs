@@ -101,7 +101,10 @@ pub(super) async fn run_embedding(
     let (host, feishu_webhook, switch_handles) =
         assembly::start_with_webhook(options.clone(), env).await?;
     let api_web = super::production_api_web(embedding.token.clone(), options.home.clone());
-    let approvals = crate::module_host::approvals::Config { token: embedding.token.clone(), bridge: switch_handles.approvals.clone() };
+    let approvals = crate::module_host::approvals::Config {
+        token: embedding.token.clone(),
+        bridge: switch_handles.approvals.clone(),
+    };
     let server = match super::production_listener(
         options.listen,
         host.clone(),
@@ -172,7 +175,8 @@ pub(super) async fn run_embedding(
         switch_handles.cron,
         switch_wiring::AdmissionGate::new(switch_handles.channels, trigger),
         phased,
-    ).with_automation_stop(switch_handles.automation);
+    )
+    .with_automation_stop(switch_handles.automation);
     let machine = crate::switch::SwitchMachine::new(
         faces.clone(),
         crate::switch::SwitchTimeouts::production(options.drain_budget),

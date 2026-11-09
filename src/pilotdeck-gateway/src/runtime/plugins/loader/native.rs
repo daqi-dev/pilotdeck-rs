@@ -17,16 +17,24 @@ pub(super) fn read_manifest(
         let parent = target
             .parent()
             .ok_or_else(|| PluginRuntimeError::new("Invalid plugin path."))?;
-        let mut file = crate::project_files::open_beneath(parent, &target)
-            .map_err(|error| if crate::project_files::nofollow_loop(&error) {
+        let mut file = crate::project_files::open_beneath(parent, &target).map_err(|error| {
+            if crate::project_files::nofollow_loop(&error) {
                 PluginRuntimeError::gateway("NATIVE_PLUGIN_UNSAFE", error.to_string())
-            } else { PluginRuntimeError::new(error.to_string()) })?;
-        let metadata = file.metadata().map_err(|error| PluginRuntimeError::new(error.to_string()))?;
+            } else {
+                PluginRuntimeError::new(error.to_string())
+            }
+        })?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| PluginRuntimeError::new(error.to_string()))?;
         if !metadata.is_file() {
             return Err(if metadata.is_dir() {
                 PluginRuntimeError::new("Plugin manifest is not a regular file.")
             } else {
-                PluginRuntimeError::gateway("NATIVE_PLUGIN_UNSAFE", "Plugin manifest is not a regular file.")
+                PluginRuntimeError::gateway(
+                    "NATIVE_PLUGIN_UNSAFE",
+                    "Plugin manifest is not a regular file.",
+                )
             });
         }
         let text = budget.read(&mut file)?;
@@ -46,13 +54,19 @@ pub(super) fn read_manifest(
 }
 
 pub(super) fn fatal(error: &PluginRuntimeError) -> bool {
-    matches!(error.code, Some("STYLE_RELOAD_LIMIT" | "NATIVE_PLUGIN_UNSAFE" | "NATIVE_PLUGIN_DEPTH"))
+    matches!(
+        error.code,
+        Some("STYLE_RELOAD_LIMIT" | "NATIVE_PLUGIN_UNSAFE" | "NATIVE_PLUGIN_DEPTH")
+    )
 }
 
 /// Count syntactic JSON values before materializing the JsValue tree. Keys do
 /// not count; duplicate-key values do. This is a budget preflight, not a JSON
 /// parser: the existing codec still validates syntax/strings and diagnostics.
-pub(super) fn check_manifest_tokens(text: &str, budget: &mut StyleBudget) -> Result<(), PluginRuntimeError> {
+pub(super) fn check_manifest_tokens(
+    text: &str,
+    budget: &mut StyleBudget,
+) -> Result<(), PluginRuntimeError> {
     let bytes = text.as_bytes();
     let mut at = 0;
     let mut depth = 0usize;
@@ -62,29 +76,46 @@ pub(super) fn check_manifest_tokens(text: &str, budget: &mut StyleBudget) -> Res
                 budget.entry()?;
                 depth += 1;
                 if depth > crate::js_value::MAX_ARRAY_DEPTH {
-                    return Err(PluginRuntimeError::gateway("NATIVE_PLUGIN_DEPTH", "Maximum call stack size exceeded"));
+                    return Err(PluginRuntimeError::gateway(
+                        "NATIVE_PLUGIN_DEPTH",
+                        "Maximum call stack size exceeded",
+                    ));
                 }
                 at += 1;
             }
-            b'}' | b']' => { depth = depth.saturating_sub(1); at += 1; }
+            b'}' | b']' => {
+                depth = depth.saturating_sub(1);
+                at += 1;
+            }
             b'"' => {
                 at += 1;
                 while at < bytes.len() {
                     match bytes[at] {
                         b'\\' => at = at.saturating_add(2),
-                        b'"' => { at += 1; break; }
+                        b'"' => {
+                            at += 1;
+                            break;
+                        }
                         _ => at += 1,
                     }
                 }
                 let mut next = at;
-                while next < bytes.len() && bytes[next].is_ascii_whitespace() { next += 1; }
-                if bytes.get(next) != Some(&b':') { budget.entry()?; }
+                while next < bytes.len() && bytes[next].is_ascii_whitespace() {
+                    next += 1;
+                }
+                if bytes.get(next) != Some(&b':') {
+                    budget.entry()?;
+                }
             }
             b'n' | b't' | b'f' | b'-' | b'0'..=b'9' => {
                 budget.entry()?;
                 at += 1;
-                while at < bytes.len() && !bytes[at].is_ascii_whitespace()
-                    && !matches!(bytes[at], b',' | b':' | b'[' | b']' | b'{' | b'}' | b'"') { at += 1; }
+                while at < bytes.len()
+                    && !bytes[at].is_ascii_whitespace()
+                    && !matches!(bytes[at], b',' | b':' | b'[' | b']' | b'{' | b'}' | b'"')
+                {
+                    at += 1;
+                }
             }
             _ => at += 1,
         }
@@ -128,7 +159,12 @@ pub(super) fn load_plugin(
     load_from_manifest(path, source, &parsed, budget)
 }
 
-pub(super) fn load_from_manifest(path: &Path, source: PluginSource, parsed: &JsValue, budget: &mut StyleBudget) -> Result<LoadedPlugin, PluginRuntimeError> {
+pub(super) fn load_from_manifest(
+    path: &Path,
+    source: PluginSource,
+    parsed: &JsValue,
+    budget: &mut StyleBudget,
+) -> Result<LoadedPlugin, PluginRuntimeError> {
     let manifest = parsed.as_object().expect("validated plugin manifest");
     let undefined = JsValue::Undefined;
     let get = |key| manifest.get_property(key).unwrap_or(&undefined);

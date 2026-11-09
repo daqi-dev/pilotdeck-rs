@@ -56,7 +56,9 @@ pub(crate) struct SopNodeOutcome {
 pub(crate) type SopModelValidator =
     Arc<dyn Fn(JsObject) -> crate::host::HostFuture<()> + Send + Sync>;
 pub(crate) trait SopNodeExecutor: Send + Sync {
-    fn tool_execution(&self) -> Option<Arc<dyn capability::ToolExecution>> { None }
+    fn tool_execution(&self) -> Option<Arc<dyn capability::ToolExecution>> {
+        None
+    }
     fn finish_node<'a>(
         &'a self,
         _outcome: Option<&'a SopNodeOutcome>,

@@ -503,9 +503,10 @@ impl NativeFire {
                     .get("type")
                     .and_then(JsValue::as_string)
                     .is_some_and(|s| s.equals_str("assistant_text_delta"))
-                    && let Some(value) = event.get("text").and_then(JsValue::as_string) {
-                        text.extend_from_slice(value.units());
-                    }
+                    && let Some(value) = event.get("text").and_then(JsValue::as_string)
+                {
+                    text.extend_from_slice(value.units());
+                }
             }
             let whitespace = |c: &u16| matches!(*c, 0x0009..=0x000d | 0x0020 | 0x00a0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff);
             let first = text
@@ -662,29 +663,30 @@ impl DiscoveryFirePort for NativeFire {
                     if let Some(cycle) = storage::run(move || cycles.get_record_js(&id))
                         .await
                         .map_err(|e| failure("internal", e.to_string()))?
-                        && cycle.status == "active" {
-                            match self.workspace.authorize_cycle(cycle).await {
-                                Ok(handle) => {
-                                    cwd = PathBuf::from(js(&handle.cwd)?);
-                                    has_workspace = true;
-                                }
-                                Err(e) if e.is_missing() => {}
-                                Err(e) => return Err(workspace_error(e)),
+                        && cycle.status == "active"
+                    {
+                        match self.workspace.authorize_cycle(cycle).await {
+                            Ok(handle) => {
+                                cwd = PathBuf::from(js(&handle.cwd)?);
+                                has_workspace = true;
                             }
+                            Err(e) if e.is_missing() => {}
+                            Err(e) => return Err(workspace_error(e)),
                         }
+                    }
                 }
                 if !has_workspace
                     && let Some(legacy) = state
                         .get("currentWorkspace")
                         .and_then(JsValue::as_object)
                         .cloned()
-                    {
-                        match self.workspace.authorize_legacy(legacy).await {
-                            Ok(handle) => cwd = PathBuf::from(js(&handle.cwd)?),
-                            Err(e) if e.is_missing() => {}
-                            Err(e) => return Err(workspace_error(e)),
-                        }
+                {
+                    match self.workspace.authorize_legacy(legacy).await {
+                        Ok(handle) => cwd = PathBuf::from(js(&handle.cwd)?),
+                        Err(e) if e.is_missing() => {}
+                        Err(e) => return Err(workspace_error(e)),
                     }
+                }
                 let spec = self.phase_spec(
                     input.run_id,
                     "discovery",

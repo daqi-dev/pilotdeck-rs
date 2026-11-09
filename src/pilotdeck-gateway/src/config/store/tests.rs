@@ -21,14 +21,22 @@ async fn bounded_native_store_rejects_fifo_and_oversize_without_losing_snapshot(
     let original = store.snapshot();
     let path = root.0.join("pilotdeck.yaml");
     std::fs::remove_file(&path).unwrap();
-    assert!(std::process::Command::new("/usr/bin/mkfifo")
-        .arg(&path).status().unwrap().success());
+    assert!(
+        std::process::Command::new("/usr/bin/mkfifo")
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success()
+    );
     assert!(ConfigStore::new_bounded(options).is_err());
     assert!(store.reload("fifo").await.is_err());
     assert!(Arc::ptr_eq(&original, &store.snapshot()));
     assert!(events.lock().unwrap().is_empty());
     std::fs::remove_file(&path).unwrap();
-    std::fs::File::create(&path).unwrap().set_len(8 * 1024 * 1024 + 1).unwrap();
+    std::fs::File::create(&path)
+        .unwrap()
+        .set_len(8 * 1024 * 1024 + 1)
+        .unwrap();
     assert!(store.reload("oversize").await.is_err());
     assert!(Arc::ptr_eq(&original, &store.snapshot()));
     root.write(&other_model());

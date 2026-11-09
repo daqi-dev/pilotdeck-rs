@@ -388,12 +388,19 @@ impl TurnGateway {
         options: TurnReplayOptions,
         teardown_budget: Duration,
         build: impl FnOnce(Arc<TurnEventCoordinator>) -> std::io::Result<GatewayServices>
-            + Send + 'static,
+        + Send
+        + 'static,
         initialize: impl Future<Output = Result<(), String>> + Send + 'static,
         cleanup: impl Future<Output = Result<(), String>> + Send + 'static,
     ) -> std::io::Result<Self> {
-        Self::start_with_clock_and_cleanup(options, None, declared_cleanup_budget(teardown_budget),
-            build, Some(Box::pin(cleanup)), Some(Box::pin(initialize)))
+        Self::start_with_clock_and_cleanup(
+            options,
+            None,
+            declared_cleanup_budget(teardown_budget),
+            build,
+            Some(Box::pin(cleanup)),
+            Some(Box::pin(initialize)),
+        )
     }
     fn start_with_clock_and_cleanup(
         options: TurnReplayOptions,

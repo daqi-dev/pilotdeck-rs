@@ -76,7 +76,9 @@ pub struct Requests {
 
 impl Requests {
     pub(crate) fn current_cron(&self) -> Option<Arc<crate::runtime::cron::CronManager>> {
-        self.automation.as_ref().map_or_else(|| self.cron.clone(), |slot| slot.cron())
+        self.automation
+            .as_ref()
+            .map_or_else(|| self.cron.clone(), |slot| slot.cron())
     }
 }
 

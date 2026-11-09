@@ -415,7 +415,11 @@ impl ConfigSource for NativeConfigSource {
         let project = project_root.to_str().ok_or_else(|| {
             RuntimeError::new("Project root is not valid UTF-8 for the config loader.")
         })?;
-        let load = if self.bounded { config::load_snapshot_bounded } else { config::load_snapshot };
+        let load = if self.bounded {
+            config::load_snapshot_bounded
+        } else {
+            config::load_snapshot
+        };
         let snapshot = load(
             &self.pilot_home,
             &self.cwd,
@@ -1089,10 +1093,15 @@ impl ProjectResourcesFactory {
         Self { options, config }
     }
     pub(crate) fn with_bounded_config(mut self) -> Self {
-        self.config = Arc::new(NativeConfigSource::new(
-            self.options.cwd.clone(), self.options.env.clone(),
-            self.options.homedir.clone(), self.options.config_version,
-        ).bounded());
+        self.config = Arc::new(
+            NativeConfigSource::new(
+                self.options.cwd.clone(),
+                self.options.env.clone(),
+                self.options.homedir.clone(),
+                self.options.config_version,
+            )
+            .bounded(),
+        );
         self
     }
 

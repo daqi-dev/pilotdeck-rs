@@ -9,13 +9,13 @@ pub mod edit_file;
 pub mod edit_notebook;
 #[cfg(unix)]
 pub mod execute_code;
+pub(crate) mod file_permissions;
 pub mod glob;
 pub mod goal;
 pub mod grep;
 pub mod mcp_resources;
 pub mod mcp_tool;
 pub mod read_file;
-pub(crate) mod file_permissions;
 pub mod send_attachment;
 pub mod structured;
 pub mod task;
@@ -1494,6 +1494,6 @@ pub(super) fn native_sandbox_write_path(
 
 pub mod plan_todo;
 
-pub(crate) mod user_dialog;
-pub(crate) mod form_schema;
 mod form_draft2020;
+pub(crate) mod form_schema;
+pub(crate) mod user_dialog;

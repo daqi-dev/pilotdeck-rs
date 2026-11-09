@@ -566,10 +566,10 @@ async fn start_assembly(
     let style_port: Arc<dyn super::session_overrides::SdkOutputStylePort> = sdk_port.clone();
     session_overrides.bind_sdk_styles(Arc::downgrade(&style_port));
     let prepare_sdk = sdk_port.clone();
-    let ephemeral=Arc::new(super::sdk_ephemeral::EphemeralSessions::default());
-    let prepare_ephemeral=ephemeral.clone();
-    let cleanup_ephemeral=ephemeral.clone();
-    let fallback_ephemeral=ephemeral.clone();
+    let ephemeral = Arc::new(super::sdk_ephemeral::EphemeralSessions::default());
+    let prepare_ephemeral = ephemeral.clone();
+    let cleanup_ephemeral = ephemeral.clone();
+    let fallback_ephemeral = ephemeral.clone();
     let fork_registry = super::agent::NativeForkRegistry::new();
     let prepare_forks = fork_registry.clone();
     let session_events = Arc::new(super::session_events::NativeSessionEvents::default());
@@ -1547,7 +1547,9 @@ async fn start_assembly(
             session_events.install(&coordinator);
             let owner = SessionOwner::new(SessionOwnerOptions::new(build_factory));
             owner.enforce_project_binding();
-            ephemeral.bind_shutdown(Arc::new(owner.weak_shutdown())).map_err(|error|std::io::Error::other(error.to_string()))?;
+            ephemeral
+                .bind_shutdown(Arc::new(owner.weak_shutdown()))
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
             lookup_forks.install_session_lookup(owner.weak_handle_lookup());
             lookup_forks.install_async_turn_lookup(owner.weak_async_turn_lookup());
             let replacement = Arc::new(ReplacementCoordinator::new(
@@ -1619,9 +1621,9 @@ async fn start_assembly(
                 ),
             )?;
             let config_reload = Arc::downgrade(&build_automation);
-            publish_refresh.set(settings.bundle.clone()).map_err(|_| {
-                std::io::Error::other("Native settings cleanup was already bound.")
-            })?;
+            publish_refresh
+                .set(settings.bundle.clone())
+                .map_err(|_| std::io::Error::other("Native settings cleanup was already bound."))?;
             settings.store.subscribe(Arc::new(move |event| {
                 let changed = |family: &str| {
                     event.changed_paths.iter().any(|path| {
@@ -1818,7 +1820,10 @@ async fn start_assembly(
                     busy_owner.has_active_user_turn(&project.into())
                 })),
                 update_subsystems: Arc::new(move |update| {
-                    if stopping_automation.upgrade().is_none_or(|owner| owner.is_stopping()) {
+                    if stopping_automation
+                        .upgrade()
+                        .is_none_or(|owner| owner.is_stopping())
+                    {
                         published_automation.clear();
                     } else {
                         published_automation.publish(update, standalone.clone());
@@ -1897,10 +1902,12 @@ async fn start_assembly(
                 let sessions = cleanup_factory.dispose().await.map_err(|e| e.to_string());
                 factory_finished.store(true, std::sync::atomic::Ordering::Release);
                 let sessions = cleanup_observer("session", sessions).await;
-                let temporary=cleanup_ephemeral.close().await.map_err(|e|e.to_string());
+                let temporary = cleanup_ephemeral.close().await.map_err(|e| e.to_string());
                 temporary_finished.store(true, std::sync::atomic::Ordering::Release);
-                let temporary=cleanup_observer("temporary sessions",temporary).await;
-                if let Err(error) = &temporary { cleanup_diagnostic(error); }
+                let temporary = cleanup_observer("temporary sessions", temporary).await;
+                if let Err(error) = &temporary {
+                    cleanup_diagnostic(error);
+                }
                 let project = cleanup_project.dispose().await.map_err(|e| e.to_string());
                 project_finished.store(true, std::sync::atomic::Ordering::Release);
                 let project = cleanup_observer("project", project).await;
@@ -1962,7 +1969,8 @@ async fn start_assembly(
                     let result = fallback_ephemeral.close().await.map_err(|e| e.to_string());
                     fallback_temporary_finished.store(true, std::sync::atomic::Ordering::Release);
                     fallback_observer("temporary sessions", result).await
-                }).await;
+                })
+                .await;
             }
             if !fallback_project_finished.load(std::sync::atomic::Ordering::Acquire) {
                 let _ = tokio::time::timeout(budget, async {
@@ -2189,7 +2197,9 @@ fn supports_native_module_binding(name: &JsString, value: &JsValue) -> bool {
     if name.equals_str("sop") {
         // parseModulesConfig has already checked endpoints, paths and contract.
         // The selected generation now installs the real StaffDeck controller.
-        return fields.get("enabled").is_none_or(|enabled| enabled == &JsValue::Bool(true))
+        return fields
+            .get("enabled")
+            .is_none_or(|enabled| enabled == &JsValue::Bool(true))
             && (fields
                 .get("provider")
                 .and_then(JsValue::as_string)

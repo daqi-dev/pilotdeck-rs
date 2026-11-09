@@ -150,7 +150,7 @@ fn config_for(server: &str, fixture: &Fixture) -> Config {
         webhook: None,
         control: None,
         api_web: None,
-            approvals: None,
+        approvals: None,
     }
 }
 
@@ -787,7 +787,7 @@ async fn local_token_requires_loopback_binding() {
         webhook: None,
         control: None,
         api_web: None,
-            approvals: None,
+        approvals: None,
     };
     let response = route("GET", "/auth/local-token", &local).await;
     assert_eq!(
@@ -1186,7 +1186,7 @@ async fn trailing_separator_root_still_serves() {
         webhook: None,
         control: None,
         api_web: None,
-            approvals: None,
+        approvals: None,
     };
     let response = route("GET", "/app.js", &config).await;
     assert_eq!(
@@ -3007,7 +3007,7 @@ async fn unserved_head_headers_timeout_408s_like_ts() {
                 webhook: None,
                 control: None,
                 api_web: None,
-            approvals: None,
+                approvals: None,
             };
             let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
                 server,
@@ -3058,7 +3058,7 @@ async fn unserved_head_headers_timeout_408s_like_ts() {
                 webhook: None,
                 control: None,
                 api_web: None,
-            approvals: None,
+                approvals: None,
             };
             let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
                 server,

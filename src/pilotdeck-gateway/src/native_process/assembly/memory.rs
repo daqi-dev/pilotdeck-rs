@@ -47,9 +47,9 @@ impl ProjectMemoryRegistry for NativeMemoryRegistry {
         project_key: &JsString,
     ) -> Result<Option<Arc<dyn MemoryManagementService>>, MemoryProviderError> {
         let root = std::path::PathBuf::from(
-            project_key.to_utf8().map_err(|_| {
-                MemoryProviderError::unknown_project_key(project_key.units())
-            })?,
+            project_key
+                .to_utf8()
+                .map_err(|_| MemoryProviderError::unknown_project_key(project_key.units()))?,
         );
         // Resolution happens before staging. Never substitute the configured
         // fallback after a selected project's generation fails to acquire.
@@ -115,7 +115,10 @@ fn build_memory_gateway(
     // Preserve startup validation of the initial project resource shape, but
     // do not freeze that generation's optional memory capability globally.
     let lease = project.acquire(None)?;
-    lease.runtime().resources().get::<ProjectResources>()
+    lease
+        .runtime()
+        .resources()
+        .get::<ProjectResources>()
         .ok_or_else(|| RuntimeError::new("Native project resources are missing."))?;
     let projection = MemoryProjection::new(registry, options.project.clone());
     Ok(MemoryGateway::from_projection(projection))
@@ -229,7 +232,11 @@ mod tests {
     impl MemoryManagementService for FakeMemory {
         fn list(&self, _limit: usize) -> Result<Vec<JsValue>, MemoryProviderError> {
             self.list_calls.fetch_add(1, Ordering::SeqCst);
-            Ok(vec![JsValue::from(if self.identity.is_empty() { "remembered" } else { self.identity })])
+            Ok(vec![JsValue::from(if self.identity.is_empty() {
+                "remembered"
+            } else {
+                self.identity
+            })])
         }
         fn clear(&self, _scope: &str) -> Result<(), MemoryProviderError> {
             self.clear_calls.fetch_add(1, Ordering::SeqCst);
@@ -302,12 +309,18 @@ mod tests {
                 return Ok(None);
             }
             if failed_root.as_ref() == Some(&input.project_root) {
-                return Err(crate::runtime::memory::MemoryBundleError::Factory(MemoryProviderError {
-                    name: "RangeError".into(), code: Some("SELECTED_PROJECT_FAILURE".into()),
-                    message: "Selected project factory failed.".into(), requires_host: false,
-                }));
+                return Err(crate::runtime::memory::MemoryBundleError::Factory(
+                    MemoryProviderError {
+                        name: "RangeError".into(),
+                        code: Some("SELECTED_PROJECT_FAILURE".into()),
+                        message: "Selected project factory failed.".into(),
+                        requires_host: false,
+                    },
+                ));
             }
-            let provider = providers.iter().find(|(root, _)| root == &input.project_root)
+            let provider = providers
+                .iter()
+                .find(|(root, _)| root == &input.project_root)
                 .map(|(_, provider)| provider.clone())
                 .expect("memory fixture must select an explicitly mapped root");
             let memory: Arc<dyn MemoryResolver> = provider.clone();
@@ -319,7 +332,12 @@ mod tests {
                     Ok(())
                 })
             });
-            Ok(Some(ProjectMemoryProvider { memory, maintenance: None, management: Some(management), dispose: Some(dispose) }))
+            Ok(Some(ProjectMemoryProvider {
+                memory,
+                maintenance: None,
+                management: Some(management),
+                dispose: Some(dispose),
+            }))
         });
         let factory = ProjectResourcesFactory::new(ProjectResourcesOptions {
             pilot_home: home.clone(),
@@ -450,37 +468,79 @@ mod tests {
     }
 
     fn named(identity: &'static str) -> Arc<FakeMemory> {
-        Arc::new(FakeMemory { identity, ..Default::default() })
+        Arc::new(FakeMemory {
+            identity,
+            ..Default::default()
+        })
     }
     fn assert_list(gateway: &MemoryGateway, root: &std::path::Path, identity: &str) {
-        let result = gateway.dispatch("memory_list", &list_params(root.to_str().unwrap())).unwrap();
+        let result = gateway
+            .dispatch("memory_list", &list_params(root.to_str().unwrap()))
+            .unwrap();
         let expected = crate::metadata::object([("items", JsValue::Array(vec![identity.into()]))]);
-        assert_eq!(result, MemoryDispatch::Response(expected), "#1456 selected project must not reach the served project provider");
+        assert_eq!(
+            result,
+            MemoryDispatch::Response(expected),
+            "#1456 selected project must not reach the served project provider"
+        );
     }
     fn assert_unavailable(gateway: &MemoryGateway, root: &std::path::Path) {
-        let result = gateway.dispatch("memory_list", &list_params(root.to_str().unwrap())).unwrap();
-        let MemoryDispatch::Error(error) = result else { panic!("disabled project returned success") };
+        let result = gateway
+            .dispatch("memory_list", &list_params(root.to_str().unwrap()))
+            .unwrap();
+        let MemoryDispatch::Error(error) = result else {
+            panic!("disabled project returned success")
+        };
         assert_eq!(error.code(), Some("CAPABILITY_UNAVAILABLE"));
-        assert_eq!(error.message(), &JsString::from("Gateway memory provider is unavailable."));
+        assert_eq!(
+            error.message(),
+            &JsString::from("Gateway memory provider is unavailable.")
+        );
     }
 
     #[tokio::test]
     async fn registered_memory_projects_are_routed_to_their_own_provider() {
         let scratch = Scratch::new();
-        let a = named("A"); let b = named("B"); let prefix = named("PREFIX"); let general = named("GENERAL");
-        let project = registry_with_providers(&scratch, vec![
-            (scratch.root(), a.clone()), (scratch.other(), b.clone()),
-            (scratch.prefix_sibling(), prefix.clone()), (scratch.home(), general.clone()),
-        ], None);
+        let a = named("A");
+        let b = named("B");
+        let prefix = named("PREFIX");
+        let general = named("GENERAL");
+        let project = registry_with_providers(
+            &scratch,
+            vec![
+                (scratch.root(), a.clone()),
+                (scratch.other(), b.clone()),
+                (scratch.prefix_sibling(), prefix.clone()),
+                (scratch.home(), general.clone()),
+            ],
+            None,
+        );
         let gateway = build_memory_gateway(&options(&scratch), &project).unwrap();
-        for (root, provider) in [(scratch.other(), &b), (scratch.prefix_sibling(), &prefix), (scratch.home(), &general)] {
+        for (root, provider) in [
+            (scratch.other(), &b),
+            (scratch.prefix_sibling(), &prefix),
+            (scratch.home(), &general),
+        ] {
             assert_list(&gateway, &root, provider.identity);
-            let result = gateway.dispatch("memory_wipe", &list_params(root.to_str().unwrap())).unwrap();
-            assert!(matches!(result, MemoryDispatch::Response(_)), "#1456 selected project wipe must use its own provider");
+            let result = gateway
+                .dispatch("memory_wipe", &list_params(root.to_str().unwrap()))
+                .unwrap();
+            assert!(
+                matches!(result, MemoryDispatch::Response(_)),
+                "#1456 selected project wipe must use its own provider"
+            );
             assert_eq!(provider.clear_calls.load(Ordering::SeqCst), 1);
         }
-        assert_eq!(a.list_calls.load(Ordering::SeqCst), 0, "#1456 registered sibling list must not touch A");
-        assert_eq!(a.clear_calls.load(Ordering::SeqCst), 0, "#1456 registered sibling wipe must not touch A");
+        assert_eq!(
+            a.list_calls.load(Ordering::SeqCst),
+            0,
+            "#1456 registered sibling list must not touch A"
+        );
+        assert_eq!(
+            a.clear_calls.load(Ordering::SeqCst),
+            0,
+            "#1456 registered sibling wipe must not touch A"
+        );
         assert_list(&gateway, &scratch.root(), "A");
         // A spelling normalized by the catalog still stages the actual B root.
         let aliased = scratch.other().join("sub/..");
@@ -491,32 +551,63 @@ mod tests {
     fn write_project_memory_config(root: &std::path::Path, enabled: bool) {
         let dir = root.join(".pilotdeck");
         std::fs::create_dir_all(&dir).unwrap();
-        let config = if enabled { CONFIG.to_owned() } else { CONFIG.replace("enabled: true", "enabled: false") };
+        let config = if enabled {
+            CONFIG.to_owned()
+        } else {
+            CONFIG.replace("enabled: true", "enabled: false")
+        };
         std::fs::write(dir.join("pilotdeck.yaml"), config).unwrap();
     }
 
     #[tokio::test]
     async fn disabled_initial_memory_does_not_hide_other_projects_or_later_generations() {
         let scratch = Scratch::new();
-        let a = named("A"); let b = named("B");
-        let project = registry_with_providers(&scratch, vec![(scratch.root(), a.clone()), (scratch.other(), b.clone())], None);
+        let a = named("A");
+        let b = named("B");
+        let project = registry_with_providers(
+            &scratch,
+            vec![(scratch.root(), a.clone()), (scratch.other(), b.clone())],
+            None,
+        );
         write_project_memory_config(&scratch.root(), false);
         let gateway = build_memory_gateway(&options(&scratch), &project).unwrap();
-        assert!(gateway.is_enabled(), "native callbacks stay installed independently of A's provider");
+        assert!(
+            gateway.is_enabled(),
+            "native callbacks stay installed independently of A's provider"
+        );
         assert_unavailable(&gateway, &scratch.root());
         assert_list(&gateway, &scratch.other(), "B");
-        let unknown = gateway.dispatch("memory_list", &list_params("/unknown-memory-project")).unwrap();
-        let MemoryDispatch::Error(error) = unknown else { panic!("unknown project accepted while A disabled") };
-        assert_eq!(error.code(), Some("PROJECT_NOT_FOUND"), "resolution precedes selected capability");
-        assert_eq!(error.message(), &JsString::from("Unknown projectKey: /unknown-memory-project"));
+        let unknown = gateway
+            .dispatch("memory_list", &list_params("/unknown-memory-project"))
+            .unwrap();
+        let MemoryDispatch::Error(error) = unknown else {
+            panic!("unknown project accepted while A disabled")
+        };
+        assert_eq!(
+            error.code(),
+            Some("PROJECT_NOT_FOUND"),
+            "resolution precedes selected capability"
+        );
+        assert_eq!(
+            error.message(),
+            &JsString::from("Unknown projectKey: /unknown-memory-project")
+        );
         write_project_memory_config(&scratch.root(), true);
         project.invalidate(Some(&scratch.root()));
         assert_list(&gateway, &scratch.root(), "A");
         write_project_memory_config(&scratch.other(), false);
         project.invalidate(Some(&scratch.other()));
         assert_unavailable(&gateway, &scratch.other());
-        assert_eq!(b.list_calls.load(Ordering::SeqCst), 1, "disabled B must not reuse its retired service");
-        assert_eq!(a.list_calls.load(Ordering::SeqCst), 1, "disabled B must not fall back to A");
+        assert_eq!(
+            b.list_calls.load(Ordering::SeqCst),
+            1,
+            "disabled B must not reuse its retired service"
+        );
+        assert_eq!(
+            a.list_calls.load(Ordering::SeqCst),
+            1,
+            "disabled B must not fall back to A"
+        );
         write_project_memory_config(&scratch.other(), true);
         project.invalidate(Some(&scratch.other()));
         assert_list(&gateway, &scratch.other(), "B");
@@ -527,17 +618,47 @@ mod tests {
     async fn selected_project_staging_failure_preserves_error_without_fallback() {
         let scratch = Scratch::new();
         let a = named("A");
-        let project = registry_with_providers(&scratch, vec![(scratch.root(), a.clone())], Some(scratch.other()));
+        let project = registry_with_providers(
+            &scratch,
+            vec![(scratch.root(), a.clone())],
+            Some(scratch.other()),
+        );
         let gateway = build_memory_gateway(&options(&scratch), &project).unwrap();
         for method in ["memory_list", "memory_wipe"] {
-            let result = gateway.dispatch(method, &list_params(scratch.other().to_str().unwrap())).unwrap();
-            let MemoryDispatch::Error(error) = result else { panic!("#1456 selected project acquisition failure must not reach the served project via fallback") };
-            assert_eq!(error.name(), "RangeError", "#1456 selected project staging error name");
-            assert_eq!(error.code(), Some("SELECTED_PROJECT_FAILURE"), "#1456 selected project staging error code");
-            assert_eq!(error.message(), &JsString::from("Selected project factory failed."), "#1456 selected project staging error message");
+            let result = gateway
+                .dispatch(method, &list_params(scratch.other().to_str().unwrap()))
+                .unwrap();
+            let MemoryDispatch::Error(error) = result else {
+                panic!(
+                    "#1456 selected project acquisition failure must not reach the served project via fallback"
+                )
+            };
+            assert_eq!(
+                error.name(),
+                "RangeError",
+                "#1456 selected project staging error name"
+            );
+            assert_eq!(
+                error.code(),
+                Some("SELECTED_PROJECT_FAILURE"),
+                "#1456 selected project staging error code"
+            );
+            assert_eq!(
+                error.message(),
+                &JsString::from("Selected project factory failed."),
+                "#1456 selected project staging error message"
+            );
         }
-        assert_eq!(a.list_calls.load(Ordering::SeqCst), 0, "#1456 selected project failure must not list A");
-        assert_eq!(a.clear_calls.load(Ordering::SeqCst), 0, "#1456 selected project failure must not wipe A");
+        assert_eq!(
+            a.list_calls.load(Ordering::SeqCst),
+            0,
+            "#1456 selected project failure must not list A"
+        );
+        assert_eq!(
+            a.clear_calls.load(Ordering::SeqCst),
+            0,
+            "#1456 selected project failure must not wipe A"
+        );
         project.dispose().await.unwrap();
     }
 

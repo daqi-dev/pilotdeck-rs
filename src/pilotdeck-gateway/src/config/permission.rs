@@ -316,7 +316,11 @@ impl RuleSetHandle {
         for name in ["allow", "deny", "ask"] {
             value.set(name, configured.member(name).unwrap_or_else(new_array));
         }
-        Self { value, policy_deny: Arc::from([]), policy_ask: Arc::from([]) }
+        Self {
+            value,
+            policy_deny: Arc::from([]),
+            policy_ask: Arc::from([]),
+        }
     }
     /// An unattended phase adds immutable policy without changing the shared
     /// session arrays. Grants and MCP ask updates remain live on this handle.
@@ -324,16 +328,28 @@ impl RuleSetHandle {
         self.with_policy_rules(rules, &[])
     }
     /// SDK policy is immutable while session/MCP arrays remain live.
-    pub(crate) fn with_policy_rules(&self, rules: &[PermissionRule], asks: &[PermissionRule]) -> Self {
+    pub(crate) fn with_policy_rules(
+        &self,
+        rules: &[PermissionRule],
+        asks: &[PermissionRule],
+    ) -> Self {
         let mut ask = self.policy_ask.to_vec();
-        ask.extend(asks.iter().cloned().map(|mut rule| {rule.source="policy".into();rule.behavior="ask".into();rule}));
+        ask.extend(asks.iter().cloned().map(|mut rule| {
+            rule.source = "policy".into();
+            rule.behavior = "ask".into();
+            rule
+        }));
         let mut deny = self.policy_deny.to_vec();
         deny.extend(rules.iter().cloned().map(|mut rule| {
             rule.source = "policy".into();
             rule.behavior = "deny".into();
             rule
         }));
-        Self { value: self.value.clone(), policy_deny: deny.into(), policy_ask: ask.into() }
+        Self {
+            value: self.value.clone(),
+            policy_deny: deny.into(),
+            policy_ask: ask.into(),
+        }
     }
     pub fn value(&self) -> SessionValue {
         self.value.clone()
@@ -356,9 +372,18 @@ impl RuleSetHandle {
     pub fn snapshot(&self) -> PermissionRuleSet {
         PermissionRuleSet {
             allow: snapshot_array(&self.member("allow")),
-            deny: self.policy_deny.iter().cloned()
-                .chain(snapshot_array(&self.member("deny"))).collect(),
-            ask: self.policy_ask.iter().cloned().chain(snapshot_array(&self.member("ask"))).collect(),
+            deny: self
+                .policy_deny
+                .iter()
+                .cloned()
+                .chain(snapshot_array(&self.member("deny")))
+                .collect(),
+            ask: self
+                .policy_ask
+                .iter()
+                .cloned()
+                .chain(snapshot_array(&self.member("ask")))
+                .collect(),
         }
     }
     pub fn to_value(&self) -> JsValue {
@@ -661,32 +686,53 @@ mod tests {
 
     #[tokio::test]
     async fn automation_policy_is_immutable_and_observes_live_session_grants() {
-        use crate::runtime::permission::{self, PermissionTool, DefaultPermissionContextOptions};
+        use crate::runtime::permission::{self, DefaultPermissionContextOptions, PermissionTool};
         struct Bash(JsString);
         impl PermissionTool for Bash {
-            fn name(&self) -> &JsString { &self.0 }
-            fn is_read_only(&self, _: &JsValue) -> Result<JsValue, crate::host::HostError> { Ok(JsValue::Bool(false)) }
+            fn name(&self) -> &JsString {
+                &self.0
+            }
+            fn is_read_only(&self, _: &JsValue) -> Result<JsValue, crate::host::HostError> {
+                Ok(JsValue::Bool(false))
+            }
         }
         let base = RuleSetHandle::empty();
         let overlay = base.with_policy_deny(&[
-            PermissionRule::new("policy", "deny", "bash").with_pattern("git push*"),
+            PermissionRule::new("policy", "deny", "bash").with_pattern("git push*")
         ]);
         let inherited = overlay.clone();
-        base.update_member("allow", |rules| rules.push(
-            PermissionRule::new("session", "allow", "bash").to_value().into()));
+        base.update_member("allow", |rules| {
+            rules.push(
+                PermissionRule::new("session", "allow", "bash")
+                    .to_value()
+                    .into(),
+            )
+        });
         assert_eq!(inherited.snapshot().allow.len(), 1);
         assert!(base.snapshot().deny.is_empty());
         // Clearing the mutable shared array cannot remove the host policy.
         inherited.update_member("deny", Vec::clear);
         assert_eq!(inherited.snapshot().deny.len(), 1);
-        assert!(matches!(inherited.to_value().get("deny"), Some(JsValue::Array(items)) if items.len() == 1));
-        let context = permission::create_default_permission_context(DefaultPermissionContextOptions {
-            cwd: "/project".into(), mode: Some("bypassPermissions".into()),
-            can_prompt: Some(false), bypass_available: Some(true),
-            rules: inherited.snapshot(), ..Default::default()
-        });
-        let result = permission::decide(&context, &Bash("bash".into()),
-            &crate::metadata::object([("command", "git push origin main".into())]), &"call".into()).await.unwrap();
+        assert!(
+            matches!(inherited.to_value().get("deny"), Some(JsValue::Array(items)) if items.len() == 1)
+        );
+        let context =
+            permission::create_default_permission_context(DefaultPermissionContextOptions {
+                cwd: "/project".into(),
+                mode: Some("bypassPermissions".into()),
+                can_prompt: Some(false),
+                bypass_available: Some(true),
+                rules: inherited.snapshot(),
+                ..Default::default()
+            });
+        let result = permission::decide(
+            &context,
+            &Bash("bash".into()),
+            &crate::metadata::object([("command", "git push origin main".into())]),
+            &"call".into(),
+        )
+        .await
+        .unwrap();
         assert_eq!(result.get("type"), Some(&JsValue::from("deny")));
     }
 

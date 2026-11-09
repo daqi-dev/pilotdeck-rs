@@ -53,7 +53,9 @@ impl ResourceFamilySource for NativeExecutionWorldFamily {
         };
         // Existing archives keep their original eager lock/restore contract.
         // An absent archive remains dormant through this read-only stage.
-        archive.prepare_existing().map_err(|error| crate::runtime::project::RuntimeError::new(error.to_string()))?;
+        archive
+            .prepare_existing()
+            .map_err(|error| crate::runtime::project::RuntimeError::new(error.to_string()))?;
         let store = archive.handle();
         let resource = Arc::new(crate::runtime::background::BackgroundExecutionWorld {
             resources: BackgroundResources {

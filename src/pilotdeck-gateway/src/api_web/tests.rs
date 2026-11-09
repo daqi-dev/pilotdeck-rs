@@ -409,7 +409,7 @@ fn native_config() -> native_http::Config {
         webhook: None,
         control: None,
         api_web: None,
-            approvals: None,
+        approvals: None,
     }
 }
 

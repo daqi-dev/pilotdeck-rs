@@ -1426,7 +1426,10 @@ impl SubmitHostServices for Services {
     }
 
     fn workspace_id(&self, input: &JsValue) -> Result<Option<JsString>, SubmitError> {
-        if let Some(project) = input.get("projectKey").filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null)) {
+        if let Some(project) = input
+            .get("projectKey")
+            .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))
+        {
             let key = project
                 .as_string()
                 .ok_or_else(|| failure("projectKey must be a valid path string."))?;
@@ -1482,19 +1485,35 @@ impl SubmitHostServices for Services {
             let options = self.options.clone();
             let env = self.env.clone();
             let project = self.project.clone();
-            let permit = super::methods::session_dir::session_io_permit().await
+            let permit = super::methods::session_dir::session_io_permit()
+                .await
                 .map_err(|error| failure(String::from_utf16_lossy(error.message.units())))?;
             let changed = tokio::task::spawn_blocking(move || {
                 let _permit = permit;
                 use crate::runtime::project::ConfigSource;
                 let fresh = crate::runtime::project::NativeConfigSource::new(
-                    options.project.clone(), env, Some(options.home), None,
-                ).bounded().load(&options.project).map_err(|e| failure(e.to_string()))?;
-                let lease = project.acquire(Some(&options.project)).map_err(|e| failure(e.to_string()))?;
-                let staged = lease.runtime().resources().get::<ProjectResources>()
-                    .ok_or_else(|| failure("Native project resources are missing."))?.context().snapshot();
+                    options.project.clone(),
+                    env,
+                    Some(options.home),
+                    None,
+                )
+                .bounded()
+                .load(&options.project)
+                .map_err(|e| failure(e.to_string()))?;
+                let lease = project
+                    .acquire(Some(&options.project))
+                    .map_err(|e| failure(e.to_string()))?;
+                let staged = lease
+                    .runtime()
+                    .resources()
+                    .get::<ProjectResources>()
+                    .ok_or_else(|| failure("Native project resources are missing."))?
+                    .context()
+                    .snapshot();
                 Ok::<_, SubmitError>(fresh.get("config") != staged.get("config"))
-            }).await.map_err(|error| failure(error.to_string()))??;
+            })
+            .await
+            .map_err(|error| failure(error.to_string()))??;
             if changed {
                 self.project.invalidate(Some(&self.options.project));
                 use crate::runtime::refresh::RefreshRouter;
@@ -1981,7 +2000,11 @@ fn native_settings_with_writer(
         reload_config: Some(bundle.clone()),
         reload_extensions: Some(bundle.clone()),
     }));
-    NativeSettings { gateway, bundle, store }
+    NativeSettings {
+        gateway,
+        bundle,
+        store,
+    }
 }
 
 /// The production composition for the native process

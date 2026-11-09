@@ -340,7 +340,13 @@ async fn production_cleanup_matrix() {
                 // lifecycle disposal (PilotDeckServerShutdownBundle.ts:33-37).
                 vec!["automation", "channels", "session"]
             } else {
-                vec!["automation", "channels", "session", "temporary sessions", "project"]
+                vec![
+                    "automation",
+                    "channels",
+                    "session",
+                    "temporary sessions",
+                    "project",
+                ]
             },
             "#1071 production cleanup attempts both resources"
         );
@@ -352,7 +358,10 @@ async fn production_cleanup_matrix() {
         negative_assert_eq!(
             actual_warnings,
             if mode == "both-errors" {
-                vec!["temporary sessions failed".to_owned(), "project failed".to_owned()]
+                vec![
+                    "temporary sessions failed".to_owned(),
+                    "project failed".to_owned(),
+                ]
             } else if mode == "project-error" {
                 vec!["project failed".to_owned()]
             } else if mode == "temporary sessions-error" {
@@ -364,7 +373,9 @@ async fn production_cleanup_matrix() {
         );
         // The native temporary-storage cleanup is an extra owned phase;
         // its failure case above has no synthetic row in the frozen TS probe.
-        if mode == "temporary sessions-error" { continue; }
+        if mode == "temporary sessions-error" {
+            continue;
+        }
         let fixture = oracle();
         let ts = fixture["observations"]["productionCleanup"]
             .as_array()
@@ -1099,7 +1110,10 @@ async fn project_path_boundaries_worker() {
         pilotdeck_protocol::parse_json("{}").unwrap(),
         pilotdeck_protocol::parse_json(r#"{"projectKey":null}"#).unwrap(),
     ] {
-        assert!(services.workspace_id(&params).is_ok(), "nullish project uses selected workspace");
+        assert!(
+            services.workspace_id(&params).is_ok(),
+            "nullish project uses selected workspace"
+        );
     }
     std::env::set_current_dir(&scratch.0).expect("#1137 restore path boundary worker");
     services

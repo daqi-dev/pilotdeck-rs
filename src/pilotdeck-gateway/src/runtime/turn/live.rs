@@ -146,7 +146,13 @@ impl LiveSessionAdapter {
         }
     }
 
-    pub(crate) fn with_loop_controller(mut self, controller: Arc<dyn super::loop_control::HostLoopController>) -> Self { self.loop_controller = Some(controller); self }
+    pub(crate) fn with_loop_controller(
+        mut self,
+        controller: Arc<dyn super::loop_control::HostLoopController>,
+    ) -> Self {
+        self.loop_controller = Some(controller);
+        self
+    }
 
     pub(crate) fn with_input_admission(
         mut self,
@@ -315,7 +321,10 @@ impl LiveSessionAdapter {
                     if let Some(lifecycle) = &mut lifecycle {
                         lifecycle.retain_turn(handler.clone());
                     }
-                    let sop = host.node_template.take().map(|template| sop::Prepared { template, parent: handler.clone() });
+                    let sop = host.node_template.take().map(|template| sop::Prepared {
+                        template,
+                        parent: handler.clone(),
+                    });
                     let manifest = handler.manifest().clone();
                     let events = if crate::mutants::on("notices-wiring") {
                         None
@@ -949,11 +958,16 @@ impl LiveTurnStream {
                 // recovery-only delivery legitimately has no sidecar stream.
                 self.integrity.module_id.lock().unwrap().take();
                 let result = terminal.get("payload").and_then(|p| p.get("result"));
-                if result.and_then(|r| r.get("sessionId")) != Some(&JsValue::String(self.identity.session_id.clone()))
-                    || result.and_then(|r| r.get("turnId")) != Some(&JsValue::String(self.identity.turn_id.clone())) {
+                if result.and_then(|r| r.get("sessionId"))
+                    != Some(&JsValue::String(self.identity.session_id.clone()))
+                    || result.and_then(|r| r.get("turnId"))
+                        != Some(&JsValue::String(self.identity.turn_id.clone()))
+                {
                     return Err(RuntimeError::new("SOP aggregate result identity mismatch."));
                 }
-                Ok(Some(self.completed_event(terminal.get("payload").unwrap(), true)?))
+                Ok(Some(
+                    self.completed_event(terminal.get("payload").unwrap(), true)?,
+                ))
             }
             Ok(ExecuteResult::Terminal(terminal)) => {
                 let outcome = terminal
@@ -2641,7 +2655,8 @@ impl LiveSessionAdapter {
                 && crate::runtime::permission::managed_default_mode(&config).is_none()
                 && let Some(mode) = source()
             {
-                let mode = crate::runtime::permission::effective_permission_mode(&config, Some(mode));
+                let mode =
+                    crate::runtime::permission::effective_permission_mode(&config, Some(mode));
                 config.insert("permissionMode".into(), JsValue::String(mode));
             }
             request
@@ -2726,7 +2741,16 @@ impl LiveSessionAdapter {
         let turn = LiveTurnStream {
             callback_cancel: Some(cancellation.clone()),
             execution: Some(Box::pin(async move {
-                let (client, inner, lease, manifest, interaction_events, prompt_hooks, lifecycle, sop) = tokio::select! {
+                let (
+                    client,
+                    inner,
+                    lease,
+                    manifest,
+                    interaction_events,
+                    prompt_hooks,
+                    lifecycle,
+                    sop,
+                ) = tokio::select! {
                     biased;
                     _ = cancellation.cancelled(), if !crate::mutants::on("gates-factory-ready-priority") => {
                         return Ok(ExecuteResult::Aborted { terminal: None });
@@ -2825,17 +2849,52 @@ impl LiveSessionAdapter {
                     .payload
                     .insert("messages".into(), JsValue::Array(messages));
                 if let Some(controller) = loop_controller {
-                    let prepared = sop.ok_or_else(|| HostError::new(HostErrorKind::Session, "SOP host node executor is unavailable."))?;
-                    let executor = sop::Executor { node: tokio::sync::Mutex::new(None), prepared, stream: handler.clone(), recorder, lease,
-                        request: request.clone(), input: sop_input, signal: cancellation.clone(), close_timeout };
+                    let prepared = sop.ok_or_else(|| {
+                        HostError::new(
+                            HostErrorKind::Session,
+                            "SOP host node executor is unavailable.",
+                        )
+                    })?;
+                    let executor = sop::Executor {
+                        node: tokio::sync::Mutex::new(None),
+                        prepared,
+                        stream: handler.clone(),
+                        recorder,
+                        lease,
+                        request: request.clone(),
+                        input: sop_input,
+                        signal: cancellation.clone(),
+                        close_timeout,
+                    };
                     let identity = request.identity.clone();
-                    let visible_messages = match request.payload.get("messages") { Some(JsValue::Array(messages)) => messages.clone(), _ => Vec::new() };
-                    let result = handler.with_pump(controller.run(super::loop_control::SopLoopInput { request, signal: cancellation, visible_messages }, &executor), identity).await;
-                    let node_closed = super::loop_control::SopNodeExecutor::finish_node(&executor, None).await;
+                    let visible_messages = match request.payload.get("messages") {
+                        Some(JsValue::Array(messages)) => messages.clone(),
+                        _ => Vec::new(),
+                    };
+                    let result = handler
+                        .with_pump(
+                            controller.run(
+                                super::loop_control::SopLoopInput {
+                                    request,
+                                    signal: cancellation,
+                                    visible_messages,
+                                },
+                                &executor,
+                            ),
+                            identity,
+                        )
+                        .await;
+                    let node_closed =
+                        super::loop_control::SopNodeExecutor::finish_node(&executor, None).await;
                     let closed = handler.inner.dispose().await;
                     let closed = node_closed.and(closed);
-                    if let Some(pending) = pending_host.take() { pending.handoff(); }
-                    return match (result, closed) { (Err(error), _) | (_, Err(error)) => Err(error), (Ok(result), Ok(())) => Ok(result) };
+                    if let Some(pending) = pending_host.take() {
+                        pending.handoff();
+                    }
+                    return match (result, closed) {
+                        (Err(error), _) | (_, Err(error)) => Err(error),
+                        (Ok(result), Ok(())) => Ok(result),
+                    };
                 }
                 let client = tokio::select! {
                     biased;

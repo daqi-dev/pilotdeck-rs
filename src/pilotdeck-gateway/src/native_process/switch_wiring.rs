@@ -55,7 +55,8 @@ pub(crate) struct AssemblySwitchHandles {
 /// through `OnceLock`s the embedding reads once the builder has run.
 #[derive(Clone, Default)]
 pub(crate) struct AssemblySwitchSlots {
-    pub(crate) approvals: Arc<std::sync::OnceLock<Arc<dyn crate::module_host::approvals::ApprovalBridge>>>,
+    pub(crate) approvals:
+        Arc<std::sync::OnceLock<Arc<dyn crate::module_host::approvals::ApprovalBridge>>>,
     pub(crate) automation: Arc<std::sync::OnceLock<AutomationStop>>,
     pub(crate) cron: Arc<std::sync::OnceLock<Arc<CronStopHandle>>>,
     pub(crate) channels: Arc<std::sync::OnceLock<Arc<NativeChannels>>>,
@@ -170,7 +171,9 @@ impl ProductionFaces {
 
 impl SwitchFaces for ProductionFaces {
     fn stop_automation(&self) -> FaceFuture {
-        if let Some(stop) = &self.automation { return stop(); }
+        if let Some(stop) = &self.automation {
+            return stop();
+        }
         match &self.cron {
             // S1: close the management face (A6) before the stop, stop the
             // manager exactly once, report the swallowed abort rejections

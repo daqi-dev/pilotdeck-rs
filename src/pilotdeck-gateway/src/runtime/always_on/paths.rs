@@ -64,12 +64,21 @@ pub(crate) fn resolve_always_on_paths<F: crate::metadata::Files>(
 
 impl AlwaysOnPaths {
     pub(crate) fn project_dir(&self) -> PathBuf {
-        self.state_file.parent().unwrap_or(Path::new("/")).to_owned()
+        self.state_file
+            .parent()
+            .unwrap_or(Path::new("/"))
+            .to_owned()
     }
-    pub(crate) fn run_history_file(&self) -> PathBuf { self.project_dir().join("run-history.jsonl") }
-    pub(crate) fn events_file(&self) -> PathBuf { self.project_dir().join("events.jsonl") }
+    pub(crate) fn run_history_file(&self) -> PathBuf {
+        self.project_dir().join("run-history.jsonl")
+    }
+    pub(crate) fn events_file(&self) -> PathBuf {
+        self.project_dir().join("events.jsonl")
+    }
     pub(crate) fn run_events_path(&self, run_id: &JsString) -> PathBuf {
-        self.project_dir().join("runs").join(format!("{}.events.jsonl", sanitize_id(run_id)))
+        self.project_dir()
+            .join("runs")
+            .join(format!("{}.events.jsonl", sanitize_id(run_id)))
     }
     pub(crate) fn worktrees_dir(&self) -> PathBuf {
         self.workspace_dir("worktrees")
@@ -80,7 +89,12 @@ impl AlwaysOnPaths {
     fn workspace_dir(&self, kind: &str) -> PathBuf {
         let project = self.project_dir();
         let project_id = project.file_name().unwrap_or_default();
-        project.parent().and_then(Path::parent).unwrap_or(&project).join(kind).join(project_id)
+        project
+            .parent()
+            .and_then(Path::parent)
+            .unwrap_or(&project)
+            .join(kind)
+            .join(project_id)
     }
 }
 

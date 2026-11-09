@@ -532,13 +532,25 @@ mod tests {
             .drain(&"turn".into());
         assert!(!entries.is_empty(), "B turn received hook result");
         _turn.close().await.unwrap();
-        requests.owner.end_turn(&session, Some(&"run".into()), Some(&_reservation));
+        requests
+            .owner
+            .end_turn(&session, Some(&"run".into()), Some(&_reservation));
         drop(binding);
         drop(lease);
         drop(_handle);
-        tokio::time::timeout(std::time::Duration::from_secs(10), requests.owner.shutdown())
-            .await.expect("B hook fixture owner cleanup must settle").unwrap();
-        tokio::time::timeout(std::time::Duration::from_secs(10), requests.project.dispose())
-            .await.expect("B hook fixture project leases must be released").unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            requests.owner.shutdown(),
+        )
+        .await
+        .expect("B hook fixture owner cleanup must settle")
+        .unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            requests.project.dispose(),
+        )
+        .await
+        .expect("B hook fixture project leases must be released")
+        .unwrap();
     }
 }

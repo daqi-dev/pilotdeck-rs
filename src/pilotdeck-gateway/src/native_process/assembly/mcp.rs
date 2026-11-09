@@ -116,7 +116,8 @@ pub(super) fn build_mcp_gateway(
         };
         let closing = close_owner(&key);
         Box::pin(async move {
-            closing.await
+            closing
+                .await
                 .map_err(|error| SdkMcpError::plain("Error", JsString::from(error.message)))
         })
     });

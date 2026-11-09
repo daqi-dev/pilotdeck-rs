@@ -514,7 +514,11 @@ impl ConfigStore {
 }
 
 fn load(options: &StoreOptions, version: f64, bounded: bool) -> Result<JsValue, Error> {
-    let loader = if bounded { super::load_snapshot_bounded } else { super::load_snapshot };
+    let loader = if bounded {
+        super::load_snapshot_bounded
+    } else {
+        super::load_snapshot
+    };
     loader(
         &options.pilot_home,
         &options.cwd,

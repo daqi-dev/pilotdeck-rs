@@ -85,11 +85,29 @@ mod tests {
         crate::native_process::assembly::register_project(&b_options).unwrap();
         let registry = requests.runs.as_ref().unwrap();
         for (root, marker) in [(&a, "only-A"), (&b, "only-B")] {
-            let run = RunRef { project_key: Some(root.to_string_lossy().as_ref().into()),
-                session_key: "same".into(), run_id: "same-run".into() };
-            registry.accept(&RunAcceptInput { run: run.clone(), request_material: marker.into() }).await.unwrap();
-            registry.append(&run, &object([("type", "agent_status".into()),
-                ("runId", "same-run".into()), ("text", marker.into())])).await.unwrap();
+            let run = RunRef {
+                project_key: Some(root.to_string_lossy().as_ref().into()),
+                session_key: "same".into(),
+                run_id: "same-run".into(),
+            };
+            registry
+                .accept(&RunAcceptInput {
+                    run: run.clone(),
+                    request_material: marker.into(),
+                })
+                .await
+                .unwrap();
+            registry
+                .append(
+                    &run,
+                    &object([
+                        ("type", "agent_status".into()),
+                        ("runId", "same-run".into()),
+                        ("text", marker.into()),
+                    ]),
+                )
+                .await
+                .unwrap();
         }
         for (project, expected, marker, foreign) in [
             (None, &a, "only-A", "only-B"),
@@ -98,17 +116,34 @@ mod tests {
         ] {
             let mut params = object([("sessionKey", "same".into()), ("runId", "same-run".into())]);
             if let Some(project) = project
-                && let JsValue::Object(values) = &mut params {
-                values.insert("projectKey".into(), JsValue::String(project.to_string_lossy().as_ref().into()));
+                && let JsValue::Object(values) = &mut params
+            {
+                values.insert(
+                    "projectKey".into(),
+                    JsValue::String(project.to_string_lossy().as_ref().into()),
+                );
             }
             for method in ["run_get", "run_reattach"] {
-                let result = requests.request(method.into(), params.clone()).await.unwrap();
-                assert_eq!(result.get("projectKey"), Some(&JsValue::String(JsString::from(expected.to_string_lossy().as_ref()))),
-                    "durable run read must use selected canonical project");
+                let result = requests
+                    .request(method.into(), params.clone())
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    result.get("projectKey"),
+                    Some(&JsValue::String(JsString::from(
+                        expected.to_string_lossy().as_ref()
+                    ))),
+                    "durable run read must use selected canonical project"
+                );
             }
             let events = requests.request("run_events".into(), params).await.unwrap();
-            let text = pilotdeck_protocol::stringify_json(&events).unwrap().unwrap();
-            assert!(text.contains(marker) && !text.contains(foreign), "durable run events must be project-scoped: {text}");
+            let text = pilotdeck_protocol::stringify_json(&events)
+                .unwrap()
+                .unwrap();
+            assert!(
+                text.contains(marker) && !text.contains(foreign),
+                "durable run events must be project-scoped: {text}"
+            );
         }
         requests.owner.shutdown().await.unwrap();
         requests.project.dispose().await.unwrap();

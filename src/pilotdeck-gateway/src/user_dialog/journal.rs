@@ -88,13 +88,17 @@ impl GatewayUserDialogJournal {
 
     #[cfg(unix)]
     pub(crate) fn with_native_home(mut self, home: &Path) -> Result<Self> {
-        self.native = Some(super::native_journal::NativeJournalFiles::new(home, &self.path)?);
+        self.native = Some(super::native_journal::NativeJournalFiles::new(
+            home, &self.path,
+        )?);
         Ok(self)
     }
 
     fn remove_file(&self) -> Result<()> {
         #[cfg(unix)]
-        if let Some(native) = &self.native { return native.remove().map_err(Into::into); }
+        if let Some(native) = &self.native {
+            return native.remove().map_err(Into::into);
+        }
         remove_file(&self.path)
     }
 
@@ -174,7 +178,10 @@ impl GatewayUserDialogJournal {
     fn read(&self) -> Result<JournalRecord> {
         let value = (|| -> Result<JournalRecord> {
             #[cfg(unix)]
-            let read = self.native.as_ref().map_or_else(|| fs::read(&self.path), |native| native.read());
+            let read = self
+                .native
+                .as_ref()
+                .map_or_else(|| fs::read(&self.path), |native| native.read());
             #[cfg(not(unix))]
             let read = fs::read(&self.path);
             let bytes = match read {
@@ -216,7 +223,9 @@ impl GatewayUserDialogJournal {
             let mut object = JsObject::new();
             object.insert("version".into(), JsValue::Number(1.0));
             object.insert("dialogs".into(), JsValue::Array(record.dialogs.clone()));
-            return native.write(json(&JsValue::Object(object))?.as_bytes()).map_err(Into::into);
+            return native
+                .write(json(&JsValue::Object(object))?.as_bytes())
+                .map_err(Into::into);
         }
         let directory = self.path.parent().unwrap_or_else(|| Path::new("."));
         mkdir(directory)?;

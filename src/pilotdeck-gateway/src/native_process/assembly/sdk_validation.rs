@@ -15,20 +15,30 @@ fn text(v: &JsValue) -> bool {
     v.as_string().is_some_and(trim)
 }
 fn unique_skills(value: &JsValue) -> bool {
-    let JsValue::Array(values) = value else { return false; };
+    let JsValue::Array(values) = value else {
+        return false;
+    };
     let mut seen = std::collections::HashSet::new();
-    !values.is_empty() && values.iter().all(|value| {
-        value.as_string().is_some_and(|name| trim(name) && seen.insert(name))
-    })
+    !values.is_empty()
+        && values.iter().all(|value| {
+            value
+                .as_string()
+                .is_some_and(|name| trim(name) && seen.insert(name))
+        })
 }
 fn distinct_plugin_paths(value: &JsValue) -> bool {
-    let JsValue::Array(values) = value else { return false; };
+    let JsValue::Array(values) = value else {
+        return false;
+    };
     let mut seen = std::collections::HashSet::new();
-    !values.is_empty() && values.iter().all(|plugin| {
-        plugin.get("type") == Some(&JsValue::from("local"))
-            && plugin.get("path").and_then(JsValue::as_string)
-                .is_some_and(|path| path.units().first() == Some(&47) && seen.insert(path))
-    })
+    !values.is_empty()
+        && values.iter().all(|plugin| {
+            plugin.get("type") == Some(&JsValue::from("local"))
+                && plugin
+                    .get("path")
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|path| path.units().first() == Some(&47) && seen.insert(path))
+        })
 }
 fn keys(v: &JsObject, allowed: &[&str]) -> bool {
     v.own_entries()

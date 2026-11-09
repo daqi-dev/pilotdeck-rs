@@ -469,32 +469,35 @@ impl WorkCycleStore {
         );
         state = without_field(&state, "currentWorkspace");
         if let Err(error) = write_index_object(&self.paths.state_file, &state)
-            && super::storage::is_policy_error(&error) {
-                return Err(error);
-            }
+            && super::storage::is_policy_error(&error)
+        {
+            return Err(error);
+        }
         if !plan_ids.is_empty()
             && let Some(plan_index) = plans.as_mut()
-            && let Some(JsValue::Array(entries)) = plan_index.get("plans") {
-                let entries = entries
-                    .iter()
-                    .map(|entry| {
-                        let Some(plan) = entry.as_object() else {
-                            return entry.clone();
-                        };
-                        if !plan_ids.iter().any(|id| plan.get("id") == Some(id)) {
-                            return entry.clone();
-                        }
-                        let mut plan = without_field(plan, "workspace");
-                        plan.insert("workCycleId".into(), JsValue::String(cycle_id.clone()));
-                        JsValue::Object(plan)
-                    })
-                    .collect();
-                plan_index.insert("plans".into(), JsValue::Array(entries));
-                if let Err(error) = write_index_object(&self.paths.plan_index_file, plan_index)
-                    && super::storage::is_policy_error(&error) {
-                        return Err(error);
+            && let Some(JsValue::Array(entries)) = plan_index.get("plans")
+        {
+            let entries = entries
+                .iter()
+                .map(|entry| {
+                    let Some(plan) = entry.as_object() else {
+                        return entry.clone();
+                    };
+                    if !plan_ids.iter().any(|id| plan.get("id") == Some(id)) {
+                        return entry.clone();
                     }
+                    let mut plan = without_field(plan, "workspace");
+                    plan.insert("workCycleId".into(), JsValue::String(cycle_id.clone()));
+                    JsValue::Object(plan)
+                })
+                .collect();
+            plan_index.insert("plans".into(), JsValue::Array(entries));
+            if let Err(error) = write_index_object(&self.paths.plan_index_file, plan_index)
+                && super::storage::is_policy_error(&error)
+            {
+                return Err(error);
             }
+        }
         Ok(Some(cycle_record(&record)))
     }
 

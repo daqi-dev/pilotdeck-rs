@@ -2343,14 +2343,20 @@ async fn native_project_binding_rejects_unbound_creation_before_and_during_scope
     owner.enforce_project_binding();
     let mut missing = context("shared");
     missing.project_key = None;
-    assert!(matches!(bounded(owner.get_or_create(missing.clone())).await,
+    assert!(
+        matches!(bounded(owner.get_or_create(missing.clone())).await,
         Err(ref error) if error.message.starts_with("PROJECT_SESSION_MISMATCH:")),
-        "native unbound creation must not create a wildcard owner");
+        "native unbound creation must not create a wildcard owner"
+    );
     let a = JsString::from("A");
-    let scope = owner.reserve_project(&"shared".into(), Some(&a), &a).unwrap();
-    assert!(matches!(bounded(owner.get_or_create(missing.clone())).await,
+    let scope = owner
+        .reserve_project(&"shared".into(), Some(&a), &a)
+        .unwrap();
+    assert!(
+        matches!(bounded(owner.get_or_create(missing.clone())).await,
         Err(ref error) if error.message.starts_with("PROJECT_SESSION_MISMATCH:")),
-        "native unbound creation must not bypass an active request scope");
+        "native unbound creation must not bypass an active request scope"
+    );
     assert!(owner.current_handle(&"shared".into()).is_none());
     drop(scope);
     bounded(owner.shutdown()).await.unwrap();

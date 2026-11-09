@@ -66,7 +66,8 @@ pub fn effective_permission_mode(config: &JsObject, stored: Option<JsString>) ->
 /// None preserves the caller's current session selection.
 pub(crate) fn configured_permission_mode(config: &JsObject) -> Option<JsString> {
     managed_default_mode(config).or_else(|| {
-        config.get("nativeSdkPermissionMode")
+        config
+            .get("nativeSdkPermissionMode")
             .and_then(JsValue::as_string)
             .filter(|mode| mode.equals_str("dontAsk"))
             .map(|_| DEFAULT_PERMISSION_MODE.into())

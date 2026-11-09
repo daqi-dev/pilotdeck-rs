@@ -157,23 +157,49 @@ pub struct HistorySnapshot {
 impl HistoryFiles {
     /// Read only the first/last 64 KiB from one nonblocking regular-file
     /// descriptor, matching the native TS prompt digest reader.
-    pub(crate) async fn prompt_lite(&self, session: &JsString) -> Result<Option<(String, String)>, String> {
-        let files = self.clone(); let session = session.clone();
-        let permit = READ_SLOTS.get_or_init(|| Arc::new(Semaphore::new(4))).clone()
-            .acquire_owned().await.map_err(|e| e.to_string())?;
+    pub(crate) async fn prompt_lite(
+        &self,
+        session: &JsString,
+    ) -> Result<Option<(String, String)>, String> {
+        let files = self.clone();
+        let session = session.clone();
+        let permit = READ_SLOTS
+            .get_or_init(|| Arc::new(Semaphore::new(4)))
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| e.to_string())?;
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
             let path = history_path(&files, &session)?;
-            #[cfg(unix)] {
+            #[cfg(unix)]
+            {
                 use std::os::unix::fs::OpenOptionsExt;
-                let mut options = fs::OpenOptions::new(); options.read(true).custom_flags(libc::O_NONBLOCK);
-                let mut file = match options.open(path) { Ok(file) => file, Err(_) => return Ok(None) };
+                let mut options = fs::OpenOptions::new();
+                options.read(true).custom_flags(libc::O_NONBLOCK);
+                let mut file = match options.open(path) {
+                    Ok(file) => file,
+                    Err(_) => return Ok(None),
+                };
                 let metadata = file.metadata().map_err(|e| e.to_string())?;
-                if !metadata.is_file() { return Err("History transcript is not a regular file".into()); }
-                Ok(crate::runtime::manager::file_catalog::read_lite_chunks(&mut file, metadata.len()).ok().flatten())
+                if !metadata.is_file() {
+                    return Err("History transcript is not a regular file".into());
+                }
+                Ok(crate::runtime::manager::file_catalog::read_lite_chunks(
+                    &mut file,
+                    metadata.len(),
+                )
+                .ok()
+                .flatten())
             }
-            #[cfg(not(unix))] { let _ = path; Err("Bounded native history is unavailable on this platform".into()) }
-        }).await.map_err(|e| e.to_string())?
+            #[cfg(not(unix))]
+            {
+                let _ = path;
+                Err("Bounded native history is unavailable on this platform".into())
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
     pub async fn read(&self, session: &JsString) -> Result<TranscriptRead, String> {
         Ok(self.snapshot(session).await?.read)
@@ -219,26 +245,53 @@ mod tests {
     #[tokio::test]
     async fn prompt_lite_reads_same_fd_windows_and_rejects_fifo() {
         let root = std::env::temp_dir().join(format!("pdrs-prompt-lite-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&root).unwrap(); let root = root.canonicalize().unwrap();
-        let home = root.join("home"); let project = root.join("project");
-        std::fs::create_dir_all(&home).unwrap(); std::fs::create_dir_all(&project).unwrap();
-        let md = crate::metadata::Metadata { home: home.clone(), cwd: PathBuf::new(), files: crate::metadata::NativeFiles };
-        let chat = md.process_chat_dir(project.to_str().unwrap()).unwrap(); std::fs::create_dir_all(&chat).unwrap();
-        let file = chat.join(format!("{}.jsonl", crate::storage::sanitize_session_id(&"session".into())));
+        std::fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let home = root.join("home");
+        let project = root.join("project");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        let md = crate::metadata::Metadata {
+            home: home.clone(),
+            cwd: PathBuf::new(),
+            files: crate::metadata::NativeFiles,
+        };
+        let chat = md.process_chat_dir(project.to_str().unwrap()).unwrap();
+        std::fs::create_dir_all(&chat).unwrap();
+        let file = chat.join(format!(
+            "{}.jsonl",
+            crate::storage::sanitize_session_id(&"session".into())
+        ));
         let files = HistoryFiles { home, project };
         std::fs::write(&file, b"short").unwrap();
-        let (head,tail) = files.prompt_lite(&"session".into()).await.unwrap().unwrap();
-        assert_eq!(head, "short"); assert_eq!(tail, "short");
-        let mut bytes = vec![b'x'; 200_000]; bytes[..5].copy_from_slice(b"HEAD!"); bytes[100_000..100_006].copy_from_slice(b"MIDDLE");
-        let end = bytes.len(); bytes[end-5..].copy_from_slice(b"TAIL!"); std::fs::write(&file, bytes).unwrap();
-        let (head,tail) = files.prompt_lite(&"session".into()).await.unwrap().unwrap();
-        assert_eq!(head.len(), 65_536); assert_eq!(tail.len(), 65_536);
+        let (head, tail) = files.prompt_lite(&"session".into()).await.unwrap().unwrap();
+        assert_eq!(head, "short");
+        assert_eq!(tail, "short");
+        let mut bytes = vec![b'x'; 200_000];
+        bytes[..5].copy_from_slice(b"HEAD!");
+        bytes[100_000..100_006].copy_from_slice(b"MIDDLE");
+        let end = bytes.len();
+        bytes[end - 5..].copy_from_slice(b"TAIL!");
+        std::fs::write(&file, bytes).unwrap();
+        let (head, tail) = files.prompt_lite(&"session".into()).await.unwrap().unwrap();
+        assert_eq!(head.len(), 65_536);
+        assert_eq!(tail.len(), 65_536);
         assert!(head.starts_with("HEAD!") && tail.ends_with("TAIL!"));
         assert!(!head.contains("MIDDLE") && !tail.contains("MIDDLE"));
         std::fs::remove_file(&file).unwrap();
-        let result = std::process::Command::new("/usr/bin/mkfifo").arg(&file).status().unwrap(); assert!(result.success());
-        let refused = tokio::time::timeout(std::time::Duration::from_secs(2), files.prompt_lite(&"session".into())).await.expect("FIFO must not hang");
-        assert!(refused.is_err()); std::fs::remove_dir_all(root).unwrap();
+        let result = std::process::Command::new("/usr/bin/mkfifo")
+            .arg(&file)
+            .status()
+            .unwrap();
+        assert!(result.success());
+        let refused = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            files.prompt_lite(&"session".into()),
+        )
+        .await
+        .expect("FIFO must not hang");
+        assert!(refused.is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

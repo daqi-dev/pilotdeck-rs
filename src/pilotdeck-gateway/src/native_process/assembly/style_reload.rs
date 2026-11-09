@@ -44,7 +44,9 @@ impl ReloadOutputStyles for NativeStyleReload {
                 ));
             }
             let selected = selected_root(&this.options, &input)?;
-            let filter_project = input.get("projectKey").is_some_and(crate::runtime::turn::submit::truthy);
+            let filter_project = input
+                .get("projectKey")
+                .is_some_and(crate::runtime::turn::submit::truthy);
             let project = this.project.clone();
             let acquire_root = selected.clone();
             let lease = tokio::task::spawn_blocking(move || project.acquire(Some(&acquire_root)))
@@ -83,15 +85,23 @@ impl ReloadOutputStyles for NativeStyleReload {
                     .project_entries()
                     .into_iter()
                     .filter_map(|(key, project)| {
-                        if filter_project && project != selected_key { return None; }
+                        if filter_project && project != selected_key {
+                            return None;
+                        }
                         let session = key.as_string()?;
                         registry.session_config(session).map(|_| session.clone())
                     })
                     .collect()
             };
-            let selected_sessions = this.overrides.output_style_sessions().into_iter().filter(|session| {
-                !filter_project || this.owner.project_key(session).as_ref() == Some(&selected_key)
-            }).collect();
+            let selected_sessions = this
+                .overrides
+                .output_style_sessions()
+                .into_iter()
+                .filter(|session| {
+                    !filter_project
+                        || this.owner.project_key(session).as_ref() == Some(&selected_key)
+                })
+                .collect();
             let sessions = unique_sessions(sdk_sessions, selected_sessions);
             for session in sessions {
                 // Prevent a disposed key from being recreated for another project
@@ -103,7 +113,9 @@ impl ReloadOutputStyles for NativeStyleReload {
                 );
                 let _scope = match scope {
                     Ok(scope) => scope,
-                    Err(error) if error.message.starts_with("PROJECT_SESSION_MISMATCH:") => continue,
+                    Err(error) if error.message.starts_with("PROJECT_SESSION_MISMATCH:") => {
+                        continue;
+                    }
                     Err(error) => return Err(SettingsError::plain("Error", error.message)),
                 };
                 this.owner
@@ -127,18 +139,32 @@ impl ReloadOutputStyles for NativeStyleReload {
 fn selected_root(options: &Options, input: &JsValue) -> Result<std::path::PathBuf, SettingsError> {
     match input.get("projectKey") {
         None | Some(JsValue::Null | JsValue::Undefined) => Ok(options.project.clone()),
-        Some(JsValue::String(key)) => crate::metadata::resolve_process_identity(std::path::Path::new(""), key)
-            .map_err(|e| SettingsError::plain("Error", e.to_string()))?
-            .map(std::path::PathBuf::from)
-            .ok_or_else(|| SettingsError::gateway("CAPABILITY_UNAVAILABLE", "Project path cannot be represented by this host.")),
+        Some(JsValue::String(key)) => {
+            crate::metadata::resolve_process_identity(std::path::Path::new(""), key)
+                .map_err(|e| SettingsError::plain("Error", e.to_string()))?
+                .map(std::path::PathBuf::from)
+                .ok_or_else(|| {
+                    SettingsError::gateway(
+                        "CAPABILITY_UNAVAILABLE",
+                        "Project path cannot be represented by this host.",
+                    )
+                })
+        }
         Some(value) => {
             let received = match crate::metadata::argument_received(value) {
                 crate::metadata::ArgumentReceived::Text(text) => text,
-                crate::metadata::ArgumentReceived::Throws { message, .. } => return Err(SettingsError::plain("TypeError", message)),
+                crate::metadata::ArgumentReceived::Throws { message, .. } => {
+                    return Err(SettingsError::plain("TypeError", message));
+                }
             };
-            let mut units: Vec<u16> = "The \"paths[0]\" argument must be of type string. Received ".encode_utf16().collect();
+            let mut units: Vec<u16> = "The \"paths[0]\" argument must be of type string. Received "
+                .encode_utf16()
+                .collect();
             units.extend_from_slice(received.units());
-            Err(SettingsError::plain("TypeError", JsString::from_utf16(units)))
+            Err(SettingsError::plain(
+                "TypeError",
+                JsString::from_utf16(units),
+            ))
         }
     }
 }
@@ -187,30 +213,53 @@ mod tests {
         let b_key = JsString::from(b.to_string_lossy().as_ref());
         requests.owner.enforce_project_binding();
         for (session, project) in [("style-a", &a_key), ("style-b", &b_key)] {
-            requests.owner.get_or_create(SessionContext {
-                session_key: session.into(), project_key: Some(project.clone()),
-                channel_key: "test".into(), allowed_tools: None, disallowed_tools: None,
-            }).await.unwrap();
+            requests
+                .owner
+                .get_or_create(SessionContext {
+                    session_key: session.into(),
+                    project_key: Some(project.clone()),
+                    channel_key: "test".into(),
+                    allowed_tools: None,
+                    disallowed_tools: None,
+                })
+                .await
+                .unwrap();
         }
         let overrides = Arc::new(SessionOverrides::default());
         overrides.set_output_style(&"style-a".into(), "a".into());
         overrides.set_output_style(&"style-b".into(), "b".into());
         let sdk = Arc::new(NativeSdkPort {
             registry: tokio::sync::Mutex::new(SdkSessionRegistry::new(SdkSessionOptions::new(
-                a.clone(), a.clone(), requests.env.clone(),
-                Arc::new(super::super::sdk_adapter::NativeSdkResolver { project: requests.project.clone() }),
+                a.clone(),
+                a.clone(),
+                requests.env.clone(),
+                Arc::new(super::super::sdk_adapter::NativeSdkResolver {
+                    project: requests.project.clone(),
+                }),
             ))),
-            handlers: Arc::default(), async_hooks: Arc::default(),
+            handlers: Arc::default(),
+            async_hooks: Arc::default(),
         });
         let reload = NativeStyleReload {
-            options: requests.options.clone(), project: requests.project.clone(), owner: requests.owner.clone(),
-            interactions: Arc::new(crate::runtime::interaction::GatewayInteractionCoordinator::new(Default::default())),
-            sdk, overrides,
+            options: requests.options.clone(),
+            project: requests.project.clone(),
+            owner: requests.owner.clone(),
+            interactions: Arc::new(
+                crate::runtime::interaction::GatewayInteractionCoordinator::new(Default::default()),
+            ),
+            sdk,
+            overrides,
         };
         let input = crate::metadata::object([("projectKey", JsValue::String(b_key))]);
         reload.reload(&input).await.unwrap();
-        assert!(requests.owner.current_handle(&"style-a".into()).is_some(), "B reload closed A session");
-        assert!(requests.owner.current_handle(&"style-b".into()).is_none(), "B reload did not close B session");
+        assert!(
+            requests.owner.current_handle(&"style-a".into()).is_some(),
+            "B reload closed A session"
+        );
+        assert!(
+            requests.owner.current_handle(&"style-b".into()).is_none(),
+            "B reload did not close B session"
+        );
         // Modify only B after its initial staging. Selecting the fallback A
         // would return no change, so this proves the actual plugin consumer.
         let plugin = b.join(".pilotdeck/plugins/style-plugin");
@@ -218,7 +267,10 @@ mod tests {
         std::fs::write(plugin.join("plugin.json"), r#"{"name":"style-plugin"}"#).unwrap();
         std::fs::write(plugin.join("output-styles/project-b.md"), "Only B style").unwrap();
         let changed = reload.reload(&input).await.unwrap();
-        assert_eq!(changed.changed, vec![JsString::from("style-plugin:project-b")]);
+        assert_eq!(
+            changed.changed,
+            vec![JsString::from("style-plugin:project-b")]
+        );
         // The fixed TS loop intentionally closes all SDK-selected sessions
         // when projectKey is omitted, even though only the fallback reloads.
         reload.reload(&crate::metadata::object([])).await.unwrap();
@@ -226,5 +278,4 @@ mod tests {
         requests.owner.shutdown().await.unwrap();
         requests.project.dispose().await.unwrap();
     }
-
 }

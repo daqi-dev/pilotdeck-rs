@@ -76,7 +76,16 @@ impl ReadFileTool {
 }
 
 impl ReadFileTool {
-    pub(crate) fn with_permissions(checkpoint:crate::host::modules::tool_context::HostToolCheckpoint,env:JsObject)->Self{Self{fields:definition(),checkpoint,env}}
+    pub(crate) fn with_permissions(
+        checkpoint: crate::host::modules::tool_context::HostToolCheckpoint,
+        env: JsObject,
+    ) -> Self {
+        Self {
+            fields: definition(),
+            checkpoint,
+            env,
+        }
+    }
 }
 
 impl Default for ReadFileTool {
@@ -89,8 +98,12 @@ impl ToolDefinition for ReadFileTool {
     fn fields(&self) -> &JsObject {
         &self.fields
     }
-    fn check_permissions<'a>(&'a self,input:&'a JsValue,permission:&'a crate::runtime::permission::PermissionContext)->crate::runtime::permission::PermissionFuture<'a,Option<JsValue>>{
-        super::file_permissions::read(input,permission,self.checkpoint.clone(),self.env.clone())
+    fn check_permissions<'a>(
+        &'a self,
+        input: &'a JsValue,
+        permission: &'a crate::runtime::permission::PermissionContext,
+    ) -> crate::runtime::permission::PermissionFuture<'a, Option<JsValue>> {
+        super::file_permissions::read(input, permission, self.checkpoint.clone(), self.env.clone())
     }
     fn is_read_only(&self, _input: &JsValue) -> Result<JsValue, HostError> {
         Ok(JsValue::Bool(true))

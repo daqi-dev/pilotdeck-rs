@@ -33,13 +33,26 @@ impl ToolDefinition for Control {
         Ok(JsValue::Bool(false))
     }
 }
-struct OptionalKnowledgeDescriptor { inner: Arc<dyn ToolDefinition>, fields: JsObject }
+struct OptionalKnowledgeDescriptor {
+    inner: Arc<dyn ToolDefinition>,
+    fields: JsObject,
+}
 impl ToolDefinition for OptionalKnowledgeDescriptor {
-    fn fields(&self) -> &JsObject { &self.fields }
-    fn is_read_only(&self, input: &JsValue) -> Result<JsValue, HostError> { self.inner.is_read_only(input) }
-    fn is_concurrency_safe(&self, input: &JsValue) -> Result<JsValue, HostError> { self.inner.is_concurrency_safe(input) }
-    fn requires_user_interaction(&self, input: &JsValue) -> Result<JsValue, HostError> { self.inner.requires_user_interaction(input) }
-    fn required_runtime_capabilities(&self) -> Option<Vec<pilotdeck_protocol::JsString>> { self.inner.required_runtime_capabilities() }
+    fn fields(&self) -> &JsObject {
+        &self.fields
+    }
+    fn is_read_only(&self, input: &JsValue) -> Result<JsValue, HostError> {
+        self.inner.is_read_only(input)
+    }
+    fn is_concurrency_safe(&self, input: &JsValue) -> Result<JsValue, HostError> {
+        self.inner.is_concurrency_safe(input)
+    }
+    fn requires_user_interaction(&self, input: &JsValue) -> Result<JsValue, HostError> {
+        self.inner.requires_user_interaction(input)
+    }
+    fn required_runtime_capabilities(&self) -> Option<Vec<pilotdeck_protocol::JsString>> {
+        self.inner.required_runtime_capabilities()
+    }
 }
 fn control() -> Arc<dyn ToolDefinition> {
     let fields=pilotdeck_protocol::parse_json(r#"{"name":"submit_step_result","title":"Submit SOP step result","description":"Submit the current StaffDeck SOP step result after all required PilotDeck tools have returned successfully.","kind":"structured_output","inputSchema":{"type":"object","properties":{"status":{"type":"string","enum":["completed","awaiting_user","handoff","failed","blocked","waiting_external_task"]},"replyFragment":{"type":"string"},"slotUpdates":{"type":"object","additionalProperties":true,"description":"Persist every known user field using the Required user information keys. Required even for awaiting_user: missing other fields must not discard fields already supplied. Use {} only when no new fields are known."},"taskSummary":{"type":"string"},"structuredResult":{},"nextStepId":{"type":"string"}},"required":["status","replyFragment","slotUpdates"],"additionalProperties":false}}"#).expect("host control schema").as_object().expect("host control schema object").clone();
@@ -65,13 +78,25 @@ impl ToolCatalog for Tools {
             let step = binding.step();
             if strings(field(&step, "requiredToolNames")).is_empty() {
                 if field(&step, "optionalKnowledge").as_object().is_some() {
-                    tools.retain(|tool| tool.fields().get("name").and_then(JsValue::as_string).is_some_and(|n|n.equals_str("knowledge_query")));
-                    tools = tools.into_iter().map(|inner| {
-                        let mut fields = inner.fields().clone();
-                        fields.insert("inputSchema".into(), super::authority::optional_schema());
-                        Arc::new(OptionalKnowledgeDescriptor { inner, fields }) as Arc<dyn ToolDefinition>
-                    }).collect();
-                } else { tools.clear(); }
+                    tools.retain(|tool| {
+                        tool.fields()
+                            .get("name")
+                            .and_then(JsValue::as_string)
+                            .is_some_and(|n| n.equals_str("knowledge_query"))
+                    });
+                    tools = tools
+                        .into_iter()
+                        .map(|inner| {
+                            let mut fields = inner.fields().clone();
+                            fields
+                                .insert("inputSchema".into(), super::authority::optional_schema());
+                            Arc::new(OptionalKnowledgeDescriptor { inner, fields })
+                                as Arc<dyn ToolDefinition>
+                        })
+                        .collect();
+                } else {
+                    tools.clear();
+                }
             }
             tools.push(control());
             Ok(tools)
@@ -127,7 +152,9 @@ impl ToolExecution for Tools {
             let mut results = vec![];
             if !ordinary.is_empty() {
                 let no_required = strings(field(&step, "requiredToolNames")).is_empty();
-                let guarded_response = field(field(&step, "node"), "type") == &JsValue::from("response") && binding.run.authority.is_some();
+                let guarded_response = field(field(&step, "node"), "type")
+                    == &JsValue::from("response")
+                    && binding.run.authority.is_some();
                 if no_required || guarded_response {
                     for call in ordinary {
                         if !call.name.equals_str("knowledge_query") && !no_required {
@@ -136,29 +163,80 @@ impl ToolExecution for Tools {
                         }
                         let check = async {
                             let projection = field(&step, "optionalKnowledge");
-                            let authority = binding.run.authority.as_ref().ok_or_else(||error("SOP_AUTHORITY_TOOL_UNAVAILABLE", "SOP_AUTHORITY_TOOL_UNAVAILABLE"))?;
-                            if !call.name.equals_str("knowledge_query") || projection.as_object().is_none() { return Err(error("SOP_AUTHORITY_TOOL_UNAVAILABLE", "SOP_AUTHORITY_TOOL_UNAVAILABLE")); }
+                            let authority = binding.run.authority.as_ref().ok_or_else(|| {
+                                error(
+                                    "SOP_AUTHORITY_TOOL_UNAVAILABLE",
+                                    "SOP_AUTHORITY_TOOL_UNAVAILABLE",
+                                )
+                            })?;
+                            if !call.name.equals_str("knowledge_query")
+                                || projection.as_object().is_none()
+                            {
+                                return Err(error(
+                                    "SOP_AUTHORITY_TOOL_UNAVAILABLE",
+                                    "SOP_AUTHORITY_TOOL_UNAVAILABLE",
+                                ));
+                            }
                             super::authority::validate_input(&call.input)?;
-                            let authority_context = field(projection,"context");
-                            let revision = field(authority_context,"expectedRevision").as_number().ok_or_else(||error("SOP_AUTHORITY_RESPONSE_INVALID", "SOP_AUTHORITY_RESPONSE_INVALID"))?;
-                            binding.run.store.authority(&binding.run.session, revision).await.map_err(store_error)?;
-                            let fresh = authority.resolve(authority_context, &binding.run.signal).await?;
-                            let context_value = super::authority::checked_execution_authority(projection, &fresh)?;
-                            binding.run.store.authority(&binding.run.session, revision).await.map_err(store_error)?;
-                            Ok::<_,HostError>(context_value)
-                        }.await;
+                            let authority_context = field(projection, "context");
+                            let revision = field(authority_context, "expectedRevision")
+                                .as_number()
+                                .ok_or_else(|| {
+                                    error(
+                                        "SOP_AUTHORITY_RESPONSE_INVALID",
+                                        "SOP_AUTHORITY_RESPONSE_INVALID",
+                                    )
+                                })?;
+                            binding
+                                .run
+                                .store
+                                .authority(&binding.run.session, revision)
+                                .await
+                                .map_err(store_error)?;
+                            let fresh = authority
+                                .resolve(authority_context, &binding.run.signal)
+                                .await?;
+                            let context_value =
+                                super::authority::checked_execution_authority(projection, &fresh)?;
+                            binding
+                                .run
+                                .store
+                                .authority(&binding.run.session, revision)
+                                .await
+                                .map_err(store_error)?;
+                            Ok::<_, HostError>(context_value)
+                        }
+                        .await;
                         match check {
                             Ok(authority) => {
-                                let scoped = ToolInvocationContext { runtime: context.runtime.clone(), execution: Arc::new(super::authority::AuthorityExecution { original:context.execution.clone(), authority }) };
+                                let scoped = ToolInvocationContext {
+                                    runtime: context.runtime.clone(),
+                                    execution: Arc::new(super::authority::AuthorityExecution {
+                                        original: context.execution.clone(),
+                                        authority,
+                                    }),
+                                };
                                 results.extend(base.execute_all(vec![call], scoped).await?);
                             }
                             Err(error) => {
-                                let code = error.module_error.as_ref().and_then(|m|m.code.as_ref()).map(|v|String::from_utf16_lossy(v.units())).unwrap_or_else(||"SOP_AUTHORITY_UNAVAILABLE".into());
-                                results.push(control_error(&call, &code, "tool_execution_failed", None));
+                                let code = error
+                                    .module_error
+                                    .as_ref()
+                                    .and_then(|m| m.code.as_ref())
+                                    .map(|v| String::from_utf16_lossy(v.units()))
+                                    .unwrap_or_else(|| "SOP_AUTHORITY_UNAVAILABLE".into());
+                                results.push(control_error(
+                                    &call,
+                                    &code,
+                                    "tool_execution_failed",
+                                    None,
+                                ));
                             }
                         }
                     }
-                } else { results = base.execute_all(ordinary, context).await?; }
+                } else {
+                    results = base.execute_all(ordinary, context).await?;
+                }
             }
             let names = results
                 .iter()

@@ -1278,9 +1278,20 @@ fn default_mode_unchanged() {
         1,
         "#1071 exact explicit opt-in branch"
     );
-    negative_assert_eq!(source.matches(INSTALLATION_OWNER).count(), 1, "exact installation owner opt-in");
     negative_assert_eq!(
-        format!("{:x}", Sha256::digest(source.replacen(OPT_IN, "", 1).replacen(INSTALLATION_OWNER, "", 1))),
+        source.matches(INSTALLATION_OWNER).count(),
+        1,
+        "exact installation owner opt-in"
+    );
+    negative_assert_eq!(
+        format!(
+            "{:x}",
+            Sha256::digest(
+                source
+                    .replacen(OPT_IN, "", 1)
+                    .replacen(INSTALLATION_OWNER, "", 1)
+            )
+        ),
         "02613cf4a756f4e9cfdb59c5356961798244feb209bf53a5485491c8b7dd4622",
         "#749 A4 executable remains unchanged"
     );

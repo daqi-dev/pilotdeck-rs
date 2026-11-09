@@ -8,32 +8,32 @@
 // Wire-shape and generic embedding entry points remain available to contract
 // tests even where the native CLI uses the richer factory.
 #![allow(dead_code)]
-mod chat_tool;
 mod chat_digest;
+mod chat_tool;
 mod phase_runner;
-mod workspace_tool;
-mod workspace_phase;
 mod phase_tools;
 mod tools;
+mod workspace_phase;
+mod workspace_tool;
 pub(crate) use tools::register_tools;
-pub(crate) mod event_sink;
 pub(crate) mod apply;
-pub(crate) mod standalone;
 mod control;
-mod report_tool;
-mod report_contract;
-mod plan_tool;
-mod plan_contract;
 mod cycles;
+pub(crate) mod event_sink;
 mod fire;
 mod gates;
 mod leases;
 mod manager;
 mod paths;
+mod plan_contract;
+mod plan_tool;
+mod report_contract;
+mod report_tool;
 mod reports;
-pub(crate) mod storage;
 mod scheduler;
+pub(crate) mod standalone;
 mod state;
+pub(crate) mod storage;
 mod watcher;
 mod workspace;
 mod workspace_copy;
@@ -42,15 +42,14 @@ pub(crate) use workspace::{NativeWorkspace, WorkspaceError, WorkspaceHandle};
 pub(crate) use control::{AlwaysOnControl, StandaloneApply, create_control};
 pub(crate) use cycles::{DiscoveryPlanRecord, DiscoveryPlanStore, WorkCycleRecord, WorkCycleStore};
 pub(crate) use fire::{
-    DiscoveryFirePort, acquire_discovery_lock, derive_execution_session_key, derive_report_session_key,
-    derive_workspace_session_key, release_discovery_lock,
+    DiscoveryFirePort, acquire_discovery_lock, derive_execution_session_key,
+    derive_report_session_key, derive_workspace_session_key, release_discovery_lock,
 };
 pub(crate) use gates::{GateBlockReason, GateInput, evaluate_always_on_discovery_gates};
 pub(crate) use leases::{ChannelLease, ChannelLeaseRegistry};
 pub(crate) use manager::{
-    AlwaysOnAgentGateway, AlwaysOnManagerOptions, ControlError,
-    GatewayAbortInput, PhaseRequest, PhaseResult, PhaseCompletion, FireInputs, FireFactory,
-    AlwaysOnRunContextRegistry,
+    AlwaysOnAgentGateway, AlwaysOnManagerOptions, AlwaysOnRunContextRegistry, ControlError,
+    FireFactory, FireInputs, GatewayAbortInput, PhaseCompletion, PhaseRequest, PhaseResult,
 };
 // The one face that crosses the crate boundary: `native_process::requests`
 // carries it in a public field (`Requests::always_on`), the same `pub`
@@ -58,9 +57,9 @@ pub(crate) use manager::{
 // `pub(crate)`.
 pub use manager::AlwaysOnManager;
 pub(crate) use paths::{AlwaysOnPaths, resolve_always_on_paths};
+pub(crate) use reports::DiscoveryReportStore;
 pub(crate) use scheduler::{DiscoveryScheduler, SchedulerDeps};
 pub(crate) use state::DiscoveryStateStore;
-pub(crate) use reports::DiscoveryReportStore;
 pub(crate) use watcher::{SignalWatcher, SignalWatcherOptions};
 
 use std::sync::Arc;

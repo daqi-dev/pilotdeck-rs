@@ -274,8 +274,11 @@ async fn native_declaration_budget_failure_keeps_generation_and_old_contribution
 
 fn declaration_options(root: &Path) -> PluginRuntimeOptions {
     PluginRuntimeOptions {
-        project_root: root.join("project"), pilot_home: root.join("home"),
-        builtin_skills_root: None, builtin_plugins: vec![], builtin_plugins_enabled: Default::default(),
+        project_root: root.join("project"),
+        pilot_home: root.join("home"),
+        builtin_skills_root: None,
+        builtin_plugins: vec![],
+        builtin_plugins_enabled: Default::default(),
     }
 }
 
@@ -288,13 +291,29 @@ fn native_manifest_stage_charges_once_at_the_real_value_boundary() {
     // One directory entry + root object + name value + ignored array + N
     // scalar values. 9996 is exactly10000; the old double read rejected it.
     for (n, accepted) in [(9996, true), (9997, false)] {
-        let raw = format!("{{\"name\":\"p\",\"ignored\":[{}]}}", vec!["0"; n].join(","));
+        let raw = format!(
+            "{{\"name\":\"p\",\"ignored\":[{}]}}",
+            vec!["0"; n].join(",")
+        );
         fs::write(plugin.join("plugin.json"), raw).unwrap();
         let result = stage_native_style_plugins(&options);
         if accepted {
-            assert_eq!(result.expect("native manifest charged once at exact value boundary").plugins.len(), 1);
+            assert_eq!(
+                result
+                    .expect("native manifest charged once at exact value boundary")
+                    .plugins
+                    .len(),
+                1
+            );
         } else {
-            assert_eq!(result.err().expect("native manifest over value boundary rejects before projection").code, Some("STYLE_RELOAD_LIMIT"), "native manifest over value boundary rejects before projection");
+            assert_eq!(
+                result
+                    .err()
+                    .expect("native manifest over value boundary rejects before projection")
+                    .code,
+                Some("STYLE_RELOAD_LIMIT"),
+                "native manifest over value boundary rejects before projection"
+            );
         }
     }
 }
@@ -312,63 +331,153 @@ fn native_manifest_byte_boundary_is_single_read_and_bounded() {
     file.write_all(prefix).unwrap();
     let mut left = 64 * 1024 * 1024 - prefix.len();
     let spaces = [b' '; 8192];
-    while left > 0 { let n = left.min(spaces.len()); file.write_all(&spaces[..n]).unwrap(); left -= n; }
+    while left > 0 {
+        let n = left.min(spaces.len());
+        file.write_all(&spaces[..n]).unwrap();
+        left -= n;
+    }
     drop(file);
-    assert_eq!(stage_native_style_plugins(&options).expect("native manifest exact byte boundary is accepted once").plugins.len(), 1);
-    fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(b" ").unwrap();
-    assert_eq!(stage_native_style_plugins(&options).err().expect("native manifest cap plus one must reject").code, Some("STYLE_RELOAD_LIMIT"), "native manifest cap plus one must reject");
+    assert_eq!(
+        stage_native_style_plugins(&options)
+            .expect("native manifest exact byte boundary is accepted once")
+            .plugins
+            .len(),
+        1
+    );
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(b" ")
+        .unwrap();
+    assert_eq!(
+        stage_native_style_plugins(&options)
+            .err()
+            .expect("native manifest cap plus one must reject")
+            .code,
+        Some("STYLE_RELOAD_LIMIT"),
+        "native manifest cap plus one must reject"
+    );
 }
 
 #[test]
 fn native_manifest_token_preflight_counts_values_before_materialization() {
-    for (raw, entries) in [(r#"{"key":"value","nested":[true,false,null,1]}"#, 7),
-                           (r#"{"same":1,"same":2}"#, 3),
-                           (r#"{"escaped\"key":"a\\\"b"}"#, 2)] {
-        let mut budget = StyleBudget { remaining_bytes: 0, remaining_entries: entries };
+    for (raw, entries) in [
+        (r#"{"key":"value","nested":[true,false,null,1]}"#, 7),
+        (r#"{"same":1,"same":2}"#, 3),
+        (r#"{"escaped\"key":"a\\\"b"}"#, 2),
+    ] {
+        let mut budget = StyleBudget {
+            remaining_bytes: 0,
+            remaining_entries: entries,
+        };
         check_manifest_tokens(raw, &mut budget).unwrap();
-        assert_eq!(budget.remaining_entries, 0, "native manifest token count includes values, not object keys");
-        let mut below = StyleBudget { remaining_bytes: 0, remaining_entries: entries - 1 };
-        assert_eq!(check_manifest_tokens(raw, &mut below).unwrap_err().code, Some("STYLE_RELOAD_LIMIT"));
+        assert_eq!(
+            budget.remaining_entries, 0,
+            "native manifest token count includes values, not object keys"
+        );
+        let mut below = StyleBudget {
+            remaining_bytes: 0,
+            remaining_entries: entries - 1,
+        };
+        assert_eq!(
+            check_manifest_tokens(raw, &mut below).unwrap_err().code,
+            Some("STYLE_RELOAD_LIMIT")
+        );
     }
 }
 
 #[tokio::test]
 async fn native_ordinary_loader_failures_follow_real_ts_staging() {
-    use std::os::unix::fs::PermissionsExt;
     use crate::runtime::plugins::PluginRuntime;
+    use std::os::unix::fs::PermissionsExt;
     struct Restore(PathBuf, fs::Permissions);
-    impl Drop for Restore { fn drop(&mut self) { let _ = fs::set_permissions(&self.0, self.1.clone()); } }
-    for id in ["empty-root", "missing-manifest", "manifest-directory", "broken-root-link", "root-link-loop", "hook-directory", "hook-empty-path", "hook-chmod000", "manifest-chmod000", "discovery-chmod000"] {
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let _ = fs::set_permissions(&self.0, self.1.clone());
+        }
+    }
+    for id in [
+        "empty-root",
+        "missing-manifest",
+        "manifest-directory",
+        "broken-root-link",
+        "root-link-loop",
+        "hook-directory",
+        "hook-empty-path",
+        "hook-chmod000",
+        "manifest-chmod000",
+        "discovery-chmod000",
+    ] {
         let scratch = Scratch::new();
         let options = declaration_options(&scratch.0);
         let dir = options.project_root.join(".pilotdeck/plugins");
         let plugin = dir.join("p");
         fs::create_dir_all(&dir).unwrap();
         let mut restore = None;
-        if id == "broken-root-link" { std::os::unix::fs::symlink("missing", &plugin).unwrap(); }
-        else if id == "root-link-loop" { std::os::unix::fs::symlink("p", &plugin).unwrap(); }
-        else if id != "empty-root" {
+        if id == "broken-root-link" {
+            std::os::unix::fs::symlink("missing", &plugin).unwrap();
+        } else if id == "root-link-loop" {
+            std::os::unix::fs::symlink("p", &plugin).unwrap();
+        } else if id != "empty-root" {
             fs::create_dir_all(&plugin).unwrap();
-            if id == "manifest-directory" { fs::create_dir(plugin.join("plugin.json")).unwrap(); }
-            else if id != "missing-manifest" {
-                let raw = match id { "hook-directory" => r#"{"name":"p","hooks":"hook-dir"}"#, "hook-empty-path" => r#"{"name":"p","hooks":""}"#, "hook-chmod000" => r#"{"name":"p","hooks":"hooks.json"}"#, _ => r#"{"name":"p"}"# };
+            if id == "manifest-directory" {
+                fs::create_dir(plugin.join("plugin.json")).unwrap();
+            } else if id != "missing-manifest" {
+                let raw = match id {
+                    "hook-directory" => r#"{"name":"p","hooks":"hook-dir"}"#,
+                    "hook-empty-path" => r#"{"name":"p","hooks":""}"#,
+                    "hook-chmod000" => r#"{"name":"p","hooks":"hooks.json"}"#,
+                    _ => r#"{"name":"p"}"#,
+                };
                 fs::write(plugin.join("plugin.json"), raw).unwrap();
                 let mode_path = match id {
-                    "hook-directory" => { fs::create_dir(plugin.join("hook-dir")).unwrap(); None }
-                    "hook-chmod000" => { let file = plugin.join("hooks.json"); fs::write(&file, r#"{"PreToolUse":[]}"#).unwrap(); Some(file) }
+                    "hook-directory" => {
+                        fs::create_dir(plugin.join("hook-dir")).unwrap();
+                        None
+                    }
+                    "hook-chmod000" => {
+                        let file = plugin.join("hooks.json");
+                        fs::write(&file, r#"{"PreToolUse":[]}"#).unwrap();
+                        Some(file)
+                    }
                     "manifest-chmod000" => Some(plugin.join("plugin.json")),
-                    "discovery-chmod000" => Some(dir.clone()), _ => None,
+                    "discovery-chmod000" => Some(dir.clone()),
+                    _ => None,
                 };
-                if let Some(path) = mode_path { let original = fs::metadata(&path).unwrap().permissions(); restore = Some(Restore(path.clone(), original)); fs::set_permissions(path, fs::Permissions::from_mode(0o0)).unwrap(); }
+                if let Some(path) = mode_path {
+                    let original = fs::metadata(&path).unwrap().permissions();
+                    restore = Some(Restore(path.clone(), original));
+                    fs::set_permissions(path, fs::Permissions::from_mode(0o0)).unwrap();
+                }
             }
         }
         let runtime = PluginRuntime::new_native_style_only(options);
-        let report = runtime.refresh_with_report().await.unwrap_or_else(|e| panic!("native ordinary staging {id}: {e}"));
+        let report = runtime
+            .refresh_with_report()
+            .await
+            .unwrap_or_else(|e| panic!("native ordinary staging {id}: {e}"));
         let loaded = usize::from(id.starts_with("hook-"));
-        let failed = usize::from(matches!(id, "missing-manifest" | "manifest-directory" | "manifest-chmod000"));
-        assert_eq!(report.next.len(), loaded, "native ordinary staging {id}: loaded");
-        assert_eq!(report.staged_failures.len(), failed, "native ordinary staging {id}: failures");
-        if loaded > 0 { assert!(report.next[0].hooks_config.is_none(), "native ordinary hook error yields no hooks"); }
+        let failed = usize::from(matches!(
+            id,
+            "missing-manifest" | "manifest-directory" | "manifest-chmod000"
+        ));
+        assert_eq!(
+            report.next.len(),
+            loaded,
+            "native ordinary staging {id}: loaded"
+        );
+        assert_eq!(
+            report.staged_failures.len(),
+            failed,
+            "native ordinary staging {id}: failures"
+        );
+        if loaded > 0 {
+            assert!(
+                report.next[0].hooks_config.is_none(),
+                "native ordinary hook error yields no hooks"
+            );
+        }
         drop(restore);
         runtime.dispose().await.unwrap();
     }
@@ -386,8 +495,15 @@ async fn native_manifest_missing_after_load_keeps_the_real_ts_previous_generatio
     runtime.refresh().await.unwrap();
     fs::remove_file(plugin.join("plugin.json")).unwrap();
     let report = runtime.refresh_with_report().await.unwrap();
-    assert_eq!(report.generation, 1, "native failed existing manifest retains generation");
-    assert_eq!(report.next.len(), 1, "native failed existing manifest retains plugin");
+    assert_eq!(
+        report.generation, 1,
+        "native failed existing manifest retains generation"
+    );
+    assert_eq!(
+        report.next.len(),
+        1,
+        "native failed existing manifest retains plugin"
+    );
     assert_eq!(report.staged_failures.len(), 1);
     runtime.dispose().await.unwrap();
 }
@@ -398,16 +514,36 @@ fn native_hook_value_budget_applies_before_json_materialization() {
     let options = declaration_options(&scratch.0);
     let plugin = options.project_root.join(".pilotdeck/plugins/p");
     fs::create_dir_all(&plugin).unwrap();
-    fs::write(plugin.join("plugin.json"), r#"{"name":"p","hooks":"hooks.json"}"#).unwrap();
+    fs::write(
+        plugin.join("plugin.json"),
+        r#"{"name":"p","hooks":"hooks.json"}"#,
+    )
+    .unwrap();
     // Directory entry + manifest object/name/hooks + hook object/array = 6.
     for (n, accepted) in [(9994, true), (9995, false)] {
-        fs::write(plugin.join("hooks.json"), format!("{{\"ignored\":[{}]}}", vec!["0"; n].join(","))).unwrap();
+        fs::write(
+            plugin.join("hooks.json"),
+            format!("{{\"ignored\":[{}]}}", vec!["0"; n].join(",")),
+        )
+        .unwrap();
         let result = stage_native_style_plugins(&options);
         if accepted {
-            assert_eq!(result.expect("native hook exact value boundary is accepted").plugins.len(), 1);
+            assert_eq!(
+                result
+                    .expect("native hook exact value boundary is accepted")
+                    .plugins
+                    .len(),
+                1
+            );
         } else {
-            assert_eq!(result.err().expect("native hook value budget rejects before projection").code,
-                Some("STYLE_RELOAD_LIMIT"), "native hook value budget rejects before projection");
+            assert_eq!(
+                result
+                    .err()
+                    .expect("native hook value budget rejects before projection")
+                    .code,
+                Some("STYLE_RELOAD_LIMIT"),
+                "native hook value budget rejects before projection"
+            );
         }
     }
 }

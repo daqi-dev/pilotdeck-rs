@@ -189,7 +189,8 @@ async fn session_grant_updates_the_same_registry_handle_used_by_execution() {
             let _ = std::fs::remove_dir_all(&self.0);
         }
     }
-    let fixture = Fixture(std::env::temp_dir().join(format!("pdrs-session-grant-{}", uuid::Uuid::new_v4())));
+    let fixture =
+        Fixture(std::env::temp_dir().join(format!("pdrs-session-grant-{}", uuid::Uuid::new_v4())));
     std::fs::create_dir(&fixture.0).unwrap();
     std::fs::write(fixture.0.join("a"), b"session grant fixture\n").unwrap();
     let registry =

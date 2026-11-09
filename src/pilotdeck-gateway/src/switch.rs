@@ -434,7 +434,9 @@ pub fn cron_management_closed(manager: Option<&Arc<CronManager>>) -> bool {
     match manager {
         None => false,
         Some(manager) => {
-            let mut closed = CRON_MANAGEMENT_CLOSED.lock().unwrap_or_else(|e| e.into_inner());
+            let mut closed = CRON_MANAGEMENT_CLOSED
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             closed.retain(|entry| entry.strong_count() != 0);
             let identity = Arc::downgrade(manager);
             closed.iter().any(|entry| Weak::ptr_eq(entry, &identity))

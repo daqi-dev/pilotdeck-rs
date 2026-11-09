@@ -248,7 +248,7 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             // that no longer exists. A case that genuinely needs the
             // unconnected state builds it explicitly.
             dialog_recovery: None,
-        sop: None,
+            sop: None,
             user_dialog_bus: Arc::new(std::sync::Mutex::new(
                 crate::user_dialog::GatewayUserDialogBus::connected(
                     crate::user_dialog::DialogRuntime::default(),
@@ -257,11 +257,11 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
             prepare_weixin_login: None,
             cron: None,
-        automation: None,
+            automation: None,
             settings: requests::Requests::stub_settings(&owner),
             session_overrides: Arc::default(),
             clear_sdk_state: None,
-        ephemeral: None,
+            ephemeral: None,
         }
     })
 }
@@ -2497,7 +2497,11 @@ async fn snapshot_restore_uses_registered_target_project_without_touching_its_fi
     let (scratch, requests) = setup();
     let oracle: Value = serde_json::from_str(ORACLE).unwrap();
     let fixture = &oracle["snapshotSuccess"];
-    seed_files(&requests.options.home.join("storage"), &fixture["storageFiles"], &scratch.0);
+    seed_files(
+        &requests.options.home.join("storage"),
+        &fixture["storageFiles"],
+        &scratch.0,
+    );
     let target = scratch.0.join("target-B");
     std::fs::create_dir_all(&target).unwrap();
     std::fs::write(target.join("keep.txt"), "B original").unwrap();
@@ -2506,13 +2510,34 @@ async fn snapshot_restore_uses_registered_target_project_without_touching_its_fi
     std::fs::write(marker.join(".cwd"), target.to_str().unwrap()).unwrap();
     let mut params = fixture["restore"]["params"].clone();
     params["targetProjectKey"] = json!(target);
-    let restored = requests.request("snapshot_restore".into(), expand(&params, &scratch.0)).await.unwrap();
-    let path = PathBuf::from(restored.get("workspaceKey").unwrap().as_string().unwrap().to_utf8().unwrap());
-    negative_assert_eq!(path.parent(), Some(target.as_path()), "native snapshot restores to selected target project");
+    let restored = requests
+        .request("snapshot_restore".into(), expand(&params, &scratch.0))
+        .await
+        .unwrap();
+    let path = PathBuf::from(
+        restored
+            .get("workspaceKey")
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .to_utf8()
+            .unwrap(),
+    );
+    negative_assert_eq!(
+        path.parent(),
+        Some(target.as_path()),
+        "native snapshot restores to selected target project"
+    );
     assert_eq!(file_tree(&path), fixture["restore"]["files"]);
-    assert_eq!(std::fs::read_to_string(target.join("keep.txt")).unwrap(), "B original");
+    assert_eq!(
+        std::fs::read_to_string(target.join("keep.txt")).unwrap(),
+        "B original"
+    );
     params["targetProjectKey"] = json!(scratch.0.join("unregistered"));
-    let error = requests.request("snapshot_restore".into(), expand(&params, &scratch.0)).await.unwrap_err();
+    let error = requests
+        .request("snapshot_restore".into(), expand(&params, &scratch.0))
+        .await
+        .unwrap_err();
     assert_eq!(error.code, "PROJECT_NOT_FOUND");
 
     // A raw surrogate is a different catalog identity from U+FFFD, even if
@@ -2521,12 +2546,19 @@ async fn snapshot_restore_uses_registered_target_project_without_touching_its_fi
     std::fs::create_dir(&replacement).unwrap();
     let replacement_marker = requests.options.home.join("projects/replacement-target");
     std::fs::create_dir(&replacement_marker).unwrap();
-    std::fs::write(replacement_marker.join(".cwd"), replacement.to_str().unwrap()).unwrap();
+    std::fs::write(
+        replacement_marker.join(".cwd"),
+        replacement.to_str().unwrap(),
+    )
+    .unwrap();
     let mut raw = expand(&fixture["restore"]["params"], &scratch.0);
     let mut units: Vec<u16> = format!("{}/", target.display()).encode_utf16().collect();
     units.push(0xd800);
     if let JsValue::Object(fields) = &mut raw {
-        fields.insert("targetProjectKey".into(), JsValue::String(JsString::from_utf16(units)));
+        fields.insert(
+            "targetProjectKey".into(),
+            JsValue::String(JsString::from_utf16(units)),
+        );
     }
     let result = requests.request("snapshot_restore".into(), raw).await;
     negative_assert!(result.is_err(), "#1231 surrogate restore target admission");

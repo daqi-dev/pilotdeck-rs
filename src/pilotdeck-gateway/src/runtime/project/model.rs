@@ -47,12 +47,18 @@ impl ResourceFamilySource for NativeModelFamilySource {
     }
     fn stage(&self, context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
         let snapshot = context.snapshot();
-        let proxy = snapshot.get("config").and_then(|config| config.get("proxy"))
+        let proxy = snapshot
+            .get("config")
+            .and_then(|config| config.get("proxy"))
             .and_then(crate::runtime::model::http::ProxySettings::from_config);
         ModelFamilySource {
-            transport: Arc::new(HyperModelTransport::with_proxy_settings(proxy.as_ref(), &self.env)),
+            transport: Arc::new(HyperModelTransport::with_proxy_settings(
+                proxy.as_ref(),
+                &self.env,
+            )),
             providers: None,
-        }.stage(context, sink)
+        }
+        .stage(context, sink)
     }
 }
 pub struct ModelResources {

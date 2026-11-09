@@ -616,6 +616,9 @@ fn closed_cron_gate_does_not_retain_manager_or_close_another_manager() {
     assert!(crate::switch::cron_management_closed(Some(&manager)));
     assert!(!crate::switch::cron_management_closed(Some(&other)));
     drop(manager);
-    assert!(weak.upgrade().is_none(), "closed gate must not keep the gateway alive");
+    assert!(
+        weak.upgrade().is_none(),
+        "closed gate must not keep the gateway alive"
+    );
     assert!(!crate::switch::cron_management_closed(Some(&other)));
 }

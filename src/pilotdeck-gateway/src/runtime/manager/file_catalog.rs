@@ -66,18 +66,28 @@ struct SessionLite {
 
 /// Read TS's head/tail window from the same already-open descriptor.
 /// Each window is capped independently; a short file intentionally appears twice.
-pub(crate) fn read_lite_chunks<R: Read + Seek>(reader: &mut R, size: u64) -> io::Result<Option<(String, String)>> {
-    if size == 0 { return Ok(None); }
+pub(crate) fn read_lite_chunks<R: Read + Seek>(
+    reader: &mut R,
+    size: u64,
+) -> io::Result<Option<(String, String)>> {
+    if size == 0 {
+        return Ok(None);
+    }
     let mut head = vec![0; size.min(SESSION_LITE_READ_BYTES) as usize];
     reader.read_exact(&mut head)?;
     let offset = size.saturating_sub(SESSION_LITE_READ_BYTES);
-    let tail = if offset == 0 { head.clone() } else {
+    let tail = if offset == 0 {
+        head.clone()
+    } else {
         reader.seek(SeekFrom::Start(offset))?;
         let mut bytes = vec![0; (size - offset) as usize];
         reader.read_exact(&mut bytes)?;
         bytes
     };
-    Ok(Some((String::from_utf8_lossy(&head).into_owned(), String::from_utf8_lossy(&tail).into_owned())))
+    Ok(Some((
+        String::from_utf8_lossy(&head).into_owned(),
+        String::from_utf8_lossy(&tail).into_owned(),
+    )))
 }
 
 /// `readSessionLite`: any stat/read failure or an empty file yields `None`.
@@ -92,7 +102,12 @@ fn read_session_lite(path: &Path) -> Option<SessionLite> {
     let mtime = system_time_ms(metadata.modified().ok()?);
     let mut file = File::open(path).ok()?;
     let (head, tail) = read_lite_chunks(&mut file, size).ok()??;
-    Some(SessionLite { mtime, size, head, tail })
+    Some(SessionLite {
+        mtime,
+        size,
+        head,
+        tail,
+    })
 }
 
 /// Node `Stats.mtime.getTime()`: `mtimeMs` is `sec*1000 + nsec/1e6` in a
@@ -272,7 +287,9 @@ fn read_session_info_from_fd(
     project_root: &Path,
 ) -> Result<Option<JsValue>, JsString> {
     let size = metadata.len();
-    let Some((head, tail)) = read_lite_chunks(file, size).ok().flatten() else { return Ok(None); };
+    let Some((head, tail)) = read_lite_chunks(file, size).ok().flatten() else {
+        return Ok(None);
+    };
     let lite = SessionLite {
         mtime: metadata.modified().ok().map(system_time_ms).unwrap_or(0.0),
         size,

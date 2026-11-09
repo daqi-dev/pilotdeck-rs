@@ -90,7 +90,10 @@ async fn changed(rx: &mut watch::Receiver<bool>) {
         .expect("barrier sender alive");
 }
 fn cleanup_ticket_still_owned(ticket: &watch::Receiver<bool>) {
-    assert!(!*ticket.borrow(), "actual cleanup publication ticket released at the barrier");
+    assert!(
+        !*ticket.borrow(),
+        "actual cleanup publication ticket released at the barrier"
+    );
 }
 #[tokio::test]
 async fn close_then_retains_ticket_before_root_removal_with_absent_owner_and_cancelled_waiter() {
@@ -268,11 +271,13 @@ async fn plain_close_receives_eviction_success_while_sdk_cleanup_fails_independe
     let key: JsString = "close-independent".into();
     let (entered, mut inside) = watch::channel(false);
     let (release, mut gate) = watch::channel(false);
-    let cleanup = owner.close_then(&key, move || Box::pin(async move {
-        entered.send_replace(true);
-        gate.wait_for(|value| *value).await.unwrap();
-        Err(RuntimeError::new("SDK-CLEANUP-FAILED"))
-    }));
+    let cleanup = owner.close_then(&key, move || {
+        Box::pin(async move {
+            entered.send_replace(true);
+            gate.wait_for(|value| *value).await.unwrap();
+            Err(RuntimeError::new("SDK-CLEANUP-FAILED"))
+        })
+    });
     changed(&mut inside).await;
     let ticket = owner.publication_ticket_probe(&key);
     assert!(!*ticket.borrow());
@@ -281,7 +286,11 @@ async fn plain_close_receives_eviction_success_while_sdk_cleanup_fails_independe
     let closed = tokio::time::timeout(Duration::from_secs(2), owner.close(&key)).await;
     release.send_replace(true);
     let cleaned = cleanup.await;
-    assert!(closed.expect("ordinary close waited for SDK callback").is_ok());
+    assert!(
+        closed
+            .expect("ordinary close waited for SDK callback")
+            .is_ok()
+    );
     assert_eq!(cleaned.unwrap_err().to_string(), "SDK-CLEANUP-FAILED");
     assert!(*ticket.borrow());
     owner.shutdown().await.unwrap();
@@ -293,8 +302,12 @@ struct EvictionFailure {
     release: watch::Receiver<bool>,
 }
 impl LiveSession for EvictionFailure {
-    fn snapshot(&self) -> JsValue { object([("messages", JsValue::Array(vec![]))]) }
-    fn abort(&self, _: &JsString) -> RuntimeResult { Ok(()) }
+    fn snapshot(&self) -> JsValue {
+        object([("messages", JsValue::Array(vec![]))])
+    }
+    fn abort(&self, _: &JsString) -> RuntimeResult {
+        Ok(())
+    }
     fn dispose(&self) -> DisposeFuture<'_> {
         let entered = self.entered.clone();
         let mut release = self.release.clone();
@@ -307,8 +320,11 @@ impl LiveSession for EvictionFailure {
 }
 struct EvictionFactory(Arc<EvictionFailure>);
 impl SessionFactory for EvictionFactory {
-    fn create(&self, _: SessionContext, _: Option<LiveSessionHandle>)
-        -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
+    fn create(
+        &self,
+        _: SessionContext,
+        _: Option<LiveSessionHandle>,
+    ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
         let session = self.0.clone();
         Box::pin(async move { Ok(LiveSessionHandle::new(session, None)) })
     }
@@ -323,13 +339,18 @@ async fn sdk_delete_waits_for_failed_inflight_close_and_preserves_temporary_root
     std::fs::write(root.path().join("keep"), b"WRITER-NOT-QUIESCENT").unwrap();
     let (entered, mut inside) = watch::channel(false);
     let (release, gate) = watch::channel(false);
-    let mut options = SessionOwnerOptions::new(Arc::new(EvictionFactory(Arc::new(
-        EvictionFailure { entered, release: gate },
-    ))));
+    let mut options =
+        SessionOwnerOptions::new(Arc::new(EvictionFactory(Arc::new(EvictionFailure {
+            entered,
+            release: gate,
+        }))));
     options.idle_sweep_interval_ms = 0;
     let owner = SessionOwner::new(options);
     let project: JsString = requests.options.project.to_string_lossy().as_ref().into();
-    let handle = owner.get_or_create(context(&key, Some(project))).await.unwrap();
+    let handle = owner
+        .get_or_create(context(&key, Some(project)))
+        .await
+        .unwrap();
     drop(handle);
     requests.owner = owner.clone();
     requests.ephemeral = Some(roots.clone());
@@ -340,15 +361,21 @@ async fn sdk_delete_waits_for_failed_inflight_close_and_preserves_temporary_root
     let cloned = requests.clone();
     let delete_key = key.clone();
     let deletion = tokio::spawn(async move {
-        cloned.session_delete(&object([("sessionKey", JsValue::String(delete_key))])).await
+        cloned
+            .session_delete(&object([("sessionKey", JsValue::String(delete_key))]))
+            .await
     });
     // The original eviction is blocked. Release it with its real error;
     // deletion must propagate that error, never run root removal afterward.
     let registered = tokio::time::timeout(Duration::from_secs(2), async {
-        while owner.publication_ticket_probe(&key).same_channel(&original_ticket) {
+        while owner
+            .publication_ticket_probe(&key)
+            .same_channel(&original_ticket)
+        {
             tokio::task::yield_now().await;
         }
-    }).await;
+    })
+    .await;
     release.send_replace(true);
     let closed = closing.await;
     let deleted = deletion.await.unwrap();
@@ -356,22 +383,40 @@ async fn sdk_delete_waits_for_failed_inflight_close_and_preserves_temporary_root
     let stopped = owner.shutdown().await;
     let cleaned = roots.close().await;
     let disposed = requests.project.dispose().await;
-    assert!(registered.is_ok(), "actual delete reserved its ticket behind the blocked eviction");
+    assert!(
+        registered.is_ok(),
+        "actual delete reserved its ticket behind the blocked eviction"
+    );
     let closed = closed.expect_err("blocked real eviction must fail");
     // LiveSessionHandle intentionally preserves the two lifecycle aggregates;
     // Display prints only the outer message. Inspect the structured source,
     // then require delete to transmit that exact public close message.
-    assert_eq!(closed.message, "Failed to dispose agent handle.", "{closed:?}");
+    assert_eq!(
+        closed.message, "Failed to dispose agent handle.",
+        "{closed:?}"
+    );
     assert_eq!(closed.causes.len(), 1, "{closed:?}");
-    assert_eq!(closed.causes[0].message, "Failed to dispose agent session.", "{closed:?}");
+    assert_eq!(
+        closed.causes[0].message, "Failed to dispose agent session.",
+        "{closed:?}"
+    );
     assert_eq!(closed.causes[0].causes.len(), 1, "{closed:?}");
-    assert_eq!(closed.causes[0].causes[0].message, "EVICTION-FAILED", "{closed:?}");
+    assert_eq!(
+        closed.causes[0].causes[0].message, "EVICTION-FAILED",
+        "{closed:?}"
+    );
     assert!(closed.causes[0].causes[0].causes.is_empty(), "{closed:?}");
     let deleted = deleted.expect_err("delete must transmit the blocked eviction failure");
     assert_eq!(deleted.code, "gateway_request_failed");
-    assert_eq!(deleted.message, JsString::from(closed.message.as_str()), "{deleted:?}");
+    assert_eq!(
+        deleted.message,
+        JsString::from(closed.message.as_str()),
+        "{deleted:?}"
+    );
     assert_eq!(preserved.unwrap(), b"WRITER-NOT-QUIESCENT");
-    stopped.unwrap(); cleaned.unwrap(); disposed.unwrap();
+    stopped.unwrap();
+    cleaned.unwrap();
+    disposed.unwrap();
 }
 
 #[tokio::test]
@@ -380,7 +425,12 @@ async fn repeated_sdk_deletes_and_clear_failure_retry_preserve_durable_namesake(
     for clear_fails in [false, true] {
         let (_scratch, mut requests) = crate::native_process::management_tests::setup();
         let key: JsString = "duplicate-delete".into();
-        let (chat, permit) = resolve_chat_dir(requests.options.home.clone(), requests.options.project.clone()).await.unwrap();
+        let (chat, permit) = resolve_chat_dir(
+            requests.options.home.clone(),
+            requests.options.project.clone(),
+        )
+        .await
+        .unwrap();
         std::fs::create_dir_all(&chat).unwrap();
         let durable = chat.join("duplicate-delete.jsonl");
         let recorder = crate::storage::recorder::Recorder::new(
@@ -388,10 +438,13 @@ async fn repeated_sdk_deletes_and_clear_failure_retry_preserve_durable_namesake(
             crate::storage::TranscriptKey {
                 project_root: requests.options.project.clone(),
                 pilot_home: requests.options.home.clone(),
-                session_id: key.clone(), transcript_path: durable.clone(),
+                session_id: key.clone(),
+                transcript_path: durable.clone(),
             },
         );
-        recorder.start_turn(&key, &"durable-namesake".into()).unwrap();
+        recorder
+            .start_turn(&key, &"durable-namesake".into())
+            .unwrap();
         drop(recorder);
         let durable_bytes = std::fs::read(&durable).unwrap();
         drop(permit);
@@ -403,7 +456,11 @@ async fn repeated_sdk_deletes_and_clear_failure_retry_preserve_durable_namesake(
         requests.clear_sdk_state = Some(Arc::new(move |_| {
             let first = calls.fetch_add(1, Ordering::SeqCst) == 0;
             Box::pin(async move {
-                if clear_fails && first { Err(RequestError::new("CLEAR-FAILURE")) } else { Ok(()) }
+                if clear_fails && first {
+                    Err(RequestError::new("CLEAR-FAILURE"))
+                } else {
+                    Ok(())
+                }
             })
         }));
         let params = object([("sessionKey", JsValue::String(key.clone()))]);
@@ -416,16 +473,35 @@ async fn repeated_sdk_deletes_and_clear_failure_retry_preserve_durable_namesake(
         assert_eq!(std::fs::read(&durable).unwrap(), durable_bytes);
         // A genuinely opened new durable recording clears only this prior
         // temporary identity. Repeating delete cannot mask it forever.
-        let lease = Arc::new(requests.project.acquire(Some(&requests.options.project)).unwrap());
-        let storage = roots.durable_storage(crate::native_process::project_storage::for_generation(requests.options.home.clone(), lease));
-        let result = storage(context(&key, Some(requests.options.project.to_string_lossy().as_ref().into()))).await.unwrap();
-        let crate::runtime::session::factory::SessionStorage::Recording(plan) = result else { panic!("real durable recording plan") };
+        let lease = Arc::new(
+            requests
+                .project
+                .acquire(Some(&requests.options.project))
+                .unwrap(),
+        );
+        let storage =
+            roots.durable_storage(crate::native_process::project_storage::for_generation(
+                requests.options.home.clone(),
+                lease,
+            ));
+        let result = storage(context(
+            &key,
+            Some(requests.options.project.to_string_lossy().as_ref().into()),
+        ))
+        .await
+        .unwrap();
+        let crate::runtime::session::factory::SessionStorage::Recording(plan) = result else {
+            panic!("real durable recording plan")
+        };
         let opened = (plan.open)().unwrap();
         drop(opened);
         drop(plan);
         drop(storage);
         requests.session_delete(&params).await.unwrap();
-        assert!(!durable.exists(), "explicit new durable admission must retire the temporary tombstone");
+        assert!(
+            !durable.exists(),
+            "explicit new durable admission must retire the temporary tombstone"
+        );
         roots.close().await.unwrap();
         requests.owner.shutdown().await.unwrap();
         requests.project.dispose().await.unwrap();
@@ -437,7 +513,12 @@ async fn concurrent_sdk_deletes_are_idempotent_and_do_not_remove_durable_namesak
     use std::sync::atomic::{AtomicUsize, Ordering};
     let (_scratch, mut requests) = crate::native_process::management_tests::setup();
     let key: JsString = "concurrent-delete".into();
-    let (chat, permit) = resolve_chat_dir(requests.options.home.clone(), requests.options.project.clone()).await.unwrap();
+    let (chat, permit) = resolve_chat_dir(
+        requests.options.home.clone(),
+        requests.options.project.clone(),
+    )
+    .await
+    .unwrap();
     std::fs::create_dir_all(&chat).unwrap();
     let durable = chat.join("concurrent-delete.jsonl");
     std::fs::write(&durable, b"PRESERVE-CONCURRENT-NAMESAKE\n").unwrap();
@@ -454,7 +535,10 @@ async fn concurrent_sdk_deletes_are_idempotent_and_do_not_remove_durable_namesak
         let entered = entered.clone();
         let mut gate = gate.clone();
         Box::pin(async move {
-            if first { entered.send_replace(true); gate.wait_for(|value| *value).await.unwrap(); }
+            if first {
+                entered.send_replace(true);
+                gate.wait_for(|value| *value).await.unwrap();
+            }
             Ok(())
         })
     }));
@@ -462,30 +546,49 @@ async fn concurrent_sdk_deletes_are_idempotent_and_do_not_remove_durable_namesak
     let first_request = requests.clone();
     let first_key = key.clone();
     let first = tokio::spawn(async move {
-        first_request.session_delete(&object([("sessionKey", JsValue::String(first_key))])).await
+        first_request
+            .session_delete(&object([("sessionKey", JsValue::String(first_key))]))
+            .await
     });
     changed(&mut inside).await;
     let first_ticket = requests.owner.publication_ticket_probe(&key);
     let second_request = requests.clone();
     let second_key = key.clone();
     let second = tokio::spawn(async move {
-        second_request.session_delete(&object([("sessionKey", JsValue::String(second_key))])).await
+        second_request
+            .session_delete(&object([("sessionKey", JsValue::String(second_key))]))
+            .await
     });
     let queued = tokio::time::timeout(Duration::from_secs(2), async {
-        while requests.owner.publication_ticket_probe(&key).same_channel(&first_ticket) {
+        while requests
+            .owner
+            .publication_ticket_probe(&key)
+            .same_channel(&first_ticket)
+        {
             tokio::task::yield_now().await;
         }
-    }).await;
+    })
+    .await;
     let held = !*first_ticket.borrow();
     release.send_replace(true);
     let one = first.await.unwrap();
     let two = second.await.unwrap();
-    assert!(queued.is_ok(), "second real delete reserved its same-key ticket");
-    assert!(held, "first cleanup remained owned while second deletion queued");
-    one.unwrap(); two.unwrap();
+    assert!(
+        queued.is_ok(),
+        "second real delete reserved its same-key ticket"
+    );
+    assert!(
+        held,
+        "first cleanup remained owned while second deletion queued"
+    );
+    one.unwrap();
+    two.unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert!(!temporary.path().exists());
-    assert_eq!(std::fs::read(&durable).unwrap(), b"PRESERVE-CONCURRENT-NAMESAKE\n");
+    assert_eq!(
+        std::fs::read(&durable).unwrap(),
+        b"PRESERVE-CONCURRENT-NAMESAKE\n"
+    );
     requests.owner.shutdown().await.unwrap();
     roots.close().await.unwrap();
     requests.project.dispose().await.unwrap();

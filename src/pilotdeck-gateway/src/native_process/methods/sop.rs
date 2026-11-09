@@ -26,14 +26,25 @@ impl Requests {
         Box::pin(async move {
             if let Some(control) = &self.sop {
                 if method == "sop_status" {
-                    return control.status(&params).await.map_err(super::super::sop_control::request_error);
+                    return control
+                        .status(&params)
+                        .await
+                        .map_err(super::super::sop_control::request_error);
                 }
                 if let Some(session) = params.get("sessionKey").and_then(JsValue::as_string)
-                    && self.owner.has_active_turn(session) {
-                    return Err(RequestError { code: "SESSION_BUSY".into(),
-                        message: "Cannot resume StaffDeck SOP while a turn is active.".into(), details: None, validation: None });
+                    && self.owner.has_active_turn(session)
+                {
+                    return Err(RequestError {
+                        code: "SESSION_BUSY".into(),
+                        message: "Cannot resume StaffDeck SOP while a turn is active.".into(),
+                        details: None,
+                        validation: None,
+                    });
                 }
-                return control.resume(&params).await.map_err(super::super::sop_control::resume_error);
+                return control
+                    .resume(&params)
+                    .await
+                    .map_err(super::super::sop_control::resume_error);
             }
             // Bare embeddings retain the capability-first TS gate; production
             // installs the same control owner used by the public HTTP bridge.

@@ -366,17 +366,31 @@ async fn body_deadline_keeps_post_header_failure_distinct_from_connect_failure()
 async fn absent_deadline_waits_past_thirty_seconds_for_actual_http_response() {
     use crate::module_host::approvals::native_http::HyperJsonTransport;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address=listener.local_addr().unwrap();
-    let (started_tx,started_rx)=tokio::sync::oneshot::channel();
-    let (release_tx,release_rx)=tokio::sync::oneshot::channel();
-    let server=tokio::spawn(async move {
-        let (mut stream,_)=listener.accept().await.unwrap();let mut buf=[0;4096];assert!(stream.read(&mut buf).await.unwrap()>0);started_tx.send(()).unwrap();
-        release_rx.await.unwrap();stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buf = [0; 4096];
+        assert!(stream.read(&mut buf).await.unwrap() > 0);
+        started_tx.send(()).unwrap();
+        release_rx.await.unwrap();
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+            .await
+            .unwrap();
     });
-    let mut request=get(url::Url::parse(&format!("http://{address}/fixture")).unwrap(),Duration::from_secs(2));request.timeout=None;
-    let client=tokio::spawn(async move {HyperJsonTransport::default().request(request).await});
-    tokio::time::timeout(Duration::from_secs(3), started_rx).await.expect("server must receive request").unwrap();
+    let mut request = get(
+        url::Url::parse(&format!("http://{address}/fixture")).unwrap(),
+        Duration::from_secs(2),
+    );
+    request.timeout = None;
+    let client = tokio::spawn(async move { HyperJsonTransport::default().request(request).await });
+    tokio::time::timeout(Duration::from_secs(3), started_rx)
+        .await
+        .expect("server must receive request")
+        .unwrap();
     tokio::time::pause();
     tokio::time::advance(Duration::from_secs(31)).await;
     tokio::task::yield_now().await;
@@ -384,23 +398,59 @@ async fn absent_deadline_waits_past_thirty_seconds_for_actual_http_response() {
     tokio::time::resume();
     assert!(!finished, "absent timeout must not invent a 30s deadline");
     release_tx.send(()).unwrap();
-    let response=tokio::time::timeout(Duration::from_secs(3), client).await.expect("client must complete").unwrap().unwrap();
-    assert_eq!(response.body,JsValue::Object(JsObject::new()));
-    tokio::time::timeout(Duration::from_secs(3),server).await.expect("server must finish").unwrap();
+    let response = tokio::time::timeout(Duration::from_secs(3), client)
+        .await
+        .expect("client must complete")
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.body, JsValue::Object(JsObject::new()));
+    tokio::time::timeout(Duration::from_secs(3), server)
+        .await
+        .expect("server must finish")
+        .unwrap();
 }
 #[test]
 fn sop_client_uses_optional_configured_timeout() {
     use crate::module_host::approvals::native_http::HyperJsonTransport;
-    let fixture=pilotdeck_protocol::parse_json(include_str!("../../../tests/fixtures/sop-timeout/oracle.json")).unwrap();
-    let JsValue::Array(rows)=field(&fixture,"results") else { panic!("TS cases") };
-    assert_eq!(rows.len(),4);
-    let JsValue::Array(default_calls)=field(&rows[0],"calls") else { panic!("default calls") };
-    let JsValue::Array(explicit_calls)=field(&rows[2],"calls") else { panic!("explicit calls") };
-    assert_eq!(field(&default_calls[0],"signal"),&JsValue::Bool(false));
-    assert_eq!(field(&explicit_calls[0],"signal"),&JsValue::Bool(true));
-    let transport=std::sync::Arc::new(HyperJsonTransport::default());
-    assert!(SopClient::new("http://127.0.0.1:1".into(),None,None,None,transport.clone()).timeout.is_none());
-    assert_eq!(SopClient::new("http://127.0.0.1:1".into(),None,None,Some(123.0),transport).timeout,Some(Duration::from_millis(123)));
+    let fixture = pilotdeck_protocol::parse_json(include_str!(
+        "../../../tests/fixtures/sop-timeout/oracle.json"
+    ))
+    .unwrap();
+    let JsValue::Array(rows) = field(&fixture, "results") else {
+        panic!("TS cases")
+    };
+    assert_eq!(rows.len(), 4);
+    let JsValue::Array(default_calls) = field(&rows[0], "calls") else {
+        panic!("default calls")
+    };
+    let JsValue::Array(explicit_calls) = field(&rows[2], "calls") else {
+        panic!("explicit calls")
+    };
+    assert_eq!(field(&default_calls[0], "signal"), &JsValue::Bool(false));
+    assert_eq!(field(&explicit_calls[0], "signal"), &JsValue::Bool(true));
+    let transport = std::sync::Arc::new(HyperJsonTransport::default());
+    assert!(
+        SopClient::new(
+            "http://127.0.0.1:1".into(),
+            None,
+            None,
+            None,
+            transport.clone()
+        )
+        .timeout
+        .is_none()
+    );
+    assert_eq!(
+        SopClient::new(
+            "http://127.0.0.1:1".into(),
+            None,
+            None,
+            Some(123.0),
+            transport
+        )
+        .timeout,
+        Some(Duration::from_millis(123))
+    );
 }
 
 #[tokio::test]
@@ -412,16 +462,39 @@ async fn native_sop_http_real_eight_mib_boundary() {
         body.resize(size - 2, b'x');
         body.extend_from_slice(b"\"}");
         assert_eq!(body.len(), size);
-        let mut response = format!("HTTP/1.1 200 OK\r\nContent-Length: {size}\r\nConnection: close\r\n\r\n").into_bytes();
+        let mut response =
+            format!("HTTP/1.1 200 OK\r\nContent-Length: {size}\r\nConnection: close\r\n\r\n")
+                .into_bytes();
         response.extend(body);
         let (url, server) = raw_server(response, false).await;
-        let result = tokio::time::timeout(Duration::from_secs(20), HyperJsonTransport::default().request(get(url, Duration::from_secs(15)))).await.unwrap();
-        tokio::time::timeout(Duration::from_secs(20), server).await.unwrap().unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(20),
+            HyperJsonTransport::default().request(get(url, Duration::from_secs(15))),
+        )
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(20), server)
+            .await
+            .unwrap()
+            .unwrap();
         if size == LIMIT {
             let result = result.expect("exact 8 MiB valid response must be accepted");
-            assert_eq!(result.body.get("x").unwrap().as_string().unwrap().units().len(), LIMIT - 8);
+            assert_eq!(
+                result
+                    .body
+                    .get("x")
+                    .unwrap()
+                    .as_string()
+                    .unwrap()
+                    .units()
+                    .len(),
+                LIMIT - 8
+            );
         } else {
-            assert!(matches!(result, Err(JsonFailure::Body(_))), "oversize must fail closed");
+            assert!(
+                matches!(result, Err(JsonFailure::Body(_))),
+                "oversize must fail closed"
+            );
         }
     }
 }

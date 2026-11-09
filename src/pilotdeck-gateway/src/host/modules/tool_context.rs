@@ -653,10 +653,20 @@ impl permission::PermissionContext for PermissionRequestContext {
 #[derive(Clone)]
 pub struct ContextRequestIdentity(ToolContextBuilder);
 impl ContextRequestIdentity {
-    pub(crate) fn for_identity(&self, identity: &pilotdeck_protocol::admission::ExecutionIdentity) -> Self {
+    pub(crate) fn for_identity(
+        &self,
+        identity: &pilotdeck_protocol::admission::ExecutionIdentity,
+    ) -> Self {
         let mut result = self.clone();
-        result.0.binding.input.insert("sessionId".into(), JsValue::String(identity.session_id.clone()));
-        result.0.binding.input.insert("turnId".into(), JsValue::String(identity.turn_id.clone()));
+        result.0.binding.input.insert(
+            "sessionId".into(),
+            JsValue::String(identity.session_id.clone()),
+        );
+        result
+            .0
+            .binding
+            .input
+            .insert("turnId".into(), JsValue::String(identity.turn_id.clone()));
         result
     }
     pub fn new(binding: TurnBinding, ports: ToolContextPorts) -> Self {

@@ -149,7 +149,14 @@ impl SessionTools {
             knowledge: None,
             context_runtime: None,
             options: options.clone(),
-            env: {let mut env=env_object(env);env.insert("PILOT_HOME".into(),JsValue::String(options.home.to_string_lossy().into_owned().into()));env},
+            env: {
+                let mut env = env_object(env);
+                env.insert(
+                    "PILOT_HOME".into(),
+                    JsValue::String(options.home.to_string_lossy().into_owned().into()),
+                );
+                env
+            },
             binding,
             config,
             interactions,
@@ -165,7 +172,10 @@ impl SessionTools {
         })
     }
 
-    pub(super) fn with_knowledge(mut self, tool: Option<Arc<super::knowledge::KnowledgeTool>>) -> Self {
+    pub(super) fn with_knowledge(
+        mut self,
+        tool: Option<Arc<super::knowledge::KnowledgeTool>>,
+    ) -> Self {
         self.knowledge = tool;
         self
     }
@@ -312,9 +322,15 @@ impl SessionTools {
         self
     }
 
-    pub(super) fn tool_results_dir(&self,session:&JsString)->PathBuf {
-        let root=self.config.get("nativeEphemeralRoot").and_then(JsValue::as_string).and_then(|v|v.to_utf8().ok()).map(PathBuf::from).unwrap_or_else(||self.options.project.clone());
-        session_tool_results_dir(&root,session)
+    pub(super) fn tool_results_dir(&self, session: &JsString) -> PathBuf {
+        let root = self
+            .config
+            .get("nativeEphemeralRoot")
+            .and_then(JsValue::as_string)
+            .and_then(|v| v.to_utf8().ok())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.options.project.clone());
+        session_tool_results_dir(&root, session)
     }
 
     pub fn turn(
@@ -428,8 +444,19 @@ impl SessionTools {
             self.lsp.clone(),
             &self.mcp,
         );
-        let mut read_env=self.env.clone();read_env.insert("PILOT_HOME".into(),JsValue::String(self.options.home.to_string_lossy().into_owned().into()));
-        tools.replace(Arc::new(builtin::read_file::ReadFileTool::with_permissions(self.binding.checkpoint.clone(),read_env))).expect("native read_file is registered");
+        let mut read_env = self.env.clone();
+        read_env.insert(
+            "PILOT_HOME".into(),
+            JsValue::String(self.options.home.to_string_lossy().into_owned().into()),
+        );
+        tools
+            .replace(Arc::new(
+                builtin::read_file::ReadFileTool::with_permissions(
+                    self.binding.checkpoint.clone(),
+                    read_env,
+                ),
+            ))
+            .expect("native read_file is registered");
         if self.user_dialog.is_some()
             && let Some(JsValue::Array(kinds)) = self.config.get("userDialogKinds")
         {
@@ -471,7 +498,9 @@ impl SessionTools {
             .expect("native automation tool names are unique");
         }
         self.skills.register(&tools);
-        let knowledge_catalog_error: Option<JsString> = self.knowledge.as_ref()
+        let knowledge_catalog_error: Option<JsString> = self
+            .knowledge
+            .as_ref()
             .and_then(|knowledge| tools.register(knowledge.clone()).err())
             .map(|error| error.message.into());
         if let Some(web) = &self.web {
@@ -495,9 +524,13 @@ impl SessionTools {
         // The SDK can only narrow the complete ordinary catalog. Capture this
         // same view in forks and native execution so refresh/aliases cannot
         // reintroduce a blocked native, extension or MCP definition.
-        let tools = super::sdk_tool_policy::scope(tools, &self.config,
-            self.binding.context.allowed_tools.clone(), self.binding.context.disallowed_tools.clone())
-            .expect("new native turn registry is active");
+        let tools = super::sdk_tool_policy::scope(
+            tools,
+            &self.config,
+            self.binding.context.allowed_tools.clone(),
+            self.binding.context.disallowed_tools.clone(),
+        )
+        .expect("new native turn registry is active");
         let fork_turn = self.forks.as_ref().map(|registry| {
             super::agent::ForkTurn::new(
                 registry.clone(),
@@ -520,7 +553,9 @@ impl SessionTools {
             }
             turn.register(&tools);
         }
-        let sdk_catalog_error = super::sdk_tools::install(&tools,&config).err().map(|error|error.message.into());
+        let sdk_catalog_error = super::sdk_tools::install(&tools, &config)
+            .err()
+            .map(|error| error.message.into());
         let execution = ToolRuntime::new(
             tools,
             // Even a profile without an interaction resource keeps this turn's

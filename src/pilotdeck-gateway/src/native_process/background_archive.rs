@@ -114,7 +114,11 @@ impl NativeArchive {
     }
     fn open_selected(project: &Path, selected: &File) -> io::Result<Arc<Self>> {
         let path = project.join(".pilotdeck/background-tasks");
-        crate::project_files::create_directories_at(selected, Path::new(".pilotdeck/background-tasks/output"), Mode::from_raw_mode(0o700))?;
+        crate::project_files::create_directories_at(
+            selected,
+            Path::new(".pilotdeck/background-tasks/output"),
+            Mode::from_raw_mode(0o700),
+        )?;
         let pilot = archive_directory_at(selected, ".pilotdeck")?;
         let root = archive_directory_at(&pilot, "background-tasks")?;
         let output = archive_directory_at(&root, "output")?;
@@ -583,7 +587,12 @@ fn archive_directory_at(parent: &File, name: &str) -> io::Result<File> {
     let access = OFlags::from_bits_retain(libc::O_SEARCH as u32);
     #[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
     let access = OFlags::RDONLY;
-    Ok(File::from(openat(parent, name, access | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW, Mode::empty())?))
+    Ok(File::from(openat(
+        parent,
+        name,
+        access | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+        Mode::empty(),
+    )?))
 }
 
 struct DeferredState {
@@ -605,12 +614,23 @@ impl DeferredArchive {
     pub(super) fn new(project: &Path) -> io::Result<Arc<Self>> {
         let project = project.canonicalize()?;
         let selected = crate::project_files::open_directory_beneath(&project, &project)?;
-        Ok(Arc::new(Self { project, selected, state: Mutex::new(DeferredState { archive: None, error: None }) }))
+        Ok(Arc::new(Self {
+            project,
+            selected,
+            state: Mutex::new(DeferredState {
+                archive: None,
+                error: None,
+            }),
+        }))
     }
     pub(super) fn prepare_existing(self: &Arc<Self>) -> io::Result<()> {
         let mut state = lock(&self.state);
-        if let Some(error) = &state.error { return Err(io::Error::other(error.clone())); }
-        if state.archive.is_some() { return Ok(()); }
+        if let Some(error) = &state.error {
+            return Err(io::Error::other(error.clone()));
+        }
+        if state.archive.is_some() {
+            return Ok(());
+        }
         // Probe relative to the pinned selected project, following no archive
         // component. Only a genuinely missing directory remains dormant.
         let pilot = match archive_directory_at(&self.selected, ".pilotdeck") {
@@ -619,7 +639,7 @@ impl DeferredArchive {
             Err(error) => return Err(error),
         };
         match archive_directory_at(&pilot, "background-tasks") {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
         }
@@ -631,8 +651,12 @@ impl DeferredArchive {
     }
     fn for_write(self: &Arc<Self>) -> io::Result<Arc<NativeArchive>> {
         let mut state = lock(&self.state);
-        if let Some(error) = &state.error { return Err(io::Error::other(error.clone())); }
-        if let Some(archive) = &state.archive { return Ok(archive.clone()); }
+        if let Some(error) = &state.error {
+            return Err(io::Error::other(error.clone()));
+        }
+        if let Some(archive) = &state.archive {
+            return Ok(archive.clone());
+        }
         // Open/flock/recovery completes synchronously before any metadata is
         // queued. A newly created foreign archive cannot be bypassed.
         let archive = NativeArchive::open_selected(&self.project, &self.selected)?;
@@ -641,14 +665,24 @@ impl DeferredArchive {
         Ok(archive)
     }
     pub(super) fn handle(self: &Arc<Self>) -> Arc<DeferredHandle> {
-        let initial = lock(&self.state).archive.as_ref().map(|archive| archive.handle());
-        Arc::new(DeferredHandle { shared: self.clone(), resolved: Mutex::new(initial) })
+        let initial = lock(&self.state)
+            .archive
+            .as_ref()
+            .map(|archive| archive.handle());
+        Arc::new(DeferredHandle {
+            shared: self.clone(),
+            resolved: Mutex::new(initial),
+        })
     }
     fn failed(&self, message: String) {
         let mut state = lock(&self.state);
         if let Some(archive) = &state.archive {
-            let archive = archive.clone();drop(state);archive.failed(message);
-        } else if state.error.is_none() { state.error = Some(message); }
+            let archive = archive.clone();
+            drop(state);
+            archive.failed(message);
+        } else if state.error.is_none() {
+            state.error = Some(message);
+        }
     }
 }
 impl DeferredHandle {
@@ -656,13 +690,18 @@ impl DeferredHandle {
         let mut resolved = lock(&self.resolved);
         if resolved.is_none() {
             // Another live generation may have activated the shared owner.
-            *resolved = lock(&self.shared.state).archive.as_ref().map(|archive| archive.handle());
+            *resolved = lock(&self.shared.state)
+                .archive
+                .as_ref()
+                .map(|archive| archive.handle());
         }
         resolved.clone()
     }
     fn for_write(&self) -> io::Result<Arc<ArchiveHandle>> {
         let mut resolved = lock(&self.resolved);
-        if let Some(handle) = &*resolved { return Ok(handle.clone()); }
+        if let Some(handle) = &*resolved {
+            return Ok(handle.clone());
+        }
         let handle = self.shared.for_write()?.handle();
         *resolved = Some(handle.clone());
         Ok(handle)
@@ -672,29 +711,47 @@ impl BackgroundTaskSnapshotStore for DeferredHandle {
     fn load(&self) -> Vec<PersistedBackgroundTask> {
         // prepare_existing already propagated all existing-archive errors at
         // stage. An absent archive linearizes as empty here without writes.
-        self.existing().map(|handle| handle.load()).unwrap_or_default()
+        self.existing()
+            .map(|handle| handle.load())
+            .unwrap_or_default()
     }
     fn original_fields(&self, task_id: &str) -> Option<TaskSnapshotIdentity> {
-        self.existing().and_then(|handle| handle.original_fields(task_id))
+        self.existing()
+            .and_then(|handle| handle.original_fields(task_id))
     }
     fn failure_reason(&self, task_id: &str) -> Option<JsString> {
-        self.existing().and_then(|handle| handle.failure_reason(task_id))
+        self.existing()
+            .and_then(|handle| handle.failure_reason(task_id))
     }
-    fn report_failure(&self, message: String) { self.shared.failed(message); }
-    fn write_task(&self, task: BackgroundBashTask, output: PersistedOutput, seq: u64, failure_reason: Option<JsString>) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
+    fn report_failure(&self, message: String) {
+        self.shared.failed(message);
+    }
+    fn write_task(
+        &self,
+        task: BackgroundBashTask,
+        output: PersistedOutput,
+        seq: u64,
+        failure_reason: Option<JsString>,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
         match self.for_write() {
             Ok(handle) => handle.write_task_pending(task, output, seq, failure_reason),
             Err(error) => Box::pin(async move { Err(error) }),
         }
     }
-    fn write(&self, snapshot: PersistedBackgroundTask, seq: u64) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
+    fn write(
+        &self,
+        snapshot: PersistedBackgroundTask,
+        seq: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
         match self.for_write() {
             Ok(handle) => handle.write_pending(snapshot, seq),
             Err(error) => Box::pin(async move { Err(error) }),
         }
     }
     fn flush(&self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
-        if let Some(handle) = self.existing() { return handle.flush_pending(); }
+        if let Some(handle) = self.existing() {
+            return handle.flush_pending();
+        }
         let error = lock(&self.shared.state).error.clone();
         Box::pin(async move { error.map(io::Error::other).map_or(Ok(()), Err) })
     }
@@ -703,13 +760,29 @@ impl NativeOutputStorage for DeferredHandle {
     fn create(&self, task_id: &JsString) -> io::Result<NativeOutputFile> {
         self.for_write()?.create(task_id)
     }
-    fn restore(&self, task_id: &JsString, expected_bytes: u64) -> io::Result<Option<NativeOutputFile>> {
-        if let Some(handle) = self.existing() { return handle.restore(task_id, expected_bytes); }
+    fn restore(
+        &self,
+        task_id: &JsString,
+        expected_bytes: u64,
+    ) -> io::Result<Option<NativeOutputFile>> {
+        if let Some(handle) = self.existing() {
+            return handle.restore(task_id, expected_bytes);
+        }
         if expected_bytes > NativeTaskLimits::CLI.output_bytes as u64 {
-            return Err(invalid(format!("Native task output exceeds its {} MiB limit.", NativeTaskLimits::CLI.output_bytes / (1024 * 1024))));
+            return Err(invalid(format!(
+                "Native task output exceeds its {} MiB limit.",
+                NativeTaskLimits::CLI.output_bytes / (1024 * 1024)
+            )));
         }
         id_text(task_id)?;
-        if expected_bytes == 0 { Ok(None) } else { Err(io::Error::new(io::ErrorKind::NotFound, "Native background archive is not initialized.")) }
+        if expected_bytes == 0 {
+            Ok(None)
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "Native background archive is not initialized.",
+            ))
+        }
     }
 }
 

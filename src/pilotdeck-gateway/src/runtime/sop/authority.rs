@@ -167,7 +167,10 @@ impl Authority {
             })?;
         let run_id = format!("sop:{session}");
         if signal.is_cancelled() {
-            return Err(error("MODULE_ABORTED", "Module request was cancelled before dispatch."));
+            return Err(error(
+                "MODULE_ABORTED",
+                "Module request was cancelled before dispatch.",
+            ));
         }
         let dispatched = std::sync::atomic::AtomicBool::new(false);
         let call = crate::skills::ModuleInvocation {
@@ -484,21 +487,34 @@ mod tests {
                         operation: "query",
                         input: &input,
                         authority_context: None,
-                on_dispatch: None,
+                        on_dispatch: None,
                     })
                     .await;
             }));
         }
         wait_started(&mock, 4).await;
-        let mut short = binding.clone(); short.timeout_ms = 75.0;
+        let mut short = binding.clone();
+        short.timeout_ms = 75.0;
         let queued = ExternalSkillsPort::new(short, transport.clone());
         let input = JsValue::Null;
-        let error = tokio::time::timeout(std::time::Duration::from_secs(2), queued.call_module(ModuleInvocation {
-            module:"knowledge", run_id:"r", operation_id:"o", request_id:"queued", operation:"query", input:&input,
-            authority_context:None, on_dispatch:None,
-        })).await.expect("queue timeout must be bounded").expect_err("fifth request must time out before entering the transport");
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            queued.call_module(ModuleInvocation {
+                module: "knowledge",
+                run_id: "r",
+                operation_id: "o",
+                request_id: "queued",
+                operation: "query",
+                input: &input,
+                authority_context: None,
+                on_dispatch: None,
+            }),
+        )
+        .await
+        .expect("queue timeout must be bounded")
+        .expect_err("fifth request must time out before entering the transport");
         assert!(error.code.equals_str("MODULE_TIMEOUT"));
-        assert_eq!(mock.started.load(std::sync::atomic::Ordering::SeqCst),4);
+        assert_eq!(mock.started.load(std::sync::atomic::Ordering::SeqCst), 4);
         let port = std::sync::Arc::new(ExternalSkillsPort::new(binding, transport));
         let fifth = tokio::spawn(async move {
             let input = JsValue::Null;
@@ -511,7 +527,7 @@ mod tests {
                     operation: "query",
                     input: &input,
                     authority_context: None,
-                on_dispatch: None,
+                    on_dispatch: None,
                 })
                 .await;
         });
@@ -591,9 +607,14 @@ mod tests {
         assert!(error.code.equals_str("MODULE_PROTOCOL_INCOMPATIBLE"));
         server.await.unwrap();
     }
-    struct AbortTransport { post_started: tokio::sync::Semaphore }
+    struct AbortTransport {
+        post_started: tokio::sync::Semaphore,
+    }
     impl crate::skills::ModuleHttpTransport for AbortTransport {
-        fn send<'a>(&'a self, request: crate::skills::ModuleHttpRequest) -> crate::skills::ModuleHttpFuture<'a> {
+        fn send<'a>(
+            &'a self,
+            request: crate::skills::ModuleHttpRequest,
+        ) -> crate::skills::ModuleHttpFuture<'a> {
             Box::pin(async move {
                 if request.method == "GET" {
                     return Ok(crate::skills::ModuleHttpResponse { status:200, body:br#"{"protocolVersion":"2.0","implementationId":"staffdeck.sop-capability-authority","contract":"staffdeck.sop-capability-authority/v1","transport":"module-http-v2","methods":["resolve"]}"#.to_vec() });
@@ -605,18 +626,42 @@ mod tests {
     }
     #[tokio::test]
     async fn authority_cancel_distinguishes_before_and_after_dispatch() {
-        use crate::skills::{ExternalSkillBinding,ExternalSkillsPort,ModuleHttpTransport};
+        use crate::skills::{ExternalSkillBinding, ExternalSkillsPort, ModuleHttpTransport};
         let binding=ExternalSkillBinding::from_value(&pilotdeck_protocol::parse_json(r#"{"implementationId":"staffdeck.sop-capability-authority","contract":"staffdeck.sop-capability-authority/v1","transport":"module-http-v2","endpoint":"https://fixture.invalid","methods":["resolve"]}"#).unwrap()).unwrap();
-        let mock=std::sync::Arc::new(AbortTransport{post_started:tokio::sync::Semaphore::new(0)});
-        let transport:std::sync::Arc<dyn ModuleHttpTransport>=mock.clone();
-        let authority=std::sync::Arc::new(Authority::new(std::sync::Arc::new(ExternalSkillsPort::new(binding,transport))));
-        let context=pilotdeck_protocol::parse_json(r#"{"sessionKey":"s","projectKey":"/p","expectedRevision":1,"requestId":"q"}"#).unwrap();
-        let pre=crate::host::Cancellation::default();pre.cancel(None);
-        assert_eq!(authority.resolve(&context,&pre).await.unwrap_err().message,"Module request was cancelled before dispatch.");
-        let signal=crate::host::Cancellation::default();let child=signal.clone();let task=tokio::spawn(async move{authority.resolve(&context,&child).await});
-        tokio::time::timeout(std::time::Duration::from_secs(2),mock.post_started.acquire()).await.unwrap().unwrap().forget();
-        signal.cancel(None);let error=tokio::time::timeout(std::time::Duration::from_secs(2),task).await.unwrap().unwrap().unwrap_err();
-        assert_eq!(error.message,"Module request was cancelled.");
+        let mock = std::sync::Arc::new(AbortTransport {
+            post_started: tokio::sync::Semaphore::new(0),
+        });
+        let transport: std::sync::Arc<dyn ModuleHttpTransport> = mock.clone();
+        let authority = std::sync::Arc::new(Authority::new(std::sync::Arc::new(
+            ExternalSkillsPort::new(binding, transport),
+        )));
+        let context = pilotdeck_protocol::parse_json(
+            r#"{"sessionKey":"s","projectKey":"/p","expectedRevision":1,"requestId":"q"}"#,
+        )
+        .unwrap();
+        let pre = crate::host::Cancellation::default();
+        pre.cancel(None);
+        assert_eq!(
+            authority.resolve(&context, &pre).await.unwrap_err().message,
+            "Module request was cancelled before dispatch."
+        );
+        let signal = crate::host::Cancellation::default();
+        let child = signal.clone();
+        let task = tokio::spawn(async move { authority.resolve(&context, &child).await });
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            mock.post_started.acquire(),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .forget();
+        signal.cancel(None);
+        let error = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(error.message, "Module request was cancelled.");
     }
-
 }

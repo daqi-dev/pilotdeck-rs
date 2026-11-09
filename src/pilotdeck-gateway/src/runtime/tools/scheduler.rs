@@ -138,9 +138,15 @@ impl ToolRuntime {
             native_sandbox_provider: None,
         }
     }
-    pub(crate) fn with_catalog_error(mut self,error:Option<JsString>)->Self { self.catalog_error=error;self }
-    fn check_catalog(&self)->Result<(),HostError> {
-        match &self.catalog_error { Some(message)=>Err(ModuleError::new(message.clone()).into()),None=>Ok(()) }
+    pub(crate) fn with_catalog_error(mut self, error: Option<JsString>) -> Self {
+        self.catalog_error = error;
+        self
+    }
+    fn check_catalog(&self) -> Result<(), HostError> {
+        match &self.catalog_error {
+            Some(message) => Err(ModuleError::new(message.clone()).into()),
+            None => Ok(()),
+        }
     }
     pub(crate) fn with_mode_owner(mut self, owner: Arc<dyn PermissionDecision>) -> Self {
         self.mode_owner = Some(owner);
@@ -1042,7 +1048,7 @@ impl ToolRuntime {
 impl ToolCatalog for ToolRuntime {
     fn list(&self) -> HostFuture<Vec<Arc<dyn ToolDefinition>>> {
         let registry = self.registry.clone();
-        let validity=self.check_catalog();
+        let validity = self.check_catalog();
         Box::pin(async move {
             validity?;
             Ok(registry
@@ -1091,12 +1097,17 @@ impl ToolExecution for ToolRuntime {
                 .map_err(|_| {
                     ModuleError::new("Tool runtime requires a host ToolRuntimeContext.")
                 })?;
-            let (execution, authority) = if let Some(scoped) = context.execution.downcast_ref::<crate::runtime::sop::authority::AuthorityExecution>() {
+            let (execution, authority) = if let Some(scoped) =
+                context
+                    .execution
+                    .downcast_ref::<crate::runtime::sop::authority::AuthorityExecution>()
+            {
                 (scoped.original.clone(), Some(scoped.authority.clone()))
             } else {
                 (context.execution, None)
             };
-            let execution = execution.downcast::<ExecutionContext>()
+            let execution = execution
+                .downcast::<ExecutionContext>()
                 .map_err(|_| ModuleError::new("Tool runtime requires a host ExecutionContext."))?;
             let mut context = ToolRunContext::new(host);
             context.knowledge_authority = authority;

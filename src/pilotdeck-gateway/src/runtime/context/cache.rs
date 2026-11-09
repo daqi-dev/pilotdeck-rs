@@ -116,7 +116,8 @@ pub(crate) fn cache_plan_identity(
             })?;
             let right_name = to_string_units(&raw_right)
                 .map_err(|_| ModuleError::new(StackOverflow::MESSAGE))?;
-            let order = node_compare_utf16(&collator, &left_name, &JsString::from_utf16(right_name));
+            let order =
+                node_compare_utf16(&collator, &left_name, &JsString::from_utf16(right_name));
             if order != Ordering::Equal {
                 return Ok(order);
             }

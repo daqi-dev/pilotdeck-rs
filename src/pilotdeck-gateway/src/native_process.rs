@@ -22,11 +22,11 @@ mod multi_project_history_tests;
 mod project_scope;
 mod project_storage;
 mod projects;
+mod sdk_tools;
 mod server_host;
 mod sop_control;
 #[cfg(test)]
 mod sop_profile_tests;
-mod sdk_tools;
 pub use local_host::{LocalHost, LocalHostOptions};
 pub use server_host::{
     ControlHandler, ControlReply, ControlRequest, HostExit, ServerOptions, legacy_local_bind_host,
@@ -43,10 +43,10 @@ pub(crate) mod elicitation;
 mod extensions;
 mod families;
 pub(crate) mod input_admission;
+mod knowledge;
 mod management;
 mod methods;
 pub(crate) mod plan_todo;
-mod knowledge;
 mod skills;
 pub use methods::registered_methods;
 // #1320 fix-r2 F10: re-exported one hop up so the runtime-side single-source
@@ -70,9 +70,9 @@ mod switch_wiring;
 #[cfg(test)]
 mod switch_wiring_tests;
 pub use session_overrides::SessionOverrides;
-mod sdk_tool_policy;
-mod sdk_permission;
 mod sdk_ephemeral;
+mod sdk_permission;
+mod sdk_tool_policy;
 mod tools;
 mod web;
 // #1433: the session MCP tool composition (SessionMcpRuntimeBundle) behind

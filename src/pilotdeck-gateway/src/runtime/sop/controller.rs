@@ -114,7 +114,11 @@ impl StaffDeckController {
             project: None,
         }))
     }
-    pub(crate) fn with_knowledge_authority(mut self: Arc<Self>, authority: Arc<super::authority::Authority>, project: JsString) -> Arc<Self> {
+    pub(crate) fn with_knowledge_authority(
+        mut self: Arc<Self>,
+        authority: Arc<super::authority::Authority>,
+        project: JsString,
+    ) -> Arc<Self> {
         let this = Arc::get_mut(&mut self).expect("new controller is exclusively owned");
         this.authority = Some(authority);
         this.project = Some(project);
@@ -317,7 +321,8 @@ impl RunState {
             })?;
         }
         set(&mut step, "contextMode", JsValue::String(mode));
-        let saved = self.store
+        let saved = self
+            .store
             .replace(
                 &self.session,
                 field(&persisted, "bundle").clone(),
@@ -326,16 +331,33 @@ impl RunState {
             )
             .await
             .map_err(store_error)?;
-        let has_knowledge = if self.authority.is_some() && field(field(&step, "node"), "type") == &JsValue::from("response") {
+        let has_knowledge = if self.authority.is_some()
+            && field(field(&step, "node"), "type") == &JsValue::from("response")
+        {
             match &self.knowledge_tools {
-                Some(catalog) => catalog.list().await?.iter().any(|tool| tool.fields().get("name").and_then(JsValue::as_string).is_some_and(|name| name.equals_str("knowledge_query"))),
+                Some(catalog) => catalog.list().await?.iter().any(|tool| {
+                    tool.fields()
+                        .get("name")
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|name| name.equals_str("knowledge_query"))
+                }),
                 None => false,
             }
-        } else { false };
+        } else {
+            false
+        };
         if let (Some(authority), Some(project)) = (&self.authority, &self.project)
-            && has_knowledge {
-            let revision = field(&saved, "revision").as_number().ok_or_else(|| error("SOP_AUTHORITY_STATE_MISSING", "SOP revision is unavailable"))?;
-            let request_id = format!("sop.authority:{}:{}:{}", session, turn, crate::js_value::number_string(revision));
+            && has_knowledge
+        {
+            let revision = field(&saved, "revision").as_number().ok_or_else(|| {
+                error("SOP_AUTHORITY_STATE_MISSING", "SOP revision is unavailable")
+            })?;
+            let request_id = format!(
+                "sop.authority:{}:{}:{}",
+                session,
+                turn,
+                crate::js_value::number_string(revision)
+            );
             let context = crate::metadata::object([
                 ("sessionKey", JsValue::String(self.session.clone())),
                 ("projectKey", JsValue::String(project.clone())),
@@ -346,19 +368,48 @@ impl RunState {
                 let projection = authority.resolve(&context, &self.signal).await?;
                 if field(&projection, "sopId") != field(&step, "skillId")
                     || field(&projection, "sopVersion") != field(&step, "version")
-                    || field(&projection, "nodeId") != field(&step, "nodeId") {
-                    return Err(error("SOP_AUTHORITY_PIN_MISMATCH", "SOP_AUTHORITY_PIN_MISMATCH"));
+                    || field(&projection, "nodeId") != field(&step, "nodeId")
+                {
+                    return Err(error(
+                        "SOP_AUTHORITY_PIN_MISMATCH",
+                        "SOP_AUTHORITY_PIN_MISMATCH",
+                    ));
                 }
-                self.store.authority(&self.session, revision).await.map_err(store_error)?;
+                self.store
+                    .authority(&self.session, revision)
+                    .await
+                    .map_err(store_error)?;
                 Ok(projection)
-            }.await;
+            }
+            .await;
             match result {
-                Ok(projection) => if matches!(field(&projection,"optionalCapabilities"),JsValue::Array(v) if !v.is_empty()) { set(&mut step,"optionalKnowledge",projection); },
+                Ok(projection) => {
+                    if matches!(field(&projection,"optionalCapabilities"),JsValue::Array(v) if !v.is_empty())
+                    {
+                        set(&mut step, "optionalKnowledge", projection);
+                    }
+                }
                 Err(e) => {
-                    let code = e.module_error.as_ref().and_then(|v| v.code.as_ref()).cloned().unwrap_or_else(|| "SOP_AUTHORITY_UNAVAILABLE".into());
-                    if self.signal.is_cancelled() { return Err(HostError::new(crate::host::HostErrorKind::Session, e.message)); }
-                    if code.equals_str("SOP_REVISION_CONFLICT") { return Err(e); }
-                    set(&mut step,"optionalKnowledgeUnavailable",JsValue::String(code));
+                    let code = e
+                        .module_error
+                        .as_ref()
+                        .and_then(|v| v.code.as_ref())
+                        .cloned()
+                        .unwrap_or_else(|| "SOP_AUTHORITY_UNAVAILABLE".into());
+                    if self.signal.is_cancelled() {
+                        return Err(HostError::new(
+                            crate::host::HostErrorKind::Session,
+                            e.message,
+                        ));
+                    }
+                    if code.equals_str("SOP_REVISION_CONFLICT") {
+                        return Err(e);
+                    }
+                    set(
+                        &mut step,
+                        "optionalKnowledgeUnavailable",
+                        JsValue::String(code),
+                    );
                 }
             }
         }

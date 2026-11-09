@@ -93,9 +93,10 @@ impl Discovery {
             .cloned();
         if let Some(selected) = &selected
             && let JsValue::Array(candidates) = field(&response.body, "candidate_sop_ids")
-                && !candidates.iter().any(|v| v.as_string() == Some(selected)) {
-                    return Err(error("SOP_DISCOVERY_SELECTION_NOT_VISIBLE",format!("StaffDeck SOP discovery selected '{}', but StaffDeck did not expose it as a candidate.",String::from_utf16_lossy(selected.units())).as_str()));
-                }
+            && !candidates.iter().any(|v| v.as_string() == Some(selected))
+        {
+            return Err(error("SOP_DISCOVERY_SELECTION_NOT_VISIBLE",format!("StaffDeck SOP discovery selected '{}', but StaffDeck did not expose it as a candidate.",String::from_utf16_lossy(selected.units())).as_str()));
+        }
         Ok(selected)
     }
 }
@@ -120,17 +121,45 @@ mod timeout_tests {
     use super::*;
     #[test]
     fn discovery_uses_explicit_discovery_timeout_then_sop_timeout_without_inventing_one() {
-        let fixture=pilotdeck_protocol::parse_json(include_str!("../../../tests/fixtures/sop-timeout/oracle.json")).unwrap();
-        let JsValue::Array(rows)=field(&fixture,"results") else { panic!("TS cases") };
-        let JsValue::Array(default_calls)=field(&rows[1],"calls") else { panic!("default calls") };
-        let JsValue::Array(explicit_calls)=field(&rows[3],"calls") else { panic!("explicit calls") };
-        assert_eq!(field(&default_calls[0],"signal"),&JsValue::Bool(false));assert_eq!(field(&explicit_calls[0],"signal"),&JsValue::Bool(true));
-        let http=Arc::new(crate::module_host::approvals::native_http::HyperJsonTransport::default());
-        let mut profile=crate::metadata::object([("discoveryEndpoint","http://127.0.0.1:1".into()),("discoveryAgentId","a".into()),("discoveryApiKey","fake".into())]);
-        assert!(Discovery::from_profile(&profile,http.clone()).unwrap().timeout.is_none());
-        set(&mut profile,"timeoutMs",JsValue::Number(222.0));
-        assert_eq!(Discovery::from_profile(&profile,http.clone()).unwrap().timeout,Some(Duration::from_millis(222)));
-        set(&mut profile,"discoveryTimeoutMs",JsValue::Number(111.0));
-        assert_eq!(Discovery::from_profile(&profile,http).unwrap().timeout,Some(Duration::from_millis(111)));
+        let fixture = pilotdeck_protocol::parse_json(include_str!(
+            "../../../tests/fixtures/sop-timeout/oracle.json"
+        ))
+        .unwrap();
+        let JsValue::Array(rows) = field(&fixture, "results") else {
+            panic!("TS cases")
+        };
+        let JsValue::Array(default_calls) = field(&rows[1], "calls") else {
+            panic!("default calls")
+        };
+        let JsValue::Array(explicit_calls) = field(&rows[3], "calls") else {
+            panic!("explicit calls")
+        };
+        assert_eq!(field(&default_calls[0], "signal"), &JsValue::Bool(false));
+        assert_eq!(field(&explicit_calls[0], "signal"), &JsValue::Bool(true));
+        let http =
+            Arc::new(crate::module_host::approvals::native_http::HyperJsonTransport::default());
+        let mut profile = crate::metadata::object([
+            ("discoveryEndpoint", "http://127.0.0.1:1".into()),
+            ("discoveryAgentId", "a".into()),
+            ("discoveryApiKey", "fake".into()),
+        ]);
+        assert!(
+            Discovery::from_profile(&profile, http.clone())
+                .unwrap()
+                .timeout
+                .is_none()
+        );
+        set(&mut profile, "timeoutMs", JsValue::Number(222.0));
+        assert_eq!(
+            Discovery::from_profile(&profile, http.clone())
+                .unwrap()
+                .timeout,
+            Some(Duration::from_millis(222))
+        );
+        set(&mut profile, "discoveryTimeoutMs", JsValue::Number(111.0));
+        assert_eq!(
+            Discovery::from_profile(&profile, http).unwrap().timeout,
+            Some(Duration::from_millis(111))
+        );
     }
 }

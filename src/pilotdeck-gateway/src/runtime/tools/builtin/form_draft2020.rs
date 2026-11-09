@@ -362,9 +362,10 @@ fn compile_node<'a>(
         }
     }
     if let Some(enumeration) = value.get("enum")
-        && !matches!(enumeration,JsValue::Array(a) if !a.is_empty()) {
-            return Err(compile_error("enum must have non-empty array"));
-        }
+        && !matches!(enumeration,JsValue::Array(a) if !a.is_empty())
+    {
+        return Err(compile_error("enum must have non-empty array"));
+    }
     if let Some(deps) = value.get("dependentRequired") {
         let deps = obj(deps).ok_or_else(|| compile_error("dependentRequired must be object"))?;
         for (name, required) in deps.own_entries() {
@@ -675,15 +676,7 @@ pub(super) fn validate(schema: &JsValue) -> Result<(), String> {
     if let Some(error) = find_external(schema, "$", 0) {
         return Err(error);
     }
-    compile_node(
-        schema,
-        schema,
-        "#",
-        0,
-        &mut 0,
-        &mut Vec::new(),
-        None,
-    )
+    compile_node(schema, schema, "#", 0, &mut 0, &mut Vec::new(), None)
 }
 #[derive(Default)]
 struct Mark {
@@ -827,9 +820,10 @@ impl<'a> Eval<'a> {
             return None;
         }
         if let Some(JsValue::Array(items)) = schema.get("enum")
-            && !items.iter().any(|c| self.equal(c, value, 0)) {
-                return None;
-            }
+            && !items.iter().any(|c| self.equal(c, value, 0))
+        {
+            return None;
+        }
         if let Some(v) = value.as_string() {
             let len = char::decode_utf16(v.units().iter().copied()).count() as f64;
             if num(schema, "minLength").is_some_and(|n| len < n)
@@ -838,9 +832,10 @@ impl<'a> Eval<'a> {
                 return None;
             }
             if let Some(p) = text(schema, "pattern")
-                && !self.regex(p, v)? {
-                    return None;
-                }
+                && !self.regex(p, v)?
+            {
+                return None;
+            }
             if let Some(f) = text(schema, "format") {
                 let f = f.to_utf8().ok()?;
                 if f == "regex" {
@@ -866,9 +861,10 @@ impl<'a> Eval<'a> {
         }
         if let Some(n) = value.as_number() {
             if let Some(f) = text(schema, "format").and_then(|f| f.to_utf8().ok())
-                && crate::runtime::mcp::output_schema::number_format_valid(&f, n) == Some(false) {
-                    return None;
-                }
+                && crate::runtime::mcp::output_schema::number_format_valid(&f, n) == Some(false)
+            {
+                return None;
+            }
             if num(schema, "minimum").is_some_and(|x| n < x)
                 || num(schema, "maximum").is_some_and(|x| n > x)
                 || num(schema, "exclusiveMinimum").is_some_and(|x| n <= x)
@@ -890,9 +886,9 @@ impl<'a> Eval<'a> {
                 && required
                     .iter()
                     .any(|k| k.as_string().is_some_and(|k| map.get_key(k).is_none()))
-                {
-                    return None;
-                }
+            {
+                return None;
+            }
             let props = schema.get("properties").and_then(obj);
             let patterns = schema.get("patternProperties").and_then(obj);
             for (key, item) in &entries {
@@ -911,11 +907,10 @@ impl<'a> Eval<'a> {
                         }
                     }
                 }
-                if !matched
-                    && let Some(additional) = schema.get("additionalProperties") {
-                        self.check(additional, item, depth + 1)?;
-                        mark.properties.insert((*key).clone());
-                    }
+                if !matched && let Some(additional) = schema.get("additionalProperties") {
+                    self.check(additional, item, depth + 1)?;
+                    mark.properties.insert((*key).clone());
+                }
                 if let Some(names) = schema.get("propertyNames") {
                     self.check(names, &JsValue::String((*key).clone()), depth + 1)?;
                 }
@@ -1031,9 +1026,10 @@ impl<'a> Eval<'a> {
             mark.merge(found?);
         }
         if let Some(not) = schema.get("not")
-            && (self.check(not, value, depth + 1).is_some() || self.exhausted) {
-                return None;
-            }
+            && (self.check(not, value, depth + 1).is_some() || self.exhausted)
+        {
+            return None;
+        }
         if let Some(condition) = schema.get("if") {
             let passed = self.check(condition, value, depth + 1);
             if self.exhausted {

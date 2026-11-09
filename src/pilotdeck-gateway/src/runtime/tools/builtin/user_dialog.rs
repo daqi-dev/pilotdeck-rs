@@ -371,12 +371,12 @@ fn validate(kind: Kind, input: &JsValue) -> Option<Vec<JsObject>> {
                 && value
                     .as_string()
                     .is_none_or(|s| s.len_utf16() > 512 || !seen.contains(s))
-                {
-                    return issue(
-                        "defaultValue",
-                        "defaultValue must match one of the choice values.",
-                    );
-                }
+            {
+                return issue(
+                    "defaultValue",
+                    "defaultValue must match one of the choice values.",
+                );
+            }
         }
         Kind::Confirmation => {
             for key in ["confirmLabel", "cancelLabel"] {
@@ -384,15 +384,13 @@ fn validate(kind: Kind, input: &JsValue) -> Option<Vec<JsObject>> {
                     && value
                         .as_string()
                         .is_none_or(|s| blank(s) || s.len_utf16() > 128)
-                    {
-                        return issue(
-                            key,
-                            format!(
-                                "{key} must be a non-empty string no longer than 128 characters."
-                            )
+                {
+                    return issue(
+                        key,
+                        format!("{key} must be a non-empty string no longer than 128 characters.")
                             .as_str(),
-                        );
-                    }
+                    );
+                }
             }
             if input
                 .get("defaultValue")
