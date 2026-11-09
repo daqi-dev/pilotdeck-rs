@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """#2140 HEAD-only CLI skills-collator controls: --check | --check-anchors |
-[--compile-only] NEW_OUTPUT_DIR [mutation ...].
+--self-check | [--compile-only] NEW_OUTPUT_DIR [mutation ...].
 
 Run after the coordinator commits the patch. This script deliberately refuses
 uncommitted/new sources (mutating_sources proves every byte against HEAD), so
@@ -11,6 +11,7 @@ alternate repository or build directory is created. Startup refusals
 directory) exit 2 = "never started", never a traceback that reads as a failed
 control (#1734 / #1666 fix-r7).
 """
+import io
 import os
 import signal
 import sys
@@ -48,15 +49,21 @@ mutations = [
     # the default collator order for the fr_Latn_CA.UTF-8 row (sign 1).
     # `Option::is_none_or` still returns true for the script-less fr_CA row,
     # so only the explicit-script rows move (gateway twin: native-collation's
-    # french-script-fallback-lost).
+    # french-script-fallback-lost). fix-r2: the replacement keeps the twin's
+    # `|_|` form -- replacing only the inner comparison would leave `script`
+    # unused, and a host that compiles with `-D warnings` would fail the
+    # mutant build and read the whole suite as INVALID (grep-etxtbsy README
+    # precedent), so the anchor covers the whole closure instead.
     ('fr-ca-script-lost', SKILLS,
-     'script.to_string() == "Latn"', 'false',
+     '.is_none_or(|script| script.to_string() == "Latn")',
+     '.is_none_or(|_| false)',
      TEST, '#2140 fr_Latn_CA.UTF-8: "coté" vs "côte"'),
     # Widening the Latn gate to every script repairs the fr_Cyrl_CA.UTF-8 row
     # (sign -1, no repair), the direction the #2170 gateway test pins
     # (gateway twin: native-collation's french-script-widened).
     ('fr-ca-script-widened', SKILLS,
-     'script.to_string() == "Latn"', 'true',
+     '.is_none_or(|script| script.to_string() == "Latn")',
+     '.is_none_or(|_| true)',
      TEST, '#2140 fr_Cyrl_CA.UTF-8: "coté" vs "côte"'),
 ]
 # fix-r1 (DS simplify#1, #1666): the run denominator must be a literal, not
@@ -76,18 +83,50 @@ def check_roster():
         refuse(str(error))
 
 
-def check_anchors():
+def check_anchors(stdout=None, stderr=None):
     """Exit non-zero on any expired anchor; an empty manifest never passes."""
-    check_roster()
+    stdout = sys.stdout if stdout is None else stdout
+    stderr = sys.stderr if stderr is None else stderr
     errors = []
-    for name, path, old, new, _test, _marker in mutations:
-        count = path.read_text().count(old)
+    for name, path, old, new, test, marker in mutations:
+        count = path.read_text(encoding='utf-8').count(old)
         if count != 1 or old == new:
             errors.append(f'{name}: stale/invalid anchor: expected=1 actual={count}')
+        elif not test or not marker:
+            # fix-r2 (DS simplify#1): an empty marker makes classify's
+            # substring test match ANY panic, killing for the wrong reason.
+            errors.append(f'{name}: empty test or marker binding')
     for error in errors:
-        print(error)
-    print(f'#2140 anchors: {len(mutations) - len(errors)}/{len(mutations)} valid')
+        print(error, file=stdout)
+    if not mutations:
+        print('#2140 anchors: empty mutation manifest; refusing to pass', file=stderr)
+        return 2
+    print(f'#2140 anchors: {len(mutations) - len(errors)}/{len(mutations)} valid', file=stdout)
     return int(bool(errors))
+
+
+def self_check():
+    """Negative control for this gate: an empty manifest must fail closed (#1364 P0-a)."""
+    if not mutations:
+        print('self-check FAILED: the shipped mutation manifest is empty', file=sys.stderr)
+        return 1
+    saved = list(mutations)
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        mutations.clear()
+        status = check_anchors(stdout=out, stderr=err)
+    finally:
+        mutations[:] = saved
+    if status == 0:
+        print('self-check FAILED: an empty manifest passed the anchor gate', file=sys.stderr)
+        return 1
+    if 'empty mutation manifest' not in err.getvalue():
+        print('self-check FAILED: empty manifest did not report the explicit error',
+              file=sys.stderr)
+        return 1
+    print(f'self-check: empty manifest fails closed (rc={status}); '
+          f'shipped manifest still has {len(mutations)} anchors: ok')
+    return 0
 
 
 def terminate_cleanly(signum, _frame):
@@ -109,7 +148,10 @@ def install_terminate_handlers():
 
 def main():
     args = sys.argv[1:]
+    if args == ['--self-check']:
+        return self_check()
     if args in (['--check'], ['--check-anchors']):
+        check_roster()
         return check_anchors()
     compile_only = '--compile-only' in args
     args = [arg for arg in args if arg != '--compile-only']
@@ -120,8 +162,10 @@ def main():
             # suite instead of refusing.
             refuse(f'#2140 unknown option: {arg}')
     if not args:
-        raise SystemExit('usage: --check | --check-anchors | [--compile-only] '
-                         'NEW_OUTPUT_DIR [mutation ...]')
+        # fix-r2 (DS boundary#2/simplify#4): a string SystemExit is rc=1 and
+        # would read as "ran and did not come out green" (#1734).
+        refuse('usage: --check | --check-anchors | --self-check | [--compile-only] '
+               'NEW_OUTPUT_DIR [mutation ...]')
     check_roster()
     selected = [row for row in mutations if not args[1:] or row[0] in args[1:]]
     if not selected or (args[1:] and len(selected) != len(args[1:])):
@@ -129,6 +173,10 @@ def main():
     if missing_target():
         refuse('#2140 caller must supply CARGO_TARGET_DIR')
     refuse_unusable_target()
+    # fix-r2 (DS concurrency#3): installed before claiming the evidence
+    # directory, so a signal in that window cannot strand an empty claimed
+    # directory that only a human can remove.
+    install_terminate_handlers()
     out = claim_dir(args[0])
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
                '-p', 'pilotdeck-cli', '--bin', 'pilotdeck']
@@ -143,12 +191,12 @@ def main():
             stream.write(result.stdout + result.stderr)
         return result
 
-    # #1885: mutating_sources rewrites every guarded path on exit with a
-    # plain write_bytes, so the set carries exactly the files a control
-    # rewrites; leftovers elsewhere stay detected by the whole-src HEAD scan.
+    # #1885: the guard set carries exactly the files a control rewrites;
+    # mutating_sources restores each guarded path atomically on exit (#1903),
+    # and leftovers anywhere else stay detected by the whole-src HEAD scan
+    # (_assert_workspace_sources).
     guarded = sorted({row[1] for row in mutations}, key=str)
     env = dict(os.environ)
-    install_terminate_handlers()
     try:
         with mutating_sources(root, guarded) as originals:
             for name, path, old, new, test, marker in selected:

@@ -24,16 +24,21 @@ HEAD-only 变异负控，绑定唯一被点名测试
 ```sh
 export CARGO_TARGET_DIR=<本树独占构建目录>
 python3 src/pilotdeck-cli/tests/fixtures/skills-fr-ca-probe/negative_controls.py --check
+python3 src/pilotdeck-cli/tests/fixtures/skills-fr-ca-probe/negative_controls.py --self-check
 python3 src/pilotdeck-cli/tests/fixtures/skills-fr-ca-probe/negative_controls.py \
   _tmp/<轮次>/negctl-out
 ```
 
 `--check` 与 `--check-anchors` 互为别名（CI #1203 闸门按 `--check` 调用，须与
-sdk-stdin / sdk-decode-budget 同口径）。逐变异先跑正控、再编译（`--no-run`）、跑
-负控、恢复并复跑正控，全部汇总后才判定；任一非 KILLED 即非零退出。锚点过期、
-清单与静态名单（`EXPECTED_NAMES`）漂移、未知选项/变异名、`CARGO_TARGET_DIR`
-缺失或取共享规则禁止值、输出目录已存在，都按 rc=2「从未开跑」拒止，不记成
-SURVIVED。变异写入与逐变异恢复走 `write_source_atomic`（#1903），SIGTERM /
-SIGHUP / SIGQUIT 触发的退出码（128+signum）原样透传。`--compile-only` 只做变异
-体编译确认。共享执行器 `negative_process.py` / `negative_suite.py` /
-`negative_panic.py` 归 M6 车道，本脚本只导入不修改。
+sdk-stdin / sdk-decode-budget 同口径；`--check` 直读源文件不带树锁，须在无并发
+变异的树跑）。`--self-check` 清空清单验证空名册 fail-closed（#1364 P0-a 同款，
+CI #1203 的 `--self-check` 循环已纳入本脚本）。逐变异先跑正控、再编译
+（`--no-run`）、跑负控、恢复并复跑正控，全部汇总后才判定；任一非 KILLED 即非零
+退出。清单与静态名单（`EXPECTED_NAMES`）漂移、未知选项/变异名（含 usage 错误）、
+`CARGO_TARGET_DIR` 缺失或取共享规则禁止值、输出目录已存在，都按 rc=2
+「从未开跑」拒止；锚点过期是 rc=1（`--check` 直接非零，全量运行记该行
+INVALID），与 sdk-stdin / sdk-decode-budget 同口径，均不记成 SURVIVED。变异
+写入与逐变异恢复走 `write_source_atomic`（#1903），SIGTERM / SIGHUP / SIGQUIT
+触发的退出码（128+signum）原样透传。`--compile-only` 只做变异体编译确认。共享
+执行器 `negative_process.py` / `negative_suite.py` / `negative_panic.py` /
+`negative_selection.py` 归 M6 车道，本脚本只导入不修改。
