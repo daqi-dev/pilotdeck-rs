@@ -796,6 +796,14 @@ async fn the_stop_face_drains_an_in_flight_management_dispatch() {
         elapsed.is_err(),
         "#2363 the stop face waits for the in-flight dispatch"
     );
+    // The same failure-path guard, second anchor: if the mark never landed
+    // (the face's first poll no longer closes the management face), free the
+    // parked body before the anchor fails — a dropped #[tokio::test] runtime
+    // waits for its blocking tasks, so a failure path that leaves the park
+    // held hangs the binary instead of failing it.
+    if !crate::switch::cron_management_closed(Some(&manager)) {
+        parking.release();
+    }
     negative_assert!(
         crate::switch::cron_management_closed(Some(&manager)),
         "#2363 the A6 mark landed on the face's first poll"
@@ -865,6 +873,14 @@ async fn a_cancelled_stop_face_leaves_the_gate_closed() {
     {
         let mut face = handle.stop_face();
         let elapsed = tokio::time::timeout(Duration::from_millis(50), &mut face).await;
+        // The same failure-path guard `the_stop_face_drains…` carries: the
+        // mutant's face reports Ok without waiting. Free the parked body
+        // before the anchor fails — a dropped #[tokio::test] runtime waits
+        // for its blocking tasks, so a failure path that leaves the park
+        // held hangs the binary instead of failing it.
+        if elapsed.is_ok() {
+            parking.release();
+        }
         negative_assert!(
             elapsed.is_err(),
             "#2363 the cancelled face is parked in its drain, not done"
