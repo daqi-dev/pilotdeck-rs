@@ -65,7 +65,7 @@ async fn release(
 
 pub(super) fn trim(value: &JsString) -> JsString {
     let space =
-        |unit: &u16| char::from_u32(u32::from(*unit)).is_some_and(crate::js_value::js_space);
+        |unit: &u16| char::from_u32(u32::from(*unit)).is_some_and(crate::metadata::js_space);
     let units = value.units();
     let start = units
         .iter()
@@ -162,7 +162,7 @@ async fn list(
     let session = match params.get("sessionKey").unwrap_or(&undefined) {
         JsValue::String(session)
             if session.units().iter().any(|unit| {
-                !char::from_u32(u32::from(*unit)).is_some_and(crate::js_value::js_space)
+                !char::from_u32(u32::from(*unit)).is_some_and(crate::metadata::js_space)
             }) =>
         {
             session

@@ -3,3 +3,4 @@ pub mod config;
 mod identifier_ranges;
 pub mod protocol;
 mod regexp;
+pub(crate) use regexp::test as test_flagless_regexp;

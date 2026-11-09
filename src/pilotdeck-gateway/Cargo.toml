@@ -15,6 +15,7 @@ workspace = true
 
 [dependencies]
 image = { version = "=0.25.8", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+jsonschema = { version = "=0.37.4", default-features = false }
 pilotdeck-child-signals = { path = "../pilotdeck-child-signals" }
 pilotdeck-agent = { path = "../pilotdeck-agent" }
 base64 = "=0.22.1"

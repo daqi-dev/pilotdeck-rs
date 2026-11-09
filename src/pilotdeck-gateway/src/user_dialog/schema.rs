@@ -313,9 +313,9 @@ fn format_valid(value: &str, format: &str, standard: bool) -> bool {
                 && domain
                     .split_once('.')
                     .is_some_and(|(a, b)| !a.is_empty() && !b.is_empty())
-                && !value.chars().any(crate::js_value::js_space)
+                && !value.chars().any(crate::metadata::js_space)
         }
-        "uri" => !value.chars().any(crate::js_value::js_space) && url::Url::parse(value).is_ok(),
+        "uri" => !value.chars().any(crate::metadata::js_space) && url::Url::parse(value).is_ok(),
         "uuid" => regex::Regex::new(if standard {
             r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
         } else {

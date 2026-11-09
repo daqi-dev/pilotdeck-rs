@@ -183,6 +183,18 @@ pub(crate) fn global_config_path(pilot_home: &std::path::Path, env: &Env) -> Str
         })
 }
 
+pub(crate) fn has_execution_config(
+    home: &std::path::Path,
+    cwd: &std::path::Path,
+    env: &Env,
+) -> std::io::Result<bool> {
+    let global = global_config_path(home, env);
+    Ok(
+        (!global.is_empty() && crate::metadata::resolve(cwd, &global).try_exists()?)
+            || cwd.join(".pilotdeck/pilotdeck.yaml").try_exists()?,
+    )
+}
+
 /// `getPilotProjectConfigFilePath(projectRoot)` with `projectRoot` resolved
 /// against `cwd` as the loader does; `None` for an absent or empty project.
 pub(crate) fn project_config_path(
