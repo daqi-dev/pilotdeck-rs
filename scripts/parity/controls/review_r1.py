@@ -327,6 +327,41 @@ class ReviewControls(unittest.TestCase):
             ('english-closed', '| 1 | DS | P1: foo | closed |\n', True),
             ('english-wontfix', '| 1 | DS | P1: foo | wontfix |\n', True),
             ('failed-but-retried', '| 1 | DS | P1：foo | 已修复，失败率 0 |\n', True),
+            # fix-r5: negated closure forms must read as pending (both families).
+            ('english-unmerged', '| 1 | DS | P1: foo | unmerged |\n', False),
+            ('english-unclosed', '| 1 | DS | P1: foo | unclosed |\n', False),
+            ('english-un-fixed', '| 1 | DS | P1: foo | un-fixed |\n', False),
+            ('english-un-fixed-underscore', '| 1 | DS | P1: foo | un_fixed |\n', False),
+            ('english-hasnt-been-fixed', "| 1 | DS | P1: foo | hasn't been fixed |\n", False),
+            ('english-wasnt-merged', "| 1 | DS | P1: foo | wasn't merged |\n", False),
+            ('chinese-无法修复', '| 1 | DS | P1：foo | 无法修复 |\n', False),
+            ('chinese-不能修复', '| 1 | DS | P1：foo | 不能修复 |\n', False),
+            ('chinese-推迟修复', '| 1 | DS | P1：foo | 推迟修复 |\n', False),
+            ('chinese-延后修复', '| 1 | DS | P1：foo | 延后修复 |\n', False),
+            ('chinese-合并失败', '| 1 | DS | P1：foo | 合并失败 |\n', False),
+            ('chinese-并入失败', '| 1 | DS | P1：foo | 并入失败 |\n', False),
+            ('chinese-完成失败', '| 1 | DS | P1：foo | 完成失败 |\n', False),
+            ('chinese-关闭失败', '| 1 | DS | P1：foo | 关闭失败 |\n', False),
+            ('chinese-降级失败', '| 1 | DS | P1：foo | 降级失败 |\n', False),
+            # fix-r5: cross-language pairs bind (未 merged / 待 done).
+            ('cross-未-merged', '| 1 | DS | P1: foo | 未 merged |\n', False),
+            ('cross-待-done', '| 1 | DS | P1: foo | 待 done |\n', False),
+            ('cross-未-closed', '| 1 | DS | P1: foo | 未 closed |\n', False),
+            ('cross-未-resolved', '| 1 | DS | P1: foo | 未 resolved |\n', False),
+            # fix-r5: intention markers look forward across clauses; negation
+            # markers stay within theirs (no character window left).
+            ('intent-across-comma', '| 1 | DS | P1：foo | 计划 2026 年 12 月 31 日，修复 |\n', False),
+            ('deferred-with-plan-ref', '| 1 | DS | P1：foo | 暂缓，修复方案见 #100 |\n', False),
+            ('intent-long-gap', '| 1 | DS | P1：foo | 计划在 2026 年 12 月 31 日之后的第二个大版本发布窗口期修复 |\n', False),
+            ('negation-stays-in-clause', '| 1 | DS | P1：foo | 已修，未引入回归 |\n', True),
+            ('no-findings-then-fixed', '| 1 | DS | P1：foo | 没发现问题，已修复 |\n', True),
+            # fix-r5: accepted/Reviewed dispositions close; won't fix is wontfix.
+            ('accepted', '| 1 | DS | P1：foo | 已验收 |\n', True),
+            ('re-reviewed', '| 1 | DS | P1：foo | 已复核 |\n', True),
+            ('wont-fix-spelled-out', "| 1 | DS | P1: foo | won't fix |\n", True),
+            # fix-r5: level negation tolerates short modifiers.
+            ('negated-with-modifier', '| 1 | DS | 无新增 P0/P1/P2 | — |\n', True),
+            ('negated-any-modifier', '| 1 | DS | 未发现任何 P0/P1/P2 | — |\n', True),
         ]
         for name, row, expected in row_cases:
             with self.subTest(name=name):
@@ -392,6 +427,17 @@ class ReviewControls(unittest.TestCase):
              table + conclusion + '备注：见附录 | 附录 B。\n', True),
             ('fullwidth-pipe-prose-line',
              table + conclusion + '备注：见附录 ｜ 附录 B。\n', True),
+            # fix-r5: a backtick fence with backticks in its info string is
+            # prose, not a fence (CommonMark) — rows after it stay visible.
+            ('malformed-fence-info-string', table + conclusion
+             + ' ```inline``` 说明\n| P1：x | — |\n', False),
+            # fix-r5: a 处置 header column reads like 处理 (CLAUDE.md wording).
+            ('chuzhi-header-clean',
+             '# 记录\n\n| 轮 | 审查方 | 结论 | 处置 |\n|---|---|---|---|\n'
+             '| 1 | DS | 无 P0/P1/P2 | 已修（c1） |\n' + conclusion, True),
+            ('chuzhi-header-undisposed',
+             '# 记录\n\n| 轮 | 审查方 | 结论 | 处置 |\n|---|---|---|---|\n'
+             '| 1 | DS | P1：foo | — |\n' + conclusion, False),
         ]
         for name, body, expected in record_cases:
             with self.subTest(name=name):
@@ -409,19 +455,31 @@ class ReviewControls(unittest.TestCase):
             self.assertIs(check_ruler.independent_review(), True)
 
     def test_pending_and_closure_families_stay_paired(self):
-        """#2245 r3 reviews (both families): every closure word must keep its
-        negated form on the pending side — the two hardcoded lists drift apart
-        one-sidedly otherwise (merged was pending-only until fix-r4)."""
-        english = ('done', 'fixed', 'resolved', 'closed', 'merged')
-        for word in english:
+        """#2245 r5 reviews (both families): every closure word keeps every
+        known negated form on the pending side, derived from the closure
+        lists — no hand-copied vocabulary that can drift one-sidedly
+        (unmerged / 合并失败 / 无法修复 all read as closed until fix-r5)."""
+        for word in check_ruler._ENGLISH_CLOSURE:
             self.assertIn(word, check_ruler._CLOSED_HANDLING)
-            self.assertIsNotNone(
-                check_ruler._IN_PROGRESS_HANDLING.search(f'not {word}'))
-        chinese = ('修', '解决', '关闭', '完成', '合入', '并入', '合并', '降级', '升级')
-        for word in chinese:
+            for form in (f'not {word}', f'never {word}', f'un{word}',
+                         f'un-{word}', f'un {word}', f"hasn't been {word}",
+                         f'未 {word}'):
+                self.assertTrue(check_ruler._handling_pending(form), form)
+        for word in ('修', '解决', '关闭', '完成', '合入', '并入', '合并',
+                     '降级', '升级'):
             self.assertIn(word, check_ruler._CLOSED_HANDLING)
-            self.assertIsNotNone(
-                check_ruler._IN_PROGRESS_HANDLING.search(f'未{word}'))
+            for form in (f'未{word}', f'没{word}', f'无法{word}', f'不能{word}',
+                         f'推迟{word}', f'延后{word}', f'待{word}'):
+                self.assertTrue(check_ruler._handling_pending(form), form)
+        for verb in check_ruler._CJK_FAILING:
+            self.assertTrue(check_ruler._handling_pending(verb + '失败'),
+                           verb + '失败')
+        for form in ('not yet fixed', 'never been merged', '待 done',
+                     '计划 12 月 31 日，修复', '暂缓，修复方案见 #100'):
+            self.assertTrue(check_ruler._handling_pending(form), form)
+        for closed in ('已修（c1）', '已验收', '已复核', '已合并 to main',
+                      "won't fix", '已修，未引入回归', '没发现问题，已修复'):
+            self.assertFalse(check_ruler._handling_pending(closed), closed)
 
 
 if __name__ == '__main__':

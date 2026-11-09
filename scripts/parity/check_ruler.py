@@ -79,27 +79,69 @@ check_frozen = _load('check_frozen', _HERE / 'check_frozen.py').check
 # (修复失败 / 计划 2026 年 12 月 31 日修复 / 待下轮（r3）修复 / not yet
 # fixed / never been fixed) reads as pending; merged closes like 合入, and
 # 合并 joins both the closure and the pending verb families.
-_NEGATED_LEVELS = re.compile(r'(?:无|没有|未发现|不含|未见)\s*P[012]'
+# fix-r5 (r4 reviews, both families): pending derives from the closure lists
+# (un- / not / n't / X失败 / 无法X forms can no longer drift one-sidedly);
+# Chinese negation markers bind within their clause while intention markers
+# look forward across clauses, removing the character-count window; level
+# negation tolerates short modifiers (无新增 P0/P1/P2); a backtick fence's
+# info string may not contain backticks; a 处置 header column reads like
+# 处理; 已验收/已复核/已评审 close; won't fix is the wontfix closure.
+_NEGATED_LEVELS = re.compile(r'(?:无|没有|未发现|不含|未见)[一-龥]{0,4}\s*P[012]'
                              r'(?:\s*[/／、]\s*P[012])*', re.IGNORECASE)
 # Word boundaries keep identifiers (`case_p1`) from reading as a level.
 _LEVEL_TOKEN = re.compile(r'(?<![0-9A-Za-z_])p[012](?![0-9A-Za-z_])', re.IGNORECASE)
 _CLOSED_HANDLING = ('修', '解决', '关闭', '拒', '保留', '无需', '完成', '合入',
-                    '并入', '合并', '降级', '升级', 'done', 'fixed', 'resolved',
-                    'closed', 'merged', 'wontfix')
-# Pending must bind to the same disposal verbs the closure list knows (r2
-# review: 待合入/未完成/not done/没修/修复待评审 let a finding read as closed).
-# The gap between marker and verb is bounded but wide enough for dates etc.;
-# parentheses may sit inside it (待下轮（r3）修复, r4 review). A failed attempt
-# (修复失败 / not yet fixed / never been merged) is pending, not closed.
-_IN_PROGRESS_HANDLING = re.compile(
-    r'(?:待|计划|拟|暂不?|暂缓|未|没|后续|尚未|正在)[^，,。;；]{0,24}'
-    r'(?:修|解决|关闭|处置|处理|评审|复核|验收|完成|合入|并入|合并|降级|升级)'
-    r'|修复失败|解决失败|合入失败'
-    r'|修复中|进行中|观察中|保留观察|继续观察|待定|待办'
-    r'|\bin[ -]progress\b'
-    r'|\b(?:not|never)\b[^，,。;]{0,24}\b(?:fix|fixed|done|resolved|closed|merged)\b'
-    r'|\bun[- ]?resolved\b|\bun[- ]?done\b|\bunfixed\b'
-    r'|\bpending\b|\btodo\b|\btbd\b|\bwip\b', re.IGNORECASE)
+                    '并入', '合并', '降级', '升级', '处置', '处理', '评审', '复核',
+                    '验收', 'done', 'fixed', 'resolved', 'closed', 'merged',
+                    'wontfix', "won't fix")
+# The pending vocabulary derives from the closure lists, never hand-copied:
+# every closure word keeps its negated form on the pending side, or the pair
+# drifts one-sidedly and a ruler false-PASS slips in (r5 reviews, both
+# families: unmerged / 合并失败 / 无法修复 read as closed). Chinese markers
+# split by scope — negation markers (未/没/尚未…) bind within their clause so
+# 「已修，未引入回归」 stays closed, while intention markers (计划/待/无法…)
+# may look forward across clauses so 「计划 2026 年 12 月 31 日，修复」 stays
+# pending; there is no character-count window left to fall off (r3/r5).
+_ENGLISH_CLOSURE = ('done', 'fixed', 'resolved', 'closed', 'merged')
+_CJK_VERBS = ('修', '解决', '关闭', '处置', '处理', '评审', '复核', '验收', '观察',
+              '完成', '合入', '并入', '合并', '降级', '升级', '通过')
+_CJK_FAILING = ('修复', '解决', '关闭', '完成', '合入', '并入', '合并', '降级',
+                '升级', '处置', '处理', '迁移')
+_NEGATION_MARKER = re.compile(r'未|没|尚未|暂不|正在')
+_INTENT_MARKER = re.compile(r'待|计划|拟|暂缓|无法|不能|推迟|延后|后续')
+_ANY_VERB = re.compile('|'.join(_CJK_VERBS + _ENGLISH_CLOSURE))
+
+
+def _handling_pending(handling):
+    """The 处理 cell still leaves its finding open (#2245 r5)."""
+    if re.search('(?:' + '|'.join(v + '失败' for v in _CJK_FAILING) + ')', handling):
+        return True  # a failed attempt (合并失败…) is pending, not closed
+    if re.search(r'修复中|进行中|观察中|保留观察|继续观察|处置中|处理中|评审中'
+                 r'|复核中|验收中|待定|待办', handling):
+        return True
+    if re.search(r'\bin[ -]progress\b|\bpending\b|\btodo\b|\btbd\b|\bwip\b',
+                 handling, re.IGNORECASE):
+        return True
+    if re.search(r'\bun[- _]?(?:' + '|'.join(_ENGLISH_CLOSURE) + r')\b',
+                 handling, re.IGNORECASE):
+        return True  # unmerged / un-fixed / un closed
+    english_verb = r'\b(?:' + '|'.join(_ENGLISH_CLOSURE) + r')\b'
+    if re.search(r"\b(?!won)\w+n't\b[^，,。;]{0,24}" + english_verb,
+                 handling, re.IGNORECASE):
+        return True  # hasn't been fixed / wasn't merged (won't fix stays closed)
+    if re.search(r'\b(?:not|never)\b[^，,。;]{0,24}' + english_verb,
+                 handling, re.IGNORECASE):
+        return True  # not yet fixed / never been fixed / not merged
+    clauses = re.split(r'[，,。;；]', handling)
+    for i, clause in enumerate(clauses):
+        for marker in _NEGATION_MARKER.finditer(clause):
+            if _ANY_VERB.search(clause, marker.start()):
+                return True
+        for marker in _INTENT_MARKER.finditer(clause):
+            if _ANY_VERB.search(clause, marker.start()) or any(
+                    _ANY_VERB.search(later) for later in clauses[i + 1:]):
+                return True
+    return False
 
 
 def _row_cells(stripped):
@@ -154,9 +196,11 @@ def _scan_table(run):
             and not any(_is_delimiter(row[1]) for row in run[2:])):
         return levels(run), False  # unreadable shape: every level row is open
     header, data = run[0][1], run[2:]
-    if '结论' not in header or '处理' not in header:
+    if '结论' not in header or not ({'处理', '处置'} & set(header)):
         return levels(data), False  # well-formed, but not a review table
-    handling_at, width = header.index('处理'), len(header)
+    handling_at = (header.index('处置') if '处置' in header
+                   else header.index('处理'))
+    width = len(header)
     open_rows = []
     for lead, cells in data:
         if not _row_has_level(cells):
@@ -168,7 +212,7 @@ def _scan_table(run):
         else:
             handling = cells[handling_at].replace('*', '').lower()
             if (not any(closed in handling for closed in _CLOSED_HANDLING)
-                    or _IN_PROGRESS_HANDLING.search(handling)):
+                    or _handling_pending(handling)):
                 open_rows.append(cells)
     return open_rows, True
 
@@ -189,8 +233,10 @@ def _visible_text(text):
     visible = []
     for line in G.jsonl_lines(text):
         if fence is None:
-            opened = re.match(r' {0,3}(`{3,}|~{3,})', line)
-            if opened:
+            opened = re.match(r' {0,3}(`{3,}|~{3,})(.*)$', line)
+            # CommonMark: a backtick fence's info string may not itself
+            # contain backticks — such a line is prose, not a fence (r5).
+            if opened and (opened.group(1)[0] == '~' or '`' not in opened.group(2)):
                 fence = (opened.group(1)[0], len(opened.group(1)))
             else:
                 visible.append(line)
