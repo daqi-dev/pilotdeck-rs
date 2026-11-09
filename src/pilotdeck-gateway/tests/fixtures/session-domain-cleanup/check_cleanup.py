@@ -1046,16 +1046,54 @@ def _conditional_status_word(node, words):
     (probe controls C1/C3).  Over-collection stays the safe direction:
     a JoinedStr with non-empty literal parts around the interpolation
     can never equal a bare word, but it is flagged rather than excused.
+
+    fix-r20 (DS r19 boundary#1 P0 + sibling#2 P1, probe-verified —
+    fix-r20-audit/probe-r20-p0.out): a conditional nested in another
+    conditional's arm with a constant-but-unresolvable test ('1.0 is
+    1.0') is answered by the FOLD as the sentinel (see _exit_uncertain),
+    so every caller meets the sentinel hit before this helper; a
+    BinOp-wrapped operand is judged per operand here for the same
+    reason the fold cannot answer it, and a recursion limit hit counts
+    as a hit too.
     """
-    if isinstance(node, ast.JoinedStr):
-        return any(isinstance(part, ast.FormattedValue)
-                   and _conditional_status_word(part.value, words)
-                   for part in node.values)
-    if not isinstance(node, (ast.IfExp, ast.BoolOp)):
-        return False
-    return any(_folded_status_hit(_folded_string(arm), words)
-               or _conditional_status_word(arm, words)
-               for arm in _exit_arms(node))
+    try:
+        if isinstance(node, ast.JoinedStr):
+            return any(isinstance(part, ast.FormattedValue)
+                       and _conditional_status_word(part.value, words)
+                       for part in node.values)
+        if isinstance(node, ast.BinOp):
+            # fix-r20 (DS sibling#2 r19 P1, probe-verified — fix-r20-audit/
+            # probe-r20-p0.out S2K/S2V/S2F): the fold's Add branch answers
+            # None when one operand folds None, so a conditional operand
+            # beside a folded word — ('sta' + 'tus') + ('' if flag else
+            # 'x') — never reaches the single-string contract.  Each
+            # operand is judged with the arm rule: one that folds to
+            # *words* or is itself a conditional word counts (the
+            # ''-conditioned shape IS the word at runtime).  Subscript is
+            # deliberately not a recursion face: d['status'] is a relay of
+            # the base, exactly like a bare Name, and the walk fallback's
+            # literal-slice over-collection (d['status'] sees the complete
+            # Constant) is the r18-established rule this must not widen.
+            return any(_folded_status_hit(_folded_string(operand), words)
+                       or _conditional_status_word(operand, words)
+                       for operand in (node.left, node.right))
+        if not isinstance(node, (ast.IfExp, ast.BoolOp)):
+            return False
+        # fix-r20 (DS boundary#1 r19 P0, probe PB1/PB2/PB3): a node that
+        # contains a dropped branch folds the sentinel (_exit_uncertain
+        # above), so every caller meets that hit first — an arm reached
+        # here folds None or a definite string only, and an arm folding
+        # the sentinel still counts as a hit below.
+        return any(_folded_status_hit(_folded_string(arm), words)
+                  or _conditional_status_word(arm, words)
+                  for arm in _exit_arms(node))
+    except RecursionError:
+        # fix-r20 (DS boundary/concurrency r19 未验边界 + anthropic
+        # concurrency#1; probe depth-240 no-raise — the parser refuses
+        # first, the guard is defense in depth): a conditional nested past
+        # the interpreter's limit fails closed instead of taking the audit
+        # down — the same polarity as _literal_test_value's wrapper.
+        return True
 
 
 def _folded_string(node, budget=None):
@@ -1339,28 +1377,46 @@ def _folded_string_fold(node, budget):
     # belongs.)
     if isinstance(node, (ast.IfExp, ast.BoolOp)):
         arms = _exit_arms(node)
+        # fix-r20 (DS boundary#1 r19 P0, probe-verified — fix-r20-audit/
+        # probe-r20-p0.out PB1/PB2): flattening drops a sub-expression
+        # that certifies no arm, and the surviving arms must not be read
+        # as the complete answer — a partial set folds as the sentinel,
+        # never a wrong string.
+        if _exit_uncertain(node):
+            return _FOLD_STRING_UNRESOLVED
         if len(arms) == 1:
             return _folded_string(arms[0], budget)
         return None if arms else _FOLD_STRING_UNRESOLVED
     return None
 
 
-def _status_literals(node):
-    words = _status_words()
-    folded = _folded_string(node)
+def _spelling_hit(node, words):
+    """One spelling pipeline for the key and the literal side (fix-r20).
+
+    fix-r20 (DS simplify#1 r19 P2): r18 fixed one side of the folded-word
+    family, r19 hand-mirrored the other — two hand-expanded copies of the
+    same three-step rule (fold hit, word-aware conditional, walk fallback)
+    are exactly what let each new wrapper family miss one side first.
+    The rule is structural now: both sides and every future consumer
+    spell it once.
+    """
     # fix-r14 (DS boundary#1 r13 P0): a fold stopped by the audit-pass cell
-    # certifies nothing about absence — it reads as a status literal, the
+    # certifies nothing about absence — it reads as a status word, the
     # conservative direction for every marker this feeds (over-collecting a
     # function into the enumeration flags it; missing one loses the audit).
     # fix-r15: the polarity lives in _folded_status_hit (DS simplify#1).
-    if _folded_status_hit(folded, words):
+    if _folded_status_hit(_folded_string(node), words):
         return True
-    # fix-r19 (DS r18 boundary#1 P0, probe G4/G5/G6): a runtime
-    # conditional can still take a status-word arm — see
-    # _conditional_status_word.
+    # fix-r19 (DS r18 boundary#1 P0, probe G1-G7): a runtime conditional
+    # can still take a status-word arm — see _conditional_status_word
+    # (fix-r20: also its BinOp-operand and uncertainty branches).
     if _conditional_status_word(node, words):
         return True
     return any(isinstance(n, ast.Constant) and n.value in words for n in ast.walk(node))
+
+
+def _status_literals(node):
+    return _spelling_hit(node, _status_words())
 
 
 def _has_passed_aggregate(node):
@@ -1495,15 +1551,12 @@ def _status_key(node):
     """
     if node is None:
         return False
-    if _folded_status_hit(_folded_string(node), _STATUS_KEYS):
-        return True
     # fix-r19 (DS r18 boundary#1 P0, probe G1/G2/G3/G7): the key-side
     # mirror of the value-side rule — a runtime conditional whose
-    # reachable arm folds to a status key is a status key.
-    if _conditional_status_word(node, _STATUS_KEYS):
-        return True
-    return any(isinstance(n, ast.Constant) and n.value in _STATUS_KEYS
-               for n in ast.walk(node))
+    # reachable arm folds to a status key is a status key.  fix-r20 (DS
+    # simplify#1 r19 P2): the mirror is the same pipeline, shared as
+    # _spelling_hit so neither side can drift again.
+    return _spelling_hit(node, _STATUS_KEYS)
 
 
 def _dict_has_status(summary):
@@ -5172,6 +5225,50 @@ def _exit_arms(node):
     return [node]
 
 
+def _exit_uncertain(node):
+    """True when arm flattening at *node* is known to be incomplete.
+
+    fix-r20 (DS boundary#1 r19 P0, probe-verified — fix-r20-audit/
+    probe-r20-p0.out PB1/PB2/PB3): _exit_arms flattens a runtime test's
+    two arms and a BoolOp's runtime operands, and a sub-expression that
+    certifies no arm (a constant-but-unresolvable test such as
+    ``1.0 is 1.0``) contributes NOTHING to the flattened list — the
+    surviving arms then read as the complete answer while the dropped
+    branch can still carry the runtime value (``report['x' if flag else
+    (('sta' + 'tus') if (1.0 is 1.0) else 'y')] = 'PASS'`` escapes
+    enumeration).  This companion walk answers exactly that question.
+
+    The fix deliberately does NOT make _exit_arms itself propagate the
+    empty set upward: the presence-scan consumers (``_calls_aggregate``
+    and friends, whose docstrings read [] as "certifies nothing") would
+    LOSE the surviving arms' detection on the same shapes — only the
+    two consumers that must not trust a partial set (the fold's
+    single-string contract and the write-policy scan) consult this.
+    """
+    if isinstance(node, ast.IfExp):
+        if _test_is_runtime(node.test):
+            return any(_exit_uncertain(sub)
+                       for sub in (node.body, node.orelse))
+        # A resolvable constant test returns the taken arm's own arm set
+        # directly (no flattening), so a deeper [] already surfaces to the
+        # callers' ``not arms`` paths; only the unresolvable test is a
+        # dropped branch here.
+        return _literal_test_value(node.test) is _LITERAL_TEST_UNRESOLVED
+    if isinstance(node, ast.BoolOp):
+        for sub in node.values:
+            if _test_is_runtime(sub):
+                # flattened operand — recurse for a dropped sub-branch
+                if _exit_uncertain(sub):
+                    return True
+            elif _literal_test_value(sub) is _LITERAL_TEST_UNRESOLVED:
+                # non-runtime unresolvable operand: _exit_arms itself
+                # returns [] here, but when this BoolOp sits inside a
+                # parent's flattening that [] is dropped the same way
+                return True
+        return False
+    return False
+
+
 def _exit_code_shaped(node):
     if isinstance(node, ast.Constant):
         return isinstance(node.value, int) and not isinstance(node.value, bool)
@@ -5225,6 +5322,12 @@ def _assigns_clean_status(value, bindings, seen=None, module=None,
     arms = _exit_arms(value)
     if not arms:
         return True
+    # fix-r20 (DS boundary#1 r19 P0, write side, probe PB2): flattening can
+    # drop a branch that certifies no arm while it can still write the
+    # clean literal at runtime — a partial arm set certifies nothing here
+    # either, the same fail-closed direction as the empty set above.
+    if _exit_uncertain(value):
+        return True
     for arm in arms:
         if isinstance(arm, ast.NamedExpr):
             # ``report['status'] = (status := 'PASS')`` writes the same value
@@ -5248,6 +5351,16 @@ def _assigns_clean_status(value, bindings, seen=None, module=None,
             # ``'PA' + 'SS'`` / ``f'{"PASS"}'`` reach the slot as the clean
             # literal without ever being a ``Constant`` node (GLM boundary r19
             # P1-2).
+            return True
+        # fix-r20 (DS sibling#1 r19 P1, probe-verified — fix-r20-audit/
+        # probe-r20-p0.out S1): this is the third consumer of the folded
+        # word polarity, and the write path may not disagree with the
+        # return path — an f-string wrapping a runtime conditional reads
+        # as a status literal on the enumeration side (_status_literals)
+        # while this scan missed it: the arm is not a Call, so the walk
+        # fallback below applies, but it only sees complete literal
+        # words ('PA'/'SS' fragments miss).
+        if _conditional_status_word(arm, _CLEAN_STATUS_LITERALS):
             return True
         if not isinstance(arm, ast.Call) and any(
                 isinstance(n, ast.Constant) and isinstance(n.value, str)
@@ -8719,6 +8832,164 @@ def _aggregation_audit_impl():
                             f'a status write (over-collection '
                             f'regression, rogue{_i}) (#1652)')
             break
+    # #1652 fix-r20 (DS r19 boundary#1 P0 + sibling#1/#2 P1 + sibling#3
+    # P2(b 口径) + simplify#1 P2a, probe-verified — fix-r20-audit/
+    # probe-r20-p0.out PB1/PB2/PB3/S1/S2K/S2V/S2F/S2N/S3): a conditional
+    # nested in another conditional's arm under a constant-but-unresolvable
+    # test ('1.0 is 1.0') had its empty arm set DROPPED by flattening, so
+    # the parent's surviving arms read as the complete answer and the
+    # folded status word in the dropped branch escaped both sides of the
+    # enumeration (the fold even answered the deterministic WRONG string
+    # 'x'); the write-policy side (_assigns_clean_status) was the third
+    # consumer never wired to the word-aware rule; a BinOp-wrapped
+    # conditional operand escaped the same way on both sides.
+    _fsr5b_fold_sentinel = [
+        "'x' if flag else (('sta' + 'tus') if (1.0 is 1.0) else 'y')",
+        "'ordinary' if flag else (('PA' + 'SS') if (1.0 is 1.0) else 'y')",
+    ]
+    if any(_folded_string(ast.parse(shape, mode='eval').body)
+           is not _FOLD_STRING_UNRESOLVED
+           for shape in _fsr5b_fold_sentinel):
+        failures.append('#892 aggregation-audit: a nested uncertainty '
+                        'conditional answered a string instead of the '
+                        'sentinel (#1652)')
+    _fsr5b_keys = [
+        "'x' if flag else (('sta' + 'tus') if (1.0 is 1.0) else 'y')",
+        "name or (('sta' + 'tus') if (1.0 is 1.0) else name2)",
+        "('sta' + 'tus') + ('' if flag else 'x')",
+        'f\'{("sta" + "tus") + ("" if flag else "x")}\'',
+        # The arm of this shape folds the SENTINEL (r15 truncation refusal
+        # behind a runtime test) — the sentinel-arm reachability face of the
+        # DS sibling#3 r19 P2 polarity.  It does NOT isolate the arm-loop
+        # polarity by itself: the BinOp branch judges the same arm's
+        # operands and the right one also folds the sentinel, so a bare-
+        # ``in`` downgrade is still caught through that branch (mutneg-r20
+        # M7 first run survived on exactly this).  The isolating face is
+        # the f-string entry below.
+        "('%.6s' % ('sta' + 'tus' + 'x' * 999994)) if flag else 'x'",
+        # The arm is a JoinedStr whose interpolation folds the SENTINEL —
+        # not an IfExp/BoolOp/BinOp recursion face, so the arm loop's
+        # _folded_status_hit is the ONLY path that reads it (the mutneg-r20
+        # M7 killer).  Its ordinary-word twin is fail-closed the same way
+        # as _fsr5b_uncertain_hits: an uncertainty counts as a hit.
+        'f\'{(("sta" + "tus") if (1.0 is 1.0) else "y")}\'' " if flag else 'x'",
+        # Two levels deep: the uncertainty sits under a SECOND runtime
+        # test, so only the recursive half of _exit_uncertain sees it.
+        "'x' if flag else ('y' if flag2 else (('sta' + 'tus')"
+        " if (1.0 is 1.0) else 'z'))",
+        # Walk-fallback-only face: the fold cannot answer a tuple index
+        # and no conditional is involved — the third step alone reads it.
+        "('status', )[0]",
+    ]
+    if any(not _status_key(ast.parse(shape, mode='eval').body)
+           for shape in _fsr5b_keys):
+        failures.append('#892 aggregation-audit: a nested-uncertainty or '
+                        'BinOp-wrapped conditional status key was not '
+                        'read as a status key (#1652)')
+    _fsr5b_lits = [
+        "'ordinary' if flag else (('PA' + 'SS') if (1.0 is 1.0) else 'y')",
+        "('PA' + 'SS') + ('' if flag else 'x')",
+        # Uncertainty behind an f-string interpolation must reach the
+        # caller as a hit — the sentinel propagates through JoinedStr
+        # folds (fix-r16) and through the nested-conditional fold
+        # (fix-r20), and these two lock that end of the chain.
+        'f\'{(("PA" + "SS") if (1.0 is 1.0) else "y")}\'',
+        'f\'{"x" if flag else (("PA" + "SS") if (1.0 is 1.0) else "y")}\'',
+    ]
+    if any(not _status_literals(ast.parse(shape, mode='eval').body)
+           for shape in _fsr5b_lits):
+        failures.append('#892 aggregation-audit: a nested-uncertainty or '
+                        'BinOp-wrapped conditional status value was not '
+                        'read as a status literal (#1652)')
+    # Deliberate over-collection, pinned as the fail-closed polarity: a
+    # nested or standalone uncertainty counts as a hit even when its
+    # dropped branch folds ordinary words only — the same sentinel
+    # direction the standalone unresolvable test has had since fix-r6.
+    _fsr5b_uncertain_hits = [
+        "('ord' + 'inary') if (1.0 is 1.0) else 'y'",
+        "'x' if flag else (('ord' + 'inary') if (1.0 is 1.0) else 'y')",
+    ]
+    if any(not _status_key(ast.parse(shape, mode='eval').body)
+           for shape in _fsr5b_uncertain_hits):
+        failures.append('#892 aggregation-audit: an uncertainty '
+                        'conditional stopped reading as a status key '
+                        '(fail-closed polarity, #1652)')
+    _fsr5b_not_keys = [
+        'name',
+        "('ord' + 'inary') + ('' if flag else 'x')",
+    ]
+    if any(_status_key(ast.parse(shape, mode='eval').body)
+           for shape in _fsr5b_not_keys):
+        failures.append('#892 aggregation-audit: a runtime or BinOp-wrapped '
+                        'non-status conditional key was over-collected as '
+                        'a status key (#1652)')
+    _fsr5b_not_lits = [
+        'f\'{("ord" + "inary") if flag else "x"}\'',
+        "('ord' + 'inary') + ('' if flag else 'x')",
+        "('or' + 'dinary') if flag else 'x'",
+    ]
+    if any(_status_literals(ast.parse(shape, mode='eval').body)
+           for shape in _fsr5b_not_lits):
+        failures.append('#892 aggregation-audit: a runtime or BinOp-wrapped '
+                        'non-status conditional value was over-collected '
+                        'as a status literal (#1652)')
+    # The third consumer's write-policy faces (DS sibling#1 r19 P1): the
+    # write path may not disagree with the return path.
+    _fsr5b_writes_clean = [
+        'f\'{("PA" + "SS") if flag else "x"}\'',
+        "'ordinary' if flag else (('PA' + 'SS') if (1.0 is 1.0) else 'y')",
+        "('PA' + 'SS') if flag else 'x'",
+    ]
+    if any(not _assigns_clean_status(
+            ast.parse(shape, mode='eval').body, {})
+           for shape in _fsr5b_writes_clean):
+        failures.append('#892 aggregation-audit: the write path read a '
+                        'conditional clean write as legal while the '
+                        'return path flags it (#1652)')
+    _fsr5b_writes_legal = [
+        'f\'{("ord" + "inary") if flag else "x"}\'',
+        "('or' + 'dinary') if flag else 'x'",
+    ]
+    if any(_assigns_clean_status(ast.parse(shape, mode='eval').body, {})
+           for shape in _fsr5b_writes_legal):
+        failures.append('#892 aggregation-audit: the write path '
+                        'over-collected a conditional non-clean write '
+                        '(#1652)')
+    # End-to-end: each rogue below writes the status word through a
+    # nested-uncertainty or BinOp-wrapped shape and must be enumerated;
+    # rogue6 is the negative control (folded non-status BinOp value).
+    _fsr5b_rogue_writes = [
+        "    report['x' if flag else (('sta' + 'tus') if (1.0 is 1.0)"
+        " else 'y')] = 'PASS'",
+        "    report['status'] = 'ordinary' if flag else (('PA' + 'SS')"
+        " if (1.0 is 1.0) else 'y')",
+        "    report[name or (('sta' + 'tus') if (1.0 is 1.0) else"
+        " name2)] = 'PASS'",
+        "    report[('sta' + 'tus') + ('' if flag else 'x')] = 'PASS'",
+        "    report['status'] = ('PA' + 'SS') + ('' if flag else 'x')",
+        '    report[f\'{("sta" + "tus") + ("" if flag else "x")}\']'
+        " = 'PASS'",
+    ]
+    _fsr5b_lines = ['report = {}', 'name = "other"', 'name2 = "z"',
+                    'flag = True', '']
+    for _i, _write in enumerate(_fsr5b_rogue_writes):
+        _fsr5b_lines += [f'def rogue{_i}(rows):', _write, '    return 0', '']
+    _fsr5b_lines += ['def rogue6(rows):',
+                    "    report['status'] = ('ord' + 'inary') + (''"
+                    " if flag else 'x')", '    return 0', '']
+    _fsr5b_found, _fsr5b_dup = scan_aggregation_tree(
+        ast.parse('\n'.join(_fsr5b_lines)), 'fix-r20-self-check.py')
+    for _i in range(len(_fsr5b_rogue_writes)):
+        if ('fix-r20-self-check.py', f'rogue{_i}') not in _fsr5b_found:
+            failures.append('#892 aggregation-audit: a nested-uncertainty '
+                            'or BinOp-wrapped conditional status write '
+                            f'escaped enumeration (rogue{_i}) (#1652)')
+            break
+    if ('fix-r20-self-check.py', 'rogue6') in _fsr5b_found:
+        failures.append('#892 aggregation-audit: a BinOp-wrapped '
+                        'non-status conditional was enumerated as a '
+                        'status write (over-collection regression, '
+                        'rogue6) (#1652)')
     # #1652 fix-r16 (DS sibling#2 r15 P2): _nested_slot_fail_closed keeps
     # the bare ``in`` on purpose — a stopped fold (the sentinel) must NOT
     # exempt a nested status slot there; False is the flagging, safe
