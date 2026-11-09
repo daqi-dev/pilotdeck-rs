@@ -121,7 +121,8 @@ jobs:
           # CLI fixtures，这些手工副本此前仍无闸门（缺文件即 python3 非零，不静默通过）。
           python3 -I src/pilotdeck-gateway/tests/fixtures/cron-schedule/negative_controls.py --check
           # #2409：cron-scheduler 同口径接入——其 --check 除锚点外还机检 README 的
-          # 变异计数与 Rows 清单须与 mutations 表逐项一致、每条变异绑定的测试名在
+          # 变异计数与 Rows 清单须与 mutations 表逐项一致、金样格数两处手抄须与
+          # oracle.json 的 cells 数一致、每条变异绑定的测试名经 declares_test 在
           # scheduler_tests.rs 中确实存在（该 README 计数曾漂移过一次，靠 fix-r3 才手工改正）。
           python3 -I src/pilotdeck-gateway/tests/fixtures/cron-scheduler/negative_controls.py --check
           # #1364 P0-a：闸门自身的负控。这两个脚本清空 mutations 后跑 --check 必须
