@@ -1,0 +1,240 @@
+{
+  "cases": [
+    {
+      "id": "context-set",
+      "settings": {
+        "agent": {
+          "maxContextTokens": 64000
+        }
+      },
+      "before": "schemaVersion: 1\n# human config\nagent:\n  model: fixture/mock # keep model\n  maxContextTokens: 128000 # context note\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: {mock: {}}\n",
+      "after": "schemaVersion: 1\n# human config\nagent:\n  model: fixture/mock # keep model\n  maxContextTokens: 64000 # context note\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: { mock: {} }\n",
+      "result": {
+        "applied": [
+          "agent.maxContextTokens"
+        ],
+        "cleared": [],
+        "changedPaths": [
+          "agent.maxContextTokens"
+        ]
+      }
+    },
+    {
+      "id": "context-clear",
+      "settings": {
+        "agent": {
+          "maxContextTokens": null
+        }
+      },
+      "before": "schemaVersion: 1\n# human config\nagent:\n  model: fixture/mock # keep model\n  maxContextTokens: 128000 # context note\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: {mock: {}}\n",
+      "after": "schemaVersion: 1\n# human config\nagent:\n  model: fixture/mock # keep model\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: { mock: {} }\n",
+      "result": {
+        "applied": [],
+        "cleared": [
+          "agent.maxContextTokens"
+        ],
+        "changedPaths": [
+          "agent.maxContextTokens"
+        ]
+      }
+    },
+    {
+      "id": "noop",
+      "settings": {
+        "agent": {}
+      },
+      "before": "schemaVersion: 1\n# human config\nagent:\n  model: fixture/mock # keep model\n  maxContextTokens: 128000 # context note\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: {mock: {}}\n",
+      "after": "schemaVersion: 1\n# human config\nagent:\n  model: fixture/mock # keep model\n  maxContextTokens: 128000 # context note\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: {mock: {}}\n",
+      "result": {
+        "applied": [],
+        "cleared": [],
+        "changedPaths": []
+      }
+    },
+    {
+      "id": "both",
+      "settings": {
+        "agent": {
+          "maxOutputTokens": 2048,
+          "maxContextTokens": 64000
+        }
+      },
+      "before": "schemaVersion: 1\n# human config\nagent:\n  model: fixture/mock # keep model\n  maxContextTokens: 128000 # context note\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: {mock: {}}\n",
+      "after": "schemaVersion: 1\n# human config\nagent:\n  model: fixture/mock # keep model\n  maxContextTokens: 64000 # context note\n  maxOutputTokens: 2048\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: { mock: {} }\n",
+      "result": {
+        "applied": [
+          "agent.maxContextTokens",
+          "agent.maxOutputTokens"
+        ],
+        "cleared": [],
+        "changedPaths": [
+          "agent.maxContextTokens",
+          "agent.maxOutputTokens"
+        ]
+      }
+    },
+    {
+      "id": "thinking",
+      "settings": {
+        "agent": {
+          "thinking": {
+            "enabled": true,
+            "budgetTokens": 10
+          }
+        }
+      },
+      "before": "schemaVersion: 1\n# human config\nagent:\n  model: fixture/mock # keep model\n  maxContextTokens: 128000 # context note\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: {mock: {}}\n",
+      "after": "schemaVersion: 1\n# human config\nagent:\n  model: fixture/mock # keep model\n  maxContextTokens: 128000 # context note\n  thinking:\n    enabled: true\n    budgetTokens: 10\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: { mock: {} }\n",
+      "result": {
+        "applied": [
+          "agent.thinking"
+        ],
+        "cleared": [],
+        "changedPaths": [
+          "agent.thinking"
+        ]
+      }
+    },
+    {
+      "id": "subagents",
+      "settings": {
+        "agent": {
+          "subagents": {
+            "default": "  fixture/mock  ",
+            "maxDepth": 2,
+            "timeoutMs": 200
+          }
+        }
+      },
+      "before": "schemaVersion: 1\n# human config\nagent:\n  model: fixture/mock # keep model\n  maxContextTokens: 128000 # context note\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: {mock: {}}\n",
+      "after": "schemaVersion: 1\n# human config\nagent:\n  model: fixture/mock # keep model\n  maxContextTokens: 128000 # context note\n  subagents:\n    default: fixture/mock\n    timeoutMs: 200\n    maxDepth: 2\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: { mock: {} }\n",
+      "result": {
+        "applied": [
+          "agent.subagents.default",
+          "agent.subagents.timeoutMs",
+          "agent.subagents.maxDepth"
+        ],
+        "cleared": [],
+        "changedPaths": [
+          "agent.subagents.default",
+          "agent.subagents.timeoutMs",
+          "agent.subagents.maxDepth"
+        ]
+      }
+    },
+    {
+      "id": "plugin",
+      "settings": {
+        "extension": {
+          "builtinPluginsEnabled": {
+            "alpha": true,
+            "beta": false
+          },
+          "includeHookEvents": true
+        }
+      },
+      "before": "schemaVersion: 1\n# human config\nagent:\n  model: fixture/mock # keep model\n  maxContextTokens: 128000 # context note\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: {mock: {}}\n",
+      "after": "schemaVersion: 1\n# human config\nagent:\n  model: fixture/mock # keep model\n  maxContextTokens: 128000 # context note\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: { mock: {} }\nextension:\n  includeHookEvents: true\n  builtinPluginsEnabled:\n    alpha: true\n    beta: false\n",
+      "result": {
+        "applied": [
+          "extension.includeHookEvents",
+          "extension.builtinPluginsEnabled"
+        ],
+        "cleared": [],
+        "changedPaths": [
+          "extension.includeHookEvents",
+          "extension.builtinPluginsEnabled"
+        ]
+      }
+    },
+    {
+      "id": "web",
+      "settings": {
+        "tools": {
+          "webSearch": {
+            "enabled": true
+          }
+        }
+      },
+      "before": "schemaVersion: 1\n# human config\nagent:\n  model: fixture/mock # keep model\n  maxContextTokens: 128000 # context note\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: {mock: {}}\n",
+      "after": "schemaVersion: 1\n# human config\nagent:\n  model: fixture/mock # keep model\n  maxContextTokens: 128000 # context note\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: { mock: {} }\ntools:\n  webSearch:\n    enabled: true\n",
+      "result": {
+        "applied": [
+          "tools.webSearch.enabled"
+        ],
+        "cleared": [],
+        "changedPaths": [
+          "tools.webSearch.enabled"
+        ]
+      }
+    },
+    {
+      "id": "invalid",
+      "settings": {
+        "agent": {
+          "maxContextTokens": -1
+        }
+      },
+      "before": "schemaVersion: 1\n# human config\nagent:\n  model: fixture/mock # keep model\n  maxContextTokens: 128000 # context note\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: {mock: {}}\n",
+      "after": "schemaVersion: 1\n# human config\nagent:\n  model: fixture/mock # keep model\n  maxContextTokens: 128000 # context note\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: {mock: {}}\n",
+      "error": {
+        "code": "INVALID_LOCAL_SETTINGS",
+        "name": "PilotLocalSettingsError",
+        "message": "localSettings.agent.maxContextTokens must be a positive integer or null."
+      }
+    },
+    {
+      "id": "unsupported",
+      "settings": {
+        "agent": {
+          "model": "other"
+        }
+      },
+      "before": "schemaVersion: 1\n# human config\nagent:\n  model: fixture/mock # keep model\n  maxContextTokens: 128000 # context note\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: {mock: {}}\n",
+      "after": "schemaVersion: 1\n# human config\nagent:\n  model: fixture/mock # keep model\n  maxContextTokens: 128000 # context note\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: {mock: {}}\n",
+      "error": {
+        "code": "UNSUPPORTED_LOCAL_SETTING",
+        "name": "PilotLocalSettingsError",
+        "message": "localSettings.agent.model is not supported by PilotDeck localSettings."
+      }
+    },
+    {
+      "id": "flow",
+      "settings": {
+        "agent": {
+          "maxContextTokens": 64000
+        }
+      },
+      "before": "schemaVersion: 1\n# human config\nagent: {model: fixture/mock, maxContextTokens: 128000} # comment\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: {mock: {}}\n",
+      "after": "schemaVersion: 1\n# human config\nagent: { model: fixture/mock, maxContextTokens: 64000 } # comment\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: { mock: {} }\n",
+      "result": {
+        "applied": [
+          "agent.maxContextTokens"
+        ],
+        "cleared": [],
+        "changedPaths": [
+          "agent.maxContextTokens"
+        ]
+      }
+    },
+    {
+      "id": "anchor",
+      "settings": {
+        "agent": {
+          "maxContextTokens": 64000
+        }
+      },
+      "before": "schemaVersion: 1\n# human config\nagent: &agent\n  model: fixture/mock # keep model\n  maxContextTokens: 128000 # context note\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: {mock: {}}\nextension: {anchorCopy: *agent}\n",
+      "after": "schemaVersion: 1\n# human config\nagent: &agent\n  model: fixture/mock # keep model\n  maxContextTokens: 64000 # context note\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: { mock: {} }\nextension: { anchorCopy: *agent }\n",
+      "result": {
+        "applied": [
+          "agent.maxContextTokens"
+        ],
+        "cleared": [],
+        "changedPaths": [
+          "agent.maxContextTokens"
+        ]
+      }
+    }
+  ]
+}

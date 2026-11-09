@@ -906,3 +906,67 @@ async fn actual_callbacks_settle_on_their_own_completion() {
         }
     }
 }
+
+#[test]
+fn sdk_scope_revokes_only_its_own_handler_tokens() {
+    let handlers = Arc::new(Mutex::new(
+        crate::runtime::sdk_session::SessionHandlerRegistry::new(),
+    ));
+    let key = "same-session".into();
+    let (old_config, old_session) = {
+        let mut registry = handlers.lock().unwrap();
+        (
+            registry.register_config_change(&key, Arc::new(|_| {})),
+            registry.register_session_hook(&key, Arc::new(|_, _| {})),
+        )
+    };
+    {
+        let mut registry = handlers.lock().unwrap();
+        registry.register_config_change(&key, Arc::new(|_| {}));
+        registry.register_session_hook(&key, Arc::new(|_, _| {}));
+    }
+    let signal = Cancellation::new();
+    let mut scope = SdkSessionHooks {
+        handlers: handlers.clone(),
+        registration: Some(old_config),
+        session_registration: Some(old_session),
+        signal: signal.clone(),
+        file: None,
+        config: None,
+    };
+    scope.revoke();
+    assert!(!signal.is_cancelled());
+    drop(scope);
+    assert!(signal.is_cancelled());
+    let registry = handlers.lock().unwrap();
+    assert!(registry.has_config_change(&key));
+    assert!(registry.has_session_hook(&key));
+}
+
+#[tokio::test]
+async fn sdk_observer_receipt_is_admitted_before_callback_returns_and_drains() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let entered = Arc::new(AtomicBool::new(false));
+    let release = Arc::new(tokio::sync::Notify::new());
+    let observed = entered.clone();
+    let gate = release.clone();
+    let slots = Arc::new(tokio::sync::Semaphore::new(1));
+    let permit = slots.clone().acquire_owned().await.unwrap();
+    let work: HostFuture<crate::runtime::hooks::LifecycleDispatchResult> = Box::pin(async move {
+        observed.store(true, Ordering::SeqCst);
+        gate.notified().await;
+        Ok(Default::default())
+    });
+    admit_sdk_observer(work, permit, &tokio::runtime::Handle::current());
+    assert!(
+        entered.load(Ordering::SeqCst),
+        "admission must precede caller return"
+    );
+    assert_eq!(slots.available_permits(), 0);
+    release.notify_one();
+    tokio::time::timeout(std::time::Duration::from_secs(2), slots.acquire())
+        .await
+        .unwrap()
+        .unwrap()
+        .forget();
+}

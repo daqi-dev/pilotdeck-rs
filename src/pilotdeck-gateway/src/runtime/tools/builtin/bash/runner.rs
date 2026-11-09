@@ -130,6 +130,30 @@ pub trait CommandRunner: Send + Sync {
     fn run(&self, command: JsString, options: CommandOptions) -> ToolFuture<CommandResult>;
 }
 
+/// The enforcing native execution-world runner. The same command runner owns
+/// output, deadline, group termination and cancellation after exact argv wrapping.
+#[cfg(unix)]
+#[derive(Clone)]
+pub struct SandboxedShellCommandRunner(pub Arc<crate::runtime::tools::sandbox::NativeSandbox>);
+#[cfg(unix)]
+impl CommandRunner for SandboxedShellCommandRunner {
+    fn run(&self, command: JsString, options: CommandOptions) -> ToolFuture<CommandResult> {
+        let sandbox = self.0.clone();
+        Box::pin(run_with_sandbox(command, options, Some(sandbox)))
+    }
+}
+
+/// Internal native orchestration owns every descendant of an argv command.
+/// It uses this same runner loop but drains the owned group before returning;
+/// ordinary NodeShellCommandRunner retains its measured TS timer semantics.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeOwnedShellCommandRunner;
+impl CommandRunner for NativeOwnedShellCommandRunner {
+    fn run(&self, command: JsString, options: CommandOptions) -> ToolFuture<CommandResult> {
+        Box::pin(run_with_policy(command, options, None, true))
+    }
+}
+
 /// The default local runner.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NodeShellCommandRunner;
@@ -373,6 +397,29 @@ pub(crate) struct PreparedSpawn {
 }
 
 impl PreparedSpawn {
+    pub(crate) async fn apply_sandbox(
+        &mut self,
+        sandbox: &crate::runtime::tools::sandbox::NativeSandbox,
+        signal: Option<&AbortSignal>,
+    ) -> Result<(), ToolError> {
+        if sandbox.mode() == crate::runtime::project::SandboxMode::DangerFullAccess {
+            return Ok(());
+        }
+        let (executable, args) = sandbox
+            .prepare(
+                self.shell.shell.clone(),
+                self.args.clone(),
+                &self.cwd,
+                signal,
+            )
+            .await?;
+        self.shell = CommandShell {
+            shell: executable,
+            kind: CommandShellKind::Custom,
+        };
+        self.args = args;
+        Ok(())
+    }
     /// `spawn(shell, args, { cwd, env, detached: true })` with `stdin` as
     /// given and piped stdout/stderr. The caller owns kill-on-drop policy.
     pub(crate) fn command(&self, stdin: Stdio) -> Command {
@@ -418,6 +465,37 @@ pub(crate) fn prepare_spawn(
     resolve_env: &[(JsString, JsString)],
 ) -> Result<PreparedSpawn, JsString> {
     let shell = resolve_default_command_shell(resolve_env)?;
+    prepare_spawn_with_shell(command, cwd, env, shell)
+}
+
+pub(crate) fn prepare_spawn_for_sandbox(
+    command: &JsString,
+    cwd: &JsString,
+    env: Option<&[(JsString, JsString)]>,
+    resolve_env: &[(JsString, JsString)],
+    sandbox: Option<&crate::runtime::tools::sandbox::NativeSandbox>,
+) -> Result<PreparedSpawn, JsString> {
+    if sandbox.is_some_and(|sandbox| {
+        sandbox.mode() != crate::runtime::project::SandboxMode::DangerFullAccess
+    }) {
+        return prepare_spawn_with_shell(
+            command,
+            cwd,
+            env,
+            CommandShell {
+                shell: "/bin/sh".into(),
+                kind: CommandShellKind::Sh,
+            },
+        );
+    }
+    prepare_spawn(command, cwd, env, resolve_env)
+}
+fn prepare_spawn_with_shell(
+    command: &JsString,
+    cwd: &JsString,
+    env: Option<&[(JsString, JsString)]>,
+    shell: CommandShell,
+) -> Result<PreparedSpawn, JsString> {
     let args = shell.args(command);
     if let Some(index) = args.iter().position(|arg| arg.units().contains(&0)) {
         let prefix = units(&format!(
@@ -512,6 +590,24 @@ fn elapsed_ms(started: Instant) -> f64 {
 }
 
 async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult, ToolError> {
+    run_with_sandbox(command, options, None).await
+}
+async fn run_with_sandbox(
+    command: JsString,
+    options: CommandOptions,
+    sandbox: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>,
+) -> Result<CommandResult, ToolError> {
+    run_with_policy(command, options, sandbox, false).await
+}
+async fn run_with_policy(
+    command: JsString,
+    options: CommandOptions,
+    sandbox: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>,
+    native_owned: bool,
+) -> Result<CommandResult, ToolError> {
+    if native_owned && options.signal.as_ref().is_some_and(AbortSignal::aborted) {
+        return Err(ToolError::aborted());
+    }
     let started = Instant::now();
     let inherited;
     let env: &[(JsString, JsString)] = match &options.env {
@@ -521,8 +617,19 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
             &inherited
         }
     };
-    let prepared = prepare_spawn(&command, &options.cwd, options.env.as_deref(), env)
-        .map_err(ToolError::failed)?;
+    let mut prepared = prepare_spawn_for_sandbox(
+        &command,
+        &options.cwd,
+        options.env.as_deref(),
+        env,
+        sandbox.as_deref(),
+    )
+    .map_err(ToolError::failed)?;
+    if let Some(sandbox) = sandbox {
+        prepared
+            .apply_sandbox(&sandbox, options.signal.as_ref())
+            .await?;
+    }
     let mut process = prepared.command(Stdio::piped());
     process.kill_on_drop(true);
     let mut child = match process.spawn() {
@@ -633,6 +740,15 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
             _ = sleep_until(force_at.unwrap_or(timeout_at)), if force_at.is_some() => {
                 // The baseline force-resolves without flushing the decoders.
                 guard.signal(rustix::process::Signal::KILL);
+                if native_owned {
+                    let waited = tokio::time::timeout(Duration::from_secs(4), child.wait()).await;
+                    crate::process_group::wait_for_group_empty(group, Duration::from_secs(4)).await;
+                    if !matches!(waited, Ok(Ok(_))) || group.is_some_and(crate::process_group::group_exists) {
+                        return Err(ToolError::new("owned_command_not_quiescent", "Native owned command group did not quiesce after termination."));
+                    }
+                    guard.disarm();
+                    return Ok(CommandResult { exit_code: None, stdout: out_text.text, stderr: err_text.text, timed_out: true, duration_ms: elapsed_ms(started), pid });
+                }
                 if matches!(child.try_wait(), Ok(Some(_))) {
                     guard.disarm();
                 }
@@ -655,6 +771,32 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
     // handler, so its run never settles; the tail is dropped here instead.
     out_text.push(&out_decoder.flush());
     err_text.push(&err_decoder.flush());
+    if native_owned {
+        // The leader has not been reaped: its PID still pins this exact PGID.
+        // Kill descendants even after a successful leader closed its pipes.
+        guard.signal(rustix::process::Signal::KILL);
+        let waited = tokio::time::timeout(Duration::from_secs(4), child.wait()).await;
+        crate::process_group::wait_for_group_empty(group, Duration::from_secs(4)).await;
+        if !matches!(&waited, Ok(Ok(_))) || group.is_some_and(crate::process_group::group_exists) {
+            return Err(ToolError::new(
+                "owned_command_not_quiescent",
+                "Native owned command group did not quiesce after completion.",
+            ));
+        }
+        guard.disarm();
+        let exit_code = waited
+            .ok()
+            .and_then(Result::ok)
+            .and_then(|status| status.code());
+        return Ok(CommandResult {
+            exit_code,
+            stdout: out_text.text,
+            stderr: err_text.text,
+            timed_out,
+            duration_ms: elapsed_ms(started),
+            pid,
+        });
+    }
     let exit_code = match (kill_at, leader_status) {
         // The baseline's 3 s SIGKILL is still pending after a terminated run
         // settled: it fires on schedule for group members that ignored TERM
@@ -749,5 +891,139 @@ mod tests {
         );
         let lone = nul_message(&units("p "), &JsString::from_utf16(vec![0xd800, 0]));
         assert_eq!(String::from_utf16_lossy(lone.units()), "p '\\ud800\\x00'");
+    }
+}
+
+#[cfg(test)]
+mod native_owned_tests {
+    use super::*;
+    use crate::{
+        host::modules::tool_context::{HostToolCheckpoint, ToolRuntimeContext},
+        runtime::tools::ToolCancellation,
+    };
+    use pilotdeck_protocol::JsObject;
+    struct Scratch(std::path::PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    fn scratch() -> Scratch {
+        let root = Scratch(
+            std::env::temp_dir().join(format!("pdrs-owned-command-{}", uuid::Uuid::new_v4())),
+        );
+        std::fs::create_dir_all(&root.0).unwrap();
+        root
+    }
+    fn options(root: &Path, signal: Option<AbortSignal>) -> CommandOptions {
+        let path = root.to_string_lossy().into_owned();
+        CommandOptions {
+            cwd: path.as_str().into(),
+            env: Some(vec![
+                ("PATH".into(), "/usr/bin:/bin".into()),
+                ("HOME".into(), path.as_str().into()),
+                ("PILOTDECK_SHELL_PATH".into(), "/bin/sh".into()),
+            ]),
+            timeout_ms: 10_000.0,
+            signal,
+            on_stdout: None,
+            on_stderr: None,
+            max_output_units: Some(1024 * 1024),
+        }
+    }
+    fn signal(cancel: ToolCancellation) -> AbortSignal {
+        let checkpoint = HostToolCheckpoint::new(None, &[]).unwrap();
+        AbortSignal(ToolRunContext::new(Arc::new(ToolRuntimeContext {
+            fields: JsObject::new(),
+            files: checkpoint.tool_context_state(),
+            abort_signal: Some(Arc::new(cancel)),
+            model: None,
+            elicitation: None,
+            user_dialog: None,
+            audit_recorder: None,
+            file_history: None,
+            file_update_notifier: None,
+            now: None,
+            progress: None,
+            subagent: None,
+            plan_todo: None,
+            goal: None,
+            plan_directory: None,
+        })))
+    }
+    #[tokio::test]
+    async fn successful_leader_exit_drains_the_exact_owned_group_before_returning() {
+        let root = scratch();
+        std::fs::write(root.0.join("owned.sh"), "(i=0; while [ ! -e release ] && [ $i -lt 500 ]; do i=$((i+1)); sleep 0.01; done; if [ -e release ]; then printf LATE > forbidden; fi) </dev/null >/dev/null 2>&1 &\necho $! > child.pid\nexit 0\n").unwrap();
+        let result = NativeOwnedShellCommandRunner
+            .run("sh owned.sh".into(), options(&root.0, None))
+            .await;
+        // Release the delayed writer only after the method claims completion.
+        // The test also settles a deliberately weakened ordinary-runner case.
+        std::fs::write(root.0.join("release"), "RELEASE").unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let late = root.0.join("forbidden").exists();
+        let result = result.unwrap();
+        assert_eq!(result.exit_code, Some(0));
+        assert!(
+            root.0.join("child.pid").is_file(),
+            "script must actually launch a descendant"
+        );
+        assert!(
+            !late,
+            "owned runner returned while the delayed descendant could still write"
+        );
+        let group = result
+            .pid
+            .and_then(|pid| rustix::process::Pid::from_raw(pid as i32))
+            .unwrap();
+        assert!(!crate::process_group::group_exists(group));
+    }
+    #[tokio::test]
+    async fn cancellation_drains_term_ignoring_owned_descendants_before_result() {
+        let root = scratch();
+        std::fs::write(root.0.join("owned.sh"), "trap '' TERM\n(trap '' TERM; sleep 30) </dev/null >/dev/null 2>&1 &\necho $! > child.pid\nprintf READY > ready\nwhile :; do sleep 1; done\n").unwrap();
+        let cancel = ToolCancellation::new();
+        let abort = signal(cancel.clone());
+        let request = options(&root.0, Some(abort));
+        let call = tokio::spawn(async move {
+            NativeOwnedShellCommandRunner
+                .run("sh owned.sh".into(), request)
+                .await
+        });
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while !root.0.join("ready").exists() && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let ready = root.0.join("ready").exists();
+        cancel.cancel();
+        let result = tokio::time::timeout(Duration::from_secs(10), call)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(ready, "cancel must happen after an actual child launch");
+        let group = result
+            .pid
+            .and_then(|pid| rustix::process::Pid::from_raw(pid as i32))
+            .unwrap();
+        assert!(
+            !crate::process_group::group_exists(group),
+            "cancellation result must follow owned-group drain"
+        );
+    }
+    #[tokio::test]
+    async fn already_cancelled_native_command_does_not_spawn() {
+        let root = scratch();
+        let cancel = ToolCancellation::new();
+        cancel.cancel();
+        let result = NativeOwnedShellCommandRunner
+            .run(
+                "printf BAD > forbidden".into(),
+                options(&root.0, Some(signal(cancel))),
+            )
+            .await;
+        assert_eq!(result.unwrap_err().code, "tool_aborted");
+        assert!(!root.0.join("forbidden").exists());
     }
 }

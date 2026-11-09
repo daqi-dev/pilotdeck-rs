@@ -15,7 +15,7 @@ mutations = [
     ('read-order', store, 'content = disk;', 'content = disk.into_iter().rev().collect();'),
     ('unconfigured-spill', store, 'spill: path.map(|path| Spill {', 'spill: path.or_else(|| Some(std::path::PathBuf::from(std::env::var_os("PDRS_553_NEGATIVE_SPILL_PATH").unwrap()))).map(|path| Spill {'),
     ('overflow-only-spill', store, 'spill.append(chunk.to_vec());', 'if self.memory + chunk.len() > self.max { spill.append(chunk.to_vec()); }'),
-    ('truncate-existing-log', store, '.append(true)', '.write(true).truncate(true)'),
+    ('truncate-existing-log', store, 'OpenOptions::new()\n                        .create(true)\n                        .append(true)', 'OpenOptions::new()\n                        .create(true)\n                        .write(true).truncate(true)'),
     ('skip-flush', store, 'let _ = tail.wait_for(Option::is_some).await;', 'let _ = tail;'),
     ('retry-disabled', store, 'fs::create_dir_all(path.parent().expect("spill parent"))?;', 'if !path.parent().expect("spill parent").exists() { return Err(std::io::Error::from_raw_os_error(libc::EACCES)); }'),
     ('failed-write-marked-ready', store, 'write().is_ok()', '{ let _ = write(); true }'),
@@ -25,7 +25,7 @@ mutations = [
     ('x-begin-close-not-closing', store, 'self.closed = true;\n        self.flush()', 'self.flush()'),
     ('utf8-disk-decoded-before-ring', store, 'content = disk;', 'content = String::from_utf8_lossy(&disk).into_owned().into_bytes();'),
     ('disk-cap-falls-through', store, 'if remaining <= 0.0 {\n            return slice', 'if remaining < 0.0 {\n            return slice'),
-    ('closed-disk-unreadable', store, 'let path = &self.spill.as_ref()?.path;', 'if self.closed { return None; } let path = &self.spill.as_ref()?.path;'),
+    ('closed-disk-unreadable', store, 'let path = &spill.path;', 'if self.closed { return None; } let path = &spill.path;'),
     ('ring-leading-replacement-lost', store, 'String::from_utf8_lossy(&content).into_owned()', "if truncated { String::from_utf8_lossy(&content).trim_start_matches('\\u{fffd}').to_owned() } else { String::from_utf8_lossy(&content).into_owned() }"),
     ('closed-accepts-output', store, 'if self.closed || chunk.is_empty() {', 'if chunk.is_empty() {'),
 ]

@@ -1,0 +1,185 @@
+{
+  "node": "v22.22.0",
+  "results": [
+    {
+      "name": "null",
+      "answer": null,
+      "result": {
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of null (reading 'type')"
+        }
+      }
+    },
+    {
+      "name": "undefined",
+      "result": {
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot read properties of undefined (reading 'type')"
+        }
+      }
+    },
+    {
+      "name": "number",
+      "answer": 7,
+      "result": {
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot convert undefined or null to object"
+        }
+      }
+    },
+    {
+      "name": "object",
+      "answer": {},
+      "result": {
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot convert undefined or null to object"
+        }
+      }
+    },
+    {
+      "name": "answers-null",
+      "answer": {
+        "type": "answered",
+        "answers": null
+      },
+      "result": {
+        "error": {
+          "name": "TypeError",
+          "message": "Cannot convert undefined or null to object"
+        }
+      }
+    },
+    {
+      "name": "answers-array",
+      "answer": {
+        "type": "answered",
+        "answers": [
+          "x",
+          "y"
+        ]
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "text",
+              "text": "User has answered your questions: \"0\"=\"x\", \"1\"=\"y\". You can now continue with the user's answers in mind."
+            }
+          ],
+          "data": {
+            "questions": [
+              {
+                "question": "Pick?",
+                "header": "Choice",
+                "options": [
+                  {
+                    "label": "A",
+                    "description": "a"
+                  },
+                  {
+                    "label": "B",
+                    "description": "b"
+                  }
+                ]
+              }
+            ],
+            "answers": [
+              "x",
+              "y"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "answers-string",
+      "answer": {
+        "type": "answered",
+        "answers": "xyz"
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "text",
+              "text": "User has answered your questions: \"0\"=\"x\", \"1\"=\"y\", \"2\"=\"z\". You can now continue with the user's answers in mind."
+            }
+          ],
+          "data": {
+            "questions": [
+              {
+                "question": "Pick?",
+                "header": "Choice",
+                "options": [
+                  {
+                    "label": "A",
+                    "description": "a"
+                  },
+                  {
+                    "label": "B",
+                    "description": "b"
+                  }
+                ]
+              }
+            ],
+            "answers": "xyz"
+          }
+        }
+      }
+    },
+    {
+      "name": "answers-number",
+      "answer": {
+        "type": "answered",
+        "answers": 4
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "text",
+              "text": "User has answered your questions: . You can now continue with the user's answers in mind."
+            }
+          ],
+          "data": {
+            "questions": [
+              {
+                "question": "Pick?",
+                "header": "Choice",
+                "options": [
+                  {
+                    "label": "A",
+                    "description": "a"
+                  },
+                  {
+                    "label": "B",
+                    "description": "b"
+                  }
+                ]
+              }
+            ],
+            "answers": 4
+          }
+        }
+      }
+    },
+    {
+      "name": "cancel",
+      "answer": {
+        "type": "cancelled",
+        "reason": "no"
+      },
+      "result": {
+        "error": {
+          "name": "PilotDeckToolRuntimeError",
+          "message": "User declined to answer questions (no)",
+          "code": "unsupported_tool"
+        }
+      }
+    }
+  ]
+}

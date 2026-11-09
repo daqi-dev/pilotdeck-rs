@@ -1,0 +1,591 @@
+{
+  "node": "v22.22.0",
+  "baseline": "/Users/da/ws/pdrs-runner/resources/PilotDeck",
+  "records": [
+    {
+      "code": "<undefined>",
+      "result": {
+        "events": [
+          {
+            "type": "text_delta",
+            "text": "probe"
+          },
+          {
+            "type": "error",
+            "message": "deterministic failure"
+          },
+          {
+            "type": "turn_completed"
+          }
+        ],
+        "sessionKey": "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-undefined",
+        "error": {
+          "code": "apply_failed",
+          "message": "deterministic failure"
+        }
+      },
+      "timeline": [
+        [
+          "event",
+          {
+            "schemaVersion": 1,
+            "eventId": "oracle-event",
+            "runId": "case-undefined",
+            "projectKey": "/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project",
+            "phase": "apply_started",
+            "timestamp": "2026-01-02T03:04:05.678Z",
+            "outcome": "executed"
+          }
+        ],
+        [
+          "set",
+          "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-undefined",
+          {
+            "cwd": "/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project",
+            "permissionMode": "bypassPermissions",
+            "bypassAvailable": true,
+            "canPrompt": false,
+            "excludeTools": [
+              "enter_plan_mode",
+              "exit_plan_mode",
+              "ask_user_question"
+            ]
+          }
+        ],
+        [
+          "submit",
+          {
+            "sessionKey": "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-undefined",
+            "channelKey": "always-on/apply",
+            "message": "Always-On apply for project \"fixture\".\n\nYour job is to merge changes from the isolated workspace into the project root.\n\nDo not enter Plan Mode.\nDo not create a new plan — apply the existing changes directly.\n\nPlan: \"First; Second\" (c1)\nProject root: /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project\nIsolated workspace: /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/workspace (snapshot-copy)\nWorkspace branch: branch\n\n## Merge approach\n\nChoose the best merge strategy based on the situation. You have full access to git and shell tools.\nCommon approaches (pick whichever fits):\n  - `git merge` / `git merge --no-ff` if the workspace is on a named branch\n  - `git cherry-pick` for individual commits\n  - `git diff` + `git apply` for patch-based application\n  - Direct file edits via Edit/Write tools for surgical changes\n\nIf you encounter conflicts, resolve them intelligently — do not blindly overwrite.\nIf you cannot resolve a conflict, leave standard conflict markers (<<<< / ==== / >>>>).\n\nChanges (1 file):\n\ndiff -ruN --exclude=.git --exclude=node_modules --exclude=dist --exclude=.pilotdeck --exclude=.pilotdeck-always-on /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project/a.txt /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/workspace/a.txt\n--- /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project/a.txt\t2026-11-09 06:39:14\n+++ /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/workspace/a.txt\t2026-11-09 06:39:14\n@@ -1 +1 @@\n-before\n+after\n",
+            "mode": "bypassPermissions",
+            "runId": "case-undefined.apply",
+            "projectKey": "/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project",
+            "telemetry": {
+              "ownerModule": "always_on",
+              "executionKind": "always_on",
+              "phase": "apply"
+            }
+          }
+        ],
+        [
+          "observe",
+          "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-undefined",
+          "always-on/apply",
+          {
+            "type": "text_delta",
+            "text": "probe"
+          }
+        ],
+        [
+          "persist",
+          "case-undefined.apply",
+          {
+            "type": "text_delta",
+            "text": "probe"
+          }
+        ],
+        [
+          "observe",
+          "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-undefined",
+          "always-on/apply",
+          {
+            "type": "error",
+            "message": "deterministic failure"
+          }
+        ],
+        [
+          "persist",
+          "case-undefined.apply",
+          {
+            "type": "error",
+            "message": "deterministic failure"
+          }
+        ],
+        [
+          "observe",
+          "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-undefined",
+          "always-on/apply",
+          {
+            "type": "turn_completed"
+          }
+        ],
+        [
+          "persist",
+          "case-undefined.apply",
+          {
+            "type": "turn_completed"
+          }
+        ],
+        [
+          "event",
+          {
+            "schemaVersion": 1,
+            "eventId": "oracle-event",
+            "runId": "case-undefined",
+            "projectKey": "/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project",
+            "phase": "run_failed",
+            "timestamp": "2026-01-02T03:04:05.678Z",
+            "outcome": "failed",
+            "error": {
+              "code": "apply_failed",
+              "message": "deterministic failure"
+            }
+          }
+        ],
+        [
+          "delete",
+          "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-undefined"
+        ],
+        [
+          "close",
+          {
+            "sessionKey": "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-undefined",
+            "reason": "always-on/done"
+          }
+        ]
+      ]
+    },
+    {
+      "code": null,
+      "result": {
+        "events": [
+          {
+            "type": "text_delta",
+            "text": "probe"
+          },
+          {
+            "type": "error",
+            "code": null,
+            "message": "deterministic failure"
+          },
+          {
+            "type": "turn_completed"
+          }
+        ],
+        "sessionKey": "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-null",
+        "error": {
+          "code": "apply_failed",
+          "message": "deterministic failure"
+        }
+      },
+      "timeline": [
+        [
+          "event",
+          {
+            "schemaVersion": 1,
+            "eventId": "oracle-event",
+            "runId": "case-null",
+            "projectKey": "/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project",
+            "phase": "apply_started",
+            "timestamp": "2026-01-02T03:04:05.678Z",
+            "outcome": "executed"
+          }
+        ],
+        [
+          "set",
+          "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-null",
+          {
+            "cwd": "/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project",
+            "permissionMode": "bypassPermissions",
+            "bypassAvailable": true,
+            "canPrompt": false,
+            "excludeTools": [
+              "enter_plan_mode",
+              "exit_plan_mode",
+              "ask_user_question"
+            ]
+          }
+        ],
+        [
+          "submit",
+          {
+            "sessionKey": "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-null",
+            "channelKey": "always-on/apply",
+            "message": "Always-On apply for project \"fixture\".\n\nYour job is to merge changes from the isolated workspace into the project root.\n\nDo not enter Plan Mode.\nDo not create a new plan — apply the existing changes directly.\n\nPlan: \"First; Second\" (c1)\nProject root: /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project\nIsolated workspace: /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/workspace (snapshot-copy)\nWorkspace branch: branch\n\n## Merge approach\n\nChoose the best merge strategy based on the situation. You have full access to git and shell tools.\nCommon approaches (pick whichever fits):\n  - `git merge` / `git merge --no-ff` if the workspace is on a named branch\n  - `git cherry-pick` for individual commits\n  - `git diff` + `git apply` for patch-based application\n  - Direct file edits via Edit/Write tools for surgical changes\n\nIf you encounter conflicts, resolve them intelligently — do not blindly overwrite.\nIf you cannot resolve a conflict, leave standard conflict markers (<<<< / ==== / >>>>).\n\nChanges (1 file):\n\ndiff -ruN --exclude=.git --exclude=node_modules --exclude=dist --exclude=.pilotdeck --exclude=.pilotdeck-always-on /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project/a.txt /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/workspace/a.txt\n--- /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project/a.txt\t2026-11-09 06:39:14\n+++ /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/workspace/a.txt\t2026-11-09 06:39:14\n@@ -1 +1 @@\n-before\n+after\n",
+            "mode": "bypassPermissions",
+            "runId": "case-null.apply",
+            "projectKey": "/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project",
+            "telemetry": {
+              "ownerModule": "always_on",
+              "executionKind": "always_on",
+              "phase": "apply"
+            }
+          }
+        ],
+        [
+          "observe",
+          "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-null",
+          "always-on/apply",
+          {
+            "type": "text_delta",
+            "text": "probe"
+          }
+        ],
+        [
+          "persist",
+          "case-null.apply",
+          {
+            "type": "text_delta",
+            "text": "probe"
+          }
+        ],
+        [
+          "observe",
+          "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-null",
+          "always-on/apply",
+          {
+            "type": "error",
+            "code": null,
+            "message": "deterministic failure"
+          }
+        ],
+        [
+          "persist",
+          "case-null.apply",
+          {
+            "type": "error",
+            "code": null,
+            "message": "deterministic failure"
+          }
+        ],
+        [
+          "observe",
+          "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-null",
+          "always-on/apply",
+          {
+            "type": "turn_completed"
+          }
+        ],
+        [
+          "persist",
+          "case-null.apply",
+          {
+            "type": "turn_completed"
+          }
+        ],
+        [
+          "event",
+          {
+            "schemaVersion": 1,
+            "eventId": "oracle-event",
+            "runId": "case-null",
+            "projectKey": "/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project",
+            "phase": "run_failed",
+            "timestamp": "2026-01-02T03:04:05.678Z",
+            "outcome": "failed",
+            "error": {
+              "code": "apply_failed",
+              "message": "deterministic failure"
+            }
+          }
+        ],
+        [
+          "delete",
+          "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-null"
+        ],
+        [
+          "close",
+          {
+            "sessionKey": "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-null",
+            "reason": "always-on/done"
+          }
+        ]
+      ]
+    },
+    {
+      "code": "",
+      "result": {
+        "events": [
+          {
+            "type": "text_delta",
+            "text": "probe"
+          },
+          {
+            "type": "error",
+            "code": "",
+            "message": "deterministic failure"
+          },
+          {
+            "type": "turn_completed"
+          }
+        ],
+        "sessionKey": "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-",
+        "error": {
+          "code": "",
+          "message": "deterministic failure"
+        }
+      },
+      "timeline": [
+        [
+          "event",
+          {
+            "schemaVersion": 1,
+            "eventId": "oracle-event",
+            "runId": "case-",
+            "projectKey": "/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project",
+            "phase": "apply_started",
+            "timestamp": "2026-01-02T03:04:05.678Z",
+            "outcome": "executed"
+          }
+        ],
+        [
+          "set",
+          "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-",
+          {
+            "cwd": "/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project",
+            "permissionMode": "bypassPermissions",
+            "bypassAvailable": true,
+            "canPrompt": false,
+            "excludeTools": [
+              "enter_plan_mode",
+              "exit_plan_mode",
+              "ask_user_question"
+            ]
+          }
+        ],
+        [
+          "submit",
+          {
+            "sessionKey": "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-",
+            "channelKey": "always-on/apply",
+            "message": "Always-On apply for project \"fixture\".\n\nYour job is to merge changes from the isolated workspace into the project root.\n\nDo not enter Plan Mode.\nDo not create a new plan — apply the existing changes directly.\n\nPlan: \"First; Second\" (c1)\nProject root: /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project\nIsolated workspace: /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/workspace (snapshot-copy)\nWorkspace branch: branch\n\n## Merge approach\n\nChoose the best merge strategy based on the situation. You have full access to git and shell tools.\nCommon approaches (pick whichever fits):\n  - `git merge` / `git merge --no-ff` if the workspace is on a named branch\n  - `git cherry-pick` for individual commits\n  - `git diff` + `git apply` for patch-based application\n  - Direct file edits via Edit/Write tools for surgical changes\n\nIf you encounter conflicts, resolve them intelligently — do not blindly overwrite.\nIf you cannot resolve a conflict, leave standard conflict markers (<<<< / ==== / >>>>).\n\nChanges (1 file):\n\ndiff -ruN --exclude=.git --exclude=node_modules --exclude=dist --exclude=.pilotdeck --exclude=.pilotdeck-always-on /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project/a.txt /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/workspace/a.txt\n--- /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project/a.txt\t2026-11-09 06:39:14\n+++ /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/workspace/a.txt\t2026-11-09 06:39:14\n@@ -1 +1 @@\n-before\n+after\n",
+            "mode": "bypassPermissions",
+            "runId": "case-.apply",
+            "projectKey": "/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project",
+            "telemetry": {
+              "ownerModule": "always_on",
+              "executionKind": "always_on",
+              "phase": "apply"
+            }
+          }
+        ],
+        [
+          "observe",
+          "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-",
+          "always-on/apply",
+          {
+            "type": "text_delta",
+            "text": "probe"
+          }
+        ],
+        [
+          "persist",
+          "case-.apply",
+          {
+            "type": "text_delta",
+            "text": "probe"
+          }
+        ],
+        [
+          "observe",
+          "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-",
+          "always-on/apply",
+          {
+            "type": "error",
+            "code": "",
+            "message": "deterministic failure"
+          }
+        ],
+        [
+          "persist",
+          "case-.apply",
+          {
+            "type": "error",
+            "code": "",
+            "message": "deterministic failure"
+          }
+        ],
+        [
+          "observe",
+          "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-",
+          "always-on/apply",
+          {
+            "type": "turn_completed"
+          }
+        ],
+        [
+          "persist",
+          "case-.apply",
+          {
+            "type": "turn_completed"
+          }
+        ],
+        [
+          "event",
+          {
+            "schemaVersion": 1,
+            "eventId": "oracle-event",
+            "runId": "case-",
+            "projectKey": "/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project",
+            "phase": "run_failed",
+            "timestamp": "2026-01-02T03:04:05.678Z",
+            "outcome": "failed",
+            "error": {
+              "code": "",
+              "message": "deterministic failure"
+            }
+          }
+        ],
+        [
+          "delete",
+          "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-"
+        ],
+        [
+          "close",
+          {
+            "sessionKey": "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-",
+            "reason": "always-on/done"
+          }
+        ]
+      ]
+    },
+    {
+      "code": "named",
+      "result": {
+        "events": [
+          {
+            "type": "text_delta",
+            "text": "probe"
+          },
+          {
+            "type": "error",
+            "code": "named",
+            "message": "deterministic failure"
+          },
+          {
+            "type": "turn_completed"
+          }
+        ],
+        "sessionKey": "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-named",
+        "error": {
+          "code": "named",
+          "message": "deterministic failure"
+        }
+      },
+      "timeline": [
+        [
+          "event",
+          {
+            "schemaVersion": 1,
+            "eventId": "oracle-event",
+            "runId": "case-named",
+            "projectKey": "/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project",
+            "phase": "apply_started",
+            "timestamp": "2026-01-02T03:04:05.678Z",
+            "outcome": "executed"
+          }
+        ],
+        [
+          "set",
+          "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-named",
+          {
+            "cwd": "/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project",
+            "permissionMode": "bypassPermissions",
+            "bypassAvailable": true,
+            "canPrompt": false,
+            "excludeTools": [
+              "enter_plan_mode",
+              "exit_plan_mode",
+              "ask_user_question"
+            ]
+          }
+        ],
+        [
+          "submit",
+          {
+            "sessionKey": "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-named",
+            "channelKey": "always-on/apply",
+            "message": "Always-On apply for project \"fixture\".\n\nYour job is to merge changes from the isolated workspace into the project root.\n\nDo not enter Plan Mode.\nDo not create a new plan — apply the existing changes directly.\n\nPlan: \"First; Second\" (c1)\nProject root: /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project\nIsolated workspace: /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/workspace (snapshot-copy)\nWorkspace branch: branch\n\n## Merge approach\n\nChoose the best merge strategy based on the situation. You have full access to git and shell tools.\nCommon approaches (pick whichever fits):\n  - `git merge` / `git merge --no-ff` if the workspace is on a named branch\n  - `git cherry-pick` for individual commits\n  - `git diff` + `git apply` for patch-based application\n  - Direct file edits via Edit/Write tools for surgical changes\n\nIf you encounter conflicts, resolve them intelligently — do not blindly overwrite.\nIf you cannot resolve a conflict, leave standard conflict markers (<<<< / ==== / >>>>).\n\nChanges (1 file):\n\ndiff -ruN --exclude=.git --exclude=node_modules --exclude=dist --exclude=.pilotdeck --exclude=.pilotdeck-always-on /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project/a.txt /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/workspace/a.txt\n--- /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project/a.txt\t2026-11-09 06:39:14\n+++ /private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/workspace/a.txt\t2026-11-09 06:39:14\n@@ -1 +1 @@\n-before\n+after\n",
+            "mode": "bypassPermissions",
+            "runId": "case-named.apply",
+            "projectKey": "/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project",
+            "telemetry": {
+              "ownerModule": "always_on",
+              "executionKind": "always_on",
+              "phase": "apply"
+            }
+          }
+        ],
+        [
+          "observe",
+          "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-named",
+          "always-on/apply",
+          {
+            "type": "text_delta",
+            "text": "probe"
+          }
+        ],
+        [
+          "persist",
+          "case-named.apply",
+          {
+            "type": "text_delta",
+            "text": "probe"
+          }
+        ],
+        [
+          "observe",
+          "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-named",
+          "always-on/apply",
+          {
+            "type": "error",
+            "code": "named",
+            "message": "deterministic failure"
+          }
+        ],
+        [
+          "persist",
+          "case-named.apply",
+          {
+            "type": "error",
+            "code": "named",
+            "message": "deterministic failure"
+          }
+        ],
+        [
+          "observe",
+          "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-named",
+          "always-on/apply",
+          {
+            "type": "turn_completed"
+          }
+        ],
+        [
+          "persist",
+          "case-named.apply",
+          {
+            "type": "turn_completed"
+          }
+        ],
+        [
+          "event",
+          {
+            "schemaVersion": 1,
+            "eventId": "oracle-event",
+            "runId": "case-named",
+            "projectKey": "/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project",
+            "phase": "run_failed",
+            "timestamp": "2026-01-02T03:04:05.678Z",
+            "outcome": "failed",
+            "error": {
+              "code": "named",
+              "message": "deterministic failure"
+            }
+          }
+        ],
+        [
+          "delete",
+          "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-named"
+        ],
+        [
+          "close",
+          {
+            "sessionKey": "always-on/apply:project=/private/tmp/pdrs-ao-error-code-20261109-a/case-G3E4Dz/project:run=case-named",
+            "reason": "always-on/done"
+          }
+        ]
+      ]
+    }
+  ]
+}

@@ -329,6 +329,7 @@ fn ports(spec: &JsValue, trace: &Trace, checkpoint: &HostToolCheckpoint) -> Tool
             trace: trace.clone(),
             empty: yes(spec, "emptyPlan"),
         })),
+        ..Default::default()
     }
 }
 fn with_abort(mut fields: JsObject, abort: &Option<RuntimeContext>) -> JsValue {

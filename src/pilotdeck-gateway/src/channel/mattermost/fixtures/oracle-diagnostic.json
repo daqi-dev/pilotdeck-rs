@@ -1,0 +1,58 @@
+{
+  "environment": {
+    "node": "v22.22.1",
+    "icu": "78.2",
+    "wsVersion": "8.21.0",
+    "diagnostic": true,
+    "formalAcceptance": false
+  },
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/adapters/channel/mattermost/MattermostChannel.ts": "b1bf10820d6a0179c9eca41b549880d2693f082e3e1e5bcaad4e0a9df133ca21",
+    "src/adapters/channel/mattermost/MattermostSessionMapper.ts": "3f03eeb2a99b64e40f5390a008bdb2e2611e6e15132b96f88abc38220e47908e",
+    "src/adapters/channel/mattermost/mattermost-render.ts": "5df007dde17e21f2793b8268e2964e097f0d6de094d83e21c1dc2f49c4e6309e",
+    "src/adapters/channel/protocol/ImElicitationHelper.ts": "cb743ce32129e33c65cbee9ff5c613b057b65d8a642a0fc11b1e1362fb458cf4",
+    "src/adapters/channel/protocol/ImPermissionHelper.ts": "40a6e25f143e9973d2cef836bb40d47f8e693424ad9aac5f2391be6514193477"
+  },
+  "requests": [
+    {
+      "sessionKey": "mattermost:chat=channel:thread:general",
+      "channelKey": "mattermost",
+      "message": "hello\nworld"
+    }
+  ],
+  "calls": [
+    {
+      "method": "GET",
+      "path": "/users/me"
+    },
+    {
+      "method": "WS",
+      "path": "/api/v4/websocket?token=fixture",
+      "origin": "http://127.0.0.1:41921"
+    },
+    {
+      "method": "POST",
+      "path": "/posts",
+      "body": {
+        "channel_id": "channel",
+        "message": "Mattermost reply",
+        "root_id": "thread"
+      }
+    }
+  ],
+  "logs": [
+    [
+      "info",
+      "mattermost: connected (REST=http://127.0.0.1:41921)"
+    ],
+    [
+      "info",
+      "mattermost: stopping (fixture)"
+    ]
+  ],
+  "mapper": {
+    "activeByChatId": {}
+  },
+  "websocketClosed": true
+}

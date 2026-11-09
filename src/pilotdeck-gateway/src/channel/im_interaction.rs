@@ -64,6 +64,8 @@ pub trait InteractionPort: Send + Sync {
         request_id: Option<&str>,
         answer_token: Option<u64>,
     );
+    /// Reset pending and in-flight answers for an explicit new conversation.
+    fn permission_clear(&self, chat_id: &str);
     fn permission_clear_after_turn(&self, chat_id: &str);
 }
 
@@ -111,5 +113,6 @@ impl InteractionPort for NoInteraction {
         None
     }
     fn permission_confirm_next(&self, _: &str, _: bool, _: Option<&str>, _: Option<u64>) {}
+    fn permission_clear(&self, _: &str) {}
     fn permission_clear_after_turn(&self, _: &str) {}
 }

@@ -729,6 +729,8 @@ async fn replay_case(case: &Value) -> Value {
             "server" => {
                 let config = js_event(&step["config"]);
                 let weixin = super::WeixinChannelOptions {
+                    host_ports: None,
+                    interaction: None,
                     credentials_path: credentials_path.clone(),
                     // generate.mts points `HOME` at the scenario directory;
                     // the Rust port redirects the mkdir target instead so a
@@ -765,6 +767,8 @@ async fn replay_case(case: &Value) -> Value {
                     live_reply: super::weixin_live_reply_options(),
                 };
                 let channels = Arc::new(NativeChannels::new(NativeChannelsOptions {
+                    #[cfg(test)]
+                    endpoints: Default::default(),
                     pilot_home: pilot_home.clone(),
                     config: Arc::new(config),
                     weixin,

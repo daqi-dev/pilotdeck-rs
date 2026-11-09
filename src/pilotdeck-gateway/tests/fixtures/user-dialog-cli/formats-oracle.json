@@ -1,0 +1,1004 @@
+{
+  "records": [
+    {
+      "id": "legacy-email-0",
+      "mode": "legacy",
+      "format": "email",
+      "value": "\ud800@example.com",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "email"
+          }
+        }
+      },
+      "answer": {
+        "x": "\ud800@example.com"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "email"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "draft-email-1",
+      "mode": "draft",
+      "format": "email",
+      "value": "\ud800@example.com",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "email"
+          }
+        }
+      },
+      "answer": {
+        "x": "\ud800@example.com"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "email"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "legacy-email-2",
+      "mode": "legacy",
+      "format": "email",
+      "value": "a@\ud800.com",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "email"
+          }
+        }
+      },
+      "answer": {
+        "x": "a@\ud800.com"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "email"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "draft-email-3",
+      "mode": "draft",
+      "format": "email",
+      "value": "a@\ud800.com",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "email"
+          }
+        }
+      },
+      "answer": {
+        "x": "a@\ud800.com"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "email"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "legacy-email-4",
+      "mode": "legacy",
+      "format": "email",
+      "value": "a@foo.com",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "email"
+          }
+        }
+      },
+      "answer": {
+        "x": "a@foo.com"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "email"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "draft-email-5",
+      "mode": "draft",
+      "format": "email",
+      "value": "a@foo.com",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "email"
+          }
+        }
+      },
+      "answer": {
+        "x": "a@foo.com"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "email"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "legacy-email-6",
+      "mode": "legacy",
+      "format": "email",
+      "value": "a﻿@foo.com",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "email"
+          }
+        }
+      },
+      "answer": {
+        "x": "a﻿@foo.com"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "email"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "draft-email-7",
+      "mode": "draft",
+      "format": "email",
+      "value": "a﻿@foo.com",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "email"
+          }
+        }
+      },
+      "answer": {
+        "x": "a﻿@foo.com"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "email"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "legacy-uri-8",
+      "mode": "legacy",
+      "format": "uri",
+      "value": "https://example.test/\ud800",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "answer": {
+        "x": "https://example.test/\ud800"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "draft-uri-9",
+      "mode": "draft",
+      "format": "uri",
+      "value": "https://example.test/\ud800",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "answer": {
+        "x": "https://example.test/\ud800"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "legacy-uri-10",
+      "mode": "legacy",
+      "format": "uri",
+      "value": "https://\ud800.test/",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "answer": {
+        "x": "https://\ud800.test/"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "draft-uri-11",
+      "mode": "draft",
+      "format": "uri",
+      "value": "https://\ud800.test/",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "answer": {
+        "x": "https://\ud800.test/"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "legacy-uri-12",
+      "mode": "legacy",
+      "format": "uri",
+      "value": "https://example.test/x﻿",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "answer": {
+        "x": "https://example.test/x﻿"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "draft-uri-13",
+      "mode": "draft",
+      "format": "uri",
+      "value": "https://example.test/x﻿",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "answer": {
+        "x": "https://example.test/x﻿"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "legacy-uuid-14",
+      "mode": "legacy",
+      "format": "uuid",
+      "value": "123e4567-e89b-12d3-a456-426614174000",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "answer": {
+        "x": "123e4567-e89b-12d3-a456-426614174000"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "draft-uuid-15",
+      "mode": "draft",
+      "format": "uuid",
+      "value": "123e4567-e89b-12d3-a456-426614174000",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "answer": {
+        "x": "123e4567-e89b-12d3-a456-426614174000"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "legacy-date-16",
+      "mode": "legacy",
+      "format": "date",
+      "value": "0000-02-29",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "answer": {
+        "x": "0000-02-29"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "draft-date-17",
+      "mode": "draft",
+      "format": "date",
+      "value": "0000-02-29",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "answer": {
+        "x": "0000-02-29"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "legacy-date-18",
+      "mode": "legacy",
+      "format": "date",
+      "value": "1900-02-29",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "answer": {
+        "x": "1900-02-29"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "draft-date-19",
+      "mode": "draft",
+      "format": "date",
+      "value": "1900-02-29",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "answer": {
+        "x": "1900-02-29"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "legacy-time-20",
+      "mode": "legacy",
+      "format": "time",
+      "value": "12:34:56",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "time"
+          }
+        }
+      },
+      "answer": {
+        "x": "12:34:56"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "time"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "draft-time-21",
+      "mode": "draft",
+      "format": "time",
+      "value": "12:34:56",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "time"
+          }
+        }
+      },
+      "answer": {
+        "x": "12:34:56"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "time"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "legacy-time-22",
+      "mode": "legacy",
+      "format": "time",
+      "value": "12:34:56Z",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "time"
+          }
+        }
+      },
+      "answer": {
+        "x": "12:34:56Z"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "time"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "draft-time-23",
+      "mode": "draft",
+      "format": "time",
+      "value": "12:34:56Z",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "time"
+          }
+        }
+      },
+      "answer": {
+        "x": "12:34:56Z"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "time"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "legacy-date-time-24",
+      "mode": "legacy",
+      "format": "date-time",
+      "value": "2024-01-01T01:02:03+03:00",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "answer": {
+        "x": "2024-01-01T01:02:03+03:00"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "draft-date-time-25",
+      "mode": "draft",
+      "format": "date-time",
+      "value": "2024-01-01T01:02:03+03:00",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "answer": {
+        "x": "2024-01-01T01:02:03+03:00"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "legacy-hostname-26",
+      "mode": "legacy",
+      "format": "hostname",
+      "value": "\ud800.test",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "hostname"
+          }
+        }
+      },
+      "answer": {
+        "x": "\ud800.test"
+      },
+      "result": {
+        "ok": false,
+        "message": "$.properties.x.format must be one of email, uri, uuid, date, time, date-time."
+      },
+      "accepted": null
+    },
+    {
+      "id": "draft-hostname-27",
+      "mode": "draft",
+      "format": "hostname",
+      "value": "\ud800.test",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "hostname"
+          }
+        }
+      },
+      "answer": {
+        "x": "\ud800.test"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "hostname"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "legacy-regex-28",
+      "mode": "legacy",
+      "format": "regex",
+      "value": "\\p{L}+",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "regex"
+          }
+        }
+      },
+      "answer": {
+        "x": "\\p{L}+"
+      },
+      "result": {
+        "ok": false,
+        "message": "$.properties.x.format must be one of email, uri, uuid, date, time, date-time."
+      },
+      "accepted": null
+    },
+    {
+      "id": "draft-regex-29",
+      "mode": "draft",
+      "format": "regex",
+      "value": "\\p{L}+",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "regex"
+          }
+        }
+      },
+      "answer": {
+        "x": "\\p{L}+"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "regex"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "legacy-int32-30",
+      "mode": "legacy",
+      "format": "int32",
+      "value": "not-number",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "int32"
+          }
+        }
+      },
+      "answer": {
+        "x": "not-number"
+      },
+      "result": {
+        "ok": false,
+        "message": "$.properties.x.format must be one of email, uri, uuid, date, time, date-time."
+      },
+      "accepted": null
+    },
+    {
+      "id": "draft-int32-31",
+      "mode": "draft",
+      "format": "int32",
+      "value": "not-number",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "format": "int32"
+          }
+        }
+      },
+      "answer": {
+        "x": "not-number"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "format": "int32"
+            }
+          }
+        }
+      },
+      "accepted": true
+    }
+  ]
+}

@@ -3848,6 +3848,365 @@ fn has_file_source(value: &JsValue) -> bool {
     }
 }
 
+#[tokio::test]
+async fn real_native_model_selection_matches_fixed_ts_bundle_matrix() {
+    use crate::runtime::turn::submit_host::SubmitHostServices;
+    let (_scratch, requests) = super::management_tests::setup();
+    let options = requests.options.clone();
+    std::fs::write(options.home.join("pilotdeck.yaml"), "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: fixture-only\n      models: {mock: {}}\n").unwrap();
+    let services = super::services::Services {
+        options: options.clone(),
+        env: requests.env.clone(),
+        project: requests.project.clone(),
+        recorders: Arc::default(),
+        owner: requests.owner.clone(),
+        snapshot_recorder: None,
+        upload_store: Arc::new(crate::upload::UploadStore::new(
+            crate::upload::UploadStoreOptions::new(
+                |_: &JsString| {
+                    Err(crate::upload::UploadError::dialog(
+                        "PROJECT_NOT_FOUND",
+                        "unused",
+                    ))
+                },
+                || Ok(vec![]),
+            ),
+        )),
+    };
+    let oracle: serde_json::Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/native-model-selection/oracle.json"
+    ))
+    .unwrap();
+    let registry_oracle: serde_json::Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/native-model-selection/registry-oracle.json"
+    ))
+    .unwrap();
+    let mut checked = 0;
+    for row in oracle["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(registry_oracle["rows"].as_array().unwrap())
+    {
+        // Relative cwd runs in the isolated child below. The registered other
+        // project and General workspace are deliberately outside this host's
+        // one-project lease; their rejection is tested in that same child.
+        if matches!(
+            row["name"].as_str(),
+            Some("key_relative" | "key_other" | "key_home")
+        ) {
+            continue;
+        }
+        let mut input = row["input"].clone();
+        if let Some(key) = input["projectKey"]
+            .as_str()
+            .filter(|key| key.contains("<project>"))
+        {
+            input["projectKey"] = serde_json::Value::String(
+                key.replace("<project>", &options.project.to_string_lossy()),
+            );
+        }
+        let input = pilotdeck_protocol::parse_json(&input.to_string()).unwrap();
+        let result = services.resolve_model_selection(&input).await;
+        if let Some(expected) = row.get("error") {
+            let actual = result.expect_err(row["name"].as_str().unwrap());
+            assert_eq!(actual.code, expected["code"], "{}", row["name"]);
+            assert_eq!(actual.message, expected["message"], "{}", row["name"]);
+        } else {
+            let actual = result.unwrap_or_else(|error| panic!("{}: {error:?}", row["name"]));
+            let encoded = pilotdeck_protocol::stringify_json(&actual)
+                .unwrap()
+                .unwrap();
+            let actual: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+            assert_eq!(actual, row["result"], "{}", row["name"]);
+        }
+        checked += 1;
+    }
+    assert_eq!(
+        checked, 29,
+        "all original and registry boundary rows are accounted for"
+    );
+    requests.owner.shutdown().await.unwrap();
+    requests.project.dispose().await.unwrap();
+}
+#[cfg(unix)]
+#[tokio::test]
+async fn native_model_override_rejects_fifo_project_marker_without_hanging() {
+    use crate::runtime::turn::submit_host::SubmitHostServices;
+    let (_scratch, requests) = super::management_tests::setup();
+    let options = requests.options.clone();
+    let marker = options.home.join("projects/a8-main/.cwd");
+    std::fs::remove_file(&marker).unwrap();
+    assert!(
+        std::process::Command::new("/usr/bin/mkfifo")
+            .arg(&marker)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let services = super::services::Services {
+        options: options.clone(),
+        env: requests.env.clone(),
+        project: requests.project.clone(),
+        recorders: Arc::default(),
+        owner: requests.owner.clone(),
+        snapshot_recorder: None,
+        upload_store: Arc::new(crate::upload::UploadStore::new(
+            crate::upload::UploadStoreOptions::new(
+                |_: &JsString| {
+                    Err(crate::upload::UploadError::dialog(
+                        "PROJECT_NOT_FOUND",
+                        "unused",
+                    ))
+                },
+                || Ok(vec![]),
+            ),
+        )),
+    };
+    let input = object([
+        (
+            "projectKey",
+            JsValue::from(options.project.to_string_lossy().as_ref()),
+        ),
+        ("sessionKey", "s".into()),
+        (
+            "modelOverride",
+            object([
+                ("mode", "model".into()),
+                ("provider", "fixture".into()),
+                ("model", "mock".into()),
+            ]),
+        ),
+    ]);
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        services.resolve_model_selection(&input),
+    )
+    .await
+    .expect("FIFO must not hang")
+    .unwrap_err();
+    assert!(
+        result.message.contains("Unsafe project marker"),
+        "{result:?}"
+    );
+    requests.owner.shutdown().await.unwrap();
+    requests.project.dispose().await.unwrap();
+}
+
+// A timeout around spawn_blocking alone cannot prove this regression: a FIFO
+// open would still prevent runtime teardown. The parent owns and reaps the
+// whole child process, with cold-start allowance and an exact child receipt.
+#[cfg(unix)]
+#[test]
+fn native_model_selection_fallback_reads_are_bounded() {
+    for case in [
+        "marker",
+        "transcript",
+        "foreign",
+        "home",
+        "alias",
+        "saved",
+        "saved-reasoning",
+        "large-config",
+        "relative",
+    ] {
+        let receipt =
+            std::env::temp_dir().join(format!("pdrs-model-receipt-{}", uuid::Uuid::new_v4()));
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "native_process::services_tests::native_model_selection_boundary_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("PDRS_MODEL_BOUNDARY_CASE", case)
+            .env("PDRS_MODEL_BOUNDARY_RECEIPT", &receipt)
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(
+                    status.success(),
+                    "model selection boundary child failed: {case}"
+                );
+                assert_eq!(
+                    std::fs::read_to_string(&receipt).unwrap(),
+                    case,
+                    "the exact child must actually run"
+                );
+                std::fs::remove_file(&receipt).unwrap();
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("model selection boundary child hung: {case}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "bounded subprocess of native_model_selection_fallback_reads_are_bounded"]
+async fn native_model_selection_boundary_child() {
+    use crate::runtime::turn::submit_host::SubmitHostServices;
+    let case = std::env::var("PDRS_MODEL_BOUNDARY_CASE").expect("parent test case");
+    let (_scratch, requests) = super::management_tests::setup();
+    let options = requests.options.clone();
+    let direct = options
+        .home
+        .join("projects")
+        .join(crate::metadata::project_id(&options.project));
+    std::fs::create_dir_all(&direct).unwrap();
+    std::fs::write(
+        direct.join(".cwd"),
+        options.project.to_string_lossy().as_bytes(),
+    )
+    .unwrap();
+    let mut project_key = options.project.to_string_lossy().into_owned();
+    let mut unsafe_path = None;
+    match case.as_str() {
+        "marker" => {
+            // First membership lookup succeeds through direct id. The later
+            // chat-directory scan encounters this earlier unrelated marker.
+            let bad = options.home.join("projects/000-unrelated");
+            std::fs::create_dir_all(&bad).unwrap();
+            unsafe_path = Some(bad.join(".cwd"));
+        }
+        "transcript" => {
+            unsafe_path = Some(options.home.join("projects/a8-main/chats/boundary.jsonl"))
+        }
+        "foreign" => {
+            let other = options.home.parent().unwrap().join("other-project");
+            std::fs::create_dir_all(&other).unwrap();
+            let registration = options.home.join("projects/other");
+            std::fs::create_dir_all(&registration).unwrap();
+            std::fs::write(
+                registration.join(".cwd"),
+                other.to_string_lossy().as_bytes(),
+            )
+            .unwrap();
+            project_key = other.to_string_lossy().into_owned();
+        }
+        "home" => project_key = options.home.to_string_lossy().into_owned(),
+        "alias" => project_key = format!("{}/./nested/..", options.project.display()),
+        "relative" => {
+            // Only this isolated subprocess changes cwd. A relative marker is
+            // relative to process.cwd(), not to the served project directory.
+            std::env::set_current_dir(options.home.parent().unwrap()).unwrap();
+            std::fs::write(direct.join(".cwd"), "project").unwrap();
+            std::fs::write(options.home.join("projects/a8-main/.cwd"), "project").unwrap();
+            project_key = "project".into();
+        }
+        "saved" | "saved-reasoning" => {
+            // The marker reader's 64 KiB bound must not become a transcript
+            // bound. Real JSONL remains readable under its own 50 MiB limit.
+            let path = options.home.join("projects/a8-main/chats/boundary.jsonl");
+            let mut selection =
+                serde_json::json!({"mode":"model","provider":"test","model":"test"});
+            if case == "saved-reasoning" {
+                selection["reasoning"] = serde_json::json!(0.8);
+            }
+            let entry = serde_json::json!({"type":"session_metadata","sessionId":"boundary","turnId":"fixture-turn","createdAt":"2026-01-01T00:00:00.000Z","sequence":1,"metadata":{"modelSelection":selection}});
+            std::fs::write(path, format!("{}{}\n", "\n".repeat(70 * 1024), entry)).unwrap();
+        }
+        "large-config" => (),
+        _ => panic!("unknown case"),
+    }
+    if matches!(case.as_str(), "large-config" | "saved-reasoning") {
+        use std::io::Write;
+        let mut config = std::fs::OpenOptions::new()
+            .append(true)
+            .open(options.home.join("pilotdeck.yaml"))
+            .unwrap();
+        writeln!(config, "#{}", "x".repeat(70 * 1024)).unwrap();
+    }
+    if let Some(path) = unsafe_path {
+        assert!(
+            std::process::Command::new("/usr/bin/mkfifo")
+                .arg(path)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    let services = super::services::Services {
+        options: options.clone(),
+        env: requests.env.clone(),
+        project: requests.project.clone(),
+        recorders: Arc::default(),
+        owner: requests.owner.clone(),
+        snapshot_recorder: None,
+        upload_store: Arc::new(crate::upload::UploadStore::new(
+            crate::upload::UploadStoreOptions::new(
+                |_: &JsString| {
+                    Err(crate::upload::UploadError::dialog(
+                        "PROJECT_NOT_FOUND",
+                        "unused",
+                    ))
+                },
+                || Ok(vec![]),
+            ),
+        )),
+    };
+    let input = object([
+        ("projectKey", project_key.as_str().into()),
+        ("sessionKey", "boundary".into()),
+    ]);
+    let result = services.resolve_model_selection(&input).await;
+    match case.as_str() {
+        "marker" | "transcript" => assert!(
+            result
+                .unwrap_err()
+                .message
+                .contains("Unsafe project marker or session transcript")
+        ),
+        "foreign" | "home" => assert_eq!(result.unwrap_err().code, "CAPABILITY_UNAVAILABLE"),
+        "saved" | "saved-reasoning" => {
+            let actual = result.unwrap();
+            assert_eq!(actual.get("source"), Some(&JsValue::from("session")));
+            assert_eq!(
+                actual.get("selection").unwrap().get("provider"),
+                Some(&JsValue::from("test"))
+            );
+            assert_eq!(
+                actual.get("selection").unwrap().get("model"),
+                Some(&JsValue::from("test"))
+            );
+        }
+        _ => {
+            assert_eq!(
+                result.unwrap().get("source"),
+                Some(&JsValue::from("default"))
+            );
+        }
+    }
+    if case == "relative" {
+        let history = crate::runtime::history::HistoryFiles {
+            home: options.home.clone(),
+            project: options.project.clone(),
+        };
+        let actual = history.snapshot(&"a8-session".into()).await.unwrap();
+        assert!(
+            actual.catalog.is_some(),
+            "relative marker must find the real stored history"
+        );
+    }
+    requests.owner.shutdown().await.unwrap();
+    requests.project.dispose().await.unwrap();
+    use std::io::Write;
+    let receipt = std::env::var_os("PDRS_MODEL_BOUNDARY_RECEIPT").expect("parent receipt path");
+    let mut receipt = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(receipt)
+        .unwrap();
+    receipt.write_all(case.as_bytes()).unwrap();
+}
+
 /// #1448 r5：limit+1 边界——恰好 limit 内联（`exact_limit_image_and_text_
 /// are_inlined` 已钉），恰好 limit+1 跳过进诊断，两侧互为对照。
 #[test]

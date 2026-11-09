@@ -109,7 +109,7 @@ impl Requests {
         // the event loop but the port has no await inside it, so the blocking
         // pool is where it belongs. The dispatch table still owns the routing;
         // only the thread changes.
-        let cron = self.cron.clone();
+        let cron = self.current_cron();
         let dispatch_method = method.clone();
         Box::pin(async move {
             let dispatched = tokio::task::spawn_blocking(move || {

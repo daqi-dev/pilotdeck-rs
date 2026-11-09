@@ -1,0 +1,206 @@
+{
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "yamlVersion": "2.9.0",
+  "cases": [
+    {
+      "id": "shared-map",
+      "yaml": "first: &old {x: 1}\nsecond: *old\n",
+      "type": "object",
+      "isArray": false,
+      "constructor": "Object",
+      "output": "first: &a1\n  x: 1\nsecond: *a1\n",
+      "afterFeishuWrite": "first: &a1\n  x: 1\nsecond: *a1\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    },
+    {
+      "id": "shared-seq",
+      "yaml": "first: &old [a, b]\nsecond: *old\n",
+      "type": "object",
+      "isArray": false,
+      "constructor": "Object",
+      "output": "first: &a1\n  - a\n  - b\nsecond: *a1\n",
+      "afterFeishuWrite": "first: &a1\n  - a\n  - b\nsecond: *a1\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    },
+    {
+      "id": "multiple-order",
+      "yaml": "z: &z {n: 1}\na: &a [x]\nz2: *z\na2: *a\nz3: *z\n",
+      "type": "object",
+      "isArray": false,
+      "constructor": "Object",
+      "output": "z: &a1\n  n: 1\na: &a2\n  - x\nz2: *a1\na2: *a2\nz3: *a1\n",
+      "afterFeishuWrite": "z: &a1\n  n: 1\na: &a2\n  - x\nz2: *a1\na2: *a2\nz3: *a1\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    },
+    {
+      "id": "cycle-map",
+      "yaml": "root: &old\n  self: *old\n",
+      "type": "object",
+      "isArray": false,
+      "constructor": "Object",
+      "output": "root: &a1\n  self: *a1\n",
+      "afterFeishuWrite": "root: &a1\n  self: *a1\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    },
+    {
+      "id": "cycle-seq",
+      "yaml": "root: &old [*old]\n",
+      "type": "object",
+      "isArray": false,
+      "constructor": "Object",
+      "output": "root: &a1\n  - *a1\n",
+      "afterFeishuWrite": "root: &a1\n  - *a1\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    },
+    {
+      "id": "scalar-alias",
+      "yaml": "first: &old hello\nsecond: *old\n",
+      "type": "object",
+      "isArray": false,
+      "constructor": "Object",
+      "output": "first: hello\nsecond: hello\n",
+      "afterFeishuWrite": "first: hello\nsecond: hello\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    },
+    {
+      "id": "anchor-unused",
+      "yaml": "first: &old {x: 1}\n",
+      "type": "object",
+      "isArray": false,
+      "constructor": "Object",
+      "output": "first:\n  x: 1\n",
+      "afterFeishuWrite": "first:\n  x: 1\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    },
+    {
+      "id": "merge",
+      "yaml": "base: &base {x: 1}\nmerged: {<<: *base, y: 2}\n",
+      "type": "object",
+      "isArray": false,
+      "constructor": "Object",
+      "output": "base: &a1\n  x: 1\nmerged:\n  <<: *a1\n  y: 2\n",
+      "afterFeishuWrite": "base: &a1\n  x: 1\nmerged:\n  <<: *a1\n  y: 2\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    },
+    {
+      "id": "root-array",
+      "yaml": "- hello\n- {x: 1}\n",
+      "type": "object",
+      "isArray": true,
+      "constructor": "Array",
+      "output": "- hello\n- x: 1\n",
+      "afterFeishuWrite": "- hello\n- x: 1\n"
+    },
+    {
+      "id": "root-string",
+      "yaml": "hello\n",
+      "type": "string",
+      "isArray": false,
+      "constructor": "String",
+      "output": "hello\n",
+      "writeError": {
+        "name": "TypeError",
+        "message": "Cannot create property 'adapters' on string 'hello'"
+      }
+    },
+    {
+      "id": "root-null",
+      "yaml": "null\n",
+      "type": "object",
+      "isArray": false,
+      "constructor": null,
+      "output": "null\n",
+      "afterFeishuWrite": "adapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    },
+    {
+      "id": "root-number",
+      "yaml": "42\n",
+      "type": "number",
+      "isArray": false,
+      "constructor": "Number",
+      "output": "42\n",
+      "writeError": {
+        "name": "TypeError",
+        "message": "Cannot create property 'adapters' on number '42'"
+      }
+    },
+    {
+      "id": "root-bool",
+      "yaml": "true\n",
+      "type": "boolean",
+      "isArray": false,
+      "constructor": "Boolean",
+      "output": "true\n",
+      "writeError": {
+        "name": "TypeError",
+        "message": "Cannot create property 'adapters' on boolean 'true'"
+      }
+    },
+    {
+      "id": "primitive-adapters",
+      "yaml": "adapters: hello\nkeep: 1\n",
+      "type": "object",
+      "isArray": false,
+      "constructor": "Object",
+      "output": "adapters: hello\nkeep: 1\n",
+      "writeError": {
+        "name": "TypeError",
+        "message": "Cannot create property 'feishu' on string 'hello'"
+      }
+    },
+    {
+      "id": "array-adapters",
+      "yaml": "adapters: [hello, world]\nkeep: 1\n",
+      "type": "object",
+      "isArray": false,
+      "constructor": "Object",
+      "output": "adapters:\n  - hello\n  - world\nkeep: 1\n",
+      "afterFeishuWrite": "adapters:\n  - hello\n  - world\nkeep: 1\n"
+    },
+    {
+      "id": "set",
+      "yaml": "items: !!set\n  a: null\n  b: null\n",
+      "type": "object",
+      "isArray": false,
+      "constructor": "Object",
+      "output": "items:\n  - a\n  - b\n",
+      "afterFeishuWrite": "items:\n  - a\n  - b\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    },
+    {
+      "id": "omap",
+      "yaml": "items: !!omap\n  - a: 1\n  - b: 2\n",
+      "type": "object",
+      "isArray": false,
+      "constructor": "Object",
+      "output": "items:\n  a: 1\n  b: 2\n",
+      "afterFeishuWrite": "items:\n  a: 1\n  b: 2\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    },
+    {
+      "id": "complex-key",
+      "yaml": "? [a, b]\n: value\n",
+      "type": "object",
+      "isArray": false,
+      "constructor": "Object",
+      "output": "\"[ a, b ]\": value\n",
+      "afterFeishuWrite": "\"[ a, b ]\": value\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    },
+    {
+      "id": "complex-map-key",
+      "yaml": "? {a: b}\n: value\n",
+      "type": "object",
+      "isArray": false,
+      "constructor": "Object",
+      "output": "\"{ a: b }\": value\n",
+      "afterFeishuWrite": "\"{ a: b }\": value\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    },
+    {
+      "id": "bad-alias",
+      "yaml": "item: *missing\n",
+      "error": {
+        "name": "ReferenceError",
+        "message": "Unresolved alias (the anchor must be set before the alias): missing"
+      }
+    },
+    {
+      "id": "duplicate-keys",
+      "yaml": "a: 1\na: 2\n",
+      "error": {
+        "name": "YAMLParseError",
+        "message": "Map keys must be unique at line 2, column 1:\n\na: 1\na: 2\n^\n"
+      }
+    }
+  ]
+}

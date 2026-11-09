@@ -5,6 +5,19 @@ use super::*;
 #[cfg(target_os = "linux")]
 use crate::test_process::{TransientAudit, TransientChildren, child_processes};
 
+#[tokio::test]
+async fn isolated_entry_rejects_js_blank_token_before_environment_or_host_start() {
+    let scratch = Scratch::new();
+    for token in ["\u{feff}", "\u{feff} \n", " \r\n"] {
+        let options = Options::parse(scratch.args()).unwrap();
+        std::fs::write(&options.token_file, token).unwrap();
+        assert_eq!(
+            super::run(options).await.unwrap_err().to_string(),
+            "native token file must contain a nonempty token"
+        );
+    }
+}
+
 #[test]
 fn production_turn_ports_share_cancellation() {
     use crate::host::modules::tool_context::HostToolCheckpoint;
@@ -226,6 +239,7 @@ async fn production_cleanup_matrix() {
     for mode in [
         "ok",
         "session-error",
+        "temporary sessions-error",
         "project-error",
         "both-errors",
         "release",
@@ -308,6 +322,7 @@ async fn production_cleanup_matrix() {
             .expect("#1071 production cleanup bounded test guard");
         let expected = match mode {
             "session-error" | "both-errors" => Err("session failed".to_owned()),
+            "temporary sessions-error" => Err("temporary sessions failed".to_owned()),
             "project-error" => Err("project failed".to_owned()),
             "cancel" => Err("cancelled".to_owned()),
             "never" => Err("gateway host drain deadline exceeded".to_owned()),
@@ -325,7 +340,13 @@ async fn production_cleanup_matrix() {
                 // lifecycle disposal (PilotDeckServerShutdownBundle.ts:33-37).
                 vec!["automation", "channels", "session"]
             } else {
-                vec!["automation", "channels", "session", "project"]
+                vec![
+                    "automation",
+                    "channels",
+                    "session",
+                    "temporary sessions",
+                    "project",
+                ]
             },
             "#1071 production cleanup attempts both resources"
         );
@@ -336,13 +357,25 @@ async fn production_cleanup_matrix() {
         );
         negative_assert_eq!(
             actual_warnings,
-            if ["project-error", "both-errors"].contains(&mode) {
+            if mode == "both-errors" {
+                vec![
+                    "temporary sessions failed".to_owned(),
+                    "project failed".to_owned(),
+                ]
+            } else if mode == "project-error" {
                 vec!["project failed".to_owned()]
+            } else if mode == "temporary sessions-error" {
+                vec!["temporary sessions failed".to_owned()]
             } else {
                 vec![]
             },
             "#1071 production cleanup reports project failure"
         );
+        // The native temporary-storage cleanup is an extra owned phase;
+        // its failure case above has no synthetic row in the frozen TS probe.
+        if mode == "temporary sessions-error" {
+            continue;
+        }
         let fixture = oracle();
         let ts = fixture["observations"]["productionCleanup"]
             .as_array()
@@ -380,7 +413,7 @@ async fn production_cleanup_matrix() {
         let gateway_calls: Vec<&str> = actual_calls
             .iter()
             .copied()
-            .filter(|step| !matches!(*step, "automation" | "channels"))
+            .filter(|step| !["automation", "channels", "temporary sessions"].contains(step))
             .collect();
         negative_assert_eq!(
             json!(gateway_calls),
@@ -394,7 +427,7 @@ async fn production_cleanup_matrix() {
 }
 
 #[tokio::test]
-async fn configured_hooks_are_refused() {
+async fn top_level_hooks_are_ignored_like_ts() {
     let scratch = Scratch::new();
     let options = Options::parse(scratch.args()).expect("#1071 hooks options");
     let env = options.environment(Env::new());
@@ -410,13 +443,82 @@ async fn configured_hooks_are_refused() {
         let path = base.join("pilotdeck.yaml");
         std::fs::write(&path, format!("{CONFIG}hooks:\n  PreToolUse:\n    - hooks: [{{type: command, command: must-not-run}}]\n"))
             .expect("#1071 configured hook fixture");
-        let error = crate::test_negative_receipt::expect_err(
-            assembly::validate_profile(&options, &env).await,
-            "#1071 configured hooks refused before readiness",
+        negative_assert!(
+            assembly::validate_profile(&options, &env).await.is_ok(),
+            "#1071 unknown top-level hooks do not become persistent hooks"
+        );
+        use crate::runtime::project::ConfigSource;
+        let snapshot = crate::runtime::project::NativeConfigSource::new(
+            options.project.clone(),
+            env.clone(),
+            Some(options.home.clone()),
+            None,
+        )
+        .load(&options.project)
+        .expect("#1071 production hooks configuration projection");
+        let projected = snapshot.get("config").expect("#1071 projected config");
+        negative_assert!(
+            projected.get("hooks").is_none_or(JsValue::is_undefined),
+            "#1071 unknown top-level hooks absent from production projection"
+        );
+        let mut agent = projected
+            .get("agent")
+            .and_then(JsValue::as_object)
+            .cloned()
+            .unwrap_or_default();
+        negative_assert!(
+            agent.get("hooks").is_none_or(JsValue::is_undefined),
+            "#1071 unknown top-level hooks do not become agent settings"
+        );
+        agent.insert(
+            "cwd".into(),
+            options.project.to_string_lossy().as_ref().into(),
+        );
+        use crate::host::modules::tool_context::HostToolCheckpoint;
+        use crate::runtime::session::{SessionContext, factory::SessionBinding};
+        let recorder = crate::runtime::turn::live::test_recorder();
+        let binding = SessionBinding {
+            context: SessionContext {
+                session_key: "hook-source-probe".into(),
+                project_key: None,
+                channel_key: "probe".into(),
+                allowed_tools: None,
+                disallowed_tools: None,
+            },
+            recorder: recorder.clone(),
+            checkpoint: HostToolCheckpoint::new(None, &[]).expect("#1071 hooks checkpoint"),
+            projection: Arc::default(),
+        };
+        let tools = tools::SessionTools::new(
+            &options,
+            &env,
+            binding,
+            agent,
+            Arc::default(),
+            Arc::default(),
+            tools::SessionMcpTools::empty(),
+        )
+        .expect("#1071 production hook-source session tools");
+        let identity = pilotdeck_protocol::admission::ExecutionIdentity {
+            request_id: "hook-request".into(),
+            run_id: "hook-run".into(),
+            operation_id: "hook-operation".into(),
+            session_id: "hook-source-probe".into(),
+            turn_id: "hook-turn".into(),
+        };
+        let ports = assembly::turn_ports(
+            &tools,
+            &identity,
+            recorder,
+            crate::runtime::hooks::Cancellation::new(),
         );
         negative_assert!(
-            error.to_string().contains("configured hooks"),
-            "#1071 configured hooks refusal is explicit"
+            ports.interaction.hooks.is_empty()
+                && ports
+                    .context_config
+                    .get("hooks")
+                    .is_none_or(JsValue::is_undefined),
+            "#1071 ignored top-level hooks never enter native turn hook authority"
         );
         std::fs::remove_file(path).expect("#1071 remove hook config fixture");
     }
@@ -472,7 +574,7 @@ async fn replacement_clone_shares_state() {
         .reserve_transcript_write(&session, "probe")
         .expect_err("#1137 cloned reservation must conflict");
     negative_assert_eq!(
-        error.code,
+        error.code.as_deref(),
         Some(
             expected["conflictCode"]
                 .as_str()
@@ -930,6 +1032,8 @@ async fn project_path_boundaries_worker() {
         async_hook_registry: None,
         // #1600: match production (connected), not the retired
         // observer-coupled bus.
+        dialog_recovery: None,
+        sop: None,
         user_dialog_bus: Arc::new(std::sync::Mutex::new(
             crate::user_dialog::GatewayUserDialogBus::connected(
                 crate::user_dialog::DialogRuntime::default(),
@@ -938,9 +1042,11 @@ async fn project_path_boundaries_worker() {
         upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
         prepare_weixin_login: None,
         cron: None,
-        always_on: None,
+        automation: None,
         settings: requests::Requests::stub_settings(&owner),
         session_overrides: Arc::default(),
+        clear_sdk_state: None,
+        ephemeral: None,
     };
     let services = services::Services {
         options: options.clone(),
@@ -983,19 +1089,39 @@ async fn project_path_boundaries_worker() {
         let read = requests
             .request("active_turn_snapshot".into(), params.clone())
             .await;
+        // Scope selection is a lexical path contract, not a registry grant.
+        // An unregistered path can return an empty active replay, while archive
+        // and dialog consumers still require their own Metadata registration.
+        let selected = super::project_scope::select(&requests.owner, &options, &params, false)
+            .expect("#1137 request scope selection");
         negative_assert_eq!(
-            read.is_ok(),
-            row["registered"]
-                .as_bool()
-                .expect("#1137 TS boundary registration"),
+            selected.options.project.to_string_lossy().as_ref(),
+            row["resolved"]
+                .as_str()
+                .expect("#1137 resolved TS boundary")
+                .replace("{root}", &scratch.0.to_string_lossy()),
             "#1137 request project guard uses process cwd"
         );
+        assert!(
+            read.is_ok(),
+            "empty replay has no project resources to authorize"
+        );
+        drop(selected);
         negative_assert_eq!(
             services.workspace_id(&params).is_ok(),
             row["storageMatches"]
                 .as_bool()
                 .expect("#1137 TS storage boundary"),
             "#1137 submit project guard uses process cwd"
+        );
+    }
+    for params in [
+        pilotdeck_protocol::parse_json("{}").unwrap(),
+        pilotdeck_protocol::parse_json(r#"{"projectKey":null}"#).unwrap(),
+    ] {
+        assert!(
+            services.workspace_id(&params).is_ok(),
+            "nullish project uses selected workspace"
         );
     }
     std::env::set_current_dir(&scratch.0).expect("#1137 restore path boundary worker");

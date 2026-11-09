@@ -6,12 +6,30 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 impl TurnInput {
     pub fn accepted_messages(&self) -> Vec<JsValue> {
+        if let AgentInput::Fork { initial, directive } = &self.input {
+            return [initial, directive]
+                .into_iter()
+                .map(|text| {
+                    super::object([
+                        ("role", "user".into()),
+                        (
+                            "content",
+                            JsValue::Array(vec![super::object([
+                                ("type", "text".into()),
+                                ("text", JsValue::String(text.clone())),
+                            ])]),
+                        ),
+                    ])
+                })
+                .collect();
+        }
         let content = match &self.input {
             AgentInput::Text(text) => vec![super::object([
                 ("type", "text".into()),
                 ("text", JsValue::String(text.clone())),
             ])],
             AgentInput::Blocks(content) => content.clone(),
+            AgentInput::Fork { .. } => unreachable!("host fork handled above"),
         };
         vec![super::object([
             ("role", "user".into()),

@@ -1176,3 +1176,59 @@ async fn lost_release_interrupts_retired_peer_waiter() {
         .expect("#1010 retired disposal joins")
         .expect_err("#1010 retired disposal error");
 }
+
+#[tokio::test]
+async fn sdk_session_contributions_are_frozen_and_not_published_globally() {
+    use crate::runtime::plugins::loader::LoadedPluginCommand;
+    let temp = Temp::new();
+    let markdown = |name: &str, is_skill| LoadedPluginCommand {
+        name: name.into(),
+        path: temp.0.join(name),
+        content: format!("content-{name}"),
+        frontmatter: Default::default(),
+        is_skill,
+    };
+    let local = Arc::new(LoadedPlugin {
+        name: "session-only".into(),
+        path: temp.0.join("local"),
+        source: PluginSource::Project,
+        commands: vec![markdown("command", false)],
+        skills: vec![markdown("skill", true)],
+        output_styles: vec![markdown("style", false)],
+        hooks_config: None,
+        mcp_servers: None,
+        lsp_servers: None,
+        dispose: None,
+    });
+    let weak = Arc::downgrade(&local);
+    let runtime = PluginRuntime::new(PluginRuntimeOptions {
+        project_root: temp.0.join("project"),
+        pilot_home: temp.0.join("home"),
+        builtin_skills_root: None,
+        builtin_plugins: vec![],
+        builtin_plugins_enabled: Default::default(),
+    });
+    runtime.refresh().await.unwrap();
+    let mut session = runtime
+        .acquire_session_contributions(vec![local.clone()])
+        .await
+        .unwrap();
+    drop(local);
+    assert_eq!(session.contributions.commands.len(), 1);
+    assert_eq!(session.contributions.skills.len(), 1);
+    assert_eq!(session.contributions.output_styles.len(), 1);
+    let mut other = runtime.acquire_session_contributions(vec![]).await.unwrap();
+    assert!(other.contributions.commands.is_empty());
+    assert!(other.contributions.skills.is_empty());
+    assert!(other.contributions.output_styles.is_empty());
+    assert!(
+        weak.upgrade().is_some(),
+        "local plugin must outlive SDK registry changes while the session lease exists"
+    );
+    session.release().await.unwrap();
+    drop(session);
+    assert!(weak.upgrade().is_none());
+    other.release().await.unwrap();
+    drop(other);
+    runtime.dispose().await.unwrap();
+}

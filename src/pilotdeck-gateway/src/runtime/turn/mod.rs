@@ -17,3 +17,6 @@ pub mod runner;
 pub mod submit;
 pub mod submit_host;
 mod timeline;
+
+pub(crate) mod loop_control;
+pub(crate) mod sop_executor;

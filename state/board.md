@@ -5455,3 +5455,28 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 ② **2215 批收口**：三报告（场景账/归一化账/准确预期账）从 macmini 拷回主仓树内 `_tmp/`（sha256 与远端逐一核对一致）并代发 #2215/#2216/#2217 评论；发现项全部只记账不动判据——`--version` 无 entries 条目、45 条 `cli.option:*` 状态翻转口径、normalization.md §8 正文停在 #933 前、tz 数据版本不在 PINNED_NODE、oracle.json 9 例未入套件——归 A 收口/后续批次统一裁定，本轮不开新单。
 ③ **巡场判读**：#2599/#2736 前置活性红（前置 #2467/#1325 均已闭）重判归 P2 批池，A 收口处置轮消化；#1157 总表同步（评论 6743020218）：G3 三选一已消化移除，当前待人 7 项列清（#2453 托管 runner 验收 / #2133 P1-4 仲裁 / 本机卷 / mbp2 mDNS sudo / pin 拍板+队列摘除复核 / #1355 r25 子向复核 / 盲区 4 项待选），纠正旧引用只写 #2136 的指针；#2245 收货等 minimax 评审块自动续；#2771/#2770（#2152/#2153）评审 CI 在飞；#2768 state PR 22:06 MERGED 邮箱核平。fleet 22:5x 四机 OK（cb8/macmini/mbp2 负载 0.01/0.26/0.24）、树 57/60、盘 79.9/200 GiB。
 ---
+
+
+### 2026-11-10 · Gateway 共同核心整合实施
+
+按人批完整整合方案启动，固定 main 8639283b 与 CLI PR #2725 3637484a，统一目录快照 001ec389、对话树快照及未提交文件已保存在主仓 _tmp/20261110-gateway-integration/。唯一整合持有人为 Codex，临时树 _build/wt-gateway-integration；原 CLI/前端树继续保留。正在逐块整合共享核心及主线负控，mbp2 三隔离树分担自动化、渠道和真实业务探针；本机不构建。第一轮旧 CLI/TS 实测发现权限拒绝事件及错误码差异，正在修复；尚无新整合头通过或完整替换结论。后续接入全核心编译、第一轮新头真实对照、通用导出恢复与全部渠道，再承接正式 host/session/retirement 装置。
+
+### 2026-11-10 · Gateway 共同候选首批验证接续
+
+固定 main 8639283b / CLI来源3637484a 的逐块整合已消除44处文本冲突，保留双方生命周期、MCP/Cron及负控；最新 origin/main 003a0b44 与固定基点的 src 无差异。新增可用通用归档存储消费者与会话互斥、统一IM交互桥，装配Telegram/Matrix/Signal/Mattermost/HomeAssistant共5渠道。mbp2 r11 全目标check及11组定向测试均通过，历史r6路径失败、HA r10编译失败原件保留。正固定可执行候选并运行TS/Rust真实业务闭环；来源PR#2725、统一目录与前端活动树快照继续保全。本轮只达到候选阶段，未关闭任何正式Gateway/渠道验收；Discord/DingTalk待收，QQ/Email/WeCom由隔离子代理继续，WhatsApp及正式host/session/retirement/冷切换仍待接续。证据：主仓 _tmp/20261110-gateway-integration/ 与 mbp2 integrated/_tmp/integration-r11-core/。
+
+### 2026-11-10 · 共同候选真实闭环与渠道重载修复
+
+共同候选9b9941b9已本地提交并推送保全（原PR#2725及各快照未改写），mbp2四可执行文件构建成功，固定TS官方客户端驱动的真实对话/工具/权限拒绝/终态/持久化与冷读对照无差异；公共portable restore后的真实模型续聊、Cron真实执行及webhook结果回送也已实跑。均为诊断、非完整正式验收。后续r15按源码清单SHA绑定新批，Matrix/Signal/Mattermost/HomeAssistant/WhatsApp五渠道实际Server完成两轮A7、出站、异步禁用/重启与停机；此前9b四渠道重载失败原件保留。Email真装配暴露extra多包一层，已修待复跑。Discord/DingTalk/QQ等生产模块已接线；WeCom仅测试编译、由Terra主体+Sol附件并行，不计完成。独立DS/Claude首轮已出部分域审计，归档非文本P1、边界与冷项目关闭增量已补，待当前头复验；P2逐项仍需收口。全部构建仍在mbp2，无本机Rust产物。主仓证据_tmp/20261110-gateway-integration/；统一CLI/前端工作区未切换。下一步当前全目标编译/定向回归、新网络上传入模、四平台真实assembly及WeCom闭环，再按边界拆线性交付PR和正式host/session/retirement接续。
+
+### 2026-11-10 · 共同核心 Draft 与第二批验证
+
+共同核心候选9b9941b9已建立Draft PR #2786（承接#2725，未合并、未关闭阶段）。归档独立审计的非文本投影/2MiB边界、冷项目关闭等待及归档完成发布窗口已修，mbp2 r18对应测试通过；本轮单独提交这些修复，双谱系增量复核继续。r22源码清单c05e8437绑定3504文件，Gateway/CLI全目标check通过；6,155项Gateway回归r23正在运行，不能预填结论。r15真实四平台Telegram/DingTalk/Discord/QQ闭环、HTTP/WS/上传入模/取消网络诊断与冷切换正向已通过；真实WS阻塞排空导致Rust非零退出、下一写入者被阻止且新数据不变，失败原件单列保留。全部19渠道仍未齐：WeCom r22为19通过3媒体测试失败，修复及重连批待复验；Feishu新增第一方protobuf WS、附件和宿主命令正在整合，固定SDK实测stop遗留WS须登记差异。cb8接收r22隔离源码开始Linux构建/见证，mbp2继续日常构建，本机无Rust构建。统一CLI/前端树及快照不动；证据总根_tmp/20261110-gateway-integration/。
+
+### 2026-11-10 · 共同候选原生存储与全渠道接线接续
+
+Draft #2786 当前已推f855107a；工作候选r34（源码清单679d5eb1）Gateway/CLI全目标check及四bin在mbp2通过，全部19渠道已有原生装配但未标完整验收。r23单进程Gateway回归5875通过/28失败/252忽略原件保留；r34改按CI的nextest逐进程、固定Node22.22.0/ICU78.2执行875定向，867通过/8失败，5304未选择。公开snapshot额外cwd已修、LocalHost误发布Server自动化已隔离，真实Server Telegram/DingTalk/Discord/QQ及WeCom A7闭环通过；飞书单测options缺口和真实生命周期quiet/测试Drop双panic正修。持久fork/replace/finalize已接通，TS/Rust真实温路径及冷恢复可执行，但发现工具reference重定向差异，正按默认provider区分内部aux与legacy外部路径；4数据单测的macOS系统temp别名已定位并修待跑。技能失败是远端源码包遗漏已授权skills目录，已补交，非删除资产；Cron新增资源清理序列精确断言已更新待跑。cb8真实删除会话EBADF已修并合本地；产品入口总账负控12项通过。按#1301最新A授权重开#1314/#1315，正式host/session/retirement仍待闭合，#1355活动冻结入口不并写；来源树、CLI/app/GPUI/file-edit快照均保留，本机无Rust构建。证据主仓_tmp/20261110-gateway-integration/；下一步收飞书/微信、持久数据剩余边界及负控修复，完成新头回归/独立审阅后分批交付。
+
+### 2026-11-10 · r37 业务闭环与完整回归接续
+
+共同工作候选r37（输入清单b06498c7、远端fmt增量单列）在mbp2完成Gateway/CLI全目标check和四bin，Gateway SHA f92f3d7c；Gateway+CLI nextest全回归仍在跑，不预填通过。r36定向50/51通过，飞书真实Server protobuf/A7/reload/关闭已通过；剩余恢复测试的v1活owner仍应跳过，固定TS实测已证明，修正了缺backup用例的owner输入。r37真实TS/Rust会话fork、replace准备/回滚、冷恢复、三aux目录字节/mode及内部/legacy路径对拍通过，0模型请求，不冒充正式suite。微信命令、真实helper及实际A7权限/elicitation测试已接，待全回归结果；BlueBubbles真实进程两代与停机另已通过。复核发现SMS虽有注册但生产factory/gateway仍None，属于明确未完成消费者，已派Sol补第一方传输和真实A7桥，不能按全部19渠道已有注册认完整。已保存并应用逐文件带前像的渠道/数据/负控候选；旧快照和规范目录未触。本地提交保全当前候选，负控需干净HEAD运行，正式host/session/retirement及最终独立评审继续。

@@ -1,0 +1,1970 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "sources": {
+    "src/sop/staffdeck/StaffDeckSopClient.ts": "c48937dcdb81414a339ab7a0e31ae58f0d2f559a9748f158626d195e1204ae86",
+    "src/sop/staffdeck/types.ts": "6d7cd5e88aa2494382d22401bea9aeab60bae5df58968f2a6f281509d782782a"
+  },
+  "forbidden": 0,
+  "fixtures": {
+    "manifest": {
+      "status": "ok",
+      "protocolVersion": "2.0",
+      "moduleId": "sop.runtime",
+      "contract": "sop.lifecycle/v2",
+      "operations": [
+        "prepare",
+        "submit"
+      ]
+    },
+    "state": {
+      "status": "active",
+      "active_skill_id": "fixture",
+      "active_step_id": "node"
+    },
+    "step": {
+      "skillId": "fixture",
+      "skillName": "Fixture",
+      "version": "v1",
+      "nodeId": "node",
+      "node": {
+        "node_id": "node"
+      },
+      "instruction": "Follow fixture instruction.",
+      "expectedUserInfo": [],
+      "knownSlots": {},
+      "allowedNextStepIds": [],
+      "requiredToolNames": [],
+      "allowedActions": [
+        "completed"
+      ],
+      "isTerminal": true,
+      "declaresHandoff": false
+    },
+    "result": {
+      "status": "completed",
+      "replyFragment": "Fixture complete.",
+      "slotUpdates": {},
+      "events": []
+    }
+  },
+  "rows": [
+    {
+      "name": "prepare",
+      "operation": "prepare",
+      "options": {},
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:prepare\",\"operationId\":\"sop.prepare\",\"requestId\":\"sop.prepare\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": true,
+          "result": {
+            "state": {
+              "status": "active",
+              "active_skill_id": "fixture",
+              "active_step_id": "node"
+            },
+            "step": {
+              "skillId": "fixture",
+              "skillName": "Fixture",
+              "version": "v1",
+              "nodeId": "node",
+              "node": {
+                "node_id": "node"
+              },
+              "instruction": "Follow fixture instruction.",
+              "expectedUserInfo": [],
+              "knownSlots": {},
+              "allowedNextStepIds": [],
+              "requiredToolNames": [],
+              "allowedActions": [
+                "completed"
+              ],
+              "isTerminal": true,
+              "declaresHandoff": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "submit",
+      "operation": "submit",
+      "options": {
+        "operation": "submit"
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        },
+        "proposal": {
+          "status": "completed",
+          "replyFragment": "Fixture complete."
+        },
+        "successfulToolNames": [
+          "read_file"
+        ]
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/submit",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:submit\",\"operationId\":\"sop.submit\",\"requestId\":\"sop.submit\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"},\"proposal\":{\"status\":\"completed\",\"replyFragment\":\"Fixture complete.\"},\"successfulToolNames\":[\"read_file\"]}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": true,
+          "result": {
+            "state": {
+              "status": "active",
+              "active_skill_id": "fixture",
+              "active_step_id": "node"
+            },
+            "result": {
+              "status": "completed",
+              "replyFragment": "Fixture complete.",
+              "slotUpdates": {},
+              "events": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "context",
+      "operation": "prepare",
+      "options": {
+        "context": {
+          "runId": "r",
+          "operationId": "o",
+          "requestId": "q",
+          "sessionId": "s",
+          "turnId": "t",
+          "idempotencyKey": "key",
+          "deadlineAt": "2099-01-01T00:00:00.000Z",
+          "expectedRevision": 0
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        },
+        "context": {
+          "runId": "r",
+          "operationId": "o",
+          "requestId": "q",
+          "sessionId": "s",
+          "turnId": "t",
+          "idempotencyKey": "key",
+          "deadlineAt": "2099-01-01T00:00:00.000Z",
+          "expectedRevision": 0
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"r\",\"operationId\":\"o\",\"requestId\":\"q\",\"sessionId\":\"s\",\"turnId\":\"t\",\"idempotencyKey\":\"key\",\"deadlineAt\":\"2099-01-01T00:00:00.000Z\",\"expectedRevision\":0,\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": true,
+          "result": {
+            "state": {
+              "status": "active",
+              "active_skill_id": "fixture",
+              "active_step_id": "node"
+            },
+            "step": {
+              "skillId": "fixture",
+              "skillName": "Fixture",
+              "version": "v1",
+              "nodeId": "node",
+              "node": {
+                "node_id": "node"
+              },
+              "instruction": "Follow fixture instruction.",
+              "expectedUserInfo": [],
+              "knownSlots": {},
+              "allowedNextStepIds": [],
+              "requiredToolNames": [],
+              "allowedActions": [
+                "completed"
+              ],
+              "isTerminal": true,
+              "declaresHandoff": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "empty-optional-context",
+      "operation": "prepare",
+      "options": {
+        "context": {
+          "runId": "r",
+          "operationId": "o",
+          "requestId": "q",
+          "sessionId": "s",
+          "turnId": "t",
+          "idempotencyKey": "",
+          "deadlineAt": ""
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        },
+        "context": {
+          "runId": "r",
+          "operationId": "o",
+          "requestId": "q",
+          "sessionId": "s",
+          "turnId": "t",
+          "idempotencyKey": "",
+          "deadlineAt": ""
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"r\",\"operationId\":\"o\",\"requestId\":\"q\",\"sessionId\":\"s\",\"turnId\":\"t\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": true,
+          "result": {
+            "state": {
+              "status": "active",
+              "active_skill_id": "fixture",
+              "active_step_id": "node"
+            },
+            "step": {
+              "skillId": "fixture",
+              "skillName": "Fixture",
+              "version": "v1",
+              "nodeId": "node",
+              "node": {
+                "node_id": "node"
+              },
+              "instruction": "Follow fixture instruction.",
+              "expectedUserInfo": [],
+              "knownSlots": {},
+              "allowedNextStepIds": [],
+              "requiredToolNames": [],
+              "allowedActions": [
+                "completed"
+              ],
+              "isTerminal": true,
+              "declaresHandoff": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "bound-manifest",
+      "operation": "prepare",
+      "options": {
+        "manifest": {
+          "status": "ok",
+          "protocolVersion": "2.0",
+          "moduleId": "sop.runtime",
+          "contract": "sop.lifecycle/v2",
+          "operations": [
+            "prepare",
+            "submit"
+          ],
+          "descriptorVersion": "1.0",
+          "implementationId": "fixture.owner",
+          "transport": "sop-http-v2"
+        },
+        "expected": {
+          "implementationId": "fixture.owner",
+          "contract": "sop.lifecycle/v2",
+          "transport": "sop-http-v2"
+        },
+        "manifestPath": "/manifest"
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/manifest",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:prepare\",\"operationId\":\"sop.prepare\",\"requestId\":\"sop.prepare\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": true,
+          "result": {
+            "state": {
+              "status": "active",
+              "active_skill_id": "fixture",
+              "active_step_id": "node"
+            },
+            "step": {
+              "skillId": "fixture",
+              "skillName": "Fixture",
+              "version": "v1",
+              "nodeId": "node",
+              "node": {
+                "node_id": "node"
+              },
+              "instruction": "Follow fixture instruction.",
+              "expectedUserInfo": [],
+              "knownSlots": {},
+              "allowedNextStepIds": [],
+              "requiredToolNames": [],
+              "allowedActions": [
+                "completed"
+              ],
+              "isTerminal": true,
+              "declaresHandoff": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-manifest-operation",
+      "operation": "prepare",
+      "options": {
+        "manifest": {
+          "status": "ok",
+          "protocolVersion": "2.0",
+          "moduleId": "sop.runtime",
+          "contract": "sop.lifecycle/v2",
+          "operations": [
+            "prepare"
+          ]
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_PROTOCOL_INCOMPATIBLE",
+          "message": "StaffDeck SOP runtime does not advertise sop.runtime sop.lifecycle/v2 protocol 2.0 support."
+        }
+      ]
+    },
+    {
+      "name": "wrong-manifest-version",
+      "operation": "prepare",
+      "options": {
+        "manifest": {
+          "status": "ok",
+          "protocolVersion": "1.0",
+          "moduleId": "sop.runtime",
+          "contract": "sop.lifecycle/v2",
+          "operations": [
+            "prepare",
+            "submit"
+          ]
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_PROTOCOL_INCOMPATIBLE",
+          "message": "StaffDeck SOP runtime does not advertise sop.runtime sop.lifecycle/v2 protocol 2.0 support."
+        }
+      ]
+    },
+    {
+      "name": "wrong-bound-manifest",
+      "operation": "prepare",
+      "options": {
+        "manifest": {
+          "status": "ok",
+          "protocolVersion": "2.0",
+          "moduleId": "sop.runtime",
+          "contract": "sop.lifecycle/v2",
+          "operations": [
+            "prepare",
+            "submit"
+          ]
+        },
+        "expected": {
+          "implementationId": "fixture.owner",
+          "contract": "sop.lifecycle/v2",
+          "transport": "sop-http-v2"
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_PROTOCOL_INCOMPATIBLE",
+          "message": "SOP runtime does not advertise the configured fixture.owner sop.lifecycle/v2/sop-http-v2 binding."
+        }
+      ]
+    },
+    {
+      "name": "health-unavailable",
+      "operation": "prepare",
+      "options": {
+        "healthStatus": 503
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_RUNTIME_UNAVAILABLE",
+          "message": "StaffDeck SOP runtime health check returned HTTP 503."
+        }
+      ]
+    },
+    {
+      "name": "wrong-request-id",
+      "operation": "prepare",
+      "options": {
+        "envelope": {
+          "protocolVersion": "2.0",
+          "requestId": "foreign",
+          "ok": true,
+          "outcome": "completed",
+          "payload": {
+            "state": {
+              "status": "active",
+              "active_skill_id": "fixture",
+              "active_step_id": "node"
+            },
+            "step": {
+              "skillId": "fixture",
+              "skillName": "Fixture",
+              "version": "v1",
+              "nodeId": "node",
+              "node": {
+                "node_id": "node"
+              },
+              "instruction": "Follow fixture instruction.",
+              "expectedUserInfo": [],
+              "knownSlots": {},
+              "allowedNextStepIds": [],
+              "requiredToolNames": [],
+              "allowedActions": [
+                "completed"
+              ],
+              "isTerminal": true,
+              "declaresHandoff": false
+            }
+          }
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:prepare\",\"operationId\":\"sop.prepare\",\"requestId\":\"sop.prepare\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_RUNTIME_PROTOCOL",
+          "message": "StaffDeck SOP runtime returned an invalid protocol envelope."
+        }
+      ]
+    },
+    {
+      "name": "owner-error",
+      "operation": "prepare",
+      "options": {
+        "status": 409,
+        "envelope": {
+          "protocolVersion": "2.0",
+          "requestId": "sop.prepare",
+          "ok": false,
+          "outcome": "failed",
+          "error": {
+            "code": "SOP_OWNER_CONFLICT",
+            "message": "Original owner conflict.",
+            "retryability": "retry_after_status",
+            "details": {
+              "revision": 4
+            }
+          }
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:prepare\",\"operationId\":\"sop.prepare\",\"requestId\":\"sop.prepare\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_OWNER_CONFLICT",
+          "message": "Original owner conflict.",
+          "details": {
+            "revision": 4
+          },
+          "retryability": "retry_after_status"
+        }
+      ]
+    },
+    {
+      "name": "malformed-owner-error",
+      "operation": "prepare",
+      "options": {
+        "envelope": {
+          "protocolVersion": "2.0",
+          "requestId": "sop.prepare",
+          "ok": false,
+          "outcome": "failed",
+          "error": {
+            "code": "bad",
+            "message": "bad",
+            "retryability": "always"
+          }
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:prepare\",\"operationId\":\"sop.prepare\",\"requestId\":\"sop.prepare\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_RUNTIME_PROTOCOL",
+          "message": "StaffDeck SOP runtime returned an invalid error envelope."
+        }
+      ]
+    },
+    {
+      "name": "outcome-invalid",
+      "operation": "prepare",
+      "options": {
+        "envelope": {
+          "protocolVersion": "2.0",
+          "requestId": "sop.prepare",
+          "ok": true,
+          "outcome": "unknown",
+          "payload": {
+            "state": {
+              "status": "active",
+              "active_skill_id": "fixture",
+              "active_step_id": "node"
+            },
+            "step": {
+              "skillId": "fixture",
+              "skillName": "Fixture",
+              "version": "v1",
+              "nodeId": "node",
+              "node": {
+                "node_id": "node"
+              },
+              "instruction": "Follow fixture instruction.",
+              "expectedUserInfo": [],
+              "knownSlots": {},
+              "allowedNextStepIds": [],
+              "requiredToolNames": [],
+              "allowedActions": [
+                "completed"
+              ],
+              "isTerminal": true,
+              "declaresHandoff": false
+            }
+          }
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:prepare\",\"operationId\":\"sop.prepare\",\"requestId\":\"sop.prepare\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_RUNTIME_PROTOCOL",
+          "message": "StaffDeck SOP runtime returned an invalid protocol envelope."
+        }
+      ]
+    },
+    {
+      "name": "success-missing-payload",
+      "operation": "prepare",
+      "options": {
+        "envelope": {
+          "protocolVersion": "2.0",
+          "requestId": "sop.prepare",
+          "ok": true,
+          "outcome": "completed"
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:prepare\",\"operationId\":\"sop.prepare\",\"requestId\":\"sop.prepare\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_RUNTIME_PROTOCOL",
+          "message": "StaffDeck SOP runtime returned an invalid success envelope."
+        }
+      ]
+    },
+    {
+      "name": "success-failed-outcome",
+      "operation": "prepare",
+      "options": {
+        "envelope": {
+          "protocolVersion": "2.0",
+          "requestId": "sop.prepare",
+          "ok": true,
+          "outcome": "failed",
+          "payload": {
+            "state": {
+              "status": "active",
+              "active_skill_id": "fixture",
+              "active_step_id": "node"
+            },
+            "step": {
+              "skillId": "fixture",
+              "skillName": "Fixture",
+              "version": "v1",
+              "nodeId": "node",
+              "node": {
+                "node_id": "node"
+              },
+              "instruction": "Follow fixture instruction.",
+              "expectedUserInfo": [],
+              "knownSlots": {},
+              "allowedNextStepIds": [],
+              "requiredToolNames": [],
+              "allowedActions": [
+                "completed"
+              ],
+              "isTerminal": true,
+              "declaresHandoff": false
+            }
+          }
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:prepare\",\"operationId\":\"sop.prepare\",\"requestId\":\"sop.prepare\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_RUNTIME_PROTOCOL",
+          "message": "StaffDeck SOP runtime returned an invalid success envelope."
+        }
+      ]
+    },
+    {
+      "name": "http-error-success-envelope",
+      "operation": "prepare",
+      "options": {
+        "status": 500
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:prepare\",\"operationId\":\"sop.prepare\",\"requestId\":\"sop.prepare\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_RUNTIME_PROTOCOL",
+          "message": "StaffDeck SOP runtime returned HTTP 500 with a successful envelope."
+        }
+      ]
+    },
+    {
+      "name": "invalid-json",
+      "operation": "prepare",
+      "options": {
+        "invalidJson": true
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:prepare\",\"operationId\":\"sop.prepare\",\"requestId\":\"sop.prepare\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_RUNTIME_PROTOCOL",
+          "message": "StaffDeck SOP runtime returned an invalid protocol envelope."
+        }
+      ]
+    },
+    {
+      "name": "fetch-error",
+      "operation": "prepare",
+      "options": {
+        "fetchError": "fixture transport failed"
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_RUNTIME_UNAVAILABLE",
+          "message": "StaffDeck SOP runtime request failed: fixture transport failed",
+          "retryability": "safe"
+        }
+      ]
+    },
+    {
+      "name": "invalid-prepare-state",
+      "operation": "prepare",
+      "options": {
+        "envelope": {
+          "protocolVersion": "2.0",
+          "requestId": "sop.prepare",
+          "ok": true,
+          "outcome": "completed",
+          "payload": {
+            "state": [],
+            "step": {
+              "skillId": "fixture",
+              "skillName": "Fixture",
+              "version": "v1",
+              "nodeId": "node",
+              "node": {
+                "node_id": "node"
+              },
+              "instruction": "Follow fixture instruction.",
+              "expectedUserInfo": [],
+              "knownSlots": {},
+              "allowedNextStepIds": [],
+              "requiredToolNames": [],
+              "allowedActions": [
+                "completed"
+              ],
+              "isTerminal": true,
+              "declaresHandoff": false
+            }
+          }
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:prepare\",\"operationId\":\"sop.prepare\",\"requestId\":\"sop.prepare\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_RUNTIME_PROTOCOL",
+          "message": "StaffDeck SOP runtime returned an invalid prepare payload.",
+          "retryability": "unsafe"
+        }
+      ]
+    },
+    {
+      "name": "invalid-step-context",
+      "operation": "prepare",
+      "options": {
+        "step": {
+          "skillId": "fixture",
+          "skillName": "Fixture",
+          "version": "v1",
+          "nodeId": "node",
+          "node": {
+            "node_id": "node"
+          },
+          "instruction": "Follow fixture instruction.",
+          "expectedUserInfo": [],
+          "knownSlots": {},
+          "allowedNextStepIds": [],
+          "requiredToolNames": [],
+          "allowedActions": [
+            "completed"
+          ],
+          "isTerminal": true,
+          "declaresHandoff": false,
+          "contextMode": "shared"
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:prepare\",\"operationId\":\"sop.prepare\",\"requestId\":\"sop.prepare\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_RUNTIME_PROTOCOL",
+          "message": "StaffDeck SOP runtime returned an invalid prepare payload.",
+          "retryability": "unsafe"
+        }
+      ]
+    },
+    {
+      "name": "invalid-step-sub-sop",
+      "operation": "prepare",
+      "options": {
+        "step": {
+          "skillId": "fixture",
+          "skillName": "Fixture",
+          "version": "v1",
+          "nodeId": "node",
+          "node": {
+            "node_id": "node"
+          },
+          "instruction": "Follow fixture instruction.",
+          "expectedUserInfo": [],
+          "knownSlots": {},
+          "allowedNextStepIds": [],
+          "requiredToolNames": [],
+          "allowedActions": [
+            "completed"
+          ],
+          "isTerminal": true,
+          "declaresHandoff": false,
+          "subSopId": 3
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:prepare\",\"operationId\":\"sop.prepare\",\"requestId\":\"sop.prepare\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_RUNTIME_PROTOCOL",
+          "message": "StaffDeck SOP runtime returned an invalid prepare payload.",
+          "retryability": "unsafe"
+        }
+      ]
+    },
+    {
+      "name": "invalid-required-tools",
+      "operation": "prepare",
+      "options": {
+        "step": {
+          "skillId": "fixture",
+          "skillName": "Fixture",
+          "version": "v1",
+          "nodeId": "node",
+          "node": {
+            "node_id": "node"
+          },
+          "instruction": "Follow fixture instruction.",
+          "expectedUserInfo": [],
+          "knownSlots": {},
+          "allowedNextStepIds": [],
+          "requiredToolNames": [
+            3
+          ],
+          "allowedActions": [
+            "completed"
+          ],
+          "isTerminal": true,
+          "declaresHandoff": false
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:prepare\",\"operationId\":\"sop.prepare\",\"requestId\":\"sop.prepare\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_RUNTIME_PROTOCOL",
+          "message": "StaffDeck SOP runtime returned an invalid prepare payload.",
+          "retryability": "unsafe"
+        }
+      ]
+    },
+    {
+      "name": "transition-valid",
+      "operation": "prepare",
+      "options": {
+        "step": {
+          "skillId": "fixture",
+          "skillName": "Fixture",
+          "version": "v1",
+          "nodeId": "node",
+          "node": {
+            "node_id": "node"
+          },
+          "instruction": "Follow fixture instruction.",
+          "expectedUserInfo": [],
+          "knownSlots": {},
+          "allowedNextStepIds": [],
+          "requiredToolNames": [],
+          "allowedActions": [
+            "completed"
+          ],
+          "isTerminal": true,
+          "declaresHandoff": false,
+          "transitions": [
+            {
+              "nextStepId": "next",
+              "condition": "yes",
+              "priority": 1,
+              "label": "Next",
+              "targetStep": {
+                "node_id": "next"
+              }
+            }
+          ]
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:prepare\",\"operationId\":\"sop.prepare\",\"requestId\":\"sop.prepare\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": true,
+          "result": {
+            "state": {
+              "status": "active",
+              "active_skill_id": "fixture",
+              "active_step_id": "node"
+            },
+            "step": {
+              "skillId": "fixture",
+              "skillName": "Fixture",
+              "version": "v1",
+              "nodeId": "node",
+              "node": {
+                "node_id": "node"
+              },
+              "instruction": "Follow fixture instruction.",
+              "expectedUserInfo": [],
+              "knownSlots": {},
+              "allowedNextStepIds": [],
+              "requiredToolNames": [],
+              "allowedActions": [
+                "completed"
+              ],
+              "isTerminal": true,
+              "declaresHandoff": false,
+              "transitions": [
+                {
+                  "nextStepId": "next",
+                  "condition": "yes",
+                  "priority": 1,
+                  "label": "Next",
+                  "targetStep": {
+                    "node_id": "next"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "transition-invalid-priority",
+      "operation": "prepare",
+      "options": {
+        "step": {
+          "skillId": "fixture",
+          "skillName": "Fixture",
+          "version": "v1",
+          "nodeId": "node",
+          "node": {
+            "node_id": "node"
+          },
+          "instruction": "Follow fixture instruction.",
+          "expectedUserInfo": [],
+          "knownSlots": {},
+          "allowedNextStepIds": [],
+          "requiredToolNames": [],
+          "allowedActions": [
+            "completed"
+          ],
+          "isTerminal": true,
+          "declaresHandoff": false,
+          "transitions": [
+            {
+              "nextStepId": "next",
+              "condition": "yes",
+              "priority": "1",
+              "targetStep": {
+                "node_id": "next"
+              }
+            }
+          ]
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:prepare\",\"operationId\":\"sop.prepare\",\"requestId\":\"sop.prepare\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_RUNTIME_PROTOCOL",
+          "message": "StaffDeck SOP runtime returned an invalid prepare payload.",
+          "retryability": "unsafe"
+        }
+      ]
+    },
+    {
+      "name": "submit-null-owner-optionals",
+      "operation": "submit",
+      "options": {
+        "operation": "submit",
+        "result": {
+          "status": "completed",
+          "replyFragment": "Fixture complete.",
+          "slotUpdates": {},
+          "events": [],
+          "taskSummary": null,
+          "nextStepId": null
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        },
+        "proposal": {
+          "status": "completed",
+          "replyFragment": "Fixture complete."
+        },
+        "successfulToolNames": [
+          "read_file"
+        ]
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/submit",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:submit\",\"operationId\":\"sop.submit\",\"requestId\":\"sop.submit\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"},\"proposal\":{\"status\":\"completed\",\"replyFragment\":\"Fixture complete.\"},\"successfulToolNames\":[\"read_file\"]}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": true,
+          "result": {
+            "state": {
+              "status": "active",
+              "active_skill_id": "fixture",
+              "active_step_id": "node"
+            },
+            "result": {
+              "status": "completed",
+              "replyFragment": "Fixture complete.",
+              "slotUpdates": {},
+              "events": [],
+              "taskSummary": null,
+              "nextStepId": null
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "submit-invalid-slot-updates",
+      "operation": "submit",
+      "options": {
+        "operation": "submit",
+        "result": {
+          "status": "completed",
+          "replyFragment": "Fixture complete.",
+          "slotUpdates": [],
+          "events": []
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        },
+        "proposal": {
+          "status": "completed",
+          "replyFragment": "Fixture complete."
+        },
+        "successfulToolNames": [
+          "read_file"
+        ]
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/submit",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:submit\",\"operationId\":\"sop.submit\",\"requestId\":\"sop.submit\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"},\"proposal\":{\"status\":\"completed\",\"replyFragment\":\"Fixture complete.\"},\"successfulToolNames\":[\"read_file\"]}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_RUNTIME_PROTOCOL",
+          "message": "StaffDeck SOP runtime returned an invalid submit payload.",
+          "retryability": "unsafe"
+        }
+      ]
+    },
+    {
+      "name": "submit-invalid-summary",
+      "operation": "submit",
+      "options": {
+        "operation": "submit",
+        "result": {
+          "status": "completed",
+          "replyFragment": "Fixture complete.",
+          "slotUpdates": {},
+          "events": [],
+          "taskSummary": 3
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        },
+        "proposal": {
+          "status": "completed",
+          "replyFragment": "Fixture complete."
+        },
+        "successfulToolNames": [
+          "read_file"
+        ]
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/submit",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:submit\",\"operationId\":\"sop.submit\",\"requestId\":\"sop.submit\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"},\"proposal\":{\"status\":\"completed\",\"replyFragment\":\"Fixture complete.\"},\"successfulToolNames\":[\"read_file\"]}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_RUNTIME_PROTOCOL",
+          "message": "StaffDeck SOP runtime returned an invalid submit payload.",
+          "retryability": "unsafe"
+        }
+      ]
+    },
+    {
+      "name": "submit-invalid-event",
+      "operation": "submit",
+      "options": {
+        "operation": "submit",
+        "result": {
+          "status": "completed",
+          "replyFragment": "Fixture complete.",
+          "slotUpdates": {},
+          "events": [
+            3
+          ]
+        }
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        },
+        "proposal": {
+          "status": "completed",
+          "replyFragment": "Fixture complete."
+        },
+        "successfulToolNames": [
+          "read_file"
+        ]
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/submit",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:submit\",\"operationId\":\"sop.submit\",\"requestId\":\"sop.submit\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"},\"proposal\":{\"status\":\"completed\",\"replyFragment\":\"Fixture complete.\"},\"successfulToolNames\":[\"read_file\"]}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_RUNTIME_PROTOCOL",
+          "message": "StaffDeck SOP runtime returned an invalid submit payload.",
+          "retryability": "unsafe"
+        }
+      ]
+    },
+    {
+      "name": "cached-manifest",
+      "operation": "prepare",
+      "options": {
+        "repeat": 2
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:prepare\",\"operationId\":\"sop.prepare\",\"requestId\":\"sop.prepare\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:prepare\",\"operationId\":\"sop.prepare\",\"requestId\":\"sop.prepare\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": true,
+          "result": {
+            "state": {
+              "status": "active",
+              "active_skill_id": "fixture",
+              "active_step_id": "node"
+            },
+            "step": {
+              "skillId": "fixture",
+              "skillName": "Fixture",
+              "version": "v1",
+              "nodeId": "node",
+              "node": {
+                "node_id": "node"
+              },
+              "instruction": "Follow fixture instruction.",
+              "expectedUserInfo": [],
+              "knownSlots": {},
+              "allowedNextStepIds": [],
+              "requiredToolNames": [],
+              "allowedActions": [
+                "completed"
+              ],
+              "isTerminal": true,
+              "declaresHandoff": false
+            }
+          }
+        },
+        {
+          "ok": true,
+          "result": {
+            "state": {
+              "status": "active",
+              "active_skill_id": "fixture",
+              "active_step_id": "node"
+            },
+            "step": {
+              "skillId": "fixture",
+              "skillName": "Fixture",
+              "version": "v1",
+              "nodeId": "node",
+              "node": {
+                "node_id": "node"
+              },
+              "instruction": "Follow fixture instruction.",
+              "expectedUserInfo": [],
+              "knownSlots": {},
+              "allowedNextStepIds": [],
+              "requiredToolNames": [],
+              "allowedActions": [
+                "completed"
+              ],
+              "isTerminal": true,
+              "declaresHandoff": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "failed-manifest-retry",
+      "operation": "prepare",
+      "options": {
+        "repeat": 2,
+        "retryManifest": true
+      },
+      "input": {
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture"
+            }
+          ]
+        },
+        "state": {
+          "status": "active",
+          "active_skill_id": "fixture",
+          "active_step_id": "node"
+        }
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/healthz",
+          "method": "GET"
+        },
+        {
+          "url": "http://127.0.0.1:1/base/v1/sop/prepare",
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"protocolVersion\":\"2.0\",\"runId\":\"sop:prepare\",\"operationId\":\"sop.prepare\",\"requestId\":\"sop.prepare\",\"sessionId\":\"unknown\",\"turnId\":\"unknown\",\"payload\":{\"bundle\":{\"sops\":[{\"id\":\"fixture\"}]},\"state\":{\"status\":\"active\",\"active_skill_id\":\"fixture\",\"active_step_id\":\"node\"}}}"
+        }
+      ],
+      "outcomes": [
+        {
+          "ok": false,
+          "name": "StaffDeckSopClientError",
+          "code": "SOP_PROTOCOL_INCOMPATIBLE",
+          "message": "StaffDeck SOP runtime does not advertise sop.runtime sop.lifecycle/v2 protocol 2.0 support."
+        },
+        {
+          "ok": true,
+          "result": {
+            "state": {
+              "status": "active",
+              "active_skill_id": "fixture",
+              "active_step_id": "node"
+            },
+            "step": {
+              "skillId": "fixture",
+              "skillName": "Fixture",
+              "version": "v1",
+              "nodeId": "node",
+              "node": {
+                "node_id": "node"
+              },
+              "instruction": "Follow fixture instruction.",
+              "expectedUserInfo": [],
+              "knownSlots": {},
+              "allowedNextStepIds": [],
+              "requiredToolNames": [],
+              "allowedActions": [
+                "completed"
+              ],
+              "isTerminal": true,
+              "declaresHandoff": false
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

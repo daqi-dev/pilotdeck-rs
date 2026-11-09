@@ -123,13 +123,8 @@ mutations = [
     # The fence carries no reservation, so `Drop` never calls `end_turn`: a
     # panicking body leaves the session at `session_busy` until restart.
     ('admission-fence-drop-skipped', manager,
-     '            reservation: Some(reservation),\n'
-     '        };\n'
-     '        self.body.run_turn(input)',
-     '            reservation: None,\n'
-     '        };\n'
-     '        let _ = reservation;\n'
-     '        self.body.run_turn(input)',
+     '            reservation: Some(reservation),\n        };\n        run()',
+     '            reservation: None,\n        };\n        let _ = reservation;\n        run()',
      FENCE_REPLAY,
      "#1325 admission fence: an unwinding turn must still release the session's admission"),
 ]

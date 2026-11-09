@@ -199,8 +199,16 @@ impl CronTaskStore {
         task_id: &str,
         update: impl Fn(&JsValue) -> Option<JsValue>,
     ) -> Result<Option<JsValue>, CronStoreError> {
+        self.update_task_js(&JsString::from(task_id), update)
+    }
+
+    pub(super) fn update_task_js(
+        &self,
+        task_id: &JsString,
+        update: impl Fn(&JsValue) -> Option<JsValue>,
+    ) -> Result<Option<JsValue>, CronStoreError> {
         mutate_task_file(&self.paths.tasks_file, || {
-            let wanted = JsValue::String(JsString::from(task_id));
+            let wanted = JsValue::String(task_id.clone());
             let file = self.read_task_file()?;
             let mut tasks = Vec::with_capacity(file.tasks.len());
             let mut updated: Option<JsValue> = None;

@@ -17,6 +17,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_process.rs'
+SERVER_HOST = ROOT / 'src/pilotdeck-gateway/src/native_process/server_host.rs'
+SKILLS = ROOT / 'src/pilotdeck-gateway/src/native_process/skills.rs'
 FAMILIES = ROOT / 'src/pilotdeck-gateway/src/native_process/families.rs'
 ASSEMBLY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
 TOOLS = ROOT / 'src/pilotdeck-gateway/src/native_process/tools.rs'
@@ -27,6 +29,7 @@ WS_TEST = ROOT / 'src/pilotdeck-gateway/src/native_ws/tests.rs'
 REVIEW_TEST = ROOT / 'src/pilotdeck-gateway/src/native_process/review_tests.rs'
 SERVICES = ROOT / 'src/pilotdeck-gateway/src/native_process/services.rs'
 REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
+PROJECT_SCOPE = ROOT / 'src/pilotdeck-gateway/src/native_process/project_scope.rs'
 REPLACEMENT = ROOT / 'src/pilotdeck-gateway/src/runtime/replacement.rs'
 MARKER_ORACLE = FIXTURES / 'native-cwd-marker/oracle.json'
 MARKER_GENERATOR = FIXTURES / 'native-cwd-marker/generate.mts'
@@ -101,24 +104,24 @@ impl Clone for ReplacementCoordinator {
      r'let existing = if existing.ends_with("\r\n") { existing.as_str() } else { crate::metadata::js_trim(&existing) };',
      'native_process::tests::review::project_marker_ownership_matches_ts', '#1137 native marker ownership matches TS registration'),
     ('directory-marker-accepted', ASSEMBLY,
-     'let existing = std::fs::read_to_string(&marker)?;',
-     'if marker.is_dir() { return Ok(()); } let existing = std::fs::read_to_string(&marker)?;',
+     '    let chats =\n        super::methods::session_dir::bounded_chat_dir_at(&options.home, &options.project, cwd)\n            .map_err(|error| String::from_utf16_lossy(error.message.units()))?;',
+     '    let mutant_chat = crate::session_chat_dir(&options.home, &options.project, &options.project.to_string_lossy());\n    let mutant_marker = mutant_chat.parent().expect("fixture marker").join(".cwd");\n    if mutant_marker.is_dir() { return Ok(()); }\n    let chats =\n        super::methods::session_dir::bounded_chat_dir_at(&options.home, &options.project, cwd)\n            .map_err(|error| String::from_utf16_lossy(error.message.units()))?;',
      'native_process::tests::review::project_marker_ownership_matches_ts', '#1137 native marker ownership matches TS registration'),
     ('dangling-marker-accepted', ASSEMBLY,
      'if marker.exists() {',
      'if marker.is_symlink() && !marker.exists() { return Ok(()); } if marker.exists() {',
      'native_process::tests::review::project_marker_ownership_matches_ts', '#1137 native marker ownership matches TS registration'),
     ('invalid-utf8-marker-accepted', ASSEMBLY,
-     'let existing = std::fs::read_to_string(&marker)?;',
-     'let existing = std::fs::read_to_string(&marker).or_else(|error| if error.kind() == std::io::ErrorKind::InvalidData { Ok(options.project.to_string_lossy().into_owned()) } else { Err(error) })?;',
+     '    let chats =\n        super::methods::session_dir::bounded_chat_dir_at(&options.home, &options.project, cwd)\n            .map_err(|error| String::from_utf16_lossy(error.message.units()))?;',
+     '    let mutant_chat = crate::session_chat_dir(&options.home, &options.project, &options.project.to_string_lossy());\n    let mutant_marker = mutant_chat.parent().expect("fixture marker").join(".cwd");\n    if std::fs::read(&mutant_marker).ok().is_some_and(|bytes| String::from_utf8(bytes).is_err()) { return Ok(()); }\n    let chats =\n        super::methods::session_dir::bounded_chat_dir_at(&options.home, &options.project, cwd)\n            .map_err(|error| String::from_utf16_lossy(error.message.units()))?;',
      'native_process::tests::review::project_marker_ownership_matches_ts', '#1137 native marker ownership matches TS registration'),
     ('invalid-utf8-marker-rewritten', ASSEMBLY,
-     'let existing = std::fs::read_to_string(&marker)?;',
-     'let existing = match std::fs::read_to_string(&marker) { Err(error) if error.kind() == std::io::ErrorKind::InvalidData => { std::fs::write(&marker, "replacement")?; return Err(error.into()); } result => result? };',
+     '    let chats =\n        super::methods::session_dir::bounded_chat_dir_at(&options.home, &options.project, cwd)\n            .map_err(|error| String::from_utf16_lossy(error.message.units()))?;',
+     '    let mutant_chat = crate::session_chat_dir(&options.home, &options.project, &options.project.to_string_lossy());\n    let mutant_marker = mutant_chat.parent().expect("fixture marker").join(".cwd");\n    if std::fs::read(&mutant_marker).ok().is_some_and(|bytes| String::from_utf8(bytes).is_err()) { std::fs::write(&mutant_marker, "replacement")?; return Err("invalid marker rewritten".into()); }\n    let chats =\n        super::methods::session_dir::bounded_chat_dir_at(&options.home, &options.project, cwd)\n            .map_err(|error| String::from_utf16_lossy(error.message.units()))?;',
      'native_process::tests::review::project_marker_ownership_matches_ts', '#1137 existing marker bytes preserved'),
     ('directory-marker-rewritten', ASSEMBLY,
-     'let existing = std::fs::read_to_string(&marker)?;',
-     'if marker.is_dir() { std::fs::write(marker.join("unexpected"), "changed")?; } let existing = std::fs::read_to_string(&marker)?;',
+     '    let chats =\n        super::methods::session_dir::bounded_chat_dir_at(&options.home, &options.project, cwd)\n            .map_err(|error| String::from_utf16_lossy(error.message.units()))?;',
+     '    let mutant_chat = crate::session_chat_dir(&options.home, &options.project, &options.project.to_string_lossy());\n    let mutant_marker = mutant_chat.parent().expect("fixture marker").join(".cwd");\n    if mutant_marker.is_dir() { std::fs::write(mutant_marker.join("unexpected"), "changed")?; }\n    let chats =\n        super::methods::session_dir::bounded_chat_dir_at(&options.home, &options.project, cwd)\n            .map_err(|error| String::from_utf16_lossy(error.message.units()))?;',
      'native_process::tests::review::project_marker_ownership_matches_ts', '#1137 existing marker bytes preserved'),
     ('dangling-marker-rewritten', ASSEMBLY,
      'if marker.exists() {',
@@ -178,15 +181,15 @@ impl Clone for ReplacementCoordinator {
      'file.write_all(options.project.to_string_lossy().as_bytes())?;',
      'file.write_all(b".")?;',
      'native_process::tests::review::project_options_publish_and_restart_match_ts', '#1137 marker publishes normalized project identity'),
-    # #2083 r1: the request gate now converts the key lossily (same source as
-    # session_close_project), so the anchor follows the new gate shape.
-    ('request-project-base', REQUESTS,
-     'self.options.serves_project(&lossy)',
-     'crate::metadata::resolve(&self.options.project, &lossy) == self.options.project',
+    # The native request now selects a lexical project view. Preserve the
+    # original wrong-base mutation, receipt and five fixed TS path rows.
+    ('request-project-base', PROJECT_SCOPE,
+     '.filter(|key| !(empty_is_default && key.is_empty()))\n        .map(resolve)',
+     '.filter(|key| !(empty_is_default && key.is_empty()))\n        .map(|key| { let shifted = JsString::from(crate::metadata::resolve(&options.project, &String::from_utf16_lossy(key.units())).to_string_lossy().into_owned()); resolve(&shifted) })',
      'native_process::tests::review::project_path_boundaries_worker', '#1137 request project guard uses process cwd'),
     ('submit-project-base', SERVICES,
-     'if !self.options.serves_project(&project) {',
-     'if crate::metadata::resolve(&self.options.project, &project) != self.options.project {',
+     'crate::metadata::resolve_process_identity(Path::new(""), key)',
+     'crate::metadata::resolve_process_identity(&self.options.project, key)',
      'native_process::tests::review::project_path_boundaries_worker', '#1137 submit project guard uses process cwd'),
     ('empty-project-options', MARKER_ORACLE,
      '"options": [', '"options": [], "unusedOptions": [',
@@ -194,36 +197,17 @@ impl Clone for ReplacementCoordinator {
     ('empty-project-boundaries', MARKER_ORACLE,
      '"boundaries": [', '"boundaries": [], "unusedBoundaries": [',
      'native_process::tests::review::project_path_boundaries_worker', '#1137 project boundary matrix count'),
-    ('configured-hooks', ASSEMBLY,
-     'row.get("path") == Some(&"hooks".into())',
-     'row.get("path") == Some(&"unused-hooks".into())',
-     'native_process::tests::review::configured_hooks_are_refused', '#1071 configured hooks refused before readiness'),
-    ('refreshed-hooks', SERVICES,
-     'super::assembly::validate_profile(&self.options, &self.env)',
-     'async { Ok::<(), crate::ProxyError>(()) }',
-     'executable_native_and_a4', '#1071 executable refreshed hooks refused'),
+    ('configured-hooks', ASSEMBLY, '    // Unknown top-level hooks produce a TS diagnostic; only plugin and SDK', '    // Unknown top-level hooks produce a TS diagnostic; only plugin and SDK\n    if snapshot.get("diagnostics").is_some_and(|value| matches!(value, JsValue::Array(rows) if rows.iter().any(|row| row.get("path") == Some(&"hooks".into())))) { return Err("#1071 incorrectly refusing ignored top-level hooks".into()); }', 'native_process::tests::review::top_level_hooks_are_ignored_like_ts', '#1071 unknown top-level hooks do not become persistent hooks'),
+    ('refreshed-hooks', ASSEMBLY,
+     '    // Unknown top-level hooks produce a TS diagnostic; only plugin and SDK',
+     '    // Unknown top-level hooks produce a TS diagnostic; only plugin and SDK\n    if snapshot.get("diagnostics").is_some_and(|value| matches!(value, JsValue::Array(rows) if rows.iter().any(|row| row.get("path") == Some(&"hooks".into())))) { return Err("incorrectly refusing refreshed top-level hooks".into()); }',
+     'executable_native_and_a4', '#1071 executable refreshed unknown top-level hooks ignored'),
     ('cleanup-first-error', ASSEMBLY,
-     'sessions.and(project)', 'project.and(sessions)',
+     'sessions.and(temporary).and(project)', 'project.and(temporary).and(sessions)',
      'native_process::tests::review::production_cleanup_matrix', '#1071 production cleanup returns first error'),
-    # #1959 (p2batch-a S2): the production cleanup now records per-resource
-    # completion between the dispose and the observer call, so the anchor
-    # follows the new block shape; the mutant still skips the project
-    # disposal after a session error, which the matrix's session-error /
-    # both-errors rows catch via the missing "project" observer record.
-    ('cleanup-skips-project-after-error', ASSEMBLY,
-     '''let project = {
-                    let result = cleanup_project.dispose().await.map_err(|e| e.to_string());
-                    project_disposed.store(true, std::sync::atomic::Ordering::SeqCst);
-                    cleanup_observer("project", result).await
-                };''',
-     '''let project = if sessions.is_err() { Ok(()) } else {
-                    let result = cleanup_project.dispose().await.map_err(|e| e.to_string());
-                    project_disposed.store(true, std::sync::atomic::Ordering::SeqCst);
-                    cleanup_observer("project", result).await
-                };''',
-     'native_process::tests::review::production_cleanup_matrix', '#1071 production cleanup attempts both resources'),
+    ('cleanup-skips-project-after-error', ASSEMBLY, '                let project = cleanup_project.dispose().await.map_err(|e| e.to_string());\n                project_finished.store(true, std::sync::atomic::Ordering::Release);\n                let project = cleanup_observer("project", project).await;', '                let project = if sessions.is_err() { Ok(()) } else {\n                    let project = cleanup_project.dispose().await.map_err(|e| e.to_string());\n                    project_finished.store(true, std::sync::atomic::Ordering::Release);\n                    cleanup_observer("project", project).await\n                };', 'native_process::tests::review::production_cleanup_matrix', '#1071 production cleanup attempts both resources'),
     ('cleanup-project-diagnostic', ASSEMBLY,
-     'cleanup_diagnostic(error);', 'let _ = error;',
+     'if let Err(error) = &project {\n                    cleanup_diagnostic(error);\n                }', 'if let Err(error) = &project { let _ = error; }',
      'native_process::tests::review::production_cleanup_matrix', '#1071 production cleanup reports project failure'),
     ('regenerated-oracle-bytes', ORACLE,
      '"node": "v22.22.0"', '"node": "v22.22.1"',
@@ -270,18 +254,12 @@ impl Clone for ReplacementCoordinator {
     # completed machine is the clean exit — the anchor is the Ok arm of the
     # machine's match (a clean signal exit that reports failure is exactly
     # the #1071 regression this control kills).
-    ('signal-exit-status', SOURCE,
-     '        Ok(()) => Ok(()),',
-     '        Ok(()) => Err("#1071 incorrect clean signal status".into()),',
-     'executable_native_and_a4', '#1071 executable clean signal exit'),
+    ('signal-exit-status', SERVER_HOST, '        Ok(()) => Ok(if restart {\n            HostExit::Restart\n        } else {\n            HostExit::Stopped\n        }),', '        Ok(()) => { let _ = restart; Err("#1071 incorrect clean signal status".into()) },', 'executable_native_and_a4', '#1071 executable clean signal exit'),
     ('non-utf8-environment', SOURCE,
      'value.to_string_lossy().into_owned()',
      'value.to_str().expect("#1071 invalid environment mutation").to_owned()',
      'native_process::tests::explicit_options_and_environment', '#1071 non UTF-8 environment does not panic'),
-    ('configured-modules', ASSEMBLY,
-     '.is_some_and(|modules| !modules.own_entries().is_empty())',
-     '.is_some_and(|modules| modules.own_entries().is_empty())',
-     'native_process::tests::production_profile_and_registration', '#1071 unsupported module bindings refused'),
+    ('configured-modules', ASSEMBLY, '        .and_then(|v| v.get("modules"))\n        .and_then(JsValue::as_object)', '        .and_then(|v| v.get("unusedModules"))\n        .and_then(JsValue::as_object)', 'native_process::tests::production_profile_and_registration', '#1071 unsupported module bindings refused'),
     ('disconnected-cancel-signal', ASSEMBLY,
      'ports.turn(identity, recorder, signal)',
      'ports.turn(identity, recorder, { let _ = signal; crate::runtime::hooks::Cancellation::new() })',
@@ -342,18 +320,9 @@ impl Clone for ReplacementCoordinator {
      'std::fs::hard_link(&temporary, &marker)',
      'Ok(())',
      'native_process::tests::production_profile_and_registration', '#1071 project visible to metadata'),
-    ('configured-mcp', ASSEMBLY,
-     'if !mcp.servers.own_entries().is_empty() || !mcp.diagnostics.is_empty() {',
-     'if false && (!mcp.servers.own_entries().is_empty() || !mcp.diagnostics.is_empty()) {',
-     'native_process::tests::production_profile_and_registration', '#1071 unsupported MCP refused'),
-    ('configured-contributions', ASSEMBLY,
-     'if entries.count() != 0 {',
-     'if entries.count() == usize::MAX {',
-     'native_process::tests::production_profile_and_registration', '#1071 unsupported contributions refused'),
-    ('configured-subagents', ASSEMBLY,
-     '.is_some_and(|v| !v.is_undefined())',
-     '.is_some_and(|v| v.is_undefined())',
-     'native_process::tests::production_profile_and_registration', '#1071 unsupported subagents refused'),
+    ('configured-mcp', TOOLS, '        for tool in &self.per_session {\n            // Atomic raw-name replacement', '        for tool in &self.per_session[0..0] {\n            // Atomic raw-name replacement', 'native_process::tools::tests::register_keeps_shared_names_and_replaces_per_session_names', '#1433 a per-session MCP tool replaces the same-name builtin'),
+    ('configured-contributions', SKILLS, '            skills\n                .iter()\n                .map(|skill| NativeSkill {', '            skills\n                .iter()\n                .take(0)\n                .map(|skill| NativeSkill {', 'native_process::skills::disabled_tests::configured_skill_contributions_are_readable_and_registered', '#1071 configured skill contributions reach the native tool'),
+    ('configured-subagents', ASSEMBLY, '    // Unknown top-level hooks produce a TS diagnostic; only plugin and SDK', '    // Unknown top-level hooks produce a TS diagnostic; only plugin and SDK\n    if snapshot.get("config").and_then(|config| config.get("agent")).and_then(|agent| agent.get("subagents")).is_some_and(|value| !value.is_undefined()) { return Err("#1071 incorrectly refusing supported subagents".into()); }', 'native_process::tests::production_profile_and_registration', 'native default subagent configuration is supported'),
     ('empty-allowlist', TOOLS,
      'allowed.as_ref().is_none_or(|names| names.contains(name))',
      'allowed.as_ref().is_none_or(|_names| true)',
@@ -367,14 +336,16 @@ impl Clone for ReplacementCoordinator {
 
 def test_body(test, texts=None):
     if texts is None:
-        texts = {path: path.read_text() for path in [TESTS, PROCESS_TEST, WS_TEST, REVIEW_TEST]}
+        texts = {path: path.read_text() for path in [TESTS, PROCESS_TEST, WS_TEST, REVIEW_TEST, TOOLS, SKILLS]}
     path = (REVIEW_TEST if test.startswith('native_process::tests::review::') else
+            TOOLS if test.startswith('native_process::tools::tests::') else
+            SKILLS if test.startswith('native_process::skills::disabled_tests::') else
             TESTS if test.startswith('native_process::tests::') else
             WS_TEST if test.startswith('native_ws::tests::') else PROCESS_TEST)
-    # These files use top-level test functions. A column-zero closing brace is
-    # the end of this function, so a sibling's assertion cannot satisfy it.
-    pattern = r'^(?:async )?fn ' + re.escape(test.rsplit('::', 1)[-1]) + r'\([^\n]*\).*?^}'
-    bodies = re.findall(pattern, texts[path], re.M | re.S)
+    # Match this function's own indentation, including existing nested test
+    # modules. A sibling's assertion must never satisfy its receipt binding.
+    pattern = r'^(?P<indent>[ \t]*)(?:async )?fn ' + re.escape(test.rsplit('::', 1)[-1]) + r'\([^\n]*\).*?^(?P=indent)}'
+    bodies = [match.group(0) for match in re.finditer(pattern, texts[path], re.M | re.S)]
     return bodies[0] if len(bodies) == 1 else ''
 
 
@@ -384,6 +355,11 @@ def check_binding_scope():
         raise RuntimeError('#1071 binding checker accepted sibling assertion')
     if 'only sibling' not in test_body('sibling', {PROCESS_TEST: fixture}):
         raise RuntimeError('#1071 binding checker lost its own assertion')
+    nested = 'mod tests {\n    fn target() {\n    }\n    fn sibling() {\n        assert!(false, "only nested sibling");\n    }\n}\n'
+    if 'only nested sibling' in test_body('target', {PROCESS_TEST: nested}):
+        raise RuntimeError('#1071 binding checker accepted nested sibling assertion')
+    if 'only nested sibling' not in test_body('sibling', {PROCESS_TEST: nested}):
+        raise RuntimeError('#1071 binding checker lost nested own assertion')
 
 
 def main():
@@ -416,7 +392,7 @@ def main():
     env = dict(os.environ)
     for key in [ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'PDRS_MUTANT', 'LIVE_E2E_MUTANT']:
         env.pop(key, None)
-    guarded = [SOURCE, FAMILIES, ASSEMBLY, TOOLS, SERVICES, REQUESTS, REPLACEMENT, MARKER_ORACLE, MARKER_GENERATOR, TESTS, MAIN, PROCESS_TEST, WS_TEST, REVIEW_TEST, PROCESS, SIGNAL, GENERATOR, ORACLE, Path(__file__).resolve(), FIXTURES / 'negative_process.py',
+    guarded = [SOURCE, SERVER_HOST, SKILLS, FAMILIES, ASSEMBLY, TOOLS, SERVICES, REQUESTS, PROJECT_SCOPE, REPLACEMENT, MARKER_ORACLE, MARKER_GENERATOR, TESTS, MAIN, PROCESS_TEST, WS_TEST, REVIEW_TEST, PROCESS, SIGNAL, GENERATOR, ORACLE, Path(__file__).resolve(), FIXTURES / 'negative_process.py',
                FIXTURES / 'negative_suite.py',
                ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs',
                ROOT / 'src/pilotdeck-gateway/src/lib.rs',

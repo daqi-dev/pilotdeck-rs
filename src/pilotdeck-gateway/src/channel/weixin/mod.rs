@@ -17,7 +17,9 @@
 //! the #1327 core reports only the four lifecycle states, while this adapter
 //! also reports its own login states.
 mod client;
-mod live_reply;
+mod commands;
+mod interaction;
+pub(crate) mod live_reply;
 mod mapper;
 // #1823: inbound attachment decryption + CDN download. The inbound item
 // pipeline that calls it is pr2b-1 (#1822); this module is not wired yet.
@@ -46,6 +48,8 @@ use super::protocol::{
     BoxFuture, ChannelAdapter, ChannelError, ChannelHandle, ChannelKey, ChannelLog,
     ChannelStartDeps,
 };
+pub use crate::channel::feishu::FeishuHostPorts as WeixinHostPorts;
+use crate::channel::im_interaction::{InteractionPort, NoInteraction};
 use crate::runtime::network::Cancellation;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 use std::{
@@ -184,6 +188,8 @@ pub type WeixinStateChange = Arc<dyn Fn(&JsValue) + Send + Sync>;
 
 #[derive(Clone)]
 pub struct WeixinChannelOptions {
+    pub host_ports: Option<WeixinHostPorts>,
+    pub interaction: Option<Arc<dyn InteractionPort>>,
     pub credentials_path: PathBuf,
     /// The directory `saveCredentials` mkdirs before writing
     /// (`PilotDeckServerShutdownBundle`-era TS: `join(homedir(), ".pilotdeck")`,
@@ -213,6 +219,8 @@ impl WeixinChannelOptions {
     /// loopback mock; production keeps the auth.js default).
     pub fn with_login_base_url(base_url: String) -> Self {
         Self {
+            host_ports: None,
+            interaction: None,
             credentials_path: default_credentials_path(),
             credentials_dir: None,
             mapper: Arc::new(WeixinSessionMapper::new()),
@@ -353,6 +361,8 @@ impl Drop for ActiveChatSlot {
 }
 
 struct Inner {
+    permission_answering: HashMap<JsString, Arc<()>>,
+    active_live: HashMap<JsString, (Arc<()>, watch::Sender<()>)>,
     generation: u64,
     abort: Option<Cancellation>,
     client: Option<Arc<dyn WeixinIlinkClient>>,
@@ -372,6 +382,8 @@ struct Inner {
 }
 
 struct Shared {
+    host_ports: WeixinHostPorts,
+    interaction: Arc<dyn InteractionPort>,
     key: ChannelKey,
     credentials_path: PathBuf,
     credentials_dir: PathBuf,
@@ -406,6 +418,10 @@ impl WeixinChannel {
             Arc::new(media::WeixinAttachmentFetcher::new()),
         ));
         Self(Arc::new(Shared {
+            host_ports: options.host_ports.unwrap_or_default(),
+            interaction: options
+                .interaction
+                .unwrap_or_else(|| Arc::new(NoInteraction)),
             key: ChannelKey::new(CHANNEL_KEY),
             credentials_path: options.credentials_path,
             credentials_dir,
@@ -419,6 +435,8 @@ impl WeixinChannel {
             live_reply: options.live_reply,
             logger: Mutex::new(None),
             inner: Mutex::new(Inner {
+                permission_answering: HashMap::new(),
+                active_live: HashMap::new(),
                 generation: 0,
                 abort: None,
                 client: None,
@@ -1032,11 +1050,15 @@ impl WeixinChannel {
         &self,
         from_user: JsString,
         text: &str,
+        interaction_text: &str,
         attachments: Vec<ChannelAttachment>,
     ) -> Option<DispatchStart> {
         let previous_session_key = self.0.mapper.get_session(&from_user);
         let mapped = self.0.mapper.resolve(&from_user, &JsString::from(text));
         if mapped.command == Some(WeixinCommand::New) {
+            let chat = String::from_utf16_lossy(from_user.units());
+            self.0.interaction.elicitation_clear(&chat);
+            self.0.interaction.permission_clear(&chat);
             if let Some(on_state_change) = &self.0.on_state_change {
                 on_state_change(&self.0.mapper.snapshot());
             }
@@ -1045,6 +1067,8 @@ impl WeixinChannel {
                 let active_run = inner.chat_state.active_run(&from_user);
                 inner.chat_state.reset_for_new_session(&from_user);
                 inner.pending_replies.remove(&from_user);
+                inner.permission_answering.remove(&from_user);
+                inner.active_live.remove(&from_user);
                 active_run
             };
             let follow_up = if mapped.message.units().is_empty() {
@@ -1064,8 +1088,50 @@ impl WeixinChannel {
                 follow_up,
             });
         }
+        if self.0.gateway.is_some() {
+            let chat = String::from_utf16_lossy(from_user.units());
+            if self.0.interaction.elicitation_pending(&chat) {
+                return Some(DispatchStart::Answer {
+                    user: from_user,
+                    text: interaction_text.into(),
+                    permission: false,
+                    guard: None,
+                });
+            }
+            let pending = self.0.interaction.permission_pending(&chat);
+            let mut inner = self.lock_inner();
+            if inner.permission_answering.contains_key(&from_user) {
+                return None;
+            }
+            if pending {
+                let token = Arc::new(());
+                inner
+                    .permission_answering
+                    .insert(from_user.clone(), token.clone());
+                drop(inner);
+                return Some(DispatchStart::Answer {
+                    user: from_user.clone(),
+                    text: interaction_text.into(),
+                    permission: true,
+                    guard: Some(interaction::AnswerGuard {
+                        channel: self.clone(),
+                        user: from_user,
+                        token,
+                    }),
+                });
+            }
+        }
         if mapped.message.units().is_empty() {
             return None;
+        }
+        if self.0.gateway.is_some()
+            && crate::metadata::js_trim(text).starts_with('/')
+            && commands::is_system_command(text)
+        {
+            return Some(DispatchStart::Command {
+                user: from_user,
+                text: text.into(),
+            });
         }
         Some(DispatchStart::Turn {
             user: from_user,
@@ -1163,9 +1229,9 @@ impl WeixinChannel {
         let message_text = if text.is_empty() {
             WEIXIN_ATTACHMENT_FALLBACK_TEXT.to_string()
         } else {
-            text
+            text.clone()
         };
-        self.dispatch_mapped(user, &message_text, attachments)
+        self.dispatch_mapped(user, &message_text, &text, attachments)
     }
 
     /// One IMAGE item: `image?.cdn_url ?? image?.url ?? extractWeixinMediaUrl`,
@@ -1288,6 +1354,24 @@ impl WeixinChannel {
 
     fn spawn_dispatch(&self, start: DispatchStart) {
         match start {
+            DispatchStart::Answer {
+                user,
+                text,
+                permission,
+                guard,
+            } => {
+                let channel = self.clone();
+                tokio::spawn(async move {
+                    let _guard = guard;
+                    channel.answer_interaction(user, text, permission).await;
+                });
+            }
+            DispatchStart::Command { user, text } => {
+                let channel = self.clone();
+                tokio::spawn(async move {
+                    commands::execute(&channel, &user, &text).await;
+                });
+            }
             DispatchStart::Inbound { user, message } => {
                 let channel = self.clone();
                 tokio::spawn(async move {
@@ -1460,6 +1544,8 @@ impl WeixinChannel {
         }));
         let mut reply =
             LiveReplyController::new(self.weixin_live_reply_transport(user), live_options);
+        let (mut resume_activity, _live_guard) = self.register_live(user);
+        let mut resume_open = true;
         let mut active_run_id: Option<JsString> = None;
         let mut failed = false;
         loop {
@@ -1475,6 +1561,9 @@ impl WeixinChannel {
             let next = tokio::select! {
                 biased;
                 item = stream.next() => Some(item),
+                changed=resume_activity.changed(),if resume_open=>{
+                    if changed.is_ok(){reply.resume_activity(live_reply::ActivityKind::Tool,false).await;}else{resume_open=false;}continue;
+                }
                 _ = timer => None,
             };
             let Some(item) = next else {
@@ -1545,10 +1634,36 @@ impl WeixinChannel {
                 "error" if js_string_text(event.get("code")) == "turn_timeout" => {
                     reply.mark_timed_out().await;
                 }
-                // Prompt delivery lands with pr2c; both paths pause the
-                // activity pulses first (WeixinChannel.ts:723-730).
-                "elicitation_request" | "permission_request" => {
+                "elicitation_request" => {
+                    let chat = String::from_utf16_lossy(user.units());
+                    let session = String::from_utf16_lossy(turn.session_key.units());
+                    let question = self
+                        .0
+                        .interaction
+                        .elicitation_capture(&chat, &session, &event);
                     reply.pause_activity().await;
+                    self.send_reply(user, &question.into(), false).await;
+                }
+                "permission_request" => {
+                    let chat = String::from_utf16_lossy(user.units());
+                    let session = String::from_utf16_lossy(turn.session_key.units());
+                    let question = self
+                        .0
+                        .interaction
+                        .permission_capture(&chat, &session, &event);
+                    reply.pause_activity().await;
+                    if let Some(question) = question {
+                        let delivered = self.send_reply(user, &question.into(), false).await;
+                        let request = event
+                            .get("requestId")
+                            .and_then(JsValue::as_string)
+                            .map(|s| String::from_utf16_lossy(s.units()));
+                        self.0.interaction.permission_confirm_initial(
+                            &chat,
+                            delivered,
+                            request.as_deref(),
+                        );
+                    }
                 }
                 _ => reply.handle_event(&event).await,
             }
@@ -1559,6 +1674,9 @@ impl WeixinChannel {
             reply.channel_submit_failed().await;
         }
         if is_current() {
+            let chat = String::from_utf16_lossy(user.units());
+            self.0.interaction.elicitation_clear(&chat);
+            self.0.interaction.permission_clear_after_turn(&chat);
             self.lock_inner().chat_state.clear_active_run(user);
             reply.flush_final().await;
         }
@@ -1849,9 +1967,22 @@ impl WeixinChannel {
 }
 
 enum DispatchStart {
+    Answer {
+        user: JsString,
+        text: String,
+        permission: bool,
+        guard: Option<interaction::AnswerGuard>,
+    },
+    Command {
+        user: JsString,
+        text: String,
+    },
     /// A message whose `item_list` holds image/file/voice/video items: its
     /// extraction awaits the CDN download, so it runs in the spawned task.
-    Inbound { user: JsString, message: JsValue },
+    Inbound {
+        user: JsString,
+        message: JsValue,
+    },
     NewSession {
         user: JsString,
         active_run: Option<ActiveRun>,

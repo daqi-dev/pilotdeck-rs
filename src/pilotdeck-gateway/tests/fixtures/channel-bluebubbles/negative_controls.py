@@ -92,11 +92,8 @@ MUTATIONS = [
     # for the subset the loader test keeps loadable.
     ('reject-table-reinserts-bluebubbles',
      root / 'src/pilotdeck-gateway/src/channel/loader.rs',
-     'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[\n'
-     '    "homeassistant",\n',
-     'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[\n'
-     '    "bluebubbles",\n'
-     '    "homeassistant",\n',
+     'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[];',
+     'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &["bluebubbles"];',
      'tests::unmigrated_subset_channels_stay_loadable',
      '#1386 subset channel must not be rejected'),
     # Dropping a case from the parsed oracle must trip the generator's

@@ -28,7 +28,7 @@ mutations = [
     ('omit-config', SOURCE, '    config: config::METHODS,', '    config: &[],', TEST, '#1305 registry contains every wired method'),
     ('omit-upload', SOURCE, '    upload: upload::METHODS,', '    upload: &[],', TEST, '#1305 registry contains every wired method'),
     ('duplicate-method', SOURCE, '    runs: runs::METHODS,', '    runs: &["run_get", "run_events", "run_reattach", "run_get"],', TEST, '#1305 registry contains no duplicate method'),
-    ('management-gate-missing', MANAGEMENT, '                | "snapshot_get"', '                | "snapshot_get_removed"', GATE_TEST, '#1305 management gate matches registered family'),
+    ('management-gate-missing', MANAGEMENT, '            method,\n            "snapshot_list"\n                | "snapshot_get"\n                | "snapshot_restore"', '            method,\n            "snapshot_list"\n                | "snapshot_get_removed"\n                | "snapshot_restore"', GATE_TEST, '#1305 management gate matches registered family'),
     ('management-gate-extra', MANAGEMENT, '                | "commands_list"', '                | "commands_list" | "run_get"', GATE_TEST, '#1305 management gate matches registered family'),
     ('management-phase-swap', FAMILY, 'pub(super) const HANDLER: Handler = Handler::BeforeAdmission(|requests, method, params| {\n    Box::pin(requests.management_request(method, params))\n});', 'pub(super) const HANDLER: Handler = Handler::AfterAdmission(|requests, method, params| {\n    Box::pin(async move {\n        requests.management_request(&method, &params).await.expect("#1305 phase mutant recognized method")\n    })\n});', GATE_TEST, '#1305 registry preserves management admission phase'),
 ]

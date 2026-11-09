@@ -41,6 +41,22 @@ pub struct MigrationInput<'a> {
 
 /// CronStoreMigration.ts:29-106.
 pub fn migrate_cron_stores(input: &MigrationInput<'_>) -> Result<(), CronStoreError> {
+    migrate_with_scope(input, None)
+}
+
+/// Native host opt-in: never rewrite a source/destination belonging to an
+/// excluded project. The public legacy migrator keeps its original policy.
+pub(super) fn migrate_cron_stores_scoped(
+    input: &MigrationInput<'_>,
+    scope: &dyn Fn(&str) -> bool,
+) -> Result<(), CronStoreError> {
+    migrate_with_scope(input, Some(scope))
+}
+
+fn migrate_with_scope(
+    input: &MigrationInput<'_>,
+    scope: Option<&dyn Fn(&str) -> bool>,
+) -> Result<(), CronStoreError> {
     // CronStoreMigration.ts:33: `resolve(input.pilotHome, "cron")` — the one
     // resolve that also absolutizes a relative pilot home. Every derived key
     // (snapshot directories, routing targets, blocked directories) must come
@@ -57,7 +73,7 @@ pub fn migrate_cron_stores(input: &MigrationInput<'_>) -> Result<(), CronStoreEr
     // CronStoreMigration.ts:102-105: `finally { await releaseLock(); }` runs on
     // a throw too, so a panic in the body must still release the lock.
     let mut release = LockRelease(Some(lock_path.clone()));
-    let body = migrate_locked(input, &home, &root_dir);
+    let body = migrate_locked(input, &home, &root_dir, scope);
     // A release failure replaces the body result, like a rejected finally.
     // A successful explicit release disarms the guard: its `Drop` must not
     // remove a lock file another migrator has freshly acquired in between.
@@ -86,8 +102,13 @@ fn migrate_locked(
     input: &MigrationInput<'_>,
     home: &Path,
     root_dir: &Path,
+    scope: Option<&dyn Fn(&str) -> bool>,
 ) -> Result<(), CronStoreError> {
     let snapshots = read_snapshots(&metadata::resolve(root_dir, "projects"))?;
+    let (snapshots, excluded_dirs) = match scope {
+        Some(scope) => scoped_snapshots(snapshots, scope)?,
+        None => (snapshots, HashSet::new()),
+    };
     if snapshots.is_empty() {
         return Ok(());
     }
@@ -164,10 +185,25 @@ fn migrate_locked(
         bucket.records = dedupe_runs(&bucket.records)?;
     }
 
+    // Reject every target collision before the first data write, not after
+    // staging one source has already rewritten another project's store.
+    if final_tasks
+        .iter()
+        .any(|(dir, _)| excluded_dirs.contains(dir))
+        || final_runs
+            .iter()
+            .any(|(dir, _)| excluded_dirs.contains(dir))
+    {
+        return Err(scoped_migration_error());
+    }
     stage_destination_data(input, &snapshots, &final_tasks, &final_runs)?;
     migrate_run_events(input, &snapshots, &run_targets)?;
     write_final_snapshots(input, &snapshots, &final_tasks, &final_runs)?;
 
+    // A scoped pass cannot claim that migration completed for all projects.
+    if scope.is_some() {
+        return Ok(());
+    }
     // CronStoreMigration.ts:98-102: the marker is a plain write, not atomic.
     let mut marker = JsObject::new();
     marker.insert("version".into(), JsValue::Number(1.0));
@@ -189,6 +225,76 @@ struct StoreSnapshot {
     task_file_writable: bool,
     invalid_run_lines: Vec<String>,
     runs: Vec<JsValue>,
+}
+
+fn scoped_migration_error() -> CronStoreError {
+    io::Error::new(io::ErrorKind::InvalidData,
+        "Scoped cron migration cannot safely change a mixed-project or unknown legacy store; original data was preserved. Migrate the shared store with an explicitly unscoped manager first.").into()
+}
+
+/// Read-only classification of all snapshots precedes every migration write.
+/// Project inference for old runs uses the same unique task-id index as routing.
+fn scoped_snapshots(
+    snapshots: Vec<StoreSnapshot>,
+    scope: &dyn Fn(&str) -> bool,
+) -> Result<(Vec<StoreSnapshot>, HashSet<PathBuf>), CronStoreError> {
+    let projects = build_task_project_index(&snapshots)?;
+    let mut selected = Vec::new();
+    let mut excluded = HashSet::new();
+    for snapshot in snapshots {
+        let mut keys = Vec::new();
+        let mut unknown = !snapshot.task_file_writable || !snapshot.invalid_run_lines.is_empty();
+        for task in &snapshot.tasks {
+            match normalized_project_key(task.get("projectKey"))? {
+                Some(key) => keys.push(key),
+                None => unknown = true,
+            }
+        }
+        for run in &snapshot.runs {
+            let key = normalized_project_key(run.get("projectKey"))?.or_else(|| {
+                run.get("taskId")
+                    .and_then(JsValue::as_string)
+                    .and_then(|task| projects.get(task))
+                    .filter(|keys| keys.len() == 1)
+                    .and_then(|keys| keys.iter().next())
+                    .cloned()
+            });
+            match key {
+                Some(key) => keys.push(key),
+                None => unknown = true,
+            }
+        }
+        let marker_path = snapshot.dir.join(".cwd");
+        match fs::read(&marker_path) {
+            Ok(bytes) => {
+                let raw = String::from_utf8_lossy(&bytes);
+                let marker = js_trim(&raw);
+                if !marker.is_empty()
+                    && let Some(key) = normalized_project_key(Some(&JsValue::from(marker)))?
+                {
+                    keys.push(key);
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(io::Error::new(
+                    error.kind(),
+                    format!("{}: {error}", marker_path.display()),
+                )
+                .into());
+            }
+        }
+        let included = keys.iter().any(|key| scope(key));
+        if included {
+            if unknown || keys.iter().any(|key| !scope(key)) {
+                return Err(scoped_migration_error());
+            }
+            selected.push(snapshot);
+        } else {
+            excluded.insert(snapshot.dir);
+        }
+    }
+    Ok((selected, excluded))
 }
 
 #[derive(Default)]

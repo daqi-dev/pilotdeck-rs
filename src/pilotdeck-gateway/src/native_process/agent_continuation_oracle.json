@@ -1,0 +1,342 @@
+{
+  "cases": [
+    {
+      "id": "two-durable-admissions",
+      "entries": [
+        {
+          "sessionId": "child",
+          "turnId": "t1",
+          "type": "agent_turn_enqueued",
+          "itemId": "i1",
+          "input": {
+            "type": "text",
+            "text": "FIRST SELF WRITTEN \ud800"
+          },
+          "submitOptions": {
+            "tag": "self-written"
+          }
+        },
+        {
+          "sessionId": "child",
+          "turnId": "t2",
+          "type": "agent_turn_enqueued",
+          "itemId": "i2",
+          "input": {
+            "type": "text",
+            "text": "SECOND SELF WRITTEN"
+          },
+          "submitOptions": {}
+        }
+      ],
+      "pending": [
+        {
+          "itemId": "i1",
+          "turnId": "t1",
+          "input": {
+            "type": "text",
+            "text": "FIRST SELF WRITTEN \ud800"
+          },
+          "submitOptions": {
+            "tag": "self-written"
+          }
+        },
+        {
+          "itemId": "i2",
+          "turnId": "t2",
+          "input": {
+            "type": "text",
+            "text": "SECOND SELF WRITTEN"
+          },
+          "submitOptions": {}
+        }
+      ]
+    },
+    {
+      "id": "atomic-first-claim",
+      "entries": [
+        {
+          "sessionId": "child",
+          "turnId": "t1",
+          "type": "agent_turn_enqueued",
+          "itemId": "i1",
+          "input": {
+            "type": "text",
+            "text": "FIRST SELF WRITTEN \ud800"
+          },
+          "submitOptions": {
+            "tag": "self-written"
+          }
+        },
+        {
+          "sessionId": "child",
+          "turnId": "t2",
+          "type": "agent_turn_enqueued",
+          "itemId": "i2",
+          "input": {
+            "type": "text",
+            "text": "SECOND SELF WRITTEN"
+          },
+          "submitOptions": {}
+        },
+        {
+          "sessionId": "child",
+          "turnId": "t1",
+          "type": "turn_started",
+          "inboxItemId": "i1"
+        }
+      ],
+      "pending": [
+        {
+          "itemId": "i2",
+          "turnId": "t2",
+          "input": {
+            "type": "text",
+            "text": "SECOND SELF WRITTEN"
+          },
+          "submitOptions": {}
+        }
+      ]
+    },
+    {
+      "id": "restore-only-unclaimed",
+      "entries": [
+        {
+          "sessionId": "child",
+          "turnId": "t1",
+          "type": "agent_turn_enqueued",
+          "itemId": "i1",
+          "input": {
+            "type": "text",
+            "text": "FIRST SELF WRITTEN \ud800"
+          },
+          "submitOptions": {
+            "tag": "self-written"
+          }
+        },
+        {
+          "sessionId": "child",
+          "turnId": "t2",
+          "type": "agent_turn_enqueued",
+          "itemId": "i2",
+          "input": {
+            "type": "text",
+            "text": "SECOND SELF WRITTEN"
+          },
+          "submitOptions": {}
+        },
+        {
+          "sessionId": "child",
+          "turnId": "t1",
+          "type": "turn_started",
+          "inboxItemId": "i1"
+        }
+      ],
+      "pending": [
+        {
+          "itemId": "i2",
+          "turnId": "t2",
+          "input": {
+            "type": "text",
+            "text": "SECOND SELF WRITTEN"
+          },
+          "submitOptions": {}
+        }
+      ]
+    },
+    {
+      "id": "durable-discard",
+      "entries": [
+        {
+          "sessionId": "child",
+          "turnId": "t1",
+          "type": "agent_turn_enqueued",
+          "itemId": "i1",
+          "input": {
+            "type": "text",
+            "text": "FIRST SELF WRITTEN \ud800"
+          },
+          "submitOptions": {
+            "tag": "self-written"
+          }
+        },
+        {
+          "sessionId": "child",
+          "turnId": "t2",
+          "type": "agent_turn_enqueued",
+          "itemId": "i2",
+          "input": {
+            "type": "text",
+            "text": "SECOND SELF WRITTEN"
+          },
+          "submitOptions": {}
+        },
+        {
+          "sessionId": "child",
+          "turnId": "t1",
+          "type": "turn_started",
+          "inboxItemId": "i1"
+        },
+        {
+          "sessionId": "child",
+          "turnId": "t2",
+          "type": "agent_turn_discarded",
+          "itemId": "i2",
+          "reason": "agent_disposed"
+        }
+      ],
+      "pending": []
+    },
+    {
+      "id": "append-failure-does-not-admit",
+      "error": "injected append failed",
+      "pending": []
+    },
+    {
+      "id": "subagent",
+      "input": {
+        "description": "fixture task",
+        "prompt": "SELF WRITTEN INITIAL"
+      },
+      "result": {
+        "data": {
+          "subagentId": "child",
+          "messageId": "i1",
+          "turnId": "t1"
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "accepted message i1 for subagent child"
+          }
+        ]
+      },
+      "requests": [
+        {
+          "provider": "pilotdeck-native",
+          "label": "fixture task",
+          "parentId": "parent",
+          "definitionId": "general-purpose",
+          "input": {
+            "type": "text",
+            "text": "SELF WRITTEN INITIAL"
+          }
+        }
+      ]
+    },
+    {
+      "id": "send_message",
+      "input": {
+        "subagent_id": "child",
+        "message": "SELF WRITTEN FOLLOWUP"
+      },
+      "result": {
+        "data": {
+          "subagentId": "child",
+          "messageId": "i2",
+          "turnId": "t2"
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "accepted message i2 for subagent child"
+          }
+        ]
+      },
+      "requests": [
+        {
+          "childSessionId": "child",
+          "parentId": "parent",
+          "input": {
+            "type": "text",
+            "text": "SELF WRITTEN FOLLOWUP"
+          }
+        }
+      ]
+    },
+    {
+      "id": "first-descriptor-authoritative",
+      "entries": [
+        {
+          "type": "subagent_descriptor",
+          "sessionId": "child",
+          "descriptor": {
+            "version": 2,
+            "mode": "continuable",
+            "provider": "pilotdeck-native",
+            "definitionId": "explore",
+            "parentSessionId": "parent",
+            "label": "fixture task",
+            "agentProvider": "p",
+            "agentModel": "m"
+          }
+        },
+        {
+          "type": "subagent_descriptor",
+          "sessionId": "child",
+          "descriptor": {
+            "version": 2,
+            "mode": "continuable",
+            "provider": "pilotdeck-native",
+            "definitionId": "explore",
+            "parentSessionId": "other",
+            "label": "fixture task",
+            "agentProvider": "p",
+            "agentModel": "m"
+          }
+        }
+      ],
+      "descriptor": {
+        "version": 2,
+        "mode": "continuable",
+        "provider": "pilotdeck-native",
+        "definitionId": "explore",
+        "parentSessionId": "parent",
+        "label": "fixture task",
+        "agentProvider": "p",
+        "agentModel": "m"
+      }
+    },
+    {
+      "id": "descriptor-extra",
+      "input": {
+        "version": 2,
+        "mode": "continuable",
+        "provider": "pilotdeck-native",
+        "definitionId": "explore",
+        "parentSessionId": "parent",
+        "label": "fixture task",
+        "agentProvider": "p",
+        "agentModel": "m",
+        "extra": true
+      },
+      "error": "Persisted subagent descriptor has unknown field \"extra\"."
+    },
+    {
+      "id": "descriptor-mode",
+      "input": {
+        "version": 2,
+        "mode": "one-shot",
+        "provider": "pilotdeck-native",
+        "definitionId": "explore",
+        "parentSessionId": "parent",
+        "label": "fixture task",
+        "agentProvider": "p",
+        "agentModel": "m"
+      },
+      "error": "Persisted subagent descriptor mode must be \"continuable\"."
+    },
+    {
+      "id": "descriptor-version",
+      "input": {
+        "version": 3,
+        "mode": "continuable",
+        "provider": "pilotdeck-native",
+        "definitionId": "explore",
+        "parentSessionId": "parent",
+        "label": "fixture task",
+        "agentProvider": "p",
+        "agentModel": "m"
+      }
+    }
+  ]
+}

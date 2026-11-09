@@ -18,7 +18,7 @@ pub mod gateway;
 mod gateway_tests;
 mod http;
 pub mod naming;
-mod output_schema;
+pub(crate) mod output_schema;
 pub mod protocol;
 pub mod registry;
 pub mod runtime;

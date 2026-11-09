@@ -28,11 +28,14 @@ from negative_suite import Case, classify, invalidate_completed, passed, publish
 ROOT = Path(__file__).resolve().parents[5]
 CONFIG = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/config.rs'
 SESSION_DIR = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/session_dir.rs'
-# #2272: the isolated-project admission source. The row below mutates it while
+# #2272/#2564: nullish admission now lives in shared project selection.
+# The regression controls reject explicit null before selection, while every
+# existing per-method assertion and negative slot remains in place.
+# The former isolated-project admission source is retired. The row below mutates it while
 # its bound assertion lives in the session directory's gate-order tests — the
 # #1864 read-side precedent (mutate the writer, assert on the reader) — so the
 # path joins SOURCE_TEXTS / LITERAL_ANCHORS below like LIVE and TOOLS did.
-REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
+PROJECT_SCOPE = ROOT / 'src/pilotdeck-gateway/src/native_process/project_scope.rs'
 # #2562: the submit path's projectKey gate (SubmitHostServices::workspace_id in
 # services.rs) — the same nullish read #2272 gave the admission source above.
 # SERVICES joins SOURCE_TEXTS as a mutation source; MANAGEMENT_TESTS joins it
@@ -158,11 +161,15 @@ mutations = [
      CFG + 'concurrent_transcript_writers_keep_the_chain_loadable',
      '#1457 transcript sequences strictly increase'),
     ('transcript-fence-removed-rename', SESSION_DIR,
-     '        let fence_path =\n'
-     '            transcript_locks::session_transcript_path(&self.options.home, &project_root, &key);\n'
+     '        let fence_path = chat_dir.join(format!(\n'
+     '            "{}.jsonl",\n'
+     '            crate::storage::sanitize_session_id(&key)\n'
+     '        ));\n'
      '        let write_fence = transcript_locks::acquire(&fence_path).await?;',
-     '        let fence_path =\n'
-     '            transcript_locks::session_transcript_path(&self.options.home, &project_root, &key);\n'
+     '        let fence_path = chat_dir.join(format!(\n'
+     '            "{}.jsonl",\n'
+     '            crate::storage::sanitize_session_id(&key)\n'
+     '        ));\n'
      '        let write_fence = ();',
      CFG + 'concurrent_transcript_writers_keep_the_chain_loadable',
      '#1457 transcript sequences strictly increase'),
@@ -281,18 +288,13 @@ mutations = [
      '        )?;',
      DIR + 'close_project_sessions_blank_project_key_is_the_domain_error',
      '#1604 the blank projectKey keeps the domain message'),
-    # #2083: a lone-surrogate `projectKey` passes the trim gate and reaches
-    # the configured-project check (TS runs it to completion; the baseline
-    # gate is only `?.trim()`). Re-adding the pre-#2083 UTF-8 rejection must
-    # turn the gate-order test red. r1: renamed off the #1455
-    # `session-dir-surrogate-rejected` (METHODS_MOD) — this runner keys its
-    # evidence files on the mutation name alone, so two rows sharing a name
-    # overwrite each other's logs.
+    # #2083: a surviving lone surrogate must not become U+FFFD and alias
+    # a filesystem project. Keep the registered nonce and kill on the actual
+    # native project identity boundary.
     ('session-dir-project-key-surrogate-rejected', SESSION_DIR,
-     '        let project_key_str = String::from_utf16_lossy(project_key.units());',
-     '        let project_key_str = project_key\n'
-     '            .to_utf8()\n'
-     '            .map_err(|_| RequestError::new("projectKey is required."))?;',
+     '        let selected = super::super::project_scope::resolve(&project_key)?;',
+     '        let project_key = JsString::from(String::from_utf16_lossy(project_key.units()).as_str());\n'
+     '        let selected = super::super::project_scope::resolve(&project_key)?;',
      DIR + 'close_project_sessions_surrogate_project_key_reaches_the_capability_gate',
      '#2083 the surrogate projectKey reaches the capability gate'),
     # ── #2272: the admission filter skips `undefined` AND `null` (the TS
@@ -302,13 +304,9 @@ mutations = [
     # so the session directory's null-cell gate-order expectations must die.
     # The bound test fails first at its blank-key null cell, before the
     # per-method valid-key cells that follow it.
-    ('admission-null-refused', REQUESTS,
-     'params\n'
-     '                .get("projectKey")\n'
-     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
-     'params\n'
-     '                .get("projectKey")\n'
-     '                .filter(|v| !v.is_undefined())',
+    ('admission-null-refused', PROJECT_SCOPE,
+     '    let requested = params',
+     '    if matches!(params.get("projectKey"), Some(JsValue::Null)) {\n        return Err(RequestError::new("null projectKey refused"));\n    }\n    let requested = params',
      DIR + 'resume_session_blank_key_gate_order',
      '#2272 a null projectKey falls back like a missing one, so the sessionKey gate answers the blank key'),
     # ── #2562: the submit path's gate is the same nullish read (the TS submit
@@ -331,13 +329,9 @@ mutations = [
     # message) answers before the method's own `?.trim()` gate, so the null
     # cell's domain-message assertion must die. Same mutant text as
     # `admission-null-refused` above: one code point, four bound tests.
-    ('admission-null-refused-close-project', REQUESTS,
-     'params\n'
-     '                .get("projectKey")\n'
-     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
-     'params\n'
-     '                .get("projectKey")\n'
-     '                .filter(|v| !v.is_undefined())',
+    ('admission-null-refused-close-project', PROJECT_SCOPE,
+     '    let requested = params',
+     '    if matches!(params.get("projectKey"), Some(JsValue::Null)) {\n        return Err(RequestError::new("null projectKey refused"));\n    }\n    let requested = params',
      DIR + 'close_project_sessions_null_project_key_is_the_domain_error',
      '#2564 a null projectKey keeps the domain message'),
     # ── #2564 fix-r1 (harvest reviews: DS sibling#2 + anthropic boundary#2,
@@ -346,24 +340,23 @@ mutations = [
     # (isolated-project message) answers before each method's own nullish read,
     # so the cell's `.expect` must die at its own message — without these rows
     # the two cells were guarded only by their positive assertions.
-    ('admission-null-refused-list-sessions', REQUESTS,
-     'params\n'
-     '                .get("projectKey")\n'
-     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
-     'params\n'
-     '                .get("projectKey")\n'
-     '                .filter(|v| !v.is_undefined())',
+    ('admission-null-refused-list-sessions', PROJECT_SCOPE,
+     '    let requested = params',
+     '    if matches!(params.get("projectKey"), Some(JsValue::Null)) {\n        return Err(RequestError::new("null projectKey refused"));\n    }\n    let requested = params',
      DIR + 'list_sessions_null_project_key_lists_the_configured_project',
      '#2564 a null projectKey lists the configured project'),
-    ('admission-null-refused-new-session', REQUESTS,
-     'params\n'
-     '                .get("projectKey")\n'
-     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
-     'params\n'
-     '                .get("projectKey")\n'
-     '                .filter(|v| !v.is_undefined())',
+    ('admission-null-refused-new-session', PROJECT_SCOPE,
+     '    let requested = params',
+     '    if matches!(params.get("projectKey"), Some(JsValue::Null)) {\n        return Err(RequestError::new("null projectKey refused"));\n    }\n    let requested = params',
      DIR + 'new_session_null_project_key_omits_the_project_prefix',
      '#2564 a null projectKey generates a session key'),
+    ('session-dir-unknown-project-write', SESSION_DIR,
+     '    async fn session_delete(&self, params: &JsValue) -> Result<JsValue, RequestError> {\n'
+     '        let project_root = resolve_project(self, params).await?;',
+     '    async fn session_delete(&self, params: &JsValue) -> Result<JsValue, RequestError> {\n'
+     '        let project_root = self.options.project.clone();',
+     DIR + 'unregistered_project_never_creates_session_storage',
+     '#2090 unknown project cannot create session storage'),
     # ── #1864: the three selectors now have a reader. Each write site
     # (permission, thinking, output style), each compose-step read leg
     # (permission, thinking, style merge), the live adapter's per-turn source
@@ -386,12 +379,8 @@ mutations = [
      CFG + 'set_session_thinking_applies_and_validates',
      '#1864 the mode object is stored'),
     ('style-store-write-removed', CONFIG,
-     '            Some(name) => self\n'
-     '                .session_overrides\n'
-     '                .set_output_style(&session_key, name.clone()),',
-     '            Some(name) => {\n'
-     '                let _ = (&session_key, name);\n'
-     '            }',
+     '        self.session_overrides\n            .select_output_style(\n                &session_key,\n                &JsString::from(project.to_string_lossy().into_owned()),\n                name.clone(),\n            )\n            .await\n            .map_err(sdk_selection_error)?;',
+     '        let _ = (&session_key, &name);',
      CFG + 'set_output_style_validates_names_and_key',
      '#1864 set_output_style applies the probe style'),
     ('compose-permission-readback-removed', ASSEMBLY,
@@ -410,7 +399,7 @@ mutations = [
      CFG + 'apply_session_overrides_composes_the_selections',
      '#1864 the style content joins the existing prompt'),
     ('styles-list-selected-removed', CONFIG,
-     '            && let Some(selected) = self.session_overrides.output_style(key)',
+     '            && let Some(selected) = self\n                .session_overrides\n                .effective_output_style(key)\n                .await\n                .map_err(sdk_selection_error)?',
      '            && let Some(selected) = None::<JsString>',
      CFG + 'output_styles_list_reports_project_styles',
      '#1864 the list echoes the stored selection for the session'),
@@ -420,11 +409,7 @@ mutations = [
      'runtime::turn::live::stream_tests::permission_mode_source_rewrites_the_agent_config_each_turn',
      "#1864 the stored mode reaches the live session's next turn"),
     ('tools-admission-source-removed', TOOLS,
-     '            if let Some(mode) = permission::managed_default_mode(&self.config).or_else(|| {\n'
-     '                self.permission_mode_source\n'
-     '                    .as_ref()\n'
-     '                    .and_then(|source| source())\n'
-     '            }) {',
+     '            if let Some(mode) = permission::configured_permission_mode(&self.config).or_else(|| {\n                self.permission_mode_source\n                    .as_ref()\n                    .and_then(|source| source())\n            }) {',
      '            if let Some(mode) = None::<JsString> {',
      'native_process::tests::review::session_tools_admission_mode_follows_the_store_each_turn',
      '#1864 the stored mode reaches the host admission context'),
@@ -516,6 +501,7 @@ LITERAL_ANCHORS = [
     (SESSION_DIR, '#2564 a null projectKey lists the configured project'),
     (SESSION_DIR, '#2564 a null projectKey generates a session key'),
     (MANAGEMENT_TESTS, '#2562 explicit null is not an error with the recorder on'),
+    (SESSION_DIR, '#2090 unknown project cannot create session storage'),
     (LIVE_TESTS, "#1864 the stored mode reaches the live session's next turn"),
     (FACTORY_TESTS,
      '#1860 hydrate holds the transcript fence until the recorder is published'),
@@ -530,7 +516,7 @@ LITERAL_ANCHORS = [
 # not name a path outside this tuple (checked below) -- a pin the completeness
 # scan does not read would be a guard with a blind spot.
 SOURCE_TEXTS = (CONFIG, SESSION_DIR, METHODS_MOD, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS,
-                REVIEW_TESTS, FACTORY, FACTORY_TESTS, REQUESTS, SERVICES,
+                REVIEW_TESTS, FACTORY, FACTORY_TESTS, PROJECT_SCOPE, SERVICES,
                 MANAGEMENT_TESTS)
 
 

@@ -247,6 +247,8 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             // case relying on "the bus is unavailable" here would test a state
             // that no longer exists. A case that genuinely needs the
             // unconnected state builds it explicitly.
+            dialog_recovery: None,
+            sop: None,
             user_dialog_bus: Arc::new(std::sync::Mutex::new(
                 crate::user_dialog::GatewayUserDialogBus::connected(
                     crate::user_dialog::DialogRuntime::default(),
@@ -255,9 +257,11 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
             prepare_weixin_login: None,
             cron: None,
-            always_on: None,
+            automation: None,
             settings: requests::Requests::stub_settings(&owner),
             session_overrides: Arc::default(),
+            clear_sdk_state: None,
+            ephemeral: None,
         }
     })
 }
@@ -622,6 +626,37 @@ impl crate::runtime::connection::GatewayTextConnection for Text {
     fn close(&self, _: u16, _: &str) {}
 }
 
+/// Verify that the three advertised methods are backed by the actual fallback
+/// control, not merely inserted into the capability list. The fixed TS fallback
+/// has a distinct rerun error message from a missing control.
+async fn assert_fallback_always_on(
+    connection: &crate::runtime::turn::gateway::HostedConnection,
+    text: &Text,
+    project: &std::path::Path,
+) {
+    connection.receive(json!({"type":"request","id":"ao-fallback-check","method":"always_on_rerun_plan","params":{"projectKey":project,"planId":"p"}}).to_string()).await.expect("fallback request");
+    let frames = text.0.lock().expect("fallback response frames");
+    let response = frames
+        .iter()
+        .find(|f| f["id"] == "ao-fallback-check")
+        .expect("fallback response");
+    negative_assert_eq!(
+        response["ok"],
+        true,
+        "fallback method returns its family envelope"
+    );
+    negative_assert_eq!(
+        response["result"]["error"]["code"],
+        "not_configured",
+        "fallback runtime is disabled"
+    );
+    negative_assert_eq!(
+        response["result"]["error"]["message"],
+        "Always-On plan rerun requires an enabled Always-On runtime.",
+        "advertisement has the standalone control delegate"
+    );
+}
+
 #[tokio::test]
 async fn production_host_management_and_restart() {
     let (_scratch, requests) = setup();
@@ -716,11 +751,10 @@ async fn production_host_management_and_restart() {
         negative_assert!(
             assembly::validate_profile(&options, &options.environment(crate::config::Env::new()))
                 .await
-                .is_err_and(|e| e
-                    .to_string()
-                    .contains("configured plugins, skills or hooks")),
-            "#1231 skill management does not enable execution"
+                .is_ok(),
+            "#1231 imported standalone skills are supported by the native profile"
         );
+        assert_fallback_always_on(&connection, &text, &options.project).await;
         host.shutdown(options.drain_budget)
             .await
             .expect("#1231 native host shutdown");
@@ -748,7 +782,7 @@ async fn admission_and_unwired_families_stay_closed() {
     let result=requests.request("snapshot_restore".into(),expand(&json!({"projectKey":"<root>/project","snapshotId":"missing","targetProjectKey":target}),&scratch.0)).await;
     negative_assert_eq!(
         result.expect_err("#1231 foreign restore must fail").code,
-        "CAPABILITY_UNAVAILABLE",
+        "SNAPSHOT_NOT_FOUND",
         "#1231 restore target project admission"
     );
     let units = format!(
@@ -760,7 +794,7 @@ async fn admission_and_unwired_families_stay_closed() {
     let result = requests.request("snapshot_restore".into(), malformed).await;
     negative_assert_eq!(
         result.expect_err("#1231 surrogate restore must fail").code,
-        "CAPABILITY_UNAVAILABLE",
+        "SNAPSHOT_NOT_FOUND",
         "#1231 surrogate restore target admission"
     );
     let result = requests
@@ -1097,6 +1131,7 @@ async fn assert_storage_disabled(storage: Option<&str>, fixture: &str) {
         );
         assert_ts_capability_subset(&expected);
     }
+    assert_fallback_always_on(&connection, &text, &options.project).await;
     host.shutdown(options.drain_budget)
         .await
         .expect("#1231 disabled storage host shutdown");
@@ -1137,14 +1172,6 @@ fn oracle_capabilities(state: &str) -> &'static [Value] {
         .unwrap_or_else(|| panic!("#1231 TS capability array missing at contract.{state}"))
 }
 
-/// Providers the management fixture leaves unbound, so their names are absent
-/// from every live advertisement here even though the TS fixture configures
-/// them: `setup()` builds the `MemoryGateway` without a projection
-/// (`MemoryGateway::is_enabled()` is false). The memory pair is exercised by
-/// `memory_management_request_disabled_gateway_returns_unavailable`, so
-/// filtering it here does not remove the only assertion covering it.
-const PROVIDERS_UNBOUND_IN_FIXTURE: &[&str] = &["memory_list", "memory_wipe"];
-
 /// The exact capability set `describe_server` must advertise (#1231).
 ///
 /// Derived from what the TS baseline actually recorded rather than from a
@@ -1152,8 +1179,9 @@ const PROVIDERS_UNBOUND_IN_FIXTURE: &[&str] = &["memory_list", "memory_wipe"];
 /// `describe_server` output for the three fixture config states, all three
 /// carrying the same 50 names. The Rust set is
 ///
-///   recorded − `capabilities::NOT_ADVERTISED` − providers this fixture does
-///   not bind (memory pair, and the snapshot triplet without `--storage-root`)
+///   recorded − `capabilities::NOT_ADVERTISED` − the snapshot triplet when
+///   `--storage-root` is absent. The live assembly always binds the dynamic
+///   memory projection; per-project disabled memory is checked at dispatch.
 ///
 /// so the only way to omit a name the baseline records is to declare it, with
 /// its reason, in one of those two lists — and a name the table invents or
@@ -1168,7 +1196,6 @@ fn expected_capabilities(with_snapshots: bool) -> Vec<&'static str> {
                 .iter()
                 .any(|(declared, _)| declared == name)
         })
-        .filter(|name| !PROVIDERS_UNBOUND_IN_FIXTURE.contains(name))
         .filter(|name| {
             with_snapshots
                 || !matches!(*name, "snapshot_list" | "snapshot_get" | "snapshot_restore")
@@ -1179,7 +1206,12 @@ fn expected_capabilities(with_snapshots: bool) -> Vec<&'static str> {
         // route on Windows.
         .filter(|name| cfg!(unix) || !matches!(*name, "background_task_stop" | "background_tasks"))
         .collect();
+    // The frozen oracle did not attach an Always-On control. The real
+    // Server publishes manager or fallback control (ProjectAutomationBundle
+    // :360-364); fixed TS advertises these methods when that control exists.
+    expected.extend(["always_on_abort", "always_on_apply", "always_on_rerun_plan"]);
     expected.sort_unstable();
+    expected.dedup();
     expected
 }
 
@@ -1221,6 +1253,10 @@ fn assert_ts_capability_subset(expected: &[&str]) {
         negative_assert!(
             expected
                 .iter()
+                .filter(|capability| !matches!(
+                    **capability,
+                    "always_on_abort" | "always_on_apply" | "always_on_rerun_plan"
+                ))
                 .all(|capability| ts_capabilities.contains(&json!(capability))),
             "#1231 wired capabilities are TS subset (contract.{state})"
         );
@@ -1447,7 +1483,17 @@ async fn settings_capabilities_match_served_delegates() {
     );
     for &method in &published {
         let result = requests
-            .settings_request(method.to_owned(), JsValue::Undefined)
+            .settings_request(
+                method.to_owned(),
+                if method == "update_settings" {
+                    crate::metadata::object([
+                        ("source", "localSettings".into()),
+                        ("settings", crate::metadata::object([])),
+                    ])
+                } else {
+                    JsValue::Undefined
+                },
+            )
             .await;
         if advertised.iter().any(|name| name == method) {
             // #1869 item 3: a non-CAPABILITY_UNAVAILABLE answer is not proof
@@ -1501,7 +1547,17 @@ async fn settings_capabilities_match_served_delegates() {
     // was true for both regressions.
     for &method in &reloads {
         let result = requests
-            .settings_request(method.to_owned(), JsValue::Undefined)
+            .settings_request(
+                method.to_owned(),
+                if method == "update_settings" {
+                    crate::metadata::object([
+                        ("source", "localSettings".into()),
+                        ("settings", crate::metadata::object([])),
+                    ])
+                } else {
+                    JsValue::Undefined
+                },
+            )
             .await;
         let value = match result {
             Ok(value) => value,
@@ -1628,6 +1684,7 @@ async fn production_entry_snapshot_capabilities_are_disabled() {
                 );
                 assert_ts_capability_subset(&expected);
             }
+            assert_fallback_always_on(&connection, &text, &options.project).await;
             host.shutdown(options.drain_budget)
                 .await
                 .expect("#1231 production entry host shutdown");
@@ -1811,6 +1868,7 @@ async fn storage_root_cli_arg_wires_snapshot_capabilities() {
     );
     // See the note at the other snapshots-enabled call site: exact equality is
     // the whole guard here, and the disabled contracts are not this state.
+    assert_fallback_always_on(&connection, &text, &options.project).await;
     host.shutdown(options.drain_budget)
         .await
         .expect("#1323 host shutdown");
@@ -2747,4 +2805,128 @@ async fn pending_memory_io_does_not_block_serial_host() {
             && released.load(std::sync::atomic::Ordering::SeqCst),
         "#1322 pending memory IO must not block host"
     );
+}
+
+#[tokio::test]
+async fn production_style_reload_null_rejects_and_empty_project_reloads() {
+    let (_scratch, requests) = setup();
+    let options = requests.options.clone();
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("dispose fixture registry");
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("shutdown fixture owner");
+    let host = assembly::start(options.clone(), requests.env.clone())
+        .await
+        .expect("native host");
+    let text = Arc::new(Text::default());
+    let connection = host.connect(text.clone(), "token".into(), "fixture".into());
+    connection.receive(json!({"type":"hello","protocolVersion":pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,"token":"token","clientName":"web","clientVersion":"fixture"}).to_string()).await.unwrap();
+    for (id, params) in [
+        ("null", json!(null)),
+        ("empty", json!({"projectKey":""})),
+        ("other", json!({"projectKey":"/not-the-served-project"})),
+    ] {
+        connection
+            .receive(
+                json!({"type":"request","id":id,"method":"reload_output_styles","params":params})
+                    .to_string(),
+            )
+            .await
+            .unwrap();
+    }
+    let frames = text.0.lock().unwrap().clone();
+    host.shutdown(options.drain_budget)
+        .await
+        .expect("native host shutdown");
+    let get = |id| frames.iter().find(|frame| frame["id"] == id).unwrap();
+    assert_eq!(get("null")["ok"], false, "{:?}", get("null"));
+    assert_eq!(
+        get("null")["error"]["message"],
+        "Cannot read properties of null (reading 'projectKey')"
+    );
+    assert_eq!(get("empty")["ok"], true, "{:?}", get("empty"));
+    assert_eq!(get("empty")["result"]["reloaded"], true);
+    assert_eq!(get("other")["ok"], false, "{:?}", get("other"));
+}
+
+#[tokio::test]
+async fn snapshot_restore_uses_registered_target_project_without_touching_its_files() {
+    let (scratch, requests) = setup();
+    let oracle: Value = serde_json::from_str(ORACLE).unwrap();
+    let fixture = &oracle["snapshotSuccess"];
+    seed_files(
+        &requests.options.home.join("storage"),
+        &fixture["storageFiles"],
+        &scratch.0,
+    );
+    let target = scratch.0.join("target-B");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join("keep.txt"), "B original").unwrap();
+    let marker = requests.options.home.join("projects/target-B");
+    std::fs::create_dir_all(&marker).unwrap();
+    std::fs::write(marker.join(".cwd"), target.to_str().unwrap()).unwrap();
+    let mut params = fixture["restore"]["params"].clone();
+    params["targetProjectKey"] = json!(target);
+    let restored = requests
+        .request("snapshot_restore".into(), expand(&params, &scratch.0))
+        .await
+        .unwrap();
+    let path = PathBuf::from(
+        restored
+            .get("workspaceKey")
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .to_utf8()
+            .unwrap(),
+    );
+    negative_assert_eq!(
+        path.parent(),
+        Some(target.as_path()),
+        "native snapshot restores to selected target project"
+    );
+    assert_eq!(file_tree(&path), fixture["restore"]["files"]);
+    assert_eq!(
+        std::fs::read_to_string(target.join("keep.txt")).unwrap(),
+        "B original"
+    );
+    params["targetProjectKey"] = json!(scratch.0.join("unregistered"));
+    let error = requests
+        .request("snapshot_restore".into(), expand(&params, &scratch.0))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "PROJECT_NOT_FOUND");
+
+    // A raw surrogate is a different catalog identity from U+FFFD, even if
+    // the latter is a real registered project. Never silently restore there.
+    let replacement = target.join("�");
+    std::fs::create_dir(&replacement).unwrap();
+    let replacement_marker = requests.options.home.join("projects/replacement-target");
+    std::fs::create_dir(&replacement_marker).unwrap();
+    std::fs::write(
+        replacement_marker.join(".cwd"),
+        replacement.to_str().unwrap(),
+    )
+    .unwrap();
+    let mut raw = expand(&fixture["restore"]["params"], &scratch.0);
+    let mut units: Vec<u16> = format!("{}/", target.display()).encode_utf16().collect();
+    units.push(0xd800);
+    if let JsValue::Object(fields) = &mut raw {
+        fields.insert(
+            "targetProjectKey".into(),
+            JsValue::String(JsString::from_utf16(units)),
+        );
+    }
+    let result = requests.request("snapshot_restore".into(), raw).await;
+    negative_assert!(result.is_err(), "#1231 surrogate restore target admission");
+    assert_eq!(result.unwrap_err().code, "PROJECT_NOT_FOUND");
+    assert_eq!(std::fs::read_dir(&replacement).unwrap().count(), 0);
+    requests.owner.shutdown().await.unwrap();
+    requests.project.dispose().await.unwrap();
 }

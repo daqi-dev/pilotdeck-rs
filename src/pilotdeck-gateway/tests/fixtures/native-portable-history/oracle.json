@@ -1,0 +1,835 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "versions": {
+    "node": "v22.22.0",
+    "icu": "78.2",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "sourceSha256": "54c2f856936733ef9c04d9c995a32317ed14a0d4070d202a0c2365447491869f",
+  "cases": {
+    "unknown_project_missing_session": {
+      "ok": false,
+      "code": "PROJECT_NOT_FOUND"
+    },
+    "invalid_project_empty_session": {
+      "ok": false,
+      "code": "ERR_INVALID_ARG_TYPE"
+    },
+    "cold_invalid_archive": {
+      "ok": false,
+      "code": "INVALID_SESSION_ARCHIVE",
+      "message": "Unsupported or malformed session transcript archive."
+    },
+    "empty_archive": {
+      "ok": false,
+      "code": "INVALID_SESSION_ARCHIVE",
+      "message": "Session transcript archive has an invalid message count."
+    },
+    "restore": {
+      "ok": true,
+      "value": {
+        "sessionKey": "sdk:restored",
+        "importedMessages": 2
+      }
+    },
+    "export_restored": {
+      "ok": true,
+      "value": {
+        "schemaVersion": 1,
+        "format": "portable_text_messages",
+        "messages": [
+          {
+            "role": "user",
+            "text": "hello"
+          },
+          {
+            "role": "assistant",
+            "text": "world"
+          }
+        ],
+        "title": "Title"
+      }
+    },
+    "conflict": {
+      "ok": false,
+      "code": "SESSION_RESTORE_CONFLICT",
+      "message": "A persistent transcript already exists for this session."
+    },
+    "missing": {
+      "ok": false,
+      "code": "SESSION_NOT_FOUND",
+      "message": "Session not found: sdk:missing"
+    },
+    "busy_invalid_archive": {
+      "ok": false,
+      "code": "SESSION_BUSY",
+      "message": "Cannot restore over an active Gateway session."
+    },
+    "busy_export": {
+      "ok": false,
+      "code": "SESSION_BUSY",
+      "message": "Cannot export a transcript while its session has an active turn."
+    },
+    "busy_restore": {
+      "ok": false,
+      "code": "SESSION_BUSY",
+      "message": "Cannot restore over an active Gateway session."
+    },
+    "finished_export": {
+      "ok": true,
+      "value": {
+        "schemaVersion": 1,
+        "format": "portable_text_messages",
+        "messages": [
+          {
+            "role": "user",
+            "text": "busy"
+          },
+          {
+            "role": "assistant",
+            "text": "answer"
+          }
+        ]
+      }
+    },
+    "compact_projection": {
+      "ok": true,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "compact"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "new"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "compact": {
+    "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+    "events": [
+      {
+        "sessionId": "compact-source",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "entryId": "compact-entry",
+        "turnId": "t1",
+        "sequence": 2,
+        "type": "control_boundary",
+        "boundary": {
+          "kind": "compact",
+          "subtype": "compact_boundary",
+          "snapshot": {
+            "version": 1,
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "compact"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        "sessionId": "compact-source",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "entryId": "new-entry",
+        "turnId": "t2",
+        "sequence": 3,
+        "type": "accepted_input",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "new"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "value": {
+      "schemaVersion": 1,
+      "format": "portable_text_messages",
+      "messages": [
+        {
+          "role": "user",
+          "text": "compact"
+        },
+        {
+          "role": "user",
+          "text": "new"
+        }
+      ]
+    }
+  },
+  "restoreDisk": [
+    {
+      "type": "session_metadata",
+      "metadata": {
+        "title": "Title",
+        "updatedAt": "2026-11-09T17:13:46.460Z"
+      },
+      "sessionId": "sdk:restored",
+      "sequence": 1
+    },
+    {
+      "type": "accepted_input",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "hello"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "world"
+            }
+          ]
+        }
+      ],
+      "metadata": {
+        "restoredFromGatewayArchive": true,
+        "archiveSchemaVersion": 1
+      },
+      "sessionId": "sdk:restored",
+      "sequence": 2
+    }
+  ],
+  "resumeMessages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "hello"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "world"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "followup"
+        }
+      ]
+    }
+  ],
+  "nontext": {
+    "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+    "environment": {
+      "node": "22.22.0",
+      "acorn": "8.15.0",
+      "ada": "2.9.2",
+      "amaro": "1.1.4",
+      "ares": "1.34.6",
+      "brotli": "1.1.0",
+      "cjs_module_lexer": "2.1.0",
+      "cldr": "48.0",
+      "icu": "78.2",
+      "llhttp": "9.3.0",
+      "modules": "127",
+      "napi": "10",
+      "nbytes": "0.1.1",
+      "ncrypto": "0.0.1",
+      "nghttp2": "1.64.0",
+      "openssl": "3.5.4",
+      "simdjson": "3.13.0",
+      "simdutf": "6.4.2",
+      "sqlite": "3.50.4",
+      "tz": "2025c",
+      "undici": "6.23.0",
+      "unicode": "17.0",
+      "uv": "1.52.1",
+      "uvwasi": "0.0.23",
+      "v8": "12.4.254.21-node.33",
+      "zlib": "1.3.1-470d3a2",
+      "zstd": "1.5.7"
+    },
+    "sourceSha256": "54c2f856936733ef9c04d9c995a32317ed14a0d4070d202a0c2365447491869f",
+    "projections": [
+      {
+        "name": "tool_calls",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "seed"
+                  }
+                ]
+              }
+            ],
+            "metadata": {
+              "restoredFromGatewayArchive": true,
+              "archiveSchemaVersion": 1
+            },
+            "sessionId": "nontext:tool_calls",
+            "turnId": "sdk:restore:3c715dea-71db-42fd-9024-e76c55dae1f5",
+            "sequence": 1,
+            "createdAt": "2026-11-09T18:58:39.667Z",
+            "entryId": "40d36fd6-a0b0-487b-a2f3-9f3f55fd36cd",
+            "parentEntryId": null
+          },
+          {
+            "sessionId": "nontext:tool_calls",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "entryId": "nontext-entry",
+            "turnId": "nontext-turn",
+            "sequence": 2,
+            "type": "accepted_input",
+            "messages": [
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": ""
+                  },
+                  {
+                    "type": "text",
+                    "text": "head"
+                  },
+                  {
+                    "type": "tool_call",
+                    "id": "a",
+                    "name": "object",
+                    "input": {
+                      "2": "two",
+                      "10": "ten",
+                      "z": 1,
+                      "nested": [
+                        true,
+                        null,
+                        "汉"
+                      ]
+                    }
+                  },
+                  {
+                    "type": "tool_call",
+                    "id": "b",
+                    "name": "literal",
+                    "input": "  literal  "
+                  },
+                  {
+                    "type": "tool_call",
+                    "id": "c",
+                    "name": "nil",
+                    "input": null
+                  },
+                  {
+                    "type": "tool_call",
+                    "id": "d",
+                    "name": "absent"
+                  },
+                  {
+                    "type": "tool_call",
+                    "id": "e",
+                    "name": "array",
+                    "input": [
+                      1,
+                      "x"
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "ok": true,
+        "value": {
+          "schemaVersion": 1,
+          "format": "portable_text_messages",
+          "messages": [
+            {
+              "role": "user",
+              "text": "seed"
+            },
+            {
+              "role": "assistant",
+              "text": "head\n\n[Tool call: object]\n{\n  \"2\": \"two\",\n  \"10\": \"ten\",\n  \"z\": 1,\n  \"nested\": [\n    true,\n    null,\n    \"汉\"\n  ]\n}\n\n[Tool call: literal]\n  literal  \n\n[Tool call: nil]\nnull\n\n[Tool call: absent]\nundefined\n\n[Tool call: array]\n[\n  1,\n  \"x\"\n]"
+            }
+          ]
+        }
+      },
+      {
+        "name": "tool_results",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "seed"
+                  }
+                ]
+              }
+            ],
+            "metadata": {
+              "restoredFromGatewayArchive": true,
+              "archiveSchemaVersion": 1
+            },
+            "sessionId": "nontext:tool_results",
+            "turnId": "sdk:restore:d1f49a82-8dcf-4289-ad7e-33dabc50d740",
+            "sequence": 1,
+            "createdAt": "2026-11-09T18:58:39.674Z",
+            "entryId": "1613f23d-ea82-469e-aa35-1e979e72f74a",
+            "parentEntryId": null
+          },
+          {
+            "sessionId": "nontext:tool_results",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "entryId": "nontext-entry",
+            "turnId": "nontext-turn",
+            "sequence": 2,
+            "type": "accepted_input",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "toolCallId": "empty",
+                    "content": []
+                  },
+                  {
+                    "type": "tool_result",
+                    "toolCallId": "mixed",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": ""
+                      },
+                      {
+                        "type": "text",
+                        "text": "body"
+                      },
+                      {
+                        "type": "image",
+                        "source": "url",
+                        "mimeType": "image/png",
+                        "data": "https://example.invalid/a.png"
+                      },
+                      {
+                        "type": "image",
+                        "source": "base64",
+                        "mimeType": "image/jpeg",
+                        "data": "😀x"
+                      },
+                      {
+                        "type": "pdf",
+                        "source": "base64",
+                        "mimeType": "application/pdf",
+                        "data": "AAAA",
+                        "bytes": 3,
+                        "pages": 3
+                      },
+                      {
+                        "type": "pdf",
+                        "source": "base64",
+                        "mimeType": "application/pdf",
+                        "data": "AAAA",
+                        "bytes": 3,
+                        "pages": 0
+                      },
+                      {
+                        "type": "pdf",
+                        "source": "base64",
+                        "mimeType": "application/pdf",
+                        "data": "AAAA",
+                        "bytes": 3,
+                        "pages": -2
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "ok": true,
+        "value": {
+          "schemaVersion": 1,
+          "format": "portable_text_messages",
+          "messages": [
+            {
+              "role": "user",
+              "text": "seed"
+            },
+            {
+              "role": "user",
+              "text": "[Tool result]\n\n[Tool result]\n\nbody\n[Image: image/png, https://example.invalid/a.png]\n[Image: image/jpeg, 3 base64 characters]\n[PDF: application/pdf, 4 base64 characters, 3 pages]\n[PDF: application/pdf, 4 base64 characters]\n[PDF: application/pdf, 4 base64 characters, -2 pages]"
+            }
+          ]
+        }
+      },
+      {
+        "name": "references_and_outer_media",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "seed"
+                  }
+                ]
+              }
+            ],
+            "metadata": {
+              "restoredFromGatewayArchive": true,
+              "archiveSchemaVersion": 1
+            },
+            "sessionId": "nontext:references_and_outer_media",
+            "turnId": "sdk:restore:dcd640cb-7015-436e-8064-924d7ea252b3",
+            "sequence": 1,
+            "createdAt": "2026-11-09T18:58:39.676Z",
+            "entryId": "a2da364f-0935-4b10-9bf7-86e07af46a58",
+            "parentEntryId": null
+          },
+          {
+            "sessionId": "nontext:references_and_outer_media",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "entryId": "nontext-entry",
+            "turnId": "nontext-turn",
+            "sequence": 2,
+            "type": "accepted_input",
+            "messages": [
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "tool_result_reference",
+                    "toolCallId": "ref-1",
+                    "path": "/owned/mock/result",
+                    "originalBytes": 8,
+                    "preview": "ignored",
+                    "hasMore": true
+                  },
+                  {
+                    "type": "image",
+                    "source": "url",
+                    "mimeType": "image/png",
+                    "data": "https://example.invalid/a.png"
+                  },
+                  {
+                    "type": "pdf",
+                    "source": "base64",
+                    "mimeType": "application/pdf",
+                    "data": "AAAA",
+                    "bytes": 3,
+                    "pages": 1
+                  },
+                  {
+                    "type": "audio",
+                    "source": "base64",
+                    "mimeType": "audio/wav",
+                    "data": "AAAA"
+                  },
+                  {
+                    "type": "thinking",
+                    "text": "not portable"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "ok": true,
+        "value": {
+          "schemaVersion": 1,
+          "format": "portable_text_messages",
+          "messages": [
+            {
+              "role": "user",
+              "text": "seed"
+            },
+            {
+              "role": "assistant",
+              "text": "[Tool result reference: ref-1]\n\n[Image]"
+            }
+          ]
+        }
+      },
+      {
+        "name": "synthetic_and_empty",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "seed"
+                  }
+                ]
+              }
+            ],
+            "metadata": {
+              "restoredFromGatewayArchive": true,
+              "archiveSchemaVersion": 1
+            },
+            "sessionId": "nontext:synthetic_and_empty",
+            "turnId": "sdk:restore:be6eeff8-fabd-438e-b3d9-c78d385d8c04",
+            "sequence": 1,
+            "createdAt": "2026-11-09T18:58:39.679Z",
+            "entryId": "4f2a804a-b989-4a84-93f8-399a669f85bc",
+            "parentEntryId": null
+          },
+          {
+            "sessionId": "nontext:synthetic_and_empty",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "entryId": "nontext-entry",
+            "turnId": "nontext-turn",
+            "sequence": 2,
+            "type": "accepted_input",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "   "
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "thinking",
+                    "text": "hidden"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "skip"
+                  }
+                ],
+                "metadata": {
+                  "synthetic": true
+                }
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "keep"
+                  }
+                ],
+                "metadata": {
+                  "synthetic": false
+                }
+              }
+            ]
+          }
+        ],
+        "ok": true,
+        "value": {
+          "schemaVersion": 1,
+          "format": "portable_text_messages",
+          "messages": [
+            {
+              "role": "user",
+              "text": "seed"
+            },
+            {
+              "role": "user",
+              "text": "keep"
+            }
+          ]
+        }
+      }
+    ],
+    "validation": [
+      {
+        "recipe": {
+          "name": "empty_title",
+          "title": ""
+        },
+        "bytes": 103,
+        "ok": true,
+        "value": {
+          "sessionKey": "validate:empty_title",
+          "importedMessages": 1
+        }
+      },
+      {
+        "recipe": {
+          "name": "null_title",
+          "title": null
+        },
+        "bytes": 105,
+        "ok": false,
+        "code": "INVALID_SESSION_ARCHIVE",
+        "message": "Session transcript archive title is invalid."
+      },
+      {
+        "recipe": {
+          "name": "title_512_units",
+          "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+        },
+        "bytes": 1127,
+        "ok": true,
+        "value": {
+          "sessionKey": "validate:title_512_units",
+          "importedMessages": 1
+        }
+      },
+      {
+        "recipe": {
+          "name": "title_513_units",
+          "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀x"
+        },
+        "bytes": 1128,
+        "ok": false,
+        "code": "INVALID_SESSION_ARCHIVE",
+        "message": "Session transcript archive title is invalid."
+      },
+      {
+        "recipe": {
+          "name": "title_before_role",
+          "title": null,
+          "badRole": true
+        },
+        "bytes": 107,
+        "ok": false,
+        "code": "INVALID_SESSION_ARCHIVE",
+        "message": "Session transcript archive title is invalid."
+      },
+      {
+        "recipe": {
+          "name": "count_before_title",
+          "title": null,
+          "count": 0
+        },
+        "bytes": 80,
+        "ok": false,
+        "code": "INVALID_SESSION_ARCHIVE",
+        "message": "Session transcript archive has an invalid message count."
+      },
+      {
+        "recipe": {
+          "name": "count_10000",
+          "count": 10000
+        },
+        "bytes": 270066,
+        "ok": true,
+        "value": {
+          "sessionKey": "validate:count_10000",
+          "importedMessages": 10000
+        }
+      },
+      {
+        "recipe": {
+          "name": "count_10001",
+          "count": 10001
+        },
+        "bytes": 270093,
+        "ok": false,
+        "code": "INVALID_SESSION_ARCHIVE",
+        "message": "Session transcript archive has an invalid message count."
+      },
+      {
+        "recipe": {
+          "name": "ascii_exact_bytes",
+          "bytes": 2097152,
+          "fill": "x"
+        },
+        "bytes": 2097152,
+        "ok": true,
+        "value": {
+          "sessionKey": "validate:ascii_exact_bytes",
+          "importedMessages": 1
+        }
+      },
+      {
+        "recipe": {
+          "name": "ascii_over_bytes",
+          "bytes": 2097153,
+          "fill": "x"
+        },
+        "bytes": 2097153,
+        "ok": false,
+        "code": "INVALID_SESSION_ARCHIVE",
+        "message": "Session transcript archive is too large."
+      },
+      {
+        "recipe": {
+          "name": "cjk_exact_bytes",
+          "bytes": 2097152,
+          "fill": "汉"
+        },
+        "bytes": 2097152,
+        "ok": true,
+        "value": {
+          "sessionKey": "validate:cjk_exact_bytes",
+          "importedMessages": 1
+        }
+      },
+      {
+        "recipe": {
+          "name": "cjk_over_bytes",
+          "bytes": 2097153,
+          "fill": "汉"
+        },
+        "bytes": 2097153,
+        "ok": false,
+        "code": "INVALID_SESSION_ARCHIVE",
+        "message": "Session transcript archive is too large."
+      }
+    ]
+  }
+}

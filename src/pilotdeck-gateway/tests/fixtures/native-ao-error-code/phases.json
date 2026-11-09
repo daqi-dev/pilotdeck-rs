@@ -1,0 +1,486 @@
+{
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "records": [
+    {
+      "phase": "discovery",
+      "code": "<undefined>",
+      "result": {
+        "outcome": "failed",
+        "runId": "discovery-undefined",
+        "startedAt": "2026-01-02T03:04:05.678Z",
+        "finishedAt": "2026-01-02T03:04:05.678Z",
+        "planId": "",
+        "error": {
+          "code": "discovery_failed",
+          "message": "fixture failure"
+        }
+      },
+      "history": [
+        {
+          "schemaVersion": 1,
+          "runId": "discovery-undefined",
+          "startedAt": "2026-01-02T03:04:05.678Z",
+          "outcome": "failed",
+          "finishedAt": "2026-01-02T03:04:05.678Z",
+          "error": {
+            "code": "discovery_failed",
+            "message": "fixture failure"
+          }
+        }
+      ],
+      "events": [
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "discovery-undefined",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "discovery_started",
+          "timestamp": "2026-01-02T03:04:05.678Z"
+        },
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "discovery-undefined",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "run_failed",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "error": {
+            "code": "discovery_failed",
+            "message": "fixture failure"
+          },
+          "outcome": "failed"
+        }
+      ]
+    },
+    {
+      "phase": "discovery",
+      "code": "",
+      "result": {
+        "outcome": "failed",
+        "runId": "discovery-",
+        "startedAt": "2026-01-02T03:04:05.678Z",
+        "finishedAt": "2026-01-02T03:04:05.678Z",
+        "planId": "",
+        "error": {
+          "code": "",
+          "message": "fixture failure"
+        }
+      },
+      "history": [
+        {
+          "schemaVersion": 1,
+          "runId": "discovery-",
+          "startedAt": "2026-01-02T03:04:05.678Z",
+          "outcome": "failed",
+          "finishedAt": "2026-01-02T03:04:05.678Z",
+          "error": {
+            "code": "",
+            "message": "fixture failure"
+          }
+        }
+      ],
+      "events": [
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "discovery-",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "discovery_started",
+          "timestamp": "2026-01-02T03:04:05.678Z"
+        },
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "discovery-",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "run_failed",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "error": {
+            "code": "",
+            "message": "fixture failure"
+          },
+          "outcome": "failed"
+        }
+      ]
+    },
+    {
+      "phase": "execution",
+      "code": "<undefined>",
+      "result": {
+        "outcome": "failed",
+        "runId": "execution-undefined",
+        "startedAt": "2026-01-02T03:04:05.678Z",
+        "finishedAt": "2026-01-02T03:04:05.678Z",
+        "planId": "plan",
+        "workspace": {
+          "strategy": "snapshot-copy",
+          "cwd": "/private/tmp/pdrs-ao-phase-error-20261109-a/workspace",
+          "metadata": {
+            "startedAt": "2026-01-02T03:04:05.678Z"
+          }
+        },
+        "reportFilePath": "/private/tmp/pdrs-ao-phase-error-20261109-a/report.md",
+        "error": {
+          "code": "execution_failed",
+          "message": "fixture failure"
+        }
+      },
+      "history": [
+        {
+          "schemaVersion": 1,
+          "runId": "execution-undefined",
+          "planId": "plan",
+          "startedAt": "2026-01-02T03:04:05.678Z",
+          "outcome": "failed",
+          "finishedAt": "2026-01-02T03:04:05.678Z",
+          "workCycleId": "cycle",
+          "workspace": {
+            "strategy": "snapshot-copy",
+            "handle": "/private/tmp/pdrs-ao-phase-error-20261109-a/workspace"
+          },
+          "error": {
+            "code": "execution_failed",
+            "message": "fixture failure"
+          }
+        }
+      ],
+      "events": [
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "execution-undefined",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "workspace_started",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "planId": "plan"
+        },
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "execution-undefined",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "workspace_ready",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "planId": "plan"
+        },
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "execution-undefined",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "execution_started",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "planId": "plan",
+          "title": "Fixture"
+        },
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "execution-undefined",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "run_failed",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "planId": "plan",
+          "error": {
+            "code": "execution_failed",
+            "message": "fixture failure"
+          },
+          "outcome": "failed"
+        }
+      ]
+    },
+    {
+      "phase": "execution",
+      "code": "",
+      "result": {
+        "outcome": "failed",
+        "runId": "execution-",
+        "startedAt": "2026-01-02T03:04:05.678Z",
+        "finishedAt": "2026-01-02T03:04:05.678Z",
+        "planId": "plan",
+        "workspace": {
+          "strategy": "snapshot-copy",
+          "cwd": "/private/tmp/pdrs-ao-phase-error-20261109-a/workspace",
+          "metadata": {
+            "startedAt": "2026-01-02T03:04:05.678Z"
+          }
+        },
+        "reportFilePath": "/private/tmp/pdrs-ao-phase-error-20261109-a/report.md",
+        "error": {
+          "code": "",
+          "message": "fixture failure"
+        }
+      },
+      "history": [
+        {
+          "schemaVersion": 1,
+          "runId": "execution-",
+          "planId": "plan",
+          "startedAt": "2026-01-02T03:04:05.678Z",
+          "outcome": "failed",
+          "finishedAt": "2026-01-02T03:04:05.678Z",
+          "workCycleId": "cycle",
+          "workspace": {
+            "strategy": "snapshot-copy",
+            "handle": "/private/tmp/pdrs-ao-phase-error-20261109-a/workspace"
+          },
+          "error": {
+            "code": "",
+            "message": "fixture failure"
+          }
+        }
+      ],
+      "events": [
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "execution-",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "workspace_started",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "planId": "plan"
+        },
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "execution-",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "workspace_ready",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "planId": "plan"
+        },
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "execution-",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "execution_started",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "planId": "plan",
+          "title": "Fixture"
+        },
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "execution-",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "run_failed",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "planId": "plan",
+          "error": {
+            "code": "",
+            "message": "fixture failure"
+          },
+          "outcome": "failed"
+        }
+      ]
+    },
+    {
+      "phase": "report",
+      "code": "<undefined>",
+      "result": {
+        "outcome": "executed",
+        "runId": "report-undefined",
+        "startedAt": "2026-01-02T03:04:05.678Z",
+        "finishedAt": "2026-01-02T03:04:05.678Z",
+        "planId": "plan",
+        "workspace": {
+          "strategy": "snapshot-copy",
+          "cwd": "/private/tmp/pdrs-ao-phase-error-20261109-a/workspace",
+          "metadata": {
+            "startedAt": "2026-01-02T03:04:05.678Z"
+          }
+        },
+        "reportFilePath": "/private/tmp/pdrs-ao-phase-error-20261109-a/report.md",
+        "error": {
+          "code": "report_degraded",
+          "message": "fixture failure"
+        }
+      },
+      "history": [
+        {
+          "schemaVersion": 1,
+          "runId": "report-undefined",
+          "planId": "plan",
+          "startedAt": "2026-01-02T03:04:05.678Z",
+          "outcome": "executed",
+          "finishedAt": "2026-01-02T03:04:05.678Z",
+          "workCycleId": "cycle",
+          "workspace": {
+            "strategy": "snapshot-copy",
+            "handle": "/private/tmp/pdrs-ao-phase-error-20261109-a/workspace"
+          },
+          "error": {
+            "code": "report_degraded",
+            "message": "fixture failure"
+          }
+        }
+      ],
+      "events": [
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "report-undefined",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "workspace_started",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "planId": "plan"
+        },
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "report-undefined",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "workspace_ready",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "planId": "plan"
+        },
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "report-undefined",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "execution_started",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "planId": "plan",
+          "title": "Fixture"
+        },
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "report-undefined",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "execution_completed",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "planId": "plan",
+          "title": "Fixture"
+        },
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "report-undefined",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "report_started",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "planId": "plan",
+          "title": "Fixture"
+        },
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "report-undefined",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "run_completed",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "planId": "plan",
+          "title": "Fixture",
+          "outcome": "executed"
+        }
+      ]
+    },
+    {
+      "phase": "report",
+      "code": "",
+      "result": {
+        "outcome": "executed",
+        "runId": "report-",
+        "startedAt": "2026-01-02T03:04:05.678Z",
+        "finishedAt": "2026-01-02T03:04:05.678Z",
+        "planId": "plan",
+        "workspace": {
+          "strategy": "snapshot-copy",
+          "cwd": "/private/tmp/pdrs-ao-phase-error-20261109-a/workspace",
+          "metadata": {
+            "startedAt": "2026-01-02T03:04:05.678Z"
+          }
+        },
+        "reportFilePath": "/private/tmp/pdrs-ao-phase-error-20261109-a/report.md",
+        "error": {
+          "code": "",
+          "message": "fixture failure"
+        }
+      },
+      "history": [
+        {
+          "schemaVersion": 1,
+          "runId": "report-",
+          "planId": "plan",
+          "startedAt": "2026-01-02T03:04:05.678Z",
+          "outcome": "executed",
+          "finishedAt": "2026-01-02T03:04:05.678Z",
+          "workCycleId": "cycle",
+          "workspace": {
+            "strategy": "snapshot-copy",
+            "handle": "/private/tmp/pdrs-ao-phase-error-20261109-a/workspace"
+          },
+          "error": {
+            "code": "",
+            "message": "fixture failure"
+          }
+        }
+      ],
+      "events": [
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "report-",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "workspace_started",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "planId": "plan"
+        },
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "report-",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "workspace_ready",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "planId": "plan"
+        },
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "report-",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "execution_started",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "planId": "plan",
+          "title": "Fixture"
+        },
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "report-",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "execution_completed",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "planId": "plan",
+          "title": "Fixture"
+        },
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "report-",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "report_started",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "planId": "plan",
+          "title": "Fixture"
+        },
+        {
+          "schemaVersion": 1,
+          "eventId": "event",
+          "runId": "report-",
+          "projectKey": "/private/tmp/pdrs-ao-phase-error-20261109-a/project",
+          "phase": "run_completed",
+          "timestamp": "2026-01-02T03:04:05.678Z",
+          "planId": "plan",
+          "title": "Fixture",
+          "outcome": "executed"
+        }
+      ]
+    }
+  ]
+}

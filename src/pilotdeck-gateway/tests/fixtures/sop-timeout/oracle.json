@@ -1,0 +1,50 @@
+{
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "results": [
+    {
+      "client": "sop",
+      "timeoutMs": null,
+      "calls": [
+        {
+          "method": "GET",
+          "signal": false
+        }
+      ],
+      "code": "SOP_RUNTIME_UNAVAILABLE"
+    },
+    {
+      "client": "discovery",
+      "timeoutMs": null,
+      "calls": [
+        {
+          "method": "POST",
+          "signal": false
+        }
+      ],
+      "code": "SOP_DISCOVERY_UNAVAILABLE"
+    },
+    {
+      "client": "sop",
+      "timeoutMs": 123,
+      "calls": [
+        {
+          "method": "GET",
+          "signal": true
+        }
+      ],
+      "code": "SOP_RUNTIME_UNAVAILABLE"
+    },
+    {
+      "client": "discovery",
+      "timeoutMs": 123,
+      "calls": [
+        {
+          "method": "POST",
+          "signal": true
+        }
+      ],
+      "code": "SOP_DISCOVERY_UNAVAILABLE"
+    }
+  ]
+}

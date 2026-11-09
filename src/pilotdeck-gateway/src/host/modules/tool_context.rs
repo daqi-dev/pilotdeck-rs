@@ -267,10 +267,16 @@ pub trait TurnEnvironment: Send + Sync {
 pub type EventSink = Arc<dyn Fn(JsObject) + Send + Sync>;
 pub type Clock = Arc<dyn Fn() -> JsValue + Send + Sync>;
 
+pub type InteractionProfileBinder =
+    Arc<dyn Fn(crate::runtime::project::InteractionProfile) -> Result<(), HostError> + Send + Sync>;
+
 #[derive(Clone, Default)]
 pub struct ToolContextPorts {
     pub model: Option<Arc<dyn TurnModel>>,
     pub elicitation: Option<RuntimeContext>,
+    pub permission_mode: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
+    pub bind_interaction_profile: Option<InteractionProfileBinder>,
+    pub elicitation_enabled: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     pub user_dialog: Option<RuntimeContext>,
     pub audit_recorder: Option<RuntimeContext>,
     pub file_history: Option<RuntimeContext>,
@@ -292,6 +298,7 @@ pub struct TurnBinding {
     pub environment: Arc<dyn TurnEnvironment>,
 }
 
+#[derive(Clone)]
 pub struct PlanDirectory {
     pub path: JsString,
     cwd: JsString,
@@ -306,6 +313,7 @@ impl PlanDirectory {
     }
 }
 
+#[derive(Clone)]
 pub struct ToolRuntimeContext {
     pub fields: JsObject,
     pub files: ToolFileState,
@@ -361,7 +369,15 @@ impl ToolContextBuilder {
         let base = config.get("permissionContext").and_then(JsValue::as_object);
         let mut result = base.cloned().unwrap_or_default();
         result.insert("cwd".into(), get(config, "cwd"));
-        result.insert("mode".into(), get(config, "permissionMode"));
+        result.insert(
+            "mode".into(),
+            self.ports
+                .permission_mode
+                .as_ref()
+                .and_then(|read| read())
+                .map(JsValue::String)
+                .unwrap_or_else(|| get(config, "permissionMode")),
+        );
         result.insert(
             "canPrompt".into(),
             self.binding
@@ -427,8 +443,14 @@ impl ToolContextBuilder {
                 fields.insert(key.into(), value.clone());
             }
         }
-        fields.insert("permissionMode".into(), get(config, "permissionMode"));
         let mut permission = self.permission_context();
+        fields.insert(
+            "permissionMode".into(),
+            permission
+                .get("mode")
+                .cloned()
+                .unwrap_or(JsValue::Undefined),
+        );
         if let Some(path) = &directory {
             permission.insert("planDirectoryPath".into(), JsValue::String(path.clone()));
         }
@@ -438,7 +460,12 @@ impl ToolContextBuilder {
             "canElicit".into(),
             JsValue::Bool(
                 binding.input.get("canElicit").and_then(JsValue::as_bool) == Some(true)
-                    && self.ports.elicitation.is_some(),
+                    && self.ports.elicitation.is_some()
+                    && self
+                        .ports
+                        .elicitation_enabled
+                        .as_ref()
+                        .is_none_or(|enabled| enabled()),
             ),
         );
         fields.insert(
@@ -497,7 +524,12 @@ impl ToolContextBuilder {
             files,
             abort_signal: binding.abort_signal.clone(),
             model: self.auxiliary_model.clone(),
-            elicitation: self.ports.elicitation.clone(),
+            elicitation: self.ports.elicitation.clone().filter(|_| {
+                self.ports
+                    .elicitation_enabled
+                    .as_ref()
+                    .is_none_or(|enabled| enabled())
+            }),
             user_dialog: self.ports.user_dialog.clone(),
             audit_recorder: self.ports.audit_recorder.clone(),
             file_history: self.ports.file_history.clone(),
@@ -568,6 +600,15 @@ pub struct CapabilityContext {
     pub plan_todo: Option<Arc<dyn SessionService>>,
 }
 impl capability::ToolContext for CapabilityContext {
+    fn bind_interaction_profile(
+        &self,
+        profile: crate::runtime::project::InteractionProfile,
+    ) -> Result<(), HostError> {
+        if let Some(bind) = &self.builder.ports.bind_interaction_profile {
+            bind(profile)?;
+        }
+        Ok(())
+    }
     fn prepare(&self, call: JsValue) -> HostFuture<ToolInvocationContext> {
         let builder = self.builder.clone();
         let plans = self.plan_todo.clone();
@@ -609,8 +650,25 @@ impl permission::PermissionContext for PermissionRequestContext {
     }
 }
 /// Only identity canonicalization is exposed to context callbacks.
+#[derive(Clone)]
 pub struct ContextRequestIdentity(ToolContextBuilder);
 impl ContextRequestIdentity {
+    pub(crate) fn for_identity(
+        &self,
+        identity: &pilotdeck_protocol::admission::ExecutionIdentity,
+    ) -> Self {
+        let mut result = self.clone();
+        result.0.binding.input.insert(
+            "sessionId".into(),
+            JsValue::String(identity.session_id.clone()),
+        );
+        result
+            .0
+            .binding
+            .input
+            .insert("turnId".into(), JsValue::String(identity.turn_id.clone()));
+        result
+    }
     pub fn new(binding: TurnBinding, ports: ToolContextPorts) -> Self {
         Self(ToolContextBuilder::new(binding, ports, false))
     }

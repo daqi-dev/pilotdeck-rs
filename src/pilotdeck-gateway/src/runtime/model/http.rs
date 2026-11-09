@@ -261,6 +261,17 @@ impl HyperModelTransport {
     pub fn new() -> Self {
         Self::from_config(webpki_client_config(), ProxyConfig::from_settings(None))
     }
+    /// Snapshot-bound native tools use the same proxy precedence as the host,
+    /// without rereading mutable process proxy variables on each request.
+    pub(crate) fn with_proxy_settings(
+        settings: Option<&ProxySettings>,
+        env: &crate::config::Env,
+    ) -> Self {
+        Self::from_config(
+            webpki_client_config(),
+            ProxyConfig::from_settings_lookup(settings, |key| env.get(key).cloned()),
+        )
+    }
     /// Trust exactly `roots` (tests use a throwaway CA).
     pub fn with_roots(roots: rustls::RootCertStore) -> Self {
         Self::from_config(
@@ -525,7 +536,7 @@ impl ProxyConfig {
         Self::from_settings_lookup(settings, |key| std::env::var(key).ok())
     }
 
-    fn from_settings_lookup(
+    pub(crate) fn from_settings_lookup(
         settings: Option<&ProxySettings>,
         lookup: impl Fn(&str) -> Option<String>,
     ) -> Option<Self> {

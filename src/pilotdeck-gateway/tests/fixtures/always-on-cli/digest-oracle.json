@@ -1,0 +1,49 @@
+{
+  "records": [
+    {
+      "id": "dedupe",
+      "input": "{\"type\":\"accepted_input\",\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\" hello \"}]}]}\n{\"type\":\"accepted_input\",\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}]}",
+      "result": [
+        "hello"
+      ]
+    },
+    {
+      "id": "spaced",
+      "input": "{\"type\": \"accepted_input\",\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"ignored\"}]}]}",
+      "result": []
+    },
+    {
+      "id": "invalid",
+      "input": "{bad}\n{\"type\":\"accepted_input\",\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}]}",
+      "result": [
+        "ok"
+      ]
+    },
+    {
+      "id": "surrogate",
+      "input": "{\"type\":\"accepted_input\",\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx🙂\"}]}]}",
+      "result": [
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\ud83d..."
+      ]
+    },
+    {
+      "id": "limit",
+      "input": "{\"type\":\"accepted_input\",\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"p0\"}]}]}\n{\"type\":\"accepted_input\",\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"p1\"}]}]}\n{\"type\":\"accepted_input\",\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"p2\"}]}]}\n{\"type\":\"accepted_input\",\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"p3\"}]}]}\n{\"type\":\"accepted_input\",\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"p4\"}]}]}\n{\"type\":\"accepted_input\",\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"p5\"}]}]}\n{\"type\":\"accepted_input\",\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"p6\"}]}]}\n{\"type\":\"accepted_input\",\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"p7\"}]}]}\n{\"type\":\"accepted_input\",\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"p8\"}]}]}\n{\"type\":\"accepted_input\",\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"p9\"}]}]}\n{\"type\":\"accepted_input\",\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"p10\"}]}]}\n{\"type\":\"accepted_input\",\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\"p11\"}]}]}",
+      "result": [
+        "p0",
+        "p1",
+        "p2",
+        "p3",
+        "p4",
+        "p5",
+        "p6",
+        "p7"
+      ]
+    },
+    {
+      "id": "empty",
+      "input": "{\"type\":\"accepted_input\",\"messages\":[{\"content\":[{\"type\":\"text\",\"text\":\" \\t\\n \"}]}]}",
+      "result": []
+    }
+  ]
+}

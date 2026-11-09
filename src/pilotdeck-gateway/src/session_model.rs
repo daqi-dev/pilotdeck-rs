@@ -90,12 +90,13 @@ pub(crate) fn response<F: Files>(
         .flatten()
         .map(String::into_bytes)
 }
-pub(crate) fn execute<F: Files>(
+/// Resolve the dialog project before selection validation, matching the
+/// Gateway session model bundle. The injected file port preserves caller
+/// policy for bounded marker reads.
+pub(crate) fn resolve_project<F: Files>(
     metadata: &Metadata<F>,
-    params: &JsValue,
-    env: &Env,
-) -> Result<JsValue, Error> {
-    let project = property(params, "projectKey")?;
+    project: &JsValue,
+) -> Result<String, Error> {
     let Some(project_string) = project.as_string() else {
         return Err(path_argument(project));
     };
@@ -132,6 +133,29 @@ pub(crate) fn execute<F: Files>(
             .map_err(crate::config::cwd_error)?
             .to_string_lossy()
             .into_owned();
+    Ok(project)
+}
+pub(crate) fn execute<F: Files>(
+    metadata: &Metadata<F>,
+    params: &JsValue,
+    env: &Env,
+) -> Result<JsValue, Error> {
+    execute_with_config(metadata, params, env, |project| {
+        config::load_project_with_files(metadata, env, project)
+    })
+}
+
+/// Keep registration/transcript IO and configuration IO in their respective
+/// owners. Native callers supply the bounded config loader so marker limits
+/// never become configuration limits (including saved reasoning restoration).
+pub(crate) fn execute_with_config<F: Files>(
+    metadata: &Metadata<F>,
+    params: &JsValue,
+    env: &Env,
+    mut load_config: impl FnMut(Option<&str>) -> Result<config::Config, Error>,
+) -> Result<JsValue, Error> {
+    let project = property(params, "projectKey")?;
+    let project = resolve_project(metadata, project)?;
     let session = field(params, "sessionKey");
     if matches!(session, JsValue::Undefined | JsValue::Null)
         || session.as_string().is_some_and(|s| {
@@ -165,7 +189,9 @@ pub(crate) fn execute<F: Files>(
             if crate::node_io::lookup_for("session_model_get", &e)
                 .is_some_and(|(code, _)| code == "ENOENT") => {}
         Err(e) => return Err(io_error(&e, &path, "stat")),
-        Ok(stat) if stat.size > 50 * 1024 * 1024 => {}
+        // Fixed TS selection replay skips oversized transcripts; history has
+        // its own error contract. Keep this existing fallback semantics.
+        Ok(stat) if stat.size > crate::storage::TRANSCRIPT_MAX_BYTES => {}
         Ok(_) => {
             let bytes = match metadata.files.read(&path) {
                 Ok(b) => b,
@@ -222,7 +248,7 @@ pub(crate) fn execute<F: Files>(
     }
     let saved = replay::selection(&entries)?;
     let saved = if truthy(&saved) {
-        restore(metadata, saved, env)?
+        restore(saved, env, &mut load_config)?
     } else {
         JsValue::Undefined
     };
@@ -236,7 +262,7 @@ pub(crate) fn execute<F: Files>(
             ("speed", field(&saved, "speed").clone()),
         ])
     } else {
-        let c = config::load_project_with_files(metadata, env, Some(&project))?;
+        let c = load_config(Some(&project))?;
         object([
             ("provider", JsValue::String(c.selection.0)),
             ("model", JsValue::String(c.selection.1)),
@@ -258,7 +284,11 @@ pub(crate) fn execute<F: Files>(
         ("effective", effective),
     ]))
 }
-fn restore<F: Files>(metadata: &Metadata<F>, saved: JsValue, env: &Env) -> Result<JsValue, Error> {
+fn restore(
+    saved: JsValue,
+    env: &Env,
+    load_config: &mut impl FnMut(Option<&str>) -> Result<config::Config, Error>,
+) -> Result<JsValue, Error> {
     if is(field(&saved, "mode"), "auto") {
         return Ok(object([("mode", "auto".into())]));
     }
@@ -274,7 +304,7 @@ fn restore<F: Files>(metadata: &Metadata<F>, saved: JsValue, env: &Env) -> Resul
     ]);
     if !field(&saved, "reasoning").is_undefined() {
         // Restore uses the global catalog, including its full validation/sorting.
-        let catalog = crate::model_catalog::execute(metadata, &object([]), env)?;
+        let catalog = crate::model_catalog::execute_loaded(load_config(None)?, &object([]), env)?;
         let item = match field(&catalog, "items") {
             JsValue::Array(items) => items.iter().find(|m| {
                 field(m, "provider") == field(&saved, "provider")
@@ -320,7 +350,7 @@ fn sanitize_session_units(s: &JsString) -> Vec<u16> {
         trimmed.to_vec()
     }
 }
-fn path_argument(v: &JsValue) -> Error {
+pub(crate) fn path_argument(v: &JsValue) -> Error {
     match crate::metadata::argument_received(v) {
         crate::metadata::ArgumentReceived::Text(received) => error(
             "ERR_INVALID_ARG_TYPE",

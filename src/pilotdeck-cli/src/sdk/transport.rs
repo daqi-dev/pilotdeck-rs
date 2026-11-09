@@ -12,21 +12,15 @@ use tokio::{
     time::{Instant, timeout, timeout_at},
 };
 use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream, connect_async_with_config,
-    tungstenite::{Message, protocol::WebSocketConfig},
+    MaybeTlsStream, WebSocketStream, connect_async_with_config, tungstenite::Message,
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub(super) const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
-const MAX_RECEIVE_BYTES: usize = 128 * 1024 * 1024;
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-fn websocket_config() -> WebSocketConfig {
-    WebSocketConfig::default()
-        .max_frame_size(Some(MAX_RECEIVE_BYTES))
-        .max_message_size(Some(MAX_RECEIVE_BYTES))
-}
+pub(crate) use pilotdeck_cli::ws_config::websocket_config;
 
 fn error(message: &str) -> Failure {
     Failure::Error(message.into())
@@ -465,7 +459,7 @@ fn next_sequence(frame: &JsValue, id: &str, previous: f64) -> Result<Option<f64>
     Ok(Some(sequence))
 }
 
-async fn close_socket(mut socket: &mut Socket) {
+pub(crate) async fn close_socket(mut socket: &mut Socket) {
     let _ = timeout(CLOSE_TIMEOUT, SinkExt::close(&mut socket)).await;
 }
 

@@ -1,4 +1,5 @@
-//! One owned process group and independent pipe pumps. No callbacks in pumps.
+//! One owned stdio group or external TCP socket, with shared bounded pumps.
+//! No callbacks in pumps; TCP cleanup never controls the external process.
 use super::{
     HostError, HostErrorKind, Limits,
     budget::{Budget, Frame, Lease},
@@ -13,7 +14,8 @@ use std::{
     },
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
+    net::TcpStream,
     process::{Child, Command},
     sync::{mpsc, oneshot, watch},
     task::JoinHandle,
@@ -26,7 +28,7 @@ enum WriteCommand {
 }
 
 pub(super) struct Connection {
-    child: Child,
+    child: Option<Child>,
     #[cfg(unix)]
     group: Option<rustix::process::Pid>,
     outgoing: Option<mpsc::Sender<WriteCommand>>,
@@ -72,13 +74,72 @@ impl Connection {
             .kill_on_drop(true)
             .spawn()
             .map_err(HostError::io)?;
+        let stdin = child.stdin.take().expect("piped stdin");
+        let stdout = child.stdout.take().expect("piped stdout");
+        let stderr_pipe = child.stderr.take().expect("piped stderr");
+        Ok(Self::from_io(
+            Some(child),
+            (stdin, stdout, stderr_pipe),
+            limits,
+            budget,
+            false,
+        ))
+    }
+    pub(super) async fn connect_tcp(
+        endpoint: &super::TcpEndpoint,
+        limits: Limits,
+        budget: Arc<Budget>,
+    ) -> Result<Self, HostError> {
+        let stream = timeout(
+            endpoint.timeout,
+            TcpStream::connect((endpoint.host.as_str(), endpoint.port)),
+        )
+        .await
+        .map_err(|_| {
+            HostError::new(
+                HostErrorKind::Timeout,
+                format!(
+                    "Timed out connecting to sidecar TCP server after {}ms.",
+                    endpoint.timeout.as_millis()
+                ),
+            )
+        })?
+        .map_err(|error| {
+            HostError::new(
+                HostErrorKind::Io,
+                format!("Failed to connect to sidecar TCP server: {error}"),
+            )
+        })?;
+        stream.set_nodelay(true).map_err(HostError::io)?;
+        let (reader, writer) = stream.into_split();
+        Ok(Self::from_io(
+            None,
+            (writer, reader, tokio::io::empty()),
+            limits,
+            budget,
+            true,
+        ))
+    }
+    // Both transports retain the same bounded queues, frame parser and byte
+    // leases. TCP has no child/PGID, so cleanup cannot kill the external peer.
+    fn from_io<R, W, E>(
+        child: Option<Child>,
+        io: (W, R, E),
+        limits: Limits,
+        budget: Arc<Budget>,
+        tcp: bool,
+    ) -> Self
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+        E: AsyncRead + Unpin + Send + 'static,
+    {
+        let (mut stdin, stdout, mut stderr_pipe) = io;
         #[cfg(unix)]
         let group = child
-            .id()
+            .as_ref()
+            .and_then(Child::id)
             .and_then(|pid| rustix::process::Pid::from_raw(pid as i32));
-        let mut stdin = child.stdin.take().expect("piped stdin");
-        let stdout = child.stdout.take().expect("piped stdout");
-        let mut stderr_pipe = child.stderr.take().expect("piped stderr");
         let (outgoing, mut writes) = mpsc::channel(limits.queue_capacity);
         let (reads, incoming) = mpsc::channel(limits.queue_capacity);
         let (ack, mut acks) = watch::channel(None::<Arc<String>>);
@@ -145,7 +206,7 @@ impl Connection {
                         let _ = reads
                             .send(Err(HostError::new(
                                 HostErrorKind::Disconnected,
-                                "Sidecar stdout closed before execute reached a terminal event.",
+                                if tcp { "Sidecar TCP socket closed before execute reached a terminal event." } else { "Sidecar stdout closed before execute reached a terminal event." },
                             )))
                             .await;
                         return;
@@ -164,7 +225,11 @@ impl Connection {
                     let _ = reads
                         .send(Err(HostError::new(
                             HostErrorKind::Limit,
-                            "Sidecar stdout frame exceeds configured byte limit.",
+                            if tcp {
+                                "Sidecar TCP frame exceeds configured byte limit."
+                            } else {
+                                "Sidecar stdout frame exceeds configured byte limit."
+                            },
                         )))
                         .await;
                     return;
@@ -198,7 +263,7 @@ impl Connection {
                 tail.drain(..excess);
             }
         });
-        Ok(Self {
+        Self {
             child,
             #[cfg(unix)]
             group,
@@ -217,7 +282,7 @@ impl Connection {
             term_sent: Arc::new(AtomicUsize::new(0)),
             #[cfg(test)]
             reap_deadline: None,
-        })
+        }
     }
 
     pub(super) fn send(&self, value: &JsValue) -> Result<(), HostError> {
@@ -318,7 +383,7 @@ impl Connection {
             .into()
     }
     pub(super) fn pid(&self) -> Option<u32> {
-        self.child.id()
+        self.child.as_ref().and_then(Child::id)
     }
 
     #[cfg(test)]
@@ -364,6 +429,9 @@ impl Connection {
             .map_err(|error| HostError::io(error.into()))
     }
     async fn stop_child(&mut self) -> Result<(), HostError> {
+        if self.child.is_none() {
+            return Ok(());
+        }
         #[cfg(unix)]
         {
             if !self.wait_for_exit_unreaped().await? {
@@ -378,18 +446,24 @@ impl Connection {
         }
         #[cfg(not(unix))]
         {
-            if let Ok(result) = timeout(self.limits.close_timeout, self.child.wait()).await {
+            if let Ok(result) = timeout(
+                self.limits.close_timeout,
+                self.child.as_mut().expect("owned child").wait(),
+            )
+            .await
+            {
                 return result.map(|_| ()).map_err(HostError::io);
             }
-            let _ = self.child.start_kill();
+            let _ = self.child.as_mut().expect("owned child").start_kill();
         }
-        timeout(self.reap_deadline(), self.child.wait())
-            .await
-            .map_err(|_| {
-                HostError::new(HostErrorKind::Timeout, "Sidecar did not exit after kill.")
-            })?
-            .map(|_| ())
-            .map_err(HostError::io)
+        timeout(
+            self.reap_deadline(),
+            self.child.as_mut().expect("owned child").wait(),
+        )
+        .await
+        .map_err(|_| HostError::new(HostErrorKind::Timeout, "Sidecar did not exit after kill."))?
+        .map(|_| ())
+        .map_err(HostError::io)
     }
     pub(super) async fn close(&mut self) -> Result<(), HostError> {
         if self.closed {
@@ -455,7 +529,7 @@ async fn deliver(
     let valid = value.is_ok();
     sender.send(value).await.is_ok() && valid
 }
-async fn optional_write(stdin: &mut tokio::process::ChildStdin, line: &str) {
+async fn optional_write(stdin: &mut (impl AsyncWrite + Unpin), line: &str) {
     // TS client:943-970: cancel and ACK failures never enter the input stream.
     if let Err(error) = stdin.write_all(line.as_bytes()).await {
         best_effort_log(format_args!(
@@ -593,7 +667,13 @@ mod tests {
         assert!(connection.wait_for_exit_unreaped().await.unwrap());
         connection.kill_group();
         assert!(connection.group.is_none());
-        connection.child.wait().await.unwrap();
+        connection
+            .child
+            .as_mut()
+            .expect("stdio test child")
+            .wait()
+            .await
+            .unwrap();
         assert_eq!(connection.pid(), None);
         connection.close().await.unwrap();
         assert!(connection.group.is_none());

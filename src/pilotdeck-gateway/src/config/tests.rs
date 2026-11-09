@@ -195,6 +195,10 @@ fn host_intrinsics_keep_upstream_ownership() {
     ));
     assert_eq!(tests.len(), 18);
     for test in tests {
+        let id = text(field(&test, "id")).unwrap();
+        if id.ends_with("-prototype-always") && !id.starts_with("diag-2620-") {
+            continue; // The isolated real-TS scalar matrix below now owns these cases.
+        }
         let yaml = text(field(&test, "yaml")).unwrap();
         let metadata = Metadata {
             home: PathBuf::from("<PILOT_HOME>"),
@@ -205,18 +209,28 @@ fn host_intrinsics_keep_upstream_ownership() {
             },
         };
         let env = Env::new();
-        let error = super::load(&metadata, &env)
-            .err()
-            .expect("requires JS host");
-        assert!(error.requires_host);
         let request = parse_json(&text(field(&test, "request")).unwrap()).unwrap();
-        assert!(matches!(
-            crate::dispatch::route_catalog(&request, Some(&metadata), &env),
-            crate::dispatch::Route::Forward
-        ));
-        // The separate Node oracle records the host response; no synthetic Rust
-        // response is compared or counted as a native wire match.
-        assert!(!text(field(&test, "response")).unwrap().is_empty());
+        if id == "diag-2620-prototype-always" {
+            let error = super::load(&metadata, &env)
+                .err()
+                .expect("shared prototype requires host");
+            assert!(error.requires_host);
+            assert!(matches!(
+                crate::dispatch::route_catalog(&request, Some(&metadata), &env),
+                crate::dispatch::Route::Forward
+            ));
+        } else {
+            let crate::dispatch::Route::LocalResponse(bytes) =
+                crate::dispatch::route_catalog(&request, Some(&metadata), &env)
+            else {
+                panic!("{id}: native response required");
+            };
+            assert_eq!(
+                std::str::from_utf8(&bytes).unwrap(),
+                text(field(&test, "response")).unwrap(),
+                "{id}"
+            );
+        }
     }
 }
 
@@ -733,4 +747,218 @@ fn string_coercion_errors_keep_their_class() {
         Err("TypeError")
     );
     assert_eq!(string_coercible(&JsValue::from("1")), Ok(()));
+}
+
+#[test]
+fn scalar_always_on_intrinsics_match_isolated_real_ts() {
+    struct TwoFiles {
+        global: Vec<u8>,
+        project: Option<Vec<u8>>,
+    }
+    impl Files for TwoFiles {
+        fn entries(&self, _: &Path) -> io::Result<Vec<(String, bool)>> {
+            Err(io::Error::from_raw_os_error(libc::ENOENT))
+        }
+        fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+            if path.ends_with(".pilotdeck/pilotdeck.yaml") {
+                self.project
+                    .clone()
+                    .ok_or_else(|| io::Error::from_raw_os_error(libc::ENOENT))
+            } else {
+                Ok(self.global.clone())
+            }
+        }
+        fn stat(&self, path: &Path) -> io::Result<Stat> {
+            let data = self.read(path)?;
+            Ok(Stat {
+                directory: false,
+                size: data.len() as u64,
+                birth_ms: 0.0,
+                ctime_ms: 0.0,
+                mtime_ms: 0.0,
+            })
+        }
+    }
+    let values = cases(include_str!(
+        "../../tests/fixtures/config/intrinsic-scalars.json"
+    ));
+    assert_fixture_complete(&values, 48);
+    for case in values {
+        let id = text(field(&case, "id")).unwrap();
+        let project = match field(&case, "project") {
+            JsValue::Null => None,
+            value => Some(encode(value).into_bytes()),
+        };
+        let metadata = Metadata {
+            home: PathBuf::from("/home-fixture"),
+            cwd: PathBuf::from("/project"),
+            files: TwoFiles {
+                global: encode(field(&case, "global")).into_bytes(),
+                project,
+            },
+        };
+        let result = super::load_project_with_files_inner(
+            &metadata,
+            &Env::new(),
+            Some("/project"),
+            Some((1.0, "1970-01-01T00:00:00.000Z".into())),
+        )
+        .unwrap_or_else(|error| panic!("{id}: unexpected {} {:?}", error.code, error.message));
+        let expected = field(&case, "result");
+        assert_eq!(
+            encode(&canonical(&JsValue::Array(result.diagnostics))),
+            encode(&canonical(field(expected, "diagnostics"))),
+            "{id} diagnostics"
+        );
+        let snapshot = result.snapshot.expect("requested config snapshot");
+        assert_eq!(
+            encode(&canonical(field(field(&snapshot, "config"), "alwaysOn"))),
+            encode(&canonical(field(expected, "alwaysOn"))),
+            "{id} alwaysOn"
+        );
+    }
+}
+
+#[test]
+fn intrinsically_shared_and_nested_values_still_require_host() {
+    for input in [
+        r#"{"alwaysOn":{"__proto__":7}}"#,
+        r#"{"alwaysOn":{"constructor":{"__proto__":{"x":1}}}}"#,
+        r#"{"alwaysOn":{"toString":[{"constructor":1}]}}"#,
+        r#"{"alwaysOn":{"projects":{"/p":{"__proto__":7}}}}"#,
+    ] {
+        assert!(host::required(&parse_json(input).unwrap()), "{input}");
+    }
+}
+
+#[test]
+fn plain_intrinsic_methods_and_project_overrides_match_repeated_ts_loads() {
+    struct Input {
+        global: Vec<u8>,
+        project: Option<Vec<u8>>,
+    }
+    impl Files for Input {
+        fn entries(&self, _: &Path) -> io::Result<Vec<(String, bool)>> {
+            Err(io::Error::from_raw_os_error(libc::ENOENT))
+        }
+        fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+            if path.ends_with(".pilotdeck/pilotdeck.yaml") {
+                self.project
+                    .clone()
+                    .ok_or_else(|| io::Error::from_raw_os_error(libc::ENOENT))
+            } else {
+                Ok(self.global.clone())
+            }
+        }
+        fn stat(&self, path: &Path) -> io::Result<Stat> {
+            let data = self.read(path)?;
+            Ok(Stat {
+                directory: false,
+                size: data.len() as u64,
+                birth_ms: 0.0,
+                ctime_ms: 0.0,
+                mtime_ms: 0.0,
+            })
+        }
+    }
+    let values = cases(include_str!(
+        "../../tests/fixtures/config/intrinsic-methods.json"
+    ));
+    assert_fixture_complete(&values, 176);
+    for case in values {
+        let id = text(field(&case, "id")).unwrap();
+        assert_eq!(field(&case, "repeatedEqual"), &JsValue::Bool(true));
+        assert_eq!(field(&case, "intrinsicsUnchanged"), &JsValue::Bool(true));
+        let project = text(field(&case, "projectRoot")).unwrap();
+        let metadata = Metadata {
+            home: PathBuf::from(text(field(&case, "home")).unwrap()),
+            cwd: PathBuf::from(&project),
+            files: Input {
+                global: encode(field(&case, "global")).into_bytes(),
+                project: match field(&case, "project") {
+                    JsValue::Null => None,
+                    v => Some(encode(v).into_bytes()),
+                },
+            },
+        };
+        for _ in 0..2 {
+            let result = super::load_project_with_files_inner(
+                &metadata,
+                &Env::new(),
+                Some(&project),
+                Some((1.0, "1970-01-01T00:00:00.000Z".into())),
+            )
+            .unwrap_or_else(|e| panic!("{id}: {} {:?}", e.code, e.message));
+            let snapshot = result.snapshot.unwrap();
+            let expected = field(&case, "result");
+            assert_eq!(
+                encode(&canonical(field(&snapshot, "config"))),
+                encode(&canonical(field(expected, "config"))),
+                "{id}: config"
+            );
+            assert_eq!(
+                encode(&canonical(&JsValue::Array(result.diagnostics))),
+                encode(&canonical(field(expected, "diagnostics"))),
+                "{id}: diagnostics"
+            );
+        }
+    }
+}
+
+#[test]
+fn own_intrinsic_model_definitions_match_real_ts_config_and_catalog() {
+    let values = cases(include_str!(
+        "../../tests/fixtures/config/intrinsic-models.json"
+    ));
+    assert_fixture_complete(&values, 24);
+    for case in values {
+        let id = text(field(&case, "id")).unwrap();
+        let expected = field(&case, "result");
+        let metadata = Metadata {
+            home: PathBuf::from(text(field(&case, "home")).unwrap()),
+            cwd: "/offline".into(),
+            files: FixtureFiles {
+                data: encode(field(&case, "global")).into_bytes(),
+                kind: None,
+            },
+        };
+        for _ in 0..2 {
+            let result = super::load_project_with_files_inner(
+                &metadata,
+                &Env::new(),
+                None,
+                Some((1.0, "1970-01-01T00:00:00.000Z".into())),
+            );
+            if field(expected, "ok") == &JsValue::Bool(false) {
+                let error = result.err().expect("expected native TypeError");
+                assert!(!error.requires_host, "{id}");
+                assert_eq!(error.name, text(field(expected, "name")).unwrap(), "{id}");
+                assert_eq!(
+                    error.message,
+                    field(expected, "message").as_string().unwrap().clone(),
+                    "{id}"
+                );
+            } else {
+                let result = result.unwrap_or_else(|e| panic!("{id}: {} {:?}", e.code, e.message));
+                let snapshot = result.snapshot.as_ref().unwrap();
+                assert_eq!(
+                    encode(&canonical(field(snapshot, "config"))),
+                    encode(&canonical(field(expected, "config"))),
+                    "{id}: config"
+                );
+                assert_eq!(
+                    encode(&canonical(&JsValue::Array(result.diagnostics.clone()))),
+                    encode(&canonical(field(expected, "diagnostics"))),
+                    "{id}: diagnostics"
+                );
+                let actual =
+                    crate::model_catalog::execute_loaded(result, &object([]), &Env::new()).unwrap();
+                assert_eq!(
+                    encode(&canonical(&actual)),
+                    encode(&canonical(field(expected, "catalog"))),
+                    "{id}: catalog"
+                );
+            }
+        }
+    }
 }

@@ -1,0 +1,972 @@
+{
+  "cachePlanSha": "899b3f6973eb343d99647ce169a9076495fc935191def6f78ca14bf858b52dc7",
+  "tools": [
+    {
+      "name": "agent",
+      "description": "Delegate a bounded task to a real child agent loop. Supply a short description and a complete directive. Built-in types: general-purpose, explore, plan, verify. Children inherit the parent's tool restrictions; nested delegation obeys maxSubagentDepth.",
+      "kind": "agent",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "description",
+          "prompt"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "subagent_type": {
+            "type": "string"
+          },
+          "subagentType": {
+            "type": "string"
+          }
+        }
+      },
+      "readOnly": false,
+      "concurrencySafe": true,
+      "requiresUserInteraction": false,
+      "requiredRuntimeCapabilities": [
+        "subagent_fork"
+      ]
+    },
+    {
+      "name": "ask_user_question",
+      "description": "Ask the user one to four multiple-choice questions.",
+      "kind": "session",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "questions"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "questions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "items": {
+              "type": "object",
+              "required": [
+                "question",
+                "header",
+                "options"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "question": {
+                  "type": "string"
+                },
+                "header": {
+                  "type": "string",
+                  "maxLength": 12
+                },
+                "options": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 4,
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "label",
+                      "description"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "label": {
+                        "type": "string"
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "preview": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "multiSelect": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "answers": {
+            "type": "object"
+          },
+          "annotations": {
+            "type": "object"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "source": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "readOnly": true,
+      "concurrencySafe": true,
+      "requiresUserInteraction": true,
+      "requiredRuntimeCapabilities": [
+        "user_interaction"
+      ]
+    },
+    {
+      "name": "bash",
+      "description": "Run a shell command in the PilotDeck workspace.\n\nUsage:\n- The `command` parameter is passed to PilotDeck's resolved command shell (Bash preferred; Unix falls back to `/bin/sh`, Windows falls back to `cmd.exe` and then PowerShell 7).\n- Set `PILOTDECK_SHELL_PATH` to explicitly select a shell executable; on Windows, `PILOTDECK_GIT_BASH_PATH` can select a non-standard Git Bash installation.\n- The shell runs in the current workspace directory and inherits the tool runtime environment.\n- Use `timeout` to override the command timeout in milliseconds. When omitted, the default is 30000ms. Values above 600000ms are rejected; lower the foreground timeout to 600000 or less, or use task_create followed by task_wait for background work that should finish.\n- Use `description` to provide a short, clear label for logs and audits. Prefer 3-10 words that say what the command does.\n- Use this tool for short shell commands, simple pipelines, and running saved workspace scripts.\n- Use task_create for long-running work such as dev servers, watchers, builds, test suites, deploys, CI pollers, or commands that need more than the maximum foreground timeout. For background work that should finish, call task_wait after task_create. Use task_output for progress checks and task_stop for long-lived processes.\n- For non-trivial code or anything you will debug/rerun with changed parameters, first create or edit a script file with write_file/edit_file, then run that file. Avoid large inline heredocs, `python - <<...`, long `python -c`, or long `node -e` programs when a saved script would be reusable.\n- Do not use shell-level backgrounding (`nohup`, `disown`, `setsid`, trailing `&`) in bash. Use task_create so PilotDeck can track lifecycle and output.\n- Read-only shell commands (for example `pwd`, `ls`, `git status`, `git diff`, `git log`) are treated as read-only. Commands with side effects require permission, and known-dangerous commands are denied outright.\n- The tool returns stdout, stderr, exit code, and duration. Non-zero exits raise a tool error, and timeouts raise `tool_timeout`.\n- Successful results begin with `BASH_RESULT[success][...]` plus Assertions. Read `retrieved_data_available` before treating `exit_code: 0` as task progress: exit code 0 only proves the process succeeded, not that useful task data was retrieved.\n- If a task needs content but the result is `empty_stdout` or `stderr_only`, run a follow-up command that prints or verifies the needed data instead of assuming progress.\n- If you have no command to run, respond with text instead of calling bash.",
+      "kind": "shell",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The shell command to execute (passed to PilotDeck's resolved command shell)."
+          },
+          "timeout": {
+            "type": "integer",
+            "description": "Optional timeout in milliseconds. Defaults to 30000. Max 600000; larger values are rejected. Use timeout=600000 or less for foreground bash, or task_create followed by task_wait for background work that should finish."
+          },
+          "description": {
+            "type": "string",
+            "description": "Clear, concise description of what this command does in active voice. Prefer 3-10 words."
+          }
+        }
+      },
+      "readOnly": true,
+      "concurrencySafe": true,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "create_goal",
+      "description": "Create the session's durable goal. Only one goal can exist at a time.",
+      "kind": "session",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "objective": {
+            "type": "string",
+            "description": "The outcome this session is pursuing."
+          },
+          "max_goal_rounds": {
+            "type": "number",
+            "description": "Optional maximum number of continuation rounds."
+          },
+          "id": {
+            "type": "string",
+            "description": "Optional stable goal identifier."
+          }
+        },
+        "required": [
+          "objective"
+        ],
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "concurrencySafe": false,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "edit_file",
+      "description": "Edit a workspace text file, or an outside-workspace text file after explicit host permission, by replacing an exact string match.\n\nUsage:\n- You may create a new file directly by setting old_string to an empty string.\n- You must read an existing target file with read_file before editing it. This tool will reject edits to existing files that have not been read in this session.\n- old_string must exactly match the file content character-by-character, including indentation. Copy old_string directly from read_file output without adding or removing spaces.\n- Use this tool for targeted changes to an existing file.\n- old_string must appear in the target file unless you are creating a new file with old_string: \"\".\n- If old_string is not unique, either provide a more specific old_string or set replace_all to update every occurrence.\n- Use replace_all when renaming or replacing repeated text across the same file.\n- Paths outside the workspace require explicit user permission before execution.",
+      "kind": "filesystem",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "file_path",
+          "old_string",
+          "new_string"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "description": "Relative or absolute path of the file to edit. Paths outside the workspace require explicit user permission."
+          },
+          "old_string": {
+            "type": "string",
+            "description": "The exact substring to find and replace. It must appear in the target file."
+          },
+          "new_string": {
+            "type": "string",
+            "description": "The replacement string that will replace old_string."
+          },
+          "replace_all": {
+            "type": "boolean",
+            "description": "When true, replace all occurrences of old_string. Defaults to false, which requires old_string to be unique."
+          }
+        }
+      },
+      "readOnly": false,
+      "concurrencySafe": false,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "edit_notebook",
+      "description": "Edit a Jupyter notebook (.ipynb) by replacing, inserting, or deleting a specific cell.\n\nUsage:\n- Use this tool for notebook cell edits instead of edit_file.\n- notebook_path may be relative to the current workspace or absolute, but it must resolve inside the workspace.\n- edit_mode defaults to replace and supports replace, insert, or delete.\n- insert requires cell_type and inserts after the referenced cell, or at the beginning when cell_id is omitted.\n- cell_id may be a real notebook cell id or a synthetic index in the form cell-N.\n- You MUST use read_file on the notebook first; stale notebook edits are rejected.",
+      "kind": "filesystem",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "notebook_path",
+          "new_source"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "notebook_path": {
+            "type": "string",
+            "description": "Relative or absolute path to the Jupyter notebook file."
+          },
+          "cell_id": {
+            "type": "string",
+            "description": "Notebook cell id, or a synthetic index in the form cell-N."
+          },
+          "new_source": {
+            "type": "string",
+            "description": "New source to write to the cell. Still required for delete to preserve legacy parity."
+          },
+          "cell_type": {
+            "type": "string",
+            "enum": [
+              "code",
+              "markdown"
+            ],
+            "description": "Cell type for inserts, or an optional replacement type for replace."
+          },
+          "edit_mode": {
+            "type": "string",
+            "enum": [
+              "replace",
+              "insert",
+              "delete"
+            ],
+            "description": "Notebook edit mode. Defaults to replace."
+          }
+        }
+      },
+      "readOnly": false,
+      "concurrencySafe": false,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "enter_plan_mode",
+      "description": "Enter read-only planning and write a plan for approval.",
+      "kind": "session",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      },
+      "readOnly": true,
+      "concurrencySafe": true,
+      "requiresUserInteraction": false,
+      "requiredRuntimeCapabilities": [
+        "plan_workflow"
+      ]
+    },
+    {
+      "name": "execute_code",
+      "description": "Run a local Python 3 script using import pilotdeck_tools. Helpers: web_search, web_fetch, read_file, write_file, edit_file, grep, glob, bash. Helpers re-enter this turn's permission, hooks and file-freshness checks. Only the final stdout/stderr summary returns to the model. Agent, task, notebook, MCP and recursive execute_code helpers are unavailable. Python inherits the tool environment; never print secrets. Read-only automatic permissions are enforced by a real filesystem sandbox; approved executions still obey the project sandbox.",
+      "kind": "custom",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "type": "integer"
+          },
+          "max_tool_calls": {
+            "type": "integer"
+          }
+        }
+      },
+      "readOnly": false,
+      "concurrencySafe": false,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "exit_plan_mode",
+      "description": "Present a plan file for approval before implementation.",
+      "kind": "session",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "plan_file_path"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "plan_file_path": {
+            "type": "string"
+          }
+        }
+      },
+      "readOnly": true,
+      "concurrencySafe": true,
+      "requiresUserInteraction": true,
+      "requiredRuntimeCapabilities": [
+        "plan_workflow",
+        "user_interaction"
+      ]
+    },
+    {
+      "name": "get_current_time",
+      "description": "Return the current local time for a timezone. Use this before creating cron_create tasks with absolute dates/times such as tonight, tomorrow morning, or next Monday. For simple relative delays like 'in 10 minutes', prefer cron_create with schedule.type='delay' instead of calling this tool.",
+      "kind": "custom",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "timezone": {
+            "type": "string",
+            "description": "IANA timezone, e.g. Asia/Shanghai. Defaults to the host local timezone."
+          }
+        }
+      },
+      "readOnly": true,
+      "concurrencySafe": true,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "get_goal",
+      "description": "Read the current durable goal for this session.",
+      "kind": "session",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "concurrencySafe": true,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "glob",
+      "description": "Fast file pattern matching tool scoped to the workspace.\n\nUsage:\n- Supports glob patterns like \"**/*.js\" or \"src/**/*.ts\".\n- Use this tool when you need to find files by name patterns.\n- Provide the optional path parameter to restrict the search to a subdirectory inside the workspace.\n- Returns matching file paths in stable sorted order.\n- Use this tool to narrow down candidate files before reading or editing them.",
+      "kind": "filesystem",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "pattern"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "description": "The glob pattern to match files against. May be workspace-relative, path-relative, or an absolute glob that resolves inside the workspace."
+          },
+          "path": {
+            "type": "string",
+            "description": "The directory to search in. If not specified, the workspace root will be used. Omit this field to use the default directory. Must resolve to a directory inside the workspace if provided."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of file paths to return. This is a PilotDeck-specific output cap; defaults to 1000. Results remain stable and sorted before truncation."
+          }
+        }
+      },
+      "readOnly": true,
+      "concurrencySafe": true,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "grep",
+      "description": "A ripgrep-powered search tool for workspace file contents.\n\nUsage:\n- ALWAYS use `grep` for content search tasks. Do NOT invoke `grep` or `rg` through `bash` when this tool can express the search.\n- Supports full regular expressions, `type` filters, glob filters, and multiline search.\n- Output modes: `content` shows matching lines, `files_with_matches` lists file paths, and `count` shows per-file match counts.\n- `head_limit` and `offset` work in every output mode. Pass `head_limit: 0` only when you truly need unlimited results.\n- For open-ended multi-step exploration, prefer the `agent` tool's `explore` subagent instead of repeatedly broadening searches in the parent agent.",
+      "kind": "filesystem",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "pattern"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "description": "The regular expression pattern to search for in file contents."
+          },
+          "path": {
+            "type": "string",
+            "description": "File or directory to search within. Defaults to the workspace root."
+          },
+          "glob": {
+            "type": "string",
+            "description": "Glob pattern to filter files (for example '*.js' or '*.{ts,tsx}'). Maps to ripgrep's --glob."
+          },
+          "output_mode": {
+            "type": "string",
+            "enum": [
+              "content",
+              "files_with_matches",
+              "count"
+            ],
+            "description": "Output mode: 'content' shows matching lines, 'files_with_matches' lists file paths, and 'count' shows per-file counts. Defaults to 'files_with_matches'."
+          },
+          "-B": {
+            "type": "integer",
+            "description": "Number of lines to show before each match (content mode only)."
+          },
+          "-A": {
+            "type": "integer",
+            "description": "Number of lines to show after each match (content mode only)."
+          },
+          "-C": {
+            "type": "integer",
+            "description": "Alias for context: number of lines to show before and after each match."
+          },
+          "context": {
+            "type": "integer",
+            "description": "Number of lines to show before and after each match (content mode only)."
+          },
+          "-n": {
+            "type": "boolean",
+            "description": "When false, hide line numbers in content mode output. Defaults to true. Ignored in other modes."
+          },
+          "-i": {
+            "type": "boolean",
+            "description": "When true, perform case-insensitive matching."
+          },
+          "type": {
+            "type": "string",
+            "description": "File type to search (for example 'js', 'ts', 'py'). Maps to ripgrep's --type filter."
+          },
+          "head_limit": {
+            "type": "integer",
+            "description": "Maximum number of output entries to return. Applies to all output modes. Defaults to 250; pass 0 for unlimited."
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Skip this many output entries before returning results."
+          },
+          "multiline": {
+            "type": "boolean",
+            "description": "When true, enable multiline mode where . matches newlines and patterns can span lines."
+          }
+        }
+      },
+      "readOnly": true,
+      "concurrencySafe": true,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "lsp",
+      "description": "Query a language server for precise definitions, references, implementations, or hover information. Coordinates are one-based UTF-16 positions.",
+      "kind": "filesystem",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "operation",
+          "file_path",
+          "line",
+          "character"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "goToDefinition",
+              "findReferences",
+              "goToImplementation",
+              "hover"
+            ]
+          },
+          "file_path": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer"
+          },
+          "character": {
+            "type": "integer"
+          }
+        }
+      },
+      "readOnly": true,
+      "concurrencySafe": true,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "read_file",
+      "description": "Reads a file from the current workspace. You can access workspace files directly by using this tool.\nIf the User provides a path to a file, assume that path is valid as long as it resolves inside the current workspace. It is okay to read a file that does not exist; an error will be returned.\n\nUsage:\n- The file_path parameter may be a workspace-relative path or an absolute path, but it must resolve inside the current workspace\n- If the user asks you to send or share a file, use send_attachment instead of read_file; do not inspect arbitrary binary files before sending them\n- By default, offset is 1 and the tool reads from the beginning of the file\n- You can optionally specify offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters\n- Results are returned using cat -n format, with line numbers starting at 1\n- For image files, screenshots, extracted video frames, and PDFs, use this tool to inspect the visual/document content directly\n- When the current model supports image input, image files are returned as model-visible image content\n- When the current model supports PDF input, small PDF files are returned as model-visible PDF content. When specific PDF pages are requested, pages are rendered as model-visible images if the model supports image input\n- Do not manually base64-encode local images/PDFs or route them through another vision/document API unless read_file reports that the current model cannot read that content\n- When the current model does not support the required modality, reading the file returns a text notice explaining that the current model cannot read it\n- For large PDFs, provide the pages parameter to validate specific page ranges (e.g., pages: \"1-5\"). Maximum 20 pages per request\n- This tool can read Jupyter notebooks (.ipynb files) and returns a text rendering of notebook cells and outputs\n- This tool can only read files, not directories\n- If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents\n- If a previous tool result says it was persisted, truncated, or preview-only, read the file_path shown in that notice with read_file",
+      "kind": "filesystem",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "file_path"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "description": "The relative or absolute path to the file to read. The path must resolve inside the current workspace."
+          },
+          "offset": {
+            "type": "integer",
+            "description": "The 1-based line number to start reading from. Only provide if the file is too large to read at once."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "The number of lines to read. Only provide if the file is too large to read at once."
+          },
+          "pages": {
+            "type": "string",
+            "description": "Page range for PDF files (e.g., \"1-5\", \"3\", \"10-20\"). Only applicable to PDF files. Maximum 20 pages per request."
+          }
+        }
+      },
+      "readOnly": true,
+      "concurrencySafe": false,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "read_skill",
+      "description": "Read the selected skill recipe and its exact SKILL.md path. Use a name listed in available-skills; resolve its references against the returned skill directory.",
+      "kind": "session",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "skillName"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "skillName": {
+            "type": "string",
+            "description": "The name shown in available-skills."
+          }
+        }
+      },
+      "readOnly": true,
+      "concurrencySafe": true,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "send_attachment",
+      "description": "Send an existing local file through the current host/channel when supported. Use this when the user asks to send, upload, return or share a file; binary files do not need read_file first. Files inside PILOTDECK_WORK_DIR or workspace .pilotdeck/work cannot be sent: publish the reviewed final artifact outside the internal work directory first. Workspace and registered attachment files are allowed; external paths require permission.",
+      "kind": "filesystem",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "file_path"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "file_path": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mime_type": {
+            "type": "string"
+          }
+        }
+      },
+      "readOnly": true,
+      "concurrencySafe": false,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "send_message",
+      "description": "Send a follow-up message to a continuable subagent. The call returns after durable admission.",
+      "kind": "agent",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "subagent_id",
+          "message"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "subagent_id": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "readOnly": false,
+      "concurrencySafe": true,
+      "requiresUserInteraction": false,
+      "requiredRuntimeCapabilities": [
+        "subagent_fork"
+      ]
+    },
+    {
+      "name": "structured_output",
+      "description": "Return a final structured output payload for non-interactive hosts.",
+      "kind": "structured_output",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "value": {
+            "type": [
+              "object",
+              "array",
+              "string",
+              "number",
+              "boolean"
+            ],
+            "description": "The structured payload to return (any JSON-serializable value)."
+          }
+        }
+      },
+      "readOnly": true,
+      "concurrencySafe": true,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "subagent",
+      "description": "Start a continuable background subagent. Available types: general-purpose, explore, plan, verify. The call returns after the initial message is durably admitted.",
+      "kind": "agent",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "description",
+          "prompt"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "subagent_type": {
+            "type": "string"
+          }
+        }
+      },
+      "readOnly": false,
+      "concurrencySafe": true,
+      "requiresUserInteraction": false,
+      "requiredRuntimeCapabilities": [
+        "subagent_fork"
+      ]
+    },
+    {
+      "name": "task_create",
+      "description": "Spawn a shell command as a detached background task. Returns immediately with a taskId; it does not automatically push completion output back into the model context. For long-running tasks that should finish, call task_wait immediately after task_create so the final output returns to the current context. Use task_output only for progress checks, not manual sleep polling. Use task_stop for long-lived services/watchers.",
+      "kind": "shell",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "Shell command to run as a detached background task."
+          },
+          "agentId": {
+            "type": "string",
+            "description": "Optional agent id to associate this task with."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "bash",
+              "monitor"
+            ],
+            "description": "Task kind: 'bash' (default) or 'monitor'."
+          }
+        }
+      },
+      "readOnly": false,
+      "concurrencySafe": true,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "task_list",
+      "description": "List background tasks (optionally filter by agentId / status / kind).",
+      "kind": "shell",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "description": "Filter tasks by agent id."
+          },
+          "status": {
+            "type": [
+              "string",
+              "array"
+            ],
+            "description": "Filter by status (e.g. 'running', 'completed'). String or array of strings."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "bash",
+              "monitor"
+            ],
+            "description": "Filter by task kind."
+          }
+        }
+      },
+      "readOnly": true,
+      "concurrencySafe": true,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "task_output",
+      "description": "Read newly-produced output for a background task (incremental progress polling). Use task_wait when you need to block until a finite task completes. Use nextOffset for the next read. Stop polling when status is completed, failed, or cancelled and nextOffset >= totalBytes.",
+      "kind": "shell",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "taskId"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "taskId": {
+            "type": "string",
+            "description": "The task id returned by task_create."
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Byte offset to start reading from (for incremental polling). Defaults to 0."
+          },
+          "maxBytes": {
+            "type": "integer",
+            "description": "Maximum bytes to return in this read. Defaults to tool limit."
+          }
+        }
+      },
+      "readOnly": true,
+      "concurrencySafe": true,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "task_stop",
+      "description": "Stop a background task (SIGTERM \u2192 grace \u2192 SIGKILL).",
+      "kind": "shell",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "taskId"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "taskId": {
+            "type": "string",
+            "description": "The task id to stop."
+          },
+          "graceMs": {
+            "type": "integer",
+            "description": "Grace period in ms between SIGTERM and SIGKILL. Defaults to 5000."
+          }
+        }
+      },
+      "readOnly": false,
+      "concurrencySafe": true,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "task_wait",
+      "description": "Block until a background task finishes or timeoutMs elapses, then return the task status and output. Use this immediately after task_create for finite long-running commands such as builds, tests, conversions, downloads, or batch scripts. It does not stop the task when timeoutMs elapses; call task_wait again or task_output for progress.",
+      "kind": "shell",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "taskId"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "taskId": {
+            "type": "string",
+            "description": "The task id returned by task_create."
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "description": "Maximum time to block in milliseconds. Defaults to 600000. Max 600000."
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Byte offset to start reading output from after waiting. Defaults to 0."
+          },
+          "maxBytes": {
+            "type": "integer",
+            "description": "Maximum bytes to return in this read. Defaults to tool limit."
+          }
+        }
+      },
+      "readOnly": true,
+      "concurrencySafe": true,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "todo_write",
+      "description": "Read or update the session checklist.",
+      "kind": "session",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "markdown": {
+            "type": "string"
+          },
+          "todos": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "content": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "in_progress",
+                    "completed",
+                    "cancelled"
+                  ]
+                },
+                "priority": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "merge": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "readOnly": true,
+      "concurrencySafe": true,
+      "requiresUserInteraction": false,
+      "requiredRuntimeCapabilities": []
+    },
+    {
+      "name": "update_goal",
+      "description": "Edit or transition the session's durable goal using an optional expected revision for CAS safety.",
+      "kind": "session",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "edit",
+              "pause",
+              "resume",
+              "complete",
+              "block",
+              "clear"
+            ]
+          },
+          "expected_revision": {
+            "type": "number"
+          },
+          "objective": {
+            "type": "string"
+          },
+          "blocked_reason": {
+            "type": "string"
+          },
+          "max_goal_rounds": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "readOnly": false,
+      "concurrencySafe": false,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "web_fetch",
+      "description": "- Fetches content from a specified URL and can process it using a secondary AI model\n- Takes a URL and a prompt as input\n- Fetches the URL content, converts HTML to markdown\n- If a model client is available, applies the prompt to the fetched content using a secondary model call\n- Without a model client, returns the fetched markdown content directly\n- Use this tool when you need to retrieve and analyze web content\n\nUsage notes:\n  - IMPORTANT: If an MCP-provided web fetch tool is available, prefer using that tool instead of this one, as it may have fewer restrictions.\n  - The URL must be a fully-formed valid URL\n  - HTTP URLs will be automatically upgraded to HTTPS\n  - The prompt should describe what information you want to extract from the page when mode is \"llm\"\n  - Use mode \"raw\" for exact, full-text, verification, or copy-the-source tasks where the fetched markdown must not be summarized or rewritten\n  - Use the default mode \"llm\" for summary, question-answering, and analysis tasks over a page\n  - This tool is read-only and does not modify any files\n  - Fetched content may be truncated and model responses may be summarized if the page is very large\n  - Includes a self-cleaning 15-minute cache for faster responses when repeatedly accessing the same URL\n  - When a URL redirects to a different host, the tool will inform you and provide the redirect URL in a special format. You should then make a new web_fetch request with the redirect URL to fetch the content.\n  - For GitHub URLs, prefer using the gh CLI via Bash instead (e.g., gh pr view, gh issue view, gh api).",
+      "kind": "network",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Fully-formed URL to fetch. HTTP URLs will be upgraded to HTTPS before the request is issued."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Question or extraction directive to apply to the fetched markdown. When no model client is available, retry with mode \"raw\" to fetch markdown without secondary model processing."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "llm",
+              "raw"
+            ],
+            "description": "Fetch mode. \"llm\" (default) applies prompt with the secondary model. \"raw\" returns fetched markdown directly without any model processing."
+          }
+        }
+      },
+      "readOnly": true,
+      "concurrencySafe": true,
+      "requiresUserInteraction": false
+    },
+    {
+      "name": "write_file",
+      "description": "Writes a UTF-8 text file inside the workspace, or outside the workspace after explicit host permission.\n\nUsage:\n- The file_path parameter may be relative to the current workspace or an absolute path. Paths outside the workspace require explicit user permission before execution.\n- You may create a new file directly; use ls/glob/git status if you need to confirm it does not exist.\n- This tool will overwrite the existing file if there is one at the provided path.\n- You must read an existing file with read_file before writing to it. This tool will fail if an existing file was not read first.\n- If the target file changed after the last read, this tool will fail and you must read it again before writing.\n- Prefer the edit_file tool for modifying existing files. Only use this tool to create new files or for complete rewrites.\n- Prefer this tool for reusable scripts, generators, and parameterized helpers before running them with bash.\n- The returned filePath is always the resolved absolute path.\n- Do not create documentation files (*.md) or README files unless explicitly requested by the User.\n- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.",
+      "kind": "filesystem",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "file_path",
+          "content"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "description": "The path to the file to write. It may be relative to the current workspace or absolute. Paths outside the workspace require explicit user permission."
+          },
+          "content": {
+            "type": "string",
+            "description": "The content to write to the file."
+          }
+        }
+      },
+      "readOnly": false,
+      "concurrencySafe": false,
+      "requiresUserInteraction": false
+    }
+  ]
+}

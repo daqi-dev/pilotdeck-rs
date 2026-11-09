@@ -320,10 +320,18 @@ struct ReplaceResult {
     retiring_lease_count: usize,
 }
 
+pub(crate) fn style_slots() -> Arc<tokio::sync::Semaphore> {
+    static SLOTS: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+    SLOTS
+        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(4)))
+        .clone()
+}
+
 // ─────────────────────────────────────────────────────────── PluginRuntimeState
 
 pub(super) struct PluginRuntimeState {
     pub(super) registry: PluginRegistry,
+    output_styles: Vec<PluginOutputStyleContribution>,
     refresh_sender: Option<watch::Sender<Option<Result<PluginRefreshResult, PluginRuntimeError>>>>,
     refresh_receiver:
         Option<watch::Receiver<Option<Result<PluginRefreshResult, PluginRuntimeError>>>>,
@@ -339,6 +347,7 @@ pub struct PluginRuntime {
     options: Arc<PluginRuntimeOptions>,
     state: Arc<TokioMutex<PluginRuntimeState>>,
     lease_failure: watch::Sender<Option<Result<(), PluginRuntimeError>>>,
+    native_style_only: bool,
 }
 
 impl PluginRuntime {
@@ -349,6 +358,7 @@ impl PluginRuntime {
             options: Arc::new(options),
             state: Arc::new(TokioMutex::new(PluginRuntimeState {
                 registry,
+                output_styles: Vec::new(),
                 refresh_sender: None,
                 refresh_receiver: None,
                 disposal_requested: false,
@@ -356,7 +366,13 @@ impl PluginRuntime {
                 dispose_receiver: None,
             })),
             lease_failure,
+            native_style_only: false,
         }
+    }
+    pub(crate) fn new_native_style_only(options: PluginRuntimeOptions) -> Self {
+        let mut runtime = Self::new(options);
+        runtime.native_style_only = true;
+        runtime
     }
 
     pub async fn refresh(&self) -> Result<Vec<Arc<LoadedPlugin>>, PluginRuntimeError> {
@@ -391,6 +407,7 @@ impl PluginRuntime {
                 st.refresh_sender = Some(tx.clone());
                 st.refresh_receiver = Some(rx.clone());
                 let options = Arc::clone(&self.options);
+                let native_style_only = self.native_style_only;
                 let state_clone = Arc::clone(&self.state);
                 super::cleanup_task::spawn_with_error(
                     &tokio::runtime::Handle::current(),
@@ -399,7 +416,8 @@ impl PluginRuntime {
                         "Plugin refresh task was dropped or panicked before completion.",
                     ),
                     async move {
-                        let result = perform_refresh(&options, &state_clone).await;
+                        let result =
+                            perform_refresh(&options, &state_clone, native_style_only).await;
                         let mut s = state_clone.lock().await;
                         s.refresh_sender = None;
                         s.refresh_receiver = None;
@@ -423,6 +441,115 @@ impl PluginRuntime {
 
     pub async fn snapshot(&self) -> Vec<Arc<LoadedPlugin>> {
         self.state.lock().await.registry.list()
+    }
+
+    /// The style-only registry is separate from immutable plugin generations.
+    pub async fn list_output_styles(&self) -> Vec<PluginOutputStyleContribution> {
+        let mut styles = self.state.lock().await.output_styles.clone();
+        contributions::locale_sort_by(&mut styles, |style| &style.name);
+        styles
+    }
+
+    /// Reload only output style manifests and markdown. Existing hooks, MCP,
+    /// commands, plugin leases and the plugin generation remain untouched.
+    pub async fn reload_output_styles(&self) -> Result<Vec<String>, PluginRuntimeError> {
+        let permit = style_slots()
+            .acquire_owned()
+            .await
+            .map_err(|_| PluginRuntimeError::new("Output style reload is unavailable."))?;
+        let options = self.options.clone();
+        let next = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let paths = PilotExtensionPaths::resolve(&options.project_root, &options.pilot_home);
+            let mut styles = Vec::new();
+            let mut positions = HashMap::new();
+            let mut budget = loader::StyleBudget::new();
+            for plugin in &options.builtin_plugins {
+                for style in &plugin.output_styles {
+                    budget.entry()?;
+                    budget.reserve(
+                        style
+                            .name
+                            .len()
+                            .saturating_add(style.content.len())
+                            .saturating_add(plugin.name.len())
+                            .saturating_add(style.path.as_os_str().len())
+                            .saturating_add(
+                                style
+                                    .frontmatter
+                                    .get("description")
+                                    .and_then(|value| value.as_str())
+                                    .map_or(0, str::len),
+                            ),
+                    )?;
+                    upsert_style(
+                        &mut styles,
+                        &mut positions,
+                        contributions::to_output_style(plugin, style),
+                    );
+                }
+            }
+            let discovered = loader::discover_style_paths(
+                &[
+                    (paths.global_plugins_dir, PluginSource::Global),
+                    (paths.project_plugins_dir, PluginSource::Project),
+                ],
+                &mut budget,
+            )?;
+            for candidate in discovered {
+                match loader::load_style_bounded(&candidate.path, candidate.source, &mut budget) {
+                    Ok(plugin) => {
+                        for style in plugin.output_styles {
+                            let description = style
+                                .frontmatter
+                                .get("description")
+                                .and_then(|value| value.as_str())
+                                .map(str::to_owned);
+                            upsert_style(
+                                &mut styles,
+                                &mut positions,
+                                PluginOutputStyleContribution {
+                                    name: style.name,
+                                    description,
+                                    content: style.content,
+                                    path: style.path,
+                                    plugin: plugin.name.clone(),
+                                    source: plugin.source,
+                                },
+                            );
+                        }
+                    }
+                    Err(error) if error.code == Some("STYLE_RELOAD_LIMIT") => return Err(error),
+                    Err(_) => {}
+                }
+            }
+            Ok::<_, PluginRuntimeError>(styles)
+        })
+        .await
+        .map_err(|error| PluginRuntimeError::new(format!("Style reload task failed: {error}")))??;
+        let mut state = self.state.lock().await;
+        let mut changed = Vec::new();
+        let next_index: HashMap<&str, &PluginOutputStyleContribution> = next
+            .iter()
+            .map(|style| (style.name.as_str(), style))
+            .collect();
+        let old_index: HashMap<&str, &PluginOutputStyleContribution> = state
+            .output_styles
+            .iter()
+            .map(|style| (style.name.as_str(), style))
+            .collect();
+        for old in &state.output_styles {
+            if next_index.get(old.name.as_str()).copied() != Some(old) {
+                changed.push(old.name.clone());
+            }
+        }
+        for new in &next {
+            if !old_index.contains_key(new.name.as_str()) {
+                changed.push(new.name.clone());
+            }
+        }
+        state.output_styles = next;
+        Ok(changed)
     }
 
     pub async fn create_view(
@@ -463,11 +590,12 @@ impl PluginRuntime {
         let mut st = self.state.lock().await;
         let lease = st.registry.acquire()?;
         let mut all_plugins = lease.plugins.clone();
-        all_plugins.extend(additional);
+        all_plugins.extend(additional.iter().cloned());
         let snapshot =
             contributions::create_session_contribution_snapshot(lease.generation, &all_plugins);
         let waiters = Arc::clone(&st.registry.waiters);
         Ok(PluginSessionContributionLease {
+            _additional: additional,
             generation: lease.generation,
             contributions: snapshot,
             state: Arc::clone(&self.state),
@@ -596,14 +724,62 @@ impl PluginRuntime {
     }
 }
 
+fn upsert_style(
+    styles: &mut Vec<PluginOutputStyleContribution>,
+    positions: &mut HashMap<String, usize>,
+    new: PluginOutputStyleContribution,
+) {
+    if let Some(index) = positions.get(&new.name) {
+        styles[*index] = new;
+    } else {
+        positions.insert(new.name.clone(), styles.len());
+        styles.push(new);
+    }
+}
+fn styles_for_plugins(plugins: &[Arc<LoadedPlugin>]) -> Vec<PluginOutputStyleContribution> {
+    let mut styles = Vec::new();
+    let mut positions = HashMap::new();
+    for plugin in plugins {
+        for style in &plugin.output_styles {
+            upsert_style(
+                &mut styles,
+                &mut positions,
+                contributions::to_output_style(plugin, style),
+            );
+        }
+    }
+    styles
+}
+
 // ─────────────────────────────────────────────────────────── perform_refresh
 
 async fn perform_refresh(
     options: &PluginRuntimeOptions,
     state_mutex: &Arc<TokioMutex<PluginRuntimeState>>,
+    native_style_only: bool,
 ) -> Result<PluginRefreshResult, PluginRuntimeError> {
     let previous = state_mutex.lock().await.registry.list();
-    let result = loader::load_from_disk(options).await;
+    let result = if native_style_only {
+        let options = PluginRuntimeOptions {
+            project_root: options.project_root.clone(),
+            pilot_home: options.pilot_home.clone(),
+            builtin_skills_root: options.builtin_skills_root.clone(),
+            builtin_plugins: options.builtin_plugins.clone(),
+            builtin_plugins_enabled: options.builtin_plugins_enabled.clone(),
+        };
+        let permit = style_slots()
+            .acquire_owned()
+            .await
+            .map_err(|_| PluginRuntimeError::new("Style loading is unavailable."))?;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            loader::stage_native_style_plugins(&options)
+        })
+        .await
+        .map_err(|e| PluginRuntimeError::new(e.to_string()))??
+    } else {
+        loader::load_from_disk(options).await
+    };
     let mut state = state_mutex.lock().await;
     let keeps_old = result.staged_failures.iter().any(|failure| {
         previous
@@ -632,6 +808,7 @@ async fn perform_refresh(
         let errors = settle_disposals(pending).await;
         PluginRuntimeError::aggregate("Failed to dispose retired plugins.", errors)?;
     }
+    state_mutex.lock().await.output_styles = styles_for_plugins(&replacement.next);
     let added: Vec<_> = replacement
         .next
         .iter()

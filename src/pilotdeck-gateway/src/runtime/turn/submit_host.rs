@@ -40,6 +40,16 @@ pub type SubmitLeaseRelease =
 /// attachment lease and turn composition, model selection, status recording,
 /// after-turn, clock and abort budget.
 pub trait SubmitHostServices: Send + Sync {
+    fn bound_project_key(&self) -> Option<JsString> {
+        None
+    }
+    fn bind_project<'a>(
+        &'a self,
+        _input: &'a mut JsValue,
+    ) -> SubmitFuture<'a, Result<Option<Arc<dyn SubmitHostServices>>, SubmitError>> {
+        Box::pin(async { Ok(None) })
+    }
+
     /// `options.workspaceId ?? workspaceIdResolver(projectKey)`; errors refuse
     /// the turn before admission (InProcessGateway.ts:954).
     fn workspace_id(&self, input: &JsValue) -> Result<Option<JsString>, SubmitError>;
@@ -128,6 +138,11 @@ impl SubmitReplacement for NativeSubmitReplacement {
 /// pending-turn rejection. They return wire events (including usage/command
 /// short-circuits); empty means admission may proceed.
 pub trait SubmitAdmission: Send + Sync {
+    fn take_turn_budget(&self, _run: &RunRef) -> JsValue {
+        JsValue::Undefined
+    }
+    fn release_turn(&self, _session: &JsString, _run: &JsString) {}
+
     fn normalize<'a>(
         &'a self,
         input: &'a mut JsValue,
@@ -152,6 +167,25 @@ pub trait SubmitAdmission: Send + Sync {
         input: &'a JsValue,
         event: &'a JsValue,
     ) -> SubmitFuture<'a, Result<(), SubmitError>>;
+    fn sdk_permission_mode<'a>(
+        &'a self,
+        _session: &'a JsString,
+    ) -> SubmitFuture<'a, Option<JsString>> {
+        Box::pin(async { None })
+    }
+    fn sdk_models<'a>(
+        &'a self,
+        _session: &'a JsString,
+        _project: Option<&'a JsString>,
+    ) -> SubmitFuture<'a, Result<Option<super::interaction::SdkModelOptions>, SubmitError>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn sdk_hooks<'a>(
+        &'a self,
+        _session: &'a JsString,
+    ) -> SubmitFuture<'a, Result<Option<super::interaction::SdkHookState>, SubmitError>> {
+        Box::pin(async { Ok(None) })
+    }
     fn has_sdk_config(&self) -> bool;
     fn validate_sdk_config(&self, config: &JsValue) -> Result<(), SubmitError>;
     fn set_sdk_config<'a>(
@@ -166,6 +200,49 @@ pub trait SubmitAdmission: Send + Sync {
 /// removes the entry before releasing, so a lease is released exactly once
 /// even if the pump future is settled along a timeout or failure path.
 type SubmitLeases = HashMap<(JsString, JsString), SubmitLeaseRelease>;
+
+/// Translate the resolved selection into the sidecar's per-turn payload.
+fn selection_override(selection: &JsValue) -> Result<JsValue, SubmitError> {
+    if matches!(selection, JsValue::Undefined | JsValue::Null) {
+        return Ok(JsValue::Undefined);
+    }
+    let mut result = pilotdeck_protocol::JsObject::new();
+    for key in ["provider", "model", "temperature", "speed"] {
+        result.insert(key.into(), field(selection, key).clone());
+    }
+    let reasoning = field(selection, "reasoning");
+    if !reasoning.is_undefined() {
+        let mode = match reasoning.as_number() {
+            Some(0.0) => "off",
+            Some(0.2) => "minimal",
+            Some(0.4) => "low",
+            Some(0.6) => "medium",
+            Some(0.8) => "high",
+            Some(0.9) => "xhigh",
+            Some(1.0) => "max",
+            _ => {
+                return Err(SubmitError::new(
+                    "UNSUPPORTED_MODEL_PARAMETER",
+                    format!(
+                        "Unsupported reasoning value: {}",
+                        crate::js_value::display(reasoning).unwrap_or_default()
+                    ),
+                ));
+            }
+        };
+        result.insert(
+            "thinking".into(),
+            crate::metadata::object([
+                (
+                    "enabled",
+                    JsValue::Bool(reasoning.as_number().unwrap_or(0.0) > 0.0),
+                ),
+                ("mode", mode.into()),
+            ]),
+        );
+    }
+    Ok(JsValue::Object(result))
+}
 
 /// The production host: embedding services plus the admission host.
 pub struct GatewaySubmitHost {
@@ -189,6 +266,24 @@ impl GatewaySubmitHost {
     }
 }
 impl SubmitHost for GatewaySubmitHost {
+    fn bound_project_key(&self) -> Option<JsString> {
+        self.services.bound_project_key()
+    }
+    fn bind_project<'a>(
+        &'a self,
+        input: &'a mut JsValue,
+    ) -> SubmitFuture<'a, Result<Option<Arc<dyn SubmitHost>>, SubmitError>> {
+        Box::pin(async move {
+            Ok(self.services.bind_project(input).await?.map(|services| {
+                Arc::new(Self::new(
+                    services,
+                    self.replacement.clone(),
+                    self.admission.clone(),
+                )) as Arc<dyn SubmitHost>
+            }))
+        })
+    }
+
     fn workspace(&self, input: &JsValue) -> Result<SubmitWorkspace, SubmitError> {
         Ok(SubmitWorkspace {
             id: self.services.workspace_id(input)?,
@@ -260,56 +355,89 @@ impl SubmitHost for GatewaySubmitHost {
                 .await?;
             let model_selection = self.services.resolve_model_selection(input).await?;
             let plan = field(input, "mode") == &JsValue::from("plan");
+            let override_model = selection_override(field(&model_selection, "selection"))?;
+            let mut options = crate::metadata::object([
+                ("turnId", JsValue::String(run.run_id.clone())),
+                (
+                    "runMode",
+                    match field(input, "runMode") {
+                        JsValue::Null | JsValue::Undefined => {
+                            if plan {
+                                "plan"
+                            } else {
+                                "agent"
+                            }
+                        }
+                        JsValue::String(mode) if mode.equals_str("") => {
+                            if plan {
+                                "plan"
+                            } else {
+                                "agent"
+                            }
+                        }
+                        JsValue::String(mode) if mode.equals_str("plan") => "plan",
+                        JsValue::String(mode) if mode.equals_str("ask") => {
+                            if crate::mutants::on("live-run-mode-ask") {
+                                "agent"
+                            } else {
+                                "ask"
+                            }
+                        }
+                        _ => "agent",
+                    }
+                    .into(),
+                ),
+                (
+                    "allowPlanModeTools",
+                    input
+                        .get("allowPlanModeTools")
+                        .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
+                        .cloned()
+                        .unwrap_or(JsValue::Bool(plan)),
+                ),
+                (
+                    "execution",
+                    crate::metadata::object([
+                        ("runId", JsValue::String(run.run_id.clone())),
+                        ("operationId", JsValue::String(run.run_id.clone())),
+                    ]),
+                ),
+            ]);
+            let task_budget = self.admission.take_turn_budget(run);
+            if let JsValue::Object(ref mut object) = options {
+                for key in ["maxTurns", "maxBudgetUsd"] {
+                    if let Some(value) = input
+                        .get(key)
+                        .filter(|v| !matches!(v, JsValue::Null | JsValue::Undefined))
+                    {
+                        object.insert(key.into(), value.clone());
+                    }
+                }
+                if let Some(total) = task_budget.get("totalUsd") {
+                    object.insert("taskBudgetUsd".into(), total.clone());
+                    object.insert(
+                        "initialTaskBudgetSpentUsd".into(),
+                        field(&task_budget, "spentUsd").clone(),
+                    );
+                }
+                for (source, target) in [
+                    ("mode", "permissionMode"),
+                    ("basePermissionMode", "basePermissionMode"),
+                ] {
+                    if let Some(mode) = input.get(source).and_then(JsValue::as_string) {
+                        object.insert(target.into(), JsValue::String(mode.clone()));
+                    }
+                }
+            }
+            if !override_model.is_undefined()
+                && let JsValue::Object(ref mut object) = options
+            {
+                object.insert("modelOverride".into(), override_model);
+            }
             Ok(PreparedTurn {
                 model_selection,
                 input: agent_input,
-                options: crate::metadata::object([
-                    ("turnId", JsValue::String(run.run_id.clone())),
-                    (
-                        "runMode",
-                        match field(input, "runMode") {
-                            JsValue::Null | JsValue::Undefined => {
-                                if plan {
-                                    "plan"
-                                } else {
-                                    "agent"
-                                }
-                            }
-                            JsValue::String(mode) if mode.equals_str("") => {
-                                if plan {
-                                    "plan"
-                                } else {
-                                    "agent"
-                                }
-                            }
-                            JsValue::String(mode) if mode.equals_str("plan") => "plan",
-                            JsValue::String(mode) if mode.equals_str("ask") => {
-                                if crate::mutants::on("live-run-mode-ask") {
-                                    "agent"
-                                } else {
-                                    "ask"
-                                }
-                            }
-                            _ => "agent",
-                        }
-                        .into(),
-                    ),
-                    (
-                        "allowPlanModeTools",
-                        input
-                            .get("allowPlanModeTools")
-                            .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
-                            .cloned()
-                            .unwrap_or(JsValue::Bool(plan)),
-                    ),
-                    (
-                        "execution",
-                        crate::metadata::object([
-                            ("runId", JsValue::String(run.run_id.clone())),
-                            ("operationId", JsValue::String(run.run_id.clone())),
-                        ]),
-                    ),
-                ]),
+                options,
             })
         })
     }
@@ -321,6 +449,7 @@ impl SubmitHost for GatewaySubmitHost {
             .commit_accepted_input(&run.session_key, &run.run_id)
     }
     fn release_claim(&self, session: &JsString, run: &JsString) {
+        self.admission.release_turn(session, run);
         self.replacement.release_claim(session, run)
     }
     fn record_failure<'a>(
@@ -385,6 +514,26 @@ impl SubmitHost for GatewaySubmitHost {
     ) -> SubmitFuture<'a, Result<(), SubmitError>> {
         self.admission.observe_event(input, event)
     }
+    fn sdk_permission_mode<'a>(
+        &'a self,
+        session: &'a JsString,
+    ) -> SubmitFuture<'a, Option<JsString>> {
+        self.admission.sdk_permission_mode(session)
+    }
+    fn sdk_models<'a>(
+        &'a self,
+        session: &'a JsString,
+        project: Option<&'a JsString>,
+    ) -> SubmitFuture<'a, Result<Option<super::interaction::SdkModelOptions>, SubmitError>> {
+        self.admission.sdk_models(session, project)
+    }
+    fn sdk_hooks<'a>(
+        &'a self,
+        session: &'a JsString,
+    ) -> SubmitFuture<'a, Result<Option<super::interaction::SdkHookState>, SubmitError>> {
+        self.admission.sdk_hooks(session)
+    }
+
     fn has_sdk_config(&self) -> bool {
         self.admission.has_sdk_config()
     }
@@ -416,3 +565,34 @@ fn non_empty_array(value: &JsValue) -> bool {
 #[cfg(test)]
 #[path = "submit_host_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod model_override_tests {
+    use super::*;
+    use pilotdeck_protocol::parse_json;
+    #[test]
+    fn per_turn_selection_builds_sidecar_override() {
+        let selection = parse_json(
+            r#"{"mode":"model","provider":"fixture","model":"other","reasoning":0.8,"speed":0.5}"#,
+        )
+        .unwrap();
+        let actual = selection_override(&selection).unwrap();
+        assert_eq!(actual.get("provider"), Some(&JsValue::from("fixture")));
+        assert_eq!(actual.get("model"), Some(&JsValue::from("other")));
+        assert_eq!(actual.get("speed"), Some(&JsValue::Number(0.5)));
+        assert_eq!(
+            actual.get("thinking").and_then(|v| v.get("mode")),
+            Some(&JsValue::from("high"))
+        );
+        assert!(
+            selection_override(&JsValue::Undefined)
+                .unwrap()
+                .is_undefined()
+        );
+        let invalid = parse_json(r#"{"provider":"p","model":"m","reasoning":0.3}"#).unwrap();
+        assert_eq!(
+            selection_override(&invalid).unwrap_err().code,
+            "UNSUPPORTED_MODEL_PARAMETER"
+        );
+    }
+}

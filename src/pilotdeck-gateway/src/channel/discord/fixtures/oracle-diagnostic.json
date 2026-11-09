@@ -1,0 +1,68 @@
+{
+  "environment": {
+    "node": "v22.22.1",
+    "icu": "78.2",
+    "wsVersion": "8.21.0",
+    "diagnostic": true,
+    "formalAcceptance": false
+  },
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/adapters/channel/discord/DiscordChannel.ts": "b556f9ea35db4489c087bed79844bcd01798a21d665ee02fe86eccc87fda25b1",
+    "src/adapters/channel/protocol/ImCronDelivery.ts": "3e505b3fa1205993089e3ed6854541fb6e7d332b7b33173d3c351880de7e8c14",
+    "src/adapters/channel/protocol/ImElicitationHelper.ts": "cb743ce32129e33c65cbee9ff5c613b057b65d8a642a0fc11b1e1362fb458cf4",
+    "src/adapters/channel/protocol/ImPermissionHelper.ts": "40a6e25f143e9973d2cef836bb40d47f8e693424ad9aac5f2391be6514193477",
+    "src/adapters/channel/discord/DiscordSessionMapper.ts": "3b260a848c48c218442735d0cf05ee5acc1570a1d0d75f468b7edd98e64a28a5",
+    "src/adapters/channel/discord/discord-render.ts": "2b1a02ef3c67a4b45df532c169e2812d1dd9214fcfd95c5b32eaed5a282114de"
+  },
+  "requests": [
+    {
+      "sessionKey": "discord:chat=c:general",
+      "channelKey": "discord",
+      "message": "hello"
+    }
+  ],
+  "calls": [
+    {
+      "method": "GET",
+      "path": "/gateway/bot"
+    },
+    {
+      "method": "WS",
+      "path": "/gateway?v=10&encoding=json"
+    },
+    {
+      "method": "GET",
+      "path": "/channels/c"
+    },
+    {
+      "method": "GET",
+      "path": "/channels/c"
+    },
+    {
+      "method": "POST",
+      "path": "/channels/c/messages",
+      "body": {
+        "content": "Discord reply"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/channels/c/typing"
+    }
+  ],
+  "logs": [
+    [
+      "info",
+      "discord: logged in as fixture"
+    ],
+    [
+      "info",
+      "discord: stopping (fixture)"
+    ]
+  ],
+  "mapper": {
+    "activeByChatId": {}
+  },
+  "websocketClosed": true
+}

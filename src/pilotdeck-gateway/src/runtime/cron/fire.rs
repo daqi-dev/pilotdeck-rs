@@ -1,23 +1,13 @@
-//! Port of TS `src/cron/runtime/CronFire.ts` (295 lines; line refs below):
-//! one cron run, from the store claim through the turn to the terminal
-//! record and the post-run task update, on the synchronous `CronAgentGateway`
-//! boundary.
-//!
-//! Event-stream boundary: TS `submitTurn` is an async generator whose events
-//! `CronFire` consumes one by one (per-event `appendRunEvent`,
-//! assistant-text accumulation, `interaction_required` aborts, error-event
-//! classification, `forcedFailure` latching after a `turn_timeout`). The
-//! Rust port's [`CronAgentGateway::submit_turn`] contract instead returns
-//! only after the turn unwound, surfacing the first terminal `error` event as
-//! `Err` with the event's code passed through untouched
-//! (`native_process/assembly/cron.rs::failed_turn`), so the classification
-//! below folds the in-loop error-event handling (CronFire.ts:125-140) into
-//! the one visible event. The seams this boundary cannot represent —
-//! assistant-text delivery for `deliverResult`, per-event `appendRunEvent`,
-//! `interaction_required`/`forcedFailure` latching, `onPhaseEvent`,
-//! `onTurnEvent` — are registered in A8.3-CRON-FIRE-EVENTSTREAM-001, not
-//! silently dropped.
+//! One real cron run: claim, per-event persistence/callbacks, terminal
+//! record, result delivery and conditional task cleanup. Native-only output
+//! policy is opt-in; the default library event ordering follows fixed TS.
 use std::{cell::Cell, sync::Arc};
+#[path = "fire_events.rs"]
+mod events;
+pub use events::{
+    CronExecutionCallbacks, CronPhaseEventHandler, CronResultDeliveryHandler, CronTurnEventHandler,
+    NATIVE_CRON_MAX_ASSISTANT_TEXT_UNITS,
+};
 
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
@@ -54,13 +44,13 @@ impl CronRunOutcome {
 /// The run record's `error` shape (CronFire.ts:113-116,129-131,139): a code
 /// plus message pair, absent for completed runs.
 struct CronRunError {
-    code: String,
+    code: JsString,
     message: JsString,
 }
 impl CronRunError {
     fn as_value(&self) -> JsValue {
         let mut error = JsObject::new();
-        error.insert("code".into(), JsValue::from(self.code.as_str()));
+        error.insert("code".into(), JsValue::String(self.code.clone()));
         error.insert("message".into(), JsValue::String(self.message.clone()));
         JsValue::Object(error)
     }
@@ -72,12 +62,8 @@ type ActiveRunLookup = Arc<dyn Fn(&JsString) -> Option<CronActiveRun> + Send + S
 /// `onResultDelivery` (CronFire.ts:38), optional.
 type ResultDelivery = Arc<dyn Fn(&JsValue) -> Result<(), CronError> + Send + Sync>;
 
-/// `CronFireDependencies` (CronFire.ts:28-44). The runtime closures are the
-/// port's injectable seams, exactly the five TS wires; `onResultDelivery` is
-/// optional and absent in the current native assembly (the app-level
-/// delivery handler is not surfaced through `CronManagerOptions` yet — a
-/// wiring gap, not a port limitation, registered in
-/// A8.3-CRON-FIRE-EVENTSTREAM-001 with follow-up #1826).
+/// Injected TS-equivalent event, phase and delivery seams plus optional
+/// native resource policy. Default library callers keep the uncapped policy.
 pub struct CronFireDeps {
     pub gateway: Arc<dyn CronAgentGateway>,
     pub store: CronTaskStore,
@@ -89,6 +75,9 @@ pub struct CronFireDeps {
     pub default_timezone: String,
     pub release_task_session: Arc<dyn Fn(&JsValue) + Send + Sync>,
     pub on_result_delivery: Option<ResultDelivery>,
+    pub on_phase_event: Option<CronPhaseEventHandler>,
+    pub on_turn_event: Option<CronTurnEventHandler>,
+    pub assistant_text_limit_units: Option<usize>,
     pub logger: Arc<dyn CronLogger>,
     pub zone_cache: Arc<CronZoneResolverCache>,
 }
@@ -126,11 +115,6 @@ impl CronFire {
 
     /// The try/catch/finally body, mirroring CronFire.ts:50-202.
     fn run_task_inner(&self, task_snapshot: &JsValue, run_id: &JsString) -> Result<(), CronError> {
-        // const startedAt = this.deps.now() — read once, stamped on the
-        // claim, the record, and nothing else.
-        let started_at_ms = (self.deps.now)();
-        // registerActiveRun before the try (CronFire.ts:58).
-        (self.deps.register_active_run)(snapshot_active_run(task_snapshot, run_id));
         // TS's `finally` runs `unregisterActiveRun(runId)` even when the try
         // block throws (CronFire.ts:150-202); a Rust panic skips sequential
         // code, so the guard is that unregister on the unwind path — a
@@ -145,25 +129,26 @@ impl CronFire {
             run_id,
             armed: true,
         };
+        // const startedAt = this.deps.now() — read once, stamped on the
+        // claim, the record, and nothing else.
+        let started_at_ms = (self.deps.now)();
+        // registerActiveRun before the try (CronFire.ts:58).
+        (self.deps.register_active_run)(snapshot_active_run(task_snapshot, run_id));
 
         let mut task = task_snapshot.clone();
-        let mut outcome = CronRunOutcome::Completed;
+        let mut outcome;
         let mut error: Option<CronRunError> = None;
         let mut started_run = false;
+        let mut assistant_text = Vec::new();
 
         // The try block (CronFire.ts:67-141): the claim, then the turn.
-        // `forcedFailure` stays false on this boundary — its only TS setters
-        // (`turn_timeout`/`interaction_required`) are folded into the
-        // classification below — so the catch arm is the plain seam fold.
+        // The observed turn helper owns forcedFailure and abort-once state.
         let claimed = Cell::new(false);
-        // The lone-surrogate taskId seam: the TS store compares `===` on raw
-        // values, but a persisted taskId round-trips through lossy UTF-8, so
-        // a lone surrogate never matches a stored task on either side.
-        let claim = match task_id_text(task_snapshot) {
+        let claim = match task_string(task_snapshot, "taskId") {
             Some(task_id) => self
                 .deps
                 .store
-                .update_task(&task_id, |current| {
+                .update_task_js(&task_id, |current| {
                     if !matches_scheduled_snapshot(current, task_snapshot) {
                         return Some(current.clone());
                     }
@@ -195,42 +180,10 @@ impl CronFire {
                     run_id: run_id.clone(),
                     timeout_ms: self.deps.run_timeout_ms,
                 };
-                if let Err(caught) = self.deps.gateway.submit_turn(&submit) {
-                    // The error-event classification (CronFire.ts:126-139):
-                    // the boundary carries the event's code through, and a
-                    // code-less error is a thrown seam error
-                    // (CronFire.ts:142-149).
-                    match caught.code() {
-                        Some("turn_timeout") => {
-                            outcome = CronRunOutcome::Failed;
-                            error = Some(CronRunError {
-                                code: "cron_run_timeout".into(),
-                                message: caught.message().clone(),
-                            });
-                        }
-                        Some(code) if code == "agent_aborted" => {
-                            outcome = CronRunOutcome::Aborted;
-                            error = Some(CronRunError {
-                                code: code.to_owned(),
-                                message: caught.message().clone(),
-                            });
-                        }
-                        Some(code) => {
-                            outcome = CronRunOutcome::Failed;
-                            error = Some(CronRunError {
-                                code: code.to_owned(),
-                                message: caught.message().clone(),
-                            });
-                        }
-                        None => {
-                            outcome = CronRunOutcome::Failed;
-                            error = Some(CronRunError {
-                                code: "cron_run_failed".into(),
-                                message: caught.message().clone(),
-                            });
-                        }
-                    }
-                }
+                let events = self.drive_events(&task, run_id, started_at_ms, &submit);
+                outcome = events.outcome;
+                error = events.error;
+                assistant_text = events.text;
             }
             // `!claimed || !currentTask` (CronFire.ts:82-85).
             Ok(_) => outcome = CronRunOutcome::Aborted,
@@ -249,11 +202,10 @@ impl CronFire {
         // The finally block (CronFire.ts:150-202) runs on every path.
         // getActiveRun(runId)?.stopRequested → outcome = "stopped"
         // (CronFire.ts:151-154).
-        if (self.deps.get_active_run)(run_id).is_some_and(|run| run.stop_requested) {
+        unregister.armed = false;
+        if (self.deps.unregister_active_run)(run_id).is_some_and(|run| run.stop_requested) {
             outcome = CronRunOutcome::Stopped;
         }
-        unregister.armed = false;
-        (self.deps.unregister_active_run)(run_id);
         if !started_run {
             // `return` inside finally (CronFire.ts:156-158): no record, no
             // delivery, no post-run update — the run never started.
@@ -290,8 +242,21 @@ impl CronFire {
             );
         }
 
+        self.emit_phase(
+            if outcome == CronRunOutcome::Completed {
+                "cron_completed"
+            } else {
+                "cron_failed"
+            },
+            &task,
+            run_id,
+            finished_at_ms,
+            error.as_ref(),
+        )?;
         // deliverResult (CronFire.ts:188-194 via 217-240), failure only warns.
-        if let Err(delivery_error) = self.deliver_result(&task, run_id, outcome, error.as_ref()) {
+        if let Err(delivery_error) =
+            self.deliver_result(&task, run_id, outcome, &assistant_text, error.as_ref())
+        {
             fire_warn(
                 &self.deps.logger,
                 "cron result delivery failed",
@@ -315,33 +280,31 @@ impl CronFire {
         Ok(())
     }
 
-    /// `deliverResult` (CronFire.ts:217-240). The completed arm's text is the
-    /// accumulated assistant text on the TS side; this boundary consumes no
-    /// event stream, so it is always empty and takes the fixed fallback.
+    /// Full TS result text, including raw UTF16 trim semantics.
     fn deliver_result(
         &self,
         task: &JsValue,
         run_id: &JsString,
         outcome: CronRunOutcome,
+        assistant_text: &[u16],
         error: Option<&CronRunError>,
     ) -> Result<(), String> {
         let text = if outcome == CronRunOutcome::Completed {
-            String::new()
+            events::trim(assistant_text)
         } else {
-            let message = error
-                .map(|error| String::from_utf16_lossy(error.message.units()))
+            let text = error
+                .map(|error| events::trim(error.message.units()))
                 .unwrap_or_default();
-            let trimmed = crate::metadata::js_trim(&message).to_owned();
-            if trimmed.is_empty() {
-                "Cron task failed.".to_owned()
+            if text.is_empty() {
+                JsString::from("Cron task failed.")
             } else {
-                trimmed
+                text
             }
         };
         let delivery_text = if text.is_empty() {
-            "定时任务已完成，但没有返回内容。"
+            JsString::from("定时任务已完成，但没有返回内容。")
         } else {
-            &text
+            text
         };
         let Some(deliver) = self.deps.on_result_delivery.as_ref() else {
             // `onResultDelivery?.(...)`: absent is a no-op that never rejects.
@@ -362,7 +325,7 @@ impl CronFire {
         );
         delivery.insert("projectKey".into(), task_field(task, "projectKey"));
         delivery.insert("outcome".into(), JsValue::from(outcome.as_str()));
-        delivery.insert("text".into(), JsValue::from(delivery_text));
+        delivery.insert("text".into(), JsValue::String(delivery_text));
         if let Some(error) = error {
             delivery.insert("error".into(), error.as_value());
         }
@@ -382,17 +345,14 @@ impl CronFire {
             .and_then(|schedule| schedule.get("type"))
             .and_then(JsValue::as_string)
             .is_some_and(|kind| kind.equals_str("once"));
-        let Some(task_id) = task_id_text(task) else {
-            // A non-UTF-8 taskId cannot cross the &str store seam; the TS
-            // updateTask would compare it === against itself and match, so
-            // this is the lone-surrogate seam, not a semantic skip.
+        let Some(task_id) = task_string(task, "taskId") else {
             return Ok(());
         };
         if once {
             // matchesRunningTask → delete, then releaseTaskSession
             // (CronFire.ts:243-255).
             let deleted = Cell::new(false);
-            self.deps.store.update_task(&task_id, |current| {
+            self.deps.store.update_task_js(&task_id, |current| {
                 if !matches_running_task(current, task, run_id) {
                     return Some(current.clone());
                 }
@@ -424,7 +384,7 @@ impl CronFire {
                 Some((_, iso)) => value_string(iso),
                 None => JsValue::Undefined,
             };
-        self.deps.store.update_task(&task_id, |current| {
+        self.deps.store.update_task_js(&task_id, |current| {
             if !matches_running_task(current, task, run_id) {
                 return Some(current.clone());
             }
@@ -517,12 +477,9 @@ pub(super) fn snapshot_active_run(task_snapshot: &JsValue, run_id: &JsString) ->
     }
 }
 
-/// The `taskId` of a stored task as UTF-8, or `None` when it cannot cross the
-/// store's `&str` seam (a lone surrogate).
-pub(super) fn task_id_text(task: &JsValue) -> Option<String> {
-    task.get("taskId")
-        .and_then(JsValue::as_string)
-        .and_then(|task_id| task_id.to_utf8().ok())
+/// Stored task identity stays in raw UTF16 across all mutation paths.
+pub(super) fn task_id_text(task: &JsValue) -> Option<JsString> {
+    task.get("taskId").and_then(JsValue::as_string).cloned()
 }
 
 /// A stored string field, `undefined` when absent.

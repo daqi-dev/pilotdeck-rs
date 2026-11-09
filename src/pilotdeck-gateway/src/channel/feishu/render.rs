@@ -4,19 +4,18 @@
 //! (`splitForTransport`), and the event→text mapping the controller's silence
 //! default formatters produce.
 //!
-//! The channel-level streaming machinery (activity pulses, cursor edits,
-//! throttled segments, `flush/clear`) is out of scope for this unit and is
-//! registered in `specs/gateway-parity/diffs/`; a turn therefore emits its
-//! final text once instead of editing a live message.
+//! Production streaming uses the full shared live-reply controller through
+//! feishu/live.rs. The earlier final-buffer projection and chunk/formatter
+//! pins below are retained only under cfg(test), preserving existing tests.
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
 /// `DEFAULT_ACTIVITY_ONLY_FINAL_TEXT`.
 pub const DEFAULT_LIVE_CARD_FALLBACK_TEXT: &str = "处理完成，但没有可见回复。";
 /// `MAX_TEXT_MESSAGE_LENGTH` in `FeishuChannel.ts`.
 pub const MAX_TEXT_MESSAGE_LENGTH: usize = 4000;
-/// `DEFAULT_CURSOR`.
-pub const DEFAULT_LIVE_REPLY_CURSOR: &str = " ▉";
+#[cfg(test)]
 const DEFAULT_TIMEOUT_FINAL_TEXT: &str = "处理超时，请重新发送或稍后重试。";
+#[cfg(test)]
 const DEFAULT_ABORT_FINAL_TEXT: &str = "处理已中止，请重新发送或稍后重试。";
 
 const DEFAULT_LIVE_CARD_MAX_TEXT_LENGTH: usize = 4000;
@@ -136,16 +135,10 @@ pub fn activity_kind_from_text(text: &str) -> ActivityKind {
     }
 }
 
-/// `liveTextLimit()`: `maxMessageLength - cursor.length` (`Math.max(1, …)`),
-/// the per-message unit budget the controller's `append` splits at.
-pub fn live_text_limit(max: usize) -> usize {
-    max.saturating_sub(DEFAULT_LIVE_REPLY_CURSOR.encode_utf16().count())
-        .max(1)
-}
-
 /// The controller's `append` split: a hard cut at `limit` UTF-16 units per
 /// message, with no separator search (that is the fallback-continuation
 /// chunker's job, which this unit does not port).
+#[cfg(test)]
 pub fn live_chunks(text: &str, limit: usize) -> Vec<String> {
     let units: Vec<u16> = text.encode_utf16().collect();
     if limit == 0 || units.len() <= limit {
@@ -215,12 +208,14 @@ pub fn split_for_transport(text: &str, max: usize) -> Vec<String> {
     chunks
 }
 
+#[cfg(test)]
 fn text_of(value: Option<&JsValue>) -> Option<String> {
     value
         .and_then(JsValue::as_string)
         .map(|value| String::from_utf16_lossy(value.units()))
 }
 
+#[cfg(test)]
 fn js_truthy(value: Option<&JsValue>) -> bool {
     match value {
         None | Some(JsValue::Undefined) | Some(JsValue::Null) | Some(JsValue::Bool(false)) => false,
@@ -230,6 +225,7 @@ fn js_truthy(value: Option<&JsValue>) -> bool {
     }
 }
 
+#[cfg(test)]
 fn display(value: Option<&JsValue>) -> String {
     match value {
         None | Some(JsValue::Undefined) => "undefined".into(),
@@ -244,6 +240,7 @@ fn display(value: Option<&JsValue>) -> String {
 }
 
 /// `defaultErrorFormatter` (`\n❌ ${message}${providerLines}\n`).
+#[cfg(test)]
 pub fn format_error(event: &JsValue) -> String {
     let provider = event.get("providerError");
     let provider_lines = if js_truthy(provider) {
@@ -272,6 +269,7 @@ pub fn format_error(event: &JsValue) -> String {
 }
 
 /// `defaultToolErrorFormatter` (`\n⚠️ ${toolName ?? toolCallId} 执行失败\n`).
+#[cfg(test)]
 pub fn format_tool_error(event: &JsValue) -> String {
     let name = event
         .get("toolName")
@@ -280,6 +278,7 @@ pub fn format_tool_error(event: &JsValue) -> String {
     format!("\n⚠️ {} 执行失败\n", display(name))
 }
 
+#[cfg(test)]
 const VISIBLE_FAILURE_STATUS_EVENTS: &[&str] = &[
     "model_empty_response_exhausted",
     "max_turns_reached",
@@ -307,12 +306,15 @@ const VISIBLE_FAILURE_STATUS_EVENTS: &[&str] = &[
 /// `ImLiveReplyController.ts:102-106`: `WARNING_STATUS_EVENTS` is the
 /// visible-failure list plus two entries, so the two can never drift
 /// (`channel/weixin/live_reply.rs` keeps the same shape).
+#[cfg(test)]
 const WARNING_STATUS_EVENTS_EXTRA: &[&str] = &["structured_output_completed", "turn_aborted"];
+#[cfg(test)]
 fn is_warning_status_event(name: &str) -> bool {
     VISIBLE_FAILURE_STATUS_EVENTS.contains(&name) || WARNING_STATUS_EVENTS_EXTRA.contains(&name)
 }
 
 /// `isVisibleFailureStatusDetail`: `detail.visible !== false && severity === "error"`.
+#[cfg(test)]
 fn is_visible_failure_detail(detail: Option<&JsValue>) -> bool {
     let Some(detail) = detail.and_then(JsValue::as_object) else {
         return false;
@@ -326,6 +328,7 @@ fn is_visible_failure_detail(detail: Option<&JsValue>) -> bool {
 /// the `ImLiveReplyController` default formatters. `None` means the event
 /// only drives activity state, which this unit does not render.
 #[derive(Default)]
+#[cfg(test)]
 pub struct LiveReplyBuffer {
     pub text: String,
     /// `closed`: a terminal event (`agent_aborted` / `turn_timeout`) already
@@ -334,6 +337,7 @@ pub struct LiveReplyBuffer {
     has_visible_failure_status: bool,
 }
 
+#[cfg(test)]
 impl LiveReplyBuffer {
     pub fn new() -> Self {
         Self::default()
@@ -385,14 +389,6 @@ impl LiveReplyBuffer {
             // attachment diff covers.
             _ => {}
         }
-    }
-
-    /// The submit-failure status the channel synthesizes on a gateway error:
-    /// `channel_submit_failed` is a warning status, so the controller appends
-    /// its message.
-    pub fn handle_submit_failure(&mut self, message: &str) {
-        self.has_visible_failure_status = true;
-        self.text.push_str(&format!("\n⚠️ {message}\n"));
     }
 
     fn handle_agent_status(&mut self, event: &JsValue) {

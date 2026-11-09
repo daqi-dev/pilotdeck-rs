@@ -1,0 +1,212 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "callbacks": [
+    {
+      "cmd": "aibot_msg_callback",
+      "headers": {
+        "req_id": "r-1"
+      },
+      "body": {
+        "msgid": "m-1",
+        "from": {
+          "userid": "alice"
+        },
+        "chatid": "alice",
+        "chattype": "single",
+        "msgtype": "mixed",
+        "mixed": {
+          "msg_item": [
+            {
+              "msgtype": "text",
+              "text": {
+                "content": " first "
+              }
+            },
+            {
+              "msgtype": "text",
+              "text": {
+                "content": "second"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "cmd": "aibot_callback",
+      "headers": {
+        "req_id": "r-2"
+      },
+      "body": {
+        "msgid": "m-2",
+        "from": {
+          "userid": "alice"
+        },
+        "chatid": "room",
+        "chattype": "group",
+        "msgtype": "text",
+        "text": {
+          "content": "@bot  hello group"
+        }
+      }
+    },
+    {
+      "cmd": "aibot_msg_callback",
+      "headers": {
+        "req_id": "r-3"
+      },
+      "body": {
+        "msgid": "m-3",
+        "from": {
+          "userid": "alice"
+        },
+        "chatid": "alice",
+        "chattype": "single",
+        "msgtype": "voice",
+        "voice": {
+          "content": "spoken"
+        }
+      }
+    },
+    {
+      "cmd": "aibot_msg_callback",
+      "headers": {
+        "req_id": "r-4"
+      },
+      "body": {
+        "msgid": "m-4",
+        "from": {
+          "userid": "alice"
+        },
+        "chatid": "alice",
+        "chattype": "single",
+        "msgtype": "text",
+        "quote": {
+          "msgtype": "text",
+          "text": {
+            "content": " quoted "
+          }
+        }
+      }
+    }
+  ],
+  "sent": [
+    {
+      "cmd": "aibot_subscribe",
+      "headers": {
+        "req_id": "subscribe-00000000000040008000000000000001"
+      },
+      "body": {
+        "bot_id": "bot-fixture",
+        "secret": "secret-fixture",
+        "device_id": "00000000000040008000000000000001"
+      }
+    },
+    {
+      "cmd": "aibot_respond_msg",
+      "headers": {
+        "req_id": "r-1"
+      },
+      "body": {
+        "msgtype": "markdown",
+        "markdown": {
+          "content": "answer"
+        }
+      }
+    },
+    {
+      "cmd": "aibot_respond_msg",
+      "headers": {
+        "req_id": "r-2"
+      },
+      "body": {
+        "msgtype": "markdown",
+        "markdown": {
+          "content": "answer"
+        }
+      }
+    },
+    {
+      "cmd": "aibot_respond_msg",
+      "headers": {
+        "req_id": "r-3"
+      },
+      "body": {
+        "msgtype": "markdown",
+        "markdown": {
+          "content": "answer"
+        }
+      }
+    },
+    {
+      "cmd": "aibot_respond_msg",
+      "headers": {
+        "req_id": "r-4"
+      },
+      "body": {
+        "msgtype": "markdown",
+        "markdown": {
+          "content": "answer"
+        }
+      }
+    }
+  ],
+  "turns": [
+    {
+      "sessionKey": "wecom:dm=alice:general",
+      "channelKey": "wecom",
+      "message": "first\nsecond",
+      "allowPlanModeTools": false,
+      "syntheticMessages": [
+        {
+          "text": "[WeCom attachment hint: If the user explicitly asks you to send a generated file to this WeCom chat, save it to an absolute local path and include MEDIA:/absolute/path in your final answer. Do not use MEDIA for files that were only read or analyzed internally.]",
+          "purpose": "wecom_deliverable_hint"
+        }
+      ]
+    },
+    {
+      "sessionKey": "wecom:group=room:user=alice:general",
+      "channelKey": "wecom",
+      "message": "hello group",
+      "allowPlanModeTools": false,
+      "syntheticMessages": [
+        {
+          "text": "[WeCom attachment hint: If the user explicitly asks you to send a generated file to this WeCom chat, save it to an absolute local path and include MEDIA:/absolute/path in your final answer. Do not use MEDIA for files that were only read or analyzed internally.]",
+          "purpose": "wecom_deliverable_hint"
+        }
+      ]
+    },
+    {
+      "sessionKey": "wecom:dm=alice:general",
+      "channelKey": "wecom",
+      "message": "spoken",
+      "allowPlanModeTools": false,
+      "syntheticMessages": [
+        {
+          "text": "[WeCom attachment hint: If the user explicitly asks you to send a generated file to this WeCom chat, save it to an absolute local path and include MEDIA:/absolute/path in your final answer. Do not use MEDIA for files that were only read or analyzed internally.]",
+          "purpose": "wecom_deliverable_hint"
+        }
+      ]
+    },
+    {
+      "sessionKey": "wecom:dm=alice:general",
+      "channelKey": "wecom",
+      "message": "quoted",
+      "allowPlanModeTools": false,
+      "syntheticMessages": [
+        {
+          "text": "[WeCom attachment hint: If the user explicitly asks you to send a generated file to this WeCom chat, save it to an absolute local path and include MEDIA:/absolute/path in your final answer. Do not use MEDIA for files that were only read or analyzed internally.]",
+          "purpose": "wecom_deliverable_hint"
+        }
+      ]
+    }
+  ],
+  "logs": [
+    [
+      "wecom: connected to wss://openws.work.weixin.qq.com as bot bot-fixture"
+    ],
+    [
+      "wecom: stopping (fixture)"
+    ]
+  ]
+}

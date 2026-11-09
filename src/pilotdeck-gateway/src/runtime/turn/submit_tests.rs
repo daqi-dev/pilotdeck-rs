@@ -51,6 +51,7 @@ struct Log {
     consumer_hold: Mutex<Option<Arc<Gate>>>,
     /// Observed terminal-writer counts, recorded by interleaving steps.
     observations: Mutex<Vec<usize>>,
+    captured_workspaces: Mutex<Vec<(bool, String)>>,
 }
 impl Log {
     fn host(&self, value: &str) {
@@ -60,6 +61,7 @@ impl Log {
             .push(value.into());
     }
 }
+#[derive(Clone)]
 struct Gate(watch::Sender<bool>);
 impl Gate {
     fn new() -> Self {
@@ -91,13 +93,32 @@ struct Session {
     pump_error_gate: Gate,
 }
 impl LiveSession for Arc<Session> {
+    fn workspace_cwd(&self) -> Option<JsString> {
+        self.setup["ownedWorkspaceCwd"]
+            .as_str()
+            .map(JsString::from)
+            .or_else(|| {
+                self.snapshot()
+                    .get("cwd")
+                    .and_then(JsValue::as_string)
+                    .cloned()
+            })
+    }
     fn snapshot(&self) -> JsValue {
-        if self.setup["snapshotCwdUnavailable"] == true {
+        if self.setup["snapshotCwdUnavailable"] == true
+            || self.setup["publicSnapshotCwdMissing"] == true
+        {
             object([])
         } else {
             object([
                 ("messages", JsValue::Array(vec![])),
-                ("cwd", "/unused".into()),
+                (
+                    "cwd",
+                    self.setup["publicSnapshotCwd"]
+                        .as_str()
+                        .unwrap_or("/unused")
+                        .into(),
+                ),
             ])
         }
     }
@@ -195,6 +216,12 @@ impl LiveTurn for Stream {
                     ));
                 }
             }
+            // Only the canonical replay regression holds the terminal frame
+            // after releasing model text, so active reads observe both without
+            // assuming the ordinary fixture's single gate separates them.
+            if self.index == 3 && session.setup["activeReplayBarrier"] == true {
+                session.end.wait().await;
+            }
             if let Some(event) = self.native.get(self.index) {
                 if event.get("type") == Some(&"turn_completed".into())
                     && session.setup["statusRecordGate"] == true
@@ -247,6 +274,12 @@ impl SubmitSnapshots for TestSnapshots {
         pre: bool,
     ) -> SubmitFuture<'a, Result<WorkspaceSnapshotResult, SubmitError>> {
         Box::pin(async move {
+            self.session
+                .log
+                .captured_workspaces
+                .lock()
+                .expect("#748 captured workspace fixture lock")
+                .push((pre, input.workspace_dir.clone()));
             self.session
                 .log
                 .host(if pre { "snapshot_pre" } else { "snapshot_post" });
@@ -386,11 +419,45 @@ impl SubmitCwdService for Cwd {
 /// The oracle's gateway options, as `SubmitHostServices` ports.
 struct Services {
     session: Arc<Session>,
-    refreshed: AtomicBool,
+    refreshed: Arc<AtomicBool>,
     prepare: Gate,
+    scoped: bool,
 }
 impl SubmitHostServices for Services {
+    fn bound_project_key(&self) -> Option<JsString> {
+        self.scoped
+            .then(|| {
+                self.session.setup["boundProjectKey"]
+                    .as_str()
+                    .map(JsString::from)
+            })
+            .flatten()
+    }
+
+    fn bind_project<'a>(
+        &'a self,
+        _input: &'a mut JsValue,
+    ) -> SubmitFuture<'a, Result<Option<Arc<dyn SubmitHostServices>>, SubmitError>> {
+        Box::pin(async move {
+            if self.session.setup["bindProject"] != true {
+                return Ok(None);
+            }
+            assert!(!self.scoped, "project host must bind only once");
+            self.session.log.host("bind_project");
+            Ok(Some(Arc::new(Self {
+                session: self.session.clone(),
+                refreshed: self.refreshed.clone(),
+                prepare: self.prepare.clone(),
+                scoped: true,
+            }) as Arc<dyn SubmitHostServices>))
+        })
+    }
+
     fn workspace_id(&self, _: &JsValue) -> Result<Option<JsString>, SubmitError> {
+        if self.session.setup["bindProject"] == true {
+            assert!(self.scoped, "workspace must use bound services");
+            self.session.log.host("bound_workspace");
+        }
         Ok(self.session.setup["workspace"].as_str().map(Into::into))
     }
     fn snapshots(&self) -> Option<Arc<dyn SubmitSnapshots>> {
@@ -526,6 +593,13 @@ impl SubmitHostServices for Services {
         })
     }
     fn after_turn(&self, _: &RunRef) -> Result<(), SubmitError> {
+        if self.session.setup["bindProject"] == true {
+            assert!(
+                self.scoped,
+                "async pump completion must retain bound services"
+            );
+            self.session.log.host("bound_after");
+        }
         self.session.log.host("after");
         if self.session.setup["finallyFailure"] == true {
             Err(SubmitError::new("FINALLY", "injected finally failure"))
@@ -813,8 +887,9 @@ async fn replay_case(case: &Value) {
     });
     let services = Arc::new(Services {
         session: session.clone(),
-        refreshed: AtomicBool::new(false),
+        refreshed: Arc::new(AtomicBool::new(false)),
         prepare: Gate::new(),
+        scoped: false,
     });
     let admission = Arc::new(Host {
         session: session.clone(),
@@ -863,6 +938,12 @@ async fn replay_case(case: &Value) {
         for (key, value) in fields {
             input[key] = value.clone();
         }
+    }
+    if setup["omitProjectKey"] == true {
+        input
+            .as_object_mut()
+            .expect("submit input object")
+            .remove("projectKey");
     }
     let stream = submitter.submit(js(&input));
     let consumer = tokio::spawn(collect(stream, log.clone()));
@@ -1006,6 +1087,36 @@ async fn replay_case(case: &Value) {
             other => panic!("unknown fixture step: {other}"),
         }
         settle(&registry).await;
+        if let Some(project) = setup["boundProjectKey"].as_str()
+            && (step == "accept" || (setup["activeReplayBarrier"] == true && step == "terminal"))
+        {
+            let replay_input = super::super::replay::ActiveTurnSnapshotInput::new("s".into());
+            let snapshot = submitter
+                .coordinator
+                .snapshot_for_project(&replay_input, &project.into())
+                .expect("bound project replay must remain visible with omitted/aliased raw key");
+            assert!(snapshot.active, "input-accept barrier retains active run");
+            let expected: &[&str] = if step == "terminal" {
+                &["turn_started", "input_accepted", "assistant_text_delta"]
+            } else {
+                &["turn_started", "input_accepted"]
+            };
+            for kind in expected {
+                assert!(
+                    snapshot.events.iter().any(|event| event
+                        .get("type")
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|name| name.equals_str(kind))),
+                    "{name}: missing active replay {kind}"
+                );
+            }
+            assert!(
+                submitter
+                    .coordinator
+                    .snapshot_for_project(&replay_input, &"/different/project".into())
+                    .is_none()
+            );
+        }
         let expected = &case["results"][index];
         // Dirty is observed via a real recreation below, independently of the
         // SDK setter's return. Do not mirror the implementation in its mock.
@@ -1048,6 +1159,55 @@ async fn replay_case(case: &Value) {
         }
     }
     consumer.await.expect("#748 submit fixture prerequisite");
+    if setup["bindProject"] == true {
+        let calls = log.host.lock().expect("#748 bound host calls");
+        for expected in ["bind_project", "bound_workspace", "bound_after"] {
+            assert_eq!(
+                calls
+                    .iter()
+                    .filter(|call| call.as_str() == expected)
+                    .count(),
+                1,
+                "{name}: {expected} exactly once"
+            );
+        }
+    }
+    if let Some(owned) = setup["ownedWorkspaceCwd"].as_str() {
+        let expected: Vec<_> = case["ownedCapturePhases"]
+            .as_array()
+            .expect("#748 capture phase fixture")
+            .iter()
+            .map(|pre| {
+                (
+                    pre.as_bool().expect("#748 capture phase boolean"),
+                    owned.to_owned(),
+                )
+            })
+            .collect();
+        let actual = log
+            .captured_workspaces
+            .lock()
+            .expect("#748 captured workspace fixture lock")
+            .clone();
+        crate::negative_assert_eq!(
+            actual,
+            expected,
+            "#748 owned workspace capture uses owner cwd"
+        );
+        assert_eq!(
+            session.submits.load(Ordering::SeqCst),
+            1,
+            "owned-cwd case must reach native submit"
+        );
+        assert!(
+            log.ended.load(Ordering::SeqCst),
+            "owned-cwd capture must settle the consumer"
+        );
+        assert!(
+            !owner.has_active_turn(&"s".into()),
+            "owned-cwd capture releases admission"
+        );
+    }
     if setup["statusRecordGate"] == true {
         let released = case["steps"]
             .as_array()
@@ -1507,4 +1667,129 @@ async fn context_budget_cancelled_wait_does_not_retain_admission() {
     tokio::time::timeout(Duration::from_secs(5), replay_case(&case))
         .await
         .expect("#748 cancelled status bounded turn");
+}
+
+#[tokio::test]
+async fn workspace_capture_uses_owned_cwd_instead_of_public_snapshot() {
+    let oracle = crate::test_baseline::oracle(ORACLE);
+    let JsValue::Array(cases) = oracle.get("cases").expect("#748 submit cases") else {
+        panic!("#748 submit cases must be an array");
+    };
+    for scenario in ["snapshot-success", "snapshot-agent-failed"] {
+        let original = cases
+            .iter()
+            .find(|case| {
+                case.get("name")
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|name| name.equals_str(scenario))
+            })
+            .unwrap();
+        // Convert only the selected snapshot case; the oracle's unrelated
+        // validation probes deliberately contain isolated UTF-16 surrogates.
+        let original = json(original);
+        // The pre/post phases are taken from the fixed TS observations, not
+        // recomputed from the Rust implementation under test.
+        let phases: Vec<_> = original["results"].as_array().unwrap().last().unwrap()["hostCalls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|call| match call.as_str() {
+                Some("snapshot_pre") => Some(true),
+                Some("snapshot_post") => Some(false),
+                _ => None,
+            })
+            .collect();
+        assert!(!phases.is_empty());
+        for missing in [false, true] {
+            let mut case = original.clone();
+            case["name"] = format!("owned-cwd-{scenario}-missing-{missing}").into();
+            case["orderOnly"] = true.into();
+            case["ownedCapturePhases"] = json!(phases);
+            case["setup"]["ownedWorkspaceCwd"] = "/owned/workspace".into();
+            if missing {
+                case["setup"]["publicSnapshotCwdMissing"] = true.into();
+            } else {
+                case["setup"]["publicSnapshotCwd"] = "/untrusted/public-snapshot".into();
+            }
+            tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
+                .await
+                .expect("#748 owned-cwd submit bounded completion");
+        }
+    }
+}
+
+#[tokio::test]
+async fn submission_binds_project_once_and_retains_view_through_pump_cleanup() {
+    let oracle = parse_json(ORACLE).unwrap();
+    let JsValue::Array(cases) = oracle.get("cases").unwrap() else {
+        panic!("submit cases");
+    };
+    let original = cases
+        .iter()
+        .find(|case| {
+            case.get("name")
+                .and_then(JsValue::as_string)
+                .is_some_and(|name| name.equals_str("durable-accept-and-session-end"))
+        })
+        .unwrap();
+    let mut case = json(original);
+    case["name"] = "immutable-project-services-through-pump".into();
+    case["orderOnly"] = true.into();
+    case["setup"]["bindProject"] = true.into();
+    tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
+        .await
+        .expect("bound submit cleanup");
+}
+
+#[test]
+fn bound_submitter_views_share_workspace_exclusion() {
+    let first = WorkspaceAdmissions::default();
+    let second = first.clone();
+    let a = RunRef {
+        session_key: "A".into(),
+        project_key: Some("project".into()),
+        run_id: "a".into(),
+    };
+    let b = RunRef {
+        session_key: "B".into(),
+        project_key: Some("project".into()),
+        run_id: "b".into(),
+    };
+    assert!(first.reserve(&"workspace".into(), &a));
+    assert!(!second.reserve(&"workspace".into(), &b));
+    first.release(&"workspace".into(), &a);
+    assert!(second.reserve(&"workspace".into(), &b));
+    second.release(&"workspace".into(), &b);
+}
+
+#[tokio::test]
+async fn scoped_submit_omitted_and_aliased_project_keep_canonical_active_replay() {
+    let oracle = parse_json(ORACLE).unwrap();
+    let JsValue::Array(cases) = oracle.get("cases").unwrap() else {
+        panic!("submit cases");
+    };
+    let original = cases
+        .iter()
+        .find(|case| {
+            case.get("name")
+                .and_then(JsValue::as_string)
+                .is_some_and(|name| name.equals_str("durable-accept-and-session-end"))
+        })
+        .unwrap();
+    for omitted in [true, false] {
+        let mut case = json(original);
+        case["name"] = format!("canonical-active-replay-omitted-{omitted}").into();
+        case["orderOnly"] = true.into();
+        case["setup"]["bindProject"] = true.into();
+        case["setup"]["boundProjectKey"] = "/owned/project-B".into();
+        case["setup"]["activeReplayBarrier"] = true.into();
+        if omitted {
+            case["setup"]["omitProjectKey"] = true.into();
+        } else {
+            case["setup"]["input"]["projectKey"] = "/owned/project-B/./".into();
+        }
+        tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
+            .await
+            .expect("canonical project replay bounded completion");
+    }
 }

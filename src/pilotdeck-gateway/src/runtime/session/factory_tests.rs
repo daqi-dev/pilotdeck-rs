@@ -489,6 +489,27 @@ impl Harness {
 }
 impl Drop for Harness {
     fn drop(&mut self) {
+        // Observations are complete. A captured storage callback owns Observed,
+        // while Observed owns handles (and their Tokio executors). Break only
+        // that fixture cycle; production disposal/lease assertions stay above.
+        // Take under the locks, but drop outside them: handle Drop may schedule
+        // cleanup whose callbacks acquire another observation lock.
+        let handles = std::mem::take(
+            &mut *self
+                .observed
+                .created_handles
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        let bindings = std::mem::take(
+            &mut *self
+                .observed
+                .bindings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        drop(handles);
+        drop(bindings);
         let _ = std::fs::remove_dir_all(&self.root);
     }
 }
@@ -7773,4 +7794,271 @@ async fn session_cwd_preflight_worker() {
     }
     harness.finish("#897 preflight").await;
     crate::test_process::receipt(&name);
+}
+
+#[tokio::test]
+async fn production_workspace_cwd_is_storage_owned_without_extending_public_snapshot() {
+    let h = Harness::new("workspace-cwd");
+    let session = h.create("workspace-cwd").await;
+    // No turn has been submitted/prepared. The admitted storage owner already
+    // has the correct project cwd, independently of adapter agent_config.
+    let before = json_value(&session.snapshot());
+    assert_eq!(before, serde_json::json!({"messages":[],"status":"idle"}));
+    crate::negative_assert_eq!(
+        session.workspace_cwd(),
+        Some(JsString::from(h.root.to_str().expect("fixture UTF8 cwd"))),
+        "#745 production owned workspace cwd"
+    );
+    assert_eq!(
+        session
+            .reload_snapshot()
+            .expect("production reload cwd")
+            .cwd,
+        h.root,
+        "the narrow workspace capability must identify the same owned project as runtime reload"
+    );
+    assert_eq!(json_value(&session.snapshot()), before);
+    assert!(
+        session.snapshot().get("cwd").is_none(),
+        "public TS session snapshot stays unchanged"
+    );
+    h.finish("workspace-cwd").await;
+}
+
+#[tokio::test]
+async fn prepared_storage_factory_is_used_by_real_session_construction() {
+    let h = Harness::new("prepared-storage");
+    let prepare = h.factory.options.prepare.clone();
+    let selected = h.factory.options.create_storage.clone();
+    let options = &h.factory.options;
+    let factory = ProjectSessionFactory::new(FactoryOptions {
+        writer_busy_wait_timeout: options.writer_busy_wait_timeout,
+        prepare: Arc::new(move |context, mcp| {
+            let preparing = prepare(context, mcp);
+            let selected = selected.clone();
+            Box::pin(async move {
+                let mut prepared = preparing.await?;
+                prepared.resources.set_storage_factory(selected)?;
+                Ok(prepared)
+            })
+        }),
+        create_storage: Arc::new(|_| {
+            Box::pin(async {
+                Err(RuntimeError::new(
+                    "unselected default storage must not execute",
+                ))
+            })
+        }),
+        admission: options.admission.clone(),
+        diagnostic: options.diagnostic.clone(),
+        tool_results_dir: options.tool_results_dir.clone(),
+    });
+    let handle = bounded("prepared storage create", factory.create(h.context(), None))
+        .await
+        .expect("prepared generation storage is the real constructor source");
+    assert_eq!(
+        handle.workspace_cwd(),
+        Some(JsString::from(h.root.to_str().unwrap()))
+    );
+    bounded(
+        "prepared storage handle drain",
+        handle.dispose("fixture_complete".into()),
+    )
+    .await
+    .unwrap();
+    drop(handle);
+    bounded("prepared storage factory drain", factory.dispose())
+        .await
+        .unwrap();
+    h.finish("prepared storage original harness").await;
+}
+struct StorageCaptureDropped(Arc<std::sync::atomic::AtomicBool>);
+impl Drop for StorageCaptureDropped {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+fn unused_storage_capture(flag: Arc<std::sync::atomic::AtomicBool>) -> CreateStorage {
+    let capture = StorageCaptureDropped(flag);
+    Arc::new(move |_| {
+        let _capture = &capture;
+        Box::pin(async { Err(RuntimeError::new("unused callback must not run")) })
+    })
+}
+#[tokio::test]
+async fn prepared_storage_capture_drops_before_explicit_generation_release() {
+    let captured = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let observed = captured.clone();
+    let mut resources = PreparedResources::default();
+    resources
+        .set_storage_factory(unused_storage_capture(captured))
+        .unwrap();
+    resources.push(move || {
+        Box::pin(async move {
+            assert!(
+                observed.load(Ordering::SeqCst),
+                "unused storage cannot pin its own generation drain"
+            );
+            Ok(())
+        })
+    });
+    bounded("explicit prepared storage release", resources.release())
+        .await
+        .unwrap();
+}
+#[tokio::test]
+async fn cancelled_prepared_storage_capture_drops_before_generation_release() {
+    let captured = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let completed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let observed = captured.clone();
+    let released = completed.clone();
+    let mut resources = PreparedResources::default();
+    resources
+        .set_storage_factory(unused_storage_capture(captured))
+        .unwrap();
+    resources.push(move || {
+        Box::pin(async move {
+            assert!(
+                observed.load(Ordering::SeqCst),
+                "cancelled storage cannot pin its own generation drain"
+            );
+            released.store(true, Ordering::SeqCst);
+            Ok(())
+        })
+    });
+    drop(resources);
+    bounded("cancelled prepared storage release", async {
+        while !completed.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn prepared_admission_is_the_real_fenced_original_metadata_source() {
+    let h = Harness::new("prepared-admission");
+    let prepare = h.factory.options.prepare.clone();
+    let options = &h.factory.options;
+    let factory = ProjectSessionFactory::new(FactoryOptions {
+        writer_busy_wait_timeout: options.writer_busy_wait_timeout,
+        prepare: Arc::new(move |context, mcp| {
+            let preparing = prepare(context, mcp);
+            Box::pin(async move {
+                let mut prepared = preparing.await?;
+                prepared.resources.set_admission(Arc::new(|context| {
+                    Box::pin(async move {
+                        Ok(Some(crate::metadata::object([
+                            (
+                                "projectKey",
+                                context
+                                    .project_key
+                                    .map(JsValue::String)
+                                    .unwrap_or(JsValue::Undefined),
+                            ),
+                            ("generation", "prepared-original".into()),
+                        ])))
+                    })
+                }))?;
+                Ok(prepared)
+            })
+        }),
+        create_storage: options.create_storage.clone(),
+        admission: Some(Arc::new(|_| {
+            Box::pin(async {
+                Err(RuntimeError::new(
+                    "unselected global admission must not run",
+                ))
+            })
+        })),
+        diagnostic: options.diagnostic.clone(),
+        tool_results_dir: options.tool_results_dir.clone(),
+    });
+    let handle = bounded(
+        "prepared admission create",
+        factory.create(h.context(), None),
+    )
+    .await
+    .unwrap();
+    let path = lock(&h.observed.bindings)
+        .last()
+        .unwrap()
+        .recorder
+        .writer()
+        .path()
+        .to_owned();
+    let read = crate::storage::read_transcript_bounded(&path).unwrap().read;
+    let admission = read
+        .entries
+        .iter()
+        .filter(|e| e.get("turnId") == Some(&JsValue::from("host-admission")))
+        .collect::<Vec<_>>();
+    assert_eq!(admission.len(), 1, "one durable original admission");
+    assert_eq!(
+        admission[0]
+            .get("metadata")
+            .and_then(|v| v.get("staffDeckAdmission"))
+            .and_then(|v| v.get("generation")),
+        Some(&JsValue::from("prepared-original"))
+    );
+    bounded(
+        "prepared admission drain",
+        handle.dispose("fixture_complete".into()),
+    )
+    .await
+    .unwrap();
+    drop(handle);
+    bounded("prepared admission factory drain", factory.dispose())
+        .await
+        .unwrap();
+    h.finish("prepared admission original harness").await;
+}
+fn unused_admission_capture(flag: Arc<std::sync::atomic::AtomicBool>) -> Admission {
+    let capture = StorageCaptureDropped(flag);
+    Arc::new(move |_| {
+        let _capture = &capture;
+        Box::pin(async { Err(RuntimeError::new("unused admission must not run")) })
+    })
+}
+#[tokio::test]
+async fn prepared_admission_drops_before_explicit_and_cancelled_lease_release() {
+    for cancel in [false, true] {
+        let captured = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed = captured.clone();
+        let completed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let released = completed.clone();
+        let mut resources = PreparedResources::default();
+        resources
+            .set_admission(unused_admission_capture(captured))
+            .unwrap();
+        assert!(
+            resources
+                .set_admission(unused_admission_capture(Arc::default()))
+                .is_err()
+        );
+        resources.push(move || {
+            Box::pin(async move {
+                assert!(
+                    observed.load(Ordering::SeqCst),
+                    "admission cannot pin its own retired generation drain"
+                );
+                released.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+        });
+        if cancel {
+            drop(resources);
+            bounded("cancelled admission cleanup", async {
+                while !completed.load(Ordering::SeqCst) {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await;
+        } else {
+            bounded("explicit admission cleanup", resources.release())
+                .await
+                .unwrap();
+            assert!(completed.load(Ordering::SeqCst));
+        }
+    }
 }

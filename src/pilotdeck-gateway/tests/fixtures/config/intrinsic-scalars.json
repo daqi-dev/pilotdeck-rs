@@ -1,0 +1,2471 @@
+{
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "cases": [
+    {
+      "id": "constructor-number-global",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "constructor": 7
+        }
+      },
+      "project": null,
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "id": "constructor-number-global-and-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "constructor": 7
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "constructor-number-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "constructor": 7
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "constructor-string-global",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "constructor": "fixture"
+        }
+      },
+      "project": null,
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "id": "constructor-string-global-and-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "constructor": "fixture"
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "constructor-string-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "constructor": "fixture"
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "constructor-null-global",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "constructor": null
+        }
+      },
+      "project": null,
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "id": "constructor-null-global-and-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "constructor": null
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "constructor-null-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "constructor": null
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "toString-number-global",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "toString": 7
+        }
+      },
+      "project": null,
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "id": "toString-number-global-and-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "toString": 7
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "toString-number-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "toString": 7
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "toString-string-global",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "toString": "fixture"
+        }
+      },
+      "project": null,
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "id": "toString-string-global-and-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "toString": "fixture"
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "toString-string-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "toString": "fixture"
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "toString-null-global",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "toString": null
+        }
+      },
+      "project": null,
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "id": "toString-null-global-and-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "toString": null
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "toString-null-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "toString": null
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "constructor-false-global",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "constructor": false
+        }
+      },
+      "project": null,
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "id": "constructor-false-global-and-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "constructor": false
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "constructor-false-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "constructor": false
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "constructor-true-global",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "constructor": true
+        }
+      },
+      "project": null,
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "id": "constructor-true-global-and-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "constructor": true
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "constructor-true-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "constructor": true
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "toString-false-global",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "toString": false
+        }
+      },
+      "project": null,
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "id": "toString-false-global-and-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "toString": false
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "toString-false-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "toString": false
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "toString-true-global",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "toString": true
+        }
+      },
+      "project": null,
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "id": "toString-true-global-and-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "toString": true
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "toString-true-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "toString": true
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "constructor-object-global",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "constructor": {
+            "x": 1
+          }
+        }
+      },
+      "project": null,
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "id": "constructor-object-global-and-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "constructor": {
+            "x": 1
+          }
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "constructor-object-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "constructor": {
+            "x": 1
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "constructor-nested-global",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "constructor": {
+            "prototype": {
+              "probe": true
+            }
+          }
+        }
+      },
+      "project": null,
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "id": "constructor-nested-global-and-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "constructor": {
+            "prototype": {
+              "probe": true
+            }
+          }
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "constructor-nested-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "constructor": {
+            "prototype": {
+              "probe": true
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "constructor-array-global",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "constructor": [
+            1
+          ]
+        }
+      },
+      "project": null,
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "id": "constructor-array-global-and-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "constructor": [
+            1
+          ]
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "constructor-array-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "constructor": [
+            1
+          ]
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "toString-object-global",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "toString": {
+            "x": 1
+          }
+        }
+      },
+      "project": null,
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "id": "toString-object-global-and-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "toString": {
+            "x": 1
+          }
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "toString-object-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "toString": {
+            "x": 1
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "toString-nested-global",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "toString": {
+            "prototype": {
+              "probe": true
+            }
+          }
+        }
+      },
+      "project": null,
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "id": "toString-nested-global-and-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "toString": {
+            "prototype": {
+              "probe": true
+            }
+          }
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "toString-nested-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "toString": {
+            "prototype": {
+              "probe": true
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "toString-array-global",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "toString": [
+            1
+          ]
+        }
+      },
+      "project": null,
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {}
+        }
+      }
+    },
+    {
+      "id": "toString-array-global-and-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "toString": [
+            1
+          ]
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    },
+    {
+      "id": "toString-array-project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/mock"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "test",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        },
+        "alwaysOn": {
+          "language": "en"
+        }
+      },
+      "project": {
+        "alwaysOn": {
+          "toString": [
+            1
+          ]
+        }
+      },
+      "result": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ],
+        "alwaysOn": {
+          "trigger": {
+            "tickIntervalMinutes": 5,
+            "cooldownMinutes": 60,
+            "dailyBudget": 4,
+            "heartbeatStaleSeconds": 90,
+            "recentUserMsgMinutes": 5,
+            "preferChannel": "web"
+          },
+          "projects": {},
+          "language": "en"
+        }
+      }
+    }
+  ]
+}

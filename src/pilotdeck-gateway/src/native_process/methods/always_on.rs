@@ -1,10 +1,7 @@
 use super::super::requests::Requests;
 use crate::{
     metadata::object,
-    runtime::{
-        always_on::{AbortInput, ApplyInput, ControlError, RerunInput},
-        connection::{Call, RequestError},
-    },
+    runtime::connection::{Call, RequestError},
 };
 use pilotdeck_protocol::JsValue;
 
@@ -14,11 +11,10 @@ use pilotdeck_protocol::JsValue;
 // without an injected always-on control" behavior: a resolved result envelope
 // whose `error` field carries `code: "not_configured"`
 // (InProcessGateway.ts:2992-3016), which the WS boundary sends as `ok: true`
-// (GatewayWsConnection.ts:186-187) — not a request-level error. #2294 lands
-// the control port itself: a staged always-on manager (the assembly's
-// automation bundle published one, `Requests::always_on`) routes to the real
-// implementation, and no manager keeps the unconfigured branch below byte for
-// byte.
+// (GatewayWsConnection.ts:186-187) — not a request-level error. The control
+// port is published by the automation generation and can provide either
+// a live manager or standalone apply; without a published control the
+// unconfigured branch below preserves the TS envelopes.
 pub(super) const METHODS: &[&str] = crate::runtime::always_on::ALWAYS_ON_METHODS;
 pub(super) const HANDLER: super::Handler =
     super::Handler::AfterAdmission(Requests::always_on_request);
@@ -32,50 +28,6 @@ fn not_configured_error(message: &str) -> JsValue {
     ])
 }
 
-/// The `error` field of a control result — the same key order
-/// (`{code, message}`, AlwaysOnControlPort.ts).
-fn control_error(error: &ControlError) -> JsValue {
-    object([
-        ("code", error.code.as_str().into()),
-        ("message", error.message.as_str().into()),
-    ])
-}
-
-/// JS `String(value)` rendering for interpolated control fields — the
-/// `js_display` shape `methods/config.rs` uses.
-fn js_display(value: &JsValue) -> String {
-    String::from_utf16_lossy(&crate::js_value::to_string_units(value).unwrap_or_default())
-}
-
-/// `String(input.<key>)` — the coercion the TS control port's reads perform.
-/// The wire `params` reach the port untouched, so a missing key reads as
-/// `undefined`: the strict-equality project match and the
-/// `No Always-On runtime for project ${...}` template both see its `String()`
-/// form, `"undefined"` included. A non-string value also never matches a
-/// runtime in TS; the port's coerced form can only collide with a project key
-/// that is itself that decimal rendering, which the config's path-shaped keys
-/// never are — recorded with the -R1 ledger.
-fn wire_string(params: &JsValue, key: &str) -> Result<String, RequestError> {
-    Ok(js_display(
-        &super::input_property(params, key)?.unwrap_or(JsValue::Undefined),
-    ))
-}
-
-/// An optional input field the control port carries through: `undefined` and
-/// a missing key are `None`, anything else is its `String()` form.
-fn wire_option(params: &JsValue, key: &str) -> Option<String> {
-    params
-        .get(key)
-        .filter(|value| !value.is_undefined())
-        .map(js_display)
-}
-
-/// A control-port rejection (`Promise` → throw) at the WS boundary: the same
-/// `gateway_request_failed` catch-all the TypeError arms produce.
-fn io_request_error(error: std::io::Error) -> RequestError {
-    RequestError::new(error.to_string())
-}
-
 impl Requests {
     pub(in crate::native_process) fn always_on_request(
         &self,
@@ -83,125 +35,62 @@ impl Requests {
         params: JsValue,
     ) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async move {
-            // The whole configuration axis is one switch: TS gates on
-            // `options.alwaysOnControl` (InProcessGateway.ts:2992-3016). A
-            // staged manager delegates to the control port verbatim; no
-            // manager answers the #1313 envelopes.
-            let Some(manager) = self.always_on.clone() else {
-                return not_configured(&method, &params);
-            };
+            if let Some(control) = self.automation.as_ref().and_then(|slot| slot.control()) {
+                let project: pilotdeck_protocol::JsString =
+                    self.options.project.to_string_lossy().as_ref().into();
+                return control
+                    .dispatch(&method, &project, params)
+                    .await
+                    .map_err(|error| RequestError {
+                        code: error.code,
+                        message: error.message.into(),
+                        details: None,
+                        validation: None,
+                    });
+            }
             match method.as_str() {
-                // The TS reads happen in this order: the manager's runtime
-                // find reads `projectKey` first, the cycle lookup reads
-                // `workCycleId`, and `projectName` rides through to the fire
-                // seam (AlwaysOnManager.ts:193-203).
-                "always_on_apply" => {
-                    let input = ApplyInput {
-                        project_key: wire_string(&params, "projectKey")?,
-                        work_cycle_id: wire_string(&params, "workCycleId")?,
-                        project_name: wire_option(&params, "projectName"),
-                    };
-                    let result = manager
-                        .apply_cycle(&input)
-                        .await
-                        .map_err(io_request_error)?;
-                    let mut envelope = vec![("sessionKey", result.session_key.as_str().into())];
-                    if let Some(error) = &result.error {
-                        envelope.push(("error", control_error(error)));
-                    }
-                    Ok(object(envelope))
-                }
-                // The manager reads `projectKey` before `sessionKey` (the
-                // runtime find first, the echo second — AlwaysOnManager.ts:
-                // 205-215), so a nullish `params` reports the projectKey read:
-                // the reverse of the unconfigured branch, which only reads
-                // `sessionKey`. The envelope's `sessionKey` is the RAW wire
-                // value like TS returns it — every control result echoes
-                // `input.sessionKey` verbatim, and JSON.stringify drops an
-                // `undefined` key.
+                // The only arm that reads `input`: the unconfigured abort
+                // echoes `input.sessionKey` in its return object
+                // (InProcessGateway.ts:3003), so a nullish `params` throws the
+                // boundary TypeError — `input_property` reproduces the message
+                // and `RequestError::new` the `gateway_request_failed` wire
+                // code the TS catch-all produces (GatewayWsConnection.ts:
+                // 246-254). A present non-undefined value is echoed verbatim
+                // (string, number and null alike), and a missing key is
+                // dropped, matching JSON.stringify over `sessionKey:
+                // undefined`.
                 "always_on_abort" => {
-                    let project_key = wire_string(&params, "projectKey")?;
                     let session_key = super::input_property(&params, "sessionKey")?;
-                    let input = AbortInput {
-                        project_key,
-                        session_key: wire_string(&params, "sessionKey")?,
-                        reason: wire_option(&params, "reason"),
-                    };
-                    let result = manager.abort_run(&input).await;
-                    let mut envelope = vec![("aborted", JsValue::Bool(result.aborted))];
+                    let mut envelope = vec![("aborted", JsValue::Bool(false))];
                     if let Some(value) = session_key.filter(|value| !value.is_undefined()) {
                         envelope.push(("sessionKey", value));
                     }
-                    if let Some(run_id) = &result.run_id {
-                        envelope.push(("runId", run_id.as_str().into()));
-                    }
-                    if let Some(error) = &result.error {
-                        envelope.push(("error", control_error(error)));
-                    }
+                    envelope.push((
+                        "error",
+                        not_configured_error("Always-On abort is not configured on this gateway."),
+                    ));
                     Ok(object(envelope))
                 }
-                // The manager's find reads `projectKey`, the runtime then
-                // reads `planId` (AlwaysOnManager.ts:185-191).
-                "always_on_rerun_plan" => {
-                    let input = RerunInput {
-                        project_key: wire_string(&params, "projectKey")?,
-                        plan_id: wire_string(&params, "planId")?,
-                    };
-                    let result = manager.rerun_plan(&input).await.map_err(io_request_error)?;
-                    let mut envelope = vec![("runId", result.run_id.as_str().into())];
-                    if let Some(error) = &result.error {
-                        envelope.push(("error", control_error(error)));
-                    }
-                    Ok(object(envelope))
-                }
-                _ => unreachable!("#2294 the registry routes only the three always-on names"),
+                // Neither remaining arm reads `input` in the unconfigured
+                // branch (InProcessGateway.ts:2992-2997, :3010-3013), so any
+                // params shape — including null and undefined — still answers
+                // the envelope.
+                "always_on_rerun_plan" => Ok(object([
+                    ("runId", "".into()),
+                    (
+                        "error",
+                        not_configured_error("Always-On rerun is not configured on this gateway."),
+                    ),
+                ])),
+                _ => Ok(object([
+                    ("sessionKey", "".into()),
+                    (
+                        "error",
+                        not_configured_error("Always-On apply is not configured on this gateway."),
+                    ),
+                ])),
             }
         })
-    }
-}
-
-/// The TS "no injected always-on control" branch
-/// (InProcessGateway.ts:2992-3016): resolved result envelopes whose `error`
-/// field carries `code: "not_configured"`.
-fn not_configured(method: &str, params: &JsValue) -> Result<JsValue, RequestError> {
-    match method {
-        // The only arm that reads `input`: the unconfigured abort echoes
-        // `input.sessionKey` in its return object (InProcessGateway.ts:3003),
-        // so a nullish `params` throws the boundary TypeError —
-        // `input_property` reproduces the message and `RequestError::new` the
-        // `gateway_request_failed` wire code the TS catch-all produces
-        // (GatewayWsConnection.ts:246-254). A present non-undefined value is
-        // echoed verbatim (string, number and null alike), and a missing key
-        // is dropped, matching JSON.stringify over `sessionKey: undefined`.
-        "always_on_abort" => {
-            let session_key = super::input_property(params, "sessionKey")?;
-            let mut envelope = vec![("aborted", JsValue::Bool(false))];
-            if let Some(value) = session_key.filter(|value| !value.is_undefined()) {
-                envelope.push(("sessionKey", value));
-            }
-            envelope.push((
-                "error",
-                not_configured_error("Always-On abort is not configured on this gateway."),
-            ));
-            Ok(object(envelope))
-        }
-        // Neither remaining arm reads `input` in the unconfigured branch
-        // (InProcessGateway.ts:2992-2997, :3010-3013), so any params shape —
-        // including null and undefined — still answers the envelope.
-        "always_on_rerun_plan" => Ok(object([
-            ("runId", "".into()),
-            (
-                "error",
-                not_configured_error("Always-On rerun is not configured on this gateway."),
-            ),
-        ])),
-        _ => Ok(object([
-            ("sessionKey", "".into()),
-            (
-                "error",
-                not_configured_error("Always-On apply is not configured on this gateway."),
-            ),
-        ])),
     }
 }
 
@@ -356,49 +245,54 @@ mod tests {
         teardown(&requests).await;
     }
 
-    // The always-on rounds walk the same shared admission gate as every other
-    // session request: an unserved projectKey is refused by the entry gate
-    // before the family runs, and the configured project is admitted through
-    // to the envelope (issue acceptance: "always-on 轮次走同一接纳器").
+    // Fixed TS InProcessGateway does not inspect projectKey in the
+    // unconfigured apply branch. The common native view still accepts each
+    // key shape before the identical envelope is returned.
     #[tokio::test]
     async fn always_on_rounds_share_the_admission_gate() {
         let (_scratch, requests) = std::panic::catch_unwind(setup).expect("#1313 fixture setup");
-        let params = crate::metadata::object([("projectKey", "/wrong/project".into())]);
-        let result =
-            GatewayRequests::request(&requests, JsString::from("always_on_apply"), params).await;
-        negative_assert_eq!(
-            result
-                .expect_err("#1313 wrong project is refused")
-                .code
-                .as_str(),
-            "gateway_request_failed",
-            "#1313 always_on_apply admission gate refuses an unserved project"
-        );
-        let project_key = requests.options.project.to_string_lossy().into_owned();
-        let params = crate::metadata::object([
-            ("projectKey", project_key.as_str().into()),
-            ("workCycleId", "wc1".into()),
-        ]);
-        let result =
-            GatewayRequests::request(&requests, JsString::from("always_on_apply"), params).await;
-        let value =
-            result.unwrap_or_else(|error| panic!("#1313 served project is admitted: {error:?}"));
-        negative_assert_eq!(
-            value
-                .get("error")
-                .and_then(|e| e.get("code"))
-                .and_then(JsValue::as_string),
-            Some(&JsString::from("not_configured")),
-            "#1313 always_on_apply admission gate admits the configured project"
-        );
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../../tests/fixtures/native-multiproject-gates/oracle.json"
+        ))
+        .unwrap();
+        let cases = match oracle.get("cases").unwrap() {
+            JsValue::Array(cases) => cases,
+            _ => panic!("cases"),
+        };
+        for (name, key) in [
+            ("null-always", JsValue::Null),
+            ("number-always", JsValue::Number(5.0)),
+            ("foreign-always", JsValue::from("/wrong/project")),
+        ] {
+            let expected = cases
+                .iter()
+                .find(|case| {
+                    case.get("id")
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|id| id.equals_str(name))
+                })
+                .unwrap();
+            let result = GatewayRequests::request(
+                &requests,
+                JsString::from("always_on_apply"),
+                crate::metadata::object([("projectKey", key)]),
+            )
+            .await
+            .unwrap();
+            negative_assert_eq!(
+                Some(&result),
+                expected.get("value"),
+                "#1313 unconfigured envelope matches fixed TS"
+            );
+        }
         teardown(&requests).await;
     }
 
-    // The three names must stay out of describe without a manager: TS lists
-    // them only when an `alwaysOnControl` is injected
-    // (InProcessGateway.ts:2123-2126), and this fixture binds none.
+    // The three names must stay out of describe: TS lists them only when an
+    // `alwaysOnControl` is injected (InProcessGateway.ts:2123-2126), and this
+    // process binds none — the runtime lands in #2294.
     #[tokio::test]
-    async fn always_on_methods_are_not_advertised_without_a_manager() {
+    async fn always_on_methods_are_not_advertised() {
         let (_scratch, requests) = std::panic::catch_unwind(setup).expect("#1313 fixture setup");
         let described = GatewayRequests::describe_server(&requests)
             .await
@@ -407,7 +301,7 @@ mod tests {
             Some(pilotdeck_protocol::JsValue::Array(items)) => items,
             _ => panic!("#1313 capability array"),
         };
-        for method in crate::runtime::always_on::ALWAYS_ON_METHODS {
+        for method in ["always_on_apply", "always_on_abort", "always_on_rerun_plan"] {
             let advertised = capabilities.iter().any(|capability| {
                 capability
                     .as_string()
@@ -416,12 +310,11 @@ mod tests {
             negative_assert_eq!(
                 advertised,
                 false,
-                "#2294 {method} must not be advertised without an always-on manager"
+                "#1313 {method} must not be advertised in describe"
             );
         }
         teardown(&requests).await;
     }
-
     /// A `Requests` whose always-on manager is staged for the fixture's one
     /// project, mirroring what the assembly publishes from a
     /// `alwaysOn: {projects: {<project>: {enabled: true}}}` section — the
@@ -443,7 +336,31 @@ mod tests {
             },
         )
         .expect("#2294 manager constructs");
-        requests.always_on = Some(std::sync::Arc::new(manager));
+        struct NoStandalone;
+        impl crate::runtime::always_on::StandaloneApply for NoStandalone {
+            fn apply<'a>(
+                &'a self,
+                _: &'a JsString,
+                _: JsValue,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                            Output = Result<JsValue, crate::runtime::always_on::ControlError>,
+                        > + Send
+                        + 'a,
+                >,
+            > {
+                Box::pin(async { unreachable!("configured manager uses live control") })
+            }
+        }
+        let slot = std::sync::Arc::new(
+            crate::native_process::assembly::automation::PublishedAutomation::default(),
+        );
+        slot.set_control_for_test(crate::runtime::always_on::create_control(
+            Some(std::sync::Arc::new(manager)),
+            std::sync::Arc::new(NoStandalone),
+        ));
+        requests.automation = Some(slot);
         requests
     }
 
@@ -529,19 +446,21 @@ mod tests {
                 .expect("#2294 envelope is defined");
             negative_assert_eq!(text, envelope, "#2294 {method} configured routing");
         }
-        // A staged manager does not bypass the shared admission gate: an
-        // unserved projectKey is still refused before the family runs.
+        // The manager owns project routing, and fixed TS returns a family
+        // envelope for an unknown project (AlwaysOnManager.ts:192-196).
         let params = crate::metadata::object([("projectKey", "/elsewhere".into())]);
-        let result =
-            GatewayRequests::request(&requests, JsString::from("always_on_apply"), params).await;
+        let value = GatewayRequests::request(&requests, JsString::from("always_on_apply"), params)
+            .await
+            .expect("project_not_found is a family envelope");
         negative_assert_eq!(
-            result
-                .expect_err("#2294 unserved project is refused with a manager too")
-                .code
-                .as_str(),
-            "gateway_request_failed",
-            "#2294 the admission gate precedes the always-on family"
+            value
+                .get("error")
+                .and_then(|e| e.get("code"))
+                .and_then(JsValue::as_string),
+            Some(&JsString::from("project_not_found")),
+            "#2294 unknown project envelope"
         );
+
         teardown(&requests).await;
     }
 

@@ -1,0 +1,55 @@
+{
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "yamlVersion": "2.9.0",
+  "cases": [
+    {
+      "id": "0",
+      "value": " \\u0000",
+      "input": "note: \" \\\\u0000\"\n",
+      "expected": "note: \" \\\\u0000\"\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    },
+    {
+      "id": "1",
+      "value": " \\u0007",
+      "input": "note: \" \\\\u0007\"\n",
+      "expected": "note: \" \\\\u0007\"\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    },
+    {
+      "id": "2",
+      "value": " \\u000b",
+      "input": "note: \" \\\\u000b\"\n",
+      "expected": "note: \" \\\\u000b\"\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    },
+    {
+      "id": "3",
+      "value": " \\u001b",
+      "input": "note: \" \\\\u001b\"\n",
+      "expected": "note: \" \\\\u001b\"\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    },
+    {
+      "id": "4",
+      "value": " \u0000",
+      "input": "note: \" \\0\"\n",
+      "expected": "note: \" \\0\"\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    },
+    {
+      "id": "5",
+      "value": " \u0007",
+      "input": "note: \" \\a\"\n",
+      "expected": "note: \" \\a\"\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    },
+    {
+      "id": "6",
+      "value": " \u000b",
+      "input": "note: \" \\v\"\n",
+      "expected": "note: \" \\v\"\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    },
+    {
+      "id": "7",
+      "value": " \u001b",
+      "input": "note: \" \\e\"\n",
+      "expected": "note: \" \\e\"\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+    }
+  ]
+}

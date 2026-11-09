@@ -44,10 +44,23 @@ pub struct TaskTool {
     kind: Kind,
     fields: JsObject,
     runtime: Option<BackgroundTaskRuntime>,
+    native_sandbox: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>,
 }
 
 /// `createTaskTools({ runtime })` in the baseline's order.
 pub fn task_tools(runtime: Option<BackgroundTaskRuntime>) -> Vec<Arc<dyn ExecutableTool>> {
+    task_tools_inner(runtime, None)
+}
+pub(crate) fn task_tools_with_sandbox(
+    runtime: Option<BackgroundTaskRuntime>,
+    sandbox: Arc<crate::runtime::tools::sandbox::NativeSandbox>,
+) -> Vec<Arc<dyn ExecutableTool>> {
+    task_tools_inner(runtime, Some(sandbox))
+}
+fn task_tools_inner(
+    runtime: Option<BackgroundTaskRuntime>,
+    sandbox: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>,
+) -> Vec<Arc<dyn ExecutableTool>> {
     [
         Kind::Create,
         Kind::List,
@@ -61,6 +74,7 @@ pub fn task_tools(runtime: Option<BackgroundTaskRuntime>) -> Vec<Arc<dyn Executa
             kind,
             fields: definition(kind),
             runtime: runtime.clone(),
+            native_sandbox: sandbox.clone(),
         }) as Arc<dyn ExecutableTool>
     })
     .collect()
@@ -201,8 +215,20 @@ impl ExecutableTool for TaskTool {
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
         let kind = self.kind;
         let runtime = self.runtime.clone();
+        let native_sandbox = self.native_sandbox.clone();
         Box::pin(async move {
             let runtime = runtime.ok_or_else(|| ToolError::new("unsupported_tool", UNSUPPORTED))?;
+            if kind == Kind::Create
+                && native_sandbox.as_ref().is_some_and(|expected| {
+                    expected.mode() != crate::runtime::project::SandboxMode::DangerFullAccess
+                        && !runtime.sandbox_matches(expected)
+                })
+            {
+                return Err(ToolError::new(
+                    "sandbox_unavailable",
+                    "Background task runtime is not bound to this execution-world sandbox provider.",
+                ));
+            }
             match kind {
                 Kind::Create => create(&runtime, &input, &context).await,
                 Kind::List => list(&runtime, &input, &context),
@@ -508,7 +534,13 @@ fn output(
     } else {
         format!("{head}\n{}", slice.content)
     };
-    Ok(text_output(&text, output_data(task_id, &slice, &task)))
+    Ok(output_with_failure(
+        runtime,
+        &key,
+        &session,
+        text,
+        output_data(task_id, &slice, &task),
+    ))
 }
 
 async fn wait(
@@ -574,7 +606,7 @@ async fn wait(
     data.insert("waitedMs".into(), JsValue::Number(waited.waited_ms));
     data.insert("timedOut".into(), JsValue::Bool(waited.timed_out));
     data.insert("outcome".into(), string(waited.outcome));
-    Ok(text_output(&text, data))
+    Ok(output_with_failure(runtime, &key, &session, text, data))
 }
 
 async fn stop(
@@ -616,4 +648,19 @@ async fn stop(
             ("status", string(after.status.as_str())),
         ]),
     ))
+}
+
+fn output_with_failure(
+    runtime: &BackgroundTaskRuntime,
+    key: &JsString,
+    session: &JsValue,
+    mut text: String,
+    mut data: JsObject,
+) -> ToolOutput {
+    if let Some(reason) = runtime.failure_reason(key, Some(session)) {
+        text.push('\n');
+        text.push_str(&String::from_utf16_lossy(reason.units()));
+        data.insert("errorReason".into(), JsValue::String(reason));
+    }
+    text_output(&text, data)
 }

@@ -284,6 +284,25 @@ pub fn active_turn_snapshot(
     coordinator.snapshot(input)
 }
 
+/// Native request view: a missing, foreign or unbound replay is an empty
+/// snapshot. Project provenance is checked under the replay store lock.
+pub(crate) fn active_turn_snapshot_for_project(
+    coordinator: &TurnEventCoordinator,
+    input: &ActiveTurnSnapshotInput,
+    project: &JsString,
+) -> ActiveTurnSnapshot {
+    coordinator
+        .snapshot_for_project(input, project)
+        .unwrap_or_else(|| ActiveTurnSnapshot {
+            active: false,
+            session_key: input.session_key.clone(),
+            run_id: None,
+            events: Vec::new(),
+            truncated: false,
+            terminal: false,
+        })
+}
+
 /// InProcessGateway.ts:2841-2861. `history` is the host-owned durable reader;
 /// `None` is the unconfigured gateway. `input` is the caller's
 /// `read_session_messages` request, passed through unchanged. Three attempts,
@@ -294,6 +313,30 @@ pub async fn read_session_messages(
     coordinator: &TurnEventCoordinator,
     history: Option<&dyn SessionHistoryReader>,
     input: &JsValue,
+) -> Result<JsValue, TurnReadError> {
+    read_session_messages_with_snapshot(history, input, |request| coordinator.snapshot(request))
+        .await
+}
+
+/// Native multi-project reads must never merge another project's replay.
+/// The replay store checks provenance under the same lock as its snapshot;
+/// missing, unbound and foreign replays are projected as an empty stream.
+pub(crate) async fn read_session_messages_for_project(
+    coordinator: &TurnEventCoordinator,
+    history: Option<&dyn SessionHistoryReader>,
+    input: &JsValue,
+    project: &JsString,
+) -> Result<JsValue, TurnReadError> {
+    read_session_messages_with_snapshot(history, input, |request| {
+        active_turn_snapshot_for_project(coordinator, request, project)
+    })
+    .await
+}
+
+async fn read_session_messages_with_snapshot(
+    history: Option<&dyn SessionHistoryReader>,
+    input: &JsValue,
+    snapshot: impl Fn(&ActiveTurnSnapshotInput) -> ActiveTurnSnapshot,
 ) -> Result<JsValue, TurnReadError> {
     let Some(history) = history else {
         return Err(TurnReadError::plain(
@@ -306,10 +349,9 @@ pub async fn read_session_messages(
         .cloned()
         .unwrap_or_default();
     for _ in 0..HISTORY_EPOCH_ATTEMPTS {
-        let before = coordinator
-            .snapshot(&ActiveTurnSnapshotInput::new(session_key.clone()).without_events());
+        let before = snapshot(&ActiveTurnSnapshotInput::new(session_key.clone()).without_events());
         let history = history.read(input).await?;
-        let stream = coordinator.snapshot(&ActiveTurnSnapshotInput::new(session_key.clone()));
+        let stream = snapshot(&ActiveTurnSnapshotInput::new(session_key.clone()));
         if !same_turn_epoch(&before, &stream) {
             continue;
         }
@@ -323,8 +365,11 @@ pub async fn read_session_messages(
 /// InProcessGateway.ts:2858: `{ ...history, stream }`. Key order follows the
 /// history object; a `stream` key the host already returned keeps its position
 /// and gets the fresh snapshot's value.
-fn merge_history_and_stream(history: JsValue, stream: &ActiveTurnSnapshot) -> JsValue {
-    let mut merged = history.as_object().cloned().unwrap_or_default();
+fn merge_history_and_stream(mut history: JsValue, stream: &ActiveTurnSnapshot) -> JsValue {
+    let mut merged = match &mut history {
+        JsValue::Object(object) => std::mem::take(object),
+        _ => JsObject::new(),
+    };
     merged.insert("stream".into(), stream.to_json());
     JsValue::Object(merged)
 }

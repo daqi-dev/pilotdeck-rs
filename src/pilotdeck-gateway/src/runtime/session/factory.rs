@@ -120,6 +120,7 @@ impl ReloadSource {
 /// has closed. A pre-drain snapshot must never rewind that durable sequence.
 pub struct SessionProjection {
     entries: Mutex<Vec<JsValue>>,
+    inbox: Mutex<super::inbox::InboxProjection>,
     last_valid: Mutex<DurableSessionState>,
     // Guarded by entries before access, just like last_valid. Tracks durable
     // completion even while projection is invalid; rebuilt only on restore.
@@ -131,6 +132,7 @@ impl Default for SessionProjection {
     fn default() -> Self {
         Self {
             entries: Mutex::default(),
+            inbox: Mutex::default(),
             last_valid: Mutex::default(),
             completed_turns: Mutex::default(),
             valid: AtomicBool::new(true),
@@ -139,6 +141,38 @@ impl Default for SessionProjection {
     }
 }
 impl SessionProjection {
+    pub(crate) fn pending_turns(
+        &self,
+        session: &JsString,
+    ) -> Result<std::collections::VecDeque<super::inbox::QueuedTurn>, RuntimeError> {
+        let entries = lock(&self.entries);
+        if self.disposed.load(Ordering::SeqCst) {
+            return Err(RuntimeError::new("Session projection driver is disposed."));
+        }
+        let mut inbox = lock(&self.inbox);
+        if inbox.processed > entries.len() {
+            *inbox = Default::default();
+        }
+        while inbox.processed < entries.len() {
+            let index = inbox.processed;
+            inbox.apply(&entries[index])?;
+            inbox.processed += 1;
+        }
+        Ok(inbox.pending(session))
+    }
+    /// Pure domain projection over borrowed durable events. Reducers must not
+    /// perform I/O, append, or acquire other session locks while this lock is held.
+    pub(crate) fn fold_domain<T>(
+        &self,
+        initial: T,
+        reduce: impl FnMut(T, &JsValue) -> Result<T, RuntimeError>,
+    ) -> Result<T, RuntimeError> {
+        let entries = lock(&self.entries);
+        if self.disposed.load(Ordering::SeqCst) {
+            return Err(RuntimeError::new("Session projection driver is disposed."));
+        }
+        entries.iter().try_fold(initial, reduce)
+    }
     pub fn snapshot(&self) -> Result<DurableSessionState, RuntimeError> {
         if self.disposed.load(Ordering::SeqCst) {
             return Err(RuntimeError::new("Session projection driver is disposed."));
@@ -170,12 +204,14 @@ type SharedWriterLease = Arc<Mutex<Option<WriterLease>>>;
 struct WriterCloseGuard {
     writer: Arc<crate::storage::TranscriptWriter>,
     _lease: Option<WriterLease>,
+    owner: Option<Arc<dyn Send + Sync>>,
 }
 impl Drop for WriterCloseGuard {
     fn drop(&mut self) {
         self.writer.begin_close();
         let writer = self.writer.clone();
         let lease = self._lease.take();
+        let owner = self.owner.take();
         let close = move || {
             // #1019 test pin: only the lease-holding close thread consults the
             // gate, and it does so before releasing the fence and process
@@ -189,6 +225,7 @@ impl Drop for WriterCloseGuard {
             }
             writer.close();
             drop(lease);
+            drop(owner);
         };
         // An independent blocking thread also works when a future is dropped
         // after its runtime has exited. It owns the lease through the drain.
@@ -247,7 +284,9 @@ async fn acquire_writer_resolved(
 pub(crate) fn try_writer_lease(path: &Path) -> Option<WriterLease> {
     let canonical = crate::storage::canonical_transcript_path(path).ok()?;
     let process = writer_mutex(&canonical).try_lock_owned().ok()?;
-    let (_, file) = crate::storage::LedgerLock::acquire(&canonical).ok()?;
+    // This private fast path is used only by native cold metadata writers;
+    // open the same lock inode with the native bounded policy from the start.
+    let (_, file) = crate::storage::LedgerLock::acquire_bounded(&canonical).ok()?;
     Some(WriterLease {
         _file: file,
         _process: process,
@@ -520,6 +559,10 @@ pub struct PreparedResources {
     /// #1010 captured executor: registration happens inside async prepare,
     /// while a runtime is current. Drop may run on a thread without one.
     executor: Option<tokio::runtime::Handle>,
+    // Opt-in session composition: storage is selected from the same prepared
+    // project generation as model/tools, rather than resolving a second one.
+    storage_factory: Option<CreateStorage>,
+    admission: Option<Admission>,
 }
 impl PreparedResources {
     /// Register cleanup on the executor captured by the first registration.
@@ -533,15 +576,44 @@ impl PreparedResources {
         }
         self.releases.push(Box::new(release));
     }
+    /// Bind storage to this prepared generation. Generic factories that do
+    /// not opt in continue using FactoryOptions::create_storage unchanged.
+    pub fn set_storage_factory(&mut self, storage: CreateStorage) -> RuntimeResult {
+        if self.storage_factory.is_some() {
+            return Err(RuntimeError::new(
+                "Prepared session storage is already selected.",
+            ));
+        }
+        self.storage_factory = Some(storage);
+        Ok(())
+    }
+    /// Bind original admission to the same immutable project generation that
+    /// prepared this session. Generic callers retain FactoryOptions.admission.
+    pub fn set_admission(&mut self, admission: Admission) -> RuntimeResult {
+        if self.admission.is_some() {
+            return Err(RuntimeError::new(
+                "Prepared session admission is already selected.",
+            ));
+        }
+        self.admission = Some(admission);
+        Ok(())
+    }
     pub fn retain_lease(&mut self, mut lease: RuntimeLease) {
         self.push(move || Box::pin(async move { lease.release().await }));
     }
     pub async fn release(mut self) -> RuntimeResult {
+        // An unused callback can own a reference to a prepared generation.
+        // Drop it before release callbacks that wait for that lease to drain.
+        drop(self.storage_factory.take());
+        drop(self.admission.take());
         release_all(std::mem::take(&mut self.releases)).await
     }
 }
 impl Drop for PreparedResources {
     fn drop(&mut self) {
+        // Cancellation obeys the same ordering as explicit release.
+        drop(self.storage_factory.take());
+        drop(self.admission.take());
         // A runtime that rejects or drops the spawned task also drops the
         // releases inside it; their own synchronous Drop semantics (lease
         // counts, WriterCloseGuard threads) still run. The async custom
@@ -612,7 +684,49 @@ pub struct FactoryStorage {
     pub load_checkpoint: Arc<dyn Fn() -> BoxFuture<RuntimeResult> + Send + Sync>,
     pub close: Arc<dyn Fn() -> BoxFuture<RuntimeResult> + Send + Sync>,
 }
+/// SOP sidechains use the existing factory writer fence and restore protocol.
+/// On cancellation/unwind the same WriterCloseGuard retires writes and retains
+/// the lease through the actual blocking close, just like factory disposal.
+pub(crate) struct SopStorage {
+    pub storage: Arc<FactoryStorage>,
+    _writer: WriterCloseGuard,
+}
+impl SopStorage {
+    pub(crate) fn close(self) -> BoxFuture<RuntimeResult> {
+        let closing = self.storage.close_owned();
+        Box::pin(async move {
+            let owner = self;
+            let result = closing.await;
+            drop(owner);
+            result
+        })
+    }
+}
 impl FactoryStorage {
+    pub(crate) async fn open_sop(
+        self,
+        writer_wait: std::time::Duration,
+        generation: Arc<RuntimeLease>,
+    ) -> Result<SopStorage, RuntimeError> {
+        let storage = Arc::new(self);
+        let deadline = tokio::time::Instant::now()
+            .checked_add(writer_wait)
+            .ok_or_else(|| RuntimeError::new("SOP writer wait is outside the supported range."))?;
+        let lease = acquire_writer(storage.recorder.writer().path().to_owned(), deadline).await?;
+        *lock(&storage.writer_lease) = Some(lease);
+        let mut writer = storage.take_writer_lease();
+        writer.owner = Some(generation);
+        let owner = SopStorage {
+            _writer: writer,
+            storage,
+        };
+        let path = owner.storage.recorder.writer().path().to_owned();
+        let _fence = super::transcript_locks::acquire(&path)
+            .await
+            .map_err(|error| RuntimeError::new(String::from_utf16_lossy(error.message.units())))?;
+        owner.storage.restore().await?;
+        Ok(owner)
+    }
     /// Supply an unlocked store (for JSONL, `JsonlTranscriptStore::new`).
     /// The factory acquires the canonical writer lease before restore. A store
     /// already owned by `open_locked` / `PersistenceResources::create_session`
@@ -689,6 +803,7 @@ impl FactoryStorage {
         WriterCloseGuard {
             writer: self.recorder.writer().clone(),
             _lease: lock(&self.writer_lease).take(),
+            owner: None,
         }
     }
     fn close_owned(&self) -> BoxFuture<RuntimeResult> {
@@ -837,8 +952,10 @@ pub struct FactoryOptions {
     pub diagnostic: Arc<dyn Fn(&Diagnostic) + Send + Sync>,
     pub tool_results_dir: Option<ToolResultsDir>,
 }
+type Publication = Arc<dyn Fn(SessionContext, LiveSessionHandle) -> RuntimeResult + Send + Sync>;
 #[derive(Clone)]
 pub struct ProjectSessionFactory {
+    publication: Option<Publication>,
     options: Arc<FactoryOptions>,
     mcp: SessionMcpRuntimeRegistry,
     #[cfg(test)]
@@ -853,11 +970,16 @@ impl ProjectSessionFactory {
             "writer_busy_wait_timeout must be positive"
         );
         Self {
+            publication: None,
             options: Arc::new(options),
             mcp: SessionMcpRuntimeRegistry::new(),
             #[cfg(test)]
             creation_sent: Arc::new(tokio::sync::watch::channel(0).0),
         }
+    }
+    pub(crate) fn with_publication(mut self, publication: Publication) -> Self {
+        self.publication = Some(publication);
+        self
     }
     /// Intentionally only the per-session MCP registry; owner.shutdown owns
     /// in-flight creations and session handles (TS ProjectSessionFactory:121).
@@ -937,7 +1059,12 @@ impl ProjectSessionFactory {
                 }
             }
         }
-        let storage = match (self.options.create_storage)(context.clone()).await {
+        let create_storage = prepared
+            .resources
+            .storage_factory
+            .as_ref()
+            .unwrap_or(&self.options.create_storage);
+        let storage = match create_storage(context.clone()).await {
             Ok(storage) => storage,
             Err(error) => {
                 let _ = prepared.resources.release().await;
@@ -990,7 +1117,11 @@ impl ProjectSessionFactory {
                     RuntimeError::new(String::from_utf16_lossy(error.message.units()))
                 })?;
             if previous.is_none()
-                && let Some(admission) = &self.options.admission
+                && let Some(admission) = prepared
+                    .resources
+                    .admission
+                    .as_ref()
+                    .or(self.options.admission.as_ref())
             {
                 let read = storage.restore().await?;
                 if read.entries.is_empty()
@@ -1146,6 +1277,12 @@ impl ProjectSessionFactory {
     }
 }
 impl SessionFactory for ProjectSessionFactory {
+    fn published(&self, context: SessionContext, handle: LiveSessionHandle) -> RuntimeResult {
+        match &self.publication {
+            Some(callback) => callback(context, handle),
+            None => Ok(()),
+        }
+    }
     fn can_recreate(&self) -> bool {
         true
     }
@@ -1228,6 +1365,16 @@ impl LiveSession for OwnedSession {
         self.adapter.reload_signal_for_test()
     }
     fn submit(&self, input: JsValue, options: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        if !self
+            .storage
+            .projection
+            .pending_turns(&self.reload_source.session_id)?
+            .is_empty()
+        {
+            return Err(RuntimeError::new(
+                "Agent handle already has an active turn.",
+            ));
+        }
         // AgentSession owns session identity; submit options only identify the turn.
         let mut options = options
             .as_object()
@@ -1246,25 +1393,80 @@ impl LiveSession for OwnedSession {
             finished: false,
         }))
     }
-    fn snapshot(&self) -> JsValue {
-        // The TS AgentSession snapshot carries the session's cwd, and the
-        // submit-side workspace snapshot wiring reads it back for the
-        // snapshot input's workspace dir (runtime/turn/submit.rs) — without
-        // it, every turn over a snapshots-enabled assembly refuses with
-        // "Workspace snapshot cwd is unavailable." The native process pins
-        // each session to the project root its factory key resolved
-        // (`SubmitCwdService::set` refuses any other cwd), so the session's
-        // cwd is the storage root, not a per-turn value (#1431).
-        let mut value = self.adapter.snapshot();
-        if let JsValue::Object(object) = &mut value {
-            object.insert(
-                "cwd".into(),
-                JsValue::String(JsString::from(
-                    self.storage.cwd.to_string_lossy().into_owned(),
-                )),
-            );
+    fn submit_queued(
+        &self,
+        input: JsValue,
+        options: JsValue,
+        authority: Option<crate::runtime::turn::interaction::TurnInteractionAuthority>,
+        item: JsString,
+    ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        // AgentSession owns session identity; submit options only identify the turn.
+        let mut options = options
+            .as_object()
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("#748 session submit options must be an object"))?;
+        options.insert(
+            "sessionId".into(),
+            JsValue::String(self.reload_source.session_id.clone()),
+        );
+        let turn = self
+            .adapter
+            .submit_queued(input, JsValue::Object(options), authority, item)?;
+        Ok(Box::new(OwnedTurn {
+            turn,
+            checkpoint: self.checkpoint.clone(),
+            saved: self.saved_files.clone(),
+            started: self.adapter.reload_execution_started(),
+            finished: false,
+        }))
+    }
+
+    fn submit_with_authority(
+        &self,
+        input: JsValue,
+        options: JsValue,
+        authority: crate::runtime::turn::interaction::TurnInteractionAuthority,
+    ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        if !self
+            .storage
+            .projection
+            .pending_turns(&self.reload_source.session_id)?
+            .is_empty()
+        {
+            return Err(RuntimeError::new(
+                "Agent handle already has an active turn.",
+            ));
         }
-        value
+        // AgentSession owns session identity; submit options only identify the turn.
+        let mut options = options
+            .as_object()
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("#748 session submit options must be an object"))?;
+        options.insert(
+            "sessionId".into(),
+            JsValue::String(self.reload_source.session_id.clone()),
+        );
+        let turn =
+            self.adapter
+                .submit_with_authority(input, JsValue::Object(options), authority)?;
+        Ok(Box::new(OwnedTurn {
+            turn,
+            checkpoint: self.checkpoint.clone(),
+            saved: self.saved_files.clone(),
+            started: self.adapter.reload_execution_started(),
+            finished: false,
+        }))
+    }
+    fn workspace_cwd(&self) -> Option<JsString> {
+        // FactoryStorage captures the admitted project's cwd before prepare.
+        // Reading this owned path requires no reload/file IO and cannot borrow
+        // the daemon's cwd or a caller-provided workspace/session identifier.
+        self.storage.cwd.to_str().map(JsString::from)
+    }
+    fn snapshot(&self) -> JsValue {
+        // Public AgentSessionState excludes cwd; the separate workspace_cwd
+        // capability carries the admitted storage root for native snapshots.
+        self.adapter.snapshot()
     }
     fn reload_snapshot(&self) -> Result<ReloadSnapshot, RuntimeError> {
         self.adapter.reload_snapshot()
@@ -1631,7 +1833,7 @@ fn real_user(message: &JsValue) -> bool {
             !text.is_empty() && text != "[system: the conversation above has been compacted. please continue with the current task.]" && !["<compact-boundary","<snip-boundary","<memory-context>","<internal-compaction-control","<hook_context"].iter().any(|p| text.starts_with(p))
         }))
 }
-fn project(entries: &[JsValue]) -> Result<DurableSessionState, RuntimeError> {
+pub(crate) fn project(entries: &[JsValue]) -> Result<DurableSessionState, RuntimeError> {
     #[cfg(test)]
     PROJECTION_VISITS.with(|visits| visits.set(visits.get() + entries.len()));
     let completed: HashSet<_> = entries

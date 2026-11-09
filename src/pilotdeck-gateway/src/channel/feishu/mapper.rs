@@ -115,7 +115,6 @@ impl FeishuSessionMapper {
 
     /// `bindProject`: the native process has no project-binding caller yet, so
     /// this is a parity seam exercised by the mapper tests.
-    #[cfg(test)]
     pub fn bind_project(&mut self, chat_id: &str, project_key: &str) {
         put(&mut self.state.project_by_chat_id, chat_id, project_key);
     }
@@ -138,7 +137,7 @@ impl FeishuSessionMapper {
         state_to_js(&self.state)
     }
 
-    fn current_session_key(&self, chat_id: &str) -> String {
+    pub(super) fn current_session_key(&self, chat_id: &str) -> String {
         get(&self.state.active_by_chat_id, chat_id)
             .unwrap_or_else(|| format!("feishu:chat={chat_id}:general"))
     }

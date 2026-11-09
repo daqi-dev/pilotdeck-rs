@@ -118,10 +118,7 @@ fn includes(raw: Option<&str>) -> Result<Vec<&'static str>, Failure> {
 }
 fn sources(argv: &[String], env: &Env, cwd: &Path) -> Result<Vec<Source>, Failure> {
     let include = includes(flag(argv, "--from"))?;
-    let home = PathBuf::from(
-        env.get("HOME")
-            .ok_or(Failure::Todo("home directory lookup without $HOME"))?,
-    );
+    let home = paths::homedir(env)?;
     let project = paths::resolve(cwd, Path::new(flag(argv, "--project").unwrap_or("")));
     let mut sources = Vec::new();
     for kind in include {
@@ -498,7 +495,7 @@ fn report(argv: &[String], env: &Env, cwd: &Path) -> Result<JsValue, Failure> {
     includes(flag(argv, "--from"))?;
     let pilot_home = match flag(argv, "--pilot-home") {
         Some(raw) => paths::resolve(cwd, Path::new(raw)),
-        None => paths::pilot_home(env, cwd)?,
+        None => paths::resolve(cwd, &paths::pilot_home(env, cwd)?),
     };
     let root = pilot_home.join("skills");
     let execute = has(argv, "--execute");
@@ -510,7 +507,7 @@ fn report(argv: &[String], env: &Env, cwd: &Path) -> Result<JsValue, Failure> {
         "skip"
     };
     let sources = sources(argv, env, cwd)?;
-    let home = PathBuf::from(env.get("HOME").expect("checked by sources"));
+    let home = paths::homedir(env)?;
     let mut options = SkillManagerOptions::new(pilot_home.to_string_lossy());
     options.home_dir = Some(home.to_string_lossy().into_owned());
     options.env = Some(env.strings());
@@ -768,6 +765,33 @@ mod tests {
             panic!()
         };
         *n
+    }
+
+    #[test]
+    fn unset_home_migration_uses_only_injected_isolated_account() {
+        let mut f = Fixture::new("unset-home-account");
+        f.env = Env::with_home_fallback(
+            &[
+                ("PILOT_HOME", &f.path.join("pilot").to_string_lossy()),
+                ("LC_ALL", "C"),
+            ],
+            f.path.join("home"),
+        );
+        f.skill("home/.claude/skills/from-account", VALID);
+        let args = ["--from", "claude-code", "--json"];
+        let fallback = f.report(&args);
+        // Report and manager get the same injected account path; no real OS
+        // home is resolved, even if the host process has HOME configured.
+        f.env = Env::from_pairs(&[
+            ("HOME", &f.path.join("home").to_string_lossy()),
+            ("PILOT_HOME", &f.path.join("pilot").to_string_lossy()),
+            ("LC_ALL", "C"),
+        ]);
+        assert_eq!(
+            pretty(&fallback).unwrap(),
+            pretty(&f.report(&args)).unwrap()
+        );
+        assert_eq!(count(&fallback, "would_migrate"), 1.0);
     }
 
     #[test]

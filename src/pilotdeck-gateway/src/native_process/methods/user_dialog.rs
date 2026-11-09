@@ -4,6 +4,7 @@ use crate::{
     user_dialog::{ConsumeResult, DialogAnswer},
 };
 use pilotdeck_protocol::{JsString, JsValue};
+use std::sync::Arc;
 
 pub(super) const METHODS: &[&str] = &[
     "user_dialog_list",
@@ -120,6 +121,19 @@ impl Requests {
                         "INVALID_USER_DIALOG_LIST",
                         "sessionKey is required.",
                     )?;
+                    // A live start owns this independent gate from before its journal
+                    // write through bus registration. Snapshot and recovered-list
+                    // filtering must observe one side of that transaction.
+                    let _start_gate = if self.dialog_recovery.is_some() {
+                        Some(
+                            crate::runtime::tools::builtin::user_dialog::dialog_start_gate(
+                                &session_key,
+                            )
+                            .await,
+                        )
+                    } else {
+                        None
+                    };
                     // #1442: `list` may expire a lease and queue a change;
                     // the observer is host code, so it is delivered only
                     // after the guard drops.
@@ -133,6 +147,21 @@ impl Requests {
                         (dialogs, outbox)
                     };
                     outbox.deliver();
+                    let mut dialogs = dialogs;
+                    if let Some(recovery) = &self.dialog_recovery {
+                        let recovered = recovery.list(self, &params, &session_key).await?;
+                        let ids: Vec<_> = dialogs
+                            .iter()
+                            .filter_map(|v| v.get("requestId").and_then(JsValue::as_string))
+                            .cloned()
+                            .collect();
+                        dialogs.extend(recovered.into_iter().filter(|v| {
+                            v.get("request")
+                                .and_then(|v| v.get("requestId"))
+                                .and_then(JsValue::as_string)
+                                .is_none_or(|id| !ids.contains(id))
+                        }));
+                    }
                     Ok(crate::metadata::object([(
                         "dialogs",
                         JsValue::Array(dialogs),
@@ -386,7 +415,7 @@ impl Requests {
                     // drops: TS is single-threaded and lets them reenter the
                     // bus freely (InProcessGateway.ts:2668-2707), so a
                     // MutexGuard must never be alive across them.
-                    let (snapshot, outbox) = {
+                    let (mut snapshot, outbox) = {
                         let mut bus = self
                             .user_dialog_bus
                             .lock()
@@ -395,31 +424,41 @@ impl Requests {
                         // (InProcessGateway.ts:2668-2674); the validator
                         // itself runs outside the guard, on the snapshot's
                         // cloneable handle.
-                        let snapshot = bus.snapshot_for_response(&session_key, &request_id);
+                        let snapshot = bus
+                            .snapshot_for_response(&session_key, &request_id)
+                            .map(Arc::new);
                         let outbox = bus.drain_events();
                         (snapshot, outbox)
                     };
                     outbox.deliver();
 
                     let answered = answer.to_value().get("behavior") == Some(&"answered".into());
-                    if answered && snapshot.is_none() {
-                        // TS validates on the peeked entry and delivers
-                        // nothing when there is none (InProcessGateway.ts:2668-2674).
-                        // Falling through with no snapshot would consume and
-                        // deliver to whatever a host callback registered under
-                        // the same request id since the peek, unvalidated
-                        // (#1599).
-                        return Ok(crate::metadata::object([(
-                            "delivered",
-                            JsValue::Bool(false),
-                        )]));
+                    if snapshot.is_none() {
+                        if let Some(recovery) = &self.dialog_recovery {
+                            match recovery.recover_or_live(self, &params, &session_key, &request_id, &answer).await? {
+                                super::super::assembly::dialog_recovery::RecoveryResult::Recovered(true) => return Ok(crate::metadata::object([("delivered", JsValue::Bool(true)), ("recovered", JsValue::Bool(true)), ("reason", "gateway_restarted".into())])),
+                                super::super::assembly::dialog_recovery::RecoveryResult::Live(current) => snapshot = Some(current),
+                                super::super::assembly::dialog_recovery::RecoveryResult::Recovered(false) => {},
+                            }
+                        }
+                        if snapshot.is_none() {
+                            return Ok(crate::metadata::object([(
+                                "delivered",
+                                JsValue::Bool(false),
+                            )]));
+                        }
                     }
                     if answered && let Some(snapshot) = &snapshot {
                         let value = result_val
                             .get("value")
                             .cloned()
                             .unwrap_or(JsValue::Undefined);
-                        if !(snapshot.accepts)(&value) {
+                        let accepts = snapshot.accepts.clone();
+                        let accepted =
+                            crate::runtime::always_on::storage::run(move || Ok(accepts(&value)))
+                                .await
+                                .map_err(|error| RequestError::new(error.to_string()))?;
+                        if !accepted {
                             return Err(RequestError {
                                     code: "INVALID_USER_DIALOG_RESPONSE".into(),
                                     message: format!(
@@ -458,7 +497,7 @@ impl Requests {
                             // Only an answered response was validated against
                             // the snapshot; a cancel removes whatever is
                             // pending, like TS (#1599).
-                            if answered { snapshot.as_ref() } else { None },
+                            if answered { snapshot.as_deref() } else { None },
                         );
                         let outbox = bus.drain_events();
                         (consumed, pre, outbox)

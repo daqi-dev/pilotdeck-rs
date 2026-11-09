@@ -1,0 +1,24 @@
+{
+  "node": "v22.22.0",
+  "results": [
+    {
+      "canPrompt": true,
+      "result": {
+        "type": "answered",
+        "answers": {
+          "One?": "first",
+          "Many?": [
+            "alpha"
+          ]
+        }
+      }
+    },
+    {
+      "canPrompt": false,
+      "result": {
+        "type": "cancelled",
+        "reason": "Prompts are disabled for this session."
+      }
+    }
+  ]
+}

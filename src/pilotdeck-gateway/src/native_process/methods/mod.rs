@@ -6,6 +6,9 @@ use pilotdeck_protocol::{JsString, JsValue};
 mod active_turn;
 mod always_on;
 mod config;
+pub(super) use config::{
+    normalize_selection, validate_selection_catalog, validate_selection_shape,
+};
 mod cron;
 mod history;
 mod interaction;
@@ -14,7 +17,7 @@ mod mcp;
 mod metadata;
 mod permission;
 mod runs;
-mod session_dir;
+pub(super) mod session_dir;
 mod settings;
 // #1320 fix-r2 F10: crate-visible for the runtime-side single-source binding
 // test; the value is `crate::runtime::settings::METHODS` verbatim.

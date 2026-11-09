@@ -1227,7 +1227,7 @@ async fn stop_prefix_can_reenter_close() {
         .expect("#1327 prefix reentry memoized close");
 }
 
-// #1386 A8.3 (#1302 B): the 11 unmigrated channels refuse native startup
+// Remaining unimplemented channels refuse startup until their native mounts land.
 // through `reject_unmigrated_channels`, the seam production assembly calls
 // from `native_process/assembly.rs` (before `NativeChannels` is constructed,
 // #1763). The seam takes no mounts and no console callback, so a rejection can
@@ -1243,7 +1243,18 @@ const UNMIGRATED_REJECTION_PHRASE: &str = crate::channel::loader::UNMIGRATED_REA
 /// not merely tolerated. The name stays `unmigrated_subset_channels_stay_loadable`
 /// (the 13 `A8.3-CHANNEL-*-001` entries cite it by name); the terminal
 /// reading is "an implemented key must not be rejected".
-const SUBSET_CHANNEL_KEYS: [&str; 8] = [
+const SUBSET_CHANNEL_KEYS: [&str; 19] = [
+    "wecom",
+    "discord",
+    "whatsapp",
+    "dingtalk",
+    "email",
+    "qq",
+    "telegram",
+    "matrix",
+    "signal",
+    "mattermost",
+    "homeassistant",
     "weixin",
     "feishu",
     "apiServer",
@@ -1297,48 +1308,234 @@ fn assert_rejects_unmigrated(key: &str) {
 }
 
 #[test]
-fn rejects_unmigrated_telegram() {
-    assert_rejects_unmigrated("telegram");
+fn constructs_migrated_telegram() {
+    let mounts = crate::native_process::channels::production_loader_mounts();
+    let loaded = load_enabled_channels(
+        Some(&enabled_adapters(&["telegram"])),
+        &LoadEnabledChannelsOptions {
+            pilot_home: Some(
+                std::env::temp_dir()
+                    .join(format!("pdrs-constructor-{}", std::process::id()))
+                    .to_string_lossy()
+                    .as_ref()
+                    .into(),
+            ),
+        },
+        &mounts,
+        &mut |message| panic!("constructor failed: {message}"),
+    );
+    assert_eq!(
+        loaded.len(),
+        1,
+        "implemented channel must have an actual constructor"
+    );
+    assert!(reject_unmigrated_channels(Some(&enabled_adapters(&["telegram"]))).is_ok());
 }
 #[test]
-fn rejects_unmigrated_discord() {
-    assert_rejects_unmigrated("discord");
+fn constructs_migrated_discord() {
+    let mounts = crate::native_process::channels::production_loader_mounts();
+    let loaded = load_enabled_channels(
+        Some(&enabled_adapters(&["discord"])),
+        &LoadEnabledChannelsOptions {
+            pilot_home: Some(
+                std::env::temp_dir()
+                    .join(format!("pdrs-constructor-{}", std::process::id()))
+                    .to_string_lossy()
+                    .as_ref()
+                    .into(),
+            ),
+        },
+        &mounts,
+        &mut |message| panic!("constructor failed: {message}"),
+    );
+    assert_eq!(
+        loaded.len(),
+        1,
+        "implemented channel must have an actual constructor"
+    );
+    assert!(reject_unmigrated_channels(Some(&enabled_adapters(&["discord"]))).is_ok());
 }
 #[test]
-fn rejects_unmigrated_matrix() {
-    assert_rejects_unmigrated("matrix");
+fn constructs_migrated_matrix() {
+    let mounts = crate::native_process::channels::production_loader_mounts();
+    let loaded = load_enabled_channels(
+        Some(&enabled_adapters(&["matrix"])),
+        &LoadEnabledChannelsOptions {
+            pilot_home: Some(
+                std::env::temp_dir()
+                    .join(format!("pdrs-constructor-{}", std::process::id()))
+                    .to_string_lossy()
+                    .as_ref()
+                    .into(),
+            ),
+        },
+        &mounts,
+        &mut |message| panic!("constructor failed: {message}"),
+    );
+    assert_eq!(
+        loaded.len(),
+        1,
+        "implemented channel must have an actual constructor"
+    );
+    assert!(reject_unmigrated_channels(Some(&enabled_adapters(&["matrix"]))).is_ok());
 }
 #[test]
-fn rejects_unmigrated_mattermost() {
-    assert_rejects_unmigrated("mattermost");
+fn constructs_migrated_mattermost() {
+    let mounts = crate::native_process::channels::production_loader_mounts();
+    let loaded = load_enabled_channels(
+        Some(&enabled_adapters(&["mattermost"])),
+        &LoadEnabledChannelsOptions {
+            pilot_home: Some(
+                std::env::temp_dir()
+                    .join(format!("pdrs-constructor-{}", std::process::id()))
+                    .to_string_lossy()
+                    .as_ref()
+                    .into(),
+            ),
+        },
+        &mounts,
+        &mut |message| panic!("constructor failed: {message}"),
+    );
+    assert_eq!(
+        loaded.len(),
+        1,
+        "implemented channel must have an actual constructor"
+    );
+    assert!(reject_unmigrated_channels(Some(&enabled_adapters(&["mattermost"]))).is_ok());
 }
 #[test]
-fn rejects_unmigrated_signal() {
-    assert_rejects_unmigrated("signal");
+fn constructs_migrated_signal() {
+    let mounts = crate::native_process::channels::production_loader_mounts();
+    let loaded = load_enabled_channels(
+        Some(&enabled_adapters(&["signal"])),
+        &LoadEnabledChannelsOptions {
+            pilot_home: Some(
+                std::env::temp_dir()
+                    .join(format!("pdrs-constructor-{}", std::process::id()))
+                    .to_string_lossy()
+                    .as_ref()
+                    .into(),
+            ),
+        },
+        &mounts,
+        &mut |message| panic!("constructor failed: {message}"),
+    );
+    assert_eq!(
+        loaded.len(),
+        1,
+        "implemented channel must have an actual constructor"
+    );
+    assert!(reject_unmigrated_channels(Some(&enabled_adapters(&["signal"]))).is_ok());
 }
 #[test]
-fn rejects_unmigrated_whatsapp() {
-    assert_rejects_unmigrated("whatsapp");
+fn constructs_migrated_whatsapp() {
+    let mounts = crate::native_process::channels::production_loader_mounts();
+    let loaded = load_enabled_channels(
+        Some(&enabled_adapters(&["whatsapp"])),
+        &LoadEnabledChannelsOptions {
+            pilot_home: Some(
+                std::env::temp_dir()
+                    .join(format!("pdrs-constructor-{}", std::process::id()))
+                    .to_string_lossy()
+                    .as_ref()
+                    .into(),
+            ),
+        },
+        &mounts,
+        &mut |message| panic!("constructor failed: {message}"),
+    );
+    assert_eq!(
+        loaded.len(),
+        1,
+        "implemented channel must have an actual constructor"
+    );
+    assert!(reject_unmigrated_channels(Some(&enabled_adapters(&["whatsapp"]))).is_ok());
 }
 #[test]
-fn rejects_unmigrated_dingtalk() {
-    assert_rejects_unmigrated("dingtalk");
+fn constructs_migrated_dingtalk() {
+    let mounts = crate::native_process::channels::production_loader_mounts();
+    let loaded = load_enabled_channels(
+        Some(&enabled_adapters(&["dingtalk"])),
+        &LoadEnabledChannelsOptions {
+            pilot_home: Some(
+                std::env::temp_dir()
+                    .join(format!("pdrs-constructor-{}", std::process::id()))
+                    .to_string_lossy()
+                    .as_ref()
+                    .into(),
+            ),
+        },
+        &mounts,
+        &mut |message| panic!("constructor failed: {message}"),
+    );
+    assert_eq!(
+        loaded.len(),
+        1,
+        "implemented channel must have an actual constructor"
+    );
+    assert!(reject_unmigrated_channels(Some(&enabled_adapters(&["dingtalk"]))).is_ok());
 }
 #[test]
-fn rejects_unmigrated_email() {
-    assert_rejects_unmigrated("email");
+fn constructs_migrated_email() {
+    let mounts = crate::native_process::channels::production_loader_mounts();
+    let loaded = load_enabled_channels(
+        Some(&enabled_adapters(&["email"])),
+        &LoadEnabledChannelsOptions {
+            pilot_home: Some(
+                std::env::temp_dir()
+                    .join(format!("pdrs-constructor-{}", std::process::id()))
+                    .to_string_lossy()
+                    .as_ref()
+                    .into(),
+            ),
+        },
+        &mounts,
+        &mut |message| panic!("constructor failed: {message}"),
+    );
+    assert_eq!(
+        loaded.len(),
+        1,
+        "implemented channel must have an actual constructor"
+    );
+    assert!(reject_unmigrated_channels(Some(&enabled_adapters(&["email"]))).is_ok());
 }
 #[test]
-fn rejects_unmigrated_homeassistant() {
-    assert_rejects_unmigrated("homeassistant");
+fn constructs_migrated_homeassistant() {
+    let mounts = crate::native_process::channels::production_loader_mounts();
+    let loaded = load_enabled_channels(
+        Some(&enabled_adapters(&["homeassistant"])),
+        &LoadEnabledChannelsOptions {
+            pilot_home: Some(
+                std::env::temp_dir()
+                    .join(format!("pdrs-constructor-{}", std::process::id()))
+                    .to_string_lossy()
+                    .as_ref()
+                    .into(),
+            ),
+        },
+        &mounts,
+        &mut |message| panic!("constructor failed: {message}"),
+    );
+    assert_eq!(
+        loaded.len(),
+        1,
+        "implemented channel must have an actual constructor"
+    );
+    assert!(reject_unmigrated_channels(Some(&enabled_adapters(&["homeassistant"]))).is_ok());
 }
 #[test]
-fn rejects_unmigrated_qq() {
-    assert_rejects_unmigrated("qq");
+fn migrated_qq_is_owned_by_the_bundle_gate() {
+    assert!(reject_unmigrated_channels(Some(&enabled_adapters(&["qq"]))).is_ok());
+    assert!(BUNDLE_CHANNEL_KEYS.contains(&"qq"));
+    assert!(reject_unimplemented_bundle_channels(Some(&enabled_adapters(&["qq"])), &[]).is_err());
 }
 #[test]
-fn rejects_unmigrated_wecom() {
-    assert_rejects_unmigrated("wecom");
+fn migrated_wecom_is_owned_by_the_bundle_gate() {
+    assert!(reject_unmigrated_channels(Some(&enabled_adapters(&["wecom"]))).is_ok());
+    assert!(BUNDLE_CHANNEL_KEYS.contains(&"wecom"));
+    assert!(
+        reject_unimplemented_bundle_channels(Some(&enabled_adapters(&["wecom"])), &[]).is_err()
+    );
 }
 
 // #1579 P1: the frozen TS baseline gates these 11 keys with two different
@@ -1356,7 +1553,13 @@ fn unmigrated_bundle_channels_require_strict_boolean_true() {
                 "#1386 bundle channel requires strict enabled === true"
             );
         }
-        assert_rejects_unmigrated(key);
+        if UNMIGRATED_CHANNEL_KEYS.contains(key) {
+            assert_rejects_unmigrated(key);
+        } else {
+            assert!(
+                reject_unimplemented_bundle_channels(Some(&enabled_adapters(&[key])), &[]).is_err()
+            );
+        }
     }
 }
 
@@ -1395,8 +1598,8 @@ fn strict_true_channel_keys_are_exactly_qq_and_wecom() {
         .filter(|key| !STRICT_TRUE_CHANNEL_KEYS.contains(key))
         .count();
     crate::negative_assert!(
-        loader_keys == 9,
-        "#1386 nine loader keys keep JS truthiness next to the two strict keys"
+        loader_keys == 0,
+        "#1386 all loader keys have production mounts"
     );
 }
 
@@ -1501,45 +1704,28 @@ fn unmigrated_falsy_or_absent_enabled_does_not_reject() {
 
 #[test]
 fn unmigrated_rejection_order_is_deterministic() {
-    // All 11 enabled: the first key in UNMIGRATED_CHANNEL_KEYS order —
-    // reverse CHANNEL_LOADER_KEYS order, then `qq`, then `wecom` — is
-    // reported.
-    let all = enabled_adapters(UNMIGRATED_CHANNEL_KEYS);
-    let message = rejection_of(&all, "#1386 unmigrated rejection order");
-    crate::negative_assert!(
-        message.contains("channel \"homeassistant\""),
-        "#1386 unmigrated rejection order"
-    );
-    // `qq` and `wecom` sit outside CHANNEL_LOADER_KEYS; alone they still
-    // reject, and `qq` is reported before `wecom`.
-    let pair = enabled_adapters(&["qq", "wecom"]);
-    let message = rejection_of(&pair, "#1386 unmigrated rejection order");
-    crate::negative_assert!(
-        message.contains("channel \"qq\""),
-        "#1386 unmigrated rejection order"
-    );
-    // An in-table key wins over the out-of-table `wecom`.
-    let mixed = enabled_adapters(&["wecom", "email"]);
-    let message = rejection_of(&mixed, "#1386 unmigrated rejection order");
-    crate::negative_assert!(
-        message.contains("channel \"email\""),
-        "#1386 unmigrated rejection order"
-    );
-    // The reverse of a CHANNEL_LOADER_KEYS adjacency: `mattermost` is
-    // reported before `matrix` even though the loader table lists
-    // `matrix` first.
-    let reversed = enabled_adapters(&["matrix", "mattermost"]);
-    let message = rejection_of(&reversed, "#1386 unmigrated rejection order");
-    crate::negative_assert!(
-        message.contains("channel \"mattermost\""),
-        "#1386 unmigrated rejection order"
-    );
-    // The table's tail: `discord` is reported before `telegram`.
-    let tail = enabled_adapters(&["discord", "telegram"]);
-    let message = rejection_of(&tail, "#1386 unmigrated rejection order");
-    crate::negative_assert!(
-        message.contains("channel \"discord\""),
-        "#1386 unmigrated rejection order"
+    for keys in [
+        vec!["wecom"],
+        vec!["qq", "wecom"],
+        vec!["wecom", "email"],
+        vec!["discord", "wecom", "whatsapp"],
+    ] {
+        let message = reject_unimplemented_bundle_channels(
+            Some(&enabled_adapters(&keys)),
+            &["feishu", "weixin", "qq"],
+        )
+        .expect_err("unbound WeCom must reject")
+        .to_js_string();
+        crate::negative_assert!(
+            message.contains("channel \"wecom\""),
+            "#1386 unmigrated rejection order"
+        );
+    }
+    assert!(
+        reject_unmigrated_channels(Some(&enabled_adapters(&[
+            "discord", "telegram", "dingtalk", "whatsapp"
+        ])))
+        .is_ok()
     );
 }
 
@@ -1562,7 +1748,16 @@ fn unmigrated_rejection_order_is_deterministic() {
 #[test]
 fn loader_keys_partition_rejected_and_implemented() {
     // The implemented loader-mount group as of #2301 (terminal wiring).
-    const IMPLEMENTED_LOADER_KEYS: [&str; 6] = [
+    const IMPLEMENTED_LOADER_KEYS: [&str; 15] = [
+        "discord",
+        "whatsapp",
+        "dingtalk",
+        "email",
+        "telegram",
+        "matrix",
+        "signal",
+        "mattermost",
+        "homeassistant",
         "slack",
         "bluebubbles",
         "wecomCallback",
@@ -1577,8 +1772,8 @@ fn loader_keys_partition_rejected_and_implemented() {
         .collect();
     crate::negative_assert_eq!(
         rejected.len(),
-        9,
-        "#1853 nine loader keys sit in the unmigrated rejection table"
+        0,
+        "remaining loader keys sit in the unmigrated rejection table"
     );
     // Covering: every loader key belongs to exactly one of the two groups.
     // This is the fail-closed cell — a key added to `CHANNEL_LOADER_KEYS`
@@ -1739,7 +1934,7 @@ fn bundle_gate_accepts_an_implemented_key() {
 fn implemented_bundle_keys_are_exactly_the_assembled_bundle_keys() {
     crate::negative_assert_eq!(
         crate::native_process::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS,
-        &["feishu", "weixin"],
+        &["feishu", "weixin", "qq", "wecom"],
         "#1763 assembly declares exactly the bundle keys it constructs"
     );
     // The table equality (every `BUNDLE_CHANNEL_KEYS` entry has a constructor
@@ -1782,4 +1977,65 @@ fn bundle_gate_requires_strict_boolean_true() {
         reject_unimplemented_bundle_channels(None, &[]).is_ok(),
         "#1763 no adapters must not reject"
     );
+}
+
+// The production pending set is empty after all mounts landed. Exercise the
+// same parameterized guard with a synthetic missing constructor instead of
+// disabling a real, implemented channel or allowing the check to go vacuous.
+const SYNTHETIC_PENDING_KEYS: &[&str] = &["probe_pending", "qq", "wecom"];
+#[test]
+fn synthetic_pending_guard_rejects_enabled_and_names_key() {
+    let config = enabled_adapters(&["probe_pending"]);
+    let error = reject_unmigrated_with_keys(Some(&config), SYNTHETIC_PENDING_KEYS)
+        .expect_err("#1386 unmigrated channel must reject startup");
+    crate::negative_assert!(
+        error.to_js_string().contains("channel \"probe_pending\""),
+        "#1386 rejection names the channel key"
+    );
+}
+#[test]
+fn synthetic_pending_gate_respects_falsy_and_strict_boolean() {
+    for key in SYNTHETIC_PENDING_KEYS {
+        for value in ["false", "0", "\"\"", "null"] {
+            let config = adapters_config(&format!("{{\"{key}\":{{\"enabled\":{value}}}}}"));
+            crate::negative_assert!(
+                reject_unmigrated_with_keys(Some(&config), SYNTHETIC_PENDING_KEYS).is_ok(),
+                "#1386 disabled unmigrated channel must not reject"
+            );
+        }
+    }
+    for key in ["qq", "wecom"] {
+        let config = adapters_config(&format!("{{\"{key}\":{{\"enabled\":1}}}}"));
+        crate::negative_assert!(
+            reject_unmigrated_with_keys(Some(&config), SYNTHETIC_PENDING_KEYS).is_ok(),
+            "#1386 bundle channel requires strict enabled === true"
+        );
+        crate::negative_assert!(
+            reject_unmigrated_with_keys(Some(&enabled_adapters(&[key])), SYNTHETIC_PENDING_KEYS)
+                .is_err(),
+            "#1386 unmigrated channel must reject startup"
+        );
+    }
+}
+#[test]
+fn synthetic_pending_loader_key_uses_js_truthiness() {
+    for value in ["1", "-1", "\"true\"", "[]", "{}"] {
+        let config = adapters_config(&format!("{{\"probe_pending\":{{\"enabled\":{value}}}}}"));
+        crate::negative_assert!(
+            reject_unmigrated_with_keys(Some(&config), SYNTHETIC_PENDING_KEYS).is_err(),
+            "#1386 loader channel uses JS truthiness"
+        );
+    }
+}
+
+#[test]
+fn synthetic_partition_never_implements_a_pending_key() {
+    const SYNTHETIC_IMPLEMENTED: [&str; 1] = ["native_ready"];
+    const SYNTHETIC_REJECTED: [&str; 1] = ["probe_pending"];
+    for key in SYNTHETIC_IMPLEMENTED {
+        crate::negative_assert!(
+            !SYNTHETIC_REJECTED.contains(&key),
+            "#2301 every implemented loader key is outside the rejection table"
+        );
+    }
 }

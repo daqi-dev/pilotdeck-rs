@@ -1,5 +1,11 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 演化记录（给人类）
 
+## 2026-11-09 · CLI与机器能力工程交付（本机候选）
+
+旧CLI命令及默认链路、Rust native Gateway/sidecar、机器连接/交互/文件/恢复、多项目、实际SDK、SOP/Always-On、源码安装更新与获准复用的32技能现有完整实现。用户选择将新版前端和独立/app/v1服务留后续。统一工作树与两侧快照保留；无GitHub推送或正式合并。
+
+源码e1d44bd17在mbp2完成格式、全目标编译、strict与四bin验证；全CLI546/原生558/审批131及最后AO124等分源证据可追溯。源码安装两代功能通过但历史PID监视器总FAIL保留，正式阶段D及人签未被自动关闭。使用说明见 `docs/changes/arch/002_cli-native-machine.md`，完整来源/失败限制/差异处置见主仓 `_tmp/20261108-cli-completion/delivery-integrated-draft.md`。
+
 - 2026-10-16：按人定将中央派发从每provider单槽改为单协调者管理多个依赖明确的任务，五树规则已同步，GLM开始实现与测试候选编写；实际三请求重叠有PID/任务原件，新增GLM代码须由DeepSeek与独立GPT评审。
 
 - 2026-10-16：PR143合入31单55子项分类/现行等级账本，明确类型、等级、确认、交付与节点分轴；现在能逐项追债，延期与未知继续未完成。GLM/DeepSeek实际独立角色及42项保真审计完成该登记范围，当前33张开放issue并未清零。

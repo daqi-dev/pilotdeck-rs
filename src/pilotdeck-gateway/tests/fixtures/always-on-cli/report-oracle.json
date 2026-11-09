@@ -1,0 +1,436 @@
+{
+  "metadata": {
+    "runId": "r",
+    "planId": "p",
+    "startedAt": "2026-01-02T03:04:05.678Z",
+    "finishedAt": "2026-01-02T03:05:05.678Z",
+    "outcome": "executed",
+    "workspaceStrategy": "snapshot-copy",
+    "workspaceHandle": "/work"
+  },
+  "records": [
+    {
+      "id": "empty",
+      "input": "",
+      "result": {
+        "title": "Always-On Discovery Run",
+        "metadata": {
+          "runId": "r",
+          "planId": "p",
+          "startedAt": "2026-01-02T03:04:05.678Z",
+          "finishedAt": "2026-01-02T03:05:05.678Z",
+          "outcome": "executed",
+          "workspaceStrategy": "snapshot-copy",
+          "workspaceHandle": "/work"
+        },
+        "sections": {
+          "Plan Reference": "(empty)",
+          "Steps Performed": "(empty)",
+          "Files Changed": "(empty)",
+          "Command Output": "(empty)",
+          "Verification Results": "(empty)",
+          "Follow-ups": "(empty)",
+          "Notes": "- fallback: section-missing(Notes)\n- fallback: title-missing\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)"
+        },
+        "fallbacks": [
+          "title-missing",
+          "section-missing(Plan Reference)",
+          "section-missing(Steps Performed)",
+          "section-missing(Files Changed)",
+          "section-missing(Command Output)",
+          "section-missing(Verification Results)",
+          "section-missing(Follow-ups)",
+          "section-missing(Notes)"
+        ],
+        "rawContent": "# Always-On Discovery Run\n\n> Always-On Discovery Run Report\n> runId: r\n> planId: p\n> startedAt: 2026-01-02T03:04:05.678Z\n> finishedAt: 2026-01-02T03:05:05.678Z\n> outcome: executed\n> workspaceStrategy: snapshot-copy\n> workspaceHandle: /work\n\n## Plan Reference\n(empty)\n\n## Steps Performed\n(empty)\n\n## Files Changed\n(empty)\n\n## Command Output\n(empty)\n\n## Verification Results\n(empty)\n\n## Follow-ups\n(empty)\n\n## Notes\n- fallback: section-missing(Notes)\n- fallback: title-missing\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)\n"
+      }
+    },
+    {
+      "id": "title",
+      "input": "# Title\n",
+      "result": {
+        "title": "Title",
+        "metadata": {
+          "runId": "r",
+          "planId": "p",
+          "startedAt": "2026-01-02T03:04:05.678Z",
+          "finishedAt": "2026-01-02T03:05:05.678Z",
+          "outcome": "executed",
+          "workspaceStrategy": "snapshot-copy",
+          "workspaceHandle": "/work"
+        },
+        "sections": {
+          "Plan Reference": "(empty)",
+          "Steps Performed": "(empty)",
+          "Files Changed": "(empty)",
+          "Command Output": "(empty)",
+          "Verification Results": "(empty)",
+          "Follow-ups": "(empty)",
+          "Notes": "- fallback: section-missing(Notes)\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)"
+        },
+        "fallbacks": [
+          "section-missing(Plan Reference)",
+          "section-missing(Steps Performed)",
+          "section-missing(Files Changed)",
+          "section-missing(Command Output)",
+          "section-missing(Verification Results)",
+          "section-missing(Follow-ups)",
+          "section-missing(Notes)"
+        ],
+        "rawContent": "# Title\n\n> Always-On Discovery Run Report\n> runId: r\n> planId: p\n> startedAt: 2026-01-02T03:04:05.678Z\n> finishedAt: 2026-01-02T03:05:05.678Z\n> outcome: executed\n> workspaceStrategy: snapshot-copy\n> workspaceHandle: /work\n\n## Plan Reference\n(empty)\n\n## Steps Performed\n(empty)\n\n## Files Changed\n(empty)\n\n## Command Output\n(empty)\n\n## Verification Results\n(empty)\n\n## Follow-ups\n(empty)\n\n## Notes\n- fallback: section-missing(Notes)\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)\n"
+      }
+    },
+    {
+      "id": "required-h1",
+      "input": "# Files Changed\nfile",
+      "result": {
+        "title": "Always-On Discovery Run",
+        "metadata": {
+          "runId": "r",
+          "planId": "p",
+          "startedAt": "2026-01-02T03:04:05.678Z",
+          "finishedAt": "2026-01-02T03:05:05.678Z",
+          "outcome": "executed",
+          "workspaceStrategy": "snapshot-copy",
+          "workspaceHandle": "/work"
+        },
+        "sections": {
+          "Files Changed": "file",
+          "Plan Reference": "(empty)",
+          "Steps Performed": "(empty)",
+          "Command Output": "(empty)",
+          "Verification Results": "(empty)",
+          "Follow-ups": "(empty)",
+          "Notes": "- fallback: section-missing(Notes)\n- fallback: title-missing\n- fallback: h1-downgraded(Files Changed)\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)"
+        },
+        "fallbacks": [
+          "title-missing",
+          "h1-downgraded(Files Changed)",
+          "section-missing(Plan Reference)",
+          "section-missing(Steps Performed)",
+          "section-missing(Command Output)",
+          "section-missing(Verification Results)",
+          "section-missing(Follow-ups)",
+          "section-missing(Notes)"
+        ],
+        "rawContent": "# Always-On Discovery Run\n\n> Always-On Discovery Run Report\n> runId: r\n> planId: p\n> startedAt: 2026-01-02T03:04:05.678Z\n> finishedAt: 2026-01-02T03:05:05.678Z\n> outcome: executed\n> workspaceStrategy: snapshot-copy\n> workspaceHandle: /work\n\n## Plan Reference\n(empty)\n\n## Steps Performed\n(empty)\n\n## Files Changed\nfile\n\n## Command Output\n(empty)\n\n## Verification Results\n(empty)\n\n## Follow-ups\n(empty)\n\n## Notes\n- fallback: section-missing(Notes)\n- fallback: title-missing\n- fallback: h1-downgraded(Files Changed)\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)\n"
+      }
+    },
+    {
+      "id": "crlf",
+      "input": "# T\r\n\r\n> ignored\r\n\r\n## Notes\r\nnotes\r\n",
+      "result": {
+        "title": "T",
+        "metadata": {
+          "runId": "r",
+          "planId": "p",
+          "startedAt": "2026-01-02T03:04:05.678Z",
+          "finishedAt": "2026-01-02T03:05:05.678Z",
+          "outcome": "executed",
+          "workspaceStrategy": "snapshot-copy",
+          "workspaceHandle": "/work"
+        },
+        "sections": {
+          "Notes": "notes\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)",
+          "Plan Reference": "(empty)",
+          "Steps Performed": "(empty)",
+          "Files Changed": "(empty)",
+          "Command Output": "(empty)",
+          "Verification Results": "(empty)",
+          "Follow-ups": "(empty)"
+        },
+        "fallbacks": [
+          "section-missing(Plan Reference)",
+          "section-missing(Steps Performed)",
+          "section-missing(Files Changed)",
+          "section-missing(Command Output)",
+          "section-missing(Verification Results)",
+          "section-missing(Follow-ups)"
+        ],
+        "rawContent": "# T\n\n> Always-On Discovery Run Report\n> runId: r\n> planId: p\n> startedAt: 2026-01-02T03:04:05.678Z\n> finishedAt: 2026-01-02T03:05:05.678Z\n> outcome: executed\n> workspaceStrategy: snapshot-copy\n> workspaceHandle: /work\n\n## Plan Reference\n(empty)\n\n## Steps Performed\n(empty)\n\n## Files Changed\n(empty)\n\n## Command Output\n(empty)\n\n## Verification Results\n(empty)\n\n## Follow-ups\n(empty)\n\n## Notes\nnotes\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)\n"
+      }
+    },
+    {
+      "id": "duplicate",
+      "input": "# T\n## Notes\na\n## Notes\nb\n",
+      "result": {
+        "title": "T",
+        "metadata": {
+          "runId": "r",
+          "planId": "p",
+          "startedAt": "2026-01-02T03:04:05.678Z",
+          "finishedAt": "2026-01-02T03:05:05.678Z",
+          "outcome": "executed",
+          "workspaceStrategy": "snapshot-copy",
+          "workspaceHandle": "/work"
+        },
+        "sections": {
+          "Notes": "b\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)",
+          "Plan Reference": "(empty)",
+          "Steps Performed": "(empty)",
+          "Files Changed": "(empty)",
+          "Command Output": "(empty)",
+          "Verification Results": "(empty)",
+          "Follow-ups": "(empty)"
+        },
+        "fallbacks": [
+          "section-missing(Plan Reference)",
+          "section-missing(Steps Performed)",
+          "section-missing(Files Changed)",
+          "section-missing(Command Output)",
+          "section-missing(Verification Results)",
+          "section-missing(Follow-ups)"
+        ],
+        "rawContent": "# T\n\n> Always-On Discovery Run Report\n> runId: r\n> planId: p\n> startedAt: 2026-01-02T03:04:05.678Z\n> finishedAt: 2026-01-02T03:05:05.678Z\n> outcome: executed\n> workspaceStrategy: snapshot-copy\n> workspaceHandle: /work\n\n## Plan Reference\n(empty)\n\n## Steps Performed\n(empty)\n\n## Files Changed\n(empty)\n\n## Command Output\n(empty)\n\n## Verification Results\n(empty)\n\n## Follow-ups\n(empty)\n\n## Notes\nb\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)\n"
+      }
+    },
+    {
+      "id": "custom",
+      "input": "# T\n## Custom\ncustom\n## Notes\nhello\n",
+      "result": {
+        "title": "T",
+        "metadata": {
+          "runId": "r",
+          "planId": "p",
+          "startedAt": "2026-01-02T03:04:05.678Z",
+          "finishedAt": "2026-01-02T03:05:05.678Z",
+          "outcome": "executed",
+          "workspaceStrategy": "snapshot-copy",
+          "workspaceHandle": "/work"
+        },
+        "sections": {
+          "Custom": "custom",
+          "Notes": "hello\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)",
+          "Plan Reference": "(empty)",
+          "Steps Performed": "(empty)",
+          "Files Changed": "(empty)",
+          "Command Output": "(empty)",
+          "Verification Results": "(empty)",
+          "Follow-ups": "(empty)"
+        },
+        "fallbacks": [
+          "section-missing(Plan Reference)",
+          "section-missing(Steps Performed)",
+          "section-missing(Files Changed)",
+          "section-missing(Command Output)",
+          "section-missing(Verification Results)",
+          "section-missing(Follow-ups)"
+        ],
+        "rawContent": "# T\n\n> Always-On Discovery Run Report\n> runId: r\n> planId: p\n> startedAt: 2026-01-02T03:04:05.678Z\n> finishedAt: 2026-01-02T03:05:05.678Z\n> outcome: executed\n> workspaceStrategy: snapshot-copy\n> workspaceHandle: /work\n\n## Plan Reference\n(empty)\n\n## Steps Performed\n(empty)\n\n## Files Changed\n(empty)\n\n## Command Output\n(empty)\n\n## Verification Results\n(empty)\n\n## Follow-ups\n(empty)\n\n## Notes\nhello\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)\n\n## Custom\ncustom\n"
+      }
+    },
+    {
+      "id": "title-surrogate",
+      "input": "# \ud800\n## Notes\n\udfff",
+      "result": {
+        "title": "\ud800",
+        "metadata": {
+          "runId": "r",
+          "planId": "p",
+          "startedAt": "2026-01-02T03:04:05.678Z",
+          "finishedAt": "2026-01-02T03:05:05.678Z",
+          "outcome": "executed",
+          "workspaceStrategy": "snapshot-copy",
+          "workspaceHandle": "/work"
+        },
+        "sections": {
+          "Notes": "\udfff\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)",
+          "Plan Reference": "(empty)",
+          "Steps Performed": "(empty)",
+          "Files Changed": "(empty)",
+          "Command Output": "(empty)",
+          "Verification Results": "(empty)",
+          "Follow-ups": "(empty)"
+        },
+        "fallbacks": [
+          "section-missing(Plan Reference)",
+          "section-missing(Steps Performed)",
+          "section-missing(Files Changed)",
+          "section-missing(Command Output)",
+          "section-missing(Verification Results)",
+          "section-missing(Follow-ups)"
+        ],
+        "rawContent": "# \ud800\n\n> Always-On Discovery Run Report\n> runId: r\n> planId: p\n> startedAt: 2026-01-02T03:04:05.678Z\n> finishedAt: 2026-01-02T03:05:05.678Z\n> outcome: executed\n> workspaceStrategy: snapshot-copy\n> workspaceHandle: /work\n\n## Plan Reference\n(empty)\n\n## Steps Performed\n(empty)\n\n## Files Changed\n(empty)\n\n## Command Output\n(empty)\n\n## Verification Results\n(empty)\n\n## Follow-ups\n(empty)\n\n## Notes\n\udfff\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)\n"
+      }
+    },
+    {
+      "id": "spaces",
+      "input": "  \n#   \n## Steps Performed  \n value  \n",
+      "result": {
+        "title": "",
+        "metadata": {
+          "runId": "r",
+          "planId": "p",
+          "startedAt": "2026-01-02T03:04:05.678Z",
+          "finishedAt": "2026-01-02T03:05:05.678Z",
+          "outcome": "executed",
+          "workspaceStrategy": "snapshot-copy",
+          "workspaceHandle": "/work"
+        },
+        "sections": {
+          "Steps Performed": " value",
+          "Plan Reference": "(empty)",
+          "Files Changed": "(empty)",
+          "Command Output": "(empty)",
+          "Verification Results": "(empty)",
+          "Follow-ups": "(empty)",
+          "Notes": "- fallback: section-missing(Notes)\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)"
+        },
+        "fallbacks": [
+          "section-missing(Plan Reference)",
+          "section-missing(Files Changed)",
+          "section-missing(Command Output)",
+          "section-missing(Verification Results)",
+          "section-missing(Follow-ups)",
+          "section-missing(Notes)"
+        ],
+        "rawContent": "# \n\n> Always-On Discovery Run Report\n> runId: r\n> planId: p\n> startedAt: 2026-01-02T03:04:05.678Z\n> finishedAt: 2026-01-02T03:05:05.678Z\n> outcome: executed\n> workspaceStrategy: snapshot-copy\n> workspaceHandle: /work\n\n## Plan Reference\n(empty)\n\n## Steps Performed\n value\n\n## Files Changed\n(empty)\n\n## Command Output\n(empty)\n\n## Verification Results\n(empty)\n\n## Follow-ups\n(empty)\n\n## Notes\n- fallback: section-missing(Notes)\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)\n"
+      }
+    },
+    {
+      "id": "pretitle",
+      "input": "unheaded\n## Notes\na\n",
+      "result": {
+        "title": "Always-On Discovery Run",
+        "metadata": {
+          "runId": "r",
+          "planId": "p",
+          "startedAt": "2026-01-02T03:04:05.678Z",
+          "finishedAt": "2026-01-02T03:05:05.678Z",
+          "outcome": "executed",
+          "workspaceStrategy": "snapshot-copy",
+          "workspaceHandle": "/work"
+        },
+        "sections": {
+          "Notes": "a\n- fallback: title-missing\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)",
+          "Plan Reference": "(empty)",
+          "Steps Performed": "(empty)",
+          "Files Changed": "(empty)",
+          "Command Output": "(empty)",
+          "Verification Results": "(empty)",
+          "Follow-ups": "(empty)"
+        },
+        "fallbacks": [
+          "title-missing",
+          "section-missing(Plan Reference)",
+          "section-missing(Steps Performed)",
+          "section-missing(Files Changed)",
+          "section-missing(Command Output)",
+          "section-missing(Verification Results)",
+          "section-missing(Follow-ups)"
+        ],
+        "rawContent": "# Always-On Discovery Run\n\n> Always-On Discovery Run Report\n> runId: r\n> planId: p\n> startedAt: 2026-01-02T03:04:05.678Z\n> finishedAt: 2026-01-02T03:05:05.678Z\n> outcome: executed\n> workspaceStrategy: snapshot-copy\n> workspaceHandle: /work\n\n## Plan Reference\n(empty)\n\n## Steps Performed\n(empty)\n\n## Files Changed\n(empty)\n\n## Command Output\n(empty)\n\n## Verification Results\n(empty)\n\n## Follow-ups\n(empty)\n\n## Notes\na\n- fallback: title-missing\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)\n"
+      }
+    },
+    {
+      "id": "numeric-keys",
+      "input": "# T\n## 9\nx\n## 2\ny\n## Notes\nz",
+      "result": {
+        "title": "T",
+        "metadata": {
+          "runId": "r",
+          "planId": "p",
+          "startedAt": "2026-01-02T03:04:05.678Z",
+          "finishedAt": "2026-01-02T03:05:05.678Z",
+          "outcome": "executed",
+          "workspaceStrategy": "snapshot-copy",
+          "workspaceHandle": "/work"
+        },
+        "sections": {
+          "2": "y",
+          "9": "x",
+          "Notes": "z\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)",
+          "Plan Reference": "(empty)",
+          "Steps Performed": "(empty)",
+          "Files Changed": "(empty)",
+          "Command Output": "(empty)",
+          "Verification Results": "(empty)",
+          "Follow-ups": "(empty)"
+        },
+        "fallbacks": [
+          "section-missing(Plan Reference)",
+          "section-missing(Steps Performed)",
+          "section-missing(Files Changed)",
+          "section-missing(Command Output)",
+          "section-missing(Verification Results)",
+          "section-missing(Follow-ups)"
+        ],
+        "rawContent": "# T\n\n> Always-On Discovery Run Report\n> runId: r\n> planId: p\n> startedAt: 2026-01-02T03:04:05.678Z\n> finishedAt: 2026-01-02T03:05:05.678Z\n> outcome: executed\n> workspaceStrategy: snapshot-copy\n> workspaceHandle: /work\n\n## Plan Reference\n(empty)\n\n## Steps Performed\n(empty)\n\n## Files Changed\n(empty)\n\n## Command Output\n(empty)\n\n## Verification Results\n(empty)\n\n## Follow-ups\n(empty)\n\n## Notes\nz\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)\n\n## 2\ny\n\n## 9\nx\n"
+      }
+    },
+    {
+      "id": "proto",
+      "input": "# T\n## __proto__\nx\n## constructor\ny\n## Notes\nz",
+      "result": {
+        "title": "T",
+        "metadata": {
+          "runId": "r",
+          "planId": "p",
+          "startedAt": "2026-01-02T03:04:05.678Z",
+          "finishedAt": "2026-01-02T03:05:05.678Z",
+          "outcome": "executed",
+          "workspaceStrategy": "snapshot-copy",
+          "workspaceHandle": "/work"
+        },
+        "sections": {
+          "constructor": "y",
+          "Notes": "z\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)",
+          "Plan Reference": "(empty)",
+          "Steps Performed": "(empty)",
+          "Files Changed": "(empty)",
+          "Command Output": "(empty)",
+          "Verification Results": "(empty)",
+          "Follow-ups": "(empty)"
+        },
+        "fallbacks": [
+          "section-missing(Plan Reference)",
+          "section-missing(Steps Performed)",
+          "section-missing(Files Changed)",
+          "section-missing(Command Output)",
+          "section-missing(Verification Results)",
+          "section-missing(Follow-ups)"
+        ],
+        "rawContent": "# T\n\n> Always-On Discovery Run Report\n> runId: r\n> planId: p\n> startedAt: 2026-01-02T03:04:05.678Z\n> finishedAt: 2026-01-02T03:05:05.678Z\n> outcome: executed\n> workspaceStrategy: snapshot-copy\n> workspaceHandle: /work\n\n## Plan Reference\n(empty)\n\n## Steps Performed\n(empty)\n\n## Files Changed\n(empty)\n\n## Command Output\n(empty)\n\n## Verification Results\n(empty)\n\n## Follow-ups\n(empty)\n\n## Notes\nz\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)\n\n## constructor\ny\n"
+      }
+    },
+    {
+      "id": "js-whitespace",
+      "input": "﻿\n# T\n## Notes\ntext﻿  \n",
+      "result": {
+        "title": "T",
+        "metadata": {
+          "runId": "r",
+          "planId": "p",
+          "startedAt": "2026-01-02T03:04:05.678Z",
+          "finishedAt": "2026-01-02T03:05:05.678Z",
+          "outcome": "executed",
+          "workspaceStrategy": "snapshot-copy",
+          "workspaceHandle": "/work"
+        },
+        "sections": {
+          "Notes": "text\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)",
+          "Plan Reference": "(empty)",
+          "Steps Performed": "(empty)",
+          "Files Changed": "(empty)",
+          "Command Output": "(empty)",
+          "Verification Results": "(empty)",
+          "Follow-ups": "(empty)"
+        },
+        "fallbacks": [
+          "section-missing(Plan Reference)",
+          "section-missing(Steps Performed)",
+          "section-missing(Files Changed)",
+          "section-missing(Command Output)",
+          "section-missing(Verification Results)",
+          "section-missing(Follow-ups)"
+        ],
+        "rawContent": "# T\n\n> Always-On Discovery Run Report\n> runId: r\n> planId: p\n> startedAt: 2026-01-02T03:04:05.678Z\n> finishedAt: 2026-01-02T03:05:05.678Z\n> outcome: executed\n> workspaceStrategy: snapshot-copy\n> workspaceHandle: /work\n\n## Plan Reference\n(empty)\n\n## Steps Performed\n(empty)\n\n## Files Changed\n(empty)\n\n## Command Output\n(empty)\n\n## Verification Results\n(empty)\n\n## Follow-ups\n(empty)\n\n## Notes\ntext\n- fallback: section-missing(Plan Reference)\n- fallback: section-missing(Steps Performed)\n- fallback: section-missing(Files Changed)\n- fallback: section-missing(Command Output)\n- fallback: section-missing(Verification Results)\n- fallback: section-missing(Follow-ups)\n"
+      }
+    },
+    {
+      "id": "fallback",
+      "input": "partial",
+      "result": "# Demo - Work Report\n\n> Always-On Discovery Run Report\n> runId: r\n> planId: p\n> startedAt: 2026-01-02T03:04:05.678Z\n> finishedAt: 2026-01-02T03:05:05.678Z\n> outcome: executed\n> workspaceStrategy: snapshot-copy\n> workspaceHandle: /work\n\n## Plan Reference\n(unavailable: report tool was not invoked)\n\n## Steps Performed\n(empty)\n\n## Files Changed\n(none recorded)\n\n## Command Output\n(none recorded)\n\n## Verification Results\n- [ ] (unverified) - report tool was not invoked\n\n## Follow-ups\n- Investigate why AlwaysOnReportTool was not called.\n\n## Notes\n- fallback: failed\n\n## Partial Tool Payload\npartial\n"
+    }
+  ]
+}

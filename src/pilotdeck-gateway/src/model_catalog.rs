@@ -71,6 +71,14 @@ pub(crate) fn execute<F: Files>(
     env: &Env,
 ) -> Result<JsValue, config::Error> {
     let config = config::load(metadata, env)?;
+    execute_loaded(config, params, env)
+}
+/// Same catalog projection over the already validated project snapshot.
+pub(crate) fn execute_loaded(
+    config: config::Config,
+    params: &JsValue,
+    env: &Env,
+) -> Result<JsValue, config::Error> {
     // Warnings are retained by the loader for future configuration consumers.
     let _diagnostics = &config.diagnostics;
     if matches!(params, JsValue::Undefined | JsValue::Null) {

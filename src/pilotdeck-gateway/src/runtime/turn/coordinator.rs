@@ -203,6 +203,30 @@ impl TurnEventCoordinator {
     where
         S: Fn(&JsValue) + Send + Sync + 'static,
     {
+        self.start_bound(session_key, run_id, None, sink)
+    }
+    pub fn start_for_project<S>(
+        &self,
+        session_key: &JsString,
+        run_id: &JsString,
+        project_key: &JsString,
+        sink: S,
+    ) -> TurnSinkRegistration
+    where
+        S: Fn(&JsValue) + Send + Sync + 'static,
+    {
+        self.start_bound(session_key, run_id, Some(project_key), sink)
+    }
+    fn start_bound<S>(
+        &self,
+        session_key: &JsString,
+        run_id: &JsString,
+        project_key: Option<&JsString>,
+        sink: S,
+    ) -> TurnSinkRegistration
+    where
+        S: Fn(&JsValue) + Send + Sync + 'static,
+    {
         let registration = Arc::new(SinkRegistration {
             sink: Arc::new(sink),
         });
@@ -211,8 +235,9 @@ impl TurnEventCoordinator {
         // panic surfaces at the call site like a throwing TS call, but the
         // guard is dropped first so it cannot poison the composite-state
         // lock for every session.
-        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
-            self.replay.start(session_key, run_id);
+        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| match project_key {
+            Some(project) => self.replay.start_for_project(session_key, run_id, project),
+            None => self.replay.start(session_key, run_id),
         })) {
             drop(state);
             resume_unwind(panic);
@@ -238,6 +263,31 @@ impl TurnEventCoordinator {
             resume_unwind(panic);
         }
     }
+    /// Bind publisher mutations to the same registration which started this
+    /// replay. A late worker must not write into a successor's replay.
+    pub(crate) fn record_registered(
+        &self,
+        session_key: &JsString,
+        event: &JsValue,
+        expected: &TurnSinkRegistration,
+    ) -> bool {
+        let state = lock(&self.state);
+        let current = state.sinks.get(session_key).and_then(|sink| sink.upgrade());
+        if !current
+            .as_ref()
+            .is_some_and(|sink| Arc::ptr_eq(sink, &expected.registration))
+        {
+            return false;
+        }
+        if let Err(panic) =
+            catch_unwind(AssertUnwindSafe(|| self.replay.record(session_key, event)))
+        {
+            drop(state);
+            resume_unwind(panic);
+        }
+        true
+    }
+
     /// Publishes only when a sink is registered. Replay is updated before the
     /// sink observes the event, matching TS delivery order.
     ///
@@ -256,6 +306,16 @@ impl TurnEventCoordinator {
     /// accepted before a sink panic or a `dispose` are dropped without any
     /// signal to their emitters.
     pub fn emit(&self, session_key: &JsString, event: &JsValue) -> bool {
+        self.emit_registered(session_key, event, None)
+    }
+    /// Keep a turn's trusted callback attached to its own registration even
+    /// after a newer turn has replaced the same session's sink.
+    pub(crate) fn emit_registered(
+        &self,
+        session_key: &JsString,
+        event: &JsValue,
+        expected: Option<&TurnSinkRegistration>,
+    ) -> bool {
         let marker_token = self.drain_token_on_this_thread(session_key);
         let (token, boundary) = {
             let mut state = lock(&self.state);
@@ -267,12 +327,18 @@ impl TurnEventCoordinator {
                 .sinks
                 .get(session_key)
                 .and_then(|registration| registration.upgrade())
+                .filter(|registration| {
+                    expected
+                        .is_none_or(|expected| Arc::ptr_eq(registration, &expected.registration))
+                })
                 .map(|registration| Arc::clone(&registration.sink))
             else {
                 // The host dropped the registration (or never started the
                 // session): TS looks a live sink up in its map, this port
                 // prunes the dead weak reference on the way out.
-                state.sinks.remove(session_key);
+                if expected.is_none() {
+                    state.sinks.remove(session_key);
+                }
                 return false;
             };
             // `with_run_id` panics on the null/undefined edge like the TS
@@ -338,6 +404,33 @@ impl TurnEventCoordinator {
             resume_unwind(panic);
         }
     }
+    /// Native bound publisher cleanup only owns its own generation. The
+    /// registration check and replay terminal transition share the same lock
+    /// as start, including when two generations reuse the same run ID.
+    pub(crate) fn retain_terminal_registered(
+        &self,
+        session_key: &JsString,
+        run_id: &JsString,
+        expected: &TurnSinkRegistration,
+    ) -> bool {
+        let mut state = lock(&self.state);
+        let current = state.sinks.get(session_key).and_then(|sink| sink.upgrade());
+        if !current
+            .as_ref()
+            .is_some_and(|sink| Arc::ptr_eq(sink, &expected.registration))
+        {
+            return false;
+        }
+        state.sinks.remove(session_key);
+        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
+            self.replay.retain_terminal(session_key, run_id)
+        })) {
+            drop(state);
+            resume_unwind(panic);
+        }
+        true
+    }
+
     /// Detaches the sink registered for `session_key` without touching the
     /// replay buffer: later `emit` calls return `false`, exactly like
     /// `retain_terminal` after it removed the sink, but the replay data, the
@@ -353,6 +446,13 @@ impl TurnEventCoordinator {
     }
     pub fn snapshot(&self, input: &ActiveTurnSnapshotInput) -> ActiveTurnSnapshot {
         self.replay.snapshot(input)
+    }
+    pub fn snapshot_for_project(
+        &self,
+        input: &ActiveTurnSnapshotInput,
+        project_key: &JsString,
+    ) -> Option<ActiveTurnSnapshot> {
+        self.replay.snapshot_for_project(input, project_key)
     }
     pub fn dispose(&self) {
         let mut state = lock(&self.state);

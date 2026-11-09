@@ -156,7 +156,7 @@ impl InteractionHooks {
             HookRuntimeOptions::default(),
         )
     }
-    fn bind_with_options(
+    pub(crate) fn bind_with_options(
         &self,
         mut binding: lifecycle::Binding,
         run_id: JsString,

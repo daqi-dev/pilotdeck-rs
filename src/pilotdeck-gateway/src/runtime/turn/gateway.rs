@@ -343,6 +343,7 @@ impl TurnGateway {
             INITIALIZATION_TEARDOWN_DEADLINE,
             build,
             Some(Box::pin(cleanup)),
+            None,
         )
     }
     /// [`Self::start_with_cleanup`] for an embedding that bounds its own
@@ -371,6 +372,7 @@ impl TurnGateway {
             declared_cleanup_budget(teardown_budget),
             build,
             Some(Box::pin(cleanup)),
+            None,
         )
     }
     fn start_with_clock(
@@ -386,6 +388,27 @@ impl TurnGateway {
             INITIALIZATION_TEARDOWN_DEADLINE,
             build,
             None,
+            None,
+        )
+    }
+    /// Initialize async producers on this same host before publishing readiness.
+    /// Startup failure disposes the constructed owner and embedding resources.
+    pub(crate) fn start_with_initializer(
+        options: TurnReplayOptions,
+        teardown_budget: Duration,
+        build: impl FnOnce(Arc<TurnEventCoordinator>) -> std::io::Result<GatewayServices>
+        + Send
+        + 'static,
+        initialize: impl Future<Output = Result<(), String>> + Send + 'static,
+        cleanup: impl Future<Output = Result<(), String>> + Send + 'static,
+    ) -> std::io::Result<Self> {
+        Self::start_with_clock_and_cleanup(
+            options,
+            None,
+            declared_cleanup_budget(teardown_budget),
+            build,
+            Some(Box::pin(cleanup)),
+            Some(Box::pin(initialize)),
         )
     }
     fn start_with_clock_and_cleanup(
@@ -396,6 +419,7 @@ impl TurnGateway {
         + Send
         + 'static,
         cleanup: Option<Call<'static, Result<(), String>>>,
+        initialize: Option<Call<'static, Result<(), String>>>,
     ) -> std::io::Result<Self> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -439,6 +463,15 @@ impl TurnGateway {
                         return;
                     }
                 };
+                if let Some(initialize) = initialize {
+                    let result = tokio::time::timeout(teardown_deadline, initialize).await
+                        .unwrap_or_else(|_| Err("gateway producer initialization deadline exceeded".into()));
+                    if let Err(error) = result {
+                        dispose_initialization(&coordinator, Some(services), cleanup, teardown_deadline).await;
+                        let _ = ready.send(Err(std::io::Error::other(error)));
+                        return;
+                    }
+                }
                 let gateway = Arc::new(ConnectionTurnGateway(services, Arc::default()));
                 if ready.send(Ok(gateway.clone())).is_err() { return; }
                 let mut running = JoinSet::new();
@@ -500,6 +533,17 @@ impl TurnGateway {
             stop,
             stopped,
         })
+    }
+    /// Observe ownership only: this never retains the submitter or its runtime.
+    #[cfg(test)]
+    pub(crate) fn weak_submitter(&self) -> std::sync::Weak<TurnSubmitter> {
+        Arc::downgrade(&self.gateway.0.submitter)
+    }
+    #[cfg(test)]
+    pub(crate) fn weak_session_factory(
+        &self,
+    ) -> std::sync::Weak<dyn crate::runtime::session::SessionFactory> {
+        self.gateway.0.submitter.owner.weak_factory()
     }
     /// Signal shutdown synchronously, including from an embedding's Drop guard.
     pub fn request_shutdown(&self, budget: Duration) {
@@ -590,10 +634,22 @@ impl HostedConnection {
         text: String,
         input_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) -> Result<Call<'static, Result<(), RequestError>>, RequestError> {
+        self.enqueue_with_input_and_job_permit(text, input_permit, None)
+            .await
+    }
+    /// Retain transport byte and job permits until the real host job completes,
+    /// including if its external completion waiter is cancelled.
+    pub async fn enqueue_with_input_and_job_permit(
+        &self,
+        text: String,
+        input_permit: Option<tokio::sync::OwnedSemaphorePermit>,
+        job_permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    ) -> Result<Call<'static, Result<(), RequestError>>, RequestError> {
         // Field order also frees text before the lease on host-job cancellation.
         struct Input {
             text: String,
             permit: Option<tokio::sync::OwnedSemaphorePermit>,
+            _job_permit: Option<tokio::sync::OwnedSemaphorePermit>,
         }
         impl Drop for Input {
             fn drop(&mut self) {
@@ -605,6 +661,7 @@ impl HostedConnection {
         let mut input = Input {
             text,
             permit: input_permit,
+            _job_permit: job_permit,
         };
         if crate::mutants::on("ws-caps-admission-request-refund") {
             input.permit = None;
@@ -707,9 +764,11 @@ async fn dispose_initialization(
         .map(|services| services.interactions.clone());
     let (owner_bound, cleanup_bound) = initialization_teardown_bounds(teardown_deadline);
     if let Some(services) = services {
-        let shutdown_deadline = tokio::time::Instant::now() + owner_bound;
-        let _ =
-            tokio::time::timeout_at(shutdown_deadline, services.submitter.owner.shutdown()).await;
+        settle_initialization(
+            async { services.submitter.owner.shutdown().await },
+            owner_bound,
+        )
+        .await;
     }
     if !skip_cleanup && let Some(cleanup) = cleanup {
         // #1949: a bound too large for the clock (an embedding's
@@ -774,6 +833,21 @@ fn caught_cleanup(
             }
         }
     })
+}
+
+// Failure reporting must preserve the original initialization error and run
+// the remaining disposals even if an embedding panics while being polled.
+async fn settle_initialization<T>(future: impl Future<Output = T>, budget: Duration) {
+    use futures_util::FutureExt;
+    let guarded = std::panic::AssertUnwindSafe(future).catch_unwind();
+    match deadline_or_waiver(tokio::time::Instant::now(), budget) {
+        Some(deadline) => {
+            let _ = tokio::time::timeout_at(deadline, guarded).await;
+        }
+        None => {
+            let _ = guarded.await;
+        }
+    }
 }
 
 /// #1746: the two awaits of [`dispose_initialization`] do not share a clock,

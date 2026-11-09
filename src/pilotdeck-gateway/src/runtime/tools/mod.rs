@@ -1,8 +1,11 @@
 //! Native tool registration and batch execution. The scheduler owns every
 //! child future, so cancellation of its host operation cannot detach work.
+mod ask_mode;
 pub mod builtin;
 mod recovery;
 pub mod registry;
+#[cfg(unix)]
+pub mod sandbox;
 pub mod scheduler;
 
 use crate::host::{
@@ -23,6 +26,13 @@ use std::{
 use tokio::time::Instant;
 
 pub type ToolFuture<T> = Pin<Box<dyn Future<Output = Result<T, ToolError>> + Send>>;
+/// Per-invocation recursive execution through the complete runtime. The hook
+/// never lives in the registry, so registered tools cannot retain their runtime.
+pub type NestedToolExecutor = Arc<
+    dyn Fn(crate::host::modules::capability::ToolCall) -> crate::host::HostFuture<JsObject>
+        + Send
+        + Sync,
+>;
 
 /// The native counterpart of a PilotDeckToolDefinition. Futures must own their
 /// I/O and stop it on Drop; spawning detached tasks violates this port contract.
@@ -32,6 +42,17 @@ pub type ToolFuture<T> = Pin<Box<dyn Future<Output = Result<T, ToolError>> + Sen
 /// leader and its process-group guard, and kills the group at once if the
 /// runtime drops it (see the runner's module docs).
 pub trait ExecutableTool: ToolDefinition {
+    /// Opaque host identity for a trusted tool which delegates every effect to
+    /// this exact execution-world provider. A same-name tool is insufficient.
+    #[cfg(unix)]
+    fn enforces_native_sandbox(
+        &self,
+        _context: &ToolRunContext,
+        _provider: &Arc<sandbox::NativeSandbox>,
+    ) -> bool {
+        false
+    }
+
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput>;
     /// `None` is TS `undefined` or `{ ok: true }`; `Some(issues)` is
     /// `{ ok: false, issues }`, including an empty issue list.
@@ -92,12 +113,18 @@ pub struct ToolRunContext {
     pub host: Arc<ToolRuntimeContext>,
     /// Detached per-call fields, including derived budget and permission result.
     pub fields: JsObject,
+    /// Installed only for the active body; nested calls re-enter all gates.
+    pub execute_tool: Option<NestedToolExecutor>,
+    /// Only an owner-validated SOP wrapper may set this per invocation.
+    pub(crate) knowledge_authority: Option<JsValue>,
 }
 impl ToolRunContext {
     pub fn new(host: Arc<ToolRuntimeContext>) -> Self {
         Self {
             fields: host.fields.clone(),
             host,
+            execute_tool: None,
+            knowledge_authority: None,
         }
     }
     /// The signal only when it is a [`ToolCancellation`]; prefer

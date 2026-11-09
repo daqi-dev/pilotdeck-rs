@@ -5,7 +5,6 @@ use crate::{
     runtime::{
         context::compaction::js_truthy,
         project::{ProjectResources, ProjectRuntimeRegistry},
-        snapshot::{SnapshotProjectResolver, SnapshotProjects},
         turn::{
             submit::{NativeSubmitSnapshots, SubmitError, SubmitFuture, SubmitSnapshots},
             submit_host::{SubmitAttachmentLease, SubmitCwdService, SubmitHostServices},
@@ -22,6 +21,7 @@ use std::io::{Read, Write as IoWrite};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+#[derive(Clone)]
 pub struct Services {
     pub options: Options,
     pub project: Arc<ProjectRuntimeRegistry>,
@@ -1494,6 +1494,27 @@ impl SubmitCwdService for Cwd {
     }
 }
 impl SubmitHostServices for Services {
+    fn bind_project<'a>(
+        &'a self,
+        input: &'a mut JsValue,
+    ) -> SubmitFuture<'a, Result<Option<Arc<dyn SubmitHostServices>>, SubmitError>> {
+        Box::pin(async move {
+            let selected = super::project_scope::select(&self.owner, &self.options, input, false)
+                .map_err(|error| {
+                SubmitError::new(&error.code, String::from_utf16_lossy(error.message.units()))
+            })?;
+            let mut services = self.clone();
+            services.options = selected.options;
+            // Persistence snapshots use only the shared captured storage-root
+            // environment. The project identity is resolved by workspace_id
+            // against this selected view, while the one provider stays shared.
+            Ok(Some(Arc::new(ScopedServices {
+                services,
+                _reservation: selected.reservation,
+            }) as Arc<dyn SubmitHostServices>))
+        })
+    }
+
     fn workspace_id(&self, input: &JsValue) -> Result<Option<JsString>, SubmitError> {
         // #2562: the filter skips `undefined` *and* `null`, the same nullish
         // read the request admission gate got in #2272 (requests.rs). The
@@ -1510,9 +1531,11 @@ impl SubmitHostServices for Services {
             .get("projectKey")
             .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))
         {
-            let project = project
+            let key = project
                 .as_string()
-                .and_then(|s| s.to_utf8().ok())
+                .ok_or_else(|| failure("projectKey must be a valid path string."))?;
+            let project = crate::metadata::resolve_process_identity(Path::new(""), key)
+                .map_err(|error| failure(error.to_string()))?
                 .ok_or_else(|| failure("projectKey must be a valid path string."))?;
             if !self.options.serves_project(&project) {
                 return Err(unavailable(
@@ -1520,26 +1543,29 @@ impl SubmitHostServices for Services {
                 ));
             }
         }
-        // The composition does not expose the SDK/model setter yet. Refuse
-        // these before session admission instead of reporting a false selection.
-        for key in ["modelSelection", "modelOverride", "sdkConfig"] {
-            if input.get(key).is_some_and(|v| !v.is_undefined()) {
-                return Err(unavailable(
-                    "Per-turn model/SDK overrides are not installed in this isolated process.",
-                ));
-            }
+        // sdkConfig is not a wired native input; sdkSessionConfig is handled
+        // by the separately validated SDK admission port.
+        if input.get("sdkConfig").is_some_and(|v| !v.is_undefined()) {
+            return Err(unavailable(
+                "Per-turn model/SDK overrides are not installed in this isolated process.",
+            ));
         }
         // When snapshots are enabled (--storage-root was supplied), resolve the
-        // id exactly as the management snapshot route does
-        // (`PersistenceResources::snapshot_gateway`): TS `resolveProjectStorageId`
-        // prefers a registered `.cwd` marker, else the legacy path slug. One
-        // resolver keeps turn-captured snapshots visible to `snapshot_list`.
+        // id through the same bounded helper as the management snapshot route:
+        // TS `resolveProjectStorageId` prefers a registered `.cwd` marker, else
+        // the legacy path slug. Sharing it keeps captured snapshots visible to
+        // `snapshot_list`.
         if self.snapshot_recorder.is_some() {
-            let projects = SnapshotProjects::new(self.options.home.clone(), PathBuf::new());
+            let metadata = crate::metadata::Metadata {
+                home: self.options.home.clone(),
+                cwd: PathBuf::new(),
+                files: super::methods::session_dir::BoundedSessionMarkers::new(),
+            };
             let project = self.options.project.to_string_lossy();
-            Ok(Some(JsString::from(
-                projects.workspace_id(&project).as_str(),
-            )))
+            let workspace_id =
+                super::management::bounded_snapshot_workspace_id(&metadata, &project)
+                    .map_err(failure)?;
+            Ok(Some(JsString::from(workspace_id.as_str())))
         } else {
             Ok(None)
         }
@@ -1557,40 +1583,51 @@ impl SubmitHostServices for Services {
     }
     fn refresh(&self) -> SubmitFuture<'_, Result<(), SubmitError>> {
         Box::pin(async {
-            let current = crate::runtime::project::NativeConfigSource::new(
-                self.options.project.clone(),
-                self.env.clone(),
-                Some(self.options.home.clone()),
-                None,
-            );
-            use crate::runtime::project::ConfigSource;
-            let fresh = current
-                .load(&self.options.project)
+            let options = self.options.clone();
+            let env = self.env.clone();
+            let project = self.project.clone();
+            let permit = super::methods::session_dir::session_io_permit()
+                .await
+                .map_err(|error| failure(String::from_utf16_lossy(error.message.units())))?;
+            let changed = tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                use crate::runtime::project::ConfigSource;
+                let fresh = crate::runtime::project::NativeConfigSource::new(
+                    options.project.clone(),
+                    env,
+                    Some(options.home),
+                    None,
+                )
+                .bounded()
+                .load(&options.project)
                 .map_err(|e| failure(e.to_string()))?;
-            let lease = self
-                .project
-                .acquire(None)
-                .map_err(|e| failure(e.to_string()))?;
-            let staged = lease
-                .runtime()
-                .resources()
-                .get::<ProjectResources>()
-                .ok_or_else(|| failure("Native project resources are missing."))?
-                .context()
-                .snapshot();
-            if fresh.get("config") != staged.get("config") {
-                self.project
-                    .reload()
-                    .await
+                let lease = project
+                    .acquire(Some(&options.project))
                     .map_err(|e| failure(e.to_string()))?;
+                let staged = lease
+                    .runtime()
+                    .resources()
+                    .get::<ProjectResources>()
+                    .ok_or_else(|| failure("Native project resources are missing."))?
+                    .context()
+                    .snapshot();
+                Ok::<_, SubmitError>(fresh.get("config") != staged.get("config"))
+            })
+            .await
+            .map_err(|error| failure(error.to_string()))??;
+            if changed {
+                self.project.invalidate(Some(&self.options.project));
                 use crate::runtime::refresh::RefreshRouter;
-                self.owner.mark_all_dirty("config_changed");
+                self.owner.mark_project_dirty(
+                    &self.options.project.to_string_lossy().into_owned().into(),
+                    "config_changed",
+                );
             }
             Ok(())
         })
     }
     fn run_policy(&self) -> Option<JsValue> {
-        let lease = self.project.acquire(None).ok()?;
+        let lease = self.project.acquire(Some(&self.options.project)).ok()?;
         lease
             .runtime()
             .resources()
@@ -1769,42 +1806,163 @@ impl SubmitHostServices for Services {
         &'a self,
         input: &'a JsValue,
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
+        let home = self.options.home.clone();
+        let project = self.options.project.clone();
+        let env = self.env.clone();
+        let input = input.clone();
         Box::pin(async move {
-            let metadata = crate::metadata::Metadata {
-                home: self.options.home.clone(),
-                cwd: std::path::PathBuf::new(),
-                files: crate::metadata::NativeFiles,
-            };
-            let params = object([
-                (
-                    "projectKey",
-                    JsValue::String(self.options.project.to_string_lossy().into_owned().into()),
-                ),
-                (
-                    "sessionKey",
-                    input
-                        .get("sessionKey")
-                        .cloned()
-                        .unwrap_or(JsValue::Undefined),
-                ),
-            ]);
-            let state =
-                crate::session_model::execute(&metadata, &params, &self.env).map_err(|e| {
+            static SLOTS: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> =
+                std::sync::LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(4)));
+            let permit = SLOTS
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|e| failure(e.to_string()))?;
+            tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                let marker_files =
+                    crate::runtime::history::HistoryMarkerFiles::for_model_selection();
+                let lookup = crate::metadata::Metadata {
+                    home: home.clone(),
+                    cwd: PathBuf::new(),
+                    files: marker_files,
+                };
+                let fallback = JsValue::from(project.to_string_lossy().as_ref());
+                let project_key = input
+                    .get("projectKey")
+                    .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
+                    .unwrap_or(&fallback);
+                let resolved = crate::session_model::resolve_project(&lookup, project_key);
+                if lookup.files.was_refused() {
+                    return Err(SubmitError::new(
+                        "gateway_request_failed",
+                        "Unsafe project marker.",
+                    ));
+                }
+                let resolved = resolved.map_err(|error| {
+                    SubmitError::new(&error.code, String::from_utf16_lossy(error.message.units()))
+                })?;
+                // This native host owns one project registry lease. Validate
+                // registration first, then refuse a different project rather
+                // than selecting its model against this host's configuration.
+                if std::path::Path::new(&resolved) != project {
+                    return Err(unavailable(
+                        "The isolated native process serves only its configured project.",
+                    ));
+                }
+                let defined = |value: Option<&JsValue>| value.is_some_and(|v| !v.is_undefined());
+                let selected = input.get("modelSelection");
+                let override_model = input.get("modelOverride");
+                if defined(selected) && defined(override_model) {
+                    return Err(SubmitError::new(
+                        "INVALID_MODEL_OVERRIDE",
+                        "Specify modelSelection or modelOverride, not both.",
+                    ));
+                }
+                let requested = if defined(selected) {
+                    let value = selected.unwrap();
+                    if !matches!(value, JsValue::Object(_) | JsValue::Array(_)) {
+                        return Err(SubmitError::new(
+                            "INVALID_MODEL_OVERRIDE",
+                            "modelSelection must be an object.",
+                        ));
+                    }
+                    Some(value)
+                } else {
+                    override_model.filter(|v| match v {
+                        JsValue::Null | JsValue::Undefined => false,
+                        JsValue::Bool(b) => *b,
+                        JsValue::Number(n) => *n != 0.0 && !n.is_nan(),
+                        JsValue::String(s) => !s.is_empty(),
+                        _ => true,
+                    })
+                };
+                let error = |e: crate::runtime::connection::RequestError| {
+                    SubmitError::new(&e.code, String::from_utf16_lossy(e.message.units()))
+                };
+                let validate = |selection: &JsValue| -> Result<(), SubmitError> {
+                    super::methods::validate_selection_shape(selection).map_err(error)?;
+                    // The served project's snapshot, rather than the process
+                    // working directory or an independent model registry.
+                    let config = crate::config::load_project_bounded(
+                        &home,
+                        &project,
+                        &env,
+                        Some(project.to_string_lossy().as_ref()),
+                    )
+                    .map_err(|e| {
+                        SubmitError::new(&e.code, String::from_utf16_lossy(e.message.units()))
+                    })?;
+                    let catalog = crate::model_catalog::execute_loaded(config, &object([]), &env)
+                        .map_err(|e| {
+                        SubmitError::new(&e.code, String::from_utf16_lossy(e.message.units()))
+                    })?;
+                    super::methods::validate_selection_catalog(selection, &catalog).map_err(error)
+                };
+                if let Some(requested) = requested {
+                    if !defined(selected) && requested.get("mode") != Some(&JsValue::from("model"))
+                    {
+                        return Err(SubmitError::new(
+                            "INVALID_MODEL_OVERRIDE",
+                            "A model selection requires mode, provider, and model.",
+                        ));
+                    }
+                    validate(requested)?;
+                    let normalized = super::methods::normalize_selection(requested);
+                    if normalized.get("mode") == Some(&JsValue::from("auto")) {
+                        return Ok(object([("source", "router".into())]));
+                    }
+                    return Ok(object([
+                        ("source", "turn".into()),
+                        ("selection", normalized),
+                    ]));
+                }
+                let params = object([
+                    (
+                        "projectKey",
+                        JsValue::from(project.to_string_lossy().as_ref()),
+                    ),
+                    (
+                        "sessionKey",
+                        input
+                            .get("sessionKey")
+                            .cloned()
+                            .unwrap_or(JsValue::Undefined),
+                    ),
+                ]);
+                let state =
+                    crate::session_model::execute_with_config(&lookup, &params, &env, |selected| {
+                        crate::config::load_project_bounded_lazy(&home, &lookup.cwd, &env, selected)
+                    });
+                // Both the second marker scan and transcript open use the same
+                // bounded, nonblocking owner. A refused marker must not silently
+                // become a lexical fallback or a default model selection.
+                if lookup.files.was_refused() {
+                    return Err(SubmitError::new(
+                        "gateway_request_failed",
+                        "Unsafe project marker or session transcript.",
+                    ));
+                }
+                let state = state.map_err(|e| {
                     SubmitError::new(&e.code, String::from_utf16_lossy(e.message.units()))
                 })?;
-            let saved = state.get("saved").cloned().unwrap_or(JsValue::Undefined);
-            if saved.get("mode") == Some(&"model".into()) {
-                Ok(object([("source", "session".into()), ("selection", saved)]))
-            } else {
-                Ok(object([(
-                    "source",
-                    state
-                        .get("effective")
-                        .and_then(|v| v.get("source"))
-                        .cloned()
-                        .unwrap_or("default".into()),
-                )]))
-            }
+                let saved = state.get("saved").cloned().unwrap_or(JsValue::Undefined);
+                if saved.get("mode") == Some(&JsValue::from("model")) {
+                    validate(&saved)?;
+                    Ok(object([("source", "session".into()), ("selection", saved)]))
+                } else {
+                    Ok(object([(
+                        "source",
+                        state
+                            .get("effective")
+                            .and_then(|v| v.get("source"))
+                            .cloned()
+                            .unwrap_or("default".into()),
+                    )]))
+                }
+            })
+            .await
+            .map_err(|e| failure(e.to_string()))?
         })
     }
     fn record_failure<'a>(
@@ -1891,6 +2049,7 @@ pub struct NativeSettingsOptions {
 /// real refresh bundle and config store.
 pub struct NativeSettings {
     pub gateway: Arc<SettingsGateway>,
+    pub(crate) store: ConfigStore,
     // Nothing in production reads the handle yet: the delegates inside the
     // gateway keep the bundle alive. #1320 fix-r1 F2: the production
     // composition never binds a notification server — the isolated native
@@ -1905,25 +2064,20 @@ pub struct NativeSettings {
     pub bundle: Arc<RefreshBundle>,
 }
 
-/// Compose the native U7 settings stack (createLocalGateway.ts:795-831 and
-/// 1383-1410): the real refresh bundle over the supplied registry, router
-/// and store (attached exactly like `runtimeRefresh.attach()`), and the
-/// settings gateway with the delegates the isolated native process owns —
-/// `resolve_settings` over the store snapshot and the two reloads over the
-/// bundle. `apply_flag_settings` / `update_settings` /
-/// `reload_output_styles` stay unconfigured (their delegates are the SDK
-/// session registry and the production local-settings writer, neither
-/// assembled into the isolated native process) and answer the TS
-/// unconfigured shapes through the component's own option handling.
-///
-/// #1320 fix-r1 F2: this composition never binds a notification server — the
-/// isolated native process has no server-push channel, so the bundle's
-/// broadcasts are lost (the connection registry is #1669, deliberately not
-/// built here). Tests that need to observe the dirty/broadcast order must
-/// `bind_server` a recording server themselves AND assert both
-/// `has_notification_server()` and the difference from the production
-/// assembly.
+/// Compose the config store and runtime refresh bundle. Test compositions may
+/// omit delegates; production supplies the atomic local writer and the shared
+/// native session flag store. Output-style-only reload is a separate delegate.
+#[cfg(test)]
 pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
+    native_settings_with_writer(options, None, None, None, None)
+}
+fn native_settings_with_writer(
+    options: NativeSettingsOptions,
+    writer: Option<Arc<dyn crate::runtime::settings::LocalSettingsWriter>>,
+    flags: Option<Arc<super::SessionOverrides>>,
+    styles: Option<Arc<dyn crate::runtime::settings::ReloadOutputStyles>>,
+    sdk: Option<Arc<dyn crate::runtime::refresh::SdkConfigChange>>,
+) -> NativeSettings {
     let NativeSettingsOptions {
         owner,
         router,
@@ -1939,7 +2093,7 @@ pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
         router: Arc::new(move || Some(router.clone())),
         project_root,
         memory_diagnostics: None,
-        sdk: None,
+        sdk,
         log,
     }));
     // `runtimeRefresh.attach()` (createLocalGateway.ts:831): without the
@@ -1948,16 +2102,25 @@ pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
     bundle.attach();
     let gateway = Arc::new(SettingsGateway::new(SettingsGatewayOptions {
         owner,
-        apply_flag_settings: None,
-        update_settings: None,
+        apply_flag_settings: flags
+            .map(|port| port as Arc<dyn crate::runtime::settings::ApplyFlagSettings>),
+        update_settings: writer.map(|writer| crate::runtime::settings::UpdateSettings {
+            organization_denied: false,
+            writer,
+            store: store.clone(),
+        }),
         resolve_settings: Some(Arc::new(ResolvedSettingsPort {
             store: store.clone(),
         })),
-        reload_output_styles: None,
+        reload_output_styles: styles,
         reload_config: Some(bundle.clone()),
         reload_extensions: Some(bundle.clone()),
     }));
-    NativeSettings { gateway, bundle }
+    NativeSettings {
+        gateway,
+        bundle,
+        store,
+    }
 }
 
 /// The production composition for the native process
@@ -1976,6 +2139,7 @@ pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
 /// `bind_server` a recording server themselves AND assert both
 /// `has_notification_server()` and the difference from the production
 /// assembly.
+#[cfg(test)]
 pub fn native_settings_for_process(
     owner: SessionOwner,
     project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
@@ -1983,6 +2147,42 @@ pub fn native_settings_for_process(
     served_project: &std::path::Path,
     env: &crate::config::Env,
 ) -> std::io::Result<NativeSettings> {
+    native_settings_for_process_with_flags(owner, project, home, served_project, env, None)
+}
+
+#[cfg(test)]
+pub fn native_settings_for_process_with_flags(
+    owner: SessionOwner,
+    project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
+    home: &std::path::Path,
+    served_project: &std::path::Path,
+    env: &crate::config::Env,
+    flags: Option<Arc<super::SessionOverrides>>,
+) -> std::io::Result<NativeSettings> {
+    native_settings_for_process_with_styles(
+        owner,
+        project,
+        home,
+        served_project,
+        env,
+        flags,
+        (None, None),
+    )
+}
+type NativeRefreshContributions = (
+    Option<Arc<dyn crate::runtime::settings::ReloadOutputStyles>>,
+    Option<Arc<dyn crate::runtime::refresh::SdkConfigChange>>,
+);
+pub(crate) fn native_settings_for_process_with_styles(
+    owner: SessionOwner,
+    project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
+    home: &std::path::Path,
+    served_project: &std::path::Path,
+    env: &crate::config::Env,
+    flags: Option<Arc<super::SessionOverrides>>,
+    contributions: NativeRefreshContributions,
+) -> std::io::Result<NativeSettings> {
+    let (styles, sdk) = contributions;
     // #1320 fix-r1 F3: same anchor as every other config read of the process
     // (`NativeConfigSource`): PILOT_HOME from the environment resolved
     // against the served project, `--home` only as the fallback homedir for
@@ -1992,9 +2192,9 @@ pub fn native_settings_for_process(
     // `Some(home)` keeps direct callers (tests and future non-CLI
     // assemblies) anchored exactly like the CLI path.
     let pilot_home = crate::runtime::project::resolve_pilot_home(env, served_project, Some(home));
-    let mut store_options = StoreOptions::new(pilot_home, served_project, env.clone());
+    let mut store_options = StoreOptions::new(pilot_home.clone(), served_project, env.clone());
     store_options.project = Some(served_project.to_string_lossy().into_owned());
-    let store = ConfigStore::new(store_options).map_err(|error| {
+    let store = ConfigStore::new_bounded(store_options).map_err(|error| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!(
@@ -2004,14 +2204,30 @@ pub fn native_settings_for_process(
             ),
         )
     })?;
-    Ok(native_settings(NativeSettingsOptions {
-        owner: owner.clone(),
-        router: Arc::new(owner),
-        registry: Arc::new(RegistryRefresh::new(project)),
-        store,
-        project_root: JsString::from(served_project.to_string_lossy().into_owned()),
-        log: Arc::new(ConsoleLog),
-    }))
+    #[cfg(unix)]
+    let writer: Option<Arc<dyn crate::runtime::settings::LocalSettingsWriter>> = Some(Arc::new(
+        crate::runtime::settings::NativeLocalSettingsWriter {
+            home: pilot_home,
+            project: served_project.to_path_buf(),
+            env: env.clone(),
+        },
+    ));
+    #[cfg(not(unix))]
+    let writer: Option<Arc<dyn crate::runtime::settings::LocalSettingsWriter>> = None;
+    Ok(native_settings_with_writer(
+        NativeSettingsOptions {
+            owner: owner.clone(),
+            router: Arc::new(owner),
+            registry: Arc::new(RegistryRefresh::new(project)),
+            store,
+            project_root: JsString::from(served_project.to_string_lossy().into_owned()),
+            log: Arc::new(ConsoleLog),
+        },
+        writer,
+        flags,
+        styles,
+        sdk,
+    ))
 }
 
 /// fix-r4 window-injection seam (tests only): the open-first sequence in
@@ -2022,6 +2238,79 @@ pub fn native_settings_for_process(
 /// the test fails (race-hook-target-assert). Per-thread and RAII-removed
 /// like the `mutation_test_hook` convention in file_memory.rs; production
 /// builds compile none of this.
+struct ScopedServices {
+    services: Services,
+    _reservation: Option<crate::runtime::session::SessionProjectScope>,
+}
+impl SubmitHostServices for ScopedServices {
+    fn bound_project_key(&self) -> Option<JsString> {
+        Some(
+            self.services
+                .options
+                .project
+                .to_string_lossy()
+                .into_owned()
+                .into(),
+        )
+    }
+    fn workspace_id(&self, input: &JsValue) -> Result<Option<JsString>, SubmitError> {
+        self.services.workspace_id(input)
+    }
+    fn snapshots(&self) -> Option<Arc<dyn SubmitSnapshots>> {
+        self.services.snapshots()
+    }
+    fn snapshots_required(&self) -> bool {
+        self.services.snapshots_required()
+    }
+    fn cwd(&self) -> Option<Arc<dyn SubmitCwdService>> {
+        self.services.cwd()
+    }
+    fn refresh(&self) -> SubmitFuture<'_, Result<(), SubmitError>> {
+        self.services.refresh()
+    }
+    fn run_policy(&self) -> Option<JsValue> {
+        self.services.run_policy()
+    }
+    fn resolve_attachments<'a>(
+        &'a self,
+        input: &'a JsValue,
+    ) -> SubmitFuture<'a, Result<SubmitAttachmentLease, SubmitError>> {
+        self.services.resolve_attachments(input)
+    }
+    fn prepare_attachment_turn<'a>(
+        &'a self,
+        message: &'a JsValue,
+        attachments: Vec<JsValue>,
+        project: Option<&JsString>,
+        session: Option<&JsString>,
+    ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
+        self.services
+            .prepare_attachment_turn(message, attachments, project, session)
+    }
+    fn resolve_model_selection<'a>(
+        &'a self,
+        input: &'a JsValue,
+    ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
+        self.services.resolve_model_selection(input)
+    }
+    fn record_failure<'a>(
+        &'a self,
+        run: &'a RunRef,
+        status: &'a JsValue,
+    ) -> SubmitFuture<'a, Result<(), SubmitError>> {
+        self.services.record_failure(run, status)
+    }
+    fn after_turn(&self, run: &RunRef) -> Result<(), SubmitError> {
+        self.services.after_turn(run)
+    }
+    fn now_ms(&self) -> f64 {
+        self.services.now_ms()
+    }
+    fn abort_turn_timeout_ms(&self) -> u64 {
+        self.services.abort_turn_timeout_ms()
+    }
+}
+
 #[cfg(test)]
 pub(super) mod swap_test_hook {
     use super::*;

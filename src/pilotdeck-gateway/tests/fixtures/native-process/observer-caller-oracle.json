@@ -1,0 +1,1064 @@
+{
+  "sourceHead": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "rawOracleSha256": "d2d52038edaebfff566c90ccff31699bd67d32c2bd1b773ec8d8d1da6225f1c4",
+  "normalization": "exact private ORACLE_PROJECT prefix only -> <PROJECT>; missing fields preserved",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "cases": [
+    {
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "markdown": "SELF_WRITTEN_CONTROLLED_REPORT",
+          "usage": {},
+          "turns": 1,
+          "durationMs": 3,
+          "subagentSessionId": "<PROJECT>::sub::observed-fixed"
+        }
+      },
+      "events": [
+        {
+          "type": "subagent_started",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker"
+        },
+        {
+          "type": "subagent_completed",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "success": true,
+          "durationMs": 3
+        },
+        {
+          "type": "subagent_started",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "subagentType": "watcher"
+        },
+        {
+          "type": "subagent_completed",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "subagentType": "watcher",
+          "success": true,
+          "durationMs": 3
+        },
+        {
+          "type": "observer_report",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "observedSubagentId": "observed-fixed",
+          "observedSubagentType": "worker",
+          "observerSubagentId": "observer-fixed",
+          "observerSubagentType": "watcher",
+          "success": true,
+          "report": "SELF_WRITTEN_CONTROLLED_REPORT",
+          "durationMs": 0
+        }
+      ],
+      "lifecycle": [
+        {
+          "event": "SubagentStart",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observed-fixed",
+            "subagentType": "worker"
+          }
+        },
+        {
+          "event": "SubagentStop",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observed-fixed",
+            "subagentType": "worker",
+            "success": true
+          }
+        },
+        {
+          "event": "SubagentStart",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observer-fixed",
+            "subagentType": "watcher"
+          }
+        },
+        {
+          "event": "SubagentStop",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observer-fixed",
+            "subagentType": "watcher",
+            "success": true
+          }
+        }
+      ],
+      "started": [
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "prompt": "self-written bounded directive",
+          "transcriptRelativePath": "",
+          "subagentSessionId": "<PROJECT>::sub::observed-fixed"
+        },
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "subagentType": "watcher",
+          "prompt": "You are an observer. Do not execute the observed task or attempt to change its outcome.\nReview this read-only activity digest and produce a concise report of risks, failures, or notable findings.\n\nObserved agent: worker\nObserved directive: self-written bounded directive\n\nActivity:\n- No observable model or tool activity was recorded.\n\nOutcome: completed\nObserved final report:\nSELF_WRITTEN_CONTROLLED_REPORT",
+          "transcriptRelativePath": "",
+          "subagentSessionId": "<PROJECT>::sub::observer-fixed"
+        }
+      ],
+      "completed": [
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "summary": "SELF_WRITTEN_CONTROLLED_REPORT",
+          "usage": {},
+          "turns": 1,
+          "durationMs": 3,
+          "errored": false
+        },
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "subagentType": "watcher",
+          "summary": "SELF_WRITTEN_CONTROLLED_REPORT",
+          "usage": {},
+          "turns": 1,
+          "durationMs": 3,
+          "errored": false
+        }
+      ],
+      "providers": [
+        {
+          "definitionId": "worker",
+          "idOwn": true,
+          "signalAborted": false,
+          "definitionKeys": [
+            "id",
+            "description",
+            "observer"
+          ],
+          "skillsOwn": false,
+          "skillsUndefined": true,
+          "parentIsSubagent": true
+        },
+        {
+          "definitionId": "watcher",
+          "idOwn": true,
+          "signalAborted": false,
+          "definitionKeys": [
+            "id",
+            "description",
+            "skills",
+            "allowedTools",
+            "disallowedTools",
+            "isReadOnly",
+            "permissionMode",
+            "mcpServers",
+            "memory",
+            "initialPrompt",
+            "background",
+            "observer",
+            "observerMessage"
+          ],
+          "skillsOwn": true,
+          "skillsUndefined": true,
+          "allowedTools": [],
+          "memory": "disabled",
+          "permissionMode": "plan",
+          "parentIsSubagent": true
+        }
+      ],
+      "launches": [
+        {
+          "observedSubagentId": "observed-fixed",
+          "observerSubagentType": "watcher"
+        }
+      ]
+    },
+    {
+      "mode": "abort",
+      "result": {
+        "ok": false,
+        "name": "Error",
+        "message": "Subagent aborted before completion."
+      },
+      "events": [
+        {
+          "type": "subagent_started",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker"
+        },
+        {
+          "type": "subagent_completed",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "success": false,
+          "aborted": true,
+          "durationMs": 0
+        },
+        {
+          "type": "subagent_started",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "subagentType": "watcher"
+        },
+        {
+          "type": "subagent_completed",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "subagentType": "watcher",
+          "success": true,
+          "durationMs": 3
+        },
+        {
+          "type": "observer_report",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "observedSubagentId": "observed-fixed",
+          "observedSubagentType": "worker",
+          "observerSubagentId": "observer-fixed",
+          "observerSubagentType": "watcher",
+          "success": true,
+          "report": "SELF_WRITTEN_CONTROLLED_REPORT",
+          "durationMs": 0
+        }
+      ],
+      "lifecycle": [
+        {
+          "event": "SubagentStart",
+          "aborted": true,
+          "payload": {
+            "subagentId": "observed-fixed",
+            "subagentType": "worker"
+          }
+        },
+        {
+          "event": "SubagentStop",
+          "aborted": true,
+          "payload": {
+            "subagentId": "observed-fixed",
+            "subagentType": "worker",
+            "success": false
+          }
+        },
+        {
+          "event": "SubagentStart",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observer-fixed",
+            "subagentType": "watcher"
+          }
+        },
+        {
+          "event": "SubagentStop",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observer-fixed",
+            "subagentType": "watcher",
+            "success": true
+          }
+        }
+      ],
+      "started": [
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "prompt": "self-written bounded directive",
+          "transcriptRelativePath": "",
+          "subagentSessionId": "<PROJECT>::sub::observed-fixed"
+        },
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "subagentType": "watcher",
+          "prompt": "You are an observer. Do not execute the observed task or attempt to change its outcome.\nReview this read-only activity digest and produce a concise report of risks, failures, or notable findings.\n\nObserved agent: worker\nObserved directive: self-written bounded directive\n\nActivity:\n- No observable model or tool activity was recorded.\n\nOutcome: failed\nObserved error: Subagent aborted before completion.",
+          "transcriptRelativePath": "",
+          "subagentSessionId": "<PROJECT>::sub::observer-fixed"
+        }
+      ],
+      "completed": [
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "summary": "Subagent aborted before completion.",
+          "turns": 0,
+          "durationMs": 0,
+          "errored": true
+        },
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "subagentType": "watcher",
+          "summary": "SELF_WRITTEN_CONTROLLED_REPORT",
+          "usage": {},
+          "turns": 1,
+          "durationMs": 3,
+          "errored": false
+        }
+      ],
+      "providers": [
+        {
+          "definitionId": "worker",
+          "idOwn": true,
+          "signalAborted": true,
+          "definitionKeys": [
+            "id",
+            "description",
+            "observer"
+          ],
+          "skillsOwn": false,
+          "skillsUndefined": true,
+          "parentIsSubagent": true
+        },
+        {
+          "definitionId": "watcher",
+          "idOwn": true,
+          "signalAborted": false,
+          "definitionKeys": [
+            "id",
+            "description",
+            "skills",
+            "allowedTools",
+            "disallowedTools",
+            "isReadOnly",
+            "permissionMode",
+            "mcpServers",
+            "memory",
+            "initialPrompt",
+            "background",
+            "observer",
+            "observerMessage"
+          ],
+          "skillsOwn": true,
+          "skillsUndefined": true,
+          "allowedTools": [],
+          "memory": "disabled",
+          "permissionMode": "plan",
+          "parentIsSubagent": true
+        }
+      ],
+      "launches": [
+        {
+          "observedSubagentId": "observed-fixed",
+          "observerSubagentType": "watcher"
+        }
+      ]
+    },
+    {
+      "mode": "timeout",
+      "result": {
+        "ok": false,
+        "name": "Error",
+        "message": "Subagent timed out after 5ms."
+      },
+      "events": [
+        {
+          "type": "subagent_started",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker"
+        },
+        {
+          "type": "subagent_completed",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "success": false,
+          "aborted": false,
+          "durationMs": 0
+        },
+        {
+          "type": "subagent_started",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "subagentType": "watcher"
+        },
+        {
+          "type": "subagent_completed",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "subagentType": "watcher",
+          "success": true,
+          "durationMs": 3
+        },
+        {
+          "type": "observer_report",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "observedSubagentId": "observed-fixed",
+          "observedSubagentType": "worker",
+          "observerSubagentId": "observer-fixed",
+          "observerSubagentType": "watcher",
+          "success": true,
+          "report": "SELF_WRITTEN_CONTROLLED_REPORT",
+          "durationMs": 0
+        }
+      ],
+      "lifecycle": [
+        {
+          "event": "SubagentStart",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observed-fixed",
+            "subagentType": "worker"
+          }
+        },
+        {
+          "event": "SubagentStop",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observed-fixed",
+            "subagentType": "worker",
+            "success": false
+          }
+        },
+        {
+          "event": "SubagentStart",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observer-fixed",
+            "subagentType": "watcher"
+          }
+        },
+        {
+          "event": "SubagentStop",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observer-fixed",
+            "subagentType": "watcher",
+            "success": true
+          }
+        }
+      ],
+      "started": [
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "prompt": "self-written bounded directive",
+          "transcriptRelativePath": "",
+          "subagentSessionId": "<PROJECT>::sub::observed-fixed"
+        },
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "subagentType": "watcher",
+          "prompt": "You are an observer. Do not execute the observed task or attempt to change its outcome.\nReview this read-only activity digest and produce a concise report of risks, failures, or notable findings.\n\nObserved agent: worker\nObserved directive: self-written bounded directive\n\nActivity:\n- No observable model or tool activity was recorded.\n\nOutcome: failed\nObserved error: Subagent timed out after 5ms.",
+          "transcriptRelativePath": "",
+          "subagentSessionId": "<PROJECT>::sub::observer-fixed"
+        }
+      ],
+      "completed": [
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "summary": "Subagent timed out after 5ms.",
+          "turns": 0,
+          "durationMs": 0,
+          "errored": true
+        },
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "subagentType": "watcher",
+          "summary": "SELF_WRITTEN_CONTROLLED_REPORT",
+          "usage": {},
+          "turns": 1,
+          "durationMs": 3,
+          "errored": false
+        }
+      ],
+      "providers": [
+        {
+          "definitionId": "worker",
+          "idOwn": true,
+          "signalAborted": false,
+          "definitionKeys": [
+            "id",
+            "description",
+            "observer"
+          ],
+          "skillsOwn": false,
+          "skillsUndefined": true,
+          "parentIsSubagent": true
+        },
+        {
+          "definitionId": "watcher",
+          "idOwn": true,
+          "signalAborted": false,
+          "definitionKeys": [
+            "id",
+            "description",
+            "skills",
+            "allowedTools",
+            "disallowedTools",
+            "isReadOnly",
+            "permissionMode",
+            "mcpServers",
+            "memory",
+            "initialPrompt",
+            "background",
+            "observer",
+            "observerMessage"
+          ],
+          "skillsOwn": true,
+          "skillsUndefined": true,
+          "allowedTools": [],
+          "memory": "disabled",
+          "permissionMode": "plan",
+          "parentIsSubagent": true
+        }
+      ],
+      "launches": [
+        {
+          "observedSubagentId": "observed-fixed",
+          "observerSubagentType": "watcher"
+        }
+      ]
+    },
+    {
+      "mode": "observer-launch-fails",
+      "result": {
+        "ok": false,
+        "name": "AggregateError",
+        "message": "Subagent failed and its observer could not be launched.",
+        "errors": [
+          {
+            "name": "Error",
+            "message": "oracle launcher rejection"
+          },
+          {
+            "name": "Error",
+            "message": "oracle launcher rejection"
+          }
+        ]
+      },
+      "events": [
+        {
+          "type": "subagent_started",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker"
+        },
+        {
+          "type": "subagent_completed",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "success": true,
+          "durationMs": 3
+        }
+      ],
+      "lifecycle": [
+        {
+          "event": "SubagentStart",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observed-fixed",
+            "subagentType": "worker"
+          }
+        },
+        {
+          "event": "SubagentStop",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observed-fixed",
+            "subagentType": "worker",
+            "success": true
+          }
+        }
+      ],
+      "started": [
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "prompt": "self-written bounded directive",
+          "transcriptRelativePath": "",
+          "subagentSessionId": "<PROJECT>::sub::observed-fixed"
+        }
+      ],
+      "completed": [
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "summary": "SELF_WRITTEN_CONTROLLED_REPORT",
+          "usage": {},
+          "turns": 1,
+          "durationMs": 3,
+          "errored": false
+        }
+      ],
+      "providers": [
+        {
+          "definitionId": "worker",
+          "idOwn": true,
+          "signalAborted": false,
+          "definitionKeys": [
+            "id",
+            "description",
+            "observer"
+          ],
+          "skillsOwn": false,
+          "skillsUndefined": true,
+          "parentIsSubagent": true
+        }
+      ],
+      "launches": [
+        {
+          "observedSubagentId": "observed-fixed",
+          "observerSubagentType": "watcher"
+        },
+        {
+          "observedSubagentId": "observed-fixed",
+          "observerSubagentType": "watcher"
+        }
+      ]
+    },
+    {
+      "mode": "observer-first-launch-fails-once",
+      "result": {
+        "ok": false,
+        "name": "Error",
+        "message": "oracle launcher rejection"
+      },
+      "events": [
+        {
+          "type": "subagent_started",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker"
+        },
+        {
+          "type": "subagent_completed",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "success": true,
+          "durationMs": 3
+        },
+        {
+          "type": "subagent_started",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "subagentType": "watcher"
+        },
+        {
+          "type": "subagent_completed",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "subagentType": "watcher",
+          "success": true,
+          "durationMs": 3
+        },
+        {
+          "type": "observer_report",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "observedSubagentId": "observed-fixed",
+          "observedSubagentType": "worker",
+          "observerSubagentId": "observer-fixed",
+          "observerSubagentType": "watcher",
+          "success": true,
+          "report": "SELF_WRITTEN_CONTROLLED_REPORT",
+          "durationMs": 0
+        }
+      ],
+      "lifecycle": [
+        {
+          "event": "SubagentStart",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observed-fixed",
+            "subagentType": "worker"
+          }
+        },
+        {
+          "event": "SubagentStop",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observed-fixed",
+            "subagentType": "worker",
+            "success": true
+          }
+        },
+        {
+          "event": "SubagentStart",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observer-fixed",
+            "subagentType": "watcher"
+          }
+        },
+        {
+          "event": "SubagentStop",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observer-fixed",
+            "subagentType": "watcher",
+            "success": true
+          }
+        }
+      ],
+      "started": [
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "prompt": "self-written bounded directive",
+          "transcriptRelativePath": "",
+          "subagentSessionId": "<PROJECT>::sub::observed-fixed"
+        },
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "subagentType": "watcher",
+          "prompt": "You are an observer. Do not execute the observed task or attempt to change its outcome.\nReview this read-only activity digest and produce a concise report of risks, failures, or notable findings.\n\nObserved agent: worker\nObserved directive: self-written bounded directive\n\nActivity:\n- No observable model or tool activity was recorded.\n\nOutcome: failed\nObserved error: oracle launcher rejection",
+          "transcriptRelativePath": "",
+          "subagentSessionId": "<PROJECT>::sub::observer-fixed"
+        }
+      ],
+      "completed": [
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "summary": "SELF_WRITTEN_CONTROLLED_REPORT",
+          "usage": {},
+          "turns": 1,
+          "durationMs": 3,
+          "errored": false
+        },
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "subagentType": "watcher",
+          "summary": "SELF_WRITTEN_CONTROLLED_REPORT",
+          "usage": {},
+          "turns": 1,
+          "durationMs": 3,
+          "errored": false
+        }
+      ],
+      "providers": [
+        {
+          "definitionId": "worker",
+          "idOwn": true,
+          "signalAborted": false,
+          "definitionKeys": [
+            "id",
+            "description",
+            "observer"
+          ],
+          "skillsOwn": false,
+          "skillsUndefined": true,
+          "parentIsSubagent": true
+        },
+        {
+          "definitionId": "watcher",
+          "idOwn": true,
+          "signalAborted": false,
+          "definitionKeys": [
+            "id",
+            "description",
+            "skills",
+            "allowedTools",
+            "disallowedTools",
+            "isReadOnly",
+            "permissionMode",
+            "mcpServers",
+            "memory",
+            "initialPrompt",
+            "background",
+            "observer",
+            "observerMessage"
+          ],
+          "skillsOwn": true,
+          "skillsUndefined": true,
+          "allowedTools": [],
+          "memory": "disabled",
+          "permissionMode": "plan",
+          "parentIsSubagent": true
+        }
+      ],
+      "launches": [
+        {
+          "observedSubagentId": "observed-fixed",
+          "observerSubagentType": "watcher"
+        },
+        {
+          "observedSubagentId": "observed-fixed",
+          "observerSubagentType": "watcher"
+        }
+      ]
+    },
+    {
+      "mode": "observer-key-only",
+      "result": {
+        "ok": false,
+        "name": "AggregateError",
+        "message": "Subagent failed and its observer could not be launched.",
+        "errors": [
+          {
+            "name": "Error",
+            "message": "Subagent descriptor definitionId must be a non-empty string."
+          },
+          {
+            "name": "Error",
+            "message": "Subagent descriptor definitionId must be a non-empty string."
+          }
+        ]
+      },
+      "events": [
+        {
+          "type": "subagent_started",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker"
+        },
+        {
+          "type": "subagent_completed",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "success": true,
+          "durationMs": 3
+        },
+        {
+          "type": "subagent_started",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed"
+        },
+        {
+          "type": "subagent_completed",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "success": false,
+          "aborted": false,
+          "durationMs": 0
+        },
+        {
+          "type": "observer_report",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "observedSubagentId": "observed-fixed",
+          "observedSubagentType": "worker",
+          "observerSubagentId": "observer-fixed",
+          "success": false,
+          "error": "Subagent descriptor definitionId must be a non-empty string.",
+          "durationMs": 0
+        },
+        {
+          "type": "subagent_started",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed"
+        },
+        {
+          "type": "subagent_completed",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "success": false,
+          "aborted": false,
+          "durationMs": 0
+        },
+        {
+          "type": "observer_report",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "observedSubagentId": "observed-fixed",
+          "observedSubagentType": "worker",
+          "observerSubagentId": "observer-fixed",
+          "success": false,
+          "error": "Subagent descriptor definitionId must be a non-empty string.",
+          "durationMs": 0
+        }
+      ],
+      "lifecycle": [
+        {
+          "event": "SubagentStart",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observed-fixed",
+            "subagentType": "worker"
+          }
+        },
+        {
+          "event": "SubagentStop",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observed-fixed",
+            "subagentType": "worker",
+            "success": true
+          }
+        },
+        {
+          "event": "SubagentStart",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observer-fixed"
+          }
+        },
+        {
+          "event": "SubagentStop",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observer-fixed",
+            "success": false
+          }
+        },
+        {
+          "event": "SubagentStart",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observer-fixed"
+          }
+        },
+        {
+          "event": "SubagentStop",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observer-fixed",
+            "success": false
+          }
+        }
+      ],
+      "started": [
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "prompt": "self-written bounded directive",
+          "transcriptRelativePath": "",
+          "subagentSessionId": "<PROJECT>::sub::observed-fixed"
+        },
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "prompt": "You are an observer. Do not execute the observed task or attempt to change its outcome.\nReview this read-only activity digest and produce a concise report of risks, failures, or notable findings.\n\nObserved agent: worker\nObserved directive: self-written bounded directive\n\nActivity:\n- No observable model or tool activity was recorded.\n\nOutcome: completed\nObserved final report:\nSELF_WRITTEN_CONTROLLED_REPORT",
+          "transcriptRelativePath": "",
+          "subagentSessionId": "<PROJECT>::sub::observer-fixed"
+        },
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "prompt": "You are an observer. Do not execute the observed task or attempt to change its outcome.\nReview this read-only activity digest and produce a concise report of risks, failures, or notable findings.\n\nObserved agent: worker\nObserved directive: self-written bounded directive\n\nActivity:\n- No observable model or tool activity was recorded.\n\nOutcome: failed\nObserved error: Subagent descriptor definitionId must be a non-empty string.",
+          "transcriptRelativePath": "",
+          "subagentSessionId": "<PROJECT>::sub::observer-fixed"
+        }
+      ],
+      "completed": [
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "summary": "SELF_WRITTEN_CONTROLLED_REPORT",
+          "usage": {},
+          "turns": 1,
+          "durationMs": 3,
+          "errored": false
+        },
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "summary": "Subagent descriptor definitionId must be a non-empty string.",
+          "turns": 0,
+          "durationMs": 0,
+          "errored": true
+        },
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observer-fixed",
+          "summary": "Subagent descriptor definitionId must be a non-empty string.",
+          "turns": 0,
+          "durationMs": 0,
+          "errored": true
+        }
+      ],
+      "providers": [
+        {
+          "definitionId": "worker",
+          "idOwn": true,
+          "signalAborted": false,
+          "definitionKeys": [
+            "id",
+            "description",
+            "observer"
+          ],
+          "skillsOwn": false,
+          "skillsUndefined": true,
+          "parentIsSubagent": true
+        }
+      ],
+      "launches": [
+        {
+          "observedSubagentId": "observed-fixed"
+        },
+        {
+          "observedSubagentId": "observed-fixed"
+        }
+      ]
+    }
+  ]
+}

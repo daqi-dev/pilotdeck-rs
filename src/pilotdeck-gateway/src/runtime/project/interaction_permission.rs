@@ -23,7 +23,7 @@ use crate::{
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -62,6 +62,7 @@ struct State {
     turns: HashMap<JsString, Arc<Run>>,
     notices: Vec<DiscardNotice>,
 }
+type ModeSource = Arc<dyn Fn() -> Option<crate::config::permission::PermissionMode> + Send + Sync>;
 struct Run {
     session: JsString,
     run_id: JsString,
@@ -69,6 +70,10 @@ struct Run {
     requests: Mutex<HashMap<JsString, Registration>>,
     options: PermissionTurnOptions,
     closed: AtomicBool,
+    native_execution: AtomicBool,
+    prompt_session: std::sync::OnceLock<JsString>,
+    mode_source: Mutex<Option<ModeSource>>,
+    native_grants: Mutex<HashSet<[u8; 32]>>,
 }
 impl Run {
     /// Close once. Returns the pending request count observed at the close
@@ -78,6 +83,7 @@ impl Run {
             return None;
         }
         self.cancelled.cancel();
+        lock(&self.native_grants).clear();
         let mut pending = 0;
         for (_, registration) in lock(&self.requests).drain() {
             pending += 1;
@@ -87,6 +93,7 @@ impl Run {
     }
 }
 /// All fields are host authority. A wire context is never merged into these.
+#[derive(Clone)]
 pub struct PermissionTurnOptions {
     pub profile: InteractionProfile,
     pub context: PermissionContext,
@@ -135,6 +142,10 @@ impl InteractionPermission {
             requests: Mutex::default(),
             options,
             closed: AtomicBool::new(false),
+            native_execution: AtomicBool::new(false),
+            prompt_session: std::sync::OnceLock::new(),
+            mode_source: Mutex::new(None),
+            native_grants: Mutex::default(),
         });
         if let Some(previous) = state.turns.insert(session, run.clone())
             && let Some(pending) = previous.close()
@@ -204,6 +215,89 @@ pub struct TurnPermission {
     run: Arc<Run>,
 }
 impl TurnPermission {
+    /// Host-only routing: siblings keep separate run/grant identities while
+    /// permission questions are answered on their admitted parent connection.
+    pub(crate) fn bind_prompt_session(&self, session: JsString) -> Result<(), HostError> {
+        self.check(&lock(&self.state))?;
+        if self.run.native_execution.load(Ordering::SeqCst) || !lock(&self.run.requests).is_empty()
+        {
+            return Err(ModuleError::new("Permission prompt routing is already active.").into());
+        }
+        self.run
+            .prompt_session
+            .set(session)
+            .map_err(|_| ModuleError::new("Permission prompt routing is already bound.").into())
+    }
+
+    pub(crate) fn bind_mode_source(
+        &self,
+        source: Arc<dyn Fn() -> Option<crate::config::permission::PermissionMode> + Send + Sync>,
+    ) -> Result<(), HostError> {
+        self.check(&lock(&self.state))?;
+        let mut slot = lock(&self.run.mode_source);
+        if slot.is_some() {
+            return Err(ModuleError::new("Permission mode is already bound.").into());
+        }
+        *slot = Some(source);
+        Ok(())
+    }
+    pub(crate) fn enable_native_execution(&self) -> Result<(), HostError> {
+        self.check(&lock(&self.state))?;
+        self.run.native_execution.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+    /// Drop any unconsumed one-shot grant when a native hook dispatch fails,
+    /// is cancelled, or returns a different first effect.
+    pub(crate) fn revoke_native_grant(
+        &self,
+        name: &JsString,
+        call_id: &JsString,
+        input: &JsValue,
+    ) -> Result<(), HostError> {
+        let key = native_grant_key(name, call_id, input)?;
+        lock(&self.run.native_grants).remove(&key);
+        Ok(())
+    }
+    /// Re-evaluate host policy, then consume exactly this turn/tool/id/input's
+    /// host-issued once grant. A sidecar-supplied decision never authorizes IO.
+    pub(crate) fn decide_for_execution(
+        &self,
+        tool: Arc<dyn ToolDefinition>,
+        input: JsValue,
+        tool_call_id: JsString,
+    ) -> HostFuture<JsValue> {
+        let turn = self.clone();
+        Box::pin(async move {
+            let name = tool
+                .fields()
+                .get("name")
+                .and_then(JsValue::as_string)
+                .cloned()
+                .ok_or_else(|| ModuleError::new("Permission tool has no name."))?;
+            let grant = native_grant_key(&name, &tool_call_id, &input)?;
+            let result = port::PermissionDecision::decide(
+                &turn,
+                tool,
+                input,
+                Arc::new(turn.clone()),
+                tool_call_id,
+            )
+            .await?;
+            let state = lock(&turn.state);
+            turn.check(&state)?;
+            let authorized = lock(&turn.run.native_grants).remove(&grant);
+            if result
+                .get("type")
+                .and_then(JsValue::as_string)
+                .is_some_and(|v| v.equals_str("ask"))
+                && authorized
+            {
+                Ok(object([("type", "allow".into())]))
+            } else {
+                Ok(result)
+            }
+        })
+    }
     /// ProfiledPermissionDecisionPort applies admission only after the native
     /// provider returns ask. In particular, its existing deny message wins.
     fn prompt_denial(&self) -> Option<&'static str> {
@@ -292,6 +386,12 @@ impl TurnPermission {
     ) -> HostFuture<JsValue> {
         let turn = self.clone();
         Box::pin(async move {
+            let native_grant = turn
+                .run
+                .native_execution
+                .load(Ordering::SeqCst)
+                .then(|| native_grant_key(&tool_name, &tool_call_id, &input))
+                .transpose()?;
             let request_id: JsString = uuid::Uuid::new_v4().to_string().into();
             let (sender, mut receiver) = oneshot::channel();
             let sender = Arc::new(Mutex::new(Some(sender)));
@@ -300,6 +400,13 @@ impl TurnPermission {
             let guard = {
                 let state = lock(&turn.state);
                 turn.check(&state)?;
+                if let Some(native_grant) = native_grant {
+                    let mut grants = lock(&turn.run.native_grants);
+                    grants.remove(&native_grant);
+                    if grants.len() >= 64 {
+                        return Ok(denied("Permission authorization limit exceeded."));
+                    }
+                }
                 // Match decide's effective order: native Gateway policy denial
                 // precedes profile admission, including direct callback misuse.
                 if turn.run.options.context.policy_can_prompt == Some(false) {
@@ -324,7 +431,7 @@ impl TurnPermission {
                     .coordinator
                     .permission_bus()
                     .register(
-                        &turn.run.session,
+                        turn.run.prompt_session.get().unwrap_or(&turn.run.session),
                         PendingEntry {
                             request_id: request_id.clone(),
                             tool_call_id,
@@ -415,6 +522,13 @@ impl TurnPermission {
                         }
                     });
                 }
+                if let Some(native_grant) = native_grant {
+                    let mut grants = lock(&turn.run.native_grants);
+                    if grants.len() >= 64 && !grants.contains(&native_grant) {
+                        return Ok(denied("Permission authorization limit exceeded."));
+                    }
+                    grants.insert(native_grant);
+                }
                 Ok(object([("behavior", "allow".into())]))
             } else {
                 Ok(object([
@@ -469,6 +583,12 @@ impl port::PermissionDecision for TurnPermission {
             }
             turn.check(&lock(&turn.state))?;
             let mut context = turn.run.options.context.clone();
+            if let Some(mode) = lock(&turn.run.mode_source)
+                .as_ref()
+                .and_then(|source| source())
+            {
+                context.mode = mode;
+            }
             context.rules = turn.run.options.rules.snapshot();
             let name = tool
                 .fields()
@@ -506,6 +626,24 @@ impl port::PermissionDecision for TurnPermission {
             Ok(result)
         })
     }
+}
+// Only a fixed digest is retained per authorization. JSON.stringify keeps JS
+// UTF-16 strings and key order; no tool payload or caller-owned decision is cached.
+fn native_grant_key(
+    tool: &JsString,
+    id: &JsString,
+    input: &JsValue,
+) -> Result<[u8; 32], HostError> {
+    use sha2::{Digest, Sha256};
+    let key = object([
+        ("tool", JsValue::String(tool.clone())),
+        ("id", JsValue::String(id.clone())),
+        ("input", input.clone()),
+    ]);
+    let raw = pilotdeck_protocol::stringify_json(&key)
+        .map_err(|e| ModuleError::new(e.to_string()))?
+        .ok_or_else(|| ModuleError::new("Permission input is not serializable."))?;
+    Ok(Sha256::digest(raw.as_bytes()).into())
 }
 fn object<const N: usize>(fields: [(&str, JsValue); N]) -> JsValue {
     let mut object = JsObject::new();

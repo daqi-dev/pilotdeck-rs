@@ -386,6 +386,7 @@ pub struct NativeConfigSource {
     cwd: PathBuf,
     env: Env,
     version: f64,
+    bounded: bool,
 }
 impl NativeConfigSource {
     /// `version` is the baseline's `options.version ?? 1`.
@@ -401,7 +402,12 @@ impl NativeConfigSource {
             cwd,
             env,
             version: version.unwrap_or(1.0),
+            bounded: false,
         }
+    }
+    pub(crate) fn bounded(mut self) -> Self {
+        self.bounded = true;
+        self
     }
 }
 impl ConfigSource for NativeConfigSource {
@@ -409,7 +415,12 @@ impl ConfigSource for NativeConfigSource {
         let project = project_root.to_str().ok_or_else(|| {
             RuntimeError::new("Project root is not valid UTF-8 for the config loader.")
         })?;
-        let snapshot = config::load_snapshot(
+        let load = if self.bounded {
+            config::load_snapshot_bounded
+        } else {
+            config::load_snapshot
+        };
+        let snapshot = load(
             &self.pilot_home,
             &self.cwd,
             &self.env,
@@ -485,6 +496,12 @@ impl Families {
         self
     }
 
+    pub(crate) fn with_native_models_from_env(mut self, env: Env) -> Self {
+        self.model_runtime = Arc::new(super::model::NativeModelFamilySource { env });
+        self.router_runtime = Arc::new(super::model::RouterFamilySource::default());
+        self
+    }
+
     /// Wire the MCP and execution-world families (A6.9-pr3c1). Replacing the
     /// execution-world source is the point of this builder: a previously
     /// configured custom source is discarded in favour of the native one and
@@ -514,6 +531,15 @@ impl Families {
     /// router registry is backed by that same plugin runtime.
     pub fn with_plugins(mut self, options: PluginRuntimeOptions) -> Self {
         self.plugins = Arc::new(super::plugins::PluginFamilySource { options });
+        self.router_custom_routers =
+            Some(Arc::new(super::custom_routers::CustomRouterFamilySource));
+        self
+    }
+
+    /// Native CLI generation with restricted output styles, standalone skills,
+    /// and configured hooks.
+    pub fn with_native_style_plugins(mut self, options: PluginRuntimeOptions) -> Self {
+        self.plugins = Arc::new(super::plugins::NativeStylePluginFamilySource { options });
         self.router_custom_routers =
             Some(Arc::new(super::custom_routers::CustomRouterFamilySource));
         self
@@ -1065,6 +1091,18 @@ impl ProjectResourcesFactory {
             options.config_version,
         ));
         Self { options, config }
+    }
+    pub(crate) fn with_bounded_config(mut self) -> Self {
+        self.config = Arc::new(
+            NativeConfigSource::new(
+                self.options.cwd.clone(),
+                self.options.env.clone(),
+                self.options.homedir.clone(),
+                self.options.config_version,
+            )
+            .bounded(),
+        );
+        self
     }
 
     /// Dispatch an installed native family source, or fail explicitly when

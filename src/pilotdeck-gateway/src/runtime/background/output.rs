@@ -11,6 +11,9 @@ use tokio::sync::watch;
 
 struct Spill {
     path: PathBuf,
+    native_file: Option<std::sync::Arc<File>>,
+    native_link_check: Option<std::sync::Arc<dyn Fn() -> bool + Send + Sync>>,
+    allow_prefix: bool,
     // Some(ready) means the preceding write finished, including failed writes.
     tail: watch::Receiver<Option<bool>>,
     #[cfg(test)]
@@ -28,6 +31,7 @@ impl Spill {
         let (done, tail) = watch::channel(None);
         self.tail = tail;
         let path = self.path.clone();
+        let native_file = self.native_file.clone();
         #[cfg(test)]
         let write_error = self.write_error;
         #[cfg(test)]
@@ -52,6 +56,14 @@ impl Spill {
                     return false;
                 }
                 let write = || -> std::io::Result<()> {
+                    if let Some(file) = native_file {
+                        if !ready {
+                            return Err(std::io::Error::other(
+                                "An earlier native output write failed.",
+                            ));
+                        }
+                        return (&*file).write_all(&chunk);
+                    }
                     if !ready {
                         fs::create_dir_all(path.parent().expect("spill parent"))?;
                     }
@@ -96,6 +108,9 @@ impl OutputStore {
             closed: false,
             spill: path.map(|path| Spill {
                 path,
+                native_file: None,
+                native_link_check: None,
+                allow_prefix: false,
                 tail: watch::channel(Some(false)).1,
                 #[cfg(test)]
                 write_error: false,
@@ -103,6 +118,45 @@ impl OutputStore {
                 write_gate: None,
             }),
         }
+    }
+    pub(super) fn with_native_file(
+        max: usize,
+        file: super::native_output::NativeOutputFile,
+    ) -> Self {
+        let mut store = Self::with_spill(max, Some(file.path));
+        let spill = store.spill.as_mut().unwrap();
+        spill.native_file = Some(std::sync::Arc::new(file.file));
+        spill.allow_prefix = file.allow_prefix;
+        spill.native_link_check = Some(file.link_check);
+        spill.tail = watch::channel(Some(true)).1;
+        store
+    }
+    pub(super) fn restore_native_file(
+        max: usize,
+        file: super::native_output::NativeOutputFile,
+        expected_total: u64,
+    ) -> std::io::Result<Self> {
+        use std::os::unix::fs::FileExt;
+        let actual = file.file.metadata()?.len();
+        if actual < expected_total || (!file.allow_prefix && actual != expected_total) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Native task output length does not match its snapshot.",
+            ));
+        }
+        let memory = expected_total.min(max as u64) as usize;
+        let dropped = expected_total - memory as u64;
+        let mut bytes = vec![0; memory];
+        file.file.read_exact_at(&mut bytes, dropped)?;
+        let mut store = Self::with_native_file(max, file);
+        if !bytes.is_empty() {
+            store.chunks.push_back(bytes);
+        }
+        store.total = expected_total;
+        store.memory = memory;
+        store.dropped = dropped;
+        store.spill.as_mut().unwrap().tail = watch::channel(Some(true)).1;
+        Ok(store)
     }
     /// Recover only the bounded tail into memory; older bytes stay on disk.
     pub(super) fn restore_from_spill(
@@ -143,11 +197,45 @@ impl OutputStore {
         Ok(store)
     }
 
+    /// Freeze one accepted native prefix. A later append may replace the
+    /// live tail while this future waits; it must not turn the earlier prefix
+    /// into a fictitious IO failure. Actual write failures remain sticky.
+    pub(super) fn native_checkpoint(
+        &self,
+    ) -> Option<std::pin::Pin<Box<dyn Future<Output = bool> + Send>>> {
+        let spill = self.spill.as_ref()?;
+        let file = spill.native_file.as_ref()?.clone();
+        let link_check = spill.native_link_check.as_ref()?.clone();
+        let mut tail = spill.tail.clone();
+        let total = self.total;
+        Some(Box::pin(async move {
+            let ready = match tail.wait_for(Option::is_some).await {
+                Ok(status) => *status == Some(true),
+                Err(_) => false,
+            };
+            ready
+                && link_check()
+                && file
+                    .metadata()
+                    .is_ok_and(|metadata| metadata.len() >= total)
+        }))
+    }
     /// A pending or failed write must never be advertised as recoverable.
     pub(super) fn has_durable_output(&self) -> bool {
         self.spill.as_ref().is_some_and(|spill| {
             *spill.tail.borrow() == Some(true)
-                && fs::metadata(&spill.path).is_ok_and(|metadata| metadata.len() == self.total)
+                && spill.native_link_check.as_ref().is_none_or(|check| check())
+                && spill
+                    .native_file
+                    .as_ref()
+                    .map_or_else(|| fs::metadata(&spill.path), |file| file.metadata())
+                    .is_ok_and(|metadata| {
+                        if spill.allow_prefix {
+                            metadata.len() >= self.total
+                        } else {
+                            metadata.len() == self.total
+                        }
+                    })
         })
     }
     /// Hold exactly the next accepted write before filesystem I/O.
@@ -265,7 +353,23 @@ impl OutputStore {
 
 impl OutputStore {
     fn read_disk(&self, offset: u64, max: u64) -> Option<Vec<u8>> {
-        let path = &self.spill.as_ref()?.path;
+        let spill = self.spill.as_ref()?;
+        if let Some(file) = &spill.native_file {
+            use std::os::unix::fs::FileExt;
+            let size = file.metadata().ok()?.len().min(self.total);
+            let wanted = size.saturating_sub(offset).min(max);
+            if wanted == 0 {
+                return None;
+            }
+            let mut bytes = vec![0; usize::try_from(wanted).ok()?];
+            let count = file.read_at(&mut bytes, offset).ok()?;
+            if count == 0 {
+                return None;
+            }
+            bytes.truncate(count);
+            return Some(bytes);
+        }
+        let path = &spill.path;
         let size = fs::metadata(path).ok()?.len().min(self.total);
         let wanted = size.saturating_sub(offset).min(max);
         if wanted == 0 {
@@ -466,7 +570,7 @@ mod dispose_tests {
                     .write_error = mode == "cancelled";
                 state.output.gate_next_write()
             };
-            entry.append(bytes);
+            entry.append(bytes, None);
             entered
                 .await
                 .expect("#994 dispose-flush setup gate entered");
@@ -761,5 +865,81 @@ mod oracle_tests {
             store.flush().await;
             store.close();
         }
+    }
+}
+
+#[cfg(test)]
+mod native_checkpoint_tests {
+    use super::*;
+    use std::{fs::OpenOptions, sync::Arc, time::Duration};
+    struct Scratch(PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+    fn native_store() -> (Scratch, OutputStore) {
+        let scratch = Scratch(std::env::temp_dir().join(format!(
+            "pdrs-native-output-checkpoint-{}",
+            uuid::Uuid::new_v4()
+        )));
+        let file = OpenOptions::new()
+            .read(true)
+            .append(true)
+            .create_new(true)
+            .open(&scratch.0)
+            .unwrap();
+        let store = OutputStore::with_native_file(
+            1024,
+            super::super::native_output::NativeOutputFile {
+                file,
+                path: scratch.0.clone(),
+                allow_prefix: false,
+                link_check: Arc::new(|| true),
+            },
+        );
+        (scratch, store)
+    }
+    #[tokio::test]
+    async fn newer_pending_append_does_not_invalidate_a_flushed_native_prefix() {
+        let (scratch, mut store) = native_store();
+        let (entered_first, release_first) = store.gate_next_write();
+        store.append(b"first");
+        entered_first.await.unwrap();
+        let checkpoint = store.native_checkpoint().unwrap();
+        let (entered_second, release_second) = store.gate_next_write();
+        store.append(b"second");
+        release_first.send(()).unwrap();
+        let persisted = tokio::time::timeout(Duration::from_secs(2), checkpoint)
+            .await
+            .unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(2), entered_second)
+            .await
+            .unwrap();
+        let live_tail_is_pending = !store.has_durable_output();
+        let prefix = fs::read(&scratch.0).unwrap();
+        release_second.send(()).unwrap();
+        store.flush().await;
+        assert!(persisted, "captured first prefix was persisted");
+        assert!(live_tail_is_pending);
+        assert_eq!(prefix, b"first");
+        assert!(store.native_checkpoint().unwrap().await);
+        assert_eq!(fs::read(&scratch.0).unwrap(), b"firstsecond");
+    }
+    #[tokio::test]
+    async fn native_output_write_failure_stays_failed_after_a_later_successful_attempt() {
+        let (scratch, mut store) = native_store();
+        store.spill.as_mut().unwrap().write_error = true;
+        store.append(b"lost");
+        store.flush().await;
+        store.spill.as_mut().unwrap().write_error = false;
+        store.append(b"later");
+        store.flush().await;
+        assert!(!store.native_checkpoint().unwrap().await);
+        assert!(!store.has_durable_output());
+        assert!(
+            fs::read(&scratch.0).unwrap().is_empty(),
+            "later bytes must not conceal an earlier missing prefix"
+        );
     }
 }

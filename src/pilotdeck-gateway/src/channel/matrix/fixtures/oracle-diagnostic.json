@@ -1,0 +1,61 @@
+{
+  "environment": {
+    "node": "v22.22.1",
+    "icu": "78.2",
+    "diagnostic": true,
+    "formalAcceptance": false
+  },
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/adapters/channel/matrix/MatrixChannel.ts": "2ac3716d32d1ff9b0dc113ff61d524b3999f3986ca67634cb505bc4d637c5359",
+    "src/adapters/channel/protocol/ImCronDelivery.ts": "3e505b3fa1205993089e3ed6854541fb6e7d332b7b33173d3c351880de7e8c14",
+    "src/adapters/channel/matrix/MatrixSessionMapper.ts": "3637c825ab880c759d3d6aa0723bd419984b348aa767f6adace7621a3e109025",
+    "src/adapters/channel/matrix/matrix-render.ts": "9a14191c9d98ab7b33bb9a74a00a53af09388ad02213aa4219405aeb1043b07b",
+    "src/adapters/channel/protocol/ImElicitationHelper.ts": "cb743ce32129e33c65cbee9ff5c613b057b65d8a642a0fc11b1e1362fb458cf4",
+    "src/adapters/channel/protocol/ImPermissionHelper.ts": "40a6e25f143e9973d2cef836bb40d47f8e693424ad9aac5f2391be6514193477"
+  },
+  "requests": [
+    {
+      "sessionKey": "matrix:chat=!room:fixture:general",
+      "channelKey": "matrix",
+      "message": "hello"
+    }
+  ],
+  "calls": [
+    {
+      "method": "GET",
+      "path": "/_matrix/client/v3/account/whoami",
+      "body": {}
+    },
+    {
+      "method": "POST",
+      "path": "/_matrix/client/v3/join/!invite%3Afixture",
+      "body": {}
+    },
+    {
+      "method": "PUT",
+      "path": "/_matrix/client/v3/rooms/!room%3Afixture/send/m.room.message/fixed-transaction",
+      "body": {
+        "msgtype": "m.text",
+        "body": "matrix reply"
+      }
+    }
+  ],
+  "logs": [
+    [
+      "info",
+      "matrix: syncing as @bot:fixture"
+    ],
+    [
+      "info",
+      "matrix: stopping (fixture)"
+    ]
+  ],
+  "mapper": {
+    "activeByChatId": {}
+  },
+  "storagePath": "/isolated-matrix-fixture/matrix-bot-storage.json",
+  "render": [
+    "\n⚠️ Read failed\n"
+  ]
+}

@@ -47,11 +47,13 @@ pub struct CallRecord {
     /// The execution's deadline abort listener already rejected this call.
     /// A late ACK is diagnostic only and cannot release its uncertainty fence.
     deadline_rejected: bool,
+    budgets: Vec<Arc<crate::server::TransportLease>>,
 }
 #[derive(Debug)]
 struct Packet {
     pending: Option<JsString>,
     line: String,
+    _budget: Option<Arc<crate::server::TransportLease>>,
 }
 #[derive(Debug, Default)]
 struct State {
@@ -63,6 +65,7 @@ struct State {
 }
 #[derive(Debug)]
 struct Inner {
+    budget: Option<Arc<crate::server::TransportBudget>>,
     binding: SidecarBinding,
     state: Mutex<State>,
     wake: Arc<WakeSignal>,
@@ -82,12 +85,31 @@ pub enum ResponseDisposition {
 impl ConnectionOwner {
     pub fn new(binding: SidecarBinding, queue_capacity: usize) -> Self {
         Self(Arc::new(Inner {
+            budget: None,
             binding,
             state: Mutex::new(State::default()),
             wake: Arc::new(WakeSignal::default()),
             next_id: AtomicU64::new(1),
             queue_capacity: queue_capacity.max(1),
         }))
+    }
+    pub(crate) fn with_budget(
+        binding: SidecarBinding,
+        queue_capacity: usize,
+        budget: Arc<crate::server::TransportBudget>,
+    ) -> Self {
+        let mut owner = Self::new(binding, queue_capacity);
+        Arc::get_mut(&mut owner.0)
+            .expect("new connection has one owner")
+            .budget = Some(budget);
+        owner
+    }
+    fn charge(&self, value: &JsValue) -> io::Result<Option<Arc<crate::server::TransportLease>>> {
+        self.0
+            .budget
+            .as_ref()
+            .map(|budget| budget.acquire(value))
+            .transpose()
     }
     pub fn binding(&self) -> &SidecarBinding {
         &self.0.binding
@@ -175,6 +197,7 @@ impl ConnectionOwner {
     /// Reader never waits for output capacity. Controls change cancellation/state
     /// first; output overload retires the connection instead of freezing input.
     pub fn send_control(&self, message: &JsValue) -> io::Result<()> {
+        let budget = self.charge(message)?;
         let line = line(message)?;
         let mut state = self.0.state.lock().unwrap_or_else(|p| p.into_inner());
         if state.closed {
@@ -189,6 +212,7 @@ impl ConnectionOwner {
             ));
         }
         state.control.push_back(Packet {
+            _budget: budget,
             pending: None,
             line,
         });
@@ -199,6 +223,7 @@ impl ConnectionOwner {
     /// Reader-safe replay stays behind already queued stream frames. A cached
     /// final must never enter the priority control queue and overtake its prefix.
     pub fn send_cached_stream(&self, message: &JsValue) -> io::Result<()> {
+        let budget = self.charge(message)?;
         let line = line(message)?;
         let mut state = self.0.state.lock().unwrap_or_else(|p| p.into_inner());
         if state.closed {
@@ -213,6 +238,7 @@ impl ConnectionOwner {
             ));
         }
         state.data.push_back(Packet {
+            _budget: budget,
             pending: None,
             line,
         });
@@ -223,6 +249,7 @@ impl ConnectionOwner {
     /// Owning worker may wait for bounded output capacity without blocking the
     /// independent reader. Cancellation/EOF/output progress all wake that wait.
     pub fn publish(&self, control: &CallControl, message: &JsValue) -> PortResult<()> {
+        let budget = self.charge(message).map_err(before)?;
         let line = line(message).map_err(before)?;
         self.0.wake_registered(control);
         loop {
@@ -234,6 +261,7 @@ impl ConnectionOwner {
             }
             if state.data.len() < self.0.queue_capacity {
                 state.data.push_back(Packet {
+                    _budget: budget,
                     pending: None,
                     line,
                 });
@@ -271,6 +299,15 @@ impl ConnectionOwner {
         // A peer cannot satisfy a queued request it has not yet received.
         if record.phase == DispatchPhase::Queued {
             return ResponseDisposition::Uncorrelated;
+        }
+        match self.charge(value) {
+            Ok(Some(budget)) => record.budgets.push(budget),
+            Ok(None) => {}
+            Err(_) => {
+                drop(state);
+                self.close();
+                return ResponseDisposition::InvalidCorrelation;
+            }
         }
         let checks = [
             ("requestId", &record.identity.request_id),
@@ -494,6 +531,7 @@ impl BoundExchange {
         EnvelopeRef::decode(&request).map_err(|error| PortError::InvalidResponse {
             message: error.message.into(),
         })?;
+        let budget = self.owner.charge(&request).map_err(before)?;
         let request_line = line(&request).map_err(before)?;
         self.owner.0.wake_registered(control);
         loop {
@@ -533,6 +571,7 @@ impl BoundExchange {
                 state.calls.insert(
                     message_id.clone(),
                     CallRecord {
+                        budgets: budget.clone().into_iter().collect(),
                         identity: identity.clone(),
                         effect,
                         request_line: request_line.clone(),
@@ -551,6 +590,7 @@ impl BoundExchange {
                     },
                 );
                 state.data.push_back(Packet {
+                    _budget: budget,
                     pending: Some(message_id.clone()),
                     line: request_line,
                 });
@@ -947,6 +987,41 @@ mod reconciliation_tests {
     use pilotdeck_agent::ports::{CancelCause, Cancellation};
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn tcp_outbound_budget_is_shared_and_released_after_last_record_owner() {
+        let budget = Arc::new(crate::server::TransportBudget::default());
+        let binding = SidecarBinding {
+            module_id: "test".into(),
+            module_instance_id: "instance".into(),
+            connection_generation: "generation".into(),
+            capabilities_version: "1".into(),
+        };
+        let a = ConnectionOwner::with_budget(binding.clone(), 64, budget.clone());
+        let b = ConnectionOwner::with_budget(binding, 64, budget);
+        let payload = JsValue::String("x".repeat(1024 * 1024).into());
+        let mut holds = Vec::new();
+        // UTF-16 payload and retained-object charge leave fewer than eight leases.
+        for _ in 0..7 {
+            holds.push(a.charge(&payload).unwrap().unwrap());
+        }
+        assert!(
+            b.charge(&payload).is_err(),
+            "one connection cannot evade the shared budget"
+        );
+        let last = holds[0].clone();
+        holds.remove(0);
+        assert!(
+            b.charge(&payload).is_err(),
+            "a retained call still owns its lease"
+        );
+        drop(last);
+        assert!(b.charge(&payload).is_ok(), "last owner releases capacity");
+        drop(holds);
+        for _ in 0..16 {
+            assert!(a.charge(&payload).is_ok());
+        }
+    }
 
     struct Recorder {
         bytes: Vec<u8>,

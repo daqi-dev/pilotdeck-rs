@@ -1,0 +1,650 @@
+{
+  "metadata": {
+    "baselineHead": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+    "node": "v22.22.0",
+    "icu": "78.2",
+    "compiler": "5.9.3",
+    "compilerSha256": "3ae902c92cc44dace175c0e69e13a4b0899f6983c6121d76b9ab8dd5795e7675",
+    "sources": [
+      {
+        "path": "src/cli/SessionAgentConfigBundle.ts",
+        "sha256": "69c24c08175200552f828e8b5c64223cdb819a2b4380243876ad970aa7197ba9",
+        "gitBlob": "f19ae2644d051064243fdada6878deba3b83ea09"
+      },
+      {
+        "path": "src/permission/settings.ts",
+        "sha256": "0c05642ec72f1617259457aed51aff9e04e0a8a0c7d6f9ef4a508c41384d112b",
+        "gitBlob": "3230e084d5ee85d04279dfdf15be25d2171e54ee"
+      },
+      {
+        "path": "src/permission/protocol/types.ts",
+        "sha256": "3a5f53e76ca6435b84faa5a6226e35ffa55b0b5950d19b7f75acc4ae497737fb",
+        "gitBlob": "f511ed33b74ff7c7708d2217508b659cc355af6e"
+      }
+    ],
+    "instrumentation": "Unmodified full SessionAgentConfigBundle.compose and permission protocol module; exact settings alias/function AST slices; import permission/index resolves to those actual exports; no disk/session host claim"
+  },
+  "cases": [
+    {
+      "name": "plain",
+      "sdk": {},
+      "permissionMode": "bypassPermissions",
+      "context": {
+        "mode": "bypassPermissions",
+        "canPrompt": true,
+        "bypassAvailable": true,
+        "acceptEdits": false,
+        "cwd": "/project",
+        "additionalWorkingDirectories": [
+          "/base"
+        ],
+        "rules": {
+          "allow": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "write_file"
+            }
+          ],
+          "deny": [
+            {
+              "source": "project",
+              "behavior": "deny",
+              "toolName": "base_denied"
+            }
+          ],
+          "ask": [
+            {
+              "source": "session",
+              "behavior": "ask",
+              "toolName": "base_asked"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "managed-plan",
+      "sdk": {
+        "managedPermissions": {
+          "defaultMode": "plan",
+          "canPrompt": false,
+          "deny": [
+            "Write",
+            "Bash( git push:* )"
+          ],
+          "ask": [
+            "Read",
+            "read_file:x:y",
+            "Read"
+          ]
+        }
+      },
+      "permissionMode": "plan",
+      "context": {
+        "mode": "plan",
+        "canPrompt": false,
+        "policyCanPrompt": false,
+        "bypassAvailable": true,
+        "acceptEdits": false,
+        "cwd": "/project",
+        "additionalWorkingDirectories": [
+          "/base"
+        ],
+        "rules": {
+          "allow": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "write_file"
+            }
+          ],
+          "deny": [
+            {
+              "source": "policy",
+              "behavior": "deny",
+              "toolName": "write_file"
+            },
+            {
+              "source": "policy",
+              "behavior": "deny",
+              "toolName": "bash",
+              "pattern": "git push:*"
+            },
+            {
+              "source": "project",
+              "behavior": "deny",
+              "toolName": "base_denied"
+            }
+          ],
+          "ask": [
+            {
+              "source": "policy",
+              "behavior": "ask",
+              "toolName": "read_file"
+            },
+            {
+              "source": "policy",
+              "behavior": "ask",
+              "toolName": "read_file",
+              "pattern": "x:y"
+            },
+            {
+              "source": "policy",
+              "behavior": "ask",
+              "toolName": "read_file"
+            },
+            {
+              "source": "session",
+              "behavior": "ask",
+              "toolName": "base_asked"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "dont-ask",
+      "sdk": {
+        "permissionMode": "dontAsk"
+      },
+      "permissionMode": "default",
+      "context": {
+        "mode": "default",
+        "canPrompt": false,
+        "bypassAvailable": true,
+        "acceptEdits": false,
+        "cwd": "/project",
+        "additionalWorkingDirectories": [
+          "/base"
+        ],
+        "rules": {
+          "allow": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "write_file"
+            }
+          ],
+          "deny": [
+            {
+              "source": "project",
+              "behavior": "deny",
+              "toolName": "base_denied"
+            }
+          ],
+          "ask": [
+            {
+              "source": "session",
+              "behavior": "ask",
+              "toolName": "base_asked"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "accept-edits",
+      "sdk": {
+        "permissionMode": "acceptEdits"
+      },
+      "permissionMode": "bypassPermissions",
+      "context": {
+        "mode": "bypassPermissions",
+        "canPrompt": true,
+        "bypassAvailable": true,
+        "acceptEdits": true,
+        "cwd": "/project",
+        "additionalWorkingDirectories": [
+          "/base"
+        ],
+        "rules": {
+          "allow": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "write_file"
+            }
+          ],
+          "deny": [
+            {
+              "source": "project",
+              "behavior": "deny",
+              "toolName": "base_denied"
+            }
+          ],
+          "ask": [
+            {
+              "source": "session",
+              "behavior": "ask",
+              "toolName": "base_asked"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "managed-beats-dontask",
+      "sdk": {
+        "permissionMode": "dontAsk",
+        "managedPermissions": {
+          "defaultMode": "plan",
+          "deny": [],
+          "ask": []
+        }
+      },
+      "permissionMode": "plan",
+      "context": {
+        "mode": "plan",
+        "canPrompt": false,
+        "bypassAvailable": true,
+        "acceptEdits": false,
+        "cwd": "/project",
+        "additionalWorkingDirectories": [
+          "/base"
+        ],
+        "rules": {
+          "allow": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "write_file"
+            }
+          ],
+          "deny": [
+            {
+              "source": "project",
+              "behavior": "deny",
+              "toolName": "base_denied"
+            }
+          ],
+          "ask": [
+            {
+              "source": "session",
+              "behavior": "ask",
+              "toolName": "base_asked"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "roots",
+      "sdk": {
+        "additionalWorkingDirectories": [
+          "/base",
+          "/extra",
+          "/extra",
+          "/\ud800"
+        ]
+      },
+      "permissionMode": "bypassPermissions",
+      "context": {
+        "mode": "bypassPermissions",
+        "canPrompt": true,
+        "bypassAvailable": true,
+        "acceptEdits": false,
+        "cwd": "/project",
+        "additionalWorkingDirectories": [
+          "/base",
+          "/extra",
+          "/\ud800"
+        ],
+        "rules": {
+          "allow": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "write_file"
+            }
+          ],
+          "deny": [
+            {
+              "source": "project",
+              "behavior": "deny",
+              "toolName": "base_denied"
+            }
+          ],
+          "ask": [
+            {
+              "source": "session",
+              "behavior": "ask",
+              "toolName": "base_asked"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "utf16-rules",
+      "sdk": {
+        "managedPermissions": {
+          "deny": [
+            " ﻿Write ",
+            "tool\ud800: x:y ",
+            "Bash(\nline)"
+          ],
+          "ask": [
+            ": x",
+            "Task",
+            "WebFetch"
+          ]
+        }
+      },
+      "permissionMode": "bypassPermissions",
+      "context": {
+        "mode": "bypassPermissions",
+        "canPrompt": true,
+        "bypassAvailable": true,
+        "acceptEdits": false,
+        "cwd": "/project",
+        "additionalWorkingDirectories": [
+          "/base"
+        ],
+        "rules": {
+          "allow": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "write_file"
+            }
+          ],
+          "deny": [
+            {
+              "source": "policy",
+              "behavior": "deny",
+              "toolName": "write_file"
+            },
+            {
+              "source": "policy",
+              "behavior": "deny",
+              "toolName": "tool\ud800",
+              "pattern": "x:y"
+            },
+            {
+              "source": "policy",
+              "behavior": "deny",
+              "toolName": "Bash(\nline)"
+            },
+            {
+              "source": "project",
+              "behavior": "deny",
+              "toolName": "base_denied"
+            }
+          ],
+          "ask": [
+            {
+              "source": "policy",
+              "behavior": "ask",
+              "toolName": ": x",
+              "pattern": "x"
+            },
+            {
+              "source": "policy",
+              "behavior": "ask",
+              "toolName": "agent"
+            },
+            {
+              "source": "policy",
+              "behavior": "ask",
+              "toolName": "web_fetch"
+            },
+            {
+              "source": "session",
+              "behavior": "ask",
+              "toolName": "base_asked"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "empty-policy",
+      "sdk": {
+        "managedPermissions": {
+          "deny": [],
+          "ask": []
+        }
+      },
+      "permissionMode": "bypassPermissions",
+      "context": {
+        "mode": "bypassPermissions",
+        "canPrompt": true,
+        "bypassAvailable": true,
+        "acceptEdits": false,
+        "cwd": "/project",
+        "additionalWorkingDirectories": [
+          "/base"
+        ],
+        "rules": {
+          "allow": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "write_file"
+            }
+          ],
+          "deny": [
+            {
+              "source": "project",
+              "behavior": "deny",
+              "toolName": "base_denied"
+            }
+          ],
+          "ask": [
+            {
+              "source": "session",
+              "behavior": "ask",
+              "toolName": "base_asked"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "managed-canprompt",
+      "sdk": {
+        "managedPermissions": {
+          "canPrompt": false,
+          "deny": [],
+          "ask": []
+        }
+      },
+      "permissionMode": "bypassPermissions",
+      "context": {
+        "mode": "bypassPermissions",
+        "canPrompt": false,
+        "policyCanPrompt": false,
+        "bypassAvailable": true,
+        "acceptEdits": false,
+        "cwd": "/project",
+        "additionalWorkingDirectories": [
+          "/base"
+        ],
+        "rules": {
+          "allow": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "write_file"
+            }
+          ],
+          "deny": [
+            {
+              "source": "project",
+              "behavior": "deny",
+              "toolName": "base_denied"
+            }
+          ],
+          "ask": [
+            {
+              "source": "session",
+              "behavior": "ask",
+              "toolName": "base_asked"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "org-before-sdk",
+      "sdk": {
+        "managedPermissions": {
+          "deny": [
+            "Write"
+          ],
+          "ask": [
+            "Read"
+          ]
+        }
+      },
+      "organizationPolicy": {
+        "permissions": {
+          "deny": [
+            "Bash"
+          ],
+          "ask": [
+            "Edit"
+          ],
+          "defaultMode": "plan",
+          "canPrompt": false
+        }
+      },
+      "permissionMode": "plan",
+      "context": {
+        "mode": "plan",
+        "canPrompt": false,
+        "policyCanPrompt": false,
+        "bypassAvailable": true,
+        "acceptEdits": false,
+        "cwd": "/project",
+        "additionalWorkingDirectories": [
+          "/base"
+        ],
+        "rules": {
+          "allow": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "write_file"
+            }
+          ],
+          "deny": [
+            {
+              "source": "policy",
+              "behavior": "deny",
+              "toolName": "bash"
+            },
+            {
+              "source": "policy",
+              "behavior": "deny",
+              "toolName": "write_file"
+            },
+            {
+              "source": "project",
+              "behavior": "deny",
+              "toolName": "base_denied"
+            }
+          ],
+          "ask": [
+            {
+              "source": "policy",
+              "behavior": "ask",
+              "toolName": "edit_file"
+            },
+            {
+              "source": "policy",
+              "behavior": "ask",
+              "toolName": "read_file"
+            },
+            {
+              "source": "session",
+              "behavior": "ask",
+              "toolName": "base_asked"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "stored-plan",
+      "sdk": {},
+      "stored": "plan",
+      "permissionMode": "plan",
+      "context": {
+        "mode": "plan",
+        "canPrompt": true,
+        "bypassAvailable": true,
+        "acceptEdits": false,
+        "cwd": "/project",
+        "additionalWorkingDirectories": [
+          "/base"
+        ],
+        "rules": {
+          "allow": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "write_file"
+            }
+          ],
+          "deny": [
+            {
+              "source": "project",
+              "behavior": "deny",
+              "toolName": "base_denied"
+            }
+          ],
+          "ask": [
+            {
+              "source": "session",
+              "behavior": "ask",
+              "toolName": "base_asked"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "dontask-stored-plan",
+      "sdk": {
+        "permissionMode": "dontAsk"
+      },
+      "stored": "plan",
+      "permissionMode": "default",
+      "context": {
+        "mode": "default",
+        "canPrompt": false,
+        "bypassAvailable": true,
+        "acceptEdits": false,
+        "cwd": "/project",
+        "additionalWorkingDirectories": [
+          "/base"
+        ],
+        "rules": {
+          "allow": [
+            {
+              "source": "session",
+              "behavior": "allow",
+              "toolName": "write_file"
+            }
+          ],
+          "deny": [
+            {
+              "source": "project",
+              "behavior": "deny",
+              "toolName": "base_denied"
+            }
+          ],
+          "ask": [
+            {
+              "source": "session",
+              "behavior": "ask",
+              "toolName": "base_asked"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

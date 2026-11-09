@@ -1285,6 +1285,83 @@ pub fn load_mcp_server_config(
     })
 }
 
+/// Native host opt-in: bound both files and refuse FIFOs/devices. Run on a
+/// blocking worker; same-descriptor metadata and take prevent replacement and
+/// growth after opening from bypassing the limit. Legacy loader stays intact.
+#[cfg(unix)]
+pub(crate) fn load_native_mcp_server_config(
+    project_root: &Path,
+    pilot_home: &Path,
+    environment: &dyn McpEnvironment,
+) -> Result<LoadMcpServerConfigResult, String> {
+    use std::{io::Read, os::unix::fs::OpenOptionsExt};
+    const LIMIT: u64 = 8 * 1024 * 1024;
+    let mut diagnostics = Vec::new();
+    let mut servers = JsObject::new();
+    for path in [
+        global_mcp_config_file_path(pilot_home),
+        project_mcp_config_file_path(project_root),
+    ] {
+        let path = path.map_err(|error| error.to_string())?;
+        let file = match std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&path)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                diagnostics.push(McpConfigDiagnostic {
+                    path: path.to_string_lossy().into_owned(),
+                    message: node_fs_message(&error, "open", &path),
+                });
+                continue;
+            }
+        };
+        let meta = file.metadata().map_err(|error| error.to_string())?;
+        if !meta.is_file() {
+            return Err(format!(
+                "MCP config is not a regular file: {}",
+                path.display()
+            ));
+        }
+        if meta.len() > LIMIT {
+            return Err(format!("MCP config exceeds 8 MiB: {}", path.display()));
+        }
+        let mut bytes = Vec::new();
+        file.take(LIMIT + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| error.to_string())?;
+        if bytes.len() as u64 > LIMIT {
+            return Err(format!("MCP config exceeds 8 MiB: {}", path.display()));
+        }
+        if let Some(source) = parse_mcp_config_text(
+            &String::from_utf8_lossy(&bytes),
+            &path,
+            &mut diagnostics,
+            environment,
+        )
+        .map_err(|error| error.to_string())?
+        {
+            for (key, value) in source.own_entries() {
+                servers.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    Ok(LoadMcpServerConfigResult {
+        servers,
+        diagnostics,
+    })
+}
+#[cfg(not(unix))]
+pub(crate) fn load_native_mcp_server_config(
+    _: &Path,
+    _: &Path,
+    _: &dyn McpEnvironment,
+) -> Result<LoadMcpServerConfigResult, String> {
+    Err("Native MCP configuration requires bounded Unix file access.".into())
+}
+
 fn read_mcp_config(
     path: &Path,
     diagnostics: &mut Vec<McpConfigDiagnostic>,
@@ -1321,11 +1398,26 @@ fn read_mcp_config(
             return Ok(None);
         }
     };
-    if let Some(message) = json_syntax::parse_error(&text) {
+    parse_mcp_config_text(&text, path, diagnostics, environment)
+}
+
+fn parse_mcp_config_text(
+    text: &str,
+    path: &Path,
+    diagnostics: &mut Vec<McpConfigDiagnostic>,
+    environment: &dyn McpEnvironment,
+) -> Result<Option<JsObject>, CallStackExceeded> {
+    let mut push = |message: String| {
+        diagnostics.push(McpConfigDiagnostic {
+            path: path.to_string_lossy().into_owned(),
+            message,
+        })
+    };
+    if let Some(message) = json_syntax::parse_error(text) {
         push(message);
         return Ok(None);
     }
-    let Ok(parsed) = parse_json(&text) else {
+    let Ok(parsed) = parse_json(text) else {
         push("Invalid JSON".into());
         return Ok(None);
     };
@@ -1673,5 +1765,72 @@ mod tests {
         assert!(parse_inbound(r#"{"jsonrpc":"2.0","id":1,"result":{},"x":1}"#).is_none());
         assert!(parse_inbound(r#"{"jsonrpc":"2.0","id":1.5,"result":{}}"#).is_none());
         assert!(parse_inbound("not json").is_none());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod native_bounded_config_tests {
+    use super::*;
+    struct Env;
+    impl McpEnvironment for Env {
+        fn env(&self, _: &JsString) -> Option<JsString> {
+            None
+        }
+        fn home(&self) -> JsString {
+            "/fixture".into()
+        }
+    }
+    struct Scratch(PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    #[test]
+    fn native_config_merges_files_and_rejects_fifo_and_oversize() {
+        let root =
+            Scratch(std::env::temp_dir().join(format!("pdrs-native-mcp-{}", uuid::Uuid::new_v4())));
+        let home = root.0.join("home");
+        let project = root.0.join("project");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(project.join(".pilotdeck")).unwrap();
+        let global = home.join("mcp.json");
+        let local = project.join(".pilotdeck/mcp.json");
+        std::fs::write(
+            &global,
+            r#"{"mcpServers":{"one":{"command":"global"},"globalOnly":{"command":"x"}}}"#,
+        )
+        .unwrap();
+        std::fs::write(&local, r#"{"mcpServers":{"one":{"command":"local"}}}"#).unwrap();
+        let value = load_native_mcp_server_config(&project, &home, &Env).unwrap();
+        assert!(value.diagnostics.is_empty());
+        assert_eq!(
+            value.servers.get("one").and_then(|x| x.get("command")),
+            Some(&"local".into())
+        );
+        assert!(value.servers.get("globalOnly").is_some());
+        std::fs::remove_file(&local).unwrap();
+        assert!(
+            std::process::Command::new("/usr/bin/mkfifo")
+                .arg(&local)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            load_native_mcp_server_config(&project, &home, &Env)
+                .unwrap_err()
+                .contains("not a regular file")
+        );
+        std::fs::remove_file(&local).unwrap();
+        std::fs::File::create(&local)
+            .unwrap()
+            .set_len(8 * 1024 * 1024 + 1)
+            .unwrap();
+        assert!(
+            load_native_mcp_server_config(&project, &home, &Env)
+                .unwrap_err()
+                .contains("exceeds 8 MiB")
+        );
     }
 }

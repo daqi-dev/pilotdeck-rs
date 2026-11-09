@@ -1,0 +1,112 @@
+{
+  "groups": [
+    {
+      "by": "project",
+      "before": [
+        {
+          "kind": "header",
+          "key": "/p/alpha",
+          "collapsed": false
+        },
+        {
+          "kind": "session",
+          "key": "a"
+        },
+        {
+          "kind": "session",
+          "key": "c"
+        },
+        {
+          "kind": "header",
+          "key": "/p/beta",
+          "collapsed": true
+        }
+      ],
+      "expanded": [
+        {
+          "kind": "header",
+          "key": "/p/alpha",
+          "collapsed": false
+        },
+        {
+          "kind": "session",
+          "key": "a"
+        },
+        {
+          "kind": "session",
+          "key": "c"
+        },
+        {
+          "kind": "header",
+          "key": "/p/beta",
+          "collapsed": false
+        },
+        {
+          "kind": "session",
+          "key": "b"
+        }
+      ]
+    },
+    {
+      "by": "status",
+      "before": [
+        {
+          "kind": "header",
+          "key": "status:running",
+          "collapsed": false
+        },
+        {
+          "kind": "session",
+          "key": "a"
+        },
+        {
+          "kind": "header",
+          "key": "status:waiting",
+          "collapsed": true
+        },
+        {
+          "kind": "header",
+          "key": "status:idle",
+          "collapsed": true
+        }
+      ],
+      "expanded": [
+        {
+          "kind": "header",
+          "key": "status:running",
+          "collapsed": false
+        },
+        {
+          "kind": "session",
+          "key": "a"
+        },
+        {
+          "kind": "header",
+          "key": "status:waiting",
+          "collapsed": false
+        },
+        {
+          "kind": "session",
+          "key": "c"
+        },
+        {
+          "kind": "header",
+          "key": "status:idle",
+          "collapsed": false
+        },
+        {
+          "kind": "session",
+          "key": "b"
+        }
+      ]
+    }
+  ],
+  "titles": [
+    "CUSTOM",
+    "AI",
+    "FIRST",
+    "SUMMARY",
+    "ID",
+    "ID"
+  ]
+}

@@ -1,0 +1,19 @@
+# Observer：真实固定TS合同与原生执行接点
+
+固定TS cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85 的 OneShotSubagentPort.ts:355-490，以及同一原件 onActivity arrow/两个常量，AST精确提取后只在内存transpile执行；不复制原源码进fixture，不加载完整plugin/SDK/runtime。依赖launcher/fork/emitter/UUID/clock在调用前注入，launcher为采集body而await run；这不代表真实后台admission会等待observer结束。
+
+27格原件SHA 2523c36e41b3f851e58ac5d04f600d5d2b27d5a81d7f910fe6432e3da24979fa。capture-r2与reproduced实际exit0、stderr空、逐字一致。较早capture-r1是22格正常探索原件，保留不覆盖，不是失败，也不冒称包含后来稀疏definition与边界格。
+
+覆盖：真实六类activity摘要/unknown忽略、先收64原事件再过滤、字段2000/4000/1000/120 UTF16 trim/slice、整体12000/12001、尾空report的trim边界、astral截断孤surrogate、FEFF与非JS空白NEL、完整/稀疏definition覆盖及own undefined顺序、成功/失败/非Error、emitter成功路径抛错后的失败报告、无emitter、UUID seam、负clock、launcher缺失/拒绝。唯一投影是预先声明的JS错误name/message和own undefined列表；没有事后路径/时间归一化。
+
+Rust四个测试：27个digest与25个body replay（两个launcher错误只作为TS源边界，不计Rust launcher已验证）、有界activity存储、畸形activity错误延后、真实已有BackgroundSubagentRuntime的Observer kind/cancel/report settlement。所有Rust由root在mbp2运行；作者未自行编译。须使用项目JsValue codec解析oracle，serde_json无法保孤surrogate；对JSON投影比较编码，own undefined另测，不能把图身份差异冒成JSON差异。
+
+生产API：ObserverActivity.record(&JsObject)/take；prepare_task(ObserverInput, ObserverFork, Option<ObserverEmitter>, ObserverClock)返回真实StartBackgroundSubagentInput(kind Observer且observed_subagent_id必有)。ObserverFork是单次FnOnce(request,ToolCancellation)的boxed Send future，结果为markdown或错误JsString。request强制空allowed/disallowed、readonly/plan、memory disabled、清MCP/skills/initialPrompt/background/observer/message，并带host-only native_observer/suppress_auto_observer；同一实际fork callback消费标记，不得仅写字段假禁MCP。
+
+Activity只保首64原事件的有界digest前缀与逻辑长度/最后非空白位置，不复制assistant/tool正文。这样维持UTF16精确前缀与尾trim，同时避免保留64份完整大raw payload。raw source events按forward时快照；格式错误留到observer准备阶段，不改变原child当时的执行结果。
+
+完整adapter另交共享hunks：同NativeForkOwner/runtime/实际创建代lease、复用api.run与child scope；observer body内可取消/同timeout等slot，普通background保原permit语义；run真实forward前record前64，成功与错误都后置prepare；host-only nativeObserver必须在共享scope写入config，并在assembly project/plugin/session/fork MCP准备前真正跳过。禁止递归observer/continuation/MCP，只读OS沙箱仍沿现owner装配，不能把模型提示当安全。
+
+TS默认Gateway projector没有observer_report映射，Rust保持同默认，不添加通知。真实报告通过同api.run写入child transcript；完整验收须证明父history subagent_started提供observer ID、同父read_subagent_messages读到报告、错父拒读，另核无工具/无新增MCP/取消及退出清理。纯mock golden不代替此真链路。
+
+可复现采集：Node v22.22.0/ICU78.2/TypeScript5.9.3；先在sandbox外核baseline Git SHA，再设置PDRS_VERIFIED_TS_SHA。capture-observer.mjs参数BASELINE_ABS NEW_OUT_ABS，父目录存在、out独占0700且不得在baseline内。Darwin sandbox-exec需deny network*/process-fork/file-write*，只allow私有scratch写；HOME/PILOT_HOME/TMPDIR/cwd均隔离。缺sandbox明确失败，不裸跑；任何Node warning失败。输出oracle.json、原stdout/stderr/sandbox/driver SHA一并保留。

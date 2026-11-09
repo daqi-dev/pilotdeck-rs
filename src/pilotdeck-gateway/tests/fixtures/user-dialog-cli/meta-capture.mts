@@ -1,0 +1,14 @@
+import assert from'node:assert/strict';import{execFileSync}from'node:child_process';import{mkdir,writeFile}from'node:fs/promises';import{join,resolve}from'node:path';import{pathToFileURL}from'node:url';const root=resolve(process.env.PDRS_BASELINE||'');const src='src/tool/dialog/FormDialogSchema.ts';const verify=()=>{assert.equal(execFileSync('git',['-C',root,'rev-parse','HEAD'],{encoding:'utf8'}).trim(),'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85');assert.equal(execFileSync('git',['-C',root,'hash-object',src],{encoding:'utf8'}).trim(),execFileSync('git',['-C',root,'rev-parse',`HEAD:${src}`],{encoding:'utf8'}).trim());};assert.equal(process.version,'v22.22.0');verify();const out=process.argv[2];assert.ok(out?.startsWith('/private/tmp/'));await mkdir(out,{recursive:false});const m=await import(pathToFileURL(join(root,src)).href);const D='https://json-schema.org/draft/2020-12/schema';const base=x=>({$schema:D,type:'object',...x});
+const cases=[
+ ['required-dup',base({properties:{a:{type:'string'}},required:['a','a']}),{}],['dep-dup',base({properties:{a:{},b:{}},dependentRequired:{a:['b','b']}}),{a:1}],
+ ['type-dup',base({properties:{a:{type:['string','string']}}}),{}],['enum-dup',base({properties:{a:{enum:['x','x']}}}),{a:'x'}],
+ ['minimum-negative-count',base({properties:{a:{type:'array',minItems:-1}}}),{}],['nullable-mismatch',base({properties:{a:{type:['string','null'],nullable:false}}}),{a:null}],
+ ['nullable-only',base({properties:{a:{nullable:true}}}),{}],['if-no-then',base({if:{properties:{x:{type:'string'}}}}),{}],
+ ['contains-no-array',base({contains:{type:'number'}}),{}],['maxcontains-without',base({properties:{a:{type:'array',maxContains:1}}}),{}],
+ ['bad-id',base({$id:'bad uri space'}),{}],['nested-id-local',base({$defs:{B:{$id:'https://example.test/B',type:'object',properties:{x:{$ref:'#/$defs/S'}},$defs:{S:{type:'string'}}}},properties:{b:{$ref:'#/$defs/B'}}}),{b:{x:'a'}}],
+ ['pointer-percent',base({$defs:{'a b':{type:'string'}},properties:{x:{$ref:'#/$defs/a%20b'}}}),{x:'a'}],
+ ['pointer-badtilde',base({$defs:{'a~b':{type:'string'}},properties:{x:{$ref:'#/$defs/a~2b'}}}),{x:'a'}],
+ ['duplicate-dynamic',base({$defs:{A:{$dynamicAnchor:'x',type:'string'},B:{$dynamicAnchor:'x',type:'number'}}}),{}],
+ ['content-annotation',base({properties:{x:{type:'string',contentEncoding:'base64',contentMediaType:'application/json'}}}),{x:'%%%'}],
+ ['format-num',base({properties:{n:{type:'number',format:'int32'}}}),{n:2147483648}],
+];const records=cases.map(([id,schema,answer])=>{try{const result=m.validateFormDialogSchema(schema);return{id,schema,answer,result,accepted:result.ok?m.acceptsFormDialogAnswer(result.schema,answer):null};}catch(e){return{id,schema,answer,error:{message:e?.message}};}});verify();await writeFile(join(out,'oracle.json'),JSON.stringify({records},null,2)+'\n');

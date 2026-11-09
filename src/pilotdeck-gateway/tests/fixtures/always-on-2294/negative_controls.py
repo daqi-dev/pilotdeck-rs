@@ -39,7 +39,7 @@ B2_REPLAY = 'native_process::assembly::automation::tests::b2_start_stop_order'
 B6_REPLAY = 'native_process::assembly::automation::tests::b6_reload_cron_only'
 NOT_ADVERTISED = (
     'native_process::methods::always_on::tests::'
-    'always_on_methods_are_not_advertised_without_a_manager'
+    'always_on_methods_are_not_advertised'
 )
 T1_REPLAY = 'runtime::always_on::scheduler::tests::t1_fires_with_state_and_lock_bookkeeping'
 mutations = [
@@ -99,23 +99,28 @@ mutations = [
     # the false capability claim the not-advertised test exists to kill.
     ('advertise-without-manager', capabilities,
      'fn always_on(requests: &Requests) -> bool {\n'
-     '    requests.always_on.is_some()\n'
+     '    requests\n'
+     '        .automation\n'
+     '        .as_ref()\n'
+     '        .and_then(|slot| slot.control())\n'
+     '        .is_some()\n'
      '}\n',
      'fn always_on(_requests: &Requests) -> bool {\n'
      '    true\n'
      '}\n',
      NOT_ADVERTISED,
-     '#2294 always_on_apply must not be advertised without an always-on manager'),
+     '#1313 always_on_apply must not be advertised in describe'),
     # A fired tick keeps the discovery lock, so t1's lockAfter stays true
     # against the golden's false (the bookkeeping half of the fire path).
     ('fired-tick-keeps-the-lock', scheduler,
-     '                if result.outcome == "no_plan" {\n'
-     '                    self.ensure_dormancy_watcher();\n'
-     '                }\n'
-     '                release_discovery_lock(&self.deps.paths);\n',
-     '                if result.outcome == "no_plan" {\n'
-     '                    self.ensure_dormancy_watcher();\n'
-     '                }\n',
+     '                let paths = self.deps.paths.clone();\n'
+     '                let _ = super::storage::run(move || {\n'
+     '                    release_discovery_lock(&paths);\n'
+     '                    Ok(())\n'
+     '                })\n'
+     '                .await;\n'
+     '                Ok(TickOutcome {\n',
+     '                Ok(TickOutcome {\n',
      T1_REPLAY,
      '#2294 t1-fired: the full fire path matches the TS baseline'),
 ]

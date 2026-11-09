@@ -24,27 +24,11 @@ root = Path(__file__).resolve().parents[5]
 assembly = root / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
 loader = root / 'src/pilotdeck-gateway/src/channel/loader.rs'
 
-REJECT_BLOCK = (
-    '        let rejected = crate::channel::loader::reject_unmigrated_channels(config.get("adapters"))\n'
-    '            .and_then(|()| {\n'
-    '                crate::channel::loader::reject_unimplemented_bundle_channels(\n'
-    '                    config.get("adapters"),\n'
-    '                    super::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS,\n'
-    '                )\n'
-    '            });\n'
-    '        if let Err(error) = rejected {\n'
-    '            // Same teardown order as the failure branch below (#1328): the\n'
-    '            // session factory first, then the project registry.\n'
-    '            let _ = tokio::time::timeout(options.drain_budget, async {\n'
-    '                let _ = factory.dispose().await;\n'
-    '                project.dispose().await\n'
-    '            })\n'
-    '            .await;\n'
-    '            return Err(error.into());\n'
-    '        }\n'
-)
+REJECT_BLOCK = '        let rejected = if mode == AssemblyMode::Server {\n            crate::channel::loader::reject_unmigrated_with_keys(\n                config.get("adapters"),\n                pending_keys,\n            )\n            .and_then(|()| {\n                crate::channel::loader::reject_unimplemented_bundle_channels(\n                    config.get("adapters"),\n                    bundle_keys,\n                )\n            })\n        } else {\n            Ok(())\n        };\n        if let Err(error) = rejected {\n            // Same teardown order as the failure branch below (#1328): the\n            // session factory first, then the project registry.\n            let _ = tokio::time::timeout(options.drain_budget, async {\n                let _ = factory.dispose().await;\n                project.dispose().await\n            })\n            .await;\n            return Err(error.into());\n        }\n'
 
-EVERY = ('startup_refuses_every_unmigrated_channel',
+EVERY = ('startup_refuses_synthetic_missing_pending',
+         '#1763 enabled unmigrated channel must refuse native startup')
+MISSING_BUNDLE = ('startup_refuses_synthetic_missing_bundle',
          '#1763 enabled unmigrated channel must refuse native startup')
 # #1329: `feishu` is implemented, so the feishu cell moved from "must refuse"
 # to the declaration invariant it now belongs to (see `BUNDLE` mutation).
@@ -57,25 +41,17 @@ MUTATIONS = [
     # can notice — that is exactly what this row pins.
     ('assembly-reject-call-removed', assembly, REJECT_BLOCK,
      '        // #1763 negative control: call site deleted\n',
-     [EVERY]),
+     [EVERY, MISSING_BUNDLE]),
     # #1763: the error is swallowed instead of propagating, i.e. "refuse" turns
     # into the silent skip #1302 B forbids. Same cells must kill.
     ('assembly-reject-silently-skipped', assembly, REJECT_BLOCK,
-     '        let rejected = crate::channel::loader::reject_unmigrated_channels(config.get("adapters"))\n'
-     '            .and_then(|()| {\n'
-     '                crate::channel::loader::reject_unimplemented_bundle_channels(\n'
-     '                    config.get("adapters"),\n'
-     '                    super::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS,\n'
-     '                )\n'
-     '            });\n'
-     '        // #1763 negative control: silent skip\n'
-     '        let _ = rejected;\n',
-     [EVERY]),
+     '        let rejected = if mode == AssemblyMode::Server {\n            crate::channel::loader::reject_unmigrated_with_keys(\n                config.get("adapters"),\n                pending_keys,\n            )\n            .and_then(|()| {\n                crate::channel::loader::reject_unimplemented_bundle_channels(\n                    config.get("adapters"),\n                    bundle_keys,\n                )\n            })\n        } else {\n            Ok(())\n        };\n        // #1763 negative control: silent skip\n        let _ = rejected;\n',
+     [EVERY, MISSING_BUNDLE]),
     # #1694 §7: `feishu` drops out of the bundle table while the assembly still
     # claims to construct it, so the two declarations disagree.
     ('bundle-feishu-dropped', loader,
-     'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu"];',
-     'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin"];',
+     'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu", "qq", "wecom"];',
+     'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "qq", "wecom"];',
      [BUNDLE]),
 ]
 

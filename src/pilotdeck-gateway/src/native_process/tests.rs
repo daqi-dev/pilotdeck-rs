@@ -932,19 +932,37 @@ async fn production_profile_and_registration() {
         let file = base.join("mcp.json");
         std::fs::write(&file, body).expect("#1071 MCP configuration");
         negative_assert!(
-            assembly::validate_profile(&options, &env).await.is_err(),
-            "#1071 unsupported MCP refused"
+            assembly::validate_profile(&options, &env).await.is_ok(),
+            "#1071 MCP configuration is composed when a session starts"
         );
         std::fs::remove_file(file).expect("#1071 remove MCP fixture");
     }
     let skill = options.project.join(".pilotdeck/skills/fixture");
     std::fs::create_dir_all(&skill).expect("#1071 skill fixture");
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: fixture\ndescription: Test skill\n---\nUse the fixture.\n",
+    )
+    .expect("#1071 skill contents");
     negative_assert!(
-        assembly::validate_profile(&options, &env).await.is_err(),
-        "#1071 unsupported contributions refused"
+        assembly::validate_profile(&options, &env).await.is_ok(),
+        "#1071 standalone skills are accepted"
     );
     std::fs::remove_dir_all(options.project.join(".pilotdeck/skills"))
         .expect("#1071 remove skill fixture");
+    let plugin = options.project.join(".pilotdeck/plugins/with-hooks");
+    std::fs::create_dir_all(&plugin).expect("#1071 plugin fixture");
+    std::fs::write(
+        plugin.join("plugin.json"),
+        r#"{"name":"fixture","version":"1.0.0","commands":"commands"}"#,
+    )
+    .expect("#1071 plugin manifest");
+    negative_assert!(
+        assembly::validate_profile(&options, &env).await.is_ok(),
+        "native plugin command declarations are supported"
+    );
+    std::fs::remove_dir_all(options.project.join(".pilotdeck/plugins"))
+        .expect("#1071 remove plugin fixture");
     std::fs::write(
         options.home.join("pilotdeck.yaml"),
         CONFIG.replace(
@@ -954,12 +972,14 @@ async fn production_profile_and_registration() {
     )
     .expect("#1071 subagent fixture");
     negative_assert!(
-        assembly::validate_profile(&options, &env).await.is_err(),
-        "#1071 unsupported subagents refused"
+        assembly::validate_profile(&options, &env).await.is_ok(),
+        "native default subagent configuration is supported"
     );
     std::fs::write(
         options.home.join("pilotdeck.yaml"),
-        format!("{CONFIG}modules:\n  skills: {{enabled: false}}\n"),
+        format!(
+            "{CONFIG}modules:\n  skills: {{enabled: false}}\n  knowledge: {{enabled: false}}\n"
+        ),
     )
     .expect("#1071 module fixture");
     use crate::runtime::project::ConfigSource;
@@ -971,6 +991,25 @@ async fn production_profile_and_registration() {
     )
     .load(&options.project)
     .expect("#1071 module fixture parses successfully");
+    negative_assert!(
+        assembly::validate_profile(&options, &env).await.is_ok(),
+        "#1071 disabled skills module is supported"
+    );
+    std::fs::write(
+        options.home.join("pilotdeck.yaml"),
+        format!(
+            "{CONFIG}modules:\n  tools: {{enabled: true, implementationId: fixture.tools, contract: pilotdeck.tools/v1, transport: module-http-v2, endpoint: 'http://127.0.0.1:1', catalog: [{{name: fixture_echo, description: Fixture echo, inputSchema: {{type: object}}}}]}}\n"
+        ),
+    )
+    .expect("#1071 external module fixture");
+    crate::runtime::project::NativeConfigSource::new(
+        options.project.clone(),
+        env.clone(),
+        Some(options.home.clone()),
+        None,
+    )
+    .load(&options.project)
+    .expect("#1071 unsupported profile binding is valid loader input");
     negative_assert!(
         assembly::validate_profile(&options, &env).await.is_err(),
         "#1071 unsupported module bindings refused"
@@ -1016,6 +1055,7 @@ async fn production_listener_mounts_the_api_web_group() {
         "fixture-token".into(),
         Arc::new(|| None),
         super::production_api_web("fixture-token".into(), scratch.0.join("home")),
+        None,
     )
     .await
     .expect("#2354 bind the production listener");
@@ -1280,6 +1320,7 @@ async fn production_listener_presents_the_api_web_ledger_surface() {
         "fixture-token".into(),
         Arc::new(|| None),
         super::production_api_web("fixture-token".into(), scratch.0.join("home")),
+        None,
     )
     .await
     .expect("#2395 bind the production listener");
@@ -1930,6 +1971,8 @@ async fn requests_registry_switch_gates_run_reads() {
             async_hook_registry: None,
             // #1600: match production (connected), not the retired
             // observer-coupled bus.
+            dialog_recovery: None,
+            sop: None,
             user_dialog_bus: Arc::new(std::sync::Mutex::new(
                 crate::user_dialog::GatewayUserDialogBus::connected(
                     crate::user_dialog::DialogRuntime::default(),
@@ -1938,9 +1981,11 @@ async fn requests_registry_switch_gates_run_reads() {
             upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
             prepare_weixin_login: None,
             cron: None,
-            always_on: None,
+            automation: None,
             settings: requests::Requests::stub_settings(&owner),
             session_overrides: Arc::default(),
+            clear_sdk_state: None,
+            ephemeral: None,
         };
         let described = requests
             .describe_server()
@@ -2024,3 +2069,6 @@ fn session_tool_results_dir_layout_and_sanitization() {
         "#897 session tool-results directory sanitizes the session id"
     );
 }
+
+#[path = "builtin_module_tests.rs"]
+mod builtin_modules;

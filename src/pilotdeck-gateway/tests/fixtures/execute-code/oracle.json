@@ -1,0 +1,965 @@
+{
+  "metadata": {
+    "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+    "node": "v22.22.0",
+    "icu": "78.2",
+    "typescript": "5.9.3",
+    "esModuleInterop": true,
+    "sourceSha256": {
+      "tsconfig.json": "2911e204056ccad033ca4a60d57accbb4b23b8d9872b7f952c5faeb9e894cc52",
+      "src/tool/builtin/bash/permissions.ts": "d6ed8f4d5d68cfa0eebe3052af65ad14ab29566d99e1b41b4b93c9c52fc6ab8d",
+      "src/tool/protocol/result.ts": "dc605b936b1a5b648b9c00c2512fb9c3236b735cba880e081502d93017b9bc6f",
+      "src/tool/builtin/executeCode.ts": "ccb317d7666d9a0f312967bdc9c068943fcb9fff64a122eb0c751d39d064b2ea"
+    },
+    "clock": "Date.now=100000; fake run adds1250ms; capture-time fixed",
+    "syntax": "injected empty diagnostics port; syntax parser NOT covered",
+    "network": "fake net provider, Seatbelt denies all real networking",
+    "normalization": "none"
+  },
+  "rows": [
+    {
+      "id": "missing-hook",
+      "input": {
+        "code": "print(\"hello\")",
+        "timeout_seconds": 2,
+        "max_tool_calls": 3
+      },
+      "options": {
+        "id": "missing-hook",
+        "hook": false
+      },
+      "output": {
+        "content": [
+          {
+            "type": "text",
+            "text": "status: unsupported\nduration_seconds: 0\ntool_calls_made: 0\nerror: execute_code requires a ToolRuntime recursion hook, but this host did not provide one."
+          }
+        ],
+        "data": {
+          "status": "unsupported",
+          "output": "",
+          "error": "execute_code requires a ToolRuntime recursion hook, but this host did not provide one.",
+          "tool_calls_made": 0,
+          "duration_seconds": 0,
+          "tool_call_log": []
+        },
+        "metadata": {
+          "status": "unsupported",
+          "tool_calls_made": 0,
+          "duration_seconds": 0,
+          "cwd": "/fixture/project",
+          "env_inheritance": "full",
+          "python_path_augmented": true
+        }
+      },
+      "effects": []
+    },
+    {
+      "id": "missing-python",
+      "input": {
+        "code": "print(\"hello\")",
+        "timeout_seconds": 2,
+        "max_tool_calls": 3
+      },
+      "options": {
+        "id": "missing-python",
+        "missing": true
+      },
+      "output": {
+        "content": [
+          {
+            "type": "text",
+            "text": "status: unsupported\nduration_seconds: 0\ntool_calls_made: 0\nerror: execute_code requires python3 on PATH."
+          }
+        ],
+        "data": {
+          "status": "unsupported",
+          "output": "",
+          "error": "execute_code requires python3 on PATH.",
+          "tool_calls_made": 0,
+          "duration_seconds": 0,
+          "tool_call_log": []
+        },
+        "metadata": {
+          "status": "unsupported",
+          "tool_calls_made": 0,
+          "duration_seconds": 0,
+          "cwd": "/fixture/project",
+          "env_inheritance": "full",
+          "python_path_augmented": true
+        }
+      },
+      "effects": [
+        [
+          "resolve",
+          [
+            "python3",
+            "python"
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "success",
+      "input": {
+        "code": "print(\"hello\")",
+        "timeout_seconds": 2,
+        "max_tool_calls": 3
+      },
+      "options": {
+        "id": "success"
+      },
+      "output": {
+        "content": [
+          {
+            "type": "text",
+            "text": "status: success\nduration_seconds: 1.25\ntool_calls_made: 0\n\nhello\n"
+          }
+        ],
+        "data": {
+          "status": "success",
+          "output": "hello\n",
+          "tool_calls_made": 0,
+          "duration_seconds": 1.25,
+          "tool_call_log": []
+        },
+        "metadata": {
+          "status": "success",
+          "tool_calls_made": 0,
+          "duration_seconds": 1.25,
+          "cwd": "/fixture/project",
+          "env_inheritance": "full",
+          "python_path_augmented": true
+        }
+      },
+      "effects": [
+        [
+          "resolve",
+          [
+            "python3",
+            "python"
+          ]
+        ],
+        "create",
+        [
+          "write",
+          "pilotdeck_tools.py",
+          "generated helper"
+        ],
+        [
+          "write",
+          "script.py",
+          "print(\"hello\")"
+        ],
+        {
+          "executable": "/fixture/python3",
+          "args": [
+            "/fixture/private/script.py"
+          ],
+          "cwd": "/fixture/project",
+          "env": {
+            "PATH": "/fixture/bin",
+            "PYTHONPATH": "/fixture/private:old-python-path",
+            "KEPT": "yes",
+            "PILOTDECK_WORKSPACE_CWD": "/fixture/project",
+            "PILOTDECK_EXECUTE_CODE_TEMP_ROOT": "/fixture/private",
+            "PILOTDECK_RPC_HOST": "127.0.0.1",
+            "PILOTDECK_RPC_PORT": "12345",
+            "PILOTDECK_RPC_TOKEN": "fixture-token",
+            "PYTHONDONTWRITEBYTECODE": "1"
+          },
+          "timeoutMs": 2000,
+          "stdoutMaxBytes": 50000,
+          "stderrMaxBytes": 10000
+        },
+        "workspace cleanup",
+        "transport cleanup"
+      ]
+    },
+    {
+      "id": "nonzero-empty",
+      "input": {
+        "code": "print(\"hello\")",
+        "timeout_seconds": 2,
+        "max_tool_calls": 3
+      },
+      "options": {
+        "id": "nonzero-empty",
+        "result": {
+          "exitCode": 3,
+          "stdout": "",
+          "stderr": ""
+        }
+      },
+      "output": {
+        "content": [
+          {
+            "type": "text",
+            "text": "status: error\nduration_seconds: 1.25\ntool_calls_made: 0\nerror: Script exited with code 3."
+          }
+        ],
+        "data": {
+          "status": "error",
+          "output": "",
+          "error": "Script exited with code 3.",
+          "tool_calls_made": 0,
+          "duration_seconds": 1.25,
+          "tool_call_log": []
+        },
+        "metadata": {
+          "status": "error",
+          "tool_calls_made": 0,
+          "duration_seconds": 1.25,
+          "cwd": "/fixture/project",
+          "env_inheritance": "full",
+          "python_path_augmented": true
+        }
+      },
+      "effects": [
+        [
+          "resolve",
+          [
+            "python3",
+            "python"
+          ]
+        ],
+        "create",
+        [
+          "write",
+          "pilotdeck_tools.py",
+          "generated helper"
+        ],
+        [
+          "write",
+          "script.py",
+          "print(\"hello\")"
+        ],
+        {
+          "executable": "/fixture/python3",
+          "args": [
+            "/fixture/private/script.py"
+          ],
+          "cwd": "/fixture/project",
+          "env": {
+            "PATH": "/fixture/bin",
+            "PYTHONPATH": "/fixture/private:old-python-path",
+            "KEPT": "yes",
+            "PILOTDECK_WORKSPACE_CWD": "/fixture/project",
+            "PILOTDECK_EXECUTE_CODE_TEMP_ROOT": "/fixture/private",
+            "PILOTDECK_RPC_HOST": "127.0.0.1",
+            "PILOTDECK_RPC_PORT": "12345",
+            "PILOTDECK_RPC_TOKEN": "fixture-token",
+            "PYTHONDONTWRITEBYTECODE": "1"
+          },
+          "timeoutMs": 2000,
+          "stdoutMaxBytes": 50000,
+          "stderrMaxBytes": 10000
+        },
+        "workspace cleanup",
+        "transport cleanup"
+      ]
+    },
+    {
+      "id": "nonzero-stderr",
+      "input": {
+        "code": "print(\"hello\")",
+        "timeout_seconds": 2,
+        "max_tool_calls": 3
+      },
+      "options": {
+        "id": "nonzero-stderr",
+        "result": {
+          "exitCode": 2,
+          "stdout": " out \n",
+          "stderr": "\u001b[31mfail\u001b[0m\n"
+        }
+      },
+      "output": {
+        "content": [
+          {
+            "type": "text",
+            "text": "status: error\nduration_seconds: 1.25\ntool_calls_made: 0\nerror: fail\n\n\nout \n\n--- stderr ---\nfail"
+          }
+        ],
+        "data": {
+          "status": "error",
+          "output": "out \n\n--- stderr ---\nfail",
+          "error": "fail\n",
+          "tool_calls_made": 0,
+          "duration_seconds": 1.25,
+          "tool_call_log": []
+        },
+        "metadata": {
+          "status": "error",
+          "tool_calls_made": 0,
+          "duration_seconds": 1.25,
+          "cwd": "/fixture/project",
+          "env_inheritance": "full",
+          "python_path_augmented": true
+        }
+      },
+      "effects": [
+        [
+          "resolve",
+          [
+            "python3",
+            "python"
+          ]
+        ],
+        "create",
+        [
+          "write",
+          "pilotdeck_tools.py",
+          "generated helper"
+        ],
+        [
+          "write",
+          "script.py",
+          "print(\"hello\")"
+        ],
+        {
+          "executable": "/fixture/python3",
+          "args": [
+            "/fixture/private/script.py"
+          ],
+          "cwd": "/fixture/project",
+          "env": {
+            "PATH": "/fixture/bin",
+            "PYTHONPATH": "/fixture/private:old-python-path",
+            "KEPT": "yes",
+            "PILOTDECK_WORKSPACE_CWD": "/fixture/project",
+            "PILOTDECK_EXECUTE_CODE_TEMP_ROOT": "/fixture/private",
+            "PILOTDECK_RPC_HOST": "127.0.0.1",
+            "PILOTDECK_RPC_PORT": "12345",
+            "PILOTDECK_RPC_TOKEN": "fixture-token",
+            "PYTHONDONTWRITEBYTECODE": "1"
+          },
+          "timeoutMs": 2000,
+          "stdoutMaxBytes": 50000,
+          "stderrMaxBytes": 10000
+        },
+        "workspace cleanup",
+        "transport cleanup"
+      ]
+    },
+    {
+      "id": "timeout",
+      "input": {
+        "code": "print(\"hello\")",
+        "timeout_seconds": 2,
+        "max_tool_calls": 3
+      },
+      "options": {
+        "id": "timeout",
+        "result": {
+          "exitCode": null,
+          "stdout": "partial",
+          "stderr": "ignored",
+          "timedOut": true
+        }
+      },
+      "output": {
+        "content": [
+          {
+            "type": "text",
+            "text": "status: timeout\nduration_seconds: 1.25\ntool_calls_made: 0\nerror: Script timed out after 2s and was killed.\n\npartial"
+          }
+        ],
+        "data": {
+          "status": "timeout",
+          "output": "partial",
+          "error": "Script timed out after 2s and was killed.",
+          "tool_calls_made": 0,
+          "duration_seconds": 1.25,
+          "tool_call_log": []
+        },
+        "metadata": {
+          "status": "timeout",
+          "tool_calls_made": 0,
+          "duration_seconds": 1.25,
+          "cwd": "/fixture/project",
+          "env_inheritance": "full",
+          "python_path_augmented": true
+        }
+      },
+      "effects": [
+        [
+          "resolve",
+          [
+            "python3",
+            "python"
+          ]
+        ],
+        "create",
+        [
+          "write",
+          "pilotdeck_tools.py",
+          "generated helper"
+        ],
+        [
+          "write",
+          "script.py",
+          "print(\"hello\")"
+        ],
+        {
+          "executable": "/fixture/python3",
+          "args": [
+            "/fixture/private/script.py"
+          ],
+          "cwd": "/fixture/project",
+          "env": {
+            "PATH": "/fixture/bin",
+            "PYTHONPATH": "/fixture/private:old-python-path",
+            "KEPT": "yes",
+            "PILOTDECK_WORKSPACE_CWD": "/fixture/project",
+            "PILOTDECK_EXECUTE_CODE_TEMP_ROOT": "/fixture/private",
+            "PILOTDECK_RPC_HOST": "127.0.0.1",
+            "PILOTDECK_RPC_PORT": "12345",
+            "PILOTDECK_RPC_TOKEN": "fixture-token",
+            "PYTHONDONTWRITEBYTECODE": "1"
+          },
+          "timeoutMs": 2000,
+          "stdoutMaxBytes": 50000,
+          "stderrMaxBytes": 10000
+        },
+        "workspace cleanup",
+        "transport cleanup"
+      ]
+    },
+    {
+      "id": "cancelled",
+      "input": {
+        "code": "print(\"hello\")",
+        "timeout_seconds": 2,
+        "max_tool_calls": 3
+      },
+      "options": {
+        "id": "cancelled",
+        "result": {
+          "exitCode": null,
+          "stdout": "partial",
+          "timedOut": true,
+          "cancelled": true
+        }
+      },
+      "output": {
+        "content": [
+          {
+            "type": "text",
+            "text": "status: cancelled\nduration_seconds: 1.25\ntool_calls_made: 0\nerror: Script execution was cancelled.\n\npartial"
+          }
+        ],
+        "data": {
+          "status": "cancelled",
+          "output": "partial",
+          "error": "Script execution was cancelled.",
+          "tool_calls_made": 0,
+          "duration_seconds": 1.25,
+          "tool_call_log": []
+        },
+        "metadata": {
+          "status": "cancelled",
+          "tool_calls_made": 0,
+          "duration_seconds": 1.25,
+          "cwd": "/fixture/project",
+          "env_inheritance": "full",
+          "python_path_augmented": true
+        }
+      },
+      "effects": [
+        [
+          "resolve",
+          [
+            "python3",
+            "python"
+          ]
+        ],
+        "create",
+        [
+          "write",
+          "pilotdeck_tools.py",
+          "generated helper"
+        ],
+        [
+          "write",
+          "script.py",
+          "print(\"hello\")"
+        ],
+        {
+          "executable": "/fixture/python3",
+          "args": [
+            "/fixture/private/script.py"
+          ],
+          "cwd": "/fixture/project",
+          "env": {
+            "PATH": "/fixture/bin",
+            "PYTHONPATH": "/fixture/private:old-python-path",
+            "KEPT": "yes",
+            "PILOTDECK_WORKSPACE_CWD": "/fixture/project",
+            "PILOTDECK_EXECUTE_CODE_TEMP_ROOT": "/fixture/private",
+            "PILOTDECK_RPC_HOST": "127.0.0.1",
+            "PILOTDECK_RPC_PORT": "12345",
+            "PILOTDECK_RPC_TOKEN": "fixture-token",
+            "PYTHONDONTWRITEBYTECODE": "1"
+          },
+          "timeoutMs": 2000,
+          "stdoutMaxBytes": 50000,
+          "stderrMaxBytes": 10000
+        },
+        "workspace cleanup",
+        "transport cleanup"
+      ]
+    },
+    {
+      "id": "runtime-throw",
+      "input": {
+        "code": "print(\"hello\")",
+        "timeout_seconds": 2,
+        "max_tool_calls": 3
+      },
+      "options": {
+        "id": "runtime-throw",
+        "throws": true
+      },
+      "output": {
+        "content": [
+          {
+            "type": "text",
+            "text": "status: error\nduration_seconds: 1.25\ntool_calls_made: 0\nerror: fixture runtime failed"
+          }
+        ],
+        "data": {
+          "status": "error",
+          "output": "",
+          "error": "fixture runtime failed",
+          "tool_calls_made": 0,
+          "duration_seconds": 1.25,
+          "tool_call_log": []
+        },
+        "metadata": {
+          "status": "error",
+          "tool_calls_made": 0,
+          "duration_seconds": 1.25,
+          "cwd": "/fixture/project",
+          "env_inheritance": "full",
+          "python_path_augmented": true
+        }
+      },
+      "effects": [
+        [
+          "resolve",
+          [
+            "python3",
+            "python"
+          ]
+        ],
+        "create",
+        [
+          "write",
+          "pilotdeck_tools.py",
+          "generated helper"
+        ],
+        [
+          "write",
+          "script.py",
+          "print(\"hello\")"
+        ],
+        {
+          "executable": "/fixture/python3",
+          "args": [
+            "/fixture/private/script.py"
+          ],
+          "cwd": "/fixture/project",
+          "env": {
+            "PATH": "/fixture/bin",
+            "PYTHONPATH": "/fixture/private:old-python-path",
+            "KEPT": "yes",
+            "PILOTDECK_WORKSPACE_CWD": "/fixture/project",
+            "PILOTDECK_EXECUTE_CODE_TEMP_ROOT": "/fixture/private",
+            "PILOTDECK_RPC_HOST": "127.0.0.1",
+            "PILOTDECK_RPC_PORT": "12345",
+            "PILOTDECK_RPC_TOKEN": "fixture-token",
+            "PYTHONDONTWRITEBYTECODE": "1"
+          },
+          "timeoutMs": 2000,
+          "stdoutMaxBytes": 50000,
+          "stderrMaxBytes": 10000
+        },
+        "workspace cleanup",
+        "transport cleanup"
+      ]
+    },
+    {
+      "id": "ansi-success",
+      "input": {
+        "code": "print(\"hello\")",
+        "timeout_seconds": 2,
+        "max_tool_calls": 3
+      },
+      "options": {
+        "id": "ansi-success",
+        "result": {
+          "stdout": "\u001b[31mred\u001b[0m"
+        }
+      },
+      "output": {
+        "content": [
+          {
+            "type": "text",
+            "text": "status: success\nduration_seconds: 1.25\ntool_calls_made: 0\n\nred"
+          }
+        ],
+        "data": {
+          "status": "success",
+          "output": "red",
+          "tool_calls_made": 0,
+          "duration_seconds": 1.25,
+          "tool_call_log": []
+        },
+        "metadata": {
+          "status": "success",
+          "tool_calls_made": 0,
+          "duration_seconds": 1.25,
+          "cwd": "/fixture/project",
+          "env_inheritance": "full",
+          "python_path_augmented": true
+        }
+      },
+      "effects": [
+        [
+          "resolve",
+          [
+            "python3",
+            "python"
+          ]
+        ],
+        "create",
+        [
+          "write",
+          "pilotdeck_tools.py",
+          "generated helper"
+        ],
+        [
+          "write",
+          "script.py",
+          "print(\"hello\")"
+        ],
+        {
+          "executable": "/fixture/python3",
+          "args": [
+            "/fixture/private/script.py"
+          ],
+          "cwd": "/fixture/project",
+          "env": {
+            "PATH": "/fixture/bin",
+            "PYTHONPATH": "/fixture/private:old-python-path",
+            "KEPT": "yes",
+            "PILOTDECK_WORKSPACE_CWD": "/fixture/project",
+            "PILOTDECK_EXECUTE_CODE_TEMP_ROOT": "/fixture/private",
+            "PILOTDECK_RPC_HOST": "127.0.0.1",
+            "PILOTDECK_RPC_PORT": "12345",
+            "PILOTDECK_RPC_TOKEN": "fixture-token",
+            "PYTHONDONTWRITEBYTECODE": "1"
+          },
+          "timeoutMs": 2000,
+          "stdoutMaxBytes": 50000,
+          "stderrMaxBytes": 10000
+        },
+        "workspace cleanup",
+        "transport cleanup"
+      ]
+    }
+  ],
+  "readOnly": [
+    {
+      "code": "print(\"ok\")",
+      "readOnly": true,
+      "concurrencySafe": false
+    },
+    {
+      "code": "write_file(\"x\",\"v\")",
+      "readOnly": false,
+      "concurrencySafe": false
+    },
+    {
+      "code": "# write_file(\"x\",\"v\")\nprint(\"ok\")",
+      "readOnly": true,
+      "concurrencySafe": false
+    },
+    {
+      "code": "x=\"edit_file(x)\"",
+      "readOnly": true,
+      "concurrencySafe": false
+    },
+    {
+      "code": "bash(\"ls\")",
+      "readOnly": true,
+      "concurrencySafe": false
+    },
+    {
+      "code": "bash(\"touch x\")",
+      "readOnly": false,
+      "concurrencySafe": false
+    },
+    {
+      "code": "bash(command)",
+      "readOnly": false,
+      "concurrencySafe": false
+    },
+    {
+      "code": "open(\"x\",\"w\").write(\"v\")",
+      "readOnly": true,
+      "concurrencySafe": false
+    },
+    {
+      "code": "import os\nos.remove(\"x\")",
+      "readOnly": true,
+      "concurrencySafe": false
+    },
+    {
+      "code": "bash(\"\"\"pwd\"\"\")",
+      "readOnly": true,
+      "concurrencySafe": false
+    },
+    {
+      "code": "bash(\"git status\")",
+      "readOnly": true,
+      "concurrencySafe": false
+    },
+    {
+      "code": "print(\"😀\")",
+      "readOnly": true,
+      "concurrencySafe": false
+    },
+    {
+      "code": "",
+      "readOnly": false,
+      "concurrencySafe": false
+    }
+  ],
+  "validation": [
+    {
+      "input": {
+        "code": "  "
+      },
+      "output": {
+        "ok": false,
+        "issues": [
+          {
+            "path": "$.code",
+            "code": "invalid_schema",
+            "message": "$.code must not be empty."
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "code": "pass",
+        "timeout_seconds": 0,
+        "max_tool_calls": 51
+      },
+      "output": {
+        "ok": false,
+        "issues": [
+          {
+            "path": "$.timeout_seconds",
+            "code": "invalid_schema",
+            "message": "$.timeout_seconds must be between 1 and 300."
+          },
+          {
+            "path": "$.max_tool_calls",
+            "code": "invalid_schema",
+            "message": "$.max_tool_calls must be between 0 and 50."
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "code": "pass",
+        "timeout_seconds": 301,
+        "max_tool_calls": -1
+      },
+      "output": {
+        "ok": false,
+        "issues": [
+          {
+            "path": "$.timeout_seconds",
+            "code": "invalid_schema",
+            "message": "$.timeout_seconds must be between 1 and 300."
+          },
+          {
+            "path": "$.max_tool_calls",
+            "code": "invalid_schema",
+            "message": "$.max_tool_calls must be between 0 and 50."
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "code": "pass",
+        "timeout_seconds": 1,
+        "max_tool_calls": 0
+      },
+      "output": {
+        "ok": true,
+        "input": {
+          "code": "pass",
+          "timeout_seconds": 1,
+          "max_tool_calls": 0
+        }
+      }
+    }
+  ],
+  "rpc": [
+    {
+      "id": "not-allowed",
+      "request": {
+        "tool": "execute_code",
+        "args": {}
+      },
+      "output": {
+        "error": "Tool 'execute_code' is not available in execute_code.",
+        "code": "tool_not_allowed"
+      },
+      "calls": []
+    },
+    {
+      "id": "invalid-token",
+      "request": {
+        "token": "wrong",
+        "tool": "read_file",
+        "args": {}
+      },
+      "expectedToken": "right",
+      "output": {
+        "error": "Invalid execute_code RPC token.",
+        "code": "invalid_rpc_token"
+      },
+      "calls": []
+    },
+    {
+      "id": "no-web-search",
+      "request": {
+        "tool": "web_search",
+        "args": {}
+      },
+      "webSearch": false,
+      "output": {
+        "error": "Tool 'web_search' is not available in execute_code.",
+        "code": "tool_not_allowed"
+      },
+      "calls": []
+    },
+    {
+      "id": "success",
+      "request": {
+        "tool": "read_file",
+        "args": {
+          "file_path": "x"
+        }
+      },
+      "result": {
+        "type": "success",
+        "content": [
+          {
+            "type": "text",
+            "text": "one"
+          },
+          {
+            "type": "text",
+            "text": "two"
+          }
+        ],
+        "data": {
+          "a": 1
+        },
+        "metadata": {
+          "m": true
+        }
+      },
+      "output": {
+        "content": "one\ntwo",
+        "data": {
+          "a": 1
+        },
+        "metadata": {
+          "m": true
+        }
+      },
+      "calls": [
+        {
+          "call": {
+            "id": "execute_code:code:1",
+            "name": "read_file",
+            "input": {
+              "file_path": "x"
+            }
+          },
+          "overrides": {
+            "currentToolCallId": "execute_code:code:1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "error",
+      "request": {
+        "tool": "edit_file",
+        "args": []
+      },
+      "result": {
+        "type": "error",
+        "content": [
+          {
+            "type": "text",
+            "text": "details"
+          }
+        ],
+        "error": {
+          "code": "stale",
+          "message": "Read first",
+          "details": {
+            "issues": [
+              {
+                "message": "issue 1"
+              },
+              null,
+              {
+                "message": ""
+              },
+              {
+                "message": "issue 2"
+              }
+            ]
+          }
+        },
+        "metadata": {
+          "m": true
+        }
+      },
+      "output": {
+        "error": "Read first\nissue 1\nissue 2",
+        "code": "stale",
+        "content": "details",
+        "metadata": {
+          "m": true
+        }
+      },
+      "calls": [
+        {
+          "call": {
+            "id": "execute_code:code:1",
+            "name": "edit_file",
+            "input": {}
+          },
+          "overrides": {
+            "currentToolCallId": "execute_code:code:1"
+          }
+        }
+      ]
+    }
+  ]
+}

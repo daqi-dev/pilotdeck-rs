@@ -77,7 +77,7 @@ mutants = [
         "journal-remove-keeps-empty-file",
         "journal.rs",
         """        if dialogs.is_empty() {
-            return remove_file(&self.path);
+            return self.remove_file();
         }""",
         """        if dialogs.is_empty() {
             return self.write(&JournalRecord { dialogs });
@@ -229,13 +229,13 @@ mutants = [
     (
         "journal-directory-read-as-missing",
         "journal.rs",
-        """            let bytes = match fs::read(&self.path) {""",
+        """            let bytes = match read {""",
         """            if self.path.is_dir() {
                 return Ok(JournalRecord {
                     dialogs: Vec::new(),
                 });
             }
-            let bytes = match fs::read(&self.path) {""",
+            let bytes = match read {""",
         "journal directory-at-path",
     ),
     (

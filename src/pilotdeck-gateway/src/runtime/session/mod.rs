@@ -4,19 +4,23 @@ mod admission;
 mod completion;
 pub mod factory;
 mod handle;
+pub(crate) mod inbox;
 mod owner;
 pub(crate) mod transcript_locks;
 
 pub use admission::{SessionAdmission, TurnReservation};
 pub use completion::{CompletionAbortReason, TurnCompletionFence, TurnCompletionHandle};
+pub(crate) use factory::project as project_transcript;
 pub use handle::{
     HandleActivity, HandleState, LiveSession, LiveSessionHandle, LiveTurn, SessionNext,
     SessionSubmission,
 };
 pub use owner::{
-    EvictionReason, MaintenanceReservation, SessionContext, SessionEvictionSnapshot,
-    SessionFactory, SessionOwner, SessionOwnerOptions,
+    ArchiveReservation, EvictionReason, MaintenanceReservation, SessionContext,
+    SessionEvictionSnapshot, SessionFactory, SessionOwner, SessionOwnerOptions,
+    SessionProjectScope,
 };
+pub(crate) use owner::{AsyncTurnLookup, CapturedAsyncTurn};
 
 use pilotdeck_protocol::JsString;
 use std::collections::HashMap;

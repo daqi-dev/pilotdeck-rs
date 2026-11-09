@@ -24,6 +24,7 @@ pub use binding::{
     SkillMethod, SkillsBinding, SkillsFacade, select_binding, skill_binding_from_snapshot,
 };
 pub use error::SkillError;
+pub(crate) use external::ModuleInvocation;
 pub use external::{
     ExternalSkillBinding, ExternalSkillsPort, HyperModuleTransport, ModuleEnvironment,
     ModuleHttpFuture, ModuleHttpRequest, ModuleHttpResponse, ModuleHttpTransport,

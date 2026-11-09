@@ -44,6 +44,11 @@ pub trait SnapshotProjectResolver: Send + Sync {
     /// The key returned by `resolve_project_key` (a registry path, never a lone
     /// surrogate), so the storage-id resolver keeps its UTF-8 signature.
     fn workspace_id(&self, project_key: &str) -> String;
+    /// Native implementations may reject an unsafe storage-id lookup. Legacy
+    /// resolvers keep their existing infallible contract.
+    fn workspace_id_checked(&self, project_key: &str) -> Result<String, SnapshotProjectionError> {
+        Ok(self.workspace_id(project_key))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -250,7 +255,7 @@ impl<R: SnapshotProjectResolver> SnapshotProjection<R> {
     pub fn list(&self, input: &JsValue) -> Result<JsValue, SnapshotProjectionError> {
         let provider = self.provider()?;
         let project_key = self.resolve_source_project(input)?;
-        let workspace_id = self.resolver.workspace_id(&project_key);
+        let workspace_id = self.resolver.workspace_id_checked(&project_key)?;
         let limit = snapshot_limit(field(input, "limit"))?;
         let session_key = field(input, "sessionKey");
         let cursor = field(input, "cursor");
@@ -310,7 +315,7 @@ impl<R: SnapshotProjectResolver> SnapshotProjection<R> {
     pub fn get(&self, input: &JsValue) -> Result<JsValue, SnapshotProjectionError> {
         let provider = self.provider()?;
         let project_key = self.resolve_source_project(input)?;
-        let workspace_id = self.resolver.workspace_id(&project_key);
+        let workspace_id = self.resolver.workspace_id_checked(&project_key)?;
         let snapshot_id = field(input, "snapshotId");
         let snapshot_units = string_units(snapshot_id);
         let manifest = provider
@@ -332,7 +337,7 @@ impl<R: SnapshotProjectResolver> SnapshotProjection<R> {
     pub fn restore(&self, input: &JsValue) -> Result<JsValue, SnapshotProjectionError> {
         let provider = self.provider()?;
         let source_project = self.resolve_source_project(input)?;
-        let workspace_id = self.resolver.workspace_id(&source_project);
+        let workspace_id = self.resolver.workspace_id_checked(&source_project)?;
         let snapshot_id = field(input, "snapshotId");
         let snapshot_units = string_units(snapshot_id);
         let manifest = provider

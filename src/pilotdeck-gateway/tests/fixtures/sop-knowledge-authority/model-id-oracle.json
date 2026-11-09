@@ -1,0 +1,190 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "blobs": {
+    "src/composition/domainPorts.ts": "d6af31ffccd71178cee2f4a00793e8f26925c011",
+    "src/composition/HttpModuleClient.ts": "08baa916285da697678fac63a9922d7a4be8a3e4"
+  },
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "cases": [
+    {
+      "id": "camel",
+      "input": {
+        "query": "q",
+        "modelConfigId": "camel-choice"
+      },
+      "wire": [
+        {
+          "path": "/undefined",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/undefined",
+          "method": "POST",
+          "body": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "module-http-1",
+            "runId": "knowledge",
+            "operationId": "knowledge",
+            "requestId": "knowledge-query-1",
+            "module": "knowledge",
+            "payload": {
+              "operation": "query",
+              "input": {
+                "query": "q",
+                "modelConfigId": "camel-choice",
+                "tenantId": "trusted-tenant",
+                "actorUserId": "trusted-user",
+                "agentId": "trusted-agent"
+              }
+            }
+          }
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "json",
+            "value": {
+              "answer": "fixture"
+            }
+          }
+        ],
+        "data": {
+          "answer": "fixture"
+        }
+      }
+    },
+    {
+      "id": "snake",
+      "input": {
+        "query": "q",
+        "model_config_id": "snake-choice"
+      },
+      "wire": [
+        {
+          "path": "/undefined",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/undefined",
+          "method": "POST",
+          "body": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "module-http-1",
+            "runId": "knowledge",
+            "operationId": "knowledge",
+            "requestId": "knowledge-query-1",
+            "module": "knowledge",
+            "payload": {
+              "operation": "query",
+              "input": {
+                "query": "q",
+                "model_config_id": "snake-choice",
+                "tenantId": "trusted-tenant",
+                "actorUserId": "trusted-user",
+                "agentId": "trusted-agent"
+              }
+            }
+          }
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "json",
+            "value": {
+              "answer": "fixture"
+            }
+          }
+        ],
+        "data": {
+          "answer": "fixture"
+        }
+      }
+    },
+    {
+      "id": "both",
+      "input": {
+        "query": "q",
+        "modelConfigId": "A",
+        "model_config_id": "B",
+        "tenantId": "forged"
+      },
+      "wire": [
+        {
+          "path": "/undefined",
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/undefined",
+          "method": "POST",
+          "body": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "module-http-1",
+            "runId": "knowledge",
+            "operationId": "knowledge",
+            "requestId": "knowledge-query-1",
+            "module": "knowledge",
+            "payload": {
+              "operation": "query",
+              "input": {
+                "query": "q",
+                "modelConfigId": "A",
+                "model_config_id": "B",
+                "tenantId": "trusted-tenant",
+                "actorUserId": "trusted-user",
+                "agentId": "trusted-agent"
+              }
+            }
+          }
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "json",
+            "value": {
+              "answer": "fixture"
+            }
+          }
+        ],
+        "data": {
+          "answer": "fixture"
+        }
+      }
+    },
+    {
+      "id": "credential-camel",
+      "input": {
+        "query": "q",
+        "modelConfigId": "A"
+      },
+      "wire": [],
+      "error": {
+        "name": "Error",
+        "code": "MODULE_PROTOCOL_INCOMPATIBLE",
+        "message": "Knowledge query cannot supply identity or an SD model selection."
+      }
+    },
+    {
+      "id": "credential-snake",
+      "input": {
+        "query": "q",
+        "model_config_id": "B"
+      },
+      "wire": [],
+      "error": {
+        "name": "Error",
+        "code": "MODULE_PROTOCOL_INCOMPATIBLE",
+        "message": "Knowledge query cannot supply identity or an SD model selection."
+      }
+    }
+  ]
+}

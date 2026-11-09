@@ -90,6 +90,29 @@ class CoverageControls(unittest.TestCase):
         with self.assertRaises(ValueError):
             json.loads('{"entries": [], "entries": []}', object_pairs_hook=unique)
 
+    def loader_table_sample(self, source):
+        # All channels now have module evidence. Keep the mutation control tied
+        # to the real production loader table, without requiring any channel to
+        # remain unmigrated solely to exercise the evidence checker.
+        header = next(i for i, line in enumerate(source)
+                      if re.fullmatch(r"\s*(?:pub(?:\([^)]*\))?\s+)?const\s+CHANNEL_LOADER_KEYS\b.*", line))
+        end = next(i for i in range(header + 1, len(source)) if source[i].strip() == "];")
+        anchors = {}
+        for i in range(header + 1, end):
+            match = re.fullmatch(r'\s*"([A-Za-z0-9_-]+)"\s*,?\s*(?://.*)?', source[i])
+            if match:
+                anchors["gateway.channel:" + match[1]] = i + 1
+        self.assertGreaterEqual(len(anchors), 2)
+        sample = copy.deepcopy(self.data)
+        seen = set()
+        for row in sample["entries"]:
+            if row["id"] in anchors:
+                row["evidence"] = "src/pilotdeck-gateway/src/channel/loader.rs:" + str(anchors[row["id"]])
+                seen.add(row["id"])
+        self.assertEqual(seen, set(anchors))
+        self.assertEqual(check(sample, self.baseline), [])
+        return sample, header
+
     def test_channel_key_literal_drift_fails(self):
         # The #2283 pre-fix misalignment, reconstructed on the real loader.rs:
         # every entry anchored at a member line drifts one line stale — each
@@ -102,6 +125,7 @@ class CoverageControls(unittest.TestCase):
         # line of the table drifts by exactly +1; entries anchored in
         # loader.rs but outside the literal table stay put.
         source = split_lines((ROOT / loader).read_text())
+        sample, _ = self.loader_table_sample(source)
         inside = literal_table_lines(source)
         # The drift target is the next table line strictly below the anchor
         # (the adjacent key, the closing `];` for the last member), derived
@@ -110,7 +134,7 @@ class CoverageControls(unittest.TestCase):
         # transparent line and false-red (r5 DS boundary P2#2). Anchors
         # keep their original line for the restore pass.
         drifted = {}
-        for row in self.data["entries"]:
+        for row in sample["entries"]:
             if not row["evidence"].startswith(loader + ":"):
                 continue
             anchor = int(row["evidence"].rsplit(":", 1)[1])
@@ -132,7 +156,7 @@ class CoverageControls(unittest.TestCase):
         # drift targets are asserted against the version they were
         # derived from even if a local writer touches loader.rs mid-test.
         snapshot = {(ROOT / loader).resolve(): (source, inside)}
-        data = copy.deepcopy(self.data)
+        data = copy.deepcopy(sample)
         for row in data["entries"]:
             if row["id"] in drifted:
                 row["evidence"] = f"{loader}:{drifted[row['id']][1]}"
@@ -268,10 +292,7 @@ class CoverageControls(unittest.TestCase):
         # any line mentioning the name — a doc comment above the table must
         # not steal it (DS sibling P2#3 / simplify P2#1).
         base = split_lines(path.read_text())
-        header = next(i for i, line in enumerate(base)
-                      if re.fullmatch(
-                          r"\s*(?:pub(?:\([^)]*\))?\s+)?const\s+"
-                          r"UNMIGRATED_CHANNEL_KEYS\b.*", line))
+        sample, header = self.loader_table_sample(base)
         noisy = list(base)
         noisy.insert(header + 1, "    // churn")
         tables = {path: (noisy, literal_table_lines(noisy))}
@@ -292,7 +313,7 @@ class CoverageControls(unittest.TestCase):
         # false-red. header is 0-based, so 1-based anchors must satisfy
         # anchor - 1 >= header + 1, i.e. anchor > header + 1.
         current = {row["id"]: int(row["evidence"].rsplit(":", 1)[1])
-                   for row in self.data["entries"]
+                   for row in sample["entries"]
                    if row["evidence"].startswith(loader + ":")
                    and int(row["evidence"].rsplit(":", 1)[1]) in inside_base
                    and int(row["evidence"].rsplit(":", 1)[1]) > header + 1}

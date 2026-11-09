@@ -1,0 +1,336 @@
+{
+  "records": [
+    {
+      "id": "valid",
+      "input": "# Demo\n\n> Always-On Discovery Plan\n> id: p1\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\nShort summary\n\n## Rationale\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n1. Perform it\n\n## Verification\n- check\n",
+      "result": {
+        "title": "Demo",
+        "metadata": {
+          "id": "p1",
+          "sourceRunId": "r1",
+          "createdAt": "2026-01-02",
+          "projectRoot": "/p",
+          "dedupeKey": "d1"
+        },
+        "sections": {
+          "Summary": [
+            "Short summary",
+            ""
+          ],
+          "Rationale": [
+            "Reason",
+            ""
+          ],
+          "Context Signals": [
+            "- signal",
+            ""
+          ],
+          "Proposed Change": [
+            "Perform the update",
+            ""
+          ],
+          "Execution Steps": [
+            "1. Perform it",
+            ""
+          ],
+          "Verification": [
+            "- check",
+            ""
+          ]
+        },
+        "rawContent": "# Demo\n\n> Always-On Discovery Plan\n> id: p1\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\nShort summary\n\n## Rationale\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n1. Perform it\n\n## Verification\n- check\n"
+      }
+    },
+    {
+      "id": "crlf",
+      "input": "# Demo\r\n\r\n> Always-On Discovery Plan\r\n> id: p1\r\n> sourceRunId: r1\r\n> createdAt: 2026-01-02\r\n> projectRoot: /p\r\n> dedupeKey: d1\r\n\r\n## Summary\r\nShort summary\r\n\r\n## Rationale\r\nReason\r\n\r\n## Context Signals\r\n- signal\r\n\r\n## Proposed Change\r\nPerform the update\r\n\r\n## Execution Steps\r\n1. Perform it\r\n\r\n## Verification\r\n- check\r\n",
+      "result": {
+        "title": "Demo",
+        "metadata": {
+          "id": "p1",
+          "sourceRunId": "r1",
+          "createdAt": "2026-01-02",
+          "projectRoot": "/p",
+          "dedupeKey": "d1"
+        },
+        "sections": {
+          "Summary": [
+            "Short summary",
+            ""
+          ],
+          "Rationale": [
+            "Reason",
+            ""
+          ],
+          "Context Signals": [
+            "- signal",
+            ""
+          ],
+          "Proposed Change": [
+            "Perform the update",
+            ""
+          ],
+          "Execution Steps": [
+            "1. Perform it",
+            ""
+          ],
+          "Verification": [
+            "- check",
+            ""
+          ]
+        },
+        "rawContent": "# Demo\n\n> Always-On Discovery Plan\n> id: p1\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\nShort summary\n\n## Rationale\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n1. Perform it\n\n## Verification\n- check\n"
+      }
+    },
+    {
+      "id": "empty",
+      "input": "",
+      "error": {
+        "name": "AlwaysOnError",
+        "code": "plan_invalid",
+        "message": "plan content is empty."
+      }
+    },
+    {
+      "id": "no-title",
+      "input": "Demo\n\n> Always-On Discovery Plan\n> id: p1\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\nShort summary\n\n## Rationale\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n1. Perform it\n\n## Verification\n- check\n",
+      "error": {
+        "name": "AlwaysOnError",
+        "code": "plan_invalid",
+        "message": "plan must start with a level-1 markdown heading."
+      }
+    },
+    {
+      "id": "no-metadata",
+      "input": "# Demo\n\n> wrong\n> id: p1\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\nShort summary\n\n## Rationale\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n1. Perform it\n\n## Verification\n- check\n",
+      "error": {
+        "name": "AlwaysOnError",
+        "code": "plan_invalid",
+        "message": "plan metadata blockquote first line must be \"Always-On Discovery Plan\"."
+      }
+    },
+    {
+      "id": "missing-id",
+      "input": "# Demo\n\n> Always-On Discovery Plan\n> id:\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\nShort summary\n\n## Rationale\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n1. Perform it\n\n## Verification\n- check\n",
+      "error": {
+        "name": "AlwaysOnError",
+        "code": "plan_invalid",
+        "message": "plan metadata is missing required key \"id\"."
+      }
+    },
+    {
+      "id": "unknown-meta",
+      "input": "# Demo\n\n> Always-On Discovery Plan\n> extra: x\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\nShort summary\n\n## Rationale\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n1. Perform it\n\n## Verification\n- check\n",
+      "error": {
+        "name": "AlwaysOnError",
+        "code": "plan_invalid",
+        "message": "plan metadata contains unknown key \"extra\"."
+      }
+    },
+    {
+      "id": "duplicate",
+      "input": "# Demo\n\n> Always-On Discovery Plan\n> id: p1\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\nShort summary\n\n## Rationale\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n1. Perform it\n\n## Verification\n- check\n\n## Summary\nagain",
+      "error": {
+        "name": "AlwaysOnError",
+        "code": "plan_invalid",
+        "message": "plan contains duplicate section \"Summary\"."
+      }
+    },
+    {
+      "id": "order",
+      "input": "# Demo\n\n> Always-On Discovery Plan\n> id: p1\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\nShort summary\n\n## Wrong\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n1. Perform it\n\n## Verification\n- check\n",
+      "error": {
+        "name": "AlwaysOnError",
+        "code": "plan_invalid",
+        "message": "plan section #2 must be \"Rationale\", got \"Wrong\"."
+      }
+    },
+    {
+      "id": "summary-length",
+      "input": "# Demo\n\n> Always-On Discovery Plan\n> id: p1\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n\n## Rationale\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n1. Perform it\n\n## Verification\n- check\n",
+      "error": {
+        "name": "AlwaysOnError",
+        "code": "plan_invalid",
+        "message": "plan Summary exceeds 200 characters."
+      }
+    },
+    {
+      "id": "summary-utf16",
+      "input": "# Demo\n\n> Always-On Discovery Plan\n> id: p1\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\n🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂\n\n## Rationale\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n1. Perform it\n\n## Verification\n- check\n",
+      "error": {
+        "name": "AlwaysOnError",
+        "code": "plan_invalid",
+        "message": "plan Summary exceeds 200 characters."
+      }
+    },
+    {
+      "id": "missing-signals",
+      "input": "# Demo\n\n> Always-On Discovery Plan\n> id: p1\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\nShort summary\n\n## Rationale\nReason\n\n## Context Signals\nsignal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n1. Perform it\n\n## Verification\n- check\n",
+      "error": {
+        "name": "AlwaysOnError",
+        "code": "plan_invalid",
+        "message": "plan Context Signals must contain at least one unordered list item."
+      }
+    },
+    {
+      "id": "fuzzy",
+      "input": "# Demo\n\n> Always-On Discovery Plan\n> id: p1\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\nShort summary\n\n## Rationale\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nTODO later\n\n## Execution Steps\n1. Perform it\n\n## Verification\n- check\n",
+      "error": {
+        "name": "AlwaysOnError",
+        "code": "plan_invalid",
+        "message": "plan Proposed Change must not be fuzzy (\"^\\s*TODO\\b\")."
+      }
+    },
+    {
+      "id": "steps-unordered",
+      "input": "# Demo\n\n> Always-On Discovery Plan\n> id: p1\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\nShort summary\n\n## Rationale\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n- Perform it\n\n## Verification\n- check\n",
+      "error": {
+        "name": "AlwaysOnError",
+        "code": "plan_invalid",
+        "message": "plan Execution Steps must use an ordered list (no unordered items)."
+      }
+    },
+    {
+      "id": "missing-verification",
+      "input": "# Demo\n\n> Always-On Discovery Plan\n> id: p1\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\nShort summary\n\n## Rationale\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n1. Perform it\n\n## Verification\ncheck\n",
+      "error": {
+        "name": "AlwaysOnError",
+        "code": "plan_invalid",
+        "message": "plan Verification must contain at least one unordered list item."
+      }
+    },
+    {
+      "id": "surrogate",
+      "input": "# Demo\n\n> Always-On Discovery Plan\n> id: p1\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\n\ud800\n\n## Rationale\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n1. Perform it\n\n## Verification\n- check\n",
+      "result": {
+        "title": "Demo",
+        "metadata": {
+          "id": "p1",
+          "sourceRunId": "r1",
+          "createdAt": "2026-01-02",
+          "projectRoot": "/p",
+          "dedupeKey": "d1"
+        },
+        "sections": {
+          "Summary": [
+            "\ud800",
+            ""
+          ],
+          "Rationale": [
+            "Reason",
+            ""
+          ],
+          "Context Signals": [
+            "- signal",
+            ""
+          ],
+          "Proposed Change": [
+            "Perform the update",
+            ""
+          ],
+          "Execution Steps": [
+            "1. Perform it",
+            ""
+          ],
+          "Verification": [
+            "- check",
+            ""
+          ]
+        },
+        "rawContent": "# Demo\n\n> Always-On Discovery Plan\n> id: p1\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\n\ud800\n\n## Rationale\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n1. Perform it\n\n## Verification\n- check\n"
+      }
+    },
+    {
+      "id": "nbsp",
+      "input": "# Demo\n\n> Always-On Discovery Plan\n> id: p1\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\nhello there\n\n## Rationale\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n1. Perform it\n\n## Verification\n- check\n",
+      "result": {
+        "title": "Demo",
+        "metadata": {
+          "id": "p1",
+          "sourceRunId": "r1",
+          "createdAt": "2026-01-02",
+          "projectRoot": "/p",
+          "dedupeKey": "d1"
+        },
+        "sections": {
+          "Summary": [
+            "hello there",
+            ""
+          ],
+          "Rationale": [
+            "Reason",
+            ""
+          ],
+          "Context Signals": [
+            "- signal",
+            ""
+          ],
+          "Proposed Change": [
+            "Perform the update",
+            ""
+          ],
+          "Execution Steps": [
+            "1. Perform it",
+            ""
+          ],
+          "Verification": [
+            "- check",
+            ""
+          ]
+        },
+        "rawContent": "# Demo\n\n> Always-On Discovery Plan\n> id: p1\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\nhello there\n\n## Rationale\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n1. Perform it\n\n## Verification\n- check\n"
+      }
+    },
+    {
+      "id": "metadata-prototype",
+      "input": "# Demo\n\n> Always-On Discovery Plan\n> __proto__: x\n> constructor: y\n> id: p1\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\nShort summary\n\n## Rationale\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n1. Perform it\n\n## Verification\n- check\n",
+      "result": {
+        "title": "Demo",
+        "metadata": {
+          "id": "p1",
+          "sourceRunId": "r1",
+          "createdAt": "2026-01-02",
+          "projectRoot": "/p",
+          "dedupeKey": "d1",
+          "constructor": "y"
+        },
+        "sections": {
+          "Summary": [
+            "Short summary",
+            ""
+          ],
+          "Rationale": [
+            "Reason",
+            ""
+          ],
+          "Context Signals": [
+            "- signal",
+            ""
+          ],
+          "Proposed Change": [
+            "Perform the update",
+            ""
+          ],
+          "Execution Steps": [
+            "1. Perform it",
+            ""
+          ],
+          "Verification": [
+            "- check",
+            ""
+          ]
+        },
+        "rawContent": "# Demo\n\n> Always-On Discovery Plan\n> __proto__: x\n> constructor: y\n> id: p1\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\nShort summary\n\n## Rationale\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n1. Perform it\n\n## Verification\n- check\n"
+      }
+    },
+    {
+      "id": "section-prototype",
+      "input": "# Demo\n\n> Always-On Discovery Plan\n> id: p1\n> sourceRunId: r1\n> createdAt: 2026-01-02\n> projectRoot: /p\n> dedupeKey: d1\n\n## Summary\nShort summary\n\n## __proto__\nReason\n\n## Context Signals\n- signal\n\n## Proposed Change\nPerform the update\n\n## Execution Steps\n1. Perform it\n\n## Verification\n- check\n",
+      "error": {
+        "name": "AlwaysOnError",
+        "code": "plan_invalid",
+        "message": "plan must contain exactly the required sections: Summary, Rationale, Context Signals, Proposed Change, Execution Steps, Verification."
+      }
+    }
+  ]
+}

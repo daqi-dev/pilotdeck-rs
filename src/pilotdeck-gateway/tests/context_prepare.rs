@@ -19,7 +19,7 @@ use pilotdeck_gateway::runtime::context::{
         MemoryResolver, MemoryRetrieveInput, MemoryRetrieveResult,
     },
 };
-use pilotdeck_protocol::{JsObject, JsValue, stringify_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 use std::{
     os::unix::fs::symlink,
     path::{Path, PathBuf},
@@ -159,8 +159,11 @@ fn extension(value: &JsValue) -> FakeExtension {
         .unwrap_or(&[])
         .iter()
         .map(|server| McpServerInstruction {
-            server_name: text(field(server, "serverName")),
-            instructions: optional_text(field(server, "instructions")),
+            server_name: field(server, "serverName")
+                .as_string()
+                .expect("serverName")
+                .clone(),
+            instructions: field(server, "instructions").as_string().cloned(),
         })
         .collect();
     let prompts = value
@@ -613,4 +616,143 @@ async fn prepare_for_model_matches_real_ts() {
         }
     }
     assert_eq!(observed_steps, STEPS, "step count");
+}
+
+#[tokio::test]
+async fn mcp_instructions_preserve_surrogates_in_prompt_parts_and_cache_identity() {
+    let oracle =
+        pilotdeck_protocol::parse_json(include_str!("fixtures/native-context-utf16/oracle.json"))
+            .unwrap();
+    let mcp = array(field(&oracle, "mcp"))
+        .iter()
+        .map(|entry| McpServerInstruction {
+            server_name: field(entry, "serverName").as_string().unwrap().clone(),
+            instructions: field(entry, "instructions").as_string().cloned(),
+        })
+        .collect();
+    let extension = FakeExtension {
+        mcp,
+        ..Default::default()
+    };
+    let truncated = extension.mcp[0].instructions.as_ref().unwrap();
+    assert_eq!(truncated.units().get(2047), Some(&0xd83d));
+    assert!(
+        truncated
+            .units()
+            .ends_with(&"… [truncated]".encode_utf16().collect::<Vec<_>>())
+    );
+    assert_eq!(extension.mcp[0].server_name.units().last(), Some(&0xd800));
+    let cases = array(field(&oracle, "results"));
+    assert_eq!(cases.len(), 3);
+    for case in cases {
+        let id = text(field(case, "id"));
+        let runtime = DefaultContextRuntime::new(Options {
+            extension: Some(Arc::new(extension.clone())),
+            include_extensions_with_custom_system_prompt: id == "custom-extensions",
+            runtime_context_surface: RuntimeContextSurface::Other,
+            now: Some(Arc::new(|| 1_767_323_045_678.0)),
+            platform: Some("darwin".into()),
+            node_version: Some("v22.22.0".into()),
+            locale: Some("en-US".into()),
+            ..Options::default()
+        });
+        let mut fields = object(&pilotdeck_protocol::parse_json(r#"{"cwd":"/fixture","provider":"fixture","model":"mock","permissionMode":"default","additionalWorkingDirectories":[],"tools":[],"messages":[],"protocol":"anthropic","supportsPromptCache":true}"#).unwrap()).clone();
+        if id != "default" {
+            fields.insert("customSystemPrompt".into(), "custom".into());
+        }
+        let result = runtime
+            .prepare_for_model(ContextInput {
+                fields,
+                abort_signal: None,
+                budget_evaluator: None,
+            })
+            .await
+            .unwrap();
+        let expected = field(case, "prompt");
+        assert_eq!(result.get("systemPrompt"), expected.get("joined"), "{id}");
+        assert_eq!(
+            result.get("systemPromptParts"),
+            expected.get("parts"),
+            "{id}"
+        );
+        assert_eq!(
+            result
+                .get("cachePlan")
+                .and_then(|plan| plan.get("fingerprint")),
+            field(case, "plan").get("fingerprint"),
+            "{id}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn custom_and_append_prompt_keep_ts_lone_surrogates() {
+    let oracle = pilotdeck_protocol::parse_json(include_str!(
+        "fixtures/native-context-utf16/oracle-extra.json"
+    ))
+    .unwrap();
+    let mcp: Vec<McpServerInstruction> = array(field(&oracle, "mcp"))
+        .iter()
+        .map(|entry| McpServerInstruction {
+            server_name: field(entry, "serverName").as_string().unwrap().clone(),
+            instructions: field(entry, "instructions").as_string().cloned(),
+        })
+        .collect();
+    for case in array(field(&oracle, "results")).iter().filter(|case| {
+        matches!(
+            text(field(case, "id")).as_str(),
+            "custom-lone" | "append-lone"
+        )
+    }) {
+        let id = text(field(case, "id"));
+        let runtime = DefaultContextRuntime::new(Options {
+            extension: Some(Arc::new(FakeExtension {
+                mcp: mcp.clone(),
+                ..Default::default()
+            })),
+            runtime_context_surface: RuntimeContextSurface::Other,
+            now: Some(Arc::new(|| 1_767_323_045_678.0)),
+            platform: Some("darwin".into()),
+            node_version: Some("v22.22.0".into()),
+            locale: Some("en-US".into()),
+            ..Options::default()
+        });
+        let mut fields = object(&pilotdeck_protocol::parse_json(r#"{"cwd":"/fixture","provider":"fixture","model":"mock","permissionMode":"default","additionalWorkingDirectories":[],"tools":[],"messages":[],"protocol":"anthropic","supportsPromptCache":true}"#).unwrap()).clone();
+        if id == "custom-lone" {
+            fields.insert(
+                "customSystemPrompt".into(),
+                JsValue::String(JsString::from_utf16(vec![
+                    80, 82, 69, 0xd800, 80, 79, 83, 84,
+                ])),
+            );
+        } else {
+            fields.insert(
+                "appendSystemPrompt".into(),
+                JsValue::String(JsString::from_utf16(vec![65, 80, 80, 0xdc00, 69, 78, 68])),
+            );
+        }
+        let result = runtime
+            .prepare_for_model(ContextInput {
+                fields,
+                abort_signal: None,
+                budget_evaluator: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            result.get("systemPrompt"),
+            field(case, "prompt").get("joined"),
+            "{id}"
+        );
+        assert_eq!(
+            result.get("systemPromptParts"),
+            field(case, "prompt").get("parts"),
+            "{id}"
+        );
+        assert_eq!(
+            result.get("cachePlan").and_then(|p| p.get("fingerprint")),
+            field(case, "plan").get("fingerprint"),
+            "{id}"
+        );
+    }
 }

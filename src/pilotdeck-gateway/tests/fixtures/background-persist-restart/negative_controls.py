@@ -49,20 +49,7 @@ flush_outcome = (
 )
 flush_swallow = '                let _ = tokio::spawn(async move { store.flush().await }).await;'
 restore_block = (
-    '            let output = OutputStore::restore_from_spill(\n'
-    '                DEFAULT_MEMORY_BYTES,\n'
-    '                output_path(disk_spill_dir, &task.task_id),\n'
-    '                snapshot.output.total_bytes,\n'
-    '            )\n'
-    '            .unwrap_or_else(|error| {\n'
-    '                let path = output_path(disk_spill_dir, &task.task_id);\n'
-    '                let message = if error.kind() == std::io::ErrorKind::InvalidData {\n'
-    '                    error.to_string()\n'
-    '                } else {\n'
-    '                    format!("Could not restore task output from {}.", path.display())\n'
-    '                };\n'
-    '                panic!("{message}");\n'
-    '            });'
+    '                OutputStore::restore_from_spill(\n                    DEFAULT_MEMORY_BYTES,\n                    output_path(disk_spill_dir, &task.task_id),\n                    snapshot.output.total_bytes,\n                )\n                .unwrap_or_else(|error| {\n                    let path = output_path(disk_spill_dir, &task.task_id);\n                    let message = if error.kind() == std::io::ErrorKind::InvalidData {\n                        error.to_string()\n                    } else {\n                        format!("Could not restore task output from {}.", path.display())\n                    };\n                    panic!("{message}");\n                })'
 )
 mutations = [
     # D1: the dispose flush error is swallowed instead of rejecting dispose().
@@ -122,12 +109,7 @@ mutations = [
      '#1233 resources dispose message'),
     # D2: a broken output claim no longer fails the restart.
     ('restore-output-soft', source, restore_block,
-     '            let output = OutputStore::restore_from_spill(\n'
-     '                DEFAULT_MEMORY_BYTES,\n'
-     '                output_path(disk_spill_dir, &task.task_id),\n'
-     '                snapshot.output.total_bytes,\n'
-     '            )\n'
-     '            .unwrap_or_else(|_error| OutputStore::with_spill(DEFAULT_MEMORY_BYTES, None));',
+     '                OutputStore::restore_from_spill(\n                    DEFAULT_MEMORY_BYTES,\n                    output_path(disk_spill_dir, &task.task_id),\n                    snapshot.output.total_bytes,\n                )\n                .unwrap_or_else(|_error| OutputStore::with_spill(DEFAULT_MEMORY_BYTES, None))',
      'background_persist',
      'restart_output_length_mismatch_fails_closed',
      '#1233 a length mismatch must fail the restart'),
@@ -145,24 +127,7 @@ mutations = [
      '#1233 an unrestorable task must fail the restart'),
     # D3: restore goes back to trusting the persisted flag.
     ('restore-persisted-gate', source, restore_block,
-     '            let output = if snapshot.output.persisted {\n'
-     '                OutputStore::restore_from_spill(\n'
-     '                    DEFAULT_MEMORY_BYTES,\n'
-     '                    output_path(disk_spill_dir, &task.task_id),\n'
-     '                    snapshot.output.total_bytes,\n'
-     '                )\n'
-     '                .unwrap_or_else(|error| {\n'
-     '                    let path = output_path(disk_spill_dir, &task.task_id);\n'
-     '                    let message = if error.kind() == std::io::ErrorKind::InvalidData {\n'
-     '                        error.to_string()\n'
-     '                    } else {\n'
-     '                        format!("Could not restore task output from {}.", path.display())\n'
-     '                    };\n'
-     '                    panic!("{message}");\n'
-     '                })\n'
-     '            } else {\n'
-     '                OutputStore::with_spill(DEFAULT_MEMORY_BYTES, None)\n'
-     '            };',
+     '                if snapshot.output.persisted {\n                OutputStore::restore_from_spill(\n                    DEFAULT_MEMORY_BYTES,\n                    output_path(disk_spill_dir, &task.task_id),\n                    snapshot.output.total_bytes,\n                )\n                .unwrap_or_else(|error| {\n                    let path = output_path(disk_spill_dir, &task.task_id);\n                    let message = if error.kind() == std::io::ErrorKind::InvalidData {\n                        error.to_string()\n                    } else {\n                        format!("Could not restore task output from {}.", path.display())\n                    };\n                    panic!("{message}");\n                })\n                } else {\n                    OutputStore::with_spill(DEFAULT_MEMORY_BYTES, None)\n                }',
      'background_persist',
      'spill_write_failure_restart_fails_closed',
      '#1233 an unusable spill directory must fail the restart'),
@@ -188,10 +153,7 @@ mutations = [
      '#1233 restored status'),
     # D6: durable output is claimed even when the bytes never landed.
     ('durable-claimed-without-landing', output_store,
-     '        self.spill.as_ref().is_some_and(|spill| {\n'
-     '            *spill.tail.borrow() == Some(true)\n'
-     '                && fs::metadata(&spill.path).is_ok_and(|metadata| metadata.len() == self.total)\n'
-     '        })',
+     '        self.spill.as_ref().is_some_and(|spill| {\n            *spill.tail.borrow() == Some(true)\n                && spill.native_link_check.as_ref().is_none_or(|check| check())\n                && spill\n                    .native_file\n                    .as_ref()\n                    .map_or_else(|| fs::metadata(&spill.path), |file| file.metadata())\n                    .is_ok_and(|metadata| {\n                        if spill.allow_prefix {\n                            metadata.len() >= self.total\n                        } else {\n                            metadata.len() == self.total\n                        }\n                    })\n        })',
      '        true',
      'background_persist',
      'spill_write_failure_keeps_snapshot_without_durable_claims',
@@ -211,14 +173,8 @@ mutations = [
     # #1233 fix-r1 (P0-1): appends stop advancing the sequence, so a stale
     # append persist ties with the newer one and can overwrite it.
     ('persist-order-append-seq', source,
-     '        state.output.append(chunk);\n'
-     '        state.task.output_bytes = state.output.total;\n'
-     '        state.persist_seq += 1;\n'
-     '        state.persist_seq',
-     '        state.output.append(chunk);\n'
-     '        state.task.output_bytes = state.output.total;\n'
-     '        let _ = state.persist_seq;\n'
-     '        0',
+     '        state.task.output_bytes = state.output.total;\n        state.persist_seq += 1;\n        (state.persist_seq, exceeded)',
+     '        state.task.output_bytes = state.output.total;\n        let _ = state.persist_seq;\n        (0, exceeded)',
      'lib',
      'runtime::background::persist_order_tests::stale_append_persist_cannot_overwrite_a_newer_append',
      '#1233 a superseded append persist cannot overwrite a newer append'),
@@ -234,20 +190,8 @@ mutations = [
     # #1233 fix-r1 (P1-2): each corruption defect is accepted instead of
     # failing the store constructor closed.
     ('corrupt-bad-json-soft', snapshot_source,
-     '    let snapshot = deserialize_snapshot_file(&text).map_err(|e| {\n'
-     '        io::Error::new(\n'
-     '            ErrorKind::InvalidData,\n'
-     '            format!(\n'
-     '                "Background task snapshot {} is not valid JSON; recovery is required: {}",\n'
-     '                file_path.display(),\n'
-     '                e\n'
-     '            ),\n'
-     '        )\n'
-     '    })?;',
-     '    let snapshot = match deserialize_snapshot_file(&text) {\n'
-     '        Ok(snapshot) => snapshot,\n'
-     '        Err(_) => return Ok(Vec::new()),\n'
-     '    };',
+     '    let snapshot = deserialize_snapshot_file(text).map_err(|e| {\n        io::Error::new(\n            ErrorKind::InvalidData,\n            format!(\n                "Background task snapshot {} is not valid JSON; recovery is required: {}",\n                file_path.display(),\n                e\n            ),\n        )\n    })?;',
+     '    let snapshot = match deserialize_snapshot_file(text) {\n        Ok(snapshot) => snapshot,\n        Err(_) => return Ok(Vec::new()),\n    };',
      'background_persist',
      'corrupted_snapshot_file_fails_closed',
      '#1233 corrupt-bad-json must fail the store constructor'),

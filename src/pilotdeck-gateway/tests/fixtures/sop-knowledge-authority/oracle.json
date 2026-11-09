@@ -1,0 +1,249 @@
+{
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "context": {
+    "sessionKey": "s",
+    "projectKey": "/p",
+    "expectedRevision": 3,
+    "requestId": "req"
+  },
+  "cases": [
+    {
+      "name": "valid",
+      "value": {
+        "context": {
+          "sessionKey": "s",
+          "projectKey": "/p",
+          "expectedRevision": 3,
+          "requestId": "req"
+        },
+        "sopId": "a",
+        "sopVersion": "1",
+        "nodeId": "n",
+        "snapshotId": "snap",
+        "registryGeneration": 1,
+        "optionalCapabilities": [
+          {
+            "operation": "knowledge.search/v1",
+            "resourceType": "knowledge_base",
+            "resourceId": "r",
+            "required": false,
+            "providerModuleId": "knowledge.local",
+            "providerVersion": "1",
+            "selectionMode": "current"
+          }
+        ]
+      },
+      "result": "ok"
+    },
+    {
+      "name": "extra-context",
+      "value": {
+        "context": {
+          "sessionKey": "s",
+          "projectKey": "/p",
+          "expectedRevision": 3,
+          "requestId": "req",
+          "extra": true
+        },
+        "sopId": "a",
+        "sopVersion": "1",
+        "nodeId": "n",
+        "snapshotId": "snap",
+        "registryGeneration": 1,
+        "optionalCapabilities": [
+          {
+            "operation": "knowledge.search/v1",
+            "resourceType": "knowledge_base",
+            "resourceId": "r",
+            "required": false,
+            "providerModuleId": "knowledge.local",
+            "providerVersion": "1",
+            "selectionMode": "current"
+          }
+        ]
+      },
+      "result": "SOP_AUTHORITY_RESPONSE_INVALID"
+    },
+    {
+      "name": "wrong-session",
+      "value": {
+        "context": {
+          "sessionKey": "other",
+          "projectKey": "/p",
+          "expectedRevision": 3,
+          "requestId": "req"
+        },
+        "sopId": "a",
+        "sopVersion": "1",
+        "nodeId": "n",
+        "snapshotId": "snap",
+        "registryGeneration": 1,
+        "optionalCapabilities": [
+          {
+            "operation": "knowledge.search/v1",
+            "resourceType": "knowledge_base",
+            "resourceId": "r",
+            "required": false,
+            "providerModuleId": "knowledge.local",
+            "providerVersion": "1",
+            "selectionMode": "current"
+          }
+        ]
+      },
+      "result": "SOP_AUTHORITY_RESPONSE_INVALID"
+    },
+    {
+      "name": "empty-id",
+      "value": {
+        "context": {
+          "sessionKey": "s",
+          "projectKey": "/p",
+          "expectedRevision": 3,
+          "requestId": "req"
+        },
+        "sopId": "a",
+        "sopVersion": "1",
+        "nodeId": "n",
+        "snapshotId": "  ",
+        "registryGeneration": 1,
+        "optionalCapabilities": [
+          {
+            "operation": "knowledge.search/v1",
+            "resourceType": "knowledge_base",
+            "resourceId": "r",
+            "required": false,
+            "providerModuleId": "knowledge.local",
+            "providerVersion": "1",
+            "selectionMode": "current"
+          }
+        ]
+      },
+      "result": "SOP_AUTHORITY_RESPONSE_INVALID"
+    },
+    {
+      "name": "negative-generation",
+      "value": {
+        "context": {
+          "sessionKey": "s",
+          "projectKey": "/p",
+          "expectedRevision": 3,
+          "requestId": "req"
+        },
+        "sopId": "a",
+        "sopVersion": "1",
+        "nodeId": "n",
+        "snapshotId": "snap",
+        "registryGeneration": -1,
+        "optionalCapabilities": [
+          {
+            "operation": "knowledge.search/v1",
+            "resourceType": "knowledge_base",
+            "resourceId": "r",
+            "required": false,
+            "providerModuleId": "knowledge.local",
+            "providerVersion": "1",
+            "selectionMode": "current"
+          }
+        ]
+      },
+      "result": "SOP_AUTHORITY_RESPONSE_INVALID"
+    },
+    {
+      "name": "empty-capabilities",
+      "value": {
+        "context": {
+          "sessionKey": "s",
+          "projectKey": "/p",
+          "expectedRevision": 3,
+          "requestId": "req"
+        },
+        "sopId": "a",
+        "sopVersion": "1",
+        "nodeId": "n",
+        "snapshotId": "snap",
+        "registryGeneration": 1,
+        "optionalCapabilities": []
+      },
+      "result": "ok"
+    },
+    {
+      "name": "required-true",
+      "value": {
+        "context": {
+          "sessionKey": "s",
+          "projectKey": "/p",
+          "expectedRevision": 3,
+          "requestId": "req"
+        },
+        "sopId": "a",
+        "sopVersion": "1",
+        "nodeId": "n",
+        "snapshotId": "snap",
+        "registryGeneration": 1,
+        "optionalCapabilities": [
+          {
+            "operation": "knowledge.search/v1",
+            "resourceType": "knowledge_base",
+            "resourceId": "r",
+            "required": true,
+            "providerModuleId": "knowledge.local",
+            "providerVersion": "1",
+            "selectionMode": "current"
+          }
+        ]
+      },
+      "result": "SOP_AUTHORITY_RESPONSE_INVALID"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "query",
+      "value": {
+        "query": " hi "
+      },
+      "result": "ok"
+    },
+    {
+      "name": "empty",
+      "value": {
+        "query": "  "
+      },
+      "result": "SOP_AUTHORITY_INPUT_INVALID"
+    },
+    {
+      "name": "extra",
+      "value": {
+        "query": "x",
+        "extra": true
+      },
+      "result": "SOP_AUTHORITY_INPUT_INVALID"
+    },
+    {
+      "name": "limit12",
+      "value": {
+        "query": "x",
+        "maxChunks": 12
+      },
+      "result": "ok"
+    },
+    {
+      "name": "limit13",
+      "value": {
+        "query": "x",
+        "maxChunks": 13
+      },
+      "result": "SOP_AUTHORITY_INPUT_INVALID"
+    },
+    {
+      "name": "idblank",
+      "value": {
+        "query": "x",
+        "documentIds": [
+          " "
+        ]
+      },
+      "result": "SOP_AUTHORITY_INPUT_INVALID"
+    }
+  ]
+}

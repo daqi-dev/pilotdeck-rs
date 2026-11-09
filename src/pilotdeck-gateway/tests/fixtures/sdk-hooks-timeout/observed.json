@@ -1,0 +1,44 @@
+{
+  "node": "v22.22.0",
+  "elapsedMs": 261.200833,
+  "calls": [
+    {
+      "url": "http://127.0.0.1:1/hook?old=keep&event=PreToolUse&matcher=0",
+      "method": "POST",
+      "headers": {
+        "content-type": "application/json",
+        "X-Fixture": "yes"
+      },
+      "body": "{\"sessionId\":\"s\",\"transcriptPath\":\"\",\"cwd\":\"/fixture\",\"hookEventName\":\"PreToolUse\",\"toolName\":\"write_file\",\"toolInput\":{\"file_path\":\"out\"},\"toolUseId\":\"call\"}"
+    }
+  ],
+  "result": {
+    "effects": [
+      {
+        "type": "block",
+        "reason": "SDK_BLOCK"
+      }
+    ],
+    "events": [
+      {
+        "type": "started",
+        "sessionId": "s",
+        "hookName": "http",
+        "hookEvent": "PreToolUse"
+      },
+      {
+        "type": "response",
+        "sessionId": "s",
+        "hookName": "http",
+        "hookEvent": "PreToolUse",
+        "stdout": "{\"decision\":\"block\",\"reason\":\"SDK_BLOCK\"}",
+        "stderr": "",
+        "exitCode": 0,
+        "outcome": "success"
+      }
+    ],
+    "blockingErrors": [],
+    "nonBlockingErrors": [],
+    "pendingAsyncHooks": []
+  }
+}

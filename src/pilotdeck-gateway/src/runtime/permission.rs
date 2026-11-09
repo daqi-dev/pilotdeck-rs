@@ -57,9 +57,21 @@ pub fn managed_default_mode(config: &JsObject) -> Option<JsString> {
 /// #1864 compose priority: the managed default, else the stored session
 /// selection, else "default" (`SessionAgentConfigBundle.compose`).
 pub fn effective_permission_mode(config: &JsObject, stored: Option<JsString>) -> JsString {
-    managed_default_mode(config)
+    configured_permission_mode(config)
         .or(stored)
         .unwrap_or_else(|| JsString::from(DEFAULT_PERMISSION_MODE))
+}
+
+/// Shared by turn projection and the actual tool permission context.
+/// None preserves the caller's current session selection.
+pub(crate) fn configured_permission_mode(config: &JsObject) -> Option<JsString> {
+    managed_default_mode(config).or_else(|| {
+        config
+            .get("nativeSdkPermissionMode")
+            .and_then(JsValue::as_string)
+            .filter(|mode| mode.equals_str("dontAsk"))
+            .map(|_| DEFAULT_PERMISSION_MODE.into())
+    })
 }
 
 /// `PermissionContext`: `policyCanPrompt` only ever carries `false` in the

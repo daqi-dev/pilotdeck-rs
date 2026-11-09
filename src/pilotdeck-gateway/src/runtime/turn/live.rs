@@ -11,7 +11,7 @@
 //! non-final loop turn_completed. A received final cannot hide queued loop
 //! events dropped during bounded cancellation; both observations must agree.
 
-use super::runner::{Recording, RecordingAction, TurnInput, TurnRunner};
+use super::runner::{AgentInput, Recording, RecordingAction, TurnInput, TurnRunner};
 use crate::{
     host::{
         Cancellation, EventGuard, ExecuteRequest, ExecuteResult, HostClient, HostError,
@@ -31,6 +31,9 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Duration, Instant, sleep_until};
 
+#[path = "sop_live.rs"]
+mod sop;
+
 type StatusReceipt = Option<oneshot::Sender<()>>;
 type ForwardedEvent = (JsValue, bool, StatusReceipt);
 
@@ -47,11 +50,13 @@ type PreparedHost = (
     Option<crate::runtime::project::interaction_events::TurnEvents>,
     Option<super::runner::PromptHooks>,
     Option<super::live_session::SessionLifecycle>,
+    Option<sop::Prepared>,
 );
 type TurnHostFactory = dyn Fn(
         ExecutionIdentity,
         Arc<Recorder>,
         crate::runtime::hooks::Cancellation,
+        Option<super::interaction::TurnInteractionAuthority>,
     ) -> HostFuture<PreparedHost>
     + Send
     + Sync;
@@ -75,6 +80,7 @@ fn null_payload_field(event: JsValue, field: &'static str) -> JsValue {
 /// observer and plan/todo ports retain per-turn state. InteractionTurn::bind
 /// only replaces the interaction handlers; it cannot sanitize these ports.
 pub struct InteractionHost {
+    pub(crate) node_template: Option<Arc<super::sop_executor::NodeTemplate>>,
     pub client: HostFuture<HostClient>,
     pub lease: crate::runtime::project::RuntimeLease,
     pub router: crate::host::modules::ModuleRouter,
@@ -85,12 +91,16 @@ pub struct InteractionHost {
 /// HostClient closes its process and disposes its handler after each execution.
 pub struct LiveSessionAdapter {
     host_factory: Arc<TurnHostFactory>,
+    loop_controller: Option<Arc<dyn super::loop_control::HostLoopController>>,
     close_timeout: std::time::Duration,
     agent_config: Option<JsObject>,
+    /// Shared TCP sidecars retain request identities across connections.
+    unique_tcp_request_id: bool,
     /// #1864 (b): re-read on every run, like InProcessGateway.ts:1443's
     /// `livePermissionMode` — the stored permission-mode selection takes
     /// effect on the next turn without a session close.
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
+    input_admission: Option<Arc<crate::native_process::input_admission::InputAdmission>>,
     tail: Option<Arc<super::runner::tail::SessionTail>>,
     recorder: Arc<Recorder>,
     history: Arc<dyn Fn() -> Vec<JsValue> + Send + Sync>,
@@ -129,19 +139,38 @@ impl LiveSessionAdapter {
         Self {
             close_timeout: crate::host::Limits::default().close_timeout,
             agent_config: None,
+            unique_tcp_request_id: false,
             permission_mode_source: None,
+            input_admission: None,
+            loop_controller: None,
             tail: None,
             recorder,
             history: Arc::new(history),
-            host_factory: Arc::new(move |_, recorder, _| {
+            host_factory: Arc::new(move |_, recorder, _, _| {
                 let host = host_factory(recorder);
                 Box::pin(async move {
                     let (client, handler, lease) = host.await?;
-                    Ok((client, handler, lease, None, None, None, None))
+                    Ok((client, handler, lease, None, None, None, None, None))
                 })
             }),
             state: Arc::default(),
         }
+    }
+
+    pub(crate) fn with_loop_controller(
+        mut self,
+        controller: Arc<dyn super::loop_control::HostLoopController>,
+    ) -> Self {
+        self.loop_controller = Some(controller);
+        self
+    }
+
+    pub(crate) fn with_input_admission(
+        mut self,
+        admission: Arc<crate::native_process::input_admission::InputAdmission>,
+    ) -> Self {
+        self.input_admission = Some(admission);
+        self
     }
 
     /// Install session-owned tail dependencies. With no installation, auxiliary
@@ -154,6 +183,13 @@ impl LiveSessionAdapter {
     /// Session-owned serialized AgentRuntimeConfig for the real sidecar.
     pub fn with_agent_config(mut self, config: JsObject) -> Self {
         self.agent_config = Some(config);
+        self
+    }
+
+    /// A listener shared across TCP connections requires a fresh implicit
+    /// request identity per logical execution. Explicit IDs are untouched.
+    pub(super) fn with_unique_tcp_request_id(mut self, enabled: bool) -> Self {
+        self.unique_tcp_request_id = enabled;
         self
     }
 
@@ -229,15 +265,43 @@ impl LiveSessionAdapter {
         + Sync
         + 'static,
     ) -> Self {
+        Self::with_interaction_authority(
+            recorder,
+            history,
+            move |identity, recorder, signal, _authority| factory(identity, recorder, signal),
+        )
+    }
+
+    pub fn with_interaction_authority(
+        recorder: Arc<Recorder>,
+        history: impl Fn() -> Vec<JsValue> + Send + Sync + 'static,
+        factory: impl Fn(
+            ExecutionIdentity,
+            Arc<Recorder>,
+            crate::runtime::hooks::Cancellation,
+            Option<super::interaction::TurnInteractionAuthority>,
+        ) -> HostFuture<InteractionHost>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
         Self {
             close_timeout: crate::host::Limits::default().close_timeout,
             agent_config: None,
+            unique_tcp_request_id: false,
             permission_mode_source: None,
+            input_admission: None,
+            loop_controller: None,
             tail: None,
             recorder,
             history: Arc::new(history),
-            host_factory: Arc::new(move |identity, recorder, signal| {
-                let host = factory(identity.clone(), recorder.clone(), signal.clone());
+            host_factory: Arc::new(move |identity, recorder, signal, authority| {
+                let host = factory(
+                    identity.clone(),
+                    recorder.clone(),
+                    signal.clone(),
+                    authority,
+                );
                 Box::pin(async move {
                     let mut host = host.await?;
                     let cwd = host.input.permission.context.cwd.clone();
@@ -268,6 +332,10 @@ impl LiveSessionAdapter {
                     if let Some(lifecycle) = &mut lifecycle {
                         lifecycle.retain_turn(handler.clone());
                     }
+                    let sop = host.node_template.take().map(|template| sop::Prepared {
+                        template,
+                        parent: handler.clone(),
+                    });
                     let manifest = handler.manifest().clone();
                     let events = if crate::mutants::on("notices-wiring") {
                         None
@@ -291,6 +359,7 @@ impl LiveSessionAdapter {
                         events,
                         prompt_hooks,
                         lifecycle,
+                        sop,
                     ))
                 })
             }),
@@ -313,238 +382,25 @@ impl LiveSession for LiveSessionAdapter {
     }
 
     fn submit(&self, input: JsValue, options: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
-        // Invalid requests must not occupy the session's active turn slot.
-        let (mut request, mut input) = parse_execute_request(&input, &options, vec![])?;
-        if let Some(config) = &self.agent_config {
-            let mut config = config.clone();
-            // #1864 (b): the stored permission-mode selection is re-read on
-            // every run (InProcessGateway.ts:1443). A non-empty
-            // managedPermissions.defaultMode still wins — compose priority
-            // (shared: runtime::permission::managed_default_mode).
-            if let Some(source) = &self.permission_mode_source
-                && crate::runtime::permission::managed_default_mode(&config).is_none()
-                && let Some(mode) = source()
-            {
-                config.insert("permissionMode".into(), JsValue::String(mode));
-            }
-            request
-                .payload
-                .insert("agent".into(), JsValue::Object(config));
-        }
-        let cancellation = Cancellation::default();
-        let signal = crate::runtime::hooks::Cancellation::new();
-        {
-            let mut state = self.state.lock().unwrap();
-            // #996: disposed-admission / active-admission drop the admission
-            // refusals (live-recording/schemata.py). Off — the original guards.
-            if state.disposed && !crate::mutants::on("disposed-admission") {
-                return Err(RuntimeError::new("Agent session disposed."));
-            }
-            if state.active.is_some() {
-                // #996: active-admission drops the refusal
-                // (live-recording/schemata.py). Off — the original refusal.
-                if !crate::mutants::on("active-admission") {
-                    return Err(RuntimeError::new(
-                        "Agent session already has an active turn.",
-                    ));
-                }
-            }
-            state.active = Some(cancellation.clone());
-            state.signal = signal.clone();
-            state.status = super::live_session::SessionStatus::Running;
-            state.current_turn_id = Some(request.identity.turn_id.clone());
-            state.reload_execution = Arc::default();
-        }
-        let active = Arc::new(ActiveTurn(self.state.clone()));
-        let reload_execution = self.reload_execution_started();
-        // Read the projection only after admission owns the slot. Rejected
-        // submissions must not observe history or race its current owner.
-        input.history = (self.history)();
-        let reload_source = self.state.lock().unwrap().reload.clone();
-        if let Some(source) = reload_source {
-            match source.projection.snapshot() {
-                Ok(snapshot) => input.history = snapshot.messages,
-                Err(error) => {
-                    let mut state = self.state.lock().unwrap();
-                    state.status = super::live_session::SessionStatus::Idle;
-                    state.current_turn_id = None;
-                    return Err(error);
-                }
-            }
-        }
-        request
-            .payload
-            .insert("messages".into(), JsValue::Array(input.loop_messages()));
-        let owner = active.clone();
-        let (recording_sender, recording_ready) = oneshot::channel();
-        let (execute_ready, execute_wait) = oneshot::channel();
-        let host_factory = self.host_factory.clone();
-        let close_timeout = self.close_timeout;
-        let recorder = self.recorder.clone();
-        let identity = request.identity.clone();
-        let tail = self.tail.clone();
-        let tail_options = options.clone();
-        // Shared between the host-side validation hook (every received event)
-        // and finish()'s second, contradiction-only check; see StreamHandler.
-        let integrity = Arc::new(StreamIntegrity::new());
-        let hook_integrity = integrity.clone();
-        // #1220: one coordinate allocator per turn, shared by the wire/host
-        // event projection and the terminal block positioning.
-        let timeline = Arc::new(Mutex::new(super::timeline::TurnTimeline::new(
-            request.identity.turn_id.clone(),
-        )));
-        let stream_timeline = timeline.clone();
-        // Keep at most one delivered event ahead of the submit consumer.
-        let (events, receiver) = mpsc::channel(1);
-        let (session_sender, session_ready) = oneshot::channel();
-        let session_id = identity.session_id.clone();
-        let session_owner = active.clone();
-        let turn = LiveTurnStream {
-            callback_cancel: Some(cancellation.clone()),
-            execution: Some(Box::pin(async move {
-                let (client, inner, lease, manifest, interaction_events, prompt_hooks, lifecycle) = tokio::select! {
-                    biased;
-                    _ = cancellation.cancelled(), if !crate::mutants::on("gates-factory-ready-priority") => {
-                        return Ok(ExecuteResult::Aborted { terminal: None });
-                    }
-                    // select constructs every branch before polling; keep the
-                    // factory call lazy so a pre-cancel never creates resources.
-                    host = async { host_factory(request.identity.clone(), recorder.clone(), signal).await } => host?,
-                };
-                let session_steer = lifecycle
-                    .as_ref()
-                    .and_then(super::live_session::SessionLifecycle::steer);
-                let _ = session_sender.send(lifecycle);
-                let mut pending_host = Some(crate::host::TurnScope::new(
-                    inner.clone(),
-                    if crate::mutants::on("gates-prepared-close-timeout") {
-                        std::time::Duration::from_secs(5)
-                    } else {
-                        close_timeout
-                    },
-                ));
-                let mut runner = TurnRunner::new(
-                    recorder,
-                    lease,
-                    request.identity.session_id.clone(),
-                    request.identity.turn_id.clone(),
-                )
-                .with_session_steer(session_steer)
-                .with_interaction_events(interaction_events)
-                .with_prompt_hooks(if crate::mutants::on("prompt-wiring") {
-                    None
-                } else {
-                    prompt_hooks
-                });
-                if let Some(tail) = tail {
-                    if crate::mutants::on("tail-live-tail-wiring") {
-                        let _ = (tail, cancellation.clone(), tail_options);
-                    } else {
-                        runner = runner.with_tail(tail, cancellation.clone(), tail_options);
-                    }
-                }
-                // Transfer the actual driver before any host event can arrive.
-                if crate::mutants::on("gates-omit-prepared-cleanup")
-                    && let Some(pending) = pending_host.take()
-                {
-                    pending.handoff();
-                }
-                // #996: real-slot drops the active-slot owner before the
-                // recording takes it (live-recording/schemata.py). Off — the
-                // real owner.
-                let slot: Arc<dyn Send + Sync> = if crate::mutants::on("real-slot") {
-                    drop(owner);
-                    Arc::new(())
-                } else {
-                    owner
-                };
-                let _ = recording_sender.send(Recording::new(runner, slot));
-                if let Some(manifest) = manifest {
-                    for (key, value) in manifest.entries() {
-                        request.payload.insert(key.clone(), value.clone());
-                    }
-                }
-                let handler = Arc::new(StreamHandler {
-                    inner,
-                    events,
-                    integrity: hook_integrity,
-                    forwarding: Arc::new(Mutex::new(Forwarding {
-                        timeline: if crate::mutants::on("timeline-forwarding-unwired") {
-                            None
-                        } else {
-                            Some(timeline.clone())
-                        },
-                        ..Default::default()
-                    })),
-                    callback_cancel: Some(cancellation.clone()),
-                });
-                let client_integrity = handler.integrity.clone();
-                let client: HostFuture<HostClient> = Box::pin(async move {
-                    let client = client.await?;
-                    *client_integrity.module_id.lock().unwrap() =
-                        Some(client.binding().module_id.clone());
-                    reload_execution.store(true, std::sync::atomic::Ordering::SeqCst);
-                    Ok(client)
-                });
-                // No connection or execute can start until both durable gates commit.
-                let client = if crate::mutants::on("gates-eager-connect") {
-                    let client = client.await;
-                    let client: HostFuture<HostClient> = Box::pin(async move { client });
-                    client
-                } else {
-                    client
-                };
-                let Ok(messages) = execute_wait.await else {
-                    return Ok(ExecuteResult::Aborted { terminal: None });
-                };
-                request
-                    .payload
-                    .insert("messages".into(), JsValue::Array(messages));
-                let client = tokio::select! {
-                    biased;
-                    _ = cancellation.cancelled() => return Ok(ExecuteResult::Aborted { terminal: None }),
-                    client = client => client?,
-                };
-                if let Some(pending) = pending_host.take() {
-                    pending.handoff();
-                }
-                let identity = request.identity.clone();
-                handler
-                    .with_pump(
-                        client.execute_cancellable(request, handler.clone(), cancellation),
-                        identity,
-                    )
-                    .await
-            })),
-            result: None,
-            events: receiver,
-            identity,
-            input,
-            integrity,
-            delivered: StreamIntegrity::new(),
-            active: Some(active),
-            recording_ready,
-            recording: None,
-            pending_event: None,
-            pending_durable: None,
-            accepted: false,
-            preflight: 0,
-            execute_ready: Some(execute_ready),
-            execute_messages: None,
-            recorded: std::collections::VecDeque::new(),
-            timeline: if crate::mutants::on("timeline-terminal-unwired") {
-                None
-            } else {
-                Some(stream_timeline)
-            },
-        };
-        Ok(Box::new(super::live_session::SessionStream::new(
-            turn,
-            session_ready,
-            session_id,
-            self.state.clone(),
-            session_owner,
-        )))
+        self.submit_inner(input, options, None)
+    }
+    fn submit_with_authority(
+        &self,
+        input: JsValue,
+        options: JsValue,
+        authority: super::interaction::TurnInteractionAuthority,
+    ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        self.submit_inner(input, options, Some(authority))
+    }
+
+    fn submit_queued(
+        &self,
+        input: JsValue,
+        options: JsValue,
+        authority: Option<super::interaction::TurnInteractionAuthority>,
+        item: JsString,
+    ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        self.submit_inner_claim(input, options, authority, Some(item))
     }
 
     fn snapshot(&self) -> JsValue {
@@ -643,6 +499,8 @@ pub(super) struct LiveTurnStream {
     events: mpsc::Receiver<ForwardedEvent>,
     identity: ExecutionIdentity,
     input: TurnInput,
+    prompt_input: Option<AgentInput>,
+    should_call_model: bool,
     // The instance the host-side receive hook observes into. finish() also
     // consults it so a contradiction received but dropped before delivery (for
     // example turn_failed followed by success) still fails the terminal.
@@ -658,6 +516,7 @@ pub(super) struct LiveTurnStream {
     pending_event: Option<(JsValue, bool, StatusReceipt)>,
     pending_durable: Option<(JsValue, StatusReceipt)>,
     callback_cancel: Option<Cancellation>,
+    host_loop: bool,
     accepted: bool,
     preflight: u8,
     execute_ready: Option<oneshot::Sender<Vec<JsValue>>>,
@@ -745,7 +604,9 @@ impl LiveTurn for LiveTurnStream {
                             (
                                 "user_prompt_submitted",
                                 RecordingAction::SubmitPrompt(
-                                    self.input.input.clone(),
+                                    self.prompt_input
+                                        .clone()
+                                        .unwrap_or_else(|| self.input.input.clone()),
                                     self.callback_cancel.clone().expect("host cancellation"),
                                 ),
                             )
@@ -774,6 +635,23 @@ impl LiveTurn for LiveTurnStream {
                             .await;
                     }
                     runner.begin_tail_work();
+                    if !self.should_call_model {
+                        let error = crate::metadata::object([
+                            ("code", "agent_unsupported_feature".into()),
+                            (
+                                "message",
+                                "Input was accepted but model execution was not requested.".into(),
+                            ),
+                        ]);
+                        return self
+                            .begin_recording(
+                                RecordingAction::Fail(error),
+                                JsValue::Null,
+                                true,
+                                None,
+                            )
+                            .await;
+                    }
                     let messages = if crate::mutants::on("prompt-execute-context") {
                         self.input.loop_messages()
                     } else {
@@ -813,7 +691,21 @@ impl LiveTurn for LiveTurnStream {
                     }
                     continue;
                 }
-                return match self.result.take() {
+                let result = self.result.take();
+                if self.accepted
+                    && let Some(Err(error)) = &result
+                    && let Some(detail) = &error.native_terminal_error
+                {
+                    // The host already validated stream binding, identity,
+                    // sequence and both copies of this Module2 native failure.
+                    // Keep the original UTF16 fields and the recorder's real
+                    // current state; never invent an empty AgentLoop snapshot.
+                    let failure = JsValue::Object((**detail).clone());
+                    return self
+                        .begin_recording(RecordingAction::Fail(failure), JsValue::Null, true, None)
+                        .await;
+                }
+                return match result {
                     Some(result) => match self.finish(result) {
                         Ok(Some(event)) => self.record_event(event, true, false, None).await,
                         Err(error)
@@ -1133,6 +1025,23 @@ impl LiveTurnStream {
         result: Result<ExecuteResult, HostError>,
     ) -> Result<Option<JsValue>, RuntimeError> {
         match result {
+            Ok(ExecuteResult::Terminal(terminal)) if self.host_loop => {
+                // Only the host-installed controller can use this path. Every
+                // node final was independently checked before controller use;
+                // recovery-only delivery legitimately has no sidecar stream.
+                self.integrity.module_id.lock().unwrap().take();
+                let result = terminal.get("payload").and_then(|p| p.get("result"));
+                if result.and_then(|r| r.get("sessionId"))
+                    != Some(&JsValue::String(self.identity.session_id.clone()))
+                    || result.and_then(|r| r.get("turnId"))
+                        != Some(&JsValue::String(self.identity.turn_id.clone()))
+                {
+                    return Err(RuntimeError::new("SOP aggregate result identity mismatch."));
+                }
+                Ok(Some(
+                    self.completed_event(terminal.get("payload").unwrap(), true)?,
+                ))
+            }
             Ok(ExecuteResult::Terminal(terminal)) => {
                 let outcome = terminal
                     .get("payload")
@@ -2164,6 +2073,14 @@ fn parse_execute_request(
     ))
 }
 
+fn assign_tcp_request_id(request: &mut ExecuteRequest, options: &JsValue, enabled: bool) {
+    if enabled && extract_string(options, "requestId").is_err() {
+        // Allocated once, before the request and identity are cloned into host
+        // ports and recovery. Reconnect/resume keep this same value.
+        request.identity.request_id = uuid::Uuid::new_v4().to_string().as_str().into();
+    }
+}
+
 fn extract_string(obj: &JsValue, key: &str) -> Result<JsString, RuntimeError> {
     match obj {
         JsValue::Object(map) => map
@@ -2226,6 +2143,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn tcp_implicit_request_identity_is_unique_and_explicit_identity_is_preserved() {
+        let input = parse_json(r#"{"type":"text","text":"hello"}"#).unwrap();
+        let options = parse_json(r#"{"sessionId":"same","turnId":"turn"}"#).unwrap();
+        let mut first = parse_execute_request(&input, &options, vec![]).unwrap().0;
+        let mut second = parse_execute_request(&input, &options, vec![]).unwrap().0;
+        assign_tcp_request_id(&mut first, &options, true);
+        assign_tcp_request_id(&mut second, &options, true);
+        assert_ne!(first.identity.request_id, second.identity.request_id);
+        assert_ne!(first.identity.request_id, JsString::from("default"));
+        // A recovery clone is the same operation, not a second allocation.
+        assert_eq!(first.clone().identity.request_id, first.identity.request_id);
+        let explicit =
+            parse_json(r#"{"sessionId":"other","turnId":"turn","requestId":"default"}"#).unwrap();
+        let mut supplied = parse_execute_request(&input, &explicit, vec![]).unwrap().0;
+        assign_tcp_request_id(&mut supplied, &explicit, true);
+        assert_eq!(supplied.identity.request_id, JsString::from("default"));
+        // The legacy parser treats nonstrings as missing, but retains every
+        // explicit string. Reusing an explicit identity is governed by the
+        // sidecar replay contract, not silently converted into a new request.
+        let empty = parse_json(r#"{"sessionId":"same","turnId":"turn","requestId":""}"#).unwrap();
+        let mut supplied_empty = parse_execute_request(&input, &empty, vec![]).unwrap().0;
+        assign_tcp_request_id(&mut supplied_empty, &empty, true);
+        assert_eq!(supplied_empty.identity.request_id, JsString::from(""));
+        for raw in [
+            r#"{"sessionId":"same","turnId":"turn","requestId":42}"#,
+            r#"{"sessionId":"same","turnId":"turn","requestId":null}"#,
+        ] {
+            let implicit = parse_json(raw).unwrap();
+            let mut request = parse_execute_request(&input, &implicit, vec![]).unwrap().0;
+            assign_tcp_request_id(&mut request, &implicit, true);
+            assert!(!request.identity.request_id.is_empty());
+            assert_ne!(request.identity.request_id, JsString::from("default"));
+        }
+        let mut stdio = parse_execute_request(&input, &options, vec![]).unwrap().0;
+        assign_tcp_request_id(&mut stdio, &options, false);
+        assert_eq!(stdio.identity.request_id, JsString::from("default"));
+    }
+
+    #[test]
     fn terminal_message_boundaries_match_ts() {
         let oracle = crate::test_baseline::oracle(include_str!(
             "../../../tests/fixtures/live-e2e/terminal-boundaries/oracle.json"
@@ -2283,6 +2239,8 @@ mod tests {
             events: mpsc::channel(1).1,
             identity: request.identity,
             input,
+            prompt_input: None,
+            should_call_model: true,
             integrity,
             delivered: StreamIntegrity::new(),
             active: None,
@@ -2291,6 +2249,7 @@ mod tests {
             pending_event: None,
             pending_durable: None,
             callback_cancel: None,
+            host_loop: false,
             accepted: false,
             preflight: 0,
             execute_ready: None,
@@ -2742,5 +2701,345 @@ impl SessionState {
     }
     pub(super) fn signal(&self) -> crate::runtime::hooks::Cancellation {
         self.signal.clone()
+    }
+}
+
+impl LiveSessionAdapter {
+    fn submit_inner(
+        &self,
+        input: JsValue,
+        options: JsValue,
+        authority: Option<super::interaction::TurnInteractionAuthority>,
+    ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        self.submit_inner_claim(input, options, authority, None)
+    }
+    fn submit_inner_claim(
+        &self,
+        input: JsValue,
+        options: JsValue,
+        authority: Option<super::interaction::TurnInteractionAuthority>,
+        queued_claim: Option<JsString>,
+    ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        // Invalid requests must not occupy the session's active turn slot.
+        let is_meta = input.get("isMeta").is_some_and(super::submit::truthy);
+        let (mut request, mut input) = parse_execute_request(&input, &options, vec![])?;
+        assign_tcp_request_id(&mut request, &options, self.unique_tcp_request_id);
+        if let Some(config) = &self.agent_config {
+            let mut config = config.clone();
+            if config.get("isSubagent") == Some(&JsValue::Bool(true))
+                && let Some(initial) = config.get("initialPrompt").and_then(JsValue::as_string)
+                && let AgentInput::Text(directive) = &input.input
+            {
+                let initial = crate::runtime::memory::js_trim_units(initial.units());
+                if !initial.is_empty() {
+                    input.input = AgentInput::Fork {
+                        initial: JsString::from_utf16(initial.to_vec()),
+                        directive: directive.clone(),
+                    };
+                }
+            }
+            // #1864 (b): the stored permission-mode selection is re-read on
+            // every run (InProcessGateway.ts:1443). A non-empty
+            // managedPermissions.defaultMode still wins — compose priority
+            // (shared: runtime::permission::managed_default_mode).
+            if let Some(source) = &self.permission_mode_source
+                && crate::runtime::permission::managed_default_mode(&config).is_none()
+                && let Some(mode) = source()
+            {
+                let mode =
+                    crate::runtime::permission::effective_permission_mode(&config, Some(mode));
+                config.insert("permissionMode".into(), JsValue::String(mode));
+            }
+            request
+                .payload
+                .insert("agent".into(), JsValue::Object(config));
+        }
+        let cancellation = Cancellation::default();
+        let signal = crate::runtime::hooks::Cancellation::new();
+        {
+            let mut state = self.state.lock().unwrap();
+            if state.disposed && !crate::mutants::on("disposed-admission") {
+                return Err(RuntimeError::new("Agent session disposed."));
+            }
+            if state.active.is_some() && !crate::mutants::on("active-admission") {
+                return Err(RuntimeError::new(
+                    "Agent session already has an active turn.",
+                ));
+            }
+            state.active = Some(cancellation.clone());
+            state.signal = signal.clone();
+            state.status = super::live_session::SessionStatus::Running;
+            state.current_turn_id = Some(request.identity.turn_id.clone());
+            state.reload_execution = Arc::default();
+        }
+        let active = Arc::new(ActiveTurn(self.state.clone()));
+        // Input admission is session-owned and cannot run for a rejected turn.
+        // Keep the original for UserPromptSubmit, including child directives.
+        let mut prompt_input = None;
+        let mut should_call_model = true;
+        if let Some(admission) = &self.input_admission {
+            prompt_input = Some(input.input.clone());
+            let (processed, should_call) = admission.process_input(&input.input, is_meta);
+            input.input = processed;
+            should_call_model = should_call;
+        }
+        let reload_execution = self.reload_execution_started();
+        // Read the projection only after admission owns the slot. Rejected
+        // submissions must not observe history or race its current owner.
+        input.history = (self.history)();
+        let reload_source = self.state.lock().unwrap().reload.clone();
+        if let Some(source) = reload_source {
+            match source.projection.snapshot() {
+                Ok(snapshot) => input.history = snapshot.messages,
+                Err(error) => {
+                    let mut state = self.state.lock().unwrap();
+                    state.status = super::live_session::SessionStatus::Idle;
+                    state.current_turn_id = None;
+                    return Err(error);
+                }
+            }
+        }
+        request
+            .payload
+            .insert("messages".into(), JsValue::Array(input.loop_messages()));
+        let owner = active.clone();
+        let (recording_sender, recording_ready) = oneshot::channel();
+        let (execute_ready, execute_wait) = oneshot::channel();
+        let host_factory = self.host_factory.clone();
+        let loop_controller = self.loop_controller.clone();
+        let host_loop = loop_controller.is_some();
+        let sop_input = input.input.clone();
+        let close_timeout = self.close_timeout;
+        let recorder = self.recorder.clone();
+        let identity = request.identity.clone();
+        let tail = self.tail.clone();
+        let tail_options = options.clone();
+        // Shared between the host-side validation hook (every received event)
+        // and finish()'s second, contradiction-only check; see StreamHandler.
+        let integrity = Arc::new(StreamIntegrity::new());
+        let hook_integrity = integrity.clone();
+        // #1220: one coordinate allocator per turn, shared by the wire/host
+        // event projection and the terminal block positioning.
+        let timeline = Arc::new(Mutex::new(super::timeline::TurnTimeline::new(
+            request.identity.turn_id.clone(),
+        )));
+        let stream_timeline = timeline.clone();
+        // Keep at most one delivered event ahead of the submit consumer.
+        let (events, receiver) = mpsc::channel(1);
+        let (session_sender, session_ready) = oneshot::channel();
+        let session_id = identity.session_id.clone();
+        let session_owner = active.clone();
+        let turn = LiveTurnStream {
+            callback_cancel: Some(cancellation.clone()),
+            execution: Some(Box::pin(async move {
+                let (
+                    client,
+                    inner,
+                    lease,
+                    manifest,
+                    interaction_events,
+                    prompt_hooks,
+                    lifecycle,
+                    sop,
+                ) = tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled(), if !crate::mutants::on("gates-factory-ready-priority") => {
+                        return Ok(ExecuteResult::Aborted { terminal: None });
+                    }
+                    // select constructs every branch before polling; keep the
+                    // factory call lazy so a pre-cancel never creates resources.
+                    host = async { host_factory(request.identity.clone(), recorder.clone(), signal, authority).await } => host?,
+                };
+                let session_steer = lifecycle
+                    .as_ref()
+                    .and_then(super::live_session::SessionLifecycle::steer);
+                let _ = session_sender.send(lifecycle);
+                let mut pending_host = Some(crate::host::TurnScope::new(
+                    inner.clone(),
+                    if crate::mutants::on("gates-prepared-close-timeout") {
+                        std::time::Duration::from_secs(5)
+                    } else {
+                        close_timeout
+                    },
+                ));
+                let mut runner = TurnRunner::new(
+                    recorder.clone(),
+                    lease.clone(),
+                    request.identity.session_id.clone(),
+                    request.identity.turn_id.clone(),
+                )
+                .with_inbox_item(queued_claim)
+                .with_subagent_descriptor(
+                    request
+                        .payload
+                        .get("agent")
+                        .and_then(|agent| agent.get("subagentDescriptor"))
+                        .and_then(JsValue::as_object)
+                        .cloned(),
+                )
+                .with_session_steer(session_steer)
+                .with_interaction_events(interaction_events)
+                .with_prompt_hooks(if crate::mutants::on("prompt-wiring") {
+                    None
+                } else {
+                    prompt_hooks
+                });
+                if let Some(tail) = tail {
+                    if crate::mutants::on("tail-live-tail-wiring") {
+                        let _ = (tail, cancellation.clone(), tail_options);
+                    } else {
+                        runner = runner.with_tail(tail, cancellation.clone(), tail_options);
+                    }
+                }
+                // Transfer the actual driver before any host event can arrive.
+                if crate::mutants::on("gates-omit-prepared-cleanup")
+                    && let Some(pending) = pending_host.take()
+                {
+                    pending.handoff();
+                }
+                let slot: Arc<dyn Send + Sync> = if crate::mutants::on("real-slot") {
+                    drop(owner);
+                    Arc::new(())
+                } else {
+                    owner
+                };
+                let _ = recording_sender.send(Recording::new(runner, slot));
+                if let Some(manifest) = manifest {
+                    for (key, value) in manifest.entries() {
+                        request.payload.insert(key.clone(), value.clone());
+                    }
+                }
+                let handler = Arc::new(StreamHandler {
+                    inner,
+                    events,
+                    integrity: hook_integrity,
+                    forwarding: Arc::new(Mutex::new(Forwarding {
+                        timeline: if crate::mutants::on("timeline-forwarding-unwired") {
+                            None
+                        } else {
+                            Some(timeline.clone())
+                        },
+                        ..Default::default()
+                    })),
+                    callback_cancel: Some(cancellation.clone()),
+                });
+                let client_integrity = handler.integrity.clone();
+                let client: HostFuture<HostClient> = Box::pin(async move {
+                    let client = client.await?;
+                    *client_integrity.module_id.lock().unwrap() =
+                        Some(client.binding().module_id.clone());
+                    reload_execution.store(true, std::sync::atomic::Ordering::SeqCst);
+                    Ok(client)
+                });
+                // No connection or execute can start until both durable gates commit.
+                let client = if crate::mutants::on("gates-eager-connect") {
+                    let client = client.await;
+                    let client: HostFuture<HostClient> = Box::pin(async move { client });
+                    client
+                } else {
+                    client
+                };
+                let Ok(messages) = execute_wait.await else {
+                    return Ok(ExecuteResult::Aborted { terminal: None });
+                };
+                request
+                    .payload
+                    .insert("messages".into(), JsValue::Array(messages));
+                if let Some(controller) = loop_controller {
+                    let prepared = sop.ok_or_else(|| {
+                        HostError::new(
+                            HostErrorKind::Session,
+                            "SOP host node executor is unavailable.",
+                        )
+                    })?;
+                    let executor = sop::Executor {
+                        node: tokio::sync::Mutex::new(None),
+                        prepared,
+                        stream: handler.clone(),
+                        recorder,
+                        lease,
+                        request: request.clone(),
+                        input: sop_input,
+                        signal: cancellation.clone(),
+                        close_timeout,
+                    };
+                    let identity = request.identity.clone();
+                    let visible_messages = match request.payload.get("messages") {
+                        Some(JsValue::Array(messages)) => messages.clone(),
+                        _ => Vec::new(),
+                    };
+                    let result = handler
+                        .with_pump(
+                            controller.run(
+                                super::loop_control::SopLoopInput {
+                                    request,
+                                    signal: cancellation,
+                                    visible_messages,
+                                },
+                                &executor,
+                            ),
+                            identity,
+                        )
+                        .await;
+                    let node_closed =
+                        super::loop_control::SopNodeExecutor::finish_node(&executor, None).await;
+                    let closed = handler.inner.dispose().await;
+                    let closed = node_closed.and(closed);
+                    if let Some(pending) = pending_host.take() {
+                        pending.handoff();
+                    }
+                    return match (result, closed) {
+                        (Err(error), _) | (_, Err(error)) => Err(error),
+                        (Ok(result), Ok(())) => Ok(result),
+                    };
+                }
+                let client = tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => return Ok(ExecuteResult::Aborted { terminal: None }),
+                    client = client => client?,
+                };
+                if let Some(pending) = pending_host.take() {
+                    pending.handoff();
+                }
+                let identity = request.identity.clone();
+                handler
+                    .with_pump(
+                        client.execute_cancellable(request, handler.clone(), cancellation),
+                        identity,
+                    )
+                    .await
+            })),
+            result: None,
+            events: receiver,
+            identity,
+            input,
+            prompt_input,
+            should_call_model,
+            integrity,
+            delivered: StreamIntegrity::new(),
+            active: Some(active),
+            recording_ready,
+            recording: None,
+            pending_event: None,
+            pending_durable: None,
+            host_loop,
+            accepted: false,
+            preflight: 0,
+            execute_ready: Some(execute_ready),
+            execute_messages: None,
+            recorded: std::collections::VecDeque::new(),
+            timeline: if crate::mutants::on("timeline-terminal-unwired") {
+                None
+            } else {
+                Some(stream_timeline)
+            },
+        };
+        Ok(Box::new(super::live_session::SessionStream::new(
+            turn,
+            session_ready,
+            session_id,
+            self.state.clone(),
+            session_owner,
+        )))
     }
 }

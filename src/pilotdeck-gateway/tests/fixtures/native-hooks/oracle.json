@@ -1,0 +1,22 @@
+{
+  "node": "v22.22.0",
+  "hookConfig": {
+    "PreToolUse": [
+      {
+        "matcher": "write_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf '{\"decision\":\"block\",\"reason\":\"fixture-block\"}\\n'"
+          }
+        ]
+      }
+    ]
+  },
+  "effects": [
+    {
+      "type": "block",
+      "reason": "fixture-block"
+    }
+  ]
+}

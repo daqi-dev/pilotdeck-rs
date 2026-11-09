@@ -48,6 +48,7 @@ impl TurnRunner {
         self.start_collector().await;
         let prompt = match input {
             AgentInput::Text(text) => text,
+            AgentInput::Fork { directive, .. } => directive,
             AgentInput::Blocks(blocks) => {
                 if blocks.is_empty() && crate::mutants::on("tail-empty-blocks") {
                     return Err(RecorderError::State("mutated empty blocks".into()));

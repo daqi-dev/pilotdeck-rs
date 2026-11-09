@@ -1586,6 +1586,13 @@ fn six_actual_original_cache_plan_profiles_match_frozen_hash_and_own_generation(
         obj([]),
         obj([("unknown", JsValue::Undefined)]),
     ] {
+        // Cache identity is computed from raw context output, before the
+        // request's fallback system prompt is added by finalization.
+        let prepared = obj([
+            ("messages", arr([msg("user", arr([block("hello")]))])),
+            ("tools", arr([])),
+            ("cachePlan", cache.clone()),
+        ]);
         let result = cached_request(cache, vec![msg("user", arr([block("hello")]))], arr([]));
         let r = result.request.value();
         assert_eq!(r.get("systemPrompt"), Some(&JsValue::from("fallback")));
@@ -1602,6 +1609,20 @@ fn six_actual_original_cache_plan_profiles_match_frozen_hash_and_own_generation(
             Some(&JsValue::from(
                 "e4dce483654c614b9e99db500531702d72db625f5bf874f7ed5dfd0de5fc8b59"
             ))
+        );
+        let JsValue::Array(messages) = prepared.get("messages").unwrap() else {
+            panic!("prepared messages");
+        };
+        let native = request_assembly::cache_plan_with_collation(
+            &prepared,
+            messages,
+            &route("p", "m"),
+            &|_, _| panic!("an empty catalog must not need collation"),
+        )
+        .unwrap();
+        assert_eq!(
+            &native, plan,
+            "native opt-in must retain all six fixed TS zero-tool plans"
         );
     }
 }

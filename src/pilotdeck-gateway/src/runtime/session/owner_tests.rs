@@ -2254,3 +2254,141 @@ fn session_shutdown_completion_survives_stopped_executor() {
         assert_eq!(repeated.message, error.message);
     });
 }
+
+#[tokio::test]
+async fn native_project_binding_rejects_pending_and_warm_cross_project_reuse() {
+    let probe = Probe::default();
+    let gate = Gate::new();
+    probe
+        .0
+        .creates
+        .lock()
+        .unwrap()
+        .insert("shared".into(), gate.clone());
+    let mut options = SessionOwnerOptions::new(Arc::new(probe.clone()));
+    options.idle_sweep_interval_ms = 0;
+    let owner = SessionOwner::new(options);
+    owner.enforce_project_binding();
+    let mut a = context("shared");
+    a.project_key = Some("A".into());
+    let mut b = a.clone();
+    b.project_key = Some("B".into());
+    let pending_a = owner.get_or_create(a);
+    assert_eq!(owner.project_key(&"shared".into()), Some("A".into()));
+    let pending_b = bounded(owner.get_or_create(b.clone())).await;
+    assert!(
+        matches!(pending_b, Err(ref error) if error.message == "PROJECT_SESSION_MISMATCH: Session belongs to a different project.")
+    );
+    gate.open();
+    let first = bounded(pending_a).await.unwrap();
+    let warm_b = bounded(owner.get_or_create(b.clone())).await;
+    assert!(
+        matches!(warm_b, Err(ref error) if error.message == "PROJECT_SESSION_MISMATCH: Session belongs to a different project.")
+    );
+    assert!(first.same_identity(&owner.current_handle(&"shared".into()).unwrap()));
+    bounded(owner.close(&"shared".into())).await.unwrap();
+    bounded(owner.get_or_create(b)).await.unwrap();
+    assert_eq!(owner.project_key(&"shared".into()), Some("B".into()));
+    bounded(owner.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
+async fn native_project_request_scope_pins_absent_owner_until_handler_finishes() {
+    let probe = Probe::default();
+    let mut options = SessionOwnerOptions::new(Arc::new(probe));
+    options.idle_sweep_interval_ms = 0;
+    let owner = SessionOwner::new(options);
+    owner.enforce_project_binding();
+    let key = JsString::from("shared");
+    let a = JsString::from("A");
+    let b = JsString::from("B");
+    let first = owner.reserve_project(&key, Some(&a), &a).unwrap();
+    let second = owner.reserve_project(&key, None, &b).unwrap();
+    assert_eq!(second.project_key(), &a);
+    assert!(
+        matches!(owner.reserve_project(&key, Some(&b), &b), Err(ref error) if error.message == "PROJECT_SESSION_MISMATCH: Session belongs to a different project.")
+    );
+    let mut context_b = context("shared");
+    context_b.project_key = Some(b.clone());
+    assert!(
+        matches!(bounded(owner.get_or_create(context_b.clone())).await, Err(ref error) if error.message == "PROJECT_SESSION_MISMATCH: Session belongs to a different project.")
+    );
+    drop(first);
+    assert!(owner.reserve_project(&key, Some(&b), &b).is_err());
+    drop(second);
+    let third = owner.reserve_project(&key, Some(&b), &a).unwrap();
+    assert_eq!(third.project_key(), &b);
+    bounded(owner.get_or_create(context_b)).await.unwrap();
+    drop(third);
+    bounded(owner.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
+async fn native_owner_close_keeps_retained_replay_scoped_to_original_project() {
+    use crate::runtime::turn::{
+        coordinator::TurnEventCoordinator, read, replay::ActiveTurnSnapshotInput,
+    };
+    let mut options = SessionOwnerOptions::new(Arc::new(Probe::default()));
+    options.idle_sweep_interval_ms = 0;
+    let owner = SessionOwner::new(options);
+    owner.enforce_project_binding();
+    let mut a = context("shared");
+    a.project_key = Some("A".into());
+    bounded(owner.get_or_create(a)).await.unwrap();
+    let coordinator = TurnEventCoordinator::new();
+    let reg = coordinator.start_for_project(&"shared".into(), &"run".into(), &"A".into(), |_| {});
+    coordinator.record(
+        &"shared".into(),
+        &parse_json(r#"{"type":"model_event","runId":"run","text":"A-secret"}"#).unwrap(),
+    );
+    coordinator.retain_terminal(&"shared".into(), &"run".into());
+    drop(reg);
+    bounded(owner.close(&"shared".into())).await.unwrap();
+    let scope = owner
+        .reserve_project(&"shared".into(), Some(&"B".into()), &"B".into())
+        .unwrap();
+    let input = ActiveTurnSnapshotInput::new("shared".into());
+    let b = read::active_turn_snapshot_for_project(&coordinator, &input, scope.project_key());
+    assert!(!b.active && !b.terminal && b.events.is_empty());
+    let a = read::active_turn_snapshot_for_project(&coordinator, &input, &"A".into());
+    assert!(a.terminal && !a.events.is_empty());
+    assert!(
+        read::active_turn_snapshot(&coordinator, &input).terminal,
+        "generic replay remains unfiltered"
+    );
+    drop(scope);
+    bounded(owner.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
+async fn native_project_binding_rejects_unbound_creation_before_and_during_scope() {
+    let mut options = SessionOwnerOptions::new(Arc::new(Probe::default()));
+    options.idle_sweep_interval_ms = 0;
+    let owner = SessionOwner::new(options);
+    owner.enforce_project_binding();
+    let mut missing = context("shared");
+    missing.project_key = None;
+    assert!(
+        matches!(bounded(owner.get_or_create(missing.clone())).await,
+        Err(ref error) if error.message.starts_with("PROJECT_SESSION_MISMATCH:")),
+        "native unbound creation must not create a wildcard owner"
+    );
+    let a = JsString::from("A");
+    let scope = owner
+        .reserve_project(&"shared".into(), Some(&a), &a)
+        .unwrap();
+    assert!(
+        matches!(bounded(owner.get_or_create(missing.clone())).await,
+        Err(ref error) if error.message.starts_with("PROJECT_SESSION_MISMATCH:")),
+        "native unbound creation must not bypass an active request scope"
+    );
+    assert!(owner.current_handle(&"shared".into()).is_none());
+    drop(scope);
+    bounded(owner.shutdown()).await.unwrap();
+    // Generic embeddings keep their original optional-project contract.
+    let mut generic = SessionOwnerOptions::new(Arc::new(Probe::default()));
+    generic.idle_sweep_interval_ms = 0;
+    let generic = SessionOwner::new(generic);
+    bounded(generic.get_or_create(missing)).await.unwrap();
+    bounded(generic.shutdown()).await.unwrap();
+}

@@ -60,30 +60,34 @@ fn relative(base: &Path, target: &Path) -> String {
     parts.join("/")
 }
 
-fn markdown_entries(directory: &Path) -> Vec<PathBuf> {
-    // Like TS collectMarkdownFiles: unreadable directories contribute nothing.
+fn markdown_entries(
+    directory: &Path,
+    budget: &mut Option<&mut super::StyleBudget>,
+) -> Result<Vec<PathBuf>, PluginRuntimeError> {
     let Ok(entries) = std::fs::read_dir(directory) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let mut names = Vec::new();
     for entry in entries {
+        if let Some(budget) = budget.as_deref_mut() {
+            budget.entry()?;
+        }
         let Ok(entry) = entry else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         names.push(entry.file_name());
     }
     names.sort();
-    names
+    Ok(names
         .into_iter()
         .map(|name| {
-            // Preserve TS's lexical contribution path, including a trailing slash.
             PathBuf::from(format!(
                 "{}/{}",
                 directory.display(),
                 name.to_string_lossy()
             ))
         })
-        .collect()
+        .collect())
 }
 
 #[cfg(unix)]
@@ -120,6 +124,22 @@ pub(super) fn load_plugin_commands_with_root(
     base: &Path,
     plugin_root: &Path,
 ) -> Result<Vec<LoadedPluginCommand>, PluginRuntimeError> {
+    load_plugin_commands_inner(plugin_name, base, plugin_root, &mut None)
+}
+pub(super) fn load_plugin_commands_bounded(
+    plugin_name: &str,
+    base: &Path,
+    plugin_root: &Path,
+    budget: &mut super::StyleBudget,
+) -> Result<Vec<LoadedPluginCommand>, PluginRuntimeError> {
+    load_plugin_commands_inner(plugin_name, base, plugin_root, &mut Some(budget))
+}
+fn load_plugin_commands_inner(
+    plugin_name: &str,
+    base: &Path,
+    plugin_root: &Path,
+    budget: &mut Option<&mut super::StyleBudget>,
+) -> Result<Vec<LoadedPluginCommand>, PluginRuntimeError> {
     let (Ok(root), Ok(canonical)) = (plugin_root.canonicalize(), base.canonicalize()) else {
         return Ok(Vec::new());
     };
@@ -132,7 +152,7 @@ pub(super) fn load_plugin_commands_with_root(
     let mut visited = HashSet::new();
     visited.insert(directory_identity(&metadata, &canonical));
     // Explicit DFS stack; each physical directory is expanded at most once.
-    let mut pending: Vec<_> = markdown_entries(base).into_iter().rev().collect();
+    let mut pending: Vec<_> = markdown_entries(base, budget)?.into_iter().rev().collect();
     let mut output = Vec::new();
     while let Some(path) = pending.pop() {
         let Ok(canonical) = path.canonicalize() else {
@@ -151,7 +171,7 @@ pub(super) fn load_plugin_commands_with_root(
             if !visited.insert(directory_identity(&metadata, &canonical)) {
                 continue;
             }
-            pending.extend(markdown_entries(&path).into_iter().rev());
+            pending.extend(markdown_entries(&path, budget)?.into_iter().rev());
         } else if path
             .file_name()
             .is_some_and(|s| s.to_string_lossy().to_ascii_lowercase().ends_with(".md"))
@@ -160,7 +180,14 @@ pub(super) fn load_plugin_commands_with_root(
             // re-verified handle so a leaf/ancestor replaced after that check
             // cannot redirect the read outside the plugin root (ROOT-001).
             let checked_identity = file_identity(&metadata);
-            let Some(raw) = read_markdown(&root, &canonical, &canonical, checked_identity, false)?
+            let Some(raw) = read_markdown(
+                &root,
+                &canonical,
+                &canonical,
+                checked_identity,
+                false,
+                budget.as_deref_mut(),
+            )?
             else {
                 continue;
             };
@@ -193,6 +220,36 @@ pub fn load_standalone_skill(
     load_markdown_source(&read_checked_skill(directory, &file)?, &file, name.into())
 }
 
+/// Native standalone skill scan shares the checked file reader and explicit
+/// generation budget. Sibling scripts/assets are never opened by discovery.
+pub(super) fn load_standalone_skill_bounded(
+    name: &str,
+    directory: &Path,
+    budget: &mut super::StyleBudget,
+) -> Result<LoadedPluginCommand, PluginRuntimeError> {
+    let file = markdown_entries(directory, &mut Some(&mut *budget))?
+        .into_iter()
+        .find(|path| is_skill(path))
+        .ok_or_else(|| {
+            PluginRuntimeError::new(format!("Standalone skill '{name}' has no SKILL.md."))
+        })?;
+    #[cfg(unix)]
+    {
+        load_markdown_source(
+            &read_checked_skill_inner(directory, &file, Some(budget))?,
+            &file,
+            name.into(),
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = file;
+        Err(PluginRuntimeError::new(
+            "Bounded native skill loading requires Unix.",
+        ))
+    }
+}
+
 /// #594: resolve the discovered SKILL.md beneath the skill directory and read it
 /// with `read_markdown` (shared with the plugin-command traversal). A standalone
 /// skill is a single file, so there is nothing to skip past: a refused read
@@ -202,6 +259,15 @@ pub fn load_standalone_skill(
 /// real ENOENT from `read_markdown`, matching TS readFile.
 #[cfg(unix)]
 fn read_checked_skill(directory: &Path, file: &Path) -> Result<String, PluginRuntimeError> {
+    read_checked_skill_inner(directory, file, None)
+}
+
+#[cfg(unix)]
+fn read_checked_skill_inner(
+    directory: &Path,
+    file: &Path,
+    budget: Option<&mut super::StyleBudget>,
+) -> Result<String, PluginRuntimeError> {
     let refused = || {
         super::io_error(
             "open",
@@ -226,7 +292,15 @@ fn read_checked_skill(directory: &Path, file: &Path) -> Result<String, PluginRun
             &std::io::Error::from_raw_os_error(libc::EISDIR),
         ));
     }
-    read_markdown(&root, &canonical, file, file_identity(&metadata), true)?.ok_or_else(refused)
+    read_markdown(
+        &root,
+        &canonical,
+        file,
+        file_identity(&metadata),
+        true,
+        budget,
+    )?
+    .ok_or_else(refused)
 }
 
 // Resolution failures are not all evidence of a refused link. In particular,
@@ -279,6 +353,7 @@ fn read_markdown(
     lexical: &Path,
     checked_identity: (u64, u64),
     require_single_link: bool,
+    budget: Option<&mut super::StyleBudget>,
 ) -> Result<Option<String>, PluginRuntimeError> {
     use std::{io::Read, os::unix::fs::MetadataExt};
     let error = |e: std::io::Error| super::io_error("open", lexical, &e);
@@ -337,6 +412,9 @@ fn read_markdown(
     if require_single_link && after.nlink() > 1 {
         return Ok(None);
     }
+    if let Some(budget) = budget {
+        return budget.read(&mut file).map(Some);
+    }
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).map_err(error)?;
     Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
@@ -367,7 +445,13 @@ fn read_markdown(
     _lexical: &Path,
     _checked_identity: (),
     _require_single_link: bool,
+    budget: Option<&mut super::StyleBudget>,
 ) -> Result<Option<String>, PluginRuntimeError> {
+    if budget.is_some() {
+        return Err(PluginRuntimeError::new(
+            "Bounded output style loading requires Unix.",
+        ));
+    }
     super::read_text(canonical).map(Some)
 }
 

@@ -307,6 +307,14 @@ impl InteractionPort for HelperInteraction {
             );
     }
 
+    fn permission_clear(&self, chat_id: &str) {
+        let id = Self::js_id(chat_id);
+        self.permissions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear(&id);
+    }
+
     fn permission_clear_after_turn(&self, chat_id: &str) {
         let id = Self::js_id(chat_id);
         self.permissions

@@ -66,6 +66,31 @@ impl ChannelServer {
         }))
     }
 
+    pub fn deliver_cron_result(
+        &self,
+        delivery: super::im_cron::CronResultDelivery,
+    ) -> BoxFuture<bool> {
+        let key = delivery
+            .origin_channel_key
+            .as_ref()
+            .unwrap_or(&delivery.channel_key);
+        let adapter = self
+            .0
+            .state
+            .lock()
+            .expect("channel state")
+            .running
+            .iter()
+            .find(|entry| entry.key == *key)
+            .map(|entry| entry.adapter.clone());
+        Box::pin(async move {
+            match adapter {
+                Some(adapter) => adapter.deliver_cron_result(&delivery).await,
+                None => false,
+            }
+        })
+    }
+
     pub fn start_channels(&self, channels: Vec<Arc<dyn ChannelAdapter>>) {
         for channel in channels {
             let key = channel.channel_key().clone();
@@ -613,3 +638,6 @@ impl ChannelServer {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod cron_delivery_tests;

@@ -1,0 +1,320 @@
+{
+  "records": [
+    {
+      "id": "ascii",
+      "pattern": "^a+$",
+      "value": "aaa",
+      "validation": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "s": {
+              "type": "string",
+              "pattern": "^a+$"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "ascii-no",
+      "pattern": "^a+$",
+      "value": "aa!",
+      "validation": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "s": {
+              "type": "string",
+              "pattern": "^a+$"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "word-unicode",
+      "pattern": "^\\w+$",
+      "value": "é",
+      "validation": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "s": {
+              "type": "string",
+              "pattern": "^\\w+$"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "word-ascii",
+      "pattern": "^\\w+$",
+      "value": "abc_",
+      "validation": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "s": {
+              "type": "string",
+              "pattern": "^\\w+$"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "digit-unicode",
+      "pattern": "^\\d+$",
+      "value": "١",
+      "validation": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "s": {
+              "type": "string",
+              "pattern": "^\\d+$"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "dot-astral",
+      "pattern": "^.$",
+      "value": "🙂",
+      "validation": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "s": {
+              "type": "string",
+              "pattern": "^.$"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "double-dot-astral",
+      "pattern": "^..$",
+      "value": "🙂",
+      "validation": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "s": {
+              "type": "string",
+              "pattern": "^..$"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "surrogate",
+      "pattern": "^.$",
+      "value": "\ud800",
+      "validation": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "s": {
+              "type": "string",
+              "pattern": "^.$"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "surrogate-pattern",
+      "pattern": "^\ud800$",
+      "value": "\ud800",
+      "validation": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "s": {
+              "type": "string",
+              "pattern": "^\ud800$"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "lookahead",
+      "pattern": "^(?=a)b",
+      "value": "b",
+      "validation": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "s": {
+              "type": "string",
+              "pattern": "^(?=a)b"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "lookbehind",
+      "pattern": "(?<=x)y",
+      "value": "xy",
+      "validation": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "s": {
+              "type": "string",
+              "pattern": "(?<=x)y"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "backref",
+      "pattern": "^(a+)\\1$",
+      "value": "aaaa",
+      "validation": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "s": {
+              "type": "string",
+              "pattern": "^(a+)\\1$"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "negated",
+      "pattern": "^[^a]+$",
+      "value": "é",
+      "validation": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "s": {
+              "type": "string",
+              "pattern": "^[^a]+$"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "space-bom",
+      "pattern": "^\\s$",
+      "value": "﻿",
+      "validation": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "s": {
+              "type": "string",
+              "pattern": "^\\s$"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "empty",
+      "pattern": "",
+      "value": "anything",
+      "validation": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "s": {
+              "type": "string",
+              "pattern": ""
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "syntax-bad",
+      "pattern": "[",
+      "value": "a",
+      "validation": {
+        "ok": false,
+        "message": "$.properties.s.pattern must be a valid JavaScript regular expression."
+      },
+      "accepted": null
+    },
+    {
+      "id": "identity-escape",
+      "pattern": "\\q",
+      "value": "q",
+      "validation": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "s": {
+              "type": "string",
+              "pattern": "\\q"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "nested",
+      "pattern": "^(a+)+$",
+      "value": "aaaaaa!",
+      "validation": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "s": {
+              "type": "string",
+              "pattern": "^(a+)+$"
+            }
+          }
+        }
+      },
+      "accepted": false
+    }
+  ]
+}

@@ -67,13 +67,28 @@ impl NativeWsServer {
         token: String,
         version: String,
     ) -> Result<Self, ProxyError> {
-        if !crate::mutants::on("native-ws-bind-policy")
+        Self::bind_with_policy(address, host, token, version, None).await
+    }
+
+    // Only the legacy server embedding can select the separately validated
+    // host policy; the isolated native entry retains its loopback/high-port gate.
+    pub(crate) async fn bind_with_policy(
+        address: SocketAddr,
+        host: TurnGateway,
+        token: String,
+        version: String,
+        legacy_loopback: Option<bool>,
+    ) -> Result<Self, ProxyError> {
+        if legacy_loopback.is_none()
+            && !crate::mutants::on("native-ws-bind-policy")
             && (address.ip() != Ipv4Addr::LOCALHOST
                 || (address.port() != 0 && address.port() < 1024))
         {
             return Err("native WS requires 127.0.0.1 and a high port (or 0)".into());
         }
-        if !crate::mutants::on("native-ws-token-policy") && token.trim().is_empty() {
+        if !crate::mutants::on("native-ws-token-policy")
+            && crate::metadata::js_trim(&token).is_empty()
+        {
             return Err("native WS requires an explicit nonempty token".into());
         }
         // The token route's loopback gate is derived from the bind address,
@@ -88,10 +103,12 @@ impl NativeWsServer {
         // own Config construction.
         let http = native_http::Config {
             token: token.clone(),
-            loopback: ts_loopback_literal(address.ip()),
+            loopback: legacy_loopback.unwrap_or_else(|| ts_loopback_literal(address.ip())),
             static_root: None,
             webhook: None,
+            control: None,
             api_web: None,
+            approvals: None,
         };
         Ok(Self {
             // Node's checker phase anchors at the 'listening' event; this
@@ -136,9 +153,19 @@ impl NativeWsServer {
         self
     }
 
+    pub(crate) fn with_control(mut self, handler: native_http::control::ControlHandler) -> Self {
+        self.http.control = Some(handler);
+        self
+    }
+
     /// Mount the `/api/web` route group on this listener (#2354): the token
     /// is the same bearer the WS lane checks, and the catalog is the native
     /// metadata registry over the same home the WS lane reads.
+    pub(crate) fn with_approvals(mut self, config: crate::module_host::approvals::Config) -> Self {
+        self.http.approvals = Some(config);
+        self
+    }
+
     pub(crate) fn with_api_web(mut self, config: crate::api_web::Config) -> Self {
         self.http.api_web = Some(config);
         self
@@ -724,7 +751,7 @@ impl Drop for InputBuffer {
         }
     }
 }
-const MAX_OUTPUT_PAYLOAD: usize = MAX_INPUT_PAYLOAD;
+pub(crate) const MAX_OUTPUT_PAYLOAD: usize = MAX_INPUT_PAYLOAD;
 const MAX_OUTPUT_BYTES: usize = MAX_OUTPUT_PAYLOAD + frame::MAX_SERVER_HEADER_BYTES;
 const MAX_OUTPUT_FRAMES: usize = 64;
 const MAX_PENDING_REQUESTS: usize = 64;

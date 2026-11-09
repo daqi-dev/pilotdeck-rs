@@ -1,0 +1,335 @@
+{
+  "fixed": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/adapters/channel/protocol/ChannelCommandRegistry.ts": "e93b583e0a5323bd35ca93c9568e484f876daa367057a2d423aabdc825867c55",
+    "src/session/search/ChatSearchArgs.ts": "f728eaf3e6b33b932f5bae1c2398f7f40084693f11a51489cd6a31107b78601c",
+    "src/session/search/formatChatHistorySearch.ts": "64323cc98de655675b19bcde3ad6d9b5ce67574f227f9592ec0a78cf636ea443"
+  },
+  "environment": {
+    "node": "22.22.0",
+    "acorn": "8.15.0",
+    "ada": "2.9.2",
+    "amaro": "1.1.4",
+    "ares": "1.34.6",
+    "brotli": "1.1.0",
+    "cjs_module_lexer": "2.1.0",
+    "cldr": "47.0",
+    "icu": "77.1",
+    "llhttp": "9.3.0",
+    "modules": "127",
+    "napi": "10",
+    "nbytes": "0.1.1",
+    "ncrypto": "0.0.1",
+    "nghttp2": "1.64.0",
+    "openssl": "3.5.4",
+    "simdjson": "3.13.0",
+    "simdutf": "6.4.2",
+    "sqlite": "3.50.4",
+    "tz": "2025b",
+    "undici": "6.23.0",
+    "unicode": "16.0",
+    "uv": "1.51.0",
+    "uvwasi": "0.0.23",
+    "v8": "12.4.254.21-node.33",
+    "zlib": "1.3.1-470d3a2",
+    "zstd": "1.5.7"
+  },
+  "formalAcceptance": false,
+  "declaredMocks": [
+    "gateway.listProjects",
+    "sessionSearch.search",
+    "runtime/updateCommand.runUpdateProcess",
+    "child_process.execFile(status only)"
+  ],
+  "projects": [
+    {
+      "name": "One",
+      "projectKey": "/fixture/one",
+      "fullPath": "/fixture/one"
+    },
+    {
+      "name": "TWO",
+      "projectKey": "/fixture/two",
+      "fullPath": "/fixture/two"
+    }
+  ],
+  "cases": [
+    {
+      "input": "/projects",
+      "handled": true,
+      "replies": [
+        "📂 项目列表：\n\n• One\n• TWO\n\n发送 /switch-project <项目名> 切换 WorkSpace"
+      ],
+      "calls": [
+        {
+          "method": "list_projects"
+        }
+      ],
+      "reset": 0
+    },
+    {
+      "input": "/项目列表",
+      "handled": true,
+      "replies": [
+        "📂 项目列表：\n\n• One\n• TWO\n\n发送 /switch-project <项目名> 切换 WorkSpace"
+      ],
+      "calls": [
+        {
+          "method": "list_projects"
+        }
+      ],
+      "reset": 0
+    },
+    {
+      "input": "/switch-project on",
+      "handled": true,
+      "replies": [
+        "已切换到项目：One\n路径：/fixture/one\n（已自动创建新会话）"
+      ],
+      "calls": [
+        {
+          "method": "list_projects"
+        }
+      ],
+      "bound": "/fixture/one",
+      "reset": 1
+    },
+    {
+      "input": "/切换项目 two",
+      "handled": true,
+      "replies": [
+        "已切换到项目：TWO\n路径：/fixture/two\n（已自动创建新会话）"
+      ],
+      "calls": [
+        {
+          "method": "list_projects"
+        }
+      ],
+      "bound": "/fixture/two",
+      "reset": 1
+    },
+    {
+      "input": "/switch-project unknown",
+      "handled": true,
+      "replies": [
+        "未找到匹配「unknown」的项目。\n\n发送 /projects 查看可用项目。"
+      ],
+      "calls": [
+        {
+          "method": "list_projects"
+        }
+      ],
+      "reset": 0
+    },
+    {
+      "input": "/switch-project",
+      "handled": true,
+      "replies": [
+        "用法：/switch-project <项目名>\n\n发送 /projects 查看可用项目。"
+      ],
+      "calls": [],
+      "reset": 0
+    },
+    {
+      "input": "/help",
+      "handled": true,
+      "replies": [
+        "📋 可用命令：\n\n/new — Create a new conversation session\n/plan — 先生成计划并请求确认\n/projects (/项目列表) — List available projects\n/switch-project (/切换项目) — Switch active project for this chat\n/update (/升级, /更新) — Install the latest supported Release and request a Web service restart\n/status (/状态) — Show PilotDeck status and version\n/search (/find, /grep, /搜索) — Search chat history across sessions\n/help (/帮助) — Show available commands"
+      ],
+      "calls": [],
+      "reset": 0
+    },
+    {
+      "input": "/search needle --all --limit 3 --role user",
+      "handled": true,
+      "replies": [
+        "未找到包含「needle」的聊天记录。\n已扫描 2 个会话。"
+      ],
+      "calls": [
+        {
+          "search": {
+            "pilotHome": "/fixture/pilot",
+            "query": "needle",
+            "limit": 3,
+            "regex": false,
+            "caseSensitive": false,
+            "role": "user"
+          }
+        }
+      ],
+      "reset": 0
+    },
+    {
+      "input": "/find needle --regex --case-sensitive --session abc",
+      "handled": true,
+      "replies": [
+        "未找到包含「needle」的聊天记录。\n已扫描 2 个会话。"
+      ],
+      "calls": [
+        {
+          "search": {
+            "pilotHome": "/fixture/pilot",
+            "query": "needle",
+            "regex": true,
+            "caseSensitive": true,
+            "sessionId": "abc"
+          }
+        }
+      ],
+      "reset": 0
+    },
+    {
+      "input": "/search",
+      "handled": true,
+      "replies": [
+        "用法：/search <关键词> [--all] [--limit N] [--role user|assistant]\n示例：/search docker 部署"
+      ],
+      "calls": [],
+      "reset": 0
+    },
+    {
+      "input": "/new",
+      "handled": false,
+      "replies": [],
+      "calls": [],
+      "reset": 0
+    },
+    {
+      "input": "/plan",
+      "handled": false,
+      "replies": [],
+      "calls": [],
+      "reset": 0
+    },
+    {
+      "input": "/unknown",
+      "handled": false,
+      "replies": [],
+      "calls": [],
+      "reset": 0
+    },
+    {
+      "input": "/status",
+      "handled": true,
+      "replies": [
+        "📊 PilotDeck Status\n\n分支: fixture-branch\n提交: abc123 fixture commit\n运行时间: 0m\nNode: v22.22.0\n平台: darwin"
+      ],
+      "calls": [],
+      "reset": 0
+    },
+    {
+      "input": "/update check",
+      "handled": true,
+      "replies": [
+        "⏳ 正在检查 Release 更新...",
+        "✅ 已是最新 Release，无需更新。"
+      ],
+      "calls": [],
+      "reset": 0
+    },
+    {
+      "input": "/update",
+      "handled": true,
+      "replies": [
+        "⏳ 正在检查部署资格并更新 Release，完成后向 Web 服务请求重启...",
+        "✅ updated fixture"
+      ],
+      "calls": [],
+      "reset": 0
+    },
+    {
+      "input": "/update bad",
+      "handled": true,
+      "replies": [
+        "用法：/update check 检查 Release；/update 更新并请求重启。未运行 Web 服务时，请使用 CLI 手动更新。"
+      ],
+      "calls": [],
+      "reset": 0
+    },
+    {
+      "input": "/search needle --limit 0x10",
+      "handled": true,
+      "replies": [
+        "未找到包含「needle」的聊天记录。\n已扫描 2 个会话。"
+      ],
+      "calls": [
+        {
+          "search": {
+            "pilotHome": "/fixture/pilot",
+            "query": "needle",
+            "limit": 16,
+            "regex": false,
+            "caseSensitive": false
+          }
+        }
+      ],
+      "reset": 0
+    },
+    {
+      "input": "/search --all",
+      "handled": true,
+      "replies": [
+        "用法：/search <关键词> [--all] [--limit N] [--role user|assistant]\n示例：/search docker 部署"
+      ],
+      "calls": [
+        {
+          "search": {
+            "pilotHome": "/fixture/pilot",
+            "query": "",
+            "regex": false,
+            "caseSensitive": false
+          }
+        }
+      ],
+      "reset": 0
+    },
+    {
+      "input": "/search needleother",
+      "handled": true,
+      "replies": [
+        "未找到包含「needleother」的聊天记录。\n已扫描 2 个会话。"
+      ],
+      "calls": [
+        {
+          "search": {
+            "pilotHome": "/fixture/pilot",
+            "query": "needleother",
+            "regex": false,
+            "caseSensitive": false
+          }
+        }
+      ],
+      "reset": 0
+    },
+    {
+      "input": "/search --limit bogus needle",
+      "handled": true,
+      "replies": [
+        "未找到包含「bogus needle」的聊天记录。\n已扫描 2 个会话。"
+      ],
+      "calls": [
+        {
+          "search": {
+            "pilotHome": "/fixture/pilot",
+            "query": "bogus needle",
+            "regex": false,
+            "caseSensitive": false
+          }
+        }
+      ],
+      "reset": 0
+    }
+  ],
+  "hostCalls": [
+    {
+      "update": [
+        "--check"
+      ]
+    },
+    {
+      "update": [
+        "--restart"
+      ]
+    }
+  ]
+}

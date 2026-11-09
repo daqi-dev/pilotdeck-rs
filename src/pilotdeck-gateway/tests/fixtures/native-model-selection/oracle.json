@@ -1,0 +1,210 @@
+{
+  "node": "v22.22.0",
+  "rows": [
+    {
+      "name": "default",
+      "input": {
+        "projectKey": "<project>",
+        "sessionKey": "session"
+      },
+      "result": {
+        "source": "default"
+      }
+    },
+    {
+      "name": "both_null",
+      "input": {
+        "projectKey": "<project>",
+        "sessionKey": "session",
+        "modelSelection": null,
+        "modelOverride": null
+      },
+      "error": {
+        "code": "INVALID_MODEL_OVERRIDE",
+        "message": "Specify modelSelection or modelOverride, not both."
+      }
+    },
+    {
+      "name": "selected_null",
+      "input": {
+        "projectKey": "<project>",
+        "sessionKey": "session",
+        "modelSelection": null
+      },
+      "error": {
+        "code": "INVALID_MODEL_OVERRIDE",
+        "message": "modelSelection must be an object."
+      }
+    },
+    {
+      "name": "selected_false",
+      "input": {
+        "projectKey": "<project>",
+        "sessionKey": "session",
+        "modelSelection": false
+      },
+      "error": {
+        "code": "INVALID_MODEL_OVERRIDE",
+        "message": "modelSelection must be an object."
+      }
+    },
+    {
+      "name": "selected_auto",
+      "input": {
+        "projectKey": "<project>",
+        "sessionKey": "session",
+        "modelSelection": {
+          "mode": "auto"
+        }
+      },
+      "error": {
+        "code": "ROUTER_AUTO_UNAVAILABLE",
+        "message": "Router auto is not available for this project."
+      }
+    },
+    {
+      "name": "selected_model",
+      "input": {
+        "projectKey": "<project>",
+        "sessionKey": "session",
+        "modelSelection": {
+          "mode": "model",
+          "provider": "fixture",
+          "model": "mock"
+        }
+      },
+      "result": {
+        "selection": {
+          "mode": "model",
+          "provider": "fixture",
+          "model": "mock"
+        },
+        "source": "turn"
+      }
+    },
+    {
+      "name": "override_model",
+      "input": {
+        "projectKey": "<project>",
+        "sessionKey": "session",
+        "modelOverride": {
+          "mode": "model",
+          "provider": "fixture",
+          "model": "mock"
+        }
+      },
+      "result": {
+        "selection": {
+          "mode": "model",
+          "provider": "fixture",
+          "model": "mock"
+        },
+        "source": "turn"
+      }
+    },
+    {
+      "name": "override_false",
+      "input": {
+        "projectKey": "<project>",
+        "sessionKey": "session",
+        "modelOverride": false
+      },
+      "result": {
+        "source": "default"
+      }
+    },
+    {
+      "name": "override_null",
+      "input": {
+        "projectKey": "<project>",
+        "sessionKey": "session",
+        "modelOverride": null
+      },
+      "result": {
+        "source": "default"
+      }
+    },
+    {
+      "name": "override_invalid",
+      "input": {
+        "projectKey": "<project>",
+        "sessionKey": "session",
+        "modelOverride": {
+          "mode": "model",
+          "provider": "missing",
+          "model": "mock"
+        }
+      },
+      "error": {
+        "code": "INVALID_MODEL_OVERRIDE",
+        "message": "Model is unavailable: missing/mock"
+      }
+    },
+    {
+      "name": "override_auto",
+      "input": {
+        "projectKey": "<project>",
+        "sessionKey": "session",
+        "modelOverride": {
+          "mode": "auto"
+        }
+      },
+      "error": {
+        "code": "INVALID_MODEL_OVERRIDE",
+        "message": "A model selection requires mode, provider, and model."
+      }
+    },
+    {
+      "name": "selected_array",
+      "input": {
+        "projectKey": "<project>",
+        "sessionKey": "session",
+        "modelSelection": []
+      },
+      "error": {
+        "code": "INVALID_MODEL_OVERRIDE",
+        "message": "A model selection requires mode, provider, and model."
+      }
+    },
+    {
+      "name": "unknown_before_both",
+      "input": {
+        "projectKey": "unknown",
+        "sessionKey": "session",
+        "modelSelection": null,
+        "modelOverride": null
+      },
+      "error": {
+        "code": "PROJECT_NOT_FOUND",
+        "message": "Unknown projectKey: unknown"
+      }
+    },
+    {
+      "name": "unknown_before_null",
+      "input": {
+        "projectKey": "unknown",
+        "sessionKey": "session",
+        "modelSelection": null
+      },
+      "error": {
+        "code": "PROJECT_NOT_FOUND",
+        "message": "Unknown projectKey: unknown"
+      }
+    },
+    {
+      "name": "unknown_before_override",
+      "input": {
+        "projectKey": "unknown",
+        "sessionKey": "session",
+        "modelOverride": {
+          "provider": "fixture",
+          "model": "mock"
+        }
+      },
+      "error": {
+        "code": "PROJECT_NOT_FOUND",
+        "message": "Unknown projectKey: unknown"
+      }
+    }
+  ]
+}

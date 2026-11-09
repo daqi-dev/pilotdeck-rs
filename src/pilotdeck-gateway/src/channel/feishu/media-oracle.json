@@ -1,0 +1,235 @@
+{
+  "fixed": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/adapters/channel/feishu/FeishuChannel.ts": "20e0ea6e2d2ed8b10a3effdd8352283cbf0ad25e0d126fa617e6c40e93babddf",
+    "src/adapters/channel/protocol/ChannelCommandRegistry.ts": "e93b583e0a5323bd35ca93c9568e484f876daa367057a2d423aabdc825867c55",
+    "src/session/search/ChatSearchArgs.ts": "f728eaf3e6b33b932f5bae1c2398f7f40084693f11a51489cd6a31107b78601c",
+    "src/session/search/formatChatHistorySearch.ts": "64323cc98de655675b19bcde3ad6d9b5ce67574f227f9592ec0a78cf636ea443",
+    "src/adapters/channel/protocol/ImAttachmentDelivery.ts": "0f64b552f3b2ceb5b20a7290ab9a266672056f3adf183fbb58b145929286cca2",
+    "src/adapters/channel/protocol/ImAttachmentStore.ts": "ce53fb0885d77b8d6fd8a25ea2371c8e8ab66ed425ed5f147633e2f77f6a4941",
+    "src/adapters/channel/protocol/ImChatSessionState.ts": "501b8597ffbba2fe2b8852900c7fdbad31c9c9866191b86489aee649158ca340",
+    "src/adapters/channel/protocol/ImCronDelivery.ts": "3e505b3fa1205993089e3ed6854541fb6e7d332b7b33173d3c351880de7e8c14",
+    "src/adapters/channel/protocol/ImElicitationHelper.ts": "cb743ce32129e33c65cbee9ff5c613b057b65d8a642a0fc11b1e1362fb458cf4",
+    "src/adapters/channel/protocol/ImPermissionHelper.ts": "40a6e25f143e9973d2cef836bb40d47f8e693424ad9aac5f2391be6514193477",
+    "src/adapters/channel/protocol/ImLiveReplyController.ts": "7e17a83d84e4bf9367d110b8fb0bd45db13c46118837a1012a29e8b756d69ed6",
+    "src/status/agentStatus.ts": "9b3f11e574fc33652594afa0a7b74f574542df57b50bb7226111cc40f2d6233b",
+    "src/adapters/channel/feishu/FeishuSessionMapper.ts": "029983b55827555cc1ff0ab319fc9671a0c8e6f57137a6de9dc684498914abb5"
+  },
+  "environment": {
+    "node": "22.22.0",
+    "acorn": "8.15.0",
+    "ada": "2.9.2",
+    "amaro": "1.1.4",
+    "ares": "1.34.6",
+    "brotli": "1.1.0",
+    "cjs_module_lexer": "2.1.0",
+    "cldr": "47.0",
+    "icu": "77.1",
+    "llhttp": "9.3.0",
+    "modules": "127",
+    "napi": "10",
+    "nbytes": "0.1.1",
+    "ncrypto": "0.0.1",
+    "nghttp2": "1.64.0",
+    "openssl": "3.5.4",
+    "simdjson": "3.13.0",
+    "simdutf": "6.4.2",
+    "sqlite": "3.50.4",
+    "tz": "2025b",
+    "undici": "6.23.0",
+    "unicode": "16.0",
+    "uv": "1.51.0",
+    "uvwasi": "0.0.23",
+    "v8": "12.4.254.21-node.33",
+    "zlib": "1.3.1-470d3a2",
+    "zstd": "1.5.7"
+  },
+  "formalAcceptance": false,
+  "inbound": [
+    {
+      "input": {
+        "chatId": "room",
+        "messageId": "m/image",
+        "messageType": "image",
+        "content": "{\"image_key\":\"image/key\"}"
+      },
+      "result": {
+        "attachments": [
+          {
+            "type": "image",
+            "name": "key.png",
+            "path": "$OUT/cache/feishu/room/m_image/key.png",
+            "mimeType": "image/png",
+            "bytes": 16,
+            "metadata": {
+              "channelKey": "feishu",
+              "chatId": "room",
+              "messageId": "m/image",
+              "sourceUrl": "https://open.feishu.cn/open-apis/im/v1/messages/m%2Fimage/resources/image%2Fkey?type=image",
+              "imageKey": "image/key"
+            },
+            "sha256": "d9c9bcbbba3f78d5acb0e0223861c44f79e918c161d4ea7b571f5cc6df50797f",
+            "mode": 384
+          }
+        ],
+        "diagnostics": []
+      }
+    },
+    {
+      "input": {
+        "chatId": "room",
+        "messageId": "m/file",
+        "messageType": "file",
+        "content": "{\"file_key\":\"file/key\",\"file_name\":\"report.pdf\",\"size\":10}"
+      },
+      "result": {
+        "attachments": [
+          {
+            "type": "file",
+            "name": "report.pdf",
+            "path": "$OUT/cache/feishu/room/m_file/report.pdf",
+            "mimeType": "application/pdf",
+            "bytes": 10,
+            "metadata": {
+              "channelKey": "feishu",
+              "chatId": "room",
+              "messageId": "m/file",
+              "sourceUrl": "https://open.feishu.cn/open-apis/im/v1/messages/m%2Ffile/resources/file%2Fkey?type=file",
+              "fileKey": "file/key"
+            },
+            "sha256": "4f85ab790f08374b7408ce7463ee3fe0d20fc8f7ab2a5df649f4dc53386eabc4",
+            "mode": 384
+          }
+        ],
+        "diagnostics": []
+      }
+    },
+    {
+      "input": {
+        "chatId": "room",
+        "messageType": "file",
+        "content": "{\"file_key\":\"missing-id\"}"
+      },
+      "result": {
+        "attachments": [],
+        "diagnostics": [
+          "[Attachment diagnostics] 飞书附件缺少 message_id，无法下载。"
+        ]
+      }
+    },
+    {
+      "input": {
+        "chatId": "room",
+        "messageId": "m/bad",
+        "messageType": "image",
+        "content": "{}"
+      },
+      "result": {
+        "attachments": [],
+        "diagnostics": [
+          "[Attachment diagnostics] 飞书附件下载失败：Error: image_key missing"
+        ]
+      }
+    }
+  ],
+  "outgoing": [
+    {
+      "attachment": {
+        "type": "file",
+        "name": "report.pdf",
+        "content": "generated attachment",
+        "source": "generated"
+      },
+      "ok": true
+    },
+    {
+      "attachment": {
+        "type": "image",
+        "name": "pic.png",
+        "path": "$OUT/image.png",
+        "source": "generated"
+      },
+      "ok": true
+    }
+  ],
+  "wire": [
+    {
+      "path": "/open-apis/auth/v3/tenant_access_token/internal",
+      "method": "POST",
+      "body": {
+        "app_id": "cli_0123456789abcdef",
+        "app_secret": "mock-secret"
+      }
+    },
+    {
+      "path": "/open-apis/im/v1/messages/m%2Fimage/resources/image%2Fkey?type=image",
+      "method": "GET",
+      "authorization": "Bearer mock-token"
+    },
+    {
+      "path": "/open-apis/im/v1/messages/m%2Ffile/resources/file%2Fkey?type=file",
+      "method": "GET",
+      "authorization": "Bearer mock-token"
+    },
+    {
+      "path": "/open-apis/im/v1/files",
+      "method": "POST",
+      "authorization": "Bearer mock-token",
+      "parts": [
+        {
+          "name": "file_type",
+          "value": "pdf"
+        },
+        {
+          "name": "file_name",
+          "value": "report.pdf"
+        },
+        {
+          "name": "file",
+          "filename": "report.pdf",
+          "size": 14,
+          "sha256": "34ca4ada6f390304b5a10376e2599d8986a92b285ca07c896d5e7eed49c61675",
+          "mime": "application/pdf"
+        }
+      ]
+    },
+    {
+      "path": "/open-apis/im/v1/messages?receive_id_type=chat_id",
+      "method": "POST",
+      "authorization": "Bearer mock-token",
+      "body": {
+        "receive_id": "room",
+        "msg_type": "file",
+        "content": "{\"file_key\":\"uploaded-file\"}"
+      }
+    },
+    {
+      "path": "/open-apis/im/v1/images",
+      "method": "POST",
+      "authorization": "Bearer mock-token",
+      "parts": [
+        {
+          "name": "image_type",
+          "value": "message"
+        },
+        {
+          "name": "image",
+          "filename": "pic.png",
+          "size": 16,
+          "sha256": "d9c9bcbbba3f78d5acb0e0223861c44f79e918c161d4ea7b571f5cc6df50797f",
+          "mime": "image/png"
+        }
+      ]
+    },
+    {
+      "path": "/open-apis/im/v1/messages?receive_id_type=chat_id",
+      "method": "POST",
+      "authorization": "Bearer mock-token",
+      "body": {
+        "receive_id": "room",
+        "msg_type": "image",
+        "content": "{\"image_key\":\"uploaded-image\"}"
+      }
+    }
+  ]
+}

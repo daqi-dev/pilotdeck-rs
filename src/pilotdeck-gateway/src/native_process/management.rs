@@ -3,7 +3,7 @@ use super::requests::Requests;
 use crate::{
     runtime::{
         connection::RequestError,
-        manager::{ManagerGateway, ManagerProjects, TranscriptSessionCatalog},
+        manager::{ManagerError, ManagerGateway, ManagerProjectResolver, TranscriptSessionCatalog},
         memory::gateway::MemoryDispatch,
         plugins::{
             CommandsListInput, GatewayCommandCatalogBundle, catalog::NativeCommandCatalogProvider,
@@ -11,6 +11,7 @@ use crate::{
         project::{
             ProjectResources, Resource, persistence::PersistenceResources, plugins::PluginResources,
         },
+        snapshot::{SnapshotGateway, SnapshotProjectResolver, SnapshotProjectionError},
     },
     skills::{
         SkillManager, SkillManagerOptions, SkillMethod, SkillsFacade, skill_binding_from_snapshot,
@@ -32,6 +33,91 @@ fn unavailable() -> RequestError {
         Some("CAPABILITY_UNAVAILABLE"),
         "Native gateway cannot execute this host-dependent operation.".into(),
     )
+}
+
+struct BoundedManagerProjects {
+    home: std::path::PathBuf,
+}
+impl ManagerProjectResolver for BoundedManagerProjects {
+    fn resolve_project_key(&self, project_key: &[u16]) -> Result<std::path::PathBuf, ManagerError> {
+        let metadata = crate::metadata::Metadata {
+            home: self.home.clone(),
+            cwd: std::path::PathBuf::new(),
+            files: super::methods::session_dir::BoundedSessionMarkers::new(),
+        };
+        let result = metadata.resolve_dialog_project(&JsString::from_utf16(project_key.to_vec()));
+        if metadata.files.was_refused() {
+            return Err(ManagerError::plain("Error", "Unsafe project marker."));
+        }
+        result
+            .map(std::path::PathBuf::from)
+            .ok_or_else(|| ManagerError::unknown_project_key(project_key))
+    }
+}
+
+/// Shared bounded storage-id lookup for native management and submit.
+pub(super) fn bounded_snapshot_workspace_id(
+    metadata: &crate::metadata::Metadata<super::methods::session_dir::BoundedSessionMarkers>,
+    project: &str,
+) -> Result<String, &'static str> {
+    let id = metadata.project_storage_id(project);
+    if metadata.files.was_refused() {
+        return Err("Unsafe project marker.");
+    }
+    Ok(id)
+}
+
+/// Per-request snapshot lookup. Project identity and storage id are resolved
+/// together under the same bounded marker reader; no unsafe fallback is used.
+struct BoundedSnapshotProjects {
+    home: std::path::PathBuf,
+    resolved: std::sync::Mutex<std::collections::HashMap<String, String>>,
+}
+impl SnapshotProjectResolver for BoundedSnapshotProjects {
+    fn resolve_project_key(&self, project_key: &[u16]) -> Result<String, SnapshotProjectionError> {
+        let metadata = crate::metadata::Metadata {
+            home: self.home.clone(),
+            cwd: std::path::PathBuf::new(),
+            files: super::methods::session_dir::BoundedSessionMarkers::new(),
+        };
+        let project = metadata.resolve_dialog_project(&JsString::from_utf16(project_key.to_vec()));
+        if metadata.files.was_refused() {
+            return Err(SnapshotProjectionError::plain(
+                "Error",
+                "Unsafe project marker.",
+            ));
+        }
+        let project =
+            project.ok_or_else(|| SnapshotProjectionError::unknown_project_key(project_key))?;
+        let id = bounded_snapshot_workspace_id(&metadata, &project)
+            .map_err(|error| SnapshotProjectionError::plain("Error", error))?;
+        self.resolved
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(project.clone(), id);
+        Ok(project)
+    }
+    fn workspace_id(&self, project_key: &str) -> String {
+        self.resolved
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(project_key)
+            .cloned()
+            .unwrap_or_default()
+    }
+    fn workspace_id_checked(&self, project_key: &str) -> Result<String, SnapshotProjectionError> {
+        self.resolved
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(project_key)
+            .cloned()
+            .ok_or_else(|| {
+                SnapshotProjectionError::plain(
+                    "Error",
+                    "Snapshot project identity was not resolved.",
+                )
+            })
+    }
 }
 
 impl Requests {
@@ -59,15 +145,34 @@ impl Requests {
         if method == "commands_list" {
             return Some(self.commands(params).await);
         }
+        let permit = if matches!(
+            method,
+            "memory_list"
+                | "memory_wipe"
+                | "snapshot_list"
+                | "snapshot_get"
+                | "snapshot_restore"
+                | "manager_sessions"
+        ) {
+            match super::methods::session_dir::session_io_permit().await {
+                Ok(permit) => Some(permit),
+                Err(error) => return Some(Err(error)),
+            }
+        } else {
+            None
+        };
         if matches!(method, "memory_list" | "memory_wipe") {
             let requests = self.clone();
             let method = method.to_owned();
             let params = params.clone();
             return Some(
-                tokio::task::spawn_blocking(move || requests.memory_dispatch(&method, &params))
-                    .await
-                    .map_err(|e| RequestError::new(e.to_string()))
-                    .and_then(|result| result),
+                tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
+                    requests.memory_dispatch(&method, &params)
+                })
+                .await
+                .map_err(|e| RequestError::new(e.to_string()))
+                .and_then(|result| result),
             );
         }
         let requests = self.clone();
@@ -79,6 +184,7 @@ impl Requests {
         // host's drain deadline. The worker owns its request and resource lease.
         Some(
             tokio::task::spawn_blocking(move || {
+                let _permit = permit;
                 runtime.block_on(requests.management(&method, &params))
             })
             .await
@@ -128,7 +234,8 @@ impl Requests {
         // before awaiting the catalog's own blocking loader/list jobs, so even
         // a single available blocking thread can make progress.
         let project = self.project.clone();
-        let lease = tokio::task::spawn_blocking(move || project.acquire(None))
+        let project_root = self.options.project.clone();
+        let lease = tokio::task::spawn_blocking(move || project.acquire(Some(&project_root)))
             .await
             .map_err(|e| RequestError::new(e.to_string()))?
             .map_err(|e| RequestError::new(e.to_string()))?;
@@ -170,21 +277,16 @@ impl Requests {
     async fn management(&self, method: &str, params: &JsValue) -> Result<JsValue, RequestError> {
         self.admit_management_project(params)?;
         if matches!(method, "manager_sessions" | "manager_browsers") {
+            let catalog = TranscriptSessionCatalog::new_bounded(|key| {
+                super::methods::session_dir::bounded_chat_dir(&key.pilot_home, &key.project_root)
+                    .map_err(|error| ManagerError::with_message("Error", None, error.message))
+            });
             let gateway = ManagerGateway::from_parts(
-                Some(Arc::new(TranscriptSessionCatalog::new(Arc::new(
-                    crate::storage::AsyncTranscriptAdapter::new(
-                        Arc::new(crate::storage::JsonlTranscriptStore::new()),
-                        Arc::new(|key| {
-                            crate::session_chat_dir(
-                                &key.pilot_home,
-                                &key.project_root,
-                                &key.project_root.to_string_lossy(),
-                            )
-                        }),
-                    ),
-                )))),
+                Some(Arc::new(catalog)),
                 None,
-                ManagerProjects::new(&self.options.home, std::path::PathBuf::new()),
+                BoundedManagerProjects {
+                    home: self.options.home.clone(),
+                },
                 &self.options.project,
                 &self.options.home,
             );
@@ -199,7 +301,7 @@ impl Requests {
         // release included); invalidation must not dispose an in-flight request.
         let lease = self
             .project
-            .acquire(None)
+            .acquire(Some(&self.options.project))
             .map_err(|e| RequestError::new(e.to_string()))?;
         let resources = lease
             .runtime()
@@ -208,17 +310,6 @@ impl Requests {
             .ok_or_else(|| RequestError::new("Native project resources are missing."))?;
         let context = resources.context();
         if method.starts_with("snapshot_") {
-            if method == "snapshot_restore"
-                && let Some(target) = params.get("targetProjectKey").filter(|v| !v.is_undefined())
-                && target
-                    .as_string()
-                    .is_some_and(|s| !s.to_utf8().is_ok_and(|p| self.options.serves_project(&p)))
-            {
-                return Err(error(
-                    Some("CAPABILITY_UNAVAILABLE"),
-                    "The isolated native process serves only its configured project.".into(),
-                ));
-            }
             let persistence = context
                 .resource(Resource::Persistence)
                 .ok_or_else(unavailable)?;
@@ -226,7 +317,17 @@ impl Requests {
                 .as_any()
                 .downcast_ref::<PersistenceResources>()
                 .ok_or_else(unavailable)?;
-            let gateway = persistence.snapshot_gateway(std::path::PathBuf::new());
+            let gateway = SnapshotGateway::new(
+                persistence
+                    .snapshots
+                    .as_ref()
+                    .map(|snapshots| snapshots.provider.clone()),
+                BoundedSnapshotProjects {
+                    home: self.options.home.clone(),
+                    resolved: Default::default(),
+                },
+                self.options.project.to_string_lossy().into_owned(),
+            );
             return (match method {
                 "snapshot_list" => gateway.list(params),
                 "snapshot_get" => gateway.get(params),
@@ -248,7 +349,21 @@ impl Requests {
         options.home_dir = Some(self.options.home.to_string_lossy().into_owned());
         let snapshot = context.snapshot();
         let manager = SkillManager::new(options).map_err(skill_error)?;
-        let facade = SkillsFacade::new(manager, move |_| skill_binding_from_snapshot(&snapshot));
+        let proxy = snapshot
+            .get("config")
+            .and_then(|config| config.get("proxy"))
+            .and_then(crate::runtime::model::http::ProxySettings::from_config);
+        let transport = Arc::new(
+            crate::skills::HyperModuleTransport::skills_with_proxy_settings(
+                proxy.as_ref(),
+                &self.env,
+            ),
+        );
+        let facade = SkillsFacade::with_transport(
+            manager,
+            move |_| skill_binding_from_snapshot(&snapshot),
+            transport,
+        );
         facade.call(skill, params).await.map_err(skill_error)
     }
 }
@@ -459,5 +574,171 @@ fn command_cursor_bytes(
             Err(invalid())
         }
         _ => Err(invalid()),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod bounded_snapshot_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn native_snapshot_marker_fifo_is_bounded_subprocess() {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--nocapture",
+                "native_snapshot_marker_fifo_child",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                let output = child.wait_with_output().unwrap();
+                assert!(
+                    status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait_with_output();
+                panic!("snapshot marker FIFO blocked");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    #[ignore = "run by bounded parent"]
+    fn native_snapshot_marker_fifo_child() {
+        let root =
+            std::env::temp_dir().join(format!("pdrs-snapshot-marker-{}", uuid::Uuid::new_v4()));
+        let home = root.join("home");
+        let project = root.join("project");
+        let registered = home.join("projects/100-registered");
+        std::fs::create_dir_all(&registered).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            registered.join(".cwd"),
+            project.to_string_lossy().as_bytes(),
+        )
+        .unwrap();
+        let resolver = BoundedSnapshotProjects {
+            home: home.clone(),
+            resolved: Default::default(),
+        };
+        let key: Vec<u16> = project.to_string_lossy().encode_utf16().collect();
+        let resolved = resolver.resolve_project_key(&key).unwrap();
+        assert_eq!(
+            resolver.workspace_id_checked(&resolved).unwrap(),
+            "100-registered"
+        );
+        assert!(resolver.workspace_id_checked("unresolved").is_err());
+        let dir = home.join("projects/000-unrelated");
+        std::fs::create_dir(&dir).unwrap();
+        assert!(
+            std::process::Command::new("/usr/bin/mkfifo")
+                .arg(dir.join(".cwd"))
+                .status()
+                .unwrap()
+                .success()
+        );
+        let error = resolver.resolve_project_key(&key).unwrap_err();
+        assert_eq!(
+            error.message(),
+            &JsString::from("Unsafe project marker."),
+            "native snapshot resolver preserves unsafe marker error"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn native_submit_workspace_fifo_is_bounded_subprocess() {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--nocapture",
+                "native_submit_workspace_fifo_child",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                let output = child.wait_with_output().unwrap();
+                assert!(
+                    status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait_with_output();
+                panic!("submit workspace marker FIFO blocked");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore = "run by bounded parent"]
+    async fn native_submit_workspace_fifo_child() {
+        use crate::runtime::turn::submit_host::SubmitHostServices as _;
+        let (_scratch, requests) = crate::native_process::management_tests::setup();
+        let root = requests.options.home.join("snapshot-storage");
+        std::fs::create_dir_all(&root).unwrap();
+        let recorder = Arc::new(
+            crate::storage::ContentAddressedWorkspaceSnapshotRecorder::new(
+                crate::storage::WorkspaceSnapshotConfig {
+                    root: root.to_string_lossy().into_owned(),
+                    snapshot_root: root.to_string_lossy().into_owned(),
+                },
+            ),
+        );
+        let services = crate::native_process::services::Services {
+            options: requests.options.clone(),
+            project: requests.project.clone(),
+            env: requests.env.clone(),
+            recorders: Arc::default(),
+            owner: requests.owner.clone(),
+            snapshot_recorder: Some(recorder),
+            upload_store: Arc::new(crate::upload::UploadStore::new(
+                crate::upload::UploadStoreOptions::new(
+                    |_| Ok(std::path::PathBuf::new()),
+                    || Ok(Vec::new()),
+                ),
+            )),
+        };
+        let input = crate::metadata::object([]);
+        assert_eq!(
+            services.workspace_id(&input).unwrap().unwrap(),
+            JsString::from("a8-main")
+        );
+        let directory = requests.options.home.join("projects/000-unrelated");
+        std::fs::create_dir(&directory).unwrap();
+        assert!(
+            std::process::Command::new("/usr/bin/mkfifo")
+                .arg(directory.join(".cwd"))
+                .status()
+                .unwrap()
+                .success()
+        );
+        let failure = services
+            .workspace_id(&input)
+            .expect_err("unsafe submit marker accepted");
+        assert_eq!(failure.message, "Unsafe project marker.");
+        requests.owner.shutdown().await.unwrap();
+        requests.project.dispose().await.unwrap();
     }
 }

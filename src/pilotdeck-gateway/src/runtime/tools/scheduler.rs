@@ -15,6 +15,40 @@ use crate::host::{
 use crate::js_value;
 use std::{future::poll_fn, task::Poll};
 
+/// TS hook denials retain the runtime reason used by error-code classification.
+fn permission_hook_denial(name: &JsString, result: &JsValue) -> JsValue {
+    let message = result
+        .get("message")
+        .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
+        .cloned()
+        .unwrap_or_else(|| JsValue::String(named("PermissionRequest hook denied ", name, ".")));
+    JsValue::Object(object([
+        ("type", "deny".into()),
+        (
+            "reason",
+            JsValue::Object(object([
+                ("type", "runtime".into()),
+                ("message", message.clone()),
+            ])),
+        ),
+        ("message", message),
+    ]))
+}
+
+struct GrantCleanup {
+    permission: crate::runtime::project::interaction_permission::TurnPermission,
+    tool: JsString,
+    call: JsString,
+    input: JsValue,
+}
+impl Drop for GrantCleanup {
+    fn drop(&mut self) {
+        let _ = self
+            .permission
+            .revoke_native_grant(&self.tool, &self.call, &self.input);
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SchedulerMode {
     Sequential,
@@ -27,10 +61,86 @@ pub enum SchedulerMode {
 #[derive(Clone)]
 pub struct ToolRuntime {
     pub registry: ToolRegistry,
+    catalog_error: Option<JsString>,
     permission: Arc<dyn PermissionDecision>,
+    mode_owner: Option<Arc<dyn PermissionDecision>>,
+    turn_permission:
+        Arc<std::sync::OnceLock<crate::runtime::project::interaction_permission::TurnPermission>>,
+    turn_hooks: Arc<std::sync::OnceLock<crate::runtime::project::interaction_hooks::TurnHooks>>,
+    native_sandbox: Option<JsString>,
+    #[cfg(unix)]
+    native_sandbox_provider: Option<Arc<super::sandbox::NativeSandbox>>,
     pub mode: SchedulerMode,
+    event_emitter: Option<crate::host::modules::tool_context::EventSink>,
 }
 impl ToolRuntime {
+    async fn dispatch_tool_lifecycle(
+        &self,
+        event: &str,
+        name: &JsString,
+        call: &ToolCall,
+        input: &JsValue,
+        context: &ToolRunContext,
+        extra: Option<JsObject>,
+    ) -> Result<Option<crate::runtime::hooks::LifecycleDispatchResult>, HostError> {
+        use crate::host::modules::lifecycle::LifecyclePort;
+        use crate::runtime::hooks::LifecycleDispatchInput;
+        let Some(hooks) = self.turn_hooks.get() else {
+            return Ok(None);
+        };
+        let cwd = context
+            .fields
+            .get("cwd")
+            .and_then(JsValue::as_string)
+            .cloned()
+            .unwrap_or_default();
+        let base_input = object([
+            (
+                "sessionId",
+                context
+                    .fields
+                    .get("sessionId")
+                    .cloned()
+                    .unwrap_or(JsValue::Undefined),
+            ),
+            ("transcriptPath", "".into()),
+            ("cwd", JsValue::String(cwd.clone())),
+            (
+                "permissionMode",
+                context
+                    .fields
+                    .get("permissionMode")
+                    .cloned()
+                    .unwrap_or(JsValue::Undefined),
+            ),
+        ]);
+        let mut payload = object([
+            ("toolName", JsValue::String(name.clone())),
+            ("toolInput", input.clone()),
+            ("toolUseId", JsValue::String(call.id.clone())),
+        ]);
+        if let Some(extra) = extra {
+            for (key, value) in extra.entries() {
+                payload.insert(key.clone(), value.clone());
+            }
+        }
+        hooks
+            .dispatch(LifecycleDispatchInput {
+                event: event.into(),
+                base_input,
+                payload: Some(payload),
+                match_query: Some(name.clone()),
+                cwd,
+                env: context
+                    .fields
+                    .get("env")
+                    .and_then(JsValue::as_object)
+                    .cloned(),
+                signal: None,
+            })
+            .await
+            .map(Some)
+    }
     pub fn new(
         registry: ToolRegistry,
         permission: Arc<dyn PermissionDecision>,
@@ -38,109 +148,204 @@ impl ToolRuntime {
     ) -> Self {
         Self {
             registry,
+            catalog_error: None,
+            event_emitter: None,
             permission,
+            mode_owner: None,
+            turn_permission: Arc::default(),
+            turn_hooks: Arc::default(),
             mode,
+            native_sandbox: None,
+            #[cfg(unix)]
+            native_sandbox_provider: None,
         }
     }
-    pub async fn execute_batch(
+    /// Business events are independent of the optional tool-progress projection.
+    pub fn with_event_emitter(
+        mut self,
+        emitter: crate::host::modules::tool_context::EventSink,
+    ) -> Self {
+        self.event_emitter = Some(emitter);
+        self
+    }
+    pub(crate) fn with_catalog_error(mut self, error: Option<JsString>) -> Self {
+        self.catalog_error = error;
+        self
+    }
+    fn check_catalog(&self) -> Result<(), HostError> {
+        match &self.catalog_error {
+            Some(message) => Err(ModuleError::new(message.clone()).into()),
+            None => Ok(()),
+        }
+    }
+    pub(crate) fn with_mode_owner(mut self, owner: Arc<dyn PermissionDecision>) -> Self {
+        self.mode_owner = Some(owner);
+        self
+    }
+    fn fresh_mode(&self, mut context: ToolRunContext) -> ToolRunContext {
+        if let Some(mode) = self
+            .mode_owner
+            .as_ref()
+            .and_then(|owner| owner.current_mode())
+        {
+            let mode = JsValue::String(mode.as_js_string().clone());
+            context.fields.insert("permissionMode".into(), mode.clone());
+            if let Some(mut permissions) = context
+                .fields
+                .get("permissionContext")
+                .and_then(JsValue::as_object)
+                .cloned()
+            {
+                permissions.insert("mode".into(), mode);
+                context
+                    .fields
+                    .insert("permissionContext".into(), JsValue::Object(permissions));
+            }
+        }
+        context
+    }
+    /// Explicit native fallback until an execution-world sandbox provider is
+    /// installed. Never silently execute a restricted profile unrestricted.
+    pub fn with_native_sandbox(mut self, mode: Option<JsString>) -> Self {
+        self.native_sandbox = mode;
+        self
+    }
+
+    #[cfg(unix)]
+    pub fn with_native_sandbox_provider(
+        mut self,
+        provider: Arc<super::sandbox::NativeSandbox>,
+    ) -> Self {
+        self.native_sandbox_provider = Some(provider);
+        self
+    }
+
+    pub fn execute_batch(
         &self,
         calls: Vec<ToolCall>,
         context: ToolRunContext,
-    ) -> Result<Vec<JsObject>, HostError> {
-        let mut concurrent = Vec::new();
-        let mut sequential = Vec::new();
-        // Predicates are evaluated for the entire batch before any call starts.
-        // Single-call batches bypass the predicate, exactly like TS.
-        for (index, call) in calls.iter().enumerate() {
-            // Deliberate deviation (fixtures/tool-runtime/README.md): TS runs
-            // every concurrencySafe tool in the concurrent phase; here only
-            // those that are also read-only do, so a sibling error, which
-            // drops the concurrent batch, never cuts a write short. Other safe
-            // Ledger: specs/gateway-parity/accepted-diffs.md
-            // A6.5-TOOLS-SCHEDULE-001 (unapproved). Other safe
-            // tools (e.g. agent) run in the sequential phase. isReadOnly is
-            // asked only of concurrencySafe tools; a throw counts as false.
-            let tool = self.registry.get(&call.name);
-            let safe = self.mode == SchedulerMode::Concurrent
-                && calls.len() > 1
-                && tool
-                    .as_ref()
-                    .map(|t| t.is_concurrency_safe(&call.input))
-                    .transpose()?
-                    .is_some_and(|v| truthy(&v))
-                && tool
-                    .and_then(|t| t.is_read_only(&call.input).ok())
-                    .is_some_and(|v| truthy(&v));
-            if safe {
-                concurrent.push(index);
-            } else {
-                sequential.push(index);
-            }
-        }
-        let mut slots = vec![None; calls.len()];
-        // Owned futures, not JoinHandles: early error, host abort, timeout and
-        // Drop synchronously destroy every unfinished sibling future.
-        let mut pending: Vec<_> = concurrent
-            .into_iter()
-            .map(|index| {
-                (
-                    index,
-                    Some(Box::pin(
-                        self.execute(calls[index].clone(), context.clone()),
-                    )),
-                )
-            })
-            .collect();
-        // TS Promise.all rejects on the first error and lets the started
-        // siblings finish detached. Ledger: specs/gateway-parity/accepted-diffs.md
-        // A6.5-TOOLS-CANCEL-001 (unapproved). Deliberate deviation: the rejection is
-        // reported at the same moment, but the batch owns the siblings and
-        // drops them. Only read-only concurrency-safe tools run here (see the
-        // classification above), so no write is cut short, and a
-        // non-cooperative sibling cannot hold the error back. The pass that
-        // sees the error still polls every sibling once, as Promise.all's
-        // synchronous map runs each up to its first await.
-        poll_fn(|cx| {
-            let mut unfinished = false;
-            let mut first_error = None;
-            for (index, slot) in &mut pending {
-                let Some(future) = slot else {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<JsObject>, HostError>> + Send + '_>> {
+        Box::pin(async move {
+            self.check_catalog()?;
+            let mut concurrent = Vec::new();
+            let mut sequential = Vec::new();
+            let mut transitions = Vec::new();
+            // Predicates are evaluated for the entire batch before any call starts.
+            // Single-call batches bypass the predicate, exactly like TS.
+            for (index, call) in calls.iter().enumerate() {
+                // Deliberate deviation (fixtures/tool-runtime/README.md): TS runs
+                // every concurrencySafe tool in the concurrent phase; here only
+                // those that are also read-only do, so a sibling error, which
+                // drops the concurrent batch, never cuts a write short. Other safe
+                // Ledger: specs/gateway-parity/accepted-diffs.md
+                // A6.5-TOOLS-SCHEDULE-001 (unapproved). Other safe
+                // tools (e.g. agent) run in the sequential phase. isReadOnly is
+                // asked only of concurrencySafe tools; a throw counts as false.
+                let tool = self.registry.get(&call.name);
+                let mode_tool = self.mode_owner.is_some()
+                    && tool
+                        .as_ref()
+                        .is_some_and(|tool| tool.is_trusted_mode_transition());
+                if mode_tool {
+                    transitions.push(index);
                     continue;
-                };
-                match future.as_mut().poll(cx) {
-                    Poll::Ready(Ok(result)) => {
-                        slots[*index] = Some(result);
-                        *slot = None;
-                    }
-                    Poll::Ready(Err(error)) => {
-                        *slot = None;
-                        first_error.get_or_insert(error);
-                    }
-                    Poll::Pending => unfinished = true,
+                }
+                let safe = self.mode == SchedulerMode::Concurrent
+                    && calls.len() > 1
+                    && tool
+                        .as_ref()
+                        .map(|t| t.is_concurrency_safe(&call.input))
+                        .transpose()?
+                        .is_some_and(|v| truthy(&v))
+                    && tool
+                        .and_then(|t| t.is_read_only(&call.input).ok())
+                        .is_some_and(|v| truthy(&v));
+                if safe {
+                    concurrent.push(index);
+                } else {
+                    sequential.push(index);
                 }
             }
-            if let Some(error) = first_error {
-                Poll::Ready(Err(error))
-            } else if unfinished {
-                Poll::Pending
-            } else {
-                Poll::Ready(Ok(()))
+            let mut slots = vec![None; calls.len()];
+            // Apply trusted mode transitions before admitting any sibling write.
+            for index in transitions {
+                let result = self
+                    .execute(calls[index].clone(), self.fresh_mode(context.clone()))
+                    .await?;
+                if let Some(owner) = &self.mode_owner {
+                    owner.apply_mode_effect(&result);
+                }
+                slots[index] = Some(result);
             }
+            // Owned futures, not JoinHandles: early error, host abort, timeout and
+            // Drop synchronously destroy every unfinished sibling future.
+            let mut pending: Vec<_> = concurrent
+                .into_iter()
+                .map(|index| {
+                    (
+                        index,
+                        Some(Box::pin(self.execute(
+                            calls[index].clone(),
+                            self.fresh_mode(context.clone()),
+                        ))),
+                    )
+                })
+                .collect();
+            // TS Promise.all rejects on the first error and lets the started
+            // siblings finish detached. Ledger: specs/gateway-parity/accepted-diffs.md
+            // A6.5-TOOLS-CANCEL-001 (unapproved). Deliberate deviation: the rejection is
+            // reported at the same moment, but the batch owns the siblings and
+            // drops them. Only read-only concurrency-safe tools run here (see the
+            // classification above), so no write is cut short, and a
+            // non-cooperative sibling cannot hold the error back. The pass that
+            // sees the error still polls every sibling once, as Promise.all's
+            // synchronous map runs each up to its first await.
+            poll_fn(|cx| {
+                let mut unfinished = false;
+                let mut first_error = None;
+                for (index, slot) in &mut pending {
+                    let Some(future) = slot else {
+                        continue;
+                    };
+                    match future.as_mut().poll(cx) {
+                        Poll::Ready(Ok(result)) => {
+                            slots[*index] = Some(result);
+                            *slot = None;
+                        }
+                        Poll::Ready(Err(error)) => {
+                            *slot = None;
+                            first_error.get_or_insert(error);
+                        }
+                        Poll::Pending => unfinished = true,
+                    }
+                }
+                if let Some(error) = first_error {
+                    Poll::Ready(Err(error))
+                } else if unfinished {
+                    Poll::Pending
+                } else {
+                    Poll::Ready(Ok(()))
+                }
+            })
+            .await?;
+            for index in sequential {
+                slots[index] = Some(
+                    self.execute(calls[index].clone(), self.fresh_mode(context.clone()))
+                        .await?,
+                );
+            }
+            Ok(slots
+                .into_iter()
+                .map(|v| v.expect("every call has a result slot"))
+                .collect())
         })
-        .await?;
-        for index in sequential {
-            slots[index] = Some(self.execute(calls[index].clone(), context.clone()).await?);
-        }
-        Ok(slots
-            .into_iter()
-            .map(|v| v.expect("every call has a result slot"))
-            .collect())
     }
     pub async fn execute(
         &self,
         call: ToolCall,
         context: ToolRunContext,
     ) -> Result<JsObject, HostError> {
+        self.check_catalog()?;
         let started = context.now_iso()?;
         let mut tool = self.registry.get(&call.name);
         let mut repaired = None;
@@ -212,6 +417,57 @@ impl ToolRuntime {
                 ),
             );
         };
+        // Ask policy is enforced before permission, including bypass mode.
+        if context
+            .fields
+            .get("runMode")
+            .and_then(JsValue::as_string)
+            .is_some_and(|mode| mode.equals_str("ask"))
+            && let Some(message) = super::ask_mode::violation(tool.as_ref(), &call.input)
+        {
+            return fail(&name, ToolError::new("ask_mode_violation", message));
+        }
+        #[cfg(unix)]
+        let native_sandbox_enforced = self
+            .native_sandbox
+            .as_ref()
+            .zip(self.native_sandbox_provider.as_ref())
+            .is_some_and(|(mode, provider)| {
+                mode.equals_str(provider.mode().as_str())
+                    && ([
+                        "bash",
+                        "write_file",
+                        "edit_file",
+                        "edit_notebook",
+                        "task_create",
+                        "task_stop",
+                    ]
+                    .iter()
+                    .any(|tool| name.equals_str(tool))
+                        || tool.enforces_native_sandbox(&context, provider))
+            });
+        #[cfg(not(unix))]
+        let native_sandbox_enforced = false;
+        if let Some(mode) = self
+            .native_sandbox
+            .as_ref()
+            .filter(|mode| mode.equals_str("read-only") || mode.equals_str("workspace-write"))
+            && (name.equals_str("bash")
+                || !matches!(tool.is_read_only(&call.input), Ok(JsValue::Bool(true))))
+            && !native_sandbox_enforced
+        {
+            return fail(
+                &name,
+                ToolError::new(
+                    "unsupported_tool",
+                    format!(
+                        "Native execution-world sandbox is unavailable for sandboxMode '{}'; refusing unrestricted {} execution.",
+                        String::from_utf16_lossy(mode.units()),
+                        String::from_utf16_lossy(name.units())
+                    ),
+                ),
+            );
+        }
         let operation = async {
             let issues = validate_input(
                 &call.input,
@@ -247,8 +503,89 @@ impl ToolRuntime {
                     ),
                 );
             }
+            let mut execute_input = call.input.clone();
+            if let Some(result) = self
+                .dispatch_tool_lifecycle("PreToolUse", &name, &call, &execute_input, &context, None)
+                .await?
+            {
+                use crate::runtime::hooks::HookEffect;
+                if let Some(error) = result
+                    .blocking_errors
+                    .iter()
+                    .find(|error| error.code == "native_hook_output_limit")
+                {
+                    return fail(
+                        &name,
+                        ToolError::new("native_hook_output_limit", error.message.clone()),
+                    );
+                }
+                for effect in &result.effects {
+                    match effect {
+                        HookEffect::Block { reason, .. } => {
+                            return fail(
+                                &name,
+                                ToolError::new("permission_denied", reason.clone()),
+                            );
+                        }
+                        HookEffect::PermissionDecision { behavior, reason }
+                            if behavior.equals_str("deny") =>
+                        {
+                            return fail(
+                                &name,
+                                ToolError::new(
+                                    "permission_denied",
+                                    reason.clone().unwrap_or_else(|| {
+                                        "PreToolUse hook denied the tool.".into()
+                                    }),
+                                ),
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(input) = result.effects.iter().find_map(|effect| match effect {
+                    HookEffect::UpdatedToolInput { input } => Some(input.clone()),
+                    _ => None,
+                }) {
+                    execute_input = JsValue::Object(input);
+                    let issues = validate_input(
+                        &execute_input,
+                        tool.fields()
+                            .get("inputSchema")
+                            .unwrap_or(&JsValue::Undefined),
+                    )?;
+                    if !issues.is_empty() {
+                        return fail(&name, validation_error(&name, issues, &context)?);
+                    }
+                    // Recheck restrictions after a hook changes input.
+                    if context
+                        .fields
+                        .get("runMode")
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|v| v.equals_str("ask"))
+                        && let Some(message) =
+                            super::ask_mode::violation(tool.as_ref(), &execute_input)
+                    {
+                        return fail(&name, ToolError::new("ask_mode_violation", message));
+                    }
+                    if self.native_sandbox.as_ref().is_some_and(|mode| {
+                        mode.equals_str("read-only") || mode.equals_str("workspace-write")
+                    }) && (name.equals_str("bash")
+                        || !matches!(tool.is_read_only(&execute_input), Ok(JsValue::Bool(true))))
+                        && !native_sandbox_enforced
+                    {
+                        return fail(
+                            &name,
+                            ToolError::new(
+                                "unsupported_tool",
+                                "Native sandbox is unavailable for the updated tool input.",
+                            ),
+                        );
+                    }
+                }
+            }
             match tool
-                .validate_input(call.input.clone(), context.clone())
+                .validate_input(execute_input.clone(), context.clone())
                 .await
             {
                 Err(error) => return fail(&name, error),
@@ -257,16 +594,128 @@ impl ToolRuntime {
                 }
                 Ok(None) => {}
             }
+            if let Some(plan) = context.host.plan_todo.as_ref().and_then(|value| {
+                value.downcast_ref::<crate::host::modules::capability::PlanTodoContext>()
+            }) {
+                let read_only =
+                    matches!(tool.is_read_only(&execute_input), Ok(JsValue::Bool(true)));
+                if let Some(message) = plan.0.blocking_message(name.clone(), read_only).await? {
+                    return fail(&name, ToolError::new("tool_execution_failed", message));
+                }
+            }
+            if let Some(mode) = self
+                .mode_owner
+                .as_ref()
+                .and_then(|owner| owner.current_mode())
+            {
+                self.permission.set_trusted_mode(mode);
+            }
             let definition: Arc<dyn ToolDefinition> = tool.clone();
-            let decision = self
-                .permission
-                .decide(
-                    definition,
-                    call.input.clone(),
-                    Arc::new(context.clone()),
-                    call.id.clone(),
-                )
-                .await?;
+            let mut decision = if let Some(permission) = self.turn_permission.get() {
+                permission
+                    .decide_for_execution(definition, execute_input.clone(), call.id.clone())
+                    .await?
+            } else {
+                self.permission
+                    .decide(
+                        definition,
+                        execute_input.clone(),
+                        Arc::new(context.clone()),
+                        call.id.clone(),
+                    )
+                    .await?
+            };
+            if decision
+                .get("type")
+                .and_then(JsValue::as_string)
+                .is_some_and(|v| v.equals_str("ask"))
+                && let (Some(permission), Some(hooks)) =
+                    (self.turn_permission.get(), self.turn_hooks.get())
+            {
+                use crate::host::modules::lifecycle::LifecyclePort;
+                use crate::runtime::hooks::{HookEffect, LifecycleDispatchInput};
+                let _grant_cleanup = GrantCleanup {
+                    permission: permission.clone(),
+                    tool: name.clone(),
+                    call: call.id.clone(),
+                    input: execute_input.clone(),
+                };
+                let cwd = context
+                    .fields
+                    .get("cwd")
+                    .and_then(JsValue::as_string)
+                    .cloned()
+                    .unwrap_or_default();
+                let base_input = object([
+                    (
+                        "sessionId",
+                        context
+                            .fields
+                            .get("sessionId")
+                            .cloned()
+                            .unwrap_or(JsValue::Undefined),
+                    ),
+                    ("transcriptPath", "".into()),
+                    ("cwd", JsValue::String(cwd.clone())),
+                    (
+                        "permissionMode",
+                        context
+                            .fields
+                            .get("permissionMode")
+                            .cloned()
+                            .unwrap_or(JsValue::Undefined),
+                    ),
+                ]);
+                let payload = object([
+                    ("toolName", JsValue::String(name.clone())),
+                    ("toolInput", execute_input.clone()),
+                    ("toolUseId", JsValue::String(call.id.clone())),
+                    (
+                        "permissionSuggestions",
+                        decision
+                            .get("request")
+                            .and_then(|r| r.get("options"))
+                            .cloned()
+                            .unwrap_or(JsValue::Undefined),
+                    ),
+                ]);
+                let dispatched = hooks
+                    .dispatch(LifecycleDispatchInput {
+                        event: "PermissionRequest".into(),
+                        base_input,
+                        payload: Some(payload),
+                        match_query: Some(name.clone()),
+                        cwd,
+                        env: context
+                            .fields
+                            .get("env")
+                            .and_then(JsValue::as_object)
+                            .cloned(),
+                        signal: None,
+                    })
+                    .await?;
+                if let Some(result) = dispatched.effects.iter().find_map(|effect| match effect {
+                    HookEffect::PermissionRequestResult { result } => Some(result),
+                    _ => None,
+                }) {
+                    let behavior = result.get("behavior").and_then(JsValue::as_string);
+                    if behavior.is_some_and(|v| v.equals_str("allow")) {
+                        // The host callback minted the exact call/input grant.
+                        // Re-evaluate native policy and consume it once; an
+                        // unsupported unbacked hook allow stays ask/fail-closed.
+                        let definition: Arc<dyn ToolDefinition> = tool.clone();
+                        decision = permission
+                            .decide_for_execution(
+                                definition,
+                                execute_input.clone(),
+                                call.id.clone(),
+                            )
+                            .await?;
+                    } else if behavior.is_some_and(|v| v.equals_str("deny")) {
+                        decision = permission_hook_denial(&name, result);
+                    }
+                }
+            }
             let kind = decision.get("type").and_then(JsValue::as_string);
             let message = decision
                 .get("message")
@@ -275,6 +724,40 @@ impl ToolRuntime {
                 .unwrap_or_default();
             match kind.map(text).as_deref() {
                 Some("deny") => {
+                    self.dispatch_tool_lifecycle(
+                        "PermissionDenied",
+                        &name,
+                        &call,
+                        &execute_input,
+                        &context,
+                        Some(object([("reason", JsValue::String(message.clone()))])),
+                    )
+                    .await?;
+                    // TS ToolRuntime.ts:337 emits after PermissionDenied lifecycle,
+                    // before the failed tool result, on the turn-owned sink.
+                    if let Some(emit) = &self.event_emitter {
+                        emit(object([
+                            ("type", "permission_denied".into()),
+                            (
+                                "sessionId",
+                                context
+                                    .fields
+                                    .get("sessionId")
+                                    .cloned()
+                                    .unwrap_or(JsValue::Undefined),
+                            ),
+                            (
+                                "turnId",
+                                context
+                                    .fields
+                                    .get("turnId")
+                                    .cloned()
+                                    .unwrap_or(JsValue::Undefined),
+                            ),
+                            ("toolName", JsValue::String(name.clone())),
+                            ("reason", JsValue::String(message.clone())),
+                        ]));
+                    }
                     let runtime = decision
                         .get("reason")
                         .and_then(|r| r.get("type"))
@@ -321,18 +804,236 @@ impl ToolRuntime {
                 .get("updatedInput")
                 .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))
                 .cloned()
-                .unwrap_or_else(|| call.input.clone());
+                .unwrap_or_else(|| execute_input.clone());
             let mut execution = context.clone();
+            let runtime = self.clone();
+            let mut nested = context.clone();
+            nested.execute_tool = None;
+            nested.fields = nested
+                .fields
+                .entries()
+                .iter()
+                .filter(|(key, _)| {
+                    !key.equals_str("currentToolCallId")
+                        && !key.equals_str("currentPermissionDecision")
+                })
+                .fold(JsObject::new(), |mut fields, (key, value)| {
+                    fields.insert(key.clone(), value.clone());
+                    fields
+                });
+            execution.execute_tool = Some(Arc::new(move |call| {
+                let runtime = runtime.clone();
+                let context = nested.clone();
+                Box::pin(async move {
+                    runtime
+                        .execute_batch(vec![call], context)
+                        .await?
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| ModuleError::new("Nested tool result was missing.").into())
+                })
+            }));
             execution
                 .fields
                 .insert("currentToolCallId".into(), string(call.id.clone()));
             execution
                 .fields
                 .insert("currentPermissionDecision".into(), decision);
-            match tool.execute(input, execution).await {
-                Err(error) => fail(&name, error),
+            #[cfg(unix)]
+            if let Some(provider) = &self.native_sandbox_provider {
+                execution
+                    .fields
+                    .insert("nativeSandboxMode".into(), string(provider.mode().as_str()));
+                execution.fields.insert(
+                    "nativeSandboxTemporaryRoot".into(),
+                    string(provider.temporary_root().to_string_lossy().as_ref()),
+                );
+            }
+            // FileChanged observes the actual didSave notification from the write
+            // body, not a path inferred from a tool name or response.
+            if let Some(hooks) = self.turn_hooks.get().cloned() {
+                use super::builtin::{FileUpdateNotice, FileUpdateNotifier};
+                use crate::host::modules::lifecycle::LifecyclePort;
+                let previous = execution.host.file_update_notifier.as_ref();
+                if previous.is_some_and(|port| port.downcast_ref::<FileUpdateNotifier>().is_none())
+                {
+                    return fail(
+                        &name,
+                        ToolError::new(
+                            "unsupported_tool",
+                            "Unknown file update notifier cannot be safely composed.",
+                        ),
+                    );
+                }
+                let upstream = previous
+                    .and_then(|port| port.downcast_ref::<FileUpdateNotifier>())
+                    .map(|port| port.0.clone());
+                let fields = context.fields.clone();
+                let callback: Arc<dyn Fn(FileUpdateNotice) -> HostFuture<()> + Send + Sync> =
+                    Arc::new(move |notice| {
+                        let upstream = upstream.clone();
+                        let hooks = hooks.clone();
+                        let fields = fields.clone();
+                        Box::pin(async move {
+                            if let Some(upstream) = upstream {
+                                let _ = upstream(notice.clone()).await;
+                            }
+                            let cwd = fields
+                                .get("cwd")
+                                .and_then(JsValue::as_string)
+                                .cloned()
+                                .unwrap_or_default();
+                            let input = crate::runtime::hooks::LifecycleDispatchInput {
+                                event: "FileChanged".into(),
+                                base_input: object([
+                                    (
+                                        "sessionId",
+                                        fields
+                                            .get("sessionId")
+                                            .cloned()
+                                            .unwrap_or(JsValue::Undefined),
+                                    ),
+                                    ("transcriptPath", "".into()),
+                                    ("cwd", JsValue::String(cwd.clone())),
+                                    (
+                                        "permissionMode",
+                                        fields
+                                            .get("permissionMode")
+                                            .cloned()
+                                            .unwrap_or(JsValue::Undefined),
+                                    ),
+                                ]),
+                                payload: Some(object([
+                                    ("absolutePath", JsValue::String(notice.absolute.clone())),
+                                    ("relativePath", JsValue::String(notice.relative)),
+                                    (
+                                        "changeKind",
+                                        if notice.created {
+                                            "create".into()
+                                        } else {
+                                            "update".into()
+                                        },
+                                    ),
+                                ])),
+                                match_query: Some(notice.absolute),
+                                cwd,
+                                env: fields.get("env").and_then(JsValue::as_object).cloned(),
+                                signal: None,
+                            };
+                            let _ = hooks.dispatch(input).await;
+                            Ok(())
+                        })
+                    });
+                let mut host = (*execution.host).clone();
+                host.file_update_notifier = Some(Arc::new(FileUpdateNotifier(callback)));
+                execution.host = Arc::new(host);
+            }
+            let track_progress =
+                !name.equals_str("todo_write") && !truthy(&tool.is_read_only(&input)?);
+            match tool.execute(input.clone(), execution).await {
+                Err(error) => {
+                    let extra = object([
+                        ("error", JsValue::String(error.message.clone())),
+                        ("isInterrupt", JsValue::Bool(error.code == "tool_aborted")),
+                    ]);
+                    if let Some(result) = self
+                        .dispatch_tool_lifecycle(
+                            "PostToolUseFailure",
+                            &name,
+                            &call,
+                            &input,
+                            &context,
+                            Some(extra),
+                        )
+                        .await?
+                        && result
+                            .blocking_errors
+                            .iter()
+                            .any(|item| item.code == "native_hook_output_limit")
+                    {
+                        return fail(
+                            &name,
+                            ToolError::new(
+                                "native_hook_output_limit",
+                                "The tool failed and its PostToolUseFailure hook exceeded the native output limit.",
+                            ),
+                        );
+                    }
+                    fail(&name, error)
+                }
                 Ok(output) => {
+                    let response = output
+                        .data
+                        .clone()
+                        .unwrap_or_else(|| JsValue::Array(output.content.clone()));
+                    let lifecycle = self
+                        .dispatch_tool_lifecycle(
+                            "PostToolUse",
+                            &name,
+                            &call,
+                            &input,
+                            &context,
+                            Some(object([("toolResponse", response)])),
+                        )
+                        .await?;
                     let mut metadata = output.metadata;
+                    if let Some(lifecycle) = lifecycle {
+                        use crate::runtime::hooks::HookEffect;
+                        if lifecycle
+                            .blocking_errors
+                            .iter()
+                            .any(|error| error.code == "native_hook_output_limit")
+                        {
+                            return fail(
+                                &name,
+                                ToolError::new(
+                                    "native_hook_output_limit",
+                                    "The tool completed, but its PostToolUse hook exceeded the native output limit.",
+                                ),
+                            );
+                        }
+                        let mut info = JsObject::new();
+                        let mut additional = Vec::new();
+                        for effect in lifecycle.effects {
+                            match effect {
+                                HookEffect::Block {
+                                    reason,
+                                    stop_reason,
+                                } if info.get("blocked").is_none() => {
+                                    info.insert(
+                                        "blocked".into(),
+                                        JsValue::Object(object([
+                                            ("reason", JsValue::String(reason)),
+                                            (
+                                                "stopReason",
+                                                stop_reason
+                                                    .map(JsValue::String)
+                                                    .unwrap_or(JsValue::Undefined),
+                                            ),
+                                        ])),
+                                    );
+                                }
+                                HookEffect::AdditionalContext { content, .. } => {
+                                    additional.push(JsValue::String(content))
+                                }
+                                HookEffect::UpdatedMcpToolOutput { output }
+                                    if info.get("updatedMcpToolOutput").is_none() =>
+                                {
+                                    info.insert("updatedMcpToolOutput".into(), output);
+                                }
+                                _ => {}
+                            }
+                        }
+                        if !additional.is_empty()
+                            || info.get("blocked").is_some()
+                            || info.get("updatedMcpToolOutput").is_some()
+                        {
+                            info.insert("additionalContext".into(), JsValue::Array(additional));
+                            metadata
+                                .get_or_insert_with(JsObject::new)
+                                .insert("lifecycle".into(), JsValue::Object(info));
+                        }
+                    }
                     let max_bytes = tool
                         .fields()
                         .get("maxResultBytes")
@@ -349,6 +1050,20 @@ impl ToolRuntime {
                         metadata
                             .get_or_insert_with(JsObject::new)
                             .insert("previewLimit".into(), JsValue::Object(limit));
+                    }
+                    if track_progress
+                        && let Some(service) = context.host.plan_todo.as_ref()
+                            .and_then(|value| value.downcast_ref::<crate::host::modules::capability::PlanTodoContext>())
+                    {
+                        let payload = object([
+                            ("sessionId", context.fields.get("sessionId").cloned().unwrap_or(JsValue::Undefined)),
+                            ("turnId", context.fields.get("turnId").cloned().unwrap_or(JsValue::Undefined)),
+                            ("method", "mark_tool_progress".into()),
+                            ("toolName", string(name.clone())),
+                        ]);
+                        if let Err(error) = service.0.call(JsValue::Object(object([("payload", JsValue::Object(payload))]))).await {
+                            return fail(&name, ToolError::failed(error.message));
+                        }
                     }
                     Ok(object([
                         ("type", "success".into()),
@@ -382,7 +1097,9 @@ impl ToolRuntime {
 impl ToolCatalog for ToolRuntime {
     fn list(&self) -> HostFuture<Vec<Arc<dyn ToolDefinition>>> {
         let registry = self.registry.clone();
+        let validity = self.check_catalog();
         Box::pin(async move {
+            validity?;
             Ok(registry
                 .list()?
                 .into_iter()
@@ -392,6 +1109,30 @@ impl ToolCatalog for ToolRuntime {
     }
 }
 impl ToolExecution for ToolRuntime {
+    fn applies_mode_effects(&self) -> bool {
+        self.mode_owner.is_some()
+    }
+    fn bind_turn_permission(
+        &self,
+        permission: crate::runtime::project::interaction_permission::TurnPermission,
+    ) -> Result<(), HostError> {
+        permission.enable_native_execution()?;
+        if let Some(owner) = &self.mode_owner {
+            let owner = owner.clone();
+            permission.bind_mode_source(Arc::new(move || owner.current_mode()))?;
+        }
+        self.turn_permission
+            .set(permission)
+            .map_err(|_| ModuleError::new("Tool execution is already bound to a turn.").into())
+    }
+    fn bind_turn_hooks(
+        &self,
+        hooks: crate::runtime::project::interaction_hooks::TurnHooks,
+    ) -> Result<(), HostError> {
+        self.turn_hooks.set(hooks).map_err(|_| {
+            ModuleError::new("Tool execution hooks are already bound to a turn.").into()
+        })
+    }
     fn execute_all(
         &self,
         calls: Vec<ToolCall>,
@@ -405,11 +1146,20 @@ impl ToolExecution for ToolRuntime {
                 .map_err(|_| {
                     ModuleError::new("Tool runtime requires a host ToolRuntimeContext.")
                 })?;
-            let execution = context
-                .execution
+            let (execution, authority) = if let Some(scoped) =
+                context
+                    .execution
+                    .downcast_ref::<crate::runtime::sop::authority::AuthorityExecution>()
+            {
+                (scoped.original.clone(), Some(scoped.authority.clone()))
+            } else {
+                (context.execution, None)
+            };
+            let execution = execution
                 .downcast::<ExecutionContext>()
                 .map_err(|_| ModuleError::new("Tool runtime requires a host ExecutionContext."))?;
             let mut context = ToolRunContext::new(host);
+            context.knowledge_authority = authority;
             with_operation_deadline_budget(&mut context, &execution.fields)?;
             runtime.execute_batch(calls, context).await
         })
@@ -983,6 +1733,33 @@ fn preview_metadata(content: &[JsValue], max: Option<f64>) -> Result<Option<JsOb
 #[cfg(test)]
 mod preview_tests {
     use super::*;
+
+    #[test]
+    fn permission_hook_denial_preserves_prompt_reason_and_nullish_fallback() {
+        for (raw, expected) in [
+            (r#"{}"#, "PermissionRequest hook denied bash."),
+            (r#"{"message":null}"#, "PermissionRequest hook denied bash."),
+            (
+                r#"{"message":"Permission prompt denied."}"#,
+                "Permission prompt denied.",
+            ),
+            (r#"{"message":""}"#, ""),
+        ] {
+            let value = permission_hook_denial(
+                &"bash".into(),
+                &pilotdeck_protocol::parse_json(raw).unwrap(),
+            );
+            assert_eq!(value.get("message"), Some(&JsValue::from(expected)));
+            assert_eq!(
+                value.get("reason").and_then(|v| v.get("type")),
+                Some(&JsValue::from("runtime"))
+            );
+            assert_eq!(
+                value.get("reason").and_then(|v| v.get("message")),
+                value.get("message")
+            );
+        }
+    }
 
     fn text_content(value: &str) -> Vec<JsValue> {
         vec![JsValue::Object(object([

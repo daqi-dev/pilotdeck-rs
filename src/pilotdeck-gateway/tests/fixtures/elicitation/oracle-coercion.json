@@ -1,0 +1,426 @@
+{
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "results": [
+    {
+      "name": "zero",
+      "input": {
+        "questions": [
+          {
+            "question": "Pick?",
+            "header": "Choice",
+            "options": [
+              {
+                "label": "A",
+                "description": "First"
+              },
+              {
+                "label": "B",
+                "description": "Second"
+              }
+            ]
+          }
+        ],
+        "answers": {
+          "Pick?": 0
+        },
+        "annotations": {
+          "Pick?": {
+            "notes": 1
+          }
+        }
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "text",
+              "text": "User has answered your questions: \"Pick?\"=\"0\" user notes: 1. You can now continue with the user's answers in mind."
+            }
+          ],
+          "data": {
+            "questions": [
+              {
+                "question": "Pick?",
+                "header": "Choice",
+                "options": [
+                  {
+                    "label": "A",
+                    "description": "First"
+                  },
+                  {
+                    "label": "B",
+                    "description": "Second"
+                  }
+                ]
+              }
+            ],
+            "answers": {
+              "Pick?": 0
+            },
+            "annotations": {
+              "Pick?": {
+                "notes": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "bool",
+      "input": {
+        "questions": [
+          {
+            "question": "Pick?",
+            "header": "Choice",
+            "options": [
+              {
+                "label": "A",
+                "description": "First"
+              },
+              {
+                "label": "B",
+                "description": "Second"
+              }
+            ]
+          }
+        ],
+        "answers": {
+          "Pick?": false
+        },
+        "annotations": {
+          "Pick?": {
+            "notes": false
+          }
+        }
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "text",
+              "text": "User has answered your questions: \"Pick?\"=\"false\". You can now continue with the user's answers in mind."
+            }
+          ],
+          "data": {
+            "questions": [
+              {
+                "question": "Pick?",
+                "header": "Choice",
+                "options": [
+                  {
+                    "label": "A",
+                    "description": "First"
+                  },
+                  {
+                    "label": "B",
+                    "description": "Second"
+                  }
+                ]
+              }
+            ],
+            "answers": {
+              "Pick?": false
+            },
+            "annotations": {
+              "Pick?": {
+                "notes": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "null",
+      "input": {
+        "questions": [
+          {
+            "question": "Pick?",
+            "header": "Choice",
+            "options": [
+              {
+                "label": "A",
+                "description": "First"
+              },
+              {
+                "label": "B",
+                "description": "Second"
+              }
+            ]
+          }
+        ],
+        "answers": {
+          "Pick?": null
+        },
+        "annotations": {
+          "Pick?": {
+            "preview": {
+              "x": 1
+            }
+          }
+        }
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "text",
+              "text": "User has answered your questions: \"Pick?\"=\"null\" selected preview:\n[object Object]. You can now continue with the user's answers in mind."
+            }
+          ],
+          "data": {
+            "questions": [
+              {
+                "question": "Pick?",
+                "header": "Choice",
+                "options": [
+                  {
+                    "label": "A",
+                    "description": "First"
+                  },
+                  {
+                    "label": "B",
+                    "description": "Second"
+                  }
+                ]
+              }
+            ],
+            "answers": {
+              "Pick?": null
+            },
+            "annotations": {
+              "Pick?": {
+                "preview": {
+                  "x": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "array",
+      "input": {
+        "questions": [
+          {
+            "question": "Pick?",
+            "header": "Choice",
+            "options": [
+              {
+                "label": "A",
+                "description": "First"
+              },
+              {
+                "label": "B",
+                "description": "Second"
+              }
+            ]
+          }
+        ],
+        "answers": {
+          "Pick?": [
+            "A",
+            null,
+            1,
+            [
+              "B",
+              "C"
+            ]
+          ]
+        },
+        "annotations": {
+          "Pick?": {
+            "notes": [
+              "x",
+              "y"
+            ]
+          }
+        }
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "text",
+              "text": "User has answered your questions: \"Pick?\"=\"A, , 1, B,C\" user notes: x,y. You can now continue with the user's answers in mind."
+            }
+          ],
+          "data": {
+            "questions": [
+              {
+                "question": "Pick?",
+                "header": "Choice",
+                "options": [
+                  {
+                    "label": "A",
+                    "description": "First"
+                  },
+                  {
+                    "label": "B",
+                    "description": "Second"
+                  }
+                ]
+              }
+            ],
+            "answers": {
+              "Pick?": [
+                "A",
+                null,
+                1,
+                [
+                  "B",
+                  "C"
+                ]
+              ]
+            },
+            "annotations": {
+              "Pick?": {
+                "notes": [
+                  "x",
+                  "y"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "object",
+      "input": {
+        "questions": [
+          {
+            "question": "Pick?",
+            "header": "Choice",
+            "options": [
+              {
+                "label": "A",
+                "description": "First"
+              },
+              {
+                "label": "B",
+                "description": "Second"
+              }
+            ]
+          }
+        ],
+        "answers": {
+          "Pick?": {
+            "x": 1
+          }
+        },
+        "annotations": {
+          "Pick?": {
+            "notes": true
+          }
+        }
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "text",
+              "text": "User has answered your questions: \"Pick?\"=\"[object Object]\" user notes: true. You can now continue with the user's answers in mind."
+            }
+          ],
+          "data": {
+            "questions": [
+              {
+                "question": "Pick?",
+                "header": "Choice",
+                "options": [
+                  {
+                    "label": "A",
+                    "description": "First"
+                  },
+                  {
+                    "label": "B",
+                    "description": "Second"
+                  }
+                ]
+              }
+            ],
+            "answers": {
+              "Pick?": {
+                "x": 1
+              }
+            },
+            "annotations": {
+              "Pick?": {
+                "notes": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "utf16",
+      "input": {
+        "questions": [
+          {
+            "question": "Pick?",
+            "header": "Choice",
+            "options": [
+              {
+                "label": "A",
+                "description": "First"
+              },
+              {
+                "label": "B",
+                "description": "Second"
+              }
+            ]
+          }
+        ],
+        "answers": {
+          "Pick?": "\ud800"
+        },
+        "annotations": {
+          "Pick?": {
+            "notes": "\ud800"
+          }
+        }
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "text",
+              "text": "User has answered your questions: \"Pick?\"=\"\ud800\" user notes: \ud800. You can now continue with the user's answers in mind."
+            }
+          ],
+          "data": {
+            "questions": [
+              {
+                "question": "Pick?",
+                "header": "Choice",
+                "options": [
+                  {
+                    "label": "A",
+                    "description": "First"
+                  },
+                  {
+                    "label": "B",
+                    "description": "Second"
+                  }
+                ]
+              }
+            ],
+            "answers": {
+              "Pick?": "\ud800"
+            },
+            "annotations": {
+              "Pick?": {
+                "notes": "\ud800"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

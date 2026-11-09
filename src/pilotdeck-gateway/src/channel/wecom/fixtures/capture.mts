@@ -1,0 +1,12 @@
+import {pathToFileURL} from "node:url";
+import {join} from "node:path";
+const baseline=process.env.PDRS_BASELINE;if(!baseline)throw Error("PDRS_BASELINE required");
+const {WeComSessionMapper}=await import(pathToFileURL(join(baseline,"src/adapters/channel/wecom/WeComSessionMapper.ts")).href);
+const {renderWeComEvent}=await import(pathToFileURL(join(baseline,"src/adapters/channel/wecom/wecom-render.ts")).href);
+const mapper=new WeComSessionMapper({activeByChatId:{},projectByScopeKey:{}},()=>"00000000-0000-4000-8000-000000000001");
+const inputs=[{chatId:" chat ",userId:" u ",text:" hello "},{chatId:"room",userId:"alice",chatType:"group",text:" /new  ask "},{chatId:"room",userId:"alice",chatType:"group",text:" next "},{chatId:"room",userId:"bob",chatType:"group",groupSessionsPerUser:false,text:"hi"},{chatId:"room",chatType:"group",text:"hi"},{chatId:"x",text:"/newer"}];
+const results=[];for(const input of inputs)results.push(mapper.resolve(input));
+mapper.bindProject({chatId:"room",userId:"alice",chatType:"group"},"/project");
+results.push(mapper.resolve({chatId:"room",userId:"alice",chatType:"group",text:"bound"}));
+const events=[{type:"assistant_text_delta",text:"hello"},{type:"assistant_thinking_delta",text:"secret"},{type:"tool_call_finished",ok:false,toolName:"read",toolCallId:"i"},{type:"tool_call_finished",ok:true,toolCallId:"i"},{type:"elicitation_request",questions:[{header:"H",question:"Q",options:[{label:"one"},{label:"two"}]}]},{type:"error",message:"bad"},{type:"turn_completed"}];
+console.log(JSON.stringify({baseline:"cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",inputs,results,state:mapper.snapshot(),events,rendered:events.map(e=>renderWeComEvent(e)??null)},null,2));

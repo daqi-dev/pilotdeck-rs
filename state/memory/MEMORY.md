@@ -55,3 +55,17 @@
 - [混合署名口径](20261106-mixed-authorship.md) — 看板 impl 写家族并集；单一「主实现方」用最大 diff 行数方（可复算），评审按「参与过即作者」取补集（#1544 人批 C+B）
 - [macmini 仅 Wi-Fi](20261106-macmini-wifi-linkloss.md) — en0 无有线，长链断链会作废整批宿主/对拍；B 已让等待器 resume + 证据分轮次，根治仍需现场插网线（#1498 人批 B）
 - [大总管会话启动](20261107-coord-session-launch.md) — 起会话用 `claude --permission-mode bypassPermissions`；`--allow-dangerously-skip-permissions` 实测落 auto mode，分类器抖动会被误读成权限被拒
+- [新增差异段名](20261108-diff-sections.md) — 六个独立段名、`check_frozen.py -I` 完整退出0后才提交；不合并 Rust 行为与范围
+- [远端源码新鲜度](20261108-remote-source-freshness.md) — 同步完成后刷新源码mtime并绑定bin哈希；库测试通过不证明实际入口已重编
+
+
+## CLI history 原生探针（2026-11-08）
+
+原生链路验收先核每一层的实际合同：WS错误帧到新control会变成exit1/空stdout/JSON stderr；Ratatui用CSI坐标绘字而非连续原始空格串；真实历史同时含text与status。测试须保留完整状态序列，用不同内容证明背景文件选择，不能只放同内容副本。跨入口驱动与复跑说明唯一见 `src/pilotdeck-gateway/tests/fixtures/native-history/README.md`；3次错误假设原件在主仓consolidation目录，不用重复的探针修复假装产品发生回归。
+
+- [CLI 候选补丁合并](20261108-cli-candidate-merge.md) — base绑定生成时原字节，逐hunk防跨车道逻辑覆盖；JsValue转换与Drop边界。
+
+
+## CLI探针的进程身份（2026-11-09）
+
+观察键必须是(pid,birth)，PID同号而birth变化意味着旧身份已退出，不能单凭同号把新身份当本任务泄漏或发信号；新身份须凭当前SID或已核live父链独立归属，leader身份替换后不得继续信任旧SID数字。记录退休身份，未知不猜；旧总FAIL不能用后来的空普查改成PASS。主仓 `_tmp/20261108-cli-completion/session-owner-rebind/pid-identity-rule/` 有4格OS表注入通过的私有规则候选；真实最终run未诱导PID复用，适用边界如实保留。原安装22条/owner4条PID变化与最终只读census分别见各自原件，验证的是不同时间命题。

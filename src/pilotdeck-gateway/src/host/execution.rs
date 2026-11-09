@@ -196,6 +196,8 @@ pub(super) async fn run(
     let mut known_terminal = None;
     let mut terminal_applied = None;
     let mut drain_deadline = None;
+    let mut native_failure = None;
+    let mut native_drain_deadline = None;
     let callbacks = &mut scope.callbacks;
     let mut interruption = None;
     // True once the cancel deadline is seen already elapsed at a loop top,
@@ -263,6 +265,12 @@ pub(super) async fn run(
             && let Some(terminal) = terminal_applied.take()
         {
             return Ok(terminal);
+        }
+        if callbacks.is_empty()
+            && events.is_empty()
+            && let Some(error) = native_failure.take()
+        {
+            return Err(error);
         }
         if client.cancel_enabled
             && progress.stream_id.is_some()
@@ -336,7 +344,7 @@ pub(super) async fn run(
         // ahead of `receive` so a still-streaming peer cannot starve it.
         tokio::select! {
             biased;
-            _ = wait_for_deadline(execution_deadline), if terminal_applied.is_none() => {
+            _ = wait_for_deadline(execution_deadline), if terminal_applied.is_none() && native_failure.is_none() => {
                 return Err(HostError::new(HostErrorKind::Timeout, "Sidecar execute timed out."));
             }
             _ = wait_for_deadline(drain_deadline), if terminal_applied.is_some() => {
@@ -390,6 +398,17 @@ pub(super) async fn run(
                     }
                 }
             }
+            _ = wait_for_deadline(native_drain_deadline), if native_failure.is_some() => {
+                // A factory failure is authoritative only after the validated
+                // event prefix has reached the consumer. Never silently lose a
+                // blocked prefix while reporting only the original error.
+                callbacks.shutdown().await;
+                if events.is_empty() && !event_running {
+                    return Err(native_failure.take().expect("native failure"));
+                }
+                return Err(HostError::new(HostErrorKind::Timeout,
+                    "Native sidecar failure prefix could not be fully applied before the terminal drain deadline."));
+            }
             // Receiving final does not mean its event callback has completed.
             // At the same absolute bound, stop cooperative application and keep
             // the validated terminal authoritative without claiming it applied.
@@ -400,6 +419,10 @@ pub(super) async fn run(
                 if let Some((event, aborted)) = known_terminal.take() {
                     return Ok(terminal_result(event, aborted, progress));
                 }
+                // Cancellation bounds prefix application for both terminal
+                // forms. A validated failure received inside that bound must
+                // retain its original detail, just like a known success above.
+                if let Some(error) = native_failure.take() { return Err(error); }
                 return Err(post_cancel_timeout());
             }
             input = client.connection.receive(), if !terminal_received => {
@@ -440,6 +463,30 @@ pub(super) async fn run(
                         if progress.stream_id.as_ref() != Some(event.stream_id) || event.identity.run_id != &identity.run_id
                             || event.identity.operation_id != &identity.operation_id || event.identity.request_id != &identity.request_id {
                             return Err(HostError::protocol("Sidecar event identity does not match the active execution (or event before acceptance)."));
+                        }
+                        // Identity and active stream binding were checked above.
+                        // Only the native owner opts into Module2 factory failures;
+                        // do not weaken the default AgentLoop terminal projector.
+                        if client.native_terminal_errors
+                            && let Some(detail) = native_terminal_error(event)
+                        {
+                            if event.sequence.value() != next_sequence {
+                                return Err(HostError::protocol(format!("Sidecar event sequence mismatch: expected {next_sequence}, got {}.", event.sequence.value())));
+                            }
+                            let mut error = HostError::new(HostErrorKind::Callback,
+                                String::from_utf16_lossy(detail.get("message").and_then(JsValue::as_string).expect("validated native error message").units()));
+                            error.native_terminal_error = Some(Box::new(detail));
+                            progress.terminal_lease = Some(raw.lease);
+                            native_failure = Some(error);
+                            terminal_received = true;
+                            // Invalidly large drain durations use the finite
+                            // close grace for this native-only error profile.
+                            native_drain_deadline = Some(Instant::now().checked_add(limits.terminal_drain_timeout)
+                                .or_else(|| Instant::now().checked_add(limits.close_timeout))
+                                .unwrap_or_else(Instant::now));
+                            #[cfg(test)]
+                            client.test_signals.final_received.store(true, Ordering::SeqCst);
+                            continue;
                         }
                         let aborted = validate_event(event, &identity, &cancellation)?;
                         if event.sequence.value() != next_sequence {
@@ -635,6 +682,30 @@ pub(super) fn module_response(call: &JsValue, result: Result<JsObject, HostError
     }
     JsValue::Object(response)
 }
+/// A narrowly typed native factory failure, not an AgentLoop success/failure
+/// result. Unknown outcomes and arbitrary malformed finals stay on the original
+/// strict path. Header/payload copies must agree before any error is preserved.
+fn native_terminal_error(event: EventRef<'_>) -> Option<JsObject> {
+    if !event.final_event
+        || event.outcome != Some(ModuleOutcome::Failed)
+        || !event.event_type.equals_str("agent.execute.failed")
+        || event.payload.len() != 1
+    {
+        return None;
+    }
+    let error = event.payload.get("error")?.as_object()?;
+    let code = error
+        .get("code")?
+        .as_string()
+        .filter(|code| !code.is_empty())?;
+    error.get("message")?.as_string()?;
+    if event.fields.get("code").and_then(JsValue::as_string) != Some(code)
+        || event.fields.get("error").and_then(JsValue::as_object) != Some(error)
+    {
+        return None;
+    }
+    Some(error.clone())
+}
 pub(super) fn validate_event(
     event: EventRef<'_>,
     identity: &ExecutionIdentity,
@@ -755,5 +826,62 @@ mod cancel_state_tests {
         state.observe(&cancellation);
         assert_eq!(state.deadline, Some(deadline));
         assert_eq!(state.take_reason_to_send(), None);
+    }
+}
+
+#[cfg(test)]
+mod native_terminal_tests {
+    use super::*;
+    fn frame() -> JsValue {
+        pilotdeck_protocol::parse_json(r#"{"kind":"event","messageId":"final","eventType":"agent.execute.failed","streamId":"stream","sequence":0,"runId":"run","operationId":"operation","requestId":"request","final":true,"outcome":"failed","code":"REQUEST_CACHE_LOCALE_COLLATION_PROFILE","error":{"code":"REQUEST_CACHE_LOCALE_COLLATION_PROFILE","message":"native \ud800 failure","extra":7},"payload":{"error":{"code":"REQUEST_CACHE_LOCALE_COLLATION_PROFILE","message":"native \ud800 failure","extra":7}}}"#).unwrap()
+    }
+    fn event(value: &JsValue) -> EventRef<'_> {
+        let MessageRef::Event(event) = decode(value).unwrap() else {
+            panic!("event")
+        };
+        event
+    }
+    #[test]
+    fn native_factory_error_retains_exact_utf16_object_without_weakening_default_terminal() {
+        let value = frame();
+        let event = event(&value);
+        let original = event.payload.get("error").unwrap().as_object().unwrap();
+        assert_eq!(native_terminal_error(event).as_ref(), Some(original));
+        let identity = ExecutionIdentity {
+            request_id: "request".into(),
+            run_id: "run".into(),
+            operation_id: "operation".into(),
+            session_id: "session".into(),
+            turn_id: "turn".into(),
+        };
+        let strict = validate_event(event, &identity, &Cancellation::default()).unwrap_err();
+        assert_eq!(strict.kind, HostErrorKind::Protocol);
+        assert_eq!(
+            strict.message,
+            "Sidecar terminal payload does not contain an AgentLoop result."
+        );
+    }
+    #[test]
+    fn malformed_copies_and_unknown_outcomes_are_never_native_failures() {
+        for (key, replacement) in [
+            ("outcome", JsValue::from("completed")),
+            ("outcome", JsValue::from("result_unknown")),
+            ("code", JsValue::from("another-code")),
+            ("payload", JsValue::Object(JsObject::new())),
+            (
+                "error",
+                pilotdeck_protocol::parse_json(
+                    r#"{"code":"REQUEST_CACHE_LOCALE_COLLATION_PROFILE","message":"different"}"#,
+                )
+                .unwrap(),
+            ),
+        ] {
+            let mut value = frame();
+            let JsValue::Object(fields) = &mut value else {
+                panic!("frame")
+            };
+            fields.insert(key.into(), replacement);
+            assert!(native_terminal_error(event(&value)).is_none(), "{key}");
+        }
     }
 }

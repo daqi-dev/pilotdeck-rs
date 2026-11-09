@@ -106,8 +106,8 @@ impl SubmitSnapshots for NativeSubmitSnapshots {
         })
     }
 }
-#[derive(Default)]
-pub struct WorkspaceAdmissions(Mutex<HashMap<JsString, (JsString, JsString)>>);
+#[derive(Clone, Default)]
+pub struct WorkspaceAdmissions(Arc<Mutex<HashMap<JsString, (JsString, JsString)>>>);
 impl WorkspaceAdmissions {
     pub fn reserve(&self, workspace: &JsString, run: &RunRef) -> bool {
         let mut owners = self.0.lock().unwrap();
@@ -157,7 +157,7 @@ struct PumpContext<'a> {
     input: &'a JsValue,
     run: &'a RunRef,
     completion: &'a TurnCompletionHandle,
-    publisher: &'a TurnPublisher,
+    publisher: &'a Arc<TurnPublisher>,
     progress: &'a Mutex<SnapshotProgress>,
     timed_out: &'a AtomicBool,
     terminal: &'a TerminalClaim,
@@ -176,6 +176,18 @@ struct PumpContext<'a> {
 /// (including usage/command short-circuits); empty means admission may proceed.
 /// The production host lives in [`super::submit_host`].
 pub trait SubmitHost: Send + Sync {
+    fn bound_project_key(&self) -> Option<JsString> {
+        None
+    }
+    /// Optional immutable host binding, selected once after input validation.
+    /// Default embeddings preserve the old host and all existing error order.
+    fn bind_project<'a>(
+        &'a self,
+        _input: &'a mut JsValue,
+    ) -> SubmitFuture<'a, Result<Option<Arc<dyn SubmitHost>>, SubmitError>> {
+        Box::pin(async { Ok(None) })
+    }
+
     fn workspace(&self, input: &JsValue) -> Result<SubmitWorkspace, SubmitError>;
     /// Normalized runPolicy.failureGuard snapshot, resolved after refresh.
     /// None means no configured policy; enabled=false keeps accounting disabled.
@@ -213,6 +225,25 @@ pub trait SubmitHost: Send + Sync {
         input: &'a JsValue,
         run: &'a RunRef,
     ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>>;
+    fn sdk_permission_mode<'a>(
+        &'a self,
+        _session: &'a JsString,
+    ) -> SubmitFuture<'a, Option<JsString>> {
+        Box::pin(async { None })
+    }
+    fn sdk_models<'a>(
+        &'a self,
+        _session: &'a JsString,
+        _project: Option<&'a JsString>,
+    ) -> SubmitFuture<'a, Result<Option<super::interaction::SdkModelOptions>, SubmitError>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn sdk_hooks<'a>(
+        &'a self,
+        _session: &'a JsString,
+    ) -> SubmitFuture<'a, Result<Option<super::interaction::SdkHookState>, SubmitError>> {
+        Box::pin(async { Ok(None) })
+    }
     fn has_sdk_config(&self) -> bool;
     fn validate_sdk_config(&self, config: &JsValue) -> Result<(), SubmitError>;
     fn set_sdk_config<'a>(
@@ -267,6 +298,7 @@ pub struct TurnSubmission {
     receiver: mpsc::UnboundedReceiver<Message>,
     consumed: Option<oneshot::Sender<()>>,
     result: Option<oneshot::Receiver<Result<(), SubmitError>>>,
+    reliable_budget: Option<Duration>,
 }
 impl TurnSubmission {
     pub async fn next(&mut self) -> Result<Option<JsValue>, SubmitError> {
@@ -277,7 +309,14 @@ impl TurnSubmission {
                     let _ = consumed.send(());
                 }
                 if let Some(result) = self.result.take() {
-                    result.await.map_err(|_| {
+                    let settled = if let Some(budget) = self.reliable_budget {
+                        tokio::time::timeout(budget, result).await.map_err(|_| {
+                            SubmitError::new("result_unknown", "Turn completion could not be confirmed within the native abort budget.")
+                        })?
+                    } else {
+                        result.await
+                    };
+                    settled.map_err(|_| {
                         SubmitError::new("gateway_submit_failed", "Submit task stopped.")
                     })??;
                 }
@@ -291,18 +330,40 @@ impl TurnSubmitter {
         self.submit_observed(input, |_| {})
     }
 
+    /// Native consumers that must classify terminal failure reliably opt in.
+    /// This does not change the legacy live queue's close behavior.
+    pub fn submit_reliable(self: &Arc<Self>, input: JsValue) -> TurnSubmission {
+        self.submit_with_budget(
+            input,
+            |_| {},
+            Some(Duration::from_millis(
+                self.host.abort_turn_timeout_ms().max(1),
+            )),
+        )
+    }
+
     /// Observe only a real completion begin, never a rejected/preflight run.
     pub(super) fn submit_observed(
         self: &Arc<Self>,
         input: JsValue,
         admitted: impl FnOnce(&RunRef) + Send + 'static,
     ) -> TurnSubmission {
+        self.submit_with_budget(input, admitted, None)
+    }
+    fn submit_with_budget(
+        self: &Arc<Self>,
+        input: JsValue,
+        admitted: impl FnOnce(&RunRef) + Send + 'static,
+        reliable_budget: Option<Duration>,
+    ) -> TurnSubmission {
         let (send, receiver) = mpsc::unbounded_channel();
         let (consumed, barrier) = oneshot::channel();
         let (result, completion) = oneshot::channel();
         let submitter = self.clone();
         tokio::spawn(async move {
-            let outcome = submitter.run(input, &send, barrier, admitted).await;
+            let outcome = submitter
+                .run(input, &send, barrier, admitted, reliable_budget)
+                .await;
             let _ = send.send(Message::End);
             let _ = result.send(outcome);
         });
@@ -310,6 +371,7 @@ impl TurnSubmitter {
             receiver,
             consumed: Some(consumed),
             result: Some(completion),
+            reliable_budget,
         }
     }
 
@@ -319,6 +381,7 @@ impl TurnSubmitter {
         send: &mpsc::UnboundedSender<Message>,
         barrier: oneshot::Receiver<()>,
         admitted: impl FnOnce(&RunRef) + Send,
+        reliable_budget: Option<Duration>,
     ) -> Result<(), SubmitError> {
         // Gateway normalization precedes validation and durable acceptance.
         let early = self.host.normalize(&mut input).await?;
@@ -330,6 +393,31 @@ impl TurnSubmitter {
             emit_all(send, vec![event]);
             return Ok(());
         }
+        if let Some(host) = self.host.bind_project(&mut input).await? {
+            let scoped = Arc::new(Self {
+                owner: self.owner.clone(),
+                coordinator: self.coordinator.clone(),
+                projector: self.projector.clone(),
+                registry: self.registry.clone(),
+                host,
+                workspace_admissions: self.workspace_admissions.clone(),
+            });
+            return scoped
+                .run_bound(input, send, barrier, admitted, reliable_budget)
+                .await;
+        }
+        self.run_bound(input, send, barrier, admitted, reliable_budget)
+            .await
+    }
+
+    async fn run_bound(
+        self: &Arc<Self>,
+        mut input: JsValue,
+        send: &mpsc::UnboundedSender<Message>,
+        barrier: oneshot::Receiver<()>,
+        admitted: impl FnOnce(&RunRef) + Send,
+        reliable_budget: Option<Duration>,
+    ) -> Result<(), SubmitError> {
         let routed = self.host.route_input(&mut input).await?;
         if !routed.is_empty() {
             emit_all(send, routed);
@@ -349,7 +437,10 @@ impl TurnSubmitter {
         }
         let run = RunRef {
             session_key: string(field(&input, "sessionKey")),
-            project_key: field(&input, "projectKey").as_string().cloned(),
+            project_key: self
+                .host
+                .bound_project_key()
+                .or_else(|| field(&input, "projectKey").as_string().cloned()),
             run_id: field(&input, "runId")
                 .as_string()
                 .cloned()
@@ -561,11 +652,16 @@ impl TurnSubmitter {
             .await;
             return Ok(());
         }
-        let publisher = Arc::new(TurnPublisher::start(
-            run.clone(),
-            self.registry.clone(),
-            self.coordinator.clone(),
-        ));
+        let publisher = Arc::new(if let Some(budget) = reliable_budget {
+            TurnPublisher::start_reliable(
+                run.clone(),
+                self.registry.clone(),
+                self.coordinator.clone(),
+                budget,
+            )
+        } else {
+            TurnPublisher::start(run.clone(), self.registry.clone(), self.coordinator.clone())
+        });
         let progress = Arc::new(Mutex::new(SnapshotProgress::default()));
         let timed_out = Arc::new(AtomicBool::new(false));
         let terminal = Arc::new(TerminalClaim::default());
@@ -958,7 +1054,14 @@ impl TurnSubmitter {
                 disallowed_tools: strings(field(input, "disallowedTools")),
             })
             .await
-            .map_err(|error| SubmitError::new("gateway_submit_failed", error.message))?;
+            .map_err(|error| {
+                let code = if error.message.starts_with("PROJECT_SESSION_MISMATCH:") {
+                    "PROJECT_SESSION_MISMATCH"
+                } else {
+                    "gateway_submit_failed"
+                };
+                SubmitError::new(code, error.message)
+            })?;
         if completion.is_cancelled() {
             publisher.gateway_event(aborted(run));
             return Ok(());
@@ -966,17 +1069,13 @@ impl TurnSubmitter {
         if recorder.is_some()
             && let Some(workspace) = &workspace_id
         {
-            let snapshot = handle.snapshot();
-            if let Some(cwd) = field(&snapshot, "cwd")
-                .as_string()
-                .filter(|cwd| !cwd.is_empty())
-            {
+            if let Some(cwd) = handle.workspace_cwd().filter(|cwd| !cwd.is_empty()) {
                 progress.lock().unwrap().input = Some(WorkspaceSnapshotInput {
                     workspace_id: display(workspace),
                     session_id: display(&run.session_key),
                     turn_id: display(&run.run_id),
                     run_id: display(&run.run_id),
-                    workspace_dir: display(cwd),
+                    workspace_dir: display(&cwd),
                     workspace_stable: None,
                     failure_kind: None,
                     failure_reason: None,
@@ -1039,8 +1138,37 @@ impl TurnSubmitter {
             set(&mut prepared.options, "execution", execution);
         }
         let mut actual_model = None;
+        let mut sdk_hooks = self.host.sdk_hooks(&run.session_key).await?;
+        if let Some(sdk) = &mut sdk_hooks {
+            let owner = self.owner.clone();
+            let session = run.session_key.clone();
+            let completion = completion.clone();
+            sdk.current_turn = Some(Arc::new(move || {
+                owner.is_current_completion(&session, &completion)
+            }));
+        }
         let mut stream = handle
-            .submit(prepared.input, prepared.options)
+            .submit_with_authority(
+                prepared.input,
+                prepared.options,
+                super::interaction::TurnInteractionAuthority {
+                    permission_mode: field(input, "mode").as_string().cloned(),
+                    base_permission_mode: field(input, "basePermissionMode").as_string().cloned(),
+                    can_prompt: field(input, "canPrompt").as_bool(),
+                    sdk_permission_mode: self.host.sdk_permission_mode(&run.session_key).await,
+                    sdk_models: self
+                        .host
+                        .sdk_models(&run.session_key, run.project_key.as_ref())
+                        .await?,
+                    sdk_hooks,
+                    policy_can_prompt: (field(
+                        field(field(input, "sdkSessionConfig"), "managedPermissions"),
+                        "canPrompt",
+                    ) == &JsValue::Bool(false))
+                        .then_some(false),
+                    emit: publisher.permission_emitter(),
+                },
+            )
             .map_err(|error| SubmitError::new("gateway_submit_failed", error.message))?;
         while let Some(event) = stream
             .next()
@@ -1303,7 +1431,7 @@ pub(super) fn is(value: &JsValue, key: &str, text: &str) -> bool {
         .as_string()
         .is_some_and(|value| value.equals_str(text))
 }
-pub(super) fn truthy(value: &JsValue) -> bool {
+pub(crate) fn truthy(value: &JsValue) -> bool {
     match value {
         JsValue::Undefined | JsValue::Null => false,
         JsValue::Bool(v) => *v,

@@ -117,12 +117,18 @@ impl fmt::Display for AutomationError {
 /// trait objects: the always-on half only ever calls `abortTurn`
 /// (`AlwaysOnRuntime.ts:387-392`), and the cron face is the
 /// `SessionAdmissionCronGateway` the #1326 wiring already constructs.
+type NativeCronBind =
+    Arc<dyn Fn(Arc<CronManager>) -> io::Result<Arc<crate::switch::CronStopHandle>> + Send + Sync>;
+
 #[derive(Clone)]
 pub(crate) struct ProjectAutomationAgentGateway {
     /// The always-on `abortTurn` face.
     pub always_on: Arc<dyn AlwaysOnAgentGateway>,
     /// The cron `submitTurn` / `abortTurn` / `closeSession` face.
     pub cron: Arc<dyn CronAgentGateway>,
+    /// Native provider generations construct their own cancellation and drain
+    /// handle while sharing this host's session owner and turn submitter.
+    pub native_cron_bind: Option<NativeCronBind>,
 }
 
 /// The hooks record the always-on bind signature takes
@@ -179,6 +185,59 @@ pub(crate) struct SubsystemUpdate {
     pub extra_tools: Vec<JsString>,
     pub cron: Option<Arc<dyn ProjectAutomationProvider>>,
     pub always_on_control: Option<Arc<dyn ProjectAutomationProvider>>,
+}
+
+/// One atomic publication of both control families. Requests pin their
+/// current manager before awaiting; retired generations keep owning their runs.
+#[derive(Default)]
+pub(crate) struct PublishedAutomation {
+    state: Mutex<PublishedState>,
+}
+#[derive(Default)]
+struct PublishedState {
+    cron: Option<Arc<CronManager>>,
+    control: Option<Arc<dyn crate::runtime::always_on::AlwaysOnControl>>,
+}
+impl PublishedAutomation {
+    pub(crate) fn publish(
+        &self,
+        update: SubsystemUpdate,
+        standalone: Arc<dyn crate::runtime::always_on::StandaloneApply>,
+    ) {
+        let manager = update
+            .always_on_control
+            .as_ref()
+            .and_then(|p| p.always_on_manager());
+        let control = crate::runtime::always_on::create_control(manager, standalone);
+        *self.state.lock().unwrap_or_else(|e| e.into_inner()) = PublishedState {
+            cron: update.cron.as_ref().and_then(|p| p.cron_manager()),
+            control: Some(control),
+        };
+    }
+    #[cfg(test)]
+    pub(crate) fn set_control_for_test(
+        &self,
+        control: Arc<dyn crate::runtime::always_on::AlwaysOnControl>,
+    ) {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).control = Some(control);
+    }
+    pub(crate) fn clear(&self) {
+        *self.state.lock().unwrap_or_else(|e| e.into_inner()) = PublishedState::default();
+    }
+    pub(crate) fn cron(&self) -> Option<Arc<CronManager>> {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .cron
+            .clone()
+    }
+    pub(crate) fn control(&self) -> Option<Arc<dyn crate::runtime::always_on::AlwaysOnControl>> {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .control
+            .clone()
+    }
 }
 
 /// `ProjectAutomationAttachment` (:63-67): the one turn facade plus the
@@ -572,9 +631,24 @@ impl ProjectAutomationBundle {
         // Construction is intentionally effect-free (:200-203): a malformed
         // new config cannot tear down a working provider generation, and a
         // factory failure here propagates without touching the current one.
-        let candidate = self
-            .stage(&input.config, Some(&previous), changes)
-            .map_err(|error| AutomationError::provider(error.to_string()))?;
+        let config = input.config.clone();
+        let staging_previous = previous.clone();
+        let home = self.pilot_home.clone();
+        let make_always_on = self.make_always_on.clone();
+        let make_cron = self.make_cron.clone();
+        let candidate = tokio::task::spawn_blocking(move || {
+            Self::stage_with(
+                &config,
+                Some(&staging_previous),
+                changes,
+                &home,
+                &make_always_on,
+                &make_cron,
+            )
+        })
+        .await
+        .map_err(|error| AutomationError::provider(error.to_string()))?
+        .map_err(|error| AutomationError::provider(error.to_string()))?;
         if !started {
             let generation = candidate;
             let attachment = match attachment {
@@ -701,6 +775,7 @@ impl ProjectAutomationBundle {
     /// The staged generation's always-on control manager — the face TS's
     /// `getInitialGatewayOptions` / `publishGeneration` hand the gateway
     /// (where the provider *is* the manager; see the trait docs).
+    #[cfg(test)]
     pub(crate) fn always_on_manager(&self) -> Option<Arc<AlwaysOnManager>> {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state
@@ -839,6 +914,27 @@ mod tests {
 
     struct DummyAlwaysOnGateway;
     impl AlwaysOnAgentGateway for DummyAlwaysOnGateway {
+        fn run_phase<'a>(
+            &'a self,
+            _: crate::runtime::always_on::PhaseRequest,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<
+                            crate::runtime::always_on::PhaseResult,
+                            crate::runtime::always_on::ControlError,
+                        >,
+                    > + Send
+                    + 'a,
+            >,
+        > {
+            Box::pin(async {
+                Err(crate::runtime::always_on::ControlError {
+                    code: "unexpected_phase".into(),
+                    message: "Lifecycle test cannot execute a phase.".into(),
+                })
+            })
+        }
         fn abort_turn<'a>(
             &'a self,
             _input: GatewayAbortInput<'a>,
@@ -937,6 +1033,114 @@ mod tests {
         config
     }
 
+    #[tokio::test]
+    async fn native_reload_queue_orders_generations_and_shutdown_is_idempotent() {
+        struct PausedStop {
+            log: Arc<Mutex<Vec<String>>>,
+            entered: Arc<tokio::sync::Notify>,
+            release: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+        }
+        impl ProjectAutomationProvider for PausedStop {
+            fn bind_agent_gateway(
+                &self,
+                _: &ProjectAutomationAgentGateway,
+                _: Option<AlwaysOnBindHooks<'_>>,
+            ) -> io::Result<()> {
+                Ok(())
+            }
+            fn start(self: Arc<Self>) -> AutomationFuture {
+                Box::pin(async move {
+                    push(&self.log, "first.start".into());
+                    Ok(())
+                })
+            }
+            fn stop(self: Arc<Self>) -> AutomationFuture {
+                Box::pin(async move {
+                    let release = self.release.lock().unwrap().take();
+                    self.entered.notify_one();
+                    if let Some(release) = release {
+                        release.await.map_err(|e| e.to_string())?;
+                    }
+                    push(&self.log, "first.stop".into());
+                    Ok(())
+                })
+            }
+            fn tools(&self) -> Vec<JsString> {
+                vec![]
+            }
+        }
+        let log: Arc<Mutex<Vec<String>>> = Arc::default();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let (release, receiver) = tokio::sync::oneshot::channel();
+        let first = Arc::new(PausedStop {
+            log: log.clone(),
+            entered: entered.clone(),
+            release: Mutex::new(Some(receiver)),
+        });
+        let config = ProjectAutomationConfig {
+            always_on: None,
+            cron: empty_cron_section(),
+        };
+        let (bundle, opts) = make_bundle(
+            log.clone(),
+            config.clone(),
+            vec![],
+            vec![first, fake("second", &log), fake("third", &log)],
+        );
+        let published = attach_bundle(&bundle, false);
+        let lifetime =
+            super::super::automation_lifetime::NativeAutomationLifetime::new(Arc::new(bundle));
+        lifetime
+            .bind_runtime(tokio::runtime::Handle::current())
+            .unwrap();
+        lifetime.start().await.unwrap();
+        let reload = || ProjectAutomationReloadInput {
+            config: config.clone(),
+            always_on_changed: false,
+            cron_changed: true,
+        };
+        lifetime.request_reload(reload());
+        tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified())
+            .await
+            .unwrap();
+        lifetime.request_reload(reload());
+        // The second requested generation cannot bind/start through the first
+        // generation's still-owned stop, even though both callers returned.
+        assert!(!actual_log(&log).iter().any(|line| line == "second.start"));
+        release.send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while published.lock().unwrap().len() < 3 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        lifetime.stop().await.unwrap();
+        lifetime.stop().await.unwrap();
+        lifetime.request_reload(reload());
+        tokio::task::yield_now().await;
+        assert!(lifetime.shutdown.is_cancelled());
+        assert_eq!(opts.lock().unwrap().cron_count, 3);
+        let events = actual_log(&log);
+        let lifecycle: Vec<_> = events
+            .iter()
+            .filter(|line| line.ends_with(".start") || line.ends_with(".stop"))
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            lifecycle,
+            [
+                "first.start",
+                "first.stop",
+                "second.start",
+                "second.stop",
+                "third.start",
+                "third.stop"
+            ]
+        );
+        assert!(published.lock().unwrap().last().unwrap().cron.is_none());
+    }
+
     fn disabled_ao_config() -> AlwaysOnConfig {
         let mut config = AlwaysOnConfig::default_config();
         config.projects = vec![("/p".into(), false)];
@@ -960,6 +1164,7 @@ mod tests {
                 agent_gateway: ProjectAutomationAgentGateway {
                     always_on: Arc::new(DummyAlwaysOnGateway),
                     cron: Arc::new(DummyCronGateway),
+                    native_cron_bind: None,
                 },
                 is_project_busy: with_busy_hook.then(|| Arc::new(|_: &str| false) as IsProjectBusy),
                 update_subsystems: Arc::new(move |update| {
@@ -1033,6 +1238,67 @@ mod tests {
             let opts = opts.lock().unwrap_or_else(|e| e.into_inner());
             assert_golden_opts(&record[state], &opts);
         }
+    }
+
+    #[test]
+    fn enabled_generation_exposes_manager_disabled_generation_does_not() {
+        struct ManagerProvider(Arc<AlwaysOnManager>);
+        impl ProjectAutomationProvider for ManagerProvider {
+            fn bind_agent_gateway(
+                &self,
+                _: &ProjectAutomationAgentGateway,
+                _: Option<AlwaysOnBindHooks<'_>>,
+            ) -> Result<(), io::Error> {
+                Ok(())
+            }
+            fn start(self: Arc<Self>) -> AutomationFuture {
+                Box::pin(async { Ok(()) })
+            }
+            fn stop(self: Arc<Self>) -> AutomationFuture {
+                Box::pin(async { Ok(()) })
+            }
+            fn tools(&self) -> Vec<JsString> {
+                vec![]
+            }
+            fn always_on_manager(&self) -> Option<Arc<AlwaysOnManager>> {
+                Some(self.0.clone())
+            }
+        }
+        let manager = Arc::new(
+            AlwaysOnManager::new(crate::runtime::always_on::AlwaysOnManagerOptions {
+                config: AlwaysOnConfig::default_config(),
+                pilot_home: PathBuf::from("/tmp/probe-home"),
+                now: None,
+                uuid: None,
+                logger: None,
+            })
+            .expect("manager"),
+        );
+        let provider: Arc<dyn ProjectAutomationProvider> =
+            Arc::new(ManagerProvider(manager.clone()));
+        let (enabled, _) = make_bundle(
+            Arc::default(),
+            ProjectAutomationConfig {
+                always_on: Some(enabled_ao_config()),
+                cron: None,
+            },
+            vec![provider],
+            vec![],
+        );
+        assert!(Arc::ptr_eq(
+            &enabled.always_on_manager().expect("enabled manager"),
+            &manager
+        ));
+        let (disabled, _) = make_bundle(
+            Arc::default(),
+            ProjectAutomationConfig {
+                always_on: Some(disabled_ao_config()),
+                cron: None,
+            },
+            vec![],
+            vec![],
+        );
+        assert!(disabled.always_on_manager().is_none());
     }
 
     // b2: start then stop — the lifecycle order (ao binds with hooks, cron

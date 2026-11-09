@@ -53,6 +53,8 @@ pub struct CompactionAbort {
 struct CompactionAbortState {
     reason: Mutex<Option<JsString>>,
     notified: tokio::sync::Notify,
+    #[cfg(test)]
+    before_wait: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 impl CompactionAbort {
     pub fn abort(&self, reason: JsString) {
@@ -67,8 +69,14 @@ impl CompactionAbort {
     pub async fn aborted(&self) -> JsString {
         loop {
             let notified = self.state.notified.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             if let Some(reason) = self.reason() {
                 return reason;
+            }
+            #[cfg(test)]
+            if let Some(before_wait) = self.state.before_wait.lock().unwrap().take() {
+                before_wait();
             }
             notified.await;
         }
@@ -94,6 +102,30 @@ pub trait SubmitCompactionRouter: Send + Sync {
 /// set time (7b wires the native validator behind `validate`).
 pub trait SubmitSdkSessionConfig: Send + Sync {
     fn validate(&self, config: &JsValue) -> Result<(), SubmitError>;
+    fn permission_mode<'a>(&'a self, _session: &'a JsString) -> SubmitFuture<'a, Option<JsString>> {
+        Box::pin(async { None })
+    }
+    fn hooks<'a>(
+        &'a self,
+        _session: &'a JsString,
+    ) -> SubmitFuture<'a, Result<Option<super::interaction::SdkHookState>, SubmitError>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn models<'a>(
+        &'a self,
+        _session: &'a JsString,
+        _project: Option<&'a JsString>,
+    ) -> SubmitFuture<'a, Result<Option<super::interaction::SdkModelOptions>, SubmitError>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn assert_model<'a>(
+        &'a self,
+        _session: &'a JsString,
+        _selection: Option<&'a JsValue>,
+        _project: Option<&'a JsString>,
+    ) -> SubmitFuture<'a, Result<(), SubmitError>> {
+        Box::pin(async { Ok(()) })
+    }
     fn set<'a>(
         &'a self,
         session: &'a JsString,
@@ -114,6 +146,16 @@ pub trait SubmitModelAssertion: Send + Sync {
 /// `options.taskBudgetSnapshot` (InProcessGateway.ts:1135-1156) resolving
 /// `{ totalUsd, spentUsd }`.
 pub trait SubmitTaskBudgetSnapshot: Send + Sync {
+    fn settle<'a>(
+        &'a self,
+        _session: &'a JsString,
+        _project: Option<&'a JsString>,
+        _run: &'a JsString,
+        _spent: f64,
+    ) -> SubmitFuture<'a, Result<(), SubmitError>> {
+        Box::pin(async { Ok(()) })
+    }
+
     fn snapshot<'a>(
         &'a self,
         session: &'a JsString,
@@ -122,6 +164,17 @@ pub trait SubmitTaskBudgetSnapshot: Send + Sync {
 }
 /// `options.clearRecoveredUserDialogs` (InProcessGateway.ts:1183-1191).
 pub trait SubmitDialogRecovery: Send + Sync {
+    /// Hosts may preserve the original project argument (including malformed
+    /// values) while the RunRef carries an immutable canonical owner identity.
+    /// Generic embeddings keep their measured clear_recovered call unchanged.
+    fn clear_recovered_input<'a>(
+        &'a self,
+        session: &'a JsString,
+        project: Option<&'a JsString>,
+        _input: &'a JsValue,
+    ) -> SubmitFuture<'a, Result<(), SubmitError>> {
+        self.clear_recovered(session, project)
+    }
     fn clear_recovered<'a>(
         &'a self,
         session: &'a JsString,
@@ -159,12 +212,14 @@ pub struct GatewaySubmitAdmission {
     options: SubmitAdmissionOptions,
     /// `dialogProjectKeys` (InProcessGateway.ts:774); consumption is 7b.
     dialog_project_keys: Mutex<HashMap<JsString, JsValue>>,
+    turn_budgets: Mutex<HashMap<(JsString, JsString), JsValue>>,
 }
 impl GatewaySubmitAdmission {
     pub fn new(options: SubmitAdmissionOptions) -> Self {
         Self {
             options,
             dialog_project_keys: Mutex::new(HashMap::new()),
+            turn_budgets: Mutex::new(HashMap::new()),
         }
     }
     pub fn dialog_project_key(&self, session: &JsString) -> Option<JsValue> {
@@ -638,6 +693,23 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
         completion: &'a TurnCompletionHandle,
     ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
         Box::pin(async move {
+            if let Some(sdk) = self.options.sdk_config.as_ref() {
+                let explicit = if is(field(input, "modelSelection"), "mode", "model") {
+                    field(input, "modelSelection")
+                } else {
+                    field(input, "modelOverride")
+                };
+                let explicit = matches!(explicit, JsValue::Object(_)).then_some(explicit);
+                if let Err(error) = sdk
+                    .assert_model(&run.session_key, explicit, run.project_key.as_ref())
+                    .await
+                {
+                    return Ok(vec![error_event(run, &error.code, &error.message, true)]);
+                }
+                if completion.is_cancelled() {
+                    return Ok(vec![aborted(run)]);
+                }
+            }
             if let Some(assertion) = self.options.model_assertion.as_ref() {
                 // explicitModel = modelSelection.mode==="model" ?
                 // modelSelection : modelOverride (TS :1116-1118)
@@ -657,6 +729,13 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
                 let budget = budget
                     .snapshot(&run.session_key, run.project_key.as_ref())
                     .await?;
+                self.turn_budgets
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(
+                        (run.session_key.clone(), run.run_id.clone()),
+                        budget.clone(),
+                    );
                 if completion.is_cancelled() {
                     return Ok(vec![aborted(run)]);
                 }
@@ -697,7 +776,7 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
             }
             if let Some(recovery) = self.options.dialog_recovery.as_ref() {
                 if let Err(error) = recovery
-                    .clear_recovered(&run.session_key, run.project_key.as_ref())
+                    .clear_recovered_input(&run.session_key, run.project_key.as_ref(), input)
                     .await
                 {
                     return Ok(vec![with_hint(
@@ -717,14 +796,80 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
             Ok(vec![])
         })
     }
-    /// Permission-mode migration, model telemetry and task-budget spend are
-    /// 7b; without them there is nothing to observe before projection.
+    /// Budget settlement precedes terminal projection, matching the CLI host.
     fn observe_event<'a>(
         &'a self,
-        _: &'a JsValue,
-        _: &'a JsValue,
+        input: &'a JsValue,
+        event: &'a JsValue,
     ) -> SubmitFuture<'a, Result<(), SubmitError>> {
-        Box::pin(async { Ok(()) })
+        Box::pin(async move {
+            if is(event, "type", "turn_completed") {
+                let budget = field(field(event, "result"), "budget");
+                if !field(budget, "taskBudgetUsd").is_undefined()
+                    && let Some(port) = &self.options.task_budget
+                {
+                    let session = string(field(input, "sessionKey"));
+                    let run = string(field(event, "runId"));
+                    port.settle(
+                        &session,
+                        field(input, "projectKey").as_string(),
+                        &run,
+                        field(budget, "turnSpentUsd")
+                            .as_number()
+                            .unwrap_or(f64::NAN),
+                    )
+                    .await?;
+                }
+            }
+            Ok(())
+        })
+    }
+    fn take_turn_budget(&self, run: &RunRef) -> JsValue {
+        self.turn_budgets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&(run.session_key.clone(), run.run_id.clone()))
+            .unwrap_or(JsValue::Undefined)
+    }
+    fn release_turn(&self, session: &JsString, run: &JsString) {
+        self.turn_budgets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&(session.clone(), run.clone()));
+    }
+    fn sdk_permission_mode<'a>(
+        &'a self,
+        session: &'a JsString,
+    ) -> SubmitFuture<'a, Option<JsString>> {
+        Box::pin(async move {
+            match &self.options.sdk_config {
+                Some(port) => port.permission_mode(session).await,
+                None => None,
+            }
+        })
+    }
+    fn sdk_models<'a>(
+        &'a self,
+        session: &'a JsString,
+        project: Option<&'a JsString>,
+    ) -> SubmitFuture<'a, Result<Option<super::interaction::SdkModelOptions>, SubmitError>> {
+        Box::pin(async move {
+            match &self.options.sdk_config {
+                Some(port) => port.models(session, project).await,
+                None => Ok(None),
+            }
+        })
+    }
+    fn sdk_hooks<'a>(
+        &'a self,
+        session: &'a JsString,
+    ) -> SubmitFuture<'a, Result<Option<super::interaction::SdkHookState>, SubmitError>> {
+        Box::pin(async move {
+            match &self.options.sdk_config {
+                Some(port) => port.hooks(session).await,
+                None => Ok(None),
+            }
+        })
     }
     fn has_sdk_config(&self) -> bool {
         self.options.sdk_config.is_some()

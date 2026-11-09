@@ -3,7 +3,7 @@ use super::prepare::{object, stable_serialize};
 use crate::{
     host::{HostError, ModuleError},
     js_value::{MAX_ARRAY_DEPTH, StackOverflow, to_string_units},
-    project_files::{node_collator, node_locale},
+    project_files::{node_collator, node_compare_utf16, node_locale},
 };
 use icu_locale_core::Locale;
 use pilotdeck_protocol::{JsString, JsValue};
@@ -116,7 +116,8 @@ pub(crate) fn cache_plan_identity(
             })?;
             let right_name = to_string_units(&raw_right)
                 .map_err(|_| ModuleError::new(StackOverflow::MESSAGE))?;
-            let order = collator.compare_utf16(left_name.units(), &right_name);
+            let order =
+                node_compare_utf16(&collator, &left_name, &JsString::from_utf16(right_name));
             if order != Ordering::Equal {
                 return Ok(order);
             }
@@ -175,7 +176,7 @@ pub(crate) fn cache_plan_identity(
 pub struct CachePlanInput<'a> {
     pub provider: &'a JsValue,
     pub model: &'a JsValue,
-    pub system_prompt: &'a str,
+    pub system_prompt: &'a JsString,
     pub tools: &'a [JsValue],
     pub messages: &'a [JsValue],
     pub enabled: bool,
@@ -239,7 +240,7 @@ impl PromptCacheCoordinator {
             &self.locale,
             input.provider,
             input.model,
-            &JsValue::String(input.system_prompt.into()),
+            &JsValue::String(input.system_prompt.clone()),
             input.tools,
             input.messages,
             // The runtime entry keeps its pre-merge depth behavior: the
@@ -445,7 +446,7 @@ mod tests {
                 CachePlanInput {
                     provider: &JsValue::String("p".into()),
                     model: &JsValue::String("m".into()),
-                    system_prompt: "preview prompt",
+                    system_prompt: &"preview prompt".into(),
                     tools: &deep_tool(schema.clone()),
                     messages: &probe_messages(),
                     enabled: true,
@@ -484,5 +485,48 @@ mod tests {
             .unwrap_or_else(|e| panic!("{label} host: {}", e.message));
             assert_eq!(identity.fingerprint, host_fingerprint, "{label} host");
         }
+    }
+}
+
+#[cfg(test)]
+mod native_surrogate_sort_regression {
+    use super::*;
+    #[test]
+    fn tool_names_match_node_cache_fingerprint() {
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../../tests/fixtures/native-context-utf16/oracle-extra.json"
+        ))
+        .unwrap();
+        let names = match oracle.get("names").unwrap() {
+            JsValue::Array(a) => a,
+            _ => panic!("names"),
+        };
+        let tools: Vec<JsValue> = names
+            .iter()
+            .map(|name| {
+                let mut schema = pilotdeck_protocol::JsObject::new();
+                schema.insert("type".into(), "object".into());
+                let mut tool = pilotdeck_protocol::JsObject::new();
+                tool.insert("name".into(), name.clone());
+                tool.insert("description".into(), "".into());
+                tool.insert("inputSchema".into(), JsValue::Object(schema));
+                JsValue::Object(tool)
+            })
+            .collect();
+        let locale: Locale = "en-US".parse().unwrap();
+        let plan = cache_plan_identity(
+            &locale,
+            &"fixture".into(),
+            &"mock".into(),
+            &"x".into(),
+            &tools,
+            &[],
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            Some(&JsValue::from(plan.fingerprint.as_str())),
+            oracle.get("toolPlans").and_then(|p| p.get("fingerprint"))
+        );
     }
 }

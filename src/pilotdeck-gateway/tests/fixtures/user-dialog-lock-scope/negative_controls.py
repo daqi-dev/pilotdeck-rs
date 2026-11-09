@@ -299,15 +299,13 @@ mutations = [
      SETTLE_TEST, LOCK_ASSERTION),
     # respond: the accepts validator runs with a guard alive again (called once).
     ('accepts-back-under-guard', 'native_process/methods/user_dialog.rs',
-     '                        if !(snapshot.accepts)(&value) {',
-     '                        let accepted = {\n'
-     '                            let _guard = self\n'
-     '                                .user_dialog_bus\n'
-     '                                .lock()\n'
-     '                                .unwrap_or_else(|e| e.into_inner());\n'
-     '                            (snapshot.accepts)(&value)\n'
-     '                        };\n'
-     '                        if !accepted {',
+     '                        let accepts = snapshot.accepts.clone();\n'
+     '                        let accepted =\n'
+     '                            crate::runtime::always_on::storage::run(move || Ok(accepts(&value)))\n'
+     '                                .await\n'
+     '                                .map_err(|error| RequestError::new(error.to_string()))?;',
+     '                        let _guard = self.user_dialog_bus.lock().unwrap_or_else(|e| e.into_inner());\n'
+     '                        let accepted = (snapshot.accepts)(&value);',
      ACCEPTS_TEST, LOCK_ASSERTION),
     # emit: the observer is invoked in place instead of being queued.
     ('observer-delivery-back-under-guard', 'user_dialog/bus.rs',
@@ -394,13 +392,13 @@ mutations = [
     # consumes whatever was registered under the id after the peek.
     ('answered-without-snapshot-consumes-the-late-registration',
      'native_process/methods/user_dialog.rs',
-     '                    if answered && snapshot.is_none() {',
-     '                    if answered && snapshot.is_none() && false {',
+     '                        if snapshot.is_none() {\n                            return Ok(crate::metadata::object([(',
+     '                        if snapshot.is_none() && !answered {\n                            return Ok(crate::metadata::object([(',
      LATE_TEST, LATE_ASSERTION),
     # respond: the answered path stops passing the validated snapshot, so the
     # consume accepts whatever registration now owns the request id.
     ('answered-snapshot-identity-dropped', 'native_process/methods/user_dialog.rs',
-     '                            if answered { snapshot.as_ref() } else { None },',
+     '                            if answered { snapshot.as_deref() } else { None },',
      '                            None,',
      REPLACED_METHOD_TEST, REPLACED_METHOD_ASSERTION),
     # restore: the old successor is ignored, so an entry whose predecessor was

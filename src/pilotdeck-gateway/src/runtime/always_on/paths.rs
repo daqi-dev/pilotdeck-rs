@@ -34,10 +34,10 @@ pub(crate) struct AlwaysOnPaths {
 /// cwd; a relative one resolves against it), then the storage id decides the
 /// project directory. `metadata` is the same face the other per-project
 /// families build (`home` = pilot home, lazy process cwd).
-pub(crate) fn resolve_always_on_paths(
+pub(crate) fn resolve_always_on_paths<F: crate::metadata::Files>(
     pilot_home: &Path,
     project_key: &str,
-    metadata: &Metadata,
+    metadata: &Metadata<F>,
 ) -> io::Result<AlwaysOnPaths> {
     let home = metadata::resolve_process_path(Path::new(""), pilot_home)?;
     let key = metadata::resolve_process_path(Path::new(""), Path::new(project_key))?;
@@ -60,6 +60,42 @@ pub(crate) fn resolve_always_on_paths(
             "discovery.lock",
         ),
     })
+}
+
+impl AlwaysOnPaths {
+    pub(crate) fn project_dir(&self) -> PathBuf {
+        self.state_file
+            .parent()
+            .unwrap_or(Path::new("/"))
+            .to_owned()
+    }
+    pub(crate) fn run_history_file(&self) -> PathBuf {
+        self.project_dir().join("run-history.jsonl")
+    }
+    pub(crate) fn events_file(&self) -> PathBuf {
+        self.project_dir().join("events.jsonl")
+    }
+    pub(crate) fn run_events_path(&self, run_id: &JsString) -> PathBuf {
+        self.project_dir()
+            .join("runs")
+            .join(format!("{}.events.jsonl", sanitize_id(run_id)))
+    }
+    pub(crate) fn worktrees_dir(&self) -> PathBuf {
+        self.workspace_dir("worktrees")
+    }
+    pub(crate) fn snapshots_dir(&self) -> PathBuf {
+        self.workspace_dir("snapshots")
+    }
+    fn workspace_dir(&self, kind: &str) -> PathBuf {
+        let project = self.project_dir();
+        let project_id = project.file_name().unwrap_or_default();
+        project
+            .parent()
+            .and_then(Path::parent)
+            .unwrap_or(&project)
+            .join(kind)
+            .join(project_id)
+    }
 }
 
 /// `planMarkdownPath` (AlwaysOnPaths.ts:79-81).

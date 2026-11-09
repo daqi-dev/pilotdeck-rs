@@ -1023,3 +1023,103 @@ async fn read_session_messages_settles_when_concurrent_publish_finishes_the_turn
     drop(registry);
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+// Native project isolation is enforced at both snapshots, including replay
+// retained after the owning session has been disposed.
+struct ProjectHistory {
+    coordinator: Arc<TurnEventCoordinator>,
+    switch_on_first_read: bool,
+    calls: AtomicUsize,
+    registrations: Mutex<Vec<TurnSinkRegistration>>,
+}
+impl SessionHistoryReader for ProjectHistory {
+    fn read(
+        &self,
+        _input: &JsValue,
+    ) -> Pin<Box<dyn Future<Output = Result<JsValue, TurnReadError>> + Send>> {
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 && self.switch_on_first_read {
+            let reg = self.coordinator.start_for_project(
+                &"s".into(),
+                &"b-run".into(),
+                &"B".into(),
+                |_| {},
+            );
+            self.registrations.lock().unwrap().push(reg);
+            self.coordinator.record(
+                &"s".into(),
+                &js(&json!({"type":"model_event", "runId":"b-run", "text":"B-only"})),
+            );
+        }
+        Box::pin(async { Ok(js(&json!({"messages": [{"text":"B-durable"}]}))) })
+    }
+}
+
+#[tokio::test]
+async fn native_history_filters_project_replay_before_and_after_read() {
+    let coordinator = Arc::new(TurnEventCoordinator::new());
+    let _a = coordinator.start_for_project(&"s".into(), &"a-run".into(), &"A".into(), |_| {});
+    coordinator.record(
+        &"s".into(),
+        &js(&json!({"type":"model_event", "runId":"a-run", "text":"A-secret"})),
+    );
+    let history = ProjectHistory {
+        coordinator: coordinator.clone(),
+        switch_on_first_read: false,
+        calls: AtomicUsize::new(0),
+        registrations: Mutex::new(vec![]),
+    };
+    let input = js(&json!({"sessionKey":"s"}));
+    let a = read_session_messages_for_project(&coordinator, Some(&history), &input, &"A".into())
+        .await
+        .unwrap();
+    assert!(render(&a).contains("A-secret"));
+    let b = read_session_messages_for_project(&coordinator, Some(&history), &input, &"B".into())
+        .await
+        .unwrap();
+    assert!(!render(&b).contains("A-secret"));
+    assert!(render(&b).contains("B-durable"));
+    coordinator.retain_terminal(&"s".into(), &"a-run".into());
+    let retained_a =
+        read_session_messages_for_project(&coordinator, Some(&history), &input, &"A".into())
+            .await
+            .unwrap();
+    let retained_b =
+        read_session_messages_for_project(&coordinator, Some(&history), &input, &"B".into())
+            .await
+            .unwrap();
+    assert!(render(&retained_a).contains("A-secret"));
+    assert!(!render(&retained_b).contains("A-secret"));
+
+    let _unbound = coordinator.start(&"s".into(), &"legacy-run".into(), |_| {});
+    coordinator.record(
+        &"s".into(),
+        &js(&json!({"type":"model_event", "runId":"legacy-run", "text":"unbound-secret"})),
+    );
+    let scoped =
+        read_session_messages_for_project(&coordinator, Some(&history), &input, &"A".into())
+            .await
+            .unwrap();
+    let generic = read_session_messages(&coordinator, Some(&history), &input)
+        .await
+        .unwrap();
+    assert!(!render(&scoped).contains("unbound-secret"));
+    assert!(render(&generic).contains("unbound-secret"));
+
+    let _a2 = coordinator.start_for_project(&"s".into(), &"a2-run".into(), &"A".into(), |_| {});
+    coordinator.record(
+        &"s".into(),
+        &js(&json!({"type":"model_event", "runId":"a2-run", "text":"A2-secret"})),
+    );
+    let changing = ProjectHistory {
+        coordinator: coordinator.clone(),
+        switch_on_first_read: true,
+        calls: AtomicUsize::new(0),
+        registrations: Mutex::new(vec![]),
+    };
+    let b = read_session_messages_for_project(&coordinator, Some(&changing), &input, &"B".into())
+        .await
+        .unwrap();
+    assert_eq!(changing.calls.load(Ordering::SeqCst), 2);
+    assert!(render(&b).contains("B-only"));
+    assert!(!render(&b).contains("A2-secret"));
+}

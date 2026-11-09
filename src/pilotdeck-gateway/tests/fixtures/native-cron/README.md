@@ -1,7 +1,7 @@
 # #1325 cron 管理方法原生夹具（repeat-trigger / cancel / restart）
 
 `tests/cron_manager_native.rs` 以 include_str 读本目录的固定任务库快照，驱动
-#1325 从 #1305（CronFire/CronScheduler）契约分到的三条接缝：
+#1325 从 #2295（CronFire/CronScheduler）契约分到的三条接缝：
 
 - **活动 run 注册表**（`registerActiveRun`/`unregisterActiveRun`，
   CronRuntime.ts:412-420）：cancel 与停机排空经由它观察；
@@ -14,7 +14,7 @@
 |---|---|---|---|
 | 6 | repeat-trigger.json（running cron 任务） | repeat_trigger_does_not_re_execute | `{started:false, reason:"already_running", taskId}`；body 零 run_turn（不重执行） |
 | 11 | repeat-trigger.json | repeat_trigger_second_submit_rejected_by_admission | 同 session 第二次 submit 在第一个 turn 的接纳围栏内被拒：`session_busy` `Session cron:task-repeat already has an active turn.`（InProcessGateway.ts:1043-1067） |
-| 8 | cancel-once.json（running once 任务） | cancel_aborts_run_and_deletes_once_task | stopTask（客户端形状 `{taskId, runId}`，无 projectKey，经 lastRunId 扫描定位）：stopRequested、abortTurn 无 reason、once 任务删除、`close_session … cron/task-removed`；注册表项留给 run 的 finally（#1305） |
+| 8 | cancel-once.json（running once 任务） | cancel_aborts_run_and_deletes_once_task | stopTask（客户端形状 `{taskId, runId}`，无 projectKey，经 lastRunId 扫描定位）：stopRequested、abortTurn 无 reason、once 任务删除、`close_session … cron/task-removed`；注册表项留给 run 的 finally（#2295） |
 | 13 | restart-unrecorded.json | restart_records_interrupted_run_without_re_execution | 重启恢复：补 failed run 记录（runId=lastRunId、startedAt=任务 updatedAt、error.code=`cron_run_interrupted`）；任务重排 revision 2、nextRunAt 由 pinned now 重算；零 run_turn（不重执行） |
 | 14 | restart-terminal.json + restart-terminal-history.jsonl | restart_with_terminal_run_reschedules_only | lastRunId 已有终态记录（finishedAt+outcome）→ 只重排 revision 2，run-history 不新增记录；零 run_turn |
 
@@ -23,10 +23,10 @@ pinned 时钟 `Date.UTC(2026, 0, 1)`（#1216 金样同款）、计数 taskId `ta
 ## 边界（登记入 RESULT）
 
 - `submit_turn` 同步返回：本端口接纳围栏内不消费事件流——异步 drain 归
-  #1305/#1326（矩阵格 22）。重复触发夹具因此从 `run_turn` 体内再入同一
+  #2295/#1326（矩阵格 22）。重复触发夹具因此从 `run_turn` 体内再入同一
   admission，这正是 TS `SessionRouter.beginTurn` 在调度器二次点火时看到的
   形状。
-- stop() 只标记/abort，注销注册表归 CronFire 的 finally（#1305）——cancel
+- stop() 只标记/abort，注销注册表归 CronFire 的 finally（#2295）——cancel
   格与 S1 停机格都按此断言。
 - S5 已落地本目录：`generate.mts`（真实 TS 金样生成器，baseline cc7c4e6 /
   Node v22.22.0，pinned 时钟 + fail-closed esbuild 装载器）、`oracle.json`

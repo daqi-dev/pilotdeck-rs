@@ -21,6 +21,9 @@ use crate::{
 use pilotdeck_protocol::{JsString, JsValue};
 use std::sync::{Arc, Mutex};
 
+pub type SessionStateCleanup =
+    Arc<dyn Fn(JsString) -> Call<'static, Result<(), RequestError>> + Send + Sync>;
+
 #[derive(Clone)]
 pub struct Requests {
     pub options: Options,
@@ -43,6 +46,8 @@ pub struct Requests {
     pub async_hook_registry: Option<Arc<AsyncHookRegistry>>,
     /// Gateway user-dialog bus backing the `user_dialog` / `respond` methods.
     pub user_dialog_bus: Arc<Mutex<GatewayUserDialogBus>>,
+    pub(crate) sop: Option<Arc<super::sop_control::NativeSopControl>>,
+    pub(crate) dialog_recovery: Option<Arc<super::assembly::dialog_recovery::NativeDialogRecovery>>,
     /// A8 U1 upload + attachment lease gateway (#1321).
     pub upload_gateway: Arc<UploadGateway>,
     /// U12 `prepareWeixinLogin` callback (InProcessGateway options field,
@@ -55,13 +60,7 @@ pub struct Requests {
     /// capabilities and every call answers the `requireCron` gate
     /// (InProcessGateway.ts:3016-3022).
     pub cron: Option<Arc<crate::runtime::cron::CronManager>>,
-    /// A7.8 always-on background runtime (#2294): the automation bundle's
-    /// staged always-on manager, the port of TS `options.alwaysOnControl`.
-    /// `None` is the unconfigured shape (no `alwaysOn:` section, or no
-    /// project with `enabled: true`): the three names stay out of
-    /// capabilities and every call answers the #1313 `not_configured`
-    /// envelopes byte for byte (InProcessGateway.ts:2992-3016).
-    pub always_on: Option<Arc<crate::runtime::always_on::AlwaysOnManager>>,
+    pub(crate) automation: Option<Arc<super::assembly::automation::PublishedAutomation>>,
     /// U7 global settings gateway (#1320): the six settings methods route
     /// here through the #1305 registry. Production binds
     /// [`crate::native_process::services::native_settings`].
@@ -71,6 +70,16 @@ pub struct Requests {
     /// `set_output_style`) write and the session factory's prepare closure
     /// reads back. One instance shared with the factory.
     pub session_overrides: Arc<SessionOverrides>,
+    pub clear_sdk_state: Option<SessionStateCleanup>,
+    pub(crate) ephemeral: Option<Arc<super::sdk_ephemeral::EphemeralSessions>>,
+}
+
+impl Requests {
+    pub(crate) fn current_cron(&self) -> Option<Arc<crate::runtime::cron::CronManager>> {
+        self.automation
+            .as_ref()
+            .map_or_else(|| self.cron.clone(), |slot| slot.cron())
+    }
 }
 
 #[cfg(test)]
@@ -159,6 +168,22 @@ impl Requests {
         }))
     }
 }
+// GatewaySessionHistoryBundle.{readSessionMessages,readSubagentMessages,
+// forkSession,replaceLastTurn,finalizeLastTurnReplacement} all call its one
+// projectRoot(projectKey), whose guard is truthy rather than nullish.
+pub(super) fn empty_project_is_default(method: &JsString) -> bool {
+    method.equals_str("reload_output_styles")
+        || [
+            "read_session_messages",
+            "read_subagent_messages",
+            "fork_session",
+            "replace_last_turn",
+            "finalize_last_turn_replacement",
+        ]
+        .iter()
+        .any(|name| method.equals_str(name))
+}
+
 impl GatewayRequests for Requests {
     fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async {
@@ -194,44 +219,30 @@ impl GatewayRequests for Requests {
             // createLocalGateway's archive callbacks use the configured fallback
             // project for nullish keys. Fill it before isolated admission, while
             // leaving Metadata's cwd lazy for explicit paths and other RPCs.
+            let selected = super::project_scope::select(
+                &self.owner,
+                &self.options,
+                &params,
+                empty_project_is_default(&method),
+            )?;
+            let _reservation = selected.reservation;
+            let mut view = self.clone();
+            view.options = selected.options;
             let mut params = params;
             if let Ok(name) = method.to_utf8()
                 && crate::native_archive::ARCHIVE_METHODS.contains(&name.as_str())
             {
-                crate::native_archive::fill_default_project_key(&mut params, &self.options.project);
+                crate::native_archive::fill_default_project_key(&mut params, &view.options.project);
             }
             if let Ok(name) = method.to_utf8()
-                && let Some(result) = methods::before_admission(self, &name, &params).await
+                && let Some(result) = methods::before_admission(&view, &name, &params).await
             {
                 return result;
-            }
-            // #2083 r1: this admission gate is the same source as the
-            // handler's configured-project check (`session_close_project`),
-            // so the key converts lossily here too. A lone-surrogate
-            // `projectKey` is refused as any other unserved key, and the
-            // registered residual — a lossy form naming a configured path
-            // that contains U+FFFD — is admitted on both layers alike.
-            // #2272: the filter skips `undefined` *and* `null` — TS reads
-            // `input.projectKey ?? fallback` (createLocalGateway.ts), so an
-            // explicit null is "not provided" and takes the handler-side
-            // configured-project fallback like `resolve_project` does, not
-            // the unserved-key refusal.
-            if let Some(project) = params
-                .get("projectKey")
-                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))
-                && !project.as_string().is_some_and(|key| {
-                    let lossy = String::from_utf16_lossy(key.units());
-                    self.options.serves_project(&lossy)
-                })
-            {
-                return Err(RequestError::new(
-                    "The isolated native process serves only its configured project.",
-                ));
             }
             let method = method
                 .to_utf8()
                 .map_err(|_| RequestError::new("Unknown native gateway method."))?;
-            methods::request(self, method, params).await
+            methods::request(&view, method, params).await
         })
     }
 }

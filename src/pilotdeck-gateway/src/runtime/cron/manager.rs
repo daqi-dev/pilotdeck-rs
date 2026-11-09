@@ -30,10 +30,10 @@ use crate::{
 use super::{
     CRON_SCHEDULE_COMPUTATION_VERSION, ComputedRunAt, CronCreateSchedule, CronStoreError,
     CronTaskStore, CronZoneResolverCache, DelayUnit, MigrationInput, collator, compute_next_run_at,
-    delay_to_milliseconds, fire::CronFire, fire::CronFireDeps, is_valid_cron_timezone,
-    iso_from_epoch_ms, migrate_cron_stores, resolve_cron_timezone, schedule::js_new_date,
-    schedule::once_computed_run_at, scheduler::CronScheduler, scheduler::SchedulerDeps,
-    strict_equals, truthy,
+    delay_to_milliseconds, fire::CronExecutionCallbacks, fire::CronFire, fire::CronFireDeps,
+    is_valid_cron_timezone, iso_from_epoch_ms, migrate_cron_stores, resolve_cron_timezone,
+    schedule::js_new_date, schedule::once_computed_run_at, scheduler::CronScheduler,
+    scheduler::SchedulerDeps, strict_equals, truthy,
 };
 
 /// `defaultCronConfig` (`src/cron/config/parseCronConfig.ts`): the defaults a
@@ -287,6 +287,15 @@ pub trait CronAgentGateway: Send + Sync {
     /// Rejected when the session cannot be admitted (busy, maintenance,
     /// shutdown) or the turn itself fails.
     fn submit_turn(&self, input: &CronTurnSubmit) -> Result<(), CronError>;
+    /// Observe every event inside the existing admission fence. Old
+    /// event-free ports retain their synchronous Result contract.
+    fn submit_turn_observed(
+        &self,
+        input: &CronTurnSubmit,
+        _observe: &mut dyn FnMut(&JsValue) -> Result<(), CronError>,
+    ) -> Result<(), CronError> {
+        self.submit_turn(input)
+    }
     /// `abortTurn` — the caller decides whether a rejection surfaces
     /// (CronRuntime.ts:373 propagates, CronRuntime.ts:207-209 swallows).
     fn abort_turn(
@@ -311,6 +320,13 @@ pub trait CronAgentGateway: Send + Sync {
 /// [`CronAgentGateway`] surface.
 pub trait CronGatewayBody: Send + Sync {
     fn run_turn(&self, input: &CronTurnSubmit) -> Result<(), CronError>;
+    fn run_turn_observed(
+        &self,
+        input: &CronTurnSubmit,
+        _observe: &mut dyn FnMut(&JsValue) -> Result<(), CronError>,
+    ) -> Result<(), CronError> {
+        self.run_turn(input)
+    }
     fn abort_turn(
         &self,
         session_key: &JsString,
@@ -356,8 +372,12 @@ impl Drop for TurnFence<'_> {
     }
 }
 
-impl CronAgentGateway for SessionAdmissionCronGateway {
-    fn submit_turn(&self, input: &CronTurnSubmit) -> Result<(), CronError> {
+impl SessionAdmissionCronGateway {
+    fn admitted(
+        &self,
+        input: &CronTurnSubmit,
+        run: impl FnOnce() -> Result<(), CronError>,
+    ) -> Result<(), CronError> {
         let Some(reservation) = self.admission.begin_turn(&input.session_key, &input.run_id) else {
             // InProcessGateway.ts:1043-1067: the rejected submit surfaces as a
             // terminal `session_busy` error; the port's synchronous boundary
@@ -376,7 +396,20 @@ impl CronAgentGateway for SessionAdmissionCronGateway {
             run_id: &input.run_id,
             reservation: Some(reservation),
         };
-        self.body.run_turn(input)
+        run()
+    }
+}
+
+impl CronAgentGateway for SessionAdmissionCronGateway {
+    fn submit_turn(&self, input: &CronTurnSubmit) -> Result<(), CronError> {
+        self.admitted(input, || self.body.run_turn(input))
+    }
+    fn submit_turn_observed(
+        &self,
+        input: &CronTurnSubmit,
+        observe: &mut dyn FnMut(&JsValue) -> Result<(), CronError>,
+    ) -> Result<(), CronError> {
+        self.admitted(input, || self.body.run_turn_observed(input, observe))
     }
     fn abort_turn(
         &self,
@@ -775,6 +808,11 @@ impl CronRuntime {
         // upgrade once per spawn and hold the strong handle for the run,
         // which is what TS's GC does for the fire promise chain.
         let runtime = Arc::downgrade(self);
+        let callbacks = self
+            .manager
+            .upgrade()
+            .map(|manager| manager.execution_callbacks())
+            .unwrap_or_default();
         let fire = Arc::new(CronFire::new(CronFireDeps {
             gateway: gateway.clone(),
             store: CronTaskStore::new(self.store.paths().clone()),
@@ -813,12 +851,10 @@ impl CronRuntime {
                     }
                 })
             },
-            // The app-level delivery handler is not surfaced through
-            // `CronManagerOptions` yet — the native assembly keeps the
-            // callback absent, registered as a wiring gap (not a port
-            // limitation) in A8.3-CRON-FIRE-EVENTSTREAM-001; follow-up
-            // #1826 owns the channel-delivery family.
-            on_result_delivery: None,
+            on_result_delivery: callbacks.on_result_delivery,
+            on_phase_event: callbacks.on_phase_event,
+            on_turn_event: callbacks.on_turn_event,
+            assistant_text_limit_units: callbacks.assistant_text_limit_units,
             logger: self.logger.clone(),
             zone_cache: self.zone_cache.clone(),
         }));
@@ -874,9 +910,18 @@ impl CronRuntime {
         }
     }
 
+    pub(super) fn execution_allowed(&self) -> bool {
+        self.manager
+            .upgrade()
+            .is_none_or(|manager| manager.execution_allowed(&self.project_key))
+    }
+
     /// CronRuntime.ts:182-195. The bind check stands in for TS's `scheduler`
     /// presence — the scheduler is exactly what `bindAgentGateway` creates.
     pub fn start(&self) -> Result<(), CronError> {
+        if !self.execution_allowed() {
+            return Ok(());
+        }
         if !self.config.enabled {
             self.logger.info(
                 "cron disabled in config; runtime is a no-op.",
@@ -2106,8 +2151,13 @@ pub struct CronManager {
     self_weak: Weak<CronManager>,
 }
 
+/// Optional host scope; absent keeps the legacy multi-project manager policy.
+pub type CronExecutionProjectFilter = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
 struct ManagerState {
     started: bool,
+    execution_project_filter: Option<CronExecutionProjectFilter>,
+    execution_callbacks: Option<CronExecutionCallbacks>,
     /// The TS `Map<string, CronRuntime>` in insertion order; the resolved
     /// project key is `runtime.project_key()`.
     runtimes: Vec<Arc<CronRuntime>>,
@@ -2123,10 +2173,63 @@ impl CronManager {
             gateway: Mutex::new(None),
             state: Mutex::new(ManagerState {
                 started: false,
+                execution_project_filter: None,
+                execution_callbacks: None,
                 runtimes: Vec::new(),
             }),
             self_weak: self_weak.clone(),
         }))
+    }
+
+    /// Limit automatic execution to projects served by this native host.
+    /// Configure once before creating runtimes or starting the manager. This
+    /// does not change the unfiltered library default or legacy store migration.
+    pub fn set_execution_project_filter(
+        &self,
+        filter: CronExecutionProjectFilter,
+    ) -> Result<(), CronError> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.started || !state.runtimes.is_empty() || state.execution_project_filter.is_some() {
+            return Err(CronError::error(
+                "Cron execution scope must be configured before loading runtimes.",
+            ));
+        }
+        state.execution_project_filter = Some(filter);
+        Ok(())
+    }
+
+    /// Bind optional callbacks/resource policy before any runtime exists.
+    pub fn set_execution_callbacks(
+        &self,
+        callbacks: CronExecutionCallbacks,
+    ) -> Result<(), CronError> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.started || !state.runtimes.is_empty() || state.execution_callbacks.is_some() {
+            return Err(CronError::error(
+                "Cron execution callbacks must be configured before loading runtimes.",
+            ));
+        }
+        state.execution_callbacks = Some(callbacks);
+        Ok(())
+    }
+
+    fn execution_callbacks(&self) -> CronExecutionCallbacks {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .execution_callbacks
+            .clone()
+            .unwrap_or_default()
+    }
+
+    fn execution_allowed(&self, project: &str) -> bool {
+        let filter = self
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .execution_project_filter
+            .clone();
+        filter.is_none_or(|filter| filter(project))
     }
 
     /// `bindAgentGateway` (CronManager.ts:70-75).
@@ -2163,18 +2266,32 @@ impl CronManager {
             )));
         }
         let migration_logger = self.options.logger.clone().map(MigrationLogger);
-        migrate_cron_stores(&MigrationInput {
+        let migration = MigrationInput {
             pilot_home: PathBuf::from(&self.pilot_home),
             logger: migration_logger
                 .as_ref()
                 .map(|logger| logger as &dyn super::CronRuntimeLogger),
             now_ms: super::store::now_millis(),
             lock_retry_delay: Duration::from_millis(100),
-        })?;
+        };
+        let scope = self
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .execution_project_filter
+            .clone();
+        match scope {
+            Some(scope) => {
+                super::migration::migrate_cron_stores_scoped(&migration, scope.as_ref())?
+            }
+            None => migrate_cron_stores(&migration)?,
+        }
         self.state.lock().unwrap_or_else(|e| e.into_inner()).started = true;
         let project_keys = discover_project_keys(&self.pilot_home, self.options.logger.as_ref())?;
         for project_key in project_keys {
-            self.ensure_runtime(&JsValue::String(JsString::from(project_key)))?;
+            if self.execution_allowed(&project_key) {
+                self.ensure_runtime(&JsValue::String(JsString::from(project_key)))?;
+            }
         }
         self.logger().info(
             "cron manager started",
@@ -2200,6 +2317,45 @@ impl CronManager {
         };
         for runtime in &runtimes {
             runtime.stop()?;
+        }
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .runtimes
+            .clear();
+        Ok(())
+    }
+
+    /// Native opt-in finalization; legacy stop retains its original TS contract.
+    pub fn stop_and_drain(
+        &self,
+        budget: Duration,
+        stopping: impl FnOnce(),
+    ) -> Result<(), CronError> {
+        let deadline = std::time::Instant::now() + budget;
+        let runtimes = {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.started = false;
+            state.runtimes.clone()
+        };
+        let mut failure = None;
+        for runtime in &runtimes {
+            if let Err(error) = runtime.stop()
+                && failure.is_none()
+            {
+                failure = Some(error);
+            }
+        }
+        // Mark every pre-registered run stopped before canceling a native body
+        // whose first submission may not have reached SessionOwner yet.
+        stopping();
+        for runtime in &runtimes {
+            if let Some(scheduler) = runtime.bound_scheduler() {
+                scheduler.drain_fires_until(deadline)?;
+            }
+        }
+        if let Some(error) = failure {
+            return Err(error);
         }
         self.state
             .lock()
