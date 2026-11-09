@@ -2153,6 +2153,30 @@ impl KeepAliveTimer {
         self.wake();
     }
 
+    /// #2152 fix-r2: a parser-admission rejection returns before `serve`,
+    /// so nothing runs the finishing a served response gets — the phase
+    /// would stay `Request` (where `expired` is `None`) with both deadlines
+    /// cleared and `request_in_flight` latched, leaving a rejection whose
+    /// 400 never drains (a peer that stopped reading) holding its
+    /// connection permit with no timer at all, `close()` waiting it out
+    /// only through the shutdown abort. Finish the exchange the way a
+    /// served response does: the previous advertisement is superseded (a
+    /// new head arrived — the same reset the serve path does), then
+    /// [`Self::response_finished`]. Direct arming is at most one flush
+    /// early and every write resets the deadline, so a flushing rejection
+    /// keeps its full budget while a wedged one is closed at the deadline
+    /// and releases its permit, like Node's `socket.setTimeout` on a
+    /// response the socket never finishes writing.
+    fn response_rejected(&self) {
+        {
+            let mut lifecycle = self.lifecycle.lock().unwrap();
+            lifecycle.advertised_keep_alive = false;
+            lifecycle.close_after_response = false;
+            lifecycle.response_write = ResponseWrite::default();
+        }
+        self.response_finished();
+    }
+
     /// Any successfully read byte resets the keep-alive inactivity timer. The
     /// first byte of a follow-up request additionally starts `headersTimeout`.
     fn read_activity(&self) {
@@ -3356,47 +3380,9 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                                 // will ever reach the socket.
                                 let head_request = request.method() == Method::HEAD;
                                 timer.request_started();
-                                // #2152: this store's server is a bare
-                                // `http.createServer`
-                                // (HttpGatewayUserDialogStore.ts:236, no
-                                // options), so llhttp / `_http_server.js`
-                                // reject a bad method, a non-ASCII or
-                                // malformed target, an over-budget header
-                                // block and an HTTP/1.1 request without `Host`
-                                // *before* the handler runs — the same gate
-                                // the webhook and api-server channels run
-                                // (#1683). The `Err` is CONNECT's zero-byte
-                                // close; hyper aborts the connection without
-                                // writing, like the other native lanes. The
-                                // rejection answers before the shutdown /
-                                // keep-alive lifecycle below: a parser 400/431
-                                // is `Connection: close`, so no advertisement
-                                // may touch it (the `Date` / chunked framing
-                                // of the missing-Host 400 is the registered
-                                // shape, not this lane's keep-alive one).
                                 if let Some(rejection) =
-                                    crate::native_http::node_parser_admission(&request)?
+                                    parser_admission(&request, &timer)?
                                 {
-                                    if rejection.status()
-                                        == StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE
-                                    {
-                                        // #2152: the over-budget family keeps
-                                        // this lane's #1232 answer —
-                                        // `NODE_431_RESPONSE`'s exact Node
-                                        // bytes through `force_node_response`,
-                                        // the same mechanism `serve`'s
-                                        // backstop uses for the framing the
-                                        // stream guard cannot track
-                                        // (duplicate `Content-Length`,
-                                        // multi-token `Transfer-Encoding`).
-                                        // The rejection is only the
-                                        // placeholder whose `Connection:
-                                        // close` keeps the keep-alive
-                                        // advertisement inert; hyper's own
-                                        // framing of it never reaches the
-                                        // socket.
-                                        timer.force_node_response(NODE_431_RESPONSE);
-                                    }
                                     return Ok(rejection);
                                 }
                                 let mut response =
@@ -3684,6 +3670,43 @@ async fn read_request_body(
 
 fn payload_too_large() -> HttpStoreHttpResponse {
     error_response(413, "payload_too_large", "Request body is too large.")
+}
+
+/// #2152: this store's server is a bare `http.createServer`
+/// (HttpGatewayUserDialogStore.ts:236, no options), so llhttp /
+/// `_http_server.js` reject a bad method, a non-ASCII or malformed target, an
+/// over-budget header block and an HTTP/1.1 request without `Host` *before*
+/// the handler runs — the same gate the webhook and api-server channels run
+/// (#1683). The `Err` is CONNECT's zero-byte close; hyper aborts the
+/// connection without writing, like the other native lanes. The rejection
+/// answers before the shutdown / keep-alive lifecycle of a served response: a
+/// parser 400/431 is `Connection: close`, so no advertisement may touch it
+/// (the `Date` / chunked framing of the missing-Host 400 is the registered
+/// shape, not this lane's keep-alive one) — but the exchange still finishes
+/// (`response_rejected`, #2152 fix-r2), so a rejection whose bytes never
+/// drain is closed at the keep-alive deadline instead of pinning its
+/// connection permit with no timer at all.
+fn parser_admission(
+    request: &Request<Incoming>,
+    timer: &KeepAliveTimer,
+) -> std::result::Result<Option<Response<crate::Body>>, std::io::Error> {
+    if let Some(rejection) = crate::native_http::node_parser_admission(request)? {
+        if rejection.status() == StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE {
+            // #2152: the over-budget family keeps this lane's #1232 answer —
+            // `NODE_431_RESPONSE`'s exact Node bytes through
+            // `force_node_response`, the same mechanism `serve`'s backstop
+            // uses for the framing the stream guard cannot track (duplicate
+            // `Content-Length`, multi-token `Transfer-Encoding`). The
+            // rejection is only the placeholder whose `Connection: close`
+            // keeps the keep-alive advertisement inert; hyper's own framing
+            // of it never reaches the socket.
+            timer.force_node_response(NODE_431_RESPONSE);
+        }
+        timer.response_rejected();
+        Ok(Some(rejection))
+    } else {
+        Ok(None)
+    }
 }
 
 async fn serve(
