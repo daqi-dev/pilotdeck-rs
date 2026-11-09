@@ -24,7 +24,9 @@ use std::{
 
 mod classify;
 mod config;
+mod custom_registry;
 mod execute;
+mod hosting;
 mod policy;
 mod scenario;
 mod session;
@@ -34,7 +36,11 @@ pub use config::{
     LITELLM_INITIAL_RETRY_DELAY_MS, LITELLM_MAX_RETRY_DELAY_MS, LITELLM_RETRY_JITTER, RouterConfig,
     RouterModelRef, StatsConfig, SubagentPolicy, TierConfig, TokenSaverConfig,
 };
+pub use custom_registry::{
+    CustomRouterInstance, CustomRouterRegistration, SessionCustomRouterRegistry,
+};
 pub use execute::{RouterExecuteContext, RouterExecuteError};
+pub use hosting::{RouterGenerationRegistry, RouterModelPolicyAssertion};
 pub use policy::{RetryDecision, retry_decide};
 pub use scenario::{ScenarioResolution, SubagentDetection, detect_subagent};
 pub use session::SessionRoutingState;
@@ -217,10 +223,13 @@ pub struct RouterDeps {
     pub events: Arc<dyn RouterEventSink>,
     pub clock: Arc<dyn Fn() -> f64 + Send + Sync>,
     pub is_model_allowed: Arc<dyn Fn(&RouterModelRef) -> bool + Send + Sync>,
+    pub assert_model_allowed: Option<RouterModelPolicyAssertion>,
     /// Native stats collector (`createNativeRouterUsageObserver`); absent means
     /// `with_deps` derives one from `config.stats` (enabled only when the router
     /// is enabled), so snapshot projections still answer and `observe` works.
     pub stats: Option<Arc<Mutex<TokenStatsCollector>>>,
+    /// Project/session lifecycle state shared by successive turn runtimes.
+    pub shared: Option<Arc<RouterSharedState>>,
 }
 impl RouterDeps {
     pub fn new(model_invoker: Arc<dyn RouterModelInvocation>) -> Self {
@@ -231,8 +240,47 @@ impl RouterDeps {
             // `RouterRuntime.ts` defaults to `() => new Date()` (wall clock).
             clock: Arc::new(wall_clock),
             is_model_allowed: Arc::new(|_| true),
+            assert_model_allowed: None,
             stats: None,
+            shared: None,
         }
+    }
+}
+
+/// State whose lifetime follows a Gateway session rather than one turn.
+/// Config, invoker and sinks remain generation-scoped on `RouterRuntime`.
+pub struct RouterSharedState {
+    pub custom_routers: Arc<SessionCustomRouterRegistry>,
+    store: Arc<session::SessionRouterStore>,
+    usage: Arc<Mutex<Vec<(JsString, JsValue)>>>,
+    health: Arc<dyn super::health::RouterProviderHealth>,
+    owns_store: bool,
+    organization_policy: Option<crate::runtime::sdk_session::OrganizationPolicy>,
+}
+impl RouterSharedState {
+    pub fn new(clock: Arc<dyn Fn() -> f64 + Send + Sync>) -> Self {
+        Self {
+            custom_routers: Arc::new(SessionCustomRouterRegistry::default()),
+            store: Arc::new(session::SessionRouterStore::new(clock.clone())),
+            usage: Arc::new(Mutex::new(Vec::new())),
+            health: Arc::new(super::health::NativeRouterProviderHealth::new(clock)),
+            owns_store: true,
+            organization_policy: None,
+        }
+    }
+
+    pub fn dispose(&self) {
+        self.custom_routers.dispose();
+        if self.owns_store {
+            self.store.clear();
+        }
+        self.usage.lock().expect("router usage cache").clear();
+        self.health.dispose();
+    }
+}
+impl Default for RouterSharedState {
+    fn default() -> Self {
+        Self::new(Arc::new(wall_clock))
     }
 }
 
@@ -286,8 +334,9 @@ pub struct RouterRuntime {
     events: Arc<dyn RouterEventSink>,
     clock: Arc<dyn Fn() -> f64 + Send + Sync>,
     is_model_allowed: Arc<dyn Fn(&RouterModelRef) -> bool + Send + Sync>,
-    store: session::SessionRouterStore,
-    usage: Mutex<Vec<(JsString, JsValue)>>,
+    assert_model_allowed: Option<RouterModelPolicyAssertion>,
+    store: Arc<session::SessionRouterStore>,
+    usage: Arc<Mutex<Vec<(JsString, JsValue)>>>,
     health: Arc<dyn super::health::RouterProviderHealth>,
     stats: Arc<Mutex<TokenStatsCollector>>,
 }
@@ -344,6 +393,9 @@ impl RouterRuntime {
                 Arc::new(Mutex::new(collector))
             }
         };
+        let shared = deps
+            .shared
+            .unwrap_or_else(|| Arc::new(RouterSharedState::new(clock.clone())));
         Ok(Self {
             config,
             enabled,
@@ -352,11 +404,10 @@ impl RouterRuntime {
             events: deps.events,
             clock: clock.clone(),
             is_model_allowed: deps.is_model_allowed,
-            health: Arc::new(super::health::NativeRouterProviderHealth::new(
-                clock.clone(),
-            )),
-            store: session::SessionRouterStore::new(clock),
-            usage: Mutex::new(Vec::new()),
+            assert_model_allowed: deps.assert_model_allowed,
+            health: shared.health.clone(),
+            store: shared.store.clone(),
+            usage: shared.usage.clone(),
             stats,
         })
     }
@@ -394,6 +445,9 @@ impl RouterRuntime {
     }
 
     fn assert_model_allowed(&self, model: &RouterModelRef) -> Result<(), RouterRuntimeError> {
+        if let Some(assert_allowed) = &self.assert_model_allowed {
+            assert_allowed(model)?;
+        }
         if (self.is_model_allowed)(model) {
             return Ok(());
         }

@@ -574,6 +574,7 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
     let mut force_at: Option<tokio::time::Instant> = None;
     let mut exited = false;
     let mut leader_status: Option<Option<i32>> = None;
+    let mut reaped_status: Option<Option<i32>> = None;
 
     let terminate = |guard: &GroupGuard,
                      kill_at: &mut Option<tokio::time::Instant>,
@@ -613,7 +614,16 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
                     _ => stderr = None,
                 }
             }
-            status = leader_exited(group), if streams_closed && !exited => {
+            status = child.wait(), if streams_closed && !exited && force_at.is_none() => {
+                if let Ok(status) = status {
+                    // No termination was requested, so no group signal remains.
+                    // Disarm immediately after reaping, before yielding the task.
+                    guard.disarm();
+                    reaped_status = Some(status.code());
+                }
+                exited = true;
+            }
+            status = leader_exited(group), if streams_closed && !exited && force_at.is_some() => {
                 exited = true;
                 leader_status = status;
             }
@@ -655,14 +665,15 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
     // handler, so its run never settles; the tail is dropped here instead.
     out_text.push(&out_decoder.flush());
     err_text.push(&err_decoder.flush());
-    let exit_code = match (kill_at, leader_status) {
+    let exit_code = match (reaped_status, kill_at, leader_status) {
+        (Some(code), _, _) => code,
         // The baseline's 3 s SIGKILL is still pending after a terminated run
         // settled: it fires on schedule for group members that ignored TERM
         // without holding the pipes. The leader stays unreaped (a zombie)
         // until then, so the group ID cannot be reused. The timer owns only
         // the zombie and the guard; if the runtime drops it, the guard kills
         // the group at once.
-        (Some(deadline), Some(code)) => {
+        (None, Some(deadline), Some(code)) => {
             tokio::spawn(async move {
                 sleep_until(deadline).await;
                 guard.signal(rustix::process::Signal::KILL);
@@ -671,7 +682,7 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
             });
             code
         }
-        (pending, _) => {
+        (None, pending, _) => {
             if pending.is_some() {
                 // Status unobservable without reaping: kill now instead of
                 // signalling a group ID that may be reused after the wait.

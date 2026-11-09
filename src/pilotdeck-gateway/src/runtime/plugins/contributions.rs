@@ -55,7 +55,8 @@ pub struct PluginToolContribution {
 #[derive(Clone, Debug)]
 pub struct PluginRouterContribution {
     pub namespace: String,
-    pub id: String,
+    pub id: JsString,
+    pub contribution: super::loader::RouterContribution,
 }
 
 /// `OutputStyleContribution` from `PluginRuntime.listOutputStyles`.
@@ -90,6 +91,22 @@ pub struct PluginSessionContributionSnapshot {
     pub hooks: HooksSettings,
     pub mcp_servers: JsObject,
     pub mcp_instructions: Vec<PluginMcpInstructionEntry>,
+}
+
+impl PluginSessionContributionSnapshot {
+    /// Instantiate every retained router factory, in contribution order.
+    /// A factory failure aborts the whole set, like the TS `map`.
+    pub fn create_custom_routers(
+        &self,
+    ) -> Result<
+        Vec<crate::runtime::model::router::CustomRouterInstance>,
+        super::PluginRuntimeError,
+    > {
+        self.routers
+            .iter()
+            .map(|entry| (entry.contribution.create_custom_router)())
+            .collect()
+    }
 }
 
 /// `PluginContributionSnapshot` (deprecated).
@@ -508,8 +525,67 @@ fn collect_tool_contributions(_plugins: &[Arc<LoadedPlugin>]) -> Vec<PluginToolC
     Vec::new()
 }
 
-fn collect_router_contributions(_plugins: &[Arc<LoadedPlugin>]) -> Vec<PluginRouterContribution> {
-    Vec::new()
+fn collect_router_contributions(plugins: &[Arc<LoadedPlugin>]) -> Vec<PluginRouterContribution> {
+    // TS PluginRuntime.ts:853-875. The trimmed id selects the winner, while the
+    // contribution and its factory keep the original id and instance identity.
+    let locale = node_locale(|key| std::env::var(key).ok());
+    let collator = node_collator(&locale).ok();
+    let compare = |left: &JsString, right: &JsString| {
+        collator.as_ref().map_or_else(
+            || left.units().cmp(right.units()),
+            |collator| crate::project_files::node_compare_utf16(collator, left, right),
+        )
+    };
+    let mut selected: Vec<(JsString, PluginRouterContribution, u8)> = Vec::new();
+    for plugin in plugins {
+        let priority = source_priority(plugin.source);
+        for router in &plugin.router_contributions {
+            let units = router.id.units();
+            let whitespace = |unit: &u16| {
+                char::from_u32(u32::from(*unit)).is_some_and(crate::metadata::js_space)
+            };
+            let start = units
+                .iter()
+                .position(|unit| !whitespace(unit))
+                .unwrap_or(units.len());
+            let end = units
+                .iter()
+                .rposition(|unit| !whitespace(unit))
+                .map_or(start, |index| index + 1);
+            let id = JsString::from_utf16(units[start..end].to_vec());
+            if id.is_empty() {
+                continue;
+            }
+            let contribution = PluginRouterContribution {
+                namespace: plugin.name.clone(),
+                id: router.id.clone(),
+                contribution: router.clone(),
+            };
+            if let Some((_, existing, existing_priority)) =
+                selected.iter_mut().find(|(key, _, _)| key == &id)
+            {
+                if priority > *existing_priority
+                    || (priority == *existing_priority
+                        && compare(
+                            &plugin.name.as_str().into(),
+                            &existing.namespace.as_str().into(),
+                        )
+                        .is_lt())
+                {
+                    *existing = contribution;
+                    *existing_priority = priority;
+                }
+            } else {
+                selected.push((id, contribution, priority));
+            }
+        }
+    }
+    let mut result: Vec<_> = selected
+        .into_iter()
+        .map(|(_, contribution, _)| contribution)
+        .collect();
+    result.sort_by(|left, right| compare(&left.id, &right.id));
+    result
 }
 
 fn collect_prompt_contributions(_plugins: &[Arc<LoadedPlugin>]) -> Vec<String> {

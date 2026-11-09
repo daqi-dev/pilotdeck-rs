@@ -61,16 +61,23 @@ struct State {
     calls: HashMap<JsString, CallRecord>,
     next_call_sequence: u64,
 }
-#[derive(Debug)]
+impl State {
+    fn remove_pending(&mut self, message_id: &JsString) {
+        let retain = |packet: &Packet| packet.pending.as_ref() != Some(message_id);
+        self.control.retain(retain);
+        self.data.retain(retain);
+    }
+}
 struct Inner {
     binding: SidecarBinding,
     state: Mutex<State>,
     wake: Arc<WakeSignal>,
     next_id: AtomicU64,
     queue_capacity: usize,
+    direct_host: Mutex<Option<std::sync::Arc<dyn crate::direct_host::DirectHostCallback>>>,
 }
 /// Clone is a handle to this exact connection, not a new generation.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ConnectionOwner(Arc<Inner>);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResponseDisposition {
@@ -87,7 +94,35 @@ impl ConnectionOwner {
             wake: Arc::new(WakeSignal::default()),
             next_id: AtomicU64::new(1),
             queue_capacity: queue_capacity.max(1),
+            direct_host: Mutex::new(None),
         }))
+    }
+    /// When set, module host requests are dispatched in-process and never
+    /// written to the stdio stream queue.
+    pub fn set_direct_host(
+        &self,
+        callback: Option<std::sync::Arc<dyn crate::direct_host::DirectHostCallback>>,
+    ) {
+        *self.0.direct_host.lock().unwrap_or_else(|p| p.into_inner()) = callback;
+    }
+    fn direct_host(&self) -> Option<std::sync::Arc<dyn crate::direct_host::DirectHostCallback>> {
+        self.0
+            .direct_host
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+    /// Drain one published stream frame for embedded agent event pumps.
+    pub fn try_pop_stream_line(&self) -> Option<String> {
+        let mut state = self.0.state.lock().unwrap_or_else(|p| p.into_inner());
+        let packet = state.data.pop_front()?;
+        drop(state);
+        Some(packet.line)
+    }
+    /// Drain one control response for embedded execution owners.
+    pub fn try_pop_control_line(&self) -> Option<String> {
+        let mut state = self.0.state.lock().unwrap_or_else(|p| p.into_inner());
+        state.control.pop_front().map(|packet| packet.line)
     }
     pub fn binding(&self) -> &SidecarBinding {
         &self.0.binding
@@ -522,7 +557,13 @@ impl BoundExchange {
             if state.closed {
                 return Err(before(closed()));
             }
-            if state.data.len() < self.owner.0.queue_capacity {
+            let direct = effect == CallEffect::ReadOnly;
+            let queue_len = if direct {
+                state.control.len()
+            } else {
+                state.data.len()
+            };
+            if queue_len < self.owner.0.queue_capacity {
                 let admission_sequence = state.next_call_sequence;
                 state.next_call_sequence =
                     state.next_call_sequence.checked_add(1).ok_or_else(|| {
@@ -550,12 +591,38 @@ impl BoundExchange {
                         deadline_rejected: false,
                     },
                 );
-                state.data.push_back(Packet {
-                    pending: Some(message_id.clone()),
-                    line: request_line,
-                });
+                let direct_host = self.owner.direct_host();
                 drop(state);
-                self.owner.0.wake.notify();
+                if let Some(result) =
+                    crate::direct_host::try_direct_dispatch(&direct_host, control, &request_line)
+                {
+                    let request_value =
+                        pilotdeck_protocol::parse_json(&request_line).unwrap_or(JsValue::Null);
+                    {
+                        let mut state =
+                            self.owner.0.state.lock().unwrap_or_else(|p| p.into_inner());
+                        if let Some(record) = state.calls.get_mut(&message_id) {
+                            record.phase = DispatchPhase::Sent;
+                        }
+                        drop(state);
+                    }
+                    let response =
+                        crate::direct_host::direct_module_response(&request_value, result);
+                    let _ = self.owner.receive_response(&response);
+                } else {
+                    let mut state = self.owner.0.state.lock().unwrap_or_else(|p| p.into_inner());
+                    let packet = Packet {
+                        pending: Some(message_id.clone()),
+                        line: request_line,
+                    };
+                    if direct {
+                        state.control.push_back(packet);
+                    } else {
+                        state.data.push_back(packet);
+                    }
+                    drop(state);
+                    self.owner.0.wake.notify();
+                }
                 break;
             }
             drop(state);
@@ -661,9 +728,7 @@ impl PendingExchange {
                     // No acceptance occurred. Remove both the responsibility
                     // record and the packet, just as for normal queued expiry.
                     state.calls.remove(&message_id);
-                    state
-                        .data
-                        .retain(|packet| packet.pending.as_ref() != Some(&message_id));
+                    state.remove_pending(&message_id);
                 } else {
                     let record = state.calls.get_mut(&message_id).unwrap();
                     record.deadline_rejected = true;
@@ -720,9 +785,7 @@ impl PendingExchange {
                     // Removing an undispatched record prevents the writer sending
                     // a packet it already dequeued but has not marked dispatched.
                     state.calls.remove(&message_id);
-                    state
-                        .data
-                        .retain(|packet| packet.pending.as_ref() != Some(&message_id));
+                    state.remove_pending(&message_id);
                 }
                 if dispatched && !invalid {
                     let record = state
@@ -987,9 +1050,7 @@ mod reconciliation_tests {
     fn mark_sent(pending: &PendingExchange) {
         let mut state = pending.owner.0.state.lock().unwrap();
         state.calls.get_mut(&pending.message_id).unwrap().phase = DispatchPhase::Sent;
-        state
-            .data
-            .retain(|packet| packet.pending.as_ref() != Some(&pending.message_id));
+        state.remove_pending(&pending.message_id);
     }
 
     #[test]
@@ -1257,16 +1318,16 @@ mod reconciliation_tests {
                         );
                     }
                     assert!(owner.call_record(&id).is_none());
-                    assert!(
-                        owner
-                            .0
-                            .state
-                            .lock()
-                            .unwrap()
-                            .data
-                            .iter()
-                            .all(|packet| packet.pending.as_ref() != Some(&id))
-                    );
+                    {
+                        let state = owner.0.state.lock().unwrap();
+                        assert!(
+                            state
+                                .control
+                                .iter()
+                                .chain(state.data.iter())
+                                .all(|packet| packet.pending.as_ref() != Some(&id))
+                        );
+                    }
                     assert_eq!(
                         owner.call_record(&original_id).unwrap().phase,
                         if original_replied {

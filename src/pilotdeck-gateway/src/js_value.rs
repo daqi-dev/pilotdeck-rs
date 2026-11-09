@@ -20,6 +20,10 @@ use pilotdeck_protocol::{JsString, JsValue, stringify_json};
 /// Deepest array nesting that converts; conservative against V8's 2515.
 pub(crate) const MAX_ARRAY_DEPTH: usize = 2000;
 
+pub(crate) fn js_space(c: char) -> bool {
+    matches!(c, '\u{9}'..='\u{d}' | '\u{20}' | '\u{a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}')
+}
+
 /// V8 `RangeError` from a too-deep `Array.prototype.join`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct StackOverflow;

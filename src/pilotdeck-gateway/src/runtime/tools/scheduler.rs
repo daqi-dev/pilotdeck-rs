@@ -29,6 +29,9 @@ pub struct ToolRuntime {
     pub registry: ToolRegistry,
     permission: Arc<dyn PermissionDecision>,
     pub mode: SchedulerMode,
+    /// `PDRS_TOOL_TIMING_METADATA=1`: the local tool-call benchmark asks for
+    /// dispatch/handler timings. Ordinary results keep the TS metadata shape.
+    timing_metadata: bool,
 }
 impl ToolRuntime {
     pub fn new(
@@ -40,7 +43,12 @@ impl ToolRuntime {
             registry,
             permission,
             mode,
+            timing_metadata: false,
         }
+    }
+    pub fn with_timing_metadata(mut self) -> Self {
+        self.timing_metadata = true;
+        self
     }
     pub async fn execute_batch(
         &self,
@@ -329,10 +337,18 @@ impl ToolRuntime {
             execution
                 .fields
                 .insert("currentPermissionDecision".into(), decision);
+            let dispatch_started = std::time::Instant::now();
             match tool.execute(input, execution).await {
                 Err(error) => fail(&name, error),
                 Ok(output) => {
                     let mut metadata = output.metadata;
+                    if self.timing_metadata {
+                        let meta = metadata.get_or_insert_with(JsObject::new);
+                        meta.insert(
+                            "dispatchMs".into(),
+                            JsValue::Number(dispatch_started.elapsed().as_secs_f64() * 1000.0),
+                        );
+                    }
                     let max_bytes = tool
                         .fields()
                         .get("maxResultBytes")

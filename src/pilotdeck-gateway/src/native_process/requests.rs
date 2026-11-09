@@ -79,8 +79,17 @@ impl Requests {
         }
         struct NullPlugins;
         impl SdkMcpSessionPlugins for NullPlugins {
-            fn plugins(&self, _: &JsValue) -> Vec<Arc<crate::runtime::plugins::LoadedPlugin>> {
-                Vec::new()
+            fn plugins<'a>(
+                &'a self,
+                _: &'a JsValue,
+            ) -> crate::runtime::mcp::sdk::SdkMcpFuture<
+                'a,
+                Result<
+                    Vec<Arc<crate::runtime::plugins::LoadedPlugin>>,
+                    crate::runtime::mcp::sdk::SdkMcpError,
+                >,
+            > {
+                Box::pin(async { Ok(Vec::new()) })
             }
         }
         let close_owner = owner.clone();

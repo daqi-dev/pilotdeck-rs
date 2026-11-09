@@ -2,15 +2,23 @@
 //! Transport routing and durable acceptance are assembled by later packages.
 mod admission;
 mod completion;
+pub mod context_resources;
+mod direct_host;
+mod embedded_sidecar;
 pub mod factory;
 mod handle;
+pub mod module_host;
 mod owner;
+pub mod routes;
+pub mod sidecar_session;
+pub mod subagent;
+pub mod subagent_continuation;
 
 pub use admission::{SessionAdmission, TurnReservation};
 pub use completion::{CompletionAbortReason, TurnCompletionFence, TurnCompletionHandle};
 pub use handle::{
     HandleActivity, HandleState, LiveSession, LiveSessionHandle, LiveTurn, SessionNext,
-    SessionSubmission,
+    SessionQueuedTurn, SessionSubmission,
 };
 pub use owner::{
     EvictionReason, MaintenanceReservation, SessionContext, SessionEvictionSnapshot,

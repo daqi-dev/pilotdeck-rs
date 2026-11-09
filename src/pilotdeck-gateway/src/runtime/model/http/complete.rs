@@ -668,10 +668,25 @@ pub async fn complete_model(
         throw_if_aborted(options)?;
         let (provider_now, model_now) = providers::validate_model_request(&current, config)?;
         let body = providers::build_model_request(&current, &provider_now, &model_now)?;
+        let mut invocation = crate::runtime::model::invocation::InvocationAttempt::begin(
+            options,
+            options.invocation.as_ref(),
+            &provider,
+            field(&current, "model"),
+            false,
+            &body,
+            attempt + 1.0,
+        )?;
         let response =
             match send_provider_request(transport, &provider, &body, options, false).await {
                 Ok(response) => response,
                 Err(error) => {
+                    crate::runtime::model::invocation::finish(
+                        &mut invocation,
+                        "transport_error",
+                        false,
+                        Some(&error),
+                    );
                     if attempt < max_retries && is_retryable_request_error(&error) {
                         let (_, delay_ms) =
                             retry_decide_request(&provider, attempt, (options.random)());
@@ -683,14 +698,19 @@ pub async fn complete_model(
                 }
             };
         let status = response.status().as_u16();
+        if let Some(attempt) = &mut invocation {
+            attempt.status(status);
+        }
         let (mut body_stream, before_abort) = response.into_body();
         // TS `response.text()` is outside the send try/catch: a mid-body
         // failure is not a retryable send error and must not re-enter the loop.
         let text = response_text(&mut body_stream, options, before_abort).await?;
+        crate::runtime::model::invocation::capture(&mut invocation, text.as_bytes());
         // `parseRawJson`: invalid/empty success bodies stay as the raw text.
         let raw = parse_json(&text).unwrap_or_else(|_| JsValue::String(text.as_str().into()));
 
         if !(200..300).contains(&status) {
+            crate::runtime::model::invocation::finish(&mut invocation, "provider_error", false, None);
             let error = normalize_model_error(
                 &provider_id(&provider),
                 &protocol(&provider),
@@ -699,6 +719,7 @@ pub async fn complete_model(
             );
             return Err(ModelStreamError::Provider(error));
         }
+        crate::runtime::model::invocation::finish(&mut invocation, "success", true, None);
 
         let protocol_value = field(&provider, "protocol").clone();
         let provider_id_value = field(&provider, "id").clone();

@@ -25,6 +25,9 @@ use crate::storage::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{fmt, fs, os::unix::fs::DirBuilderExt, path::PathBuf};
 
+#[path = "memory/routes.rs"]
+pub mod memory_routes;
+
 static UNDEFINED: JsValue = JsValue::Undefined;
 const MKDTEMP_TEMPLATE_SUFFIX: &str = ".pilotdeck-restore-XXXXXX";
 

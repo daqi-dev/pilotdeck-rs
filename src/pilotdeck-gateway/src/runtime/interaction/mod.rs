@@ -9,8 +9,10 @@
 //! another thread cannot claim that already settled entry. Pending/replay
 //! ownership belongs here; connection::BindingOwners is a connection-only subset.
 mod bus;
+pub mod channel;
 mod coordinator;
 mod reconnect;
+pub mod routes;
 mod value;
 
 pub use bus::{GatewayElicitationBus, GatewayPermissionBus, PendingEntry, Registration};

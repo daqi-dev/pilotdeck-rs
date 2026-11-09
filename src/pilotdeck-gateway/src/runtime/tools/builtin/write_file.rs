@@ -52,7 +52,7 @@ impl ExecutableTool for WriteFileTool {
     }
 
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
-        Box::pin(async move { execute(&input, &context) })
+        Box::pin(async move { execute(&input, &context).await })
     }
 }
 
@@ -130,7 +130,7 @@ fn validate(input: &JsValue, context: &ToolRunContext) -> Result<Option<Vec<JsOb
     }
 }
 
-fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, ToolError> {
+async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, ToolError> {
     let path = input_path(input);
     let content_value = input_content(input);
     let content = String::from_utf16_lossy(content_value.units());
@@ -158,6 +158,16 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
     }
     super::invalidate_read_file_state(context, &resolved.absolute);
     record_write_snapshot(context, &resolved.absolute, &content, write.mtime_ms, None);
+    // `FileChanged` fires only after the durable write, with the pre-edit bytes
+    // so a hook can distinguish created from updated.
+    crate::runtime::hooks::session::notify_file_save(
+        context,
+        &resolved.absolute,
+        &resolved.relative,
+        &resolved.root,
+        freshness.previous_content.as_deref(),
+    )
+    .await;
 
     let kind = if write.created { "create" } else { "update" };
     let structured_patch = build_structured_patch(freshness.previous_content.as_deref(), &content);

@@ -30,6 +30,9 @@ serde_json.workspace = true
 pilotdeck-protocol.workspace = true
 pilotdeck-tokenizer = { path = "../pilotdeck-tokenizer" }
 pilotdeck-transport = { path = "../pilotdeck-transport" }
+pilotdeck-agent = { path = "../pilotdeck-agent" }
+# Steer image validation: same decoders Node's sharp accepts for file images.
+image = { version = "=0.25.8", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 uuid = { version = "=1.27.0", features = ["v4"] }
 pilotdeck-yaml = { path = "../pilotdeck-yaml" }
 url = "=2.5.8"

@@ -16,8 +16,8 @@
 //!
 //! ## Deliberate hangers (other slices)
 //!
-//! - `resolveSdkSubagentScopes` (TS `:2118-2204`) is outside this PR's cited
-//!   ranges. `setSdkSessionConfig` therefore stores `agents` untouched.
+//! - `resolveSdkSubagentScopes` (TS `:2118-2204`) resolves agent model, skills
+//!   and SDK-session MCP references through the same catalog and session owner.
 //! - Session hook / SDK config-change **dispatch** is A6.7-pr6. This module
 //!   defines the registration types and registry only (see
 //!   [`SessionHandlerRegistry`]).
@@ -39,6 +39,7 @@ mod handlers;
 mod policy;
 mod projects;
 mod registry;
+pub mod routes;
 mod settings;
 
 pub use handlers::*;
@@ -48,6 +49,8 @@ pub use projects::{SdkSessionProjects, SdkSessionProjectsTable};
 pub use registry::*;
 pub use settings::*;
 
+#[cfg(test)]
+mod agent_mcp_tests;
 #[cfg(test)]
 mod tests;
 

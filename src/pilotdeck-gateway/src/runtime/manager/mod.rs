@@ -24,7 +24,10 @@
 //! `CAPABILITY_UNAVAILABLE`: an absent provider produces the TS gateway-method
 //! error, while an injected provider owns both values and errors.
 
+mod browser;
 mod catalog;
+pub mod session_mcp;
+pub use browser::{BrowserManager, BrowserRuntimeLease};
 mod file_catalog;
 mod projection;
 #[cfg(test)]
@@ -133,5 +136,129 @@ mod sop_membership_tests {
             super::contains_session_units(&root, &workspace, ".", &"relative-session".into())
                 .unwrap()
         );
+    }
+}
+
+pub(crate) fn browser_provider_unavailable() -> RequestError {
+    RequestError {
+        code: "CAPABILITY_UNAVAILABLE".into(),
+        ..RequestError::new("Gateway manager browser provider is unavailable.")
+    }
+}
+
+use crate::metadata::{Metadata, NativeFiles, resolve_path, resolved_identity};
+use crate::runtime::connection::RequestError;
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use std::path::{Path, PathBuf};
+
+pub async fn sessions(home: &Path, cwd: &Path, params: &JsValue) -> Result<JsValue, RequestError> {
+    let (home, cwd, params) = (home.to_owned(), cwd.to_owned(), params.clone());
+    tokio::task::spawn_blocking(move || {
+        let scope = resolve_scope(&home, &cwd, &params)?;
+        let chat = scope.metadata.chat_dir(&scope.project.to_string_lossy());
+        let mut listed = file_catalog::list_sessions(&chat, &scope.project, false)
+            .map_err(RequestError::new)?.into_iter().map(|(_, item)| item).collect::<Vec<_>>();
+        // createLocalGateway.ts:1263-1267 filters only after the catalog's limit.
+        listed.truncate(100);
+        if truthy(&scope.session) {
+            listed.retain(|item| {
+                item.get("sessionId") == Some(&scope.session)
+                    || item.get("sessionKey") == Some(&scope.session)
+            });
+        }
+        Ok(items(listed))
+    })
+    .await
+    .map_err(|error| RequestError::new(error.to_string()))?
+}
+
+
+/// LocalServer uses the same registry its session MCP owners register with.
+pub async fn browsers(home: &Path, cwd: &Path, params: &JsValue) -> Result<JsValue, RequestError> {
+    BrowserManager::production()
+        .browsers(home, cwd, params)
+        .await
+}
+
+struct Scope {
+    metadata: Metadata,
+    project: PathBuf,
+    session: JsValue,
+}
+
+fn resolve_scope(home: &Path, cwd: &Path, params: &JsValue) -> Result<Scope, RequestError> {
+    if matches!(params, JsValue::Null | JsValue::Undefined) {
+        let kind = if params.is_undefined() {
+            "undefined"
+        } else {
+            "null"
+        };
+        return Err(RequestError::new(format!(
+            "Cannot read properties of {kind} (reading 'projectKey')"
+        )));
+    }
+    let home = resolve_path(cwd, home);
+    let metadata = Metadata {
+        home,
+        cwd: cwd.to_owned(),
+        files: NativeFiles,
+    };
+    let undefined = JsValue::Undefined;
+    let raw = params.get("projectKey").unwrap_or(&undefined);
+    let key = match raw {
+        JsValue::Undefined | JsValue::Null => JsString::from(cwd.to_string_lossy().as_ref()),
+        JsValue::String(key) => key.clone(),
+        _ => {
+            let received = match crate::metadata::argument_received(raw) {
+                crate::metadata::ArgumentReceived::Text(text) => text,
+                crate::metadata::ArgumentReceived::Throws { message, .. } => {
+                    return Err(RequestError::new(message));
+                }
+            };
+            let mut message = "The \"paths[0]\" argument must be of type string. Received "
+                .encode_utf16().collect::<Vec<_>>();
+            message.extend_from_slice(received.units());
+            let mut error = RequestError::new(JsString::from_utf16(message));
+            error.code = "ERR_INVALID_ARG_TYPE".into();
+            return Err(error);
+        }
+    };
+    let requested = resolved_identity(cwd, &key).map(PathBuf::from);
+    let registered = match requested.as_ref() {
+        Some(project) if project == &metadata.home => true,
+        Some(project) => metadata.has_registered_project(project)
+            .map_err(|error| RequestError::new(error.to_string()))?,
+        None => false,
+    };
+    let Some(project) = requested.filter(|_| registered) else {
+        let mut message: Vec<u16> = "Unknown projectKey: ".encode_utf16().collect();
+        message.extend_from_slice(key.units());
+        let mut error = RequestError::new(JsString::from_utf16(message));
+        error.code = "PROJECT_NOT_FOUND".into();
+        return Err(error);
+    };
+    Ok(Scope {
+        metadata,
+        project,
+        session: params
+            .get("sessionKey")
+            .cloned()
+            .unwrap_or(JsValue::Undefined),
+    })
+}
+
+fn items(values: Vec<JsValue>) -> JsValue {
+    let mut result = JsObject::new();
+    result.insert("items".into(), JsValue::Array(values));
+    JsValue::Object(result)
+}
+
+fn truthy(value: &JsValue) -> bool {
+    match value {
+        JsValue::Undefined | JsValue::Null => false,
+        JsValue::Bool(value) => *value,
+        JsValue::Number(value) => *value != 0.0 && !value.is_nan(),
+        JsValue::String(value) => !value.is_empty(),
+        JsValue::Array(_) | JsValue::Object(_) => true,
     }
 }

@@ -42,6 +42,19 @@ pub struct HyperCountTransport {
     client: Client<hyper_rustls::HttpsConnector<super::http::ProxyConnect>, Full<Bytes>>,
 }
 impl HyperCountTransport {
+    /// Loaded configuration snapshot: same roots and proxy as the stream path.
+    pub fn from_snapshot(snapshot: &JsValue) -> Self {
+        Self {
+            client: Client::builder(TokioExecutor::new()).build(
+                super::http::proxy_https_connector(
+                    super::http::webpki_client_config(),
+                    super::http::ProxyConfig::from_settings(
+                        super::http::ProxySettings::from_snapshot(snapshot).as_ref(),
+                    ),
+                ),
+            ),
+        }
+    }
     /// Trust exactly `roots` (tests use a throwaway CA).
     pub fn with_roots(roots: rustls::RootCertStore) -> Self {
         Self::from_config(super::http::rooted_client_config(roots))

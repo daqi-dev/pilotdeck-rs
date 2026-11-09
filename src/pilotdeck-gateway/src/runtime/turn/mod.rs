@@ -2,7 +2,9 @@
 pub mod admission;
 pub mod coordinator;
 pub mod failure_guard;
+pub mod execute_payload;
 pub mod gateway;
+pub mod history;
 pub mod host_factory;
 pub mod interaction;
 pub mod live;
@@ -13,6 +15,8 @@ mod projector_cwd_tests;
 pub mod publish;
 pub mod read;
 pub mod replay;
+pub mod routes;
+pub mod services;
 pub mod runner;
 pub mod submit;
 pub mod submit_host;

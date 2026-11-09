@@ -252,6 +252,13 @@ pub struct HyperModelTransport {
     client: Client<hyper_rustls::HttpsConnector<ProxyConnect>, Full<Bytes>>,
 }
 impl HyperModelTransport {
+    /// Loaded configuration snapshot: bundled roots plus the configured proxy.
+    pub fn from_snapshot(snapshot: &JsValue) -> Self {
+        Self::from_config(
+            webpki_client_config(),
+            ProxyConfig::from_settings(ProxySettings::from_snapshot(snapshot).as_ref()),
+        )
+    }
     /// Bundled roots plus Node-compatible explicit CA files; see `tls`.
     pub fn new() -> Self {
         Self::from_config(webpki_client_config(), ProxyConfig::from_settings(None))
@@ -447,6 +454,12 @@ pub enum ProxyInstallMode {
 }
 
 impl ProxySettings {
+    /// Loaded configuration snapshot form (`snapshot.config.proxy`), keeping
+    /// the startup precedence in [`ProxyConfig::from_settings`].
+    pub(crate) fn from_snapshot(snapshot: &JsValue) -> Option<Self> {
+        let proxy = snapshot.get("config").and_then(|value| value.get("proxy"))?;
+        Self::from_config(proxy)
+    }
     /// Parse a `proxy` config value (string or `{url, noProxy}`). Empty URLs
     /// are absent, exactly like `parseProxyConfig` and the `if
     /// (snapshot.config.proxy?.url)` guard in `pilotdeck.ts:48`.
@@ -1146,6 +1159,9 @@ pub enum StreamOutput {
 
 #[derive(Clone)]
 pub struct StreamOptions {
+    /// Gateway-owned attempt context and durable, synchronous stage sink
+    /// (`storage/invocationStorage.ts`); `None` skips audit for this call.
+    pub invocation: Option<super::invocation::ModelInvocation>,
     pub abort: Option<AbortFlag>,
     /// `options.streamTimeoutMs`.
     pub stream_timeout_ms: Option<f64>,
@@ -1167,6 +1183,7 @@ pub struct StreamOptions {
 impl Default for StreamOptions {
     fn default() -> Self {
         Self {
+            invocation: None,
             abort: None,
             stream_timeout_ms: None,
             random: Arc::new(|| {
@@ -2700,6 +2717,15 @@ pub async fn stream_model(
         options.yield_boundary().await;
         let (provider_now, model_now) = providers::validate_model_request(&current, config)?;
         let body = providers::build_model_request(&current, &provider_now, &model_now)?;
+        let mut invocation = super::invocation::InvocationAttempt::begin(
+            options,
+            options.invocation.as_ref(),
+            &provider,
+            field(&current, "model"),
+            true,
+            &body,
+            attempt + 1.0,
+        )?;
 
         let progress = |sink: &mut (dyn FnMut(StreamOutput) + Send),
                         reason: &str,
@@ -2719,6 +2745,12 @@ pub async fn stream_model(
         {
             Ok(response) => response,
             Err(error) => {
+                super::invocation::finish(
+                    &mut invocation,
+                    "transport_error",
+                    false,
+                    Some(&error),
+                );
                 if attempt < max_retries && is_retryable_stream_error(&error) {
                     let (_, delay_ms) = retry_decide(&provider, attempt, None, (options.random)());
                     progress(sink, "network_error", delay_ms, field(&current, "model"));
@@ -2739,6 +2771,9 @@ pub async fn stream_model(
             }
         };
         let status = response.status().as_u16();
+        if let Some(attempt) = &mut invocation {
+            attempt.status(status);
+        }
         let retry_after_header = {
             let values: Vec<String> = response
                 .headers()
@@ -2750,6 +2785,7 @@ pub async fn stream_model(
         };
         let (mut body, mut body_before_abort) = response.into_body();
         if matches!(status, 204 | 205) {
+            super::invocation::finish(&mut invocation, "incomplete", false, None);
             // Null-body statuses: `response.body` is null in fetch.
             let missing = JsError {
                 message: "Missing response body.".into(),
@@ -2770,6 +2806,8 @@ pub async fn stream_model(
         }
         if !(200..300).contains(&status) {
             let text = response_text(&mut body, options, body_before_abort).await?;
+            super::invocation::capture(&mut invocation, text.as_bytes());
+            super::invocation::finish(&mut invocation, "provider_error", false, None);
             let raw = parse_json(&text).unwrap_or_else(|_| JsValue::String(text.as_str().into()));
             let mut error = normalize_model_error(
                 &provider_id(&provider),
@@ -2820,6 +2858,9 @@ pub async fn stream_model(
                     throw_if_aborted(options)?;
                 }
                 let chunk = read_frame(&mut body, idle_ms, options, &mut body_before_abort).await?;
+                if let Some(chunk) = &chunk {
+                    super::invocation::capture(&mut invocation, chunk);
+                }
                 if !body_before_abort {
                     throw_if_aborted(options)?;
                 }
@@ -2867,6 +2908,23 @@ pub async fn stream_model(
             Ok(())
         }
         .await;
+        let outcome_name = if outcome.is_ok() {
+            "success"
+        } else if outcome
+            .as_ref()
+            .err()
+            .is_some_and(is_retryable_stream_error)
+        {
+            "incomplete"
+        } else {
+            "transport_error"
+        };
+        super::invocation::finish(
+            &mut invocation,
+            outcome_name,
+            outcome.is_ok(),
+            outcome.as_ref().err(),
+        );
         // Closing the body (here or on any return) cancels the connection.
         drop(body);
         let Err(error) = outcome else {

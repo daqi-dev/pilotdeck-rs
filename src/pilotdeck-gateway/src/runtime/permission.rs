@@ -18,6 +18,7 @@
 use crate::config::permission::{PermissionMode, PermissionRule, PermissionRuleSet};
 use crate::host::{HostError, HostErrorKind};
 use crate::js_value;
+pub mod routes;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{future::Future, pin::Pin};
 

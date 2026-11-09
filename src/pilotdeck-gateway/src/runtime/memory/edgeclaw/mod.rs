@@ -37,3 +37,5 @@ pub use file_memory::{
 pub use storage::{EdgeClawStorage, IndexingSettings, L0SessionRecord, StorageError};
 
 pub mod factory;
+mod owner;
+pub use owner::{NativeProjectMemoryOwner, create_project_owner};

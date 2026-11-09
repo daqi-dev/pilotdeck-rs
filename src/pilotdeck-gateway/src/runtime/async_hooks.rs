@@ -107,10 +107,106 @@ pub struct AsyncHookResult {
 type Delivery = Result<AsyncHookResult, HostError>;
 type DeliveryReceiver = watch::Receiver<Option<Delivery>>;
 type TurnLookup = dyn Fn(&JsString) -> Option<AsyncHookTurn> + Send + Sync;
-type EventSink = dyn Fn(&JsString, JsObject) + Send + Sync;
+type TurnEventSink = dyn Fn(JsObject) + Send + Sync;
+type TurnCapture = dyn Fn(&JsString) -> Option<(AsyncHookTurn, Arc<TurnEventSink>)> + Send + Sync;
+
+/// Production session bindings share the existing steer mailbox and event
+/// stream. A generation guard prevents a retiring turn from unbinding its
+/// replacement. No second queue or session owner is introduced.
+#[derive(Clone)]
+pub struct LiveAsyncHookBindings {
+    current: Arc<Mutex<HashMap<JsString, LiveAsyncHookBinding>>>,
+    pub registry: AsyncHookRegistry,
+}
+struct LiveAsyncHookBinding {
+    identity: Arc<()>,
+    turn: AsyncHookTurn,
+    emit: Arc<TurnEventSink>,
+}
+pub struct LiveAsyncHookGuard {
+    bindings: LiveAsyncHookBindings,
+    session: JsString,
+    run: JsString,
+    identity: Arc<()>,
+}
+impl Default for LiveAsyncHookBindings {
+    fn default() -> Self {
+        let current = Arc::new(Mutex::new(HashMap::<JsString, LiveAsyncHookBinding>::new()));
+        let capture = current.clone();
+        let registry = AsyncHookRegistry::with_capture(Arc::new(TokioHookClock), move |session| {
+            capture
+                .lock()
+                .unwrap()
+                .get(session)
+                .map(|entry| (entry.turn.clone(), entry.emit.clone()))
+        });
+        Self { current, registry }
+    }
+}
+impl LiveAsyncHookBindings {
+    pub fn bind(
+        &self,
+        session: JsString,
+        turn: AsyncHookTurn,
+        emit: impl Fn(JsObject) + Send + Sync + 'static,
+    ) -> LiveAsyncHookGuard {
+        let identity = Arc::new(());
+        let run = turn.run_id.clone();
+        let mut replacement = Some(LiveAsyncHookBinding {
+            identity: identity.clone(),
+            turn,
+            emit: Arc::new(emit),
+        });
+        loop {
+            let old = {
+                let mut current = self.current.lock().unwrap();
+                match current.remove(&session) {
+                    Some(old) => Some(old),
+                    None => {
+                        current.insert(session.clone(), replacement.take().unwrap());
+                        None
+                    }
+                }
+            };
+            let Some(old) = old else { break };
+            // Retire pending work before publishing its replacement. Each
+            // registration retains the old sink even when another drainer or
+            // an accepted steer finishes after this transition.
+            self.registry
+                .expire_for_binding(&session, &old.turn.run_id, &old.emit);
+        }
+        LiveAsyncHookGuard {
+            bindings: self.clone(),
+            session,
+            run,
+            identity,
+        }
+    }
+}
+impl Drop for LiveAsyncHookGuard {
+    fn drop(&mut self) {
+        let owned = {
+            let mut current = self.bindings.current.lock().unwrap();
+            let owns = current
+                .get(&self.session)
+                .is_some_and(|entry| Arc::ptr_eq(&entry.identity, &self.identity));
+            if owns {
+                current.remove(&self.session)
+            } else {
+                None
+            }
+        };
+        if let Some(owned) = owned {
+            self.bindings
+                .registry
+                .expire_for_binding(&self.session, &self.run, &owned.emit);
+        }
+    }
+}
 struct Pending {
     input: AsyncHookRegistration,
     run_id: JsString,
+    emit: Arc<TurnEventSink>,
     expires_at: f64,
     timer: Mutex<Option<Box<dyn AsyncHookTimer>>>,
     delivery: Mutex<Option<DeliveryReceiver>>,
@@ -127,7 +223,7 @@ struct State {
     outcomes: HashMap<JsString, Arc<Outcome>>,
     // Events are queued in settlement order under this lock and handed to the
     // sink by one drainer at a time (see `flush`).
-    events: VecDeque<(JsString, JsObject)>,
+    events: VecDeque<(Arc<TurnEventSink>, JsObject)>,
     emitting: bool,
 }
 impl State {
@@ -148,7 +244,7 @@ impl State {
 struct Inner {
     clock: Arc<dyn AsyncHookClock>,
     turn: Arc<TurnLookup>,
-    emit: Arc<EventSink>,
+    capture: Arc<TurnCapture>,
     state: Mutex<State>,
 }
 /// Gateway-owned registry. Lookup supplies the current run and its existing
@@ -174,21 +270,44 @@ impl AsyncHookRegistry {
         turn: impl Fn(&JsString) -> Option<AsyncHookTurn> + Send + Sync + 'static,
         emit: impl Fn(&JsString, JsObject) + Send + Sync + 'static,
     ) -> Self {
+        let emit = Arc::new(emit);
+        Self::with_capture(clock, move |session| {
+            let turn = turn(session)?;
+            let session = session.clone();
+            let emit = emit.clone();
+            let sink: Arc<TurnEventSink> = Arc::new(move |event| emit(&session, event));
+            Some((turn, sink))
+        })
+    }
+    fn with_capture(
+        clock: Arc<dyn AsyncHookClock>,
+        capture: impl Fn(&JsString) -> Option<(AsyncHookTurn, Arc<TurnEventSink>)>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        let capture = Arc::new(capture);
+        let lookup = capture.clone();
         Self(Arc::new(Inner {
             clock,
-            turn: Arc::new(turn),
-            emit: Arc::new(emit),
+            turn: Arc::new(move |session| lookup(session).map(|(turn, _)| turn)),
+            capture,
             state: Mutex::new(State::default()),
         }))
     }
     pub fn register(&self, input: AsyncHookRegistration) -> Result<(), HostError> {
-        let Some(turn) = (self.0.turn)(&input.session_key).filter(|t| !t.run_id.is_empty()) else {
-            return Ok(());
-        };
         if blank(&input.invocation_id) {
             return Ok(());
         }
+        // Bind removes the retiring generation before taking this lock to
+        // expire it. Capture while holding the lock so registration cannot
+        // enter that generation after its expiry scan has completed.
         let mut state = self.0.state.lock().unwrap();
+        let Some((turn, emit)) =
+            (self.0.capture)(&input.session_key).filter(|(turn, _)| !turn.run_id.is_empty())
+        else {
+            return Ok(());
+        };
         if let Some(existing) = state.pending(&input.invocation_id) {
             if existing.input.session_key == input.session_key && existing.run_id == turn.run_id {
                 return Ok(());
@@ -207,6 +326,7 @@ impl AsyncHookRegistry {
         let pending = Arc::new(Pending {
             input,
             run_id: turn.run_id,
+            emit,
             expires_at: self.0.clock.now_ms() + timeout,
             timer: Mutex::new(None),
             delivery: Mutex::new(None),
@@ -367,13 +487,33 @@ impl AsyncHookRegistry {
         wait_for_delivery(receiver, false)
     }
     pub fn expire_for_turn(&self, session_key: &JsString, run_id: &JsString) {
+        self.expire_matching_turn(session_key, run_id, None);
+    }
+    fn expire_for_binding(
+        &self,
+        session_key: &JsString,
+        run_id: &JsString,
+        sink: &Arc<TurnEventSink>,
+    ) {
+        self.expire_matching_turn(session_key, run_id, Some(sink));
+    }
+    fn expire_matching_turn(
+        &self,
+        session_key: &JsString,
+        run_id: &JsString,
+        sink: Option<&Arc<TurnEventSink>>,
+    ) {
         // TS expires the whole turn in one synchronous loop; settle every
         // entry under one lock so no other settlement interleaves the burst.
         let mut state = self.0.state.lock().unwrap();
         let entries = state
             .pending
             .iter()
-            .filter(|p| &p.input.session_key == session_key && &p.run_id == run_id)
+            .filter(|p| {
+                &p.input.session_key == session_key
+                    && &p.run_id == run_id
+                    && sink.is_none_or(|sink| Arc::ptr_eq(sink, &p.emit))
+            })
             .cloned()
             .collect::<Vec<_>>();
         for pending in &entries {
@@ -453,10 +593,7 @@ impl AsyncHookRegistry {
                 ),
                 ("status", status.as_str().into()),
             ]);
-            state.events.push_back((
-                pending.input.session_key.clone(),
-                event.as_object().unwrap().clone(),
-            ));
+            state.events.push_back((pending.emit.clone(), event.as_object().unwrap().clone()));
         }
     }
     /// Hands queued events to the sink in order. Only one caller drains at a
@@ -490,11 +627,11 @@ impl AsyncHookRegistry {
                 }
                 next
             };
-            let Some((session, event)) = next else {
+            let Some((emit, event)) = next else {
                 std::mem::forget(draining);
                 return;
             };
-            (self.0.emit)(&session, event);
+            emit(event);
         }
     }
 }
@@ -691,6 +828,7 @@ mod spawn_tests {
                 include_hook_events: false,
             },
             run_id: "r".into(),
+            emit: Arc::new(|_| {}),
             expires_at: f64::INFINITY,
             timer: Mutex::new(None),
             delivery: Mutex::new(None),
@@ -843,5 +981,160 @@ mod spawn_tests {
                 .status,
             AsyncHookStatus::Duplicate
         );
+    }
+}
+
+#[cfg(test)]
+mod live_binding_tests {
+    use super::*;
+    #[tokio::test]
+    async fn production_binding_delivers_to_real_mailbox_and_expires_once_before_release() {
+        let bindings = LiveAsyncHookBindings::default();
+        let mailbox = SteerMailbox::default();
+        mailbox.start("run".into());
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let output = events.clone();
+        let guard = bindings.bind(
+            "s".into(),
+            AsyncHookTurn {
+                run_id: "run".into(),
+                mailbox: mailbox.clone(),
+            },
+            move |event| output.lock().unwrap().push(event),
+        );
+        let register = |id: &str| {
+            bindings
+                .registry
+                .register(AsyncHookRegistration {
+                    session_key: "s".into(),
+                    invocation_id: id.into(),
+                    hook_name: "http".into(),
+                    hook_event: "PreModelRequest".into(),
+                    timeout_ms: Some(60_000.0),
+                    include_hook_events: true,
+                })
+                .unwrap()
+        };
+        register("delivered");
+        let result = bindings.registry.submit("s".into(), "delivered".into(), pilotdeck_protocol::parse_json(r#"{"hookSpecificOutput":{"hookEventName":"PreModelRequest","additionalContext":"later"}}"#).unwrap()).await.unwrap();
+        assert_eq!(result.status, AsyncHookStatus::Delivered);
+        let steers = mailbox.drain(&"run".into());
+        assert_eq!(steers.len(), 1);
+        assert_eq!(steers[0].item_id, "async-hook:delivered".into());
+        assert_eq!(
+            bindings
+                .registry
+                .submit("s".into(), "delivered".into(), JsValue::Null)
+                .await
+                .unwrap()
+                .status,
+            AsyncHookStatus::Duplicate
+        );
+        register("expired");
+        drop(guard);
+        assert_eq!(
+            bindings
+                .registry
+                .submit("s".into(), "expired".into(), JsValue::Null)
+                .await
+                .unwrap()
+                .status,
+            AsyncHookStatus::Expired
+        );
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].get("status"), Some(&"delivered".into()));
+        assert_eq!(events[1].get("status"), Some(&"expired".into()));
+    }
+
+    #[tokio::test]
+    async fn stale_turn_guard_cannot_unbind_replacement() {
+        let bindings = LiveAsyncHookBindings::default();
+        let old_events = Arc::new(Mutex::new(Vec::new()));
+        let old_sink = old_events.clone();
+        let old = bindings.bind(
+            "s".into(),
+            AsyncHookTurn {
+                run_id: "old".into(),
+                mailbox: SteerMailbox::default(),
+            },
+            move |event| old_sink.lock().unwrap().push(event),
+        );
+        let register = |id: &str| {
+            bindings
+                .registry
+                .register(AsyncHookRegistration {
+                    session_key: "s".into(),
+                    invocation_id: id.into(),
+                    hook_name: "http".into(),
+                    hook_event: "PreModelRequest".into(),
+                    timeout_ms: Some(60_000.0),
+                    include_hook_events: true,
+                })
+                .unwrap()
+        };
+        register("old-pending");
+        let new_events = Arc::new(Mutex::new(Vec::new()));
+        let new_sink = new_events.clone();
+        let replacement = bindings.bind(
+            "s".into(),
+            AsyncHookTurn {
+                run_id: "new".into(),
+                mailbox: SteerMailbox::default(),
+            },
+            move |event| new_sink.lock().unwrap().push(event),
+        );
+        assert_eq!(old_events.lock().unwrap().len(), 1);
+        assert_eq!(
+            old_events.lock().unwrap()[0].get("status"),
+            Some(&"expired".into())
+        );
+        assert!(new_events.lock().unwrap().is_empty());
+        register("new-pending");
+        drop(old);
+        assert!(
+            new_events.lock().unwrap().is_empty(),
+            "retired guard cannot emit into replacement"
+        );
+        assert_eq!(
+            (bindings.registry.0.turn)(&"s".into()).unwrap().run_id,
+            "new".into()
+        );
+        drop(replacement);
+        assert_eq!(new_events.lock().unwrap().len(), 1);
+        assert!((bindings.registry.0.turn)(&"s".into()).is_none());
+    }
+
+    #[tokio::test]
+    async fn stale_guard_cannot_expire_replacement_with_reused_run_id() {
+        let bindings = LiveAsyncHookBindings::default();
+        let turn = AsyncHookTurn {
+            run_id: "same-run".into(),
+            mailbox: SteerMailbox::default(),
+        };
+        let old = bindings.bind("s".into(), turn.clone(), |_| {});
+        let replacement = bindings.bind("s".into(), turn, |_| {});
+        bindings
+            .registry
+            .register(AsyncHookRegistration {
+                session_key: "s".into(),
+                invocation_id: "new".into(),
+                hook_name: "http".into(),
+                hook_event: "PreModelRequest".into(),
+                timeout_ms: Some(60_000.0),
+                include_hook_events: false,
+            })
+            .unwrap();
+        drop(old);
+        assert_eq!(
+            bindings
+                .registry
+                .submit("s".into(), "new".into(), JsValue::Object(JsObject::new()))
+                .await
+                .unwrap()
+                .status,
+            AsyncHookStatus::Delivered
+        );
+        drop(replacement);
     }
 }

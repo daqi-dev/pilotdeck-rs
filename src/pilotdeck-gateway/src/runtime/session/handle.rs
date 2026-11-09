@@ -3,7 +3,7 @@
 use super::super::project::{DisposeFuture, RuntimeError, RuntimeLease, RuntimeResult};
 use pilotdeck_protocol::{JsString, JsValue};
 use std::sync::{Arc, Mutex};
-use std::{future::Future, pin::Pin};
+use std::{collections::VecDeque, future::Future, pin::Pin};
 use tokio::sync::watch;
 
 /// One awaited native stream step.
@@ -18,9 +18,89 @@ pub trait LiveTurn: Send {
     fn next(&mut self) -> SessionNext<'_>;
 }
 
+/// A durable item accepted for execution after the active turn. Its item id is
+/// stable across restore; the turn id becomes the active run on submission.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SessionQueuedTurn {
+    pub item_id: JsString,
+    pub turn_id: JsString,
+    pub input: JsValue,
+    pub submit_options: JsValue,
+}
+
+impl SessionQueuedTurn {
+    pub(crate) fn restore(entries: &[JsValue]) -> Result<Vec<Self>, RuntimeError> {
+        let mut pending: Vec<Self> = Vec::new();
+        for entry in entries {
+            let kind = entry
+                .get("type")
+                .and_then(JsValue::as_string)
+                .and_then(|kind| kind.to_utf8().ok())
+                .unwrap_or_default();
+            if kind == "agent_turn_enqueued" {
+                pending.push(Self {
+                    item_id: required_id(entry, "itemId")?,
+                    turn_id: required_id(entry, "turnId")?,
+                    input: entry
+                        .get("input")
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("Queued turn input is missing."))?,
+                    submit_options: entry
+                        .get("submitOptions")
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("Queued turn options are missing."))?,
+                });
+                continue;
+            }
+            let claimed = if kind == "agent_turn_discarded" {
+                entry.get("itemId").and_then(JsValue::as_string)
+            } else if kind == "turn_started" {
+                entry.get("inboxItemId").and_then(JsValue::as_string)
+            } else {
+                None
+            };
+            let Some(item_id) = claimed else { continue };
+            let turn_id = required_id(entry, "turnId")?;
+            let index = pending
+                .iter()
+                .position(|turn| turn.item_id == *item_id && turn.turn_id == turn_id)
+                .ok_or_else(|| RuntimeError::new("Queued turn lifecycle is invalid."))?;
+            if kind == "turn_started" && index != 0 {
+                return Err(RuntimeError::new("Queued turn lifecycle is not FIFO."));
+            }
+            pending.remove(index);
+        }
+        Ok(pending)
+    }
+}
+
 /// Implementations own the real session writer and its resources. No default
 /// no-op implementation is supplied for unavailable providers.
 pub trait LiveSession: Send + Sync {
+    fn steer(
+        &self,
+        _turn_id: JsString,
+        _message: crate::runtime::steer::SteerMessage,
+    ) -> crate::host::HostFuture<crate::runtime::steer::EnqueueResult> {
+        Box::pin(async {
+            Ok(crate::runtime::steer::EnqueueResult {
+                accepted: false,
+                reason: Some(crate::runtime::steer::SteerReason::NoActiveTurn),
+            })
+        })
+    }
+    fn cancel_steer(
+        &self,
+        _turn_id: JsString,
+        _item_id: JsString,
+    ) -> crate::host::HostFuture<crate::runtime::steer::CancelResult> {
+        Box::pin(async {
+            Ok(crate::runtime::steer::CancelResult {
+                cancelled: false,
+                reason: Some(crate::runtime::steer::SteerReason::NoActiveTurn),
+            })
+        })
+    }
     /// Test-only observation of the actual reload controller, not a fabricated ID.
     #[cfg(test)]
     fn reload_signal_for_test(&self) -> Option<crate::runtime::hooks::Cancellation> {
@@ -47,6 +127,24 @@ pub trait LiveSession: Send + Sync {
     ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
         Err(RuntimeError::new("Agent session submit is unavailable."))
     }
+    fn pending_queued_turns(&self) -> Result<Vec<SessionQueuedTurn>, RuntimeError> {
+        Ok(Vec::new())
+    }
+    fn queued_input_template(&self) -> Option<JsValue> {
+        None
+    }
+    fn enqueue_queued_turn(&self, _turn: &SessionQueuedTurn) -> RuntimeResult {
+        Err(RuntimeError::new("Agent session follow-up is unavailable."))
+    }
+    fn submit_queued_turn(
+        &self,
+        _turn: &SessionQueuedTurn,
+    ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        Err(RuntimeError::new("Agent session follow-up is unavailable."))
+    }
+    fn discard_queued_turns(&self, _reason: &str) -> RuntimeResult {
+        Ok(())
+    }
     fn snapshot(&self) -> JsValue;
     /// May be called repeatedly while `dispose()` is in progress and after its
     /// future has completed: the handle remains Draining through the project
@@ -61,6 +159,10 @@ pub trait LiveSession: Send + Sync {
     /// Only a fully Disposed handle suppresses subsequent external aborts.
     /// This matches TS AgentHandle.ts:176-179,281-287.
     fn abort(&self, reason: &JsString) -> RuntimeResult;
+    /// Scoped owners stop descendants before waiting for their own active turn.
+    fn dispose_start(&self, _reason: &JsString) -> DisposeFuture<'_> {
+        Box::pin(async { Ok(()) })
+    }
     /// Transfer owned writer cleanup before abort can unwind. Keep writes open
     /// for final lifecycle hooks; the guard retires/drains the writer on Drop.
     /// Adapters without a factory writer lease have nothing to transfer.
@@ -99,9 +201,18 @@ struct Inner {
     // cancel an in-flight disposal.
     progress: Arc<Mutex<Progress>>,
     changed: watch::Sender<u64>,
+    admission: Mutex<()>,
+    queued: Mutex<QueuedProgress>,
     /// #1010 captured executor: dispose must also be startable from Drop, on a
     /// thread without a runtime context and after the ambient one went away.
     executor: tokio::runtime::Handle,
+}
+
+#[derive(Default)]
+struct QueuedProgress {
+    pending: VecDeque<SessionQueuedTurn>,
+    pump_running: bool,
+    pump_blocked: bool,
 }
 
 /// Cloning preserves object identity. A project lease is held until the writer
@@ -222,6 +333,7 @@ impl LiveSessionHandle {
     /// Must be constructed inside a Tokio runtime. Later disposal and Drop
     /// may run on a plain thread; they continue to use this captured executor.
     pub fn new(session: Arc<dyn LiveSession>, lease: Option<RuntimeLease>) -> Self {
+        let pending = session.pending_queued_turns().unwrap_or_default();
         Self(Arc::new(Inner {
             session,
             lease: Mutex::new(lease),
@@ -239,6 +351,11 @@ impl LiveSessionHandle {
                 activity_waiting: None,
             })),
             changed: watch::channel(0).0,
+            admission: Mutex::new(()),
+            queued: Mutex::new(QueuedProgress {
+                pending: pending.into(),
+                ..Default::default()
+            }),
             // Same contract as PendingSession/ProjectRuntimeRegistry: the
             // construction site is inside the owning runtime.
             executor: tokio::runtime::Handle::current(),
@@ -278,6 +395,38 @@ impl LiveSessionHandle {
         self.0.session.snapshot()
     }
 
+    pub fn steer(
+        &self,
+        turn_id: JsString,
+        message: crate::runtime::steer::SteerMessage,
+    ) -> crate::host::HostFuture<crate::runtime::steer::EnqueueResult> {
+        if self.state() != HandleState::Active {
+            return Box::pin(async {
+                Ok(crate::runtime::steer::EnqueueResult {
+                    accepted: false,
+                    reason: Some(crate::runtime::steer::SteerReason::NoActiveTurn),
+                })
+            });
+        }
+        self.0.session.steer(turn_id, message)
+    }
+
+    pub fn cancel_steer(
+        &self,
+        turn_id: JsString,
+        item_id: JsString,
+    ) -> crate::host::HostFuture<crate::runtime::steer::CancelResult> {
+        if self.state() != HandleState::Active {
+            return Box::pin(async {
+                Ok(crate::runtime::steer::CancelResult {
+                    cancelled: false,
+                    reason: Some(crate::runtime::steer::SteerReason::NoActiveTurn),
+                })
+            });
+        }
+        self.0.session.cancel_steer(turn_id, item_id)
+    }
+
     /// A live consumer holds this guard for the entire turn/maintenance future.
     /// Dropping a cancelled consumer releases drain even on an error path.
     pub fn begin_activity(&self) -> Result<HandleActivity, RuntimeError> {
@@ -314,12 +463,125 @@ impl LiveSessionHandle {
         input: JsValue,
         options: JsValue,
     ) -> Result<SessionSubmission, RuntimeError> {
+        let _admission = self.0.admission.lock().unwrap();
+        let queued = self.0.queued.lock().unwrap();
+        if !queued.pending.is_empty() || queued.pump_running {
+            return Err(RuntimeError::new("Agent handle already has a queued turn."));
+        }
+        drop(queued);
         let activity = self.begin_activity()?;
         let stream = self.0.session.submit(input, options)?;
         Ok(SessionSubmission {
             stream,
             _activity: Some(activity),
         })
+    }
+
+    pub fn enqueue_queued_turn(&self, turn: SessionQueuedTurn) -> RuntimeResult {
+        let _admission = self.0.admission.lock().unwrap();
+        if self.state() != HandleState::Active {
+            return Err(RuntimeError::new("Agent handle is not active."));
+        }
+        self.0.session.enqueue_queued_turn(&turn)?;
+        let mut queued = self.0.queued.lock().unwrap();
+        queued.pending.push_back(turn);
+        queued.pump_blocked = false;
+        drop(queued);
+        drop(_admission);
+        self.start_queued_pump();
+        Ok(())
+    }
+
+    pub fn enqueue_followup(
+        &self,
+        input: JsValue,
+        submit_options: JsValue,
+    ) -> Result<SessionQueuedTurn, RuntimeError> {
+        let turn = SessionQueuedTurn {
+            item_id: uuid::Uuid::new_v4().to_string().into(),
+            turn_id: uuid::Uuid::new_v4().to_string().into(),
+            input,
+            submit_options,
+        };
+        self.enqueue_queued_turn(turn.clone())?;
+        Ok(turn)
+    }
+
+    pub fn resume_queued_turns(&self) {
+        self.start_queued_pump();
+    }
+
+    fn start_queued_pump(&self) {
+        {
+            let mut queued = self.0.queued.lock().unwrap();
+            if queued.pending.is_empty() || queued.pump_running || queued.pump_blocked {
+                return;
+            }
+            queued.pump_running = true;
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            self.0.queued.lock().unwrap().pump_running = false;
+            return;
+        };
+        let handle = self.clone();
+        runtime.spawn(async move {
+            let blocked = handle.run_queued_pump().await.is_err();
+            let active = handle.state() == HandleState::Active;
+            let restart = {
+                let mut queued = handle.0.queued.lock().unwrap();
+                queued.pump_running = false;
+                queued.pump_blocked = blocked;
+                !blocked && !queued.pending.is_empty() && active
+            };
+            handle.0.changed.send_modify(|version| *version += 1);
+            if restart {
+                handle.start_queued_pump();
+            }
+        });
+    }
+
+    async fn run_queued_pump(&self) -> RuntimeResult {
+        loop {
+            let mut changed = self.0.changed.subscribe();
+            let started = {
+                let _admission = self.0.admission.lock().unwrap();
+                let mut progress = self.0.progress.lock().unwrap();
+                if progress.state != HandleState::Active {
+                    return Ok(());
+                }
+                if progress.activity {
+                    None
+                } else {
+                    let turn = self.0.queued.lock().unwrap().pending.front().cloned();
+                    let Some(turn) = turn else { return Ok(()) };
+                    progress.activity = true;
+                    progress.maintenance = false;
+                    progress.cancelled = None;
+                    drop(progress);
+                    let activity = HandleActivity(self.clone());
+                    match self.0.session.submit_queued_turn(&turn) {
+                        Ok(stream) => {
+                            let removed = self.0.queued.lock().unwrap().pending.pop_front();
+                            debug_assert_eq!(removed.as_ref(), Some(&turn));
+                            Some(Ok(SessionSubmission {
+                                stream,
+                                _activity: Some(activity),
+                            }))
+                        }
+                        Err(error) => {
+                            drop(activity);
+                            Some(Err(error))
+                        }
+                    }
+                }
+            };
+            let Some(started) = started else {
+                let _ = changed.changed().await;
+                continue;
+            };
+            let mut submission = started?;
+            while submission.next().await?.is_some() {}
+        }
     }
 
     pub fn abort(&self, reason: &JsString) -> RuntimeResult {
@@ -345,6 +607,15 @@ impl LiveSessionHandle {
     pub fn dispose(&self, reason: JsString) -> DisposeFuture<'static> {
         Box::pin(wait_result(self.0.start_dispose(reason)))
     }
+}
+
+fn required_id(value: &JsValue, key: &str) -> Result<JsString, RuntimeError> {
+    value
+        .get(key)
+        .and_then(JsValue::as_string)
+        .cloned()
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| RuntimeError::new(format!("Queued turn {key} is missing.")))
 }
 
 impl Inner {

@@ -1076,6 +1076,24 @@ fn project_event(
     };
     let kind = String::from_utf16_lossy(kind.units());
     Ok(match kind.as_str() {
+        // B dc123d18 forwards hook/elicitation frames verbatim so the gateway
+        // stream can carry pending questions and hook lifecycle to the client.
+        "elicitation_request"
+        | "elicitation_cancelled"
+        | "hook_started"
+        | "hook_response"
+        | "hook_async_result" => {
+            if kind.starts_with("elicitation_") {
+                required(event, "requestId")?;
+            }
+            let mut frame = JsObject::new();
+            for (key, value) in event.as_object().unwrap().entries() {
+                if !key.equals_str("sessionId") && !key.equals_str("turnId") {
+                    frame.insert(key.clone(), value.clone());
+                }
+            }
+            vec![JsValue::Object(frame)]
+        }
         "turn_started" => vec![object([
             ("type", text("turn_started")),
             ("runId", text(run_id)),

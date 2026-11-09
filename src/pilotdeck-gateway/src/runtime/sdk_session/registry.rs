@@ -19,7 +19,7 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
 };
 
 // ─────────────────────────────────────────────────────────── runtime ports
@@ -127,8 +127,23 @@ impl SdkTaskBudget for TaskBudgetStorePort {
 }
 
 /// The subset of `AbortSignal` used by `setSdkSessionConfig`.
-pub trait SdkAbortSignal {
+pub trait SdkAbortSignal: Send + Sync {
     fn throw_if_aborted(&self) -> Result<(), SdkSessionError>;
+}
+
+#[derive(Clone, Debug)]
+pub struct SdkAgentMcpServer {
+    pub config: JsValue,
+    pub enabled: bool,
+}
+
+/// Weakly held because the MCP owner retains this registry through its adapters.
+pub trait SdkAgentMcpResolver: Send + Sync {
+    fn session_server(
+        &self,
+        session_key: &JsString,
+        server_name: &JsString,
+    ) -> Option<SdkAgentMcpServer>;
 }
 
 fn check_abort(signal: Option<&dyn SdkAbortSignal>) -> Result<(), SdkSessionError> {
@@ -217,6 +232,7 @@ pub struct FlagSettingsResult {
 
 pub struct SdkSessionRegistry {
     options: SdkSessionOptions,
+    agent_mcp_resolver: Option<Weak<dyn SdkAgentMcpResolver>>,
     configs: Vec<(JsString, JsValue)>,
     plugins: Vec<(JsString, Vec<Arc<LoadedPlugin>>)>,
     thinking: Vec<(JsString, JsValue)>,
@@ -232,6 +248,7 @@ impl SdkSessionRegistry {
         let projects = Arc::clone(&options.projects);
         Self {
             options,
+            agent_mcp_resolver: None,
             configs: Vec::new(),
             plugins: Vec::new(),
             thinking: Vec::new(),
@@ -248,6 +265,10 @@ impl SdkSessionRegistry {
 
     pub fn options(&self) -> &SdkSessionOptions {
         &self.options
+    }
+
+    pub fn set_agent_mcp_resolver(&mut self, resolver: Weak<dyn SdkAgentMcpResolver>) {
+        self.agent_mcp_resolver = Some(resolver);
     }
 
     pub fn handlers(&self) -> &SessionHandlerRegistry {
@@ -901,7 +922,95 @@ impl SdkSessionRegistry {
             let resolved = resolve_session_skills(items, &available)?;
             set_property(&mut next, "skills", resolved);
         }
-        // resolveSdkSubagentScopes (TS :2118) is outside this slice's ranges.
+        if let Some(agents) = own(&next, "agents").and_then(JsValue::as_object).cloned() {
+            let available = view.all_skills();
+            let parent = own(&next, "skills")
+                .and_then(array)
+                .map(<[JsValue]>::to_vec);
+            let mut scoped = agents.clone();
+            for (agent_id, definition) in agents.entries() {
+                let mut definition = definition.clone();
+                if let Some(model) = definition.get("model").filter(|value| truthy(value)) {
+                    let resolved = model
+                        .as_string()
+                        .and_then(|model| {
+                            resolve_configured_model(
+                                &runtime.snapshot,
+                                model,
+                                ModelField::Model,
+                            )
+                            .ok()
+                        })
+                        .ok_or_else(|| {
+                            SdkSessionError::new(
+                                "INVALID_SDK_AGENT_MODEL",
+                                format!(
+                                    "Agent {} model is not uniquely resolvable from the Gateway catalog: {}",
+                                    number_text(agent_id),
+                                    display_value(model)
+                                ),
+                            )
+                        })?;
+                    self.assert_organization_model_allowed(&runtime, &resolved)?;
+                    assert_managed_model_allowed(own(&next, "managedModels"), &resolved)?;
+                    set_property(
+                        &mut definition,
+                        "model",
+                        JsValue::String(
+                            format!(
+                                "{}/{}",
+                                number_text(&resolved.provider),
+                                number_text(&resolved.model)
+                            )
+                            .into(),
+                        ),
+                    );
+                }
+                let requested = definition.get("skills");
+                let resolved = if let Some(JsValue::Array(skills)) = requested {
+                    let resolved = resolve_session_skills(skills, &available)?;
+                    if let Some(parent) = &parent
+                        && let Some(escaped) = array(&resolved)
+                            .unwrap_or(&[])
+                            .iter()
+                            .find(|name| !parent.contains(name))
+                    {
+                        return Err(SdkSessionError::new(
+                            "SDK_AGENT_SKILL_OUT_OF_SCOPE",
+                            format!(
+                                "Agent {} skill is not visible to the parent SDK session: {}",
+                                number_text(agent_id),
+                                display_value(escaped)
+                            ),
+                        ));
+                    }
+                    Some(resolved)
+                } else if requested.is_none_or(JsValue::is_undefined)
+                    || requested
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|skills| skills.equals_str("all"))
+                {
+                    parent.as_ref().map(|skills| JsValue::Array(skills.clone()))
+                } else {
+                    None
+                };
+                if let Some(resolved) = resolved {
+                    set_property(&mut definition, "skills", resolved);
+                }
+                if let Some(specs) = definition.get("mcpServers").cloned() {
+                    let resolver = self.agent_mcp_resolver.as_ref().and_then(Weak::upgrade);
+                    let resolved = resolve_agent_mcp_servers(
+                        session_key,
+                        agent_id,
+                        &specs,
+                        resolver.as_deref(),
+                    )?;
+                    set_property(&mut definition, "mcpServers", resolved);
+                }
+                scoped.insert(agent_id.clone(), definition);
+            }
+            set_property(&mut next, "agents", JsValue::Object(scoped));
+        }
 
         if let Some(model) = own(&next, "settings")
             .and_then(|settings| settings.get("agent"))
@@ -939,6 +1048,68 @@ impl SdkSessionRegistry {
         self.set_project(session_key, runtime.project_root);
         Ok(true)
     }
+}
+
+pub(super) fn resolve_agent_mcp_servers(
+    session_key: &JsString,
+    agent_id: &JsString,
+    specs: &JsValue,
+    resolver: Option<&dyn SdkAgentMcpResolver>,
+) -> Result<JsValue, SdkSessionError> {
+    let entries = match specs {
+        JsValue::Array(entries) => entries.as_slice(),
+        _ => std::slice::from_ref(specs),
+    };
+    let mut resolved = pilotdeck_protocol::JsObject::new();
+    for spec in entries {
+        if let Some(name) = spec.as_string() {
+            let Some(configured) =
+                resolver.and_then(|resolver| resolver.session_server(session_key, name))
+            else {
+                return Err(SdkSessionError::new(
+                    "SDK_AGENT_MCP_REFERENCE_NOT_FOUND",
+                    format!(
+                        "Agent {} references SDK-session MCP server {}, but it is not configured for this session.",
+                        number_text(agent_id),
+                        number_text(name)
+                    ),
+                ));
+            };
+            if !configured.enabled {
+                return Err(SdkSessionError::new(
+                    "SDK_AGENT_MCP_REFERENCE_DISABLED",
+                    format!(
+                        "Agent {} references SDK-session MCP server {}, but it is disabled.",
+                        number_text(agent_id),
+                        number_text(name)
+                    ),
+                ));
+            }
+            resolved.insert(name.clone(), configured.config);
+            continue;
+        }
+        let Some(servers) = spec.as_object() else {
+            continue;
+        };
+        for (name, config) in servers.entries() {
+            if resolved
+                .entries()
+                .iter()
+                .any(|(existing, _)| existing == name)
+            {
+                return Err(SdkSessionError::new(
+                    "INVALID_MCP_SERVER",
+                    format!(
+                        "Agent {} repeats MCP server {}.",
+                        number_text(agent_id),
+                        number_text(name)
+                    ),
+                ));
+            }
+            resolved.insert(name.clone(), config.clone());
+        }
+    }
+    Ok(JsValue::Object(resolved))
 }
 
 fn resolve_configured_model_value(

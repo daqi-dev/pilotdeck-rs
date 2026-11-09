@@ -120,8 +120,11 @@ impl SdkMcpProjectResolver for NativeMcpResolver {
 /// empty list, matching the TS path where `sdkSessionPlugins` is never set.
 struct NoSessionPlugins;
 impl SdkMcpSessionPlugins for NoSessionPlugins {
-    fn plugins(&self, _session_key: &JsValue) -> Vec<Arc<crate::runtime::plugins::LoadedPlugin>> {
-        Vec::new()
+    fn plugins<'a>(
+        &'a self,
+        _session_key: &'a JsValue,
+    ) -> crate::runtime::mcp::sdk::SdkMcpFuture<'a, Result<Vec<Arc<crate::runtime::plugins::LoadedPlugin>>, crate::runtime::mcp::sdk::SdkMcpError>> {
+        Box::pin(async { Ok(Vec::new()) })
     }
 }
 

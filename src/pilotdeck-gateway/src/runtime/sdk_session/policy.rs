@@ -442,6 +442,11 @@ pub struct ProviderPolicy {
 
 #[derive(Clone, Debug, Default)]
 pub struct OrganizationSettingsPolicy {
+    pub can_update_local_settings: Option<bool>,
+    pub max_context_tokens: Option<f64>,
+    pub max_output_tokens: Option<f64>,
+    pub max_thinking_tokens: Option<f64>,
+    pub max_subagent_timeout_ms: Option<f64>,
     pub session_defaults: Option<JsValue>,
     pub managed_session_settings: Option<JsValue>,
     pub session_default_sources: Option<JsValue>,
@@ -455,6 +460,12 @@ pub struct OrganizationPolicy {
     pub setting_sources: Option<SelectorPolicy>,
     pub settings: Option<OrganizationSettingsPolicy>,
     pub max_task_budget_usd: Option<f64>,
+    /// `organizationPolicy.limits.maxTurns`; a positive safe integer.
+    pub max_turns: Option<f64>,
+    /// `organizationPolicy.limits.maxSubagentDepth`; a non-negative integer.
+    pub max_subagent_depth: Option<f64>,
+    /// `organizationPolicy.settings.maxSubagentTimeoutMs`.
+    pub max_subagent_timeout_ms: Option<f64>,
 }
 
 impl OrganizationPolicy {

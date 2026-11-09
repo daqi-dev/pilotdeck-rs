@@ -44,6 +44,7 @@ fn registry_duplicate_key_keeps_first_position_and_last_value() {
             hooks_config: None,
             mcp_servers: None,
             lsp_servers: None,
+            router_contributions: Vec::new(),
             dispose: None,
         })
     };
@@ -93,6 +94,7 @@ fn disposable(name: &str, dispose: loader::DisposeFn) -> Arc<LoadedPlugin> {
         hooks_config: None,
         mcp_servers: None,
         lsp_servers: None,
+        router_contributions: Vec::new(),
         dispose: Some(dispose),
     })
 }
@@ -771,6 +773,7 @@ fn plugin_disposal_receivers() -> (DisposalStartReceiver, Vec<DisposalReceiver>)
         hooks_config: None,
         mcp_servers: None,
         lsp_servers: None,
+        router_contributions: Vec::new(),
         dispose: Some(Box::new(|| Box::pin(async { Ok(()) }))),
     });
     let mut registry = PluginRegistry::new();
