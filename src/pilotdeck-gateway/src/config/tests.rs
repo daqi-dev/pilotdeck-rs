@@ -389,6 +389,56 @@ fn load_project_anchors_relative_cwd_like_load_snapshot() {
     assert_eq!(diagnostics(&relative), absolute);
 }
 
+/// #2427: the snapshot's platform-key table and the loader's
+/// `CHANNEL_LOADER_KEYS` have no derivation tying them together — a loader
+/// key missing from the whitelist never reaches `config.adapters`, so the
+/// loader's `cfg?.enabled` gate never even looks at it and the channel
+/// silently skips (#1853 form; on this seam there is no console.error line at
+/// all). The seam drives the real `load_snapshot` over a scratch home that
+/// configures all 16 platform keys, and holds the two tables together from
+/// the output side: every loader key plus the `wecom` bundle key (the one
+/// platform-table member the loader table legitimately lacks) must appear in
+/// the snapshot's `adapters`. Deriving the snapshot table from the loader
+/// table was rejected: TS hardcodes its own `PLATFORM_KEYS`
+/// (`parseGatewayConfig.ts`), so a Rust derivation would break the literal
+/// mirror of the TS baseline the two lists both are.
+#[test]
+fn snapshot_adapters_cover_every_channel_loader_key() {
+    let root = std::env::temp_dir().join(format!("pdrs-2427-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("#2427 scratch home");
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _cleanup = Cleanup(root.clone());
+    let mut yaml = String::from(
+        "schemaVersion: 1\nagent:\n  model: test/test\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:1\n      apiKey: test-only\n      models:\n        test: {}\nadapters:\n",
+    );
+    for key in super::snapshot::PLATFORM_SNAPSHOT_KEYS {
+        yaml.push_str(&format!("  {key}:\n    enabled: true\n"));
+    }
+    std::fs::write(root.join("pilotdeck.yaml"), yaml).expect("#2427 scratch config");
+    let env = Env::from([("PILOT_HOME".to_owned(), root.to_string_lossy().into_owned())]);
+    let snapshot = load_snapshot(&root, &root, &env, None, 1.0, "1970-01-01T00:00:00.000Z")
+        .expect("#2427 the all-keys scratch config loads");
+    let adapters = snapshot
+        .get("config")
+        .and_then(|config| config.get("adapters"))
+        .expect("#2427 the snapshot records an adapters object");
+    for key in crate::channel::loader::CHANNEL_LOADER_KEYS {
+        crate::negative_assert!(
+            adapters.get(key).is_some(),
+            "#2427 the config snapshot carries loader key {key} into config.adapters"
+        );
+    }
+    crate::negative_assert!(
+        adapters.get("wecom").is_some(),
+        "#2427 the config snapshot carries the wecom bundle key into config.adapters"
+    );
+}
+
 /// #261: config-source merging must read `output[key]` through the explicit
 /// prototype chain and keep the key's UTF-16 units. Here a lone-surrogate key
 /// lives on the prototype object and is then overridden: the old

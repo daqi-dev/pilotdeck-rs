@@ -1279,6 +1279,36 @@ fn gateway(raw: &JsValue) -> Option<JsValue> {
     Some(JsValue::Object(o))
 }
 
+/// The platform-shaped adapter keys the snapshot emits through `platform()`
+/// (the TS `parseGatewayConfig` `PLATFORM_KEYS` mirror). The list is the 15
+/// [`crate::channel::loader::CHANNEL_LOADER_KEYS`] members plus `wecom`,
+/// whose TS builder consumes the same platform record without going through
+/// the loader table; TS hardcodes its own list too, so this table stays a
+/// literal mirror rather than a derivation. `config/tests.rs`
+/// (#2427 `snapshot_adapters_cover_every_channel_loader_key`) holds the two
+/// tables together — a loader key missing here is the #1853 silent skip (the
+/// channel never reaches `config.adapters`, so the loader's `cfg?.enabled`
+/// gate never even looks at it), and `config/graph.rs` reuses this same
+/// constant for its `extra` cycle walk so the two copies cannot drift.
+pub(crate) const PLATFORM_SNAPSHOT_KEYS: [&str; 16] = [
+    "telegram",
+    "discord",
+    "slack",
+    "matrix",
+    "mattermost",
+    "signal",
+    "whatsapp",
+    "bluebubbles",
+    "dingtalk",
+    "wecom",
+    "wecomCallback",
+    "email",
+    "sms",
+    "homeassistant",
+    "apiServer",
+    "webhook",
+];
+
 fn adapters(raw: &JsValue) -> Option<JsValue> {
     let a = field(raw, "adapters").as_object()?;
     let mut o = obj();
@@ -1303,24 +1333,7 @@ fn adapters(raw: &JsValue) -> Option<JsValue> {
         enabled_only(a.get("weixin")).unwrap_or_else(undefined),
     );
     put(&mut o, "qq", qq(a.get("qq")).unwrap_or_else(undefined));
-    for key in [
-        "telegram",
-        "discord",
-        "slack",
-        "matrix",
-        "mattermost",
-        "signal",
-        "whatsapp",
-        "bluebubbles",
-        "dingtalk",
-        "wecom",
-        "wecomCallback",
-        "email",
-        "sms",
-        "homeassistant",
-        "apiServer",
-        "webhook",
-    ] {
+    for key in PLATFORM_SNAPSHOT_KEYS {
         if let Some(v) = platform(a.get(key)) {
             put(&mut o, key, v);
         }

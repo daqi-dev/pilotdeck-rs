@@ -59,10 +59,12 @@ mutations = [
         "#1333 method-dispatch request 3: status differs",
     ),
     (
+        # #2428: the gate reads `ApiKey::is_off` now — a truthy key (string,
+        # array, or never-matching) always checks the Bearer token.
         "auth-bypass",
         SERVER,
-        "    if !shared.api_key.is_empty() && !bearer_matches(&authorization, &shared.api_key) {",
-        "    if false && !shared.api_key.is_empty() && !bearer_matches(&authorization, &shared.api_key) {",
+        "    if !shared.api_key.is_off() && !bearer_matches(&authorization, &shared.api_key) {",
+        "    if false && !shared.api_key.is_off() && !bearer_matches(&authorization, &shared.api_key) {",
         REPLAY,
         "#1333 auth request 0: status differs",
     ),

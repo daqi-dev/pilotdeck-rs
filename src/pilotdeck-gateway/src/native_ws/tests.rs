@@ -2431,3 +2431,156 @@ async fn stalled_output_is_bounded_and_cancellable() {
         }
     }
 }
+
+// --------------------------------------------------------------- #2434 stderr
+
+/// The re-exec probe's env: `run:<token>`; the child also requires the token
+/// as an argv positional, so a stray env value alone can never branch a
+/// normal test run into the child path (the #2301 probe-token shape).
+const WS_STDERR_PROBE_ENV: &str = "PDRS_2434_WS_STDERR_PROBE";
+/// Where the child's panic hook leaves its evidence.
+const WS_STDERR_MARKER_ENV: &str = "PDRS_2434_WS_STDERR_MARKER";
+
+fn ws_stderr_probe_token() -> Option<String> {
+    let value = std::env::var_os(WS_STDERR_PROBE_ENV)?.to_str()?.to_owned();
+    let (_, token) = value.split_once(':')?;
+    if token.is_empty() {
+        return None;
+    }
+    std::env::args()
+        .any(|argument| argument == token)
+        .then(|| token.to_owned())
+}
+
+/// #2434: the accept loop's error lines were `eprintln!`, which panics when
+/// the stderr write fails (std behavior) — a failing stderr would take the
+/// whole accept-loop task down with it, while TS's `console.error` is
+/// best-effort and never fails the lifecycle. The fix is the shared
+/// `console_log_line`, which drops the write error. This control drives the
+/// reachable line — the connection error after an invalid upgrade — in a
+/// re-exec'd child whose stderr is a pipe with the read end already dropped
+/// (every write fails with EPIPE); the child installs a panic hook first, so
+/// a panicking `eprintln!` leaves a marker file and exits 33 instead of
+/// passing. A read-only fd is not a failing sink for this purpose:
+/// `std::io::Stderr` redirects EBADF to a fresh `/dev/null` and reports
+/// success, so only EPIPE reaches the `eprintln!` panic. The accept-error
+/// line at the same call site got the same shape, but an `accept()` error
+/// that is neither InvalidInput, PermissionDenied nor Unsupported has no
+/// portable trigger, so it is covered by the shared helper's own contract,
+/// not a second child.
+#[tokio::test]
+async fn connection_error_lines_survive_a_failed_stderr() {
+    if let Some(token) = ws_stderr_probe_token() {
+        ws_stderr_probe_child(&token).await;
+        return;
+    }
+    let token = format!("pdrs-2434-{}", uuid::Uuid::new_v4().simple());
+    let marker = std::env::temp_dir().join(format!("{token}.marker"));
+    let mut child =
+        tokio::process::Command::new(std::env::current_exe().expect("#2434 the probe binary path"))
+            .args([
+                "--exact",
+                "native_ws::tests::connection_error_lines_survive_a_failed_stderr",
+                "--nocapture",
+                "--test-threads=1",
+                &token,
+            ])
+            .env(WS_STDERR_PROBE_ENV, format!("run:{token}"))
+            .env(WS_STDERR_MARKER_ENV, &marker)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("#2434 the failed-stderr probe child spawns");
+    // The failing sink: a pipe whose read end is dropped before the child
+    // writes, so every stderr write fails with EPIPE. (A read-only fd is not
+    // enough: `std::io::Stderr` redirects EBADF to a fresh `/dev/null` and
+    // reports success — only EPIPE reaches the `eprintln!` panic.)
+    drop(child.stderr.take());
+    // Every wait states its termination condition: 30 seconds on the child,
+    // then kill + reap before the named failure (the #2301 probe shape).
+    let status = match tokio::time::timeout(DEADLINE * 6, child.wait()).await {
+        Ok(status) => status.expect("#2434 the failed-stderr probe child is waitable"),
+        Err(_) => {
+            child
+                .kill()
+                .await
+                .expect("#2434 the timed-out probe child is killed");
+            let _ = child.wait().await;
+            negative_assert!(
+                false,
+                "#2434 the failed-stderr probe child did not finish within 30s"
+            );
+            unreachable!("negative_assert! panics");
+        }
+    };
+    let console = {
+        let mut out = Vec::new();
+        if let Some(mut stdout) = child.stdout.take() {
+            let _ = stdout.read_to_end(&mut out).await;
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    };
+    negative_assert!(
+        status.success(),
+        "#2434 the child with a write-failed stderr exits cleanly (exit {status})\n{console}"
+    );
+    negative_assert!(
+        !marker.exists(),
+        "#2434 no panic marker after the connection-error line ({}): {:?}",
+        marker.display(),
+        std::fs::read_to_string(&marker).unwrap_or_default()
+    );
+}
+
+/// The child half of [`connection_error_lines_survive_a_failed_stderr`]:
+/// panic hook first (marker + exit 33), then a real listener and the invalid
+/// upgrade that makes `serve_socket` fail, then a clean drain.
+async fn ws_stderr_probe_child(token: &str) {
+    let marker = std::env::var(WS_STDERR_MARKER_ENV)
+        .unwrap_or_else(|_| panic!("#2434 {token} is missing the marker env"));
+    std::panic::set_hook(Box::new(move |info| {
+        // The default hook would print to the failed stderr; the marker is
+        // the parent's evidence instead.
+        let _ = std::fs::write(&marker, format!("{info}"));
+        std::process::exit(33);
+    }));
+    let host = native_ws_fixture(Arc::new(Requests::default()));
+    let server = NativeWsServer::bind(
+        "127.0.0.1:0".parse().expect("#2434 listen address"),
+        host,
+        "fixture-token".into(),
+        "probe".into(),
+    )
+    .await
+    .expect("#2434 bind native");
+    let address = server.local_addr().expect("#2434 bound address");
+    let (stop, stopped) = oneshot::channel();
+    let task = tokio::spawn(server.run(
+        async {
+            let _ = stopped.await;
+        },
+        DEADLINE,
+    ));
+    let mut socket = TcpStream::connect(address)
+        .await
+        .expect("#2434 invalid upgrade connect");
+    socket
+        .write_all(
+            b"GET /wrong HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: key\r\n\r\n",
+        )
+        .await
+        .expect("#2434 invalid upgrade send");
+    let mut reply = vec![];
+    let read = timeout(DEADLINE, socket.read_to_end(&mut reply)).await;
+    crate::test_negative_receipt::expect_ok(
+        crate::test_negative_receipt::expect_ok(read, "#2434 the invalid upgrade is answered"),
+        "#2434 the invalid upgrade is answered",
+    );
+    stop.send(()).expect("#2434 stop server");
+    timeout(DEADLINE, task)
+        .await
+        .expect("#2434 server finish deadline")
+        .expect("#2434 server task")
+        .expect("#2434 successful drain");
+}

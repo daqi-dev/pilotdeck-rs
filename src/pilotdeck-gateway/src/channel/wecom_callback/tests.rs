@@ -1031,6 +1031,243 @@ fn config_port_follows_number_semantics() {
     );
 }
 
+/// #2432: the TS constructor coerces all five string fields through `String()`
+/// *before* the port (WeComCallbackChannel.ts:100-105 field order), so a value
+/// whose conversion throws — an own `toString`, a prototype-carried one, a
+/// null-terminating chain, or an array whose join reaches such an element —
+/// fails the whole construction with the TS error text. A plain object still
+/// stringifies as `[object Object]` and must construct: only the throwing
+/// shapes take the loader's catch path.
+#[test]
+fn constructor_string_fields_report_the_ts_type_error() {
+    let constructor = WeComCallbackChannel::constructor(no_interaction());
+    for field in ["corpId", "agentId", "secret", "token", "encodingAesKey"] {
+        let mut options = JsObject::new();
+        options.insert(
+            field.into(),
+            parse_json(r#"{"toString": null}"#).expect("#2432 own-toString shape parses"),
+        );
+        let error = constructor(&options)
+            .err()
+            .unwrap_or_else(|| panic!("#2432 {field} must refuse the throwing shape"));
+        match error {
+            ChannelError::Plain(message) => crate::negative_assert_eq!(
+                message,
+                "TypeError: Cannot convert object to primitive value",
+                "#2432 {field} reports the TS TypeError"
+            ),
+            other => panic!(
+                "#2432 {field} reports the port's Plain shape, found {}",
+                other.to_js_string()
+            ),
+        }
+    }
+    // The array element join takes the same walk: `String([{toString: null}])`
+    // throws before the port coercion is ever reached.
+    let mut options = JsObject::new();
+    options.insert(
+        "agentId".into(),
+        parse_json(r#"[{"toString": null}]"#).expect("#2432 array shape parses"),
+    );
+    let error = constructor(&options)
+        .err()
+        .expect("#2432 agentId array must refuse the throwing shape");
+    match error {
+        ChannelError::Plain(message) => crate::negative_assert_eq!(
+            message,
+            "TypeError: Cannot convert object to primitive value",
+            "#2432 agentId array join reports the TS TypeError"
+        ),
+        other => panic!(
+            "#2432 agentId array reports the port's Plain shape, found {}",
+            other.to_js_string()
+        ),
+    }
+    let mut options = JsObject::new();
+    options.insert(
+        "corpId".into(),
+        parse_json(r#"{"a": 1}"#).expect("#2432 plain object parses"),
+    );
+    assert!(
+        constructor(&options).is_ok(),
+        "#2432 a plain object still stringifies as [object Object] and constructs"
+    );
+}
+
+/// #2432, loader level: `extra.corpId: {toString: null}` makes the TS
+/// constructor throw, so `loadEnabledChannels` records exactly one console.error
+/// line for the key and continues — the channel never enters the returned
+/// array (the same catch-and-continue shape the port's TypeError already has).
+#[test]
+fn loader_records_string_field_type_errors_and_continues() {
+    let mut mounts = crate::channel::loader::ChannelLoaderMounts::default();
+    mounts.register(
+        "wecomCallback",
+        WeComCallbackChannel::constructor(no_interaction()),
+    );
+    let config = parse_json(
+        r#"{"adapters": {"wecomCallback": {"enabled": true, "extra": {"corpId": {"toString": null}}}}}"#,
+    )
+    .expect("#2432 loader fixture config parses");
+    let mut errors = Vec::new();
+    let channels = crate::channel::loader::load_enabled_channels(
+        config.get("adapters"),
+        &crate::channel::loader::LoadEnabledChannelsOptions { pilot_home: None },
+        &mounts,
+        &mut |message| errors.push(message),
+    );
+    crate::negative_assert_eq!(
+        errors,
+        vec![
+            "[adapters] Failed to load channel \"wecomCallback\": TypeError: Cannot convert object to primitive value"
+                .to_owned()
+        ],
+        "#2432 the loader records the corpId TypeError and skips the key"
+    );
+    crate::negative_assert!(
+        channels.is_empty(),
+        "#2432 the failed key constructs no channel"
+    );
+}
+
+/// #2426: `wecomCallback` was the only implemented loader key without a mount
+/// test (the five siblings' shape, template `channel/webhook/tests.rs:2906`).
+/// The loader's `build_options` maps the config's six fields onto the option
+/// object, the mount's `WeComCallbackChannel::constructor` builds the adapter
+/// from it, and the constructor product — `WeComCallbackOptions`, the same
+/// type the channel reads at `start` — matches the fixture config item by
+/// item. A recording mount wraps the production constructor so the
+/// loader-built option object is observable without widening the adapter's
+/// product type; the wrapped call is the only path to the assertions.
+#[tokio::test]
+async fn loader_mount_builds_wecom_callback_channel() {
+    let mut mounts = crate::channel::loader::ChannelLoaderMounts::default();
+    let captured: Arc<Mutex<Option<JsObject>>> = Arc::default();
+    let sink = captured.clone();
+    let constructor = WeComCallbackChannel::constructor(no_interaction());
+    mounts.register(
+        "wecomCallback",
+        Arc::new(move |options: &JsObject| {
+            *sink.lock().expect("#2426 capture mutex") = Some(options.clone());
+            constructor(options)
+        }),
+    );
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("#2426 free-port probe");
+    let port = probe.local_addr().expect("#2426 probe address").port();
+    drop(probe);
+    let adapters = parse_json(
+        &json!({
+            "wecomCallback": {"enabled": true, "token": "probe-token", "extra": {
+                "corpId": "probe-corp",
+                "agentId": "probe-agent",
+                "secret": "probe-secret",
+                "encodingAesKey": "probe-aes",
+                "port": port
+            }},
+            "telegram": {"enabled": false},
+        })
+        .to_string(),
+    )
+    .expect("#2426 adapters JSON");
+    let mut errors = Vec::new();
+    let channels = crate::channel::loader::load_enabled_channels(
+        Some(&adapters),
+        &crate::channel::loader::LoadEnabledChannelsOptions { pilot_home: None },
+        &mounts,
+        &mut |message| errors.push(message),
+    );
+    crate::negative_assert!(errors.is_empty(), "#2426 loader errors: {errors:?}");
+    crate::negative_assert_eq!(
+        channels.len(),
+        1,
+        "#2426 exactly the wecom_callback channel loads"
+    );
+    crate::negative_assert_eq!(
+        channels[0].channel_key().to_string(),
+        "wecom_callback",
+        "#2426 the loader-built channel carries the wecom_callback key"
+    );
+    let captured = captured
+        .lock()
+        .expect("#2426 capture mutex")
+        .clone()
+        .expect("#2426 the mount recorded the loader-built options");
+    let options = WeComCallbackOptions::from_object(&captured, DEFAULT_QYAPI);
+    crate::negative_assert_eq!(
+        options.corp_id,
+        "probe-corp",
+        "#2426 loader mount maps corpId through to the channel options"
+    );
+    crate::negative_assert_eq!(
+        options.agent_id,
+        "probe-agent",
+        "#2426 loader mount maps agentId through to the channel options"
+    );
+    crate::negative_assert_eq!(
+        options.secret,
+        "probe-secret",
+        "#2426 loader mount maps secret through to the channel options"
+    );
+    crate::negative_assert_eq!(
+        options.token,
+        "probe-token",
+        "#2426 loader mount maps token through to the channel options"
+    );
+    crate::negative_assert_eq!(
+        options.encoding_aes_key,
+        "probe-aes",
+        "#2426 loader mount maps encodingAesKey through to the channel options"
+    );
+    crate::negative_assert_eq!(
+        options.port,
+        port as u32,
+        "#2426 loader mount maps the extra port through to the channel options"
+    );
+    crate::negative_assert_eq!(
+        options.qyapi,
+        DEFAULT_QYAPI,
+        "#2426 the mount keeps the production qyapi constant"
+    );
+
+    // The constructed adapter really listens through the mount's options: the
+    // start line is the TS dist anchor and the port accepts a connection.
+    let logs: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+    let sink = logs.clone();
+    let handle = channels[0]
+        .start(ChannelStartDeps {
+            config: None,
+            report_status: None,
+            log: Some(Arc::new(move |level: &str, message: &str| {
+                sink.lock()
+                    .expect("#2426 log sink")
+                    .push((level.to_owned(), message.to_owned()));
+            })),
+            turn_gateway: None,
+        })
+        .await
+        .expect("#2426 loader-built wecom_callback start");
+    let listening = format!("wecom_callback: listening on 0.0.0.0:{port}");
+    assert!(
+        logs.lock()
+            .expect("#2426 log sink")
+            .iter()
+            .any(|(level, message)| level == "info" && message == &listening),
+        "#2426 the TS dist anchor line {listening:?} in {:?}",
+        logs.lock().expect("#2426 log sink")
+    );
+    TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#2426 the loader-built listener accepts connections");
+    handle
+        .stop("test")
+        .await
+        .expect("#2426 wecom_callback stop");
+    assert!(
+        TcpStream::connect(("127.0.0.1", port)).await.is_err(),
+        "#2426 the listener is gone after stop"
+    );
+}
+
 #[test]
 fn message_body_truncates_at_2048_utf16_units() {
     let body = message_body("1000002", "chat1", &"😀".repeat(1500));
