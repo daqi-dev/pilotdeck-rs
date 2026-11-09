@@ -1,21 +1,29 @@
 #!/usr/bin/env python3
-"""#2140 HEAD-only CLI skills-collator controls: --check-anchors |
+"""#2140 HEAD-only CLI skills-collator controls: --check | --check-anchors |
 [--compile-only] NEW_OUTPUT_DIR [mutation ...].
 
 Run after the coordinator commits the patch. This script deliberately refuses
 uncommitted/new sources (mutating_sources proves every byte against HEAD), so
-the full KILLED/SURVIVED verdicts are produced on the host; --check-anchors
-works pre-commit. The caller supplies CARGO_TARGET_DIR; no alternate
-repository or build directory is created.
+the full KILLED/SURVIVED verdicts are produced on the host; --check /
+--check-anchors work pre-commit. The caller supplies CARGO_TARGET_DIR; no
+alternate repository or build directory is created. Startup refusals
+(unknown option/mutation, roster drift, unusable target, existing output
+directory) exit 2 = "never started", never a traceback that reads as a failed
+control (#1734 / #1666 fix-r7).
 """
 import os
-from pathlib import Path
+import signal
 import sys
+from pathlib import Path
 
 sys.dont_write_bytecode = True
 root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(root / 'src/pilotdeck-gateway/tests/fixtures'))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (defer_signal_exit, mutating_sources, run_owned,
+                              wait_for_slot, write_source_atomic)
+from negative_selection import (claim_dir, missing_target, refuse,
+                                 refuse_unusable_target, registered,
+                                 verdict_exit)
 from negative_suite import Case, classify, invalidate_completed, passed, publish_summary
 
 SKILLS = root / 'src/pilotdeck-cli/src/skills.rs'
@@ -36,11 +44,41 @@ mutations = [
      '                    .is_some_and(|region| region.as_str() == "CA")\n',
      '',
      TEST, '#2140 fr_FR.UTF-8: "coté" vs "côte"'),
+    # Losing the Latn script gate applies the same repair widening as above to
+    # the default collator order for the fr_Latn_CA.UTF-8 row (sign 1).
+    # `Option::is_none_or` still returns true for the script-less fr_CA row,
+    # so only the explicit-script rows move (gateway twin: native-collation's
+    # french-script-fallback-lost).
+    ('fr-ca-script-lost', SKILLS,
+     'script.to_string() == "Latn"', 'false',
+     TEST, '#2140 fr_Latn_CA.UTF-8: "coté" vs "côte"'),
+    # Widening the Latn gate to every script repairs the fr_Cyrl_CA.UTF-8 row
+    # (sign -1, no repair), the direction the #2170 gateway test pins
+    # (gateway twin: native-collation's french-script-widened).
+    ('fr-ca-script-widened', SKILLS,
+     'script.to_string() == "Latn"', 'true',
+     TEST, '#2140 fr_Cyrl_CA.UTF-8: "coté" vs "côte"'),
 ]
+# fix-r1 (DS simplify#1, #1666): the run denominator must be a literal, not
+# `len(mutations)` — a dropped row would silently shrink the run.
+EXPECTED_NAMES = (
+    'fr-ca-repair-dropped',
+    'fr-ca-region-widened',
+    'fr-ca-script-lost',
+    'fr-ca-script-widened',
+)
+
+
+def check_roster():
+    try:
+        registered(mutations, EXPECTED_NAMES)
+    except ValueError as error:
+        refuse(str(error))
 
 
 def check_anchors():
     """Exit non-zero on any expired anchor; an empty manifest never passes."""
+    check_roster()
     errors = []
     for name, path, old, new, _test, _marker in mutations:
         count = path.read_text().count(old)
@@ -48,29 +86,50 @@ def check_anchors():
             errors.append(f'{name}: stale/invalid anchor: expected=1 actual={count}')
     for error in errors:
         print(error)
-    if not mutations:
-        print('#2140 anchors: empty mutation manifest; refusing to pass', file=sys.stderr)
-        return 2
     print(f'#2140 anchors: {len(mutations) - len(errors)}/{len(mutations)} valid')
     return int(bool(errors))
 
 
+def terminate_cleanly(signum, _frame):
+    """Unwind on SIGTERM/SIGHUP/SIGQUIT so the finally blocks restore the
+    sources; the default disposition would leave a mutant in the tree
+    (mirror of same-json-surfaces' #892 r23 form)."""
+    if defer_signal_exit(signum):
+        return
+    raise SystemExit(128 + signum)
+
+
+def install_terminate_handlers():
+    signal.signal(signal.SIGTERM, terminate_cleanly)
+    if hasattr(signal, 'SIGHUP'):
+        signal.signal(signal.SIGHUP, terminate_cleanly)
+    if hasattr(signal, 'SIGQUIT'):
+        signal.signal(signal.SIGQUIT, terminate_cleanly)
+
+
 def main():
-    if sys.argv[1:] == ['--check-anchors']:
+    args = sys.argv[1:]
+    if args in (['--check'], ['--check-anchors']):
         return check_anchors()
-    args = [arg for arg in sys.argv[1:] if arg != '--compile-only']
-    compile_only = '--compile-only' in sys.argv[1:]
+    compile_only = '--compile-only' in args
+    args = [arg for arg in args if arg != '--compile-only']
+    for arg in args:
+        if arg.startswith('-'):
+            # fix-r1 (DS boundary#1, P1): an unknown `--flag` would otherwise
+            # be taken for the output directory and run the whole mutation
+            # suite instead of refusing.
+            refuse(f'#2140 unknown option: {arg}')
     if not args:
-        raise SystemExit('usage: --check-anchors | [--compile-only] '
+        raise SystemExit('usage: --check | --check-anchors | [--compile-only] '
                          'NEW_OUTPUT_DIR [mutation ...]')
+    check_roster()
     selected = [row for row in mutations if not args[1:] or row[0] in args[1:]]
     if not selected or (args[1:] and len(selected) != len(args[1:])):
-        raise SystemExit('#2140 unknown or duplicate mutation')
-    env = dict(os.environ)
-    if not env.get('CARGO_TARGET_DIR'):
-        raise SystemExit('#2140 caller must supply CARGO_TARGET_DIR')
-    out = Path(args[0]).resolve()
-    out.mkdir(parents=True, exist_ok=False)
+        refuse('#2140 unknown or duplicate mutation')
+    if missing_target():
+        refuse('#2140 caller must supply CARGO_TARGET_DIR')
+    refuse_unusable_target()
+    out = claim_dir(args[0])
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
                '-p', 'pilotdeck-cli', '--bin', 'pilotdeck']
     results = []
@@ -84,10 +143,12 @@ def main():
             stream.write(result.stdout + result.stderr)
         return result
 
-    shared = root / 'src/pilotdeck-gateway/tests/fixtures'
-    guarded = [SKILLS, Path(__file__).resolve(),
-               shared / 'negative_process.py', shared / 'negative_suite.py',
-               shared / 'negative_panic.py']
+    # #1885: mutating_sources rewrites every guarded path on exit with a
+    # plain write_bytes, so the set carries exactly the files a control
+    # rewrites; leftovers elsewhere stay detected by the whole-src HEAD scan.
+    guarded = sorted({row[1] for row in mutations}, key=str)
+    env = dict(os.environ)
+    install_terminate_handlers()
     try:
         with mutating_sources(root, guarded) as originals:
             for name, path, old, new, test, marker in selected:
@@ -100,7 +161,10 @@ def main():
                         raise ValueError('expired or invalid anchor')
                     if not compile_only and not passed(run(name + '-positive', arguments), test):
                         raise RuntimeError('positive control did not pass')
-                    path.write_text(original.replace(old, new, 1))
+                    # #1903: a truncating write here would leave a half-file
+                    # on SIGKILL; the rename publish never does.
+                    write_source_atomic(root, path,
+                                        original.replace(old, new, 1).encode())
                     if run(name + '-compile', ['--no-run']).returncode != 0:
                         raise RuntimeError('mutant did not compile; never a kill')
                     row['compiled'] = True
@@ -113,7 +177,7 @@ def main():
                 except Exception as error:
                     row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
                 finally:
-                    path.write_bytes(originals[path])
+                    write_source_atomic(root, path, originals[path])
                 try:
                     restored = run(name + '-restored',
                                    ['--no-run'] if compile_only else arguments)
@@ -130,9 +194,15 @@ def main():
             results.append(dict(mutation=name, test=test, assertion=marker,
                                 status='INVALID', reason=reason, compiled=False))
             print(f'{name}: INVALID: {reason}', flush=True)
-    publish_summary(out, results)
-    expected = 'COMPILED' if compile_only else 'KILLED'
-    return int(any(row['status'] != expected for row in results))
+        if isinstance(error, (SystemExit, KeyboardInterrupt)):
+            # fix-r1 (DS boundary#5): a signal unwinding must keep its exit
+            # code instead of being reported as "ran and did not come out
+            # green"; the INVALID rows above still record what was abandoned.
+            raise
+    publish_summary(out, results,
+                    states=('KILLED', 'SURVIVED', 'INVALID', 'COMPILED'))
+    return verdict_exit(results, key='status',
+                        killed='COMPILED' if compile_only else 'KILLED')
 
 
 if __name__ == '__main__':

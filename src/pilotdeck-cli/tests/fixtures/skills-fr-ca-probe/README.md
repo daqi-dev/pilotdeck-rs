@@ -6,24 +6,34 @@ HEAD-only 变异负控，绑定唯一被点名测试
 （回放 `../skills-fr-ca-probe.json` 记录的 Node v22.22.0 / ICU 78.2 原始输出）。
 `pilotdeck-cli` 是 binary-only 包，单元测试跑在 `--bin pilotdeck` 目标下。
 
-两条变异各绑一条 `#2140` 专属断言消息（测试内失败点均已去裸 unwrap）：
+四条变异各绑一条 `#2140` 专属断言消息（测试内失败点均已去裸 unwrap）：
 
 - `fr-ca-repair-dropped`：删掉 `collator.with_backward_second_level(true)`，fr_CA 行
   `coté` vs `côte` 符号翻成 -1，绑 `#2140 fr_CA.UTF-8: "coté" vs "côte"`；
 - `fr-ca-region-widened`：去掉 `region == "CA"` 合取项（放宽成 `language == "fr"`），
-  fr_FR 行被误修复成 1，绑 `#2140 fr_FR.UTF-8: "coté" vs "côte"`。
+  fr_FR 行被误修复成 1，绑 `#2140 fr_FR.UTF-8: "coté" vs "côte"`；
+- `fr-ca-script-lost`：`script == "Latn"` 门收紧成恒假，fr_Latn_CA 行丢失修复翻成 -1，
+  绑 `#2140 fr_Latn_CA.UTF-8: "coté" vs "côte"`（gateway 侧同款
+  french-script-fallback-lost；`is_none_or` 对无 script 的 fr_CA 行仍为真）；
+- `fr-ca-script-widened`：`script == "Latn"` 门放宽成恒真，fr_Cyrl_CA 行被误修复翻成 1，
+  绑 `#2140 fr_Cyrl_CA.UTF-8: "coté" vs "côte"`（gateway 侧同款 french-script-widened，
+  即 #2170 gateway 测试钉住的方向）。
 
 用法（提交后由协调者在宿主跑；未提交源码会被 HEAD 守卫拒绝）：
 
 ```sh
 export CARGO_TARGET_DIR=<本树独占构建目录>
-python3 src/pilotdeck-cli/tests/fixtures/skills-fr-ca-probe/negative_controls.py --check-anchors
+python3 src/pilotdeck-cli/tests/fixtures/skills-fr-ca-probe/negative_controls.py --check
 python3 src/pilotdeck-cli/tests/fixtures/skills-fr-ca-probe/negative_controls.py \
   _tmp/<轮次>/negctl-out
 ```
 
-逐变异先跑正控、再编译（`--no-run`）、跑负控、恢复并复跑正控，全部汇总后才判定；
-任一非 KILLED 即非零退出。锚点过期或清单为空都报错退出，不会记成 SURVIVED。
-`--compile-only` 只做变异体编译确认。输出目录必须不存在；`CARGO_TARGET_DIR` 必须由
-调用方设置。共享执行器 `negative_process.py` / `negative_suite.py` /
+`--check` 与 `--check-anchors` 互为别名（CI #1203 闸门按 `--check` 调用，须与
+sdk-stdin / sdk-decode-budget 同口径）。逐变异先跑正控、再编译（`--no-run`）、跑
+负控、恢复并复跑正控，全部汇总后才判定；任一非 KILLED 即非零退出。锚点过期、
+清单与静态名单（`EXPECTED_NAMES`）漂移、未知选项/变异名、`CARGO_TARGET_DIR`
+缺失或取共享规则禁止值、输出目录已存在，都按 rc=2「从未开跑」拒止，不记成
+SURVIVED。变异写入与逐变异恢复走 `write_source_atomic`（#1903），SIGTERM /
+SIGHUP / SIGQUIT 触发的退出码（128+signum）原样透传。`--compile-only` 只做变异
+体编译确认。共享执行器 `negative_process.py` / `negative_suite.py` /
 `negative_panic.py` 归 M6 车道，本脚本只导入不修改。
