@@ -174,8 +174,10 @@ target_environment(...) except RuntimeError: refuse(...)`，效果等价于
 `cli-parity-mock-gateway` 与 `same-json-surfaces` 不编译 Cargo，**四档全豁免**，由登记表
 守卫断言它们没有任何 target 读取；
 **树脏 / 领锁超时 / oracle 读不了**三条，自管入口里 `settings-gateway`（`entered` 旗标）、
-两个 `issue-297` 入口（编译预检的 `guard_failed` → 2，只覆盖源码守卫、不含 oracle 读取）与
-`same-json-surfaces`（#2422 起的 `started` 旗标，#2431 落了 rc2 回归钉）已实现
+两个 `issue-297` 入口（编译预检的 `guard_failed` → 2，只覆盖源码守卫、不含 oracle 读取）、
+`same-json-surfaces`（#2422 起的 `started` 旗标，#2431 落了 rc2 回归钉）与
+`utf16-residual-sort`（#2131 起的 `started` 旗标 + `startup_refusal` 撤回空证据目录，
+覆盖 enter 两边；无 oracle 读取）已实现
 （`sdk-signals` 的相位路由 #1885 r8 与 `_negkit/contract.py` 的 `entered` 旗标也各自实现；
 本句枚举的是 `test_negative_optimize_guards.py` 登记面，非全集），
 其余脚本是未捕获异常 → 1，仍按「失败关闭」处理（不会假绿），登记在 #1666 的后续批次。
