@@ -182,10 +182,13 @@ u64); 20]`、source.json 实测三角，防「数组与实测同步丢格」只�
 §7 同步钉住）；
 产品侧负控 `initialization-query-close-before-control` 把顺序改回旧写法点名用例即红。
 `rst_cells_keep_verified_original_shape` 离线钉住 4 格 abort-rst 原件形状（穷尽集合、
-rstApplied milestone、归一化后 stderr、reset 在 query 连接上的 trace 位置与 dispatched
-abort 的先后、reset 之后无 wire 事件；其余全部 surface 含 initial/final 与 close-order pin
-同范式经 `compare_surfaces` 一次覆盖，格序严格与不适用任何例外登记由上面的 stable 名单
-断言和 `approved_stderr_match_domain_is_exact` 旁证钉住）。
+input.signal/stage、status、naturalExit、cleanupExit、aborts、connections、activeAfterExit、
+stdout 逐字段字面断言；rstApplied milestone、归一化后 stderr、reset 在 query 连接上的
+trace 位置与 dispatched abort 的先后、reset 之后无 wire 事件；再以 `compare_surfaces`
+校验 TS→Rust 投影形态本身被比较器接受——closes 投影与 listener 折叠，非值钉。格序严格
+与不适用任何例外登记由上面的 stable 名单断言和 `approved_stderr_match_domain_is_exact`
+旁证钉住；20 格业务前缀 stderr 集与 stable 名单的同集合关系由
+`stderr_complete_node_tail_preserves_business_line` 机检钉住）。
 离线 `signal_replay::comparison_tests::*` 用真实原件覆盖边界与配对损坏输入，并验证 SIGINT 包装。
 `approved_stderr_match_domain_is_exact` 用 proc-macro2 读取匹配臂，严格核对独立八 ID 常量与差异条目；
 新增矩阵内独有字节第九臂、矩阵外第九臂、少一臂均须失败。批准 stderr 同时要求原件
