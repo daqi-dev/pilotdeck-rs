@@ -4,7 +4,7 @@
 //! it is computed once per turn from a config snapshot and the module
 //! inventory, never from sidecar authority. Per-turn handler binding and
 //! registration stay with the ModuleRouter (A6.9 pr2b).
-use super::capability::{ToolDefinition, serialize_tool_descriptor};
+use super::capability::{Handler, PlanTodoHandler, ToolDefinition, serialize_tool_descriptor};
 use crate::host::HostError;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
@@ -126,6 +126,20 @@ pub struct ModuleInventory {
     pub event: bool,
     /// modules.interaction?.elicitationAvailable; None = no interaction module.
     pub elicitation_available: Option<bool>,
+}
+impl ModuleInventory {
+    /// Bind and advertise the same host-owned plan/todo port for this turn.
+    pub fn bind_plan_todo(
+        &mut self,
+        capability: Handler,
+        handler: Option<std::sync::Arc<dyn PlanTodoHandler>>,
+    ) -> Handler {
+        self.plan_todo = handler.is_some();
+        match handler {
+            Some(handler) => capability.with_plan_todo(handler),
+            None => capability,
+        }
+    }
 }
 
 /// Pure manifest input: a config snapshot plus the registered module
@@ -293,6 +307,51 @@ fn module_methods(methods: Vec<JsValue>) -> JsValue {
 mod tests {
     use super::*;
     use pilotdeck_protocol::{parse_json, stringify_json};
+    #[tokio::test]
+    async fn plan_todo_inventory_advertises_the_real_bound_handler() {
+        use crate::runtime::tools::builtin::todo_write::DurableTodoService;
+        let root =
+            std::env::temp_dir().join(format!("pdrs-manifest-todo-{}", uuid::Uuid::new_v4()));
+        let service = DurableTodoService::open(root).unwrap();
+        let oracle = parse_json(include_str!(
+            "../../../tests/fixtures/host-manifest/oracle.json"
+        ))
+        .unwrap();
+        let mut input = manifest_input(&array(oracle.get("cases").unwrap())[0]);
+        let handler = service.handler(&"s".into(), &"t".into()).unwrap();
+        let capability = input
+            .modules
+            .bind_plan_todo(Handler::default(), Some(handler));
+        let manifest = JsValue::Object(compose_manifest(&input));
+        let methods = manifest
+            .get("hostModules")
+            .unwrap()
+            .get("capability")
+            .unwrap()
+            .get("methods")
+            .unwrap();
+        assert!(array(methods).contains(&JsValue::from("plan_todo")));
+        let call = parse_json(r#"{"payload":{"operation":"plan_todo","method":"write_todos","sessionId":"s","turnId":"t","todos":[{"content":"actual","status":"pending"}]}}"#).unwrap();
+        let result = capability.call(call).await.unwrap();
+        assert_eq!(
+            array(result.get("snapshot").unwrap().get("todos").unwrap()).len(),
+            1
+        );
+        input.modules.bind_plan_todo(Handler::default(), None);
+        let manifest = JsValue::Object(compose_manifest(&input));
+        assert!(
+            !array(
+                manifest
+                    .get("hostModules")
+                    .unwrap()
+                    .get("capability")
+                    .unwrap()
+                    .get("methods")
+                    .unwrap()
+            )
+            .contains(&JsValue::from("plan_todo"))
+        );
+    }
 
     const BASELINE_COMMIT: &str = "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85";
 

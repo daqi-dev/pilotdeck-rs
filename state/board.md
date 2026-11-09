@@ -3256,3 +3256,8 @@ updated: 2026-11-05 13:4x · by Claude Code 协调者（13:4x 交接：#1419 合
 
 - **P1**：`4b90bac` rewind 维护租约 · `857d422` 组织策略进 turn · `57e4284` webhook 鉴权 · `a3b7323` 微信附件/失败回传。
 - **全量 lib** 4230/0；证据 `pdrs-ext/…/r9/最终报告.md`，`r9/logs/lib-full-r9.log`；未 push。
+
+### 2026-11-09 pdrs-daqi-b-channels r10（merge runtime 9b1d808）
+
+- **merge** `pdrs-daqi-b-runtime` @ `9b1d808`：Codex r6 十五提交 + 冲突扫尾 + `open_turn_services` 桥接。
+- **全量 lib** 4244/0；六组定向测全绿；证据 `pdrs-ext/…/r10/最终报告.md`，`r10/logs/*`；已提交 merge，未 push。

@@ -2,8 +2,11 @@
 use super::{object, schema, string, text};
 use crate::{
     host::{
-        HostError,
-        modules::{capability::ToolDefinition, tool_context::SessionService},
+        HostError, HostFuture, ModuleError,
+        modules::{
+            capability::{PlanTodoHandler, ToolDefinition},
+            tool_context::SessionService,
+        },
     },
     runtime::tools::{ExecutableTool, ToolError, ToolFuture, ToolOutput, ToolRunContext},
 };
@@ -13,15 +16,17 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock, Weak},
 };
 
 pub struct TodoWriteTool {
     fields: JsObject,
+    handler: Option<Arc<dyn PlanTodoHandler>>,
 }
 impl TodoWriteTool {
     pub fn new() -> Self {
         Self {
+            handler: None,
             fields: object([
                 ("name", string("todo_write")),
                 ("aliases", JsValue::Array(vec![string("TodoWrite")])),
@@ -40,6 +45,10 @@ impl TodoWriteTool {
                 ),
             ]),
         }
+    }
+    pub fn with_plan_todo(mut self, handler: Arc<dyn PlanTodoHandler>) -> Self {
+        self.handler = Some(handler);
+        self
     }
 }
 impl Default for TodoWriteTool {
@@ -60,12 +69,10 @@ impl ToolDefinition for TodoWriteTool {
 }
 impl ExecutableTool for TodoWriteTool {
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
+        let handler = self.handler.clone();
         Box::pin(async move {
-            let session = context
-                .host
-                .plan_todo
-                .as_ref()
-                .and_then(|value| value.downcast_ref::<TodoSession>())
+            let handler = handler
+                .or_else(|| context.host.plan_todo.as_ref().and_then(session_handler))
                 .ok_or_else(|| {
                     ToolError::new(
                         "unsupported_tool",
@@ -85,12 +92,19 @@ impl ExecutableTool for TodoWriteTool {
                 .map(text)
                 .map(|v| v.trim().to_owned())
                 .filter(|v| !v.is_empty());
-            let (mode, markdown, todos, diagnostics) = match input.get("todos") {
-                Some(JsValue::Array(updates)) => {
-                    let (todos, diagnostics) =
-                        session.write_structured(updates, merge, reason.as_deref(), &turn)?;
-                    ("structured", None, todos, diagnostics)
-                }
+            let (mode, markdown, method, updates) = match input.get("todos") {
+                Some(JsValue::Array(updates)) => (
+                    "structured",
+                    None,
+                    "write_todos",
+                    Some(
+                        updates
+                            .iter()
+                            .enumerate()
+                            .map(|(i, v)| JsValue::Object(normalize_update(v, i, !merge)))
+                            .collect(),
+                    ),
+                ),
                 _ if input.get("markdown").and_then(JsValue::as_string).is_some() => {
                     let markdown = input
                         .get("markdown")
@@ -98,15 +112,65 @@ impl ExecutableTool for TodoWriteTool {
                         .unwrap()
                         .clone();
                     let parsed = parse_markdown(&text(&markdown));
-                    let (todos, diagnostics) =
-                        session.write_markdown(parsed, &markdown, reason.as_deref(), &turn)?;
-                    ("markdown", Some(markdown), todos, diagnostics)
+                    (
+                        "markdown",
+                        Some(markdown),
+                        "record_todo_write",
+                        Some(parsed.into_iter().map(JsValue::Object).collect()),
+                    )
                 }
-                _ => {
-                    let state = session.snapshot()?;
-                    ("read", None, state.todos, state.diagnostics)
-                }
+                _ => ("read", None, "read", None),
             };
+            let mut payload = object([
+                ("operation", string("plan_todo")),
+                ("method", string(method)),
+                (
+                    "sessionId",
+                    context
+                        .fields
+                        .get("sessionId")
+                        .cloned()
+                        .unwrap_or(JsValue::Undefined),
+                ),
+                ("turnId", JsValue::String(turn)),
+                ("merge", JsValue::Bool(merge)),
+            ]);
+            if let Some(updates) = updates {
+                payload.insert("todos".into(), JsValue::Array(updates));
+            }
+            if let Some(markdown) = &markdown {
+                payload.insert("markdown".into(), JsValue::String(markdown.clone()));
+            }
+            if let Some(reason) = &reason {
+                payload.insert("reason".into(), string(reason.as_str()));
+            }
+            let response = handler
+                .call(JsValue::Object(object([(
+                    "payload",
+                    JsValue::Object(payload),
+                )])))
+                .await
+                .map_err(|error| ToolError::failed(error.to_string()))?;
+            let snapshot = response
+                .get("snapshot")
+                .and_then(JsValue::as_object)
+                .ok_or_else(|| ToolError::failed("Plan/todo handler returned no snapshot."))?;
+            let todos = match snapshot.get("todos") {
+                Some(JsValue::Array(todos)) => todos
+                    .iter()
+                    .map(|todo| {
+                        todo.as_object().cloned().ok_or_else(|| {
+                            ToolError::failed("Plan/todo handler returned an invalid todo.")
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+                _ => return Err(ToolError::failed("Plan/todo handler returned no todos.")),
+            };
+            let diagnostics = snapshot
+                .get("todoDiagnostics")
+                .and_then(JsValue::as_object)
+                .cloned()
+                .ok_or_else(|| ToolError::failed("Plan/todo handler returned no diagnostics."))?;
             Ok(output(mode, markdown, todos, merge, reason, diagnostics))
         })
     }
@@ -140,6 +204,200 @@ impl Default for TodoState {
 pub struct TodoSession {
     path: PathBuf,
     state: Arc<Mutex<TodoState>>,
+}
+// Bridge existing opaque host contexts by allocation identity, without owning
+// their lifetime or choosing a session from caller-supplied fields.
+type TodoBindings = HashMap<usize, (Weak<TodoSession>, JsString)>;
+fn todo_bindings() -> &'static Mutex<TodoBindings> {
+    static BINDINGS: OnceLock<Mutex<TodoBindings>> = OnceLock::new();
+    BINDINGS.get_or_init(Mutex::default)
+}
+fn session_handler(
+    context: &crate::host::modules::capability::RuntimeContext,
+) -> Option<Arc<dyn PlanTodoHandler>> {
+    let key = Arc::as_ptr(context) as *const () as usize;
+    let mut bindings = todo_bindings().lock().ok()?;
+    let (session, session_id) = bindings.get(&key)?;
+    let Some(session) = session.upgrade() else {
+        bindings.remove(&key);
+        return None;
+    };
+    Some(Arc::new(BoundTodoHandler {
+        session,
+        session_id: session_id.clone(),
+        turn_id: None,
+    }))
+}
+
+pub struct BoundTodoHandler {
+    session: Arc<TodoSession>,
+    session_id: JsString,
+    turn_id: Option<JsString>,
+}
+impl PlanTodoHandler for BoundTodoHandler {
+    fn call(&self, call: JsValue) -> HostFuture<JsObject> {
+        let session = self.session.clone();
+        let session_id = self.session_id.clone();
+        let turn_id = self.turn_id.clone();
+        Box::pin(async move {
+            let payload = call
+                .get("payload")
+                .ok_or_else(|| ModuleError::new("Missing payload."))?;
+            let required = |key: &str| -> Result<JsString, HostError> {
+                payload
+                    .get(key)
+                    .and_then(JsValue::as_string)
+                    .filter(|s| !s.is_empty())
+                    .cloned()
+                    .ok_or_else(|| ModuleError::new(format!("Missing {key}.")).into())
+            };
+            let incoming_session = required("sessionId")?;
+            let turn = required("turnId")?;
+            if incoming_session != session_id
+                || turn_id.as_ref().is_some_and(|expected| *expected != turn)
+            {
+                return Err(ModuleError::new(
+                    "Plan/todo capability identity does not match the active host turn.",
+                )
+                .into());
+            }
+            let method = required("method")?;
+            let reason = payload.get("reason").and_then(JsValue::as_string).map(text);
+            let run = || -> Result<(), ToolError> {
+                match text(&method).as_str() {
+                    "read" => {}
+                    "mark_plan_approved" => {
+                        let plan =
+                            required("plan").map_err(|e| ToolError::failed(e.to_string()))?;
+                        session.mark_plan_approved(&plan, &turn)?;
+                    }
+                    "write_todos" | "record_todo_write" => {
+                        let markdown_mode = method.equals_str("record_todo_write");
+                        let updates = match payload.get("todos") {
+                            Some(JsValue::Array(todos)) => todos,
+                            _ => {
+                                return Err(ToolError::failed(if markdown_mode {
+                                    "Plan/todo items must be an array."
+                                } else {
+                                    "Plan/todo updates must be an array."
+                                }));
+                            }
+                        };
+                        for item in updates {
+                            let item = item.as_object().ok_or_else(|| {
+                                ToolError::failed("Plan/todo entry must be an object.")
+                            })?;
+                            let status = item.get("status");
+                            let valid = status.and_then(JsValue::as_string).is_some_and(|s| {
+                                ["pending", "in_progress", "completed", "cancelled"]
+                                    .iter()
+                                    .any(|v| s.equals_str(v))
+                            });
+                            if markdown_mode
+                                && (!valid
+                                    || item
+                                        .get("content")
+                                        .and_then(JsValue::as_string)
+                                        .is_none_or(JsString::is_empty))
+                            {
+                                return Err(ToolError::failed("Plan/todo item is invalid."));
+                            }
+                            if !markdown_mode && status.is_some_and(|s| !s.is_undefined()) && !valid
+                            {
+                                return Err(ToolError::failed(
+                                    "Plan/todo update status is invalid.",
+                                ));
+                            }
+                        }
+                        if markdown_mode {
+                            let markdown = payload
+                                .get("markdown")
+                                .and_then(JsValue::as_string)
+                                .cloned()
+                                .ok_or_else(|| ToolError::failed("Missing markdown."))?;
+                            let todos = replace_todos(
+                                &updates
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, v)| normalize_update(v, i, true))
+                                    .collect::<Vec<_>>(),
+                            );
+                            session.write_markdown(todos, &markdown, reason.as_deref(), &turn)?;
+                        } else {
+                            let merge = payload.get("merge") == Some(&JsValue::Bool(true));
+                            let markdown = payload
+                                .get("markdown")
+                                .and_then(JsValue::as_string)
+                                .cloned();
+                            if markdown.is_some() {
+                                session.write_structured_with_markdown(
+                                    updates,
+                                    merge,
+                                    markdown,
+                                    reason.as_deref(),
+                                    &turn,
+                                )?;
+                            } else {
+                                session.write_structured(
+                                    updates,
+                                    merge,
+                                    reason.as_deref(),
+                                    &turn,
+                                )?;
+                            }
+                        }
+                    }
+                    "mark_tool_progress" => {
+                        let name =
+                            required("toolName").map_err(|e| ToolError::failed(e.to_string()))?;
+                        session.mark_tool_progress(&name, &turn)?;
+                    }
+                    _ => {
+                        return Err(ToolError::failed(format!(
+                            "Unsupported sidecar plan/todo method: {}",
+                            text(&method)
+                        )));
+                    }
+                }
+                Ok(())
+            };
+            run().map_err(|e| ModuleError::new(text(&e.message)))?;
+            let state = session
+                .snapshot()
+                .map_err(|e| ModuleError::new(text(&e.message)))?;
+            let mut snapshot = encode_state(&state).as_object().cloned().unwrap();
+            snapshot.insert(
+                "todoHistory".into(),
+                JsValue::Array(
+                    state
+                        .history
+                        .iter()
+                        .filter(|entry| {
+                            entry
+                                .get("type")
+                                .and_then(JsValue::as_string)
+                                .is_some_and(|kind| kind.equals_str("plan_todo_written"))
+                        })
+                        .cloned()
+                        .map(JsValue::Object)
+                        .collect(),
+                ),
+            );
+            snapshot.insert(
+                "activeTodos".into(),
+                JsValue::Array(
+                    state
+                        .todos
+                        .iter()
+                        .filter(|v| active(v))
+                        .cloned()
+                        .map(JsValue::Object)
+                        .collect(),
+                ),
+            );
+            Ok(object([("snapshot", JsValue::Object(snapshot))]))
+        })
+    }
 }
 impl TodoSession {
     fn open(path: PathBuf) -> std::io::Result<Self> {
@@ -202,6 +460,16 @@ impl TodoSession {
         reason: Option<&str>,
         turn: &JsString,
     ) -> Result<(Vec<JsObject>, JsObject), ToolError> {
+        self.write_structured_with_markdown(updates, merge, None, reason, turn)
+    }
+    fn write_structured_with_markdown(
+        &self,
+        updates: &[JsValue],
+        merge: bool,
+        markdown: Option<JsString>,
+        reason: Option<&str>,
+        turn: &JsString,
+    ) -> Result<(Vec<JsObject>, JsObject), ToolError> {
         let updates = updates
             .iter()
             .enumerate()
@@ -213,7 +481,29 @@ impl TodoSession {
         } else {
             replace_todos(&updates)
         };
-        self.record(next, "structured", merge, None, reason, turn)
+        self.record(next, "structured", merge, markdown, reason, turn)
+    }
+    fn mark_tool_progress(&self, tool: &JsString, turn: &JsString) -> Result<(), ToolError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| ToolError::failed("Todo provider lock is poisoned."))?;
+        if state.approved_plan.is_none()
+            || state.requires_initialization
+            || tool.equals_str("todo_write")
+        {
+            return Ok(());
+        }
+        state.tool_calls_since_write = state
+            .tool_calls_since_write
+            .checked_add(1)
+            .ok_or_else(|| ToolError::failed("Todo progress counter exhausted."))?;
+        state.history.push(object([
+            ("type", string("plan_todo_progressed")),
+            ("turnId", JsValue::String(turn.clone())),
+            ("toolName", JsValue::String(tool.clone())),
+        ]));
+        persist(&self.path, &state)
     }
     fn record(
         &self,
@@ -326,14 +616,36 @@ impl DurableTodoService {
     }
     pub fn session(&self, session_id: &JsString) -> std::io::Result<Arc<TodoSession>> {
         let key = session_id.units().to_vec();
-        if let Some(value) = self.sessions.lock().unwrap().get(&key).cloned() {
+        // Look up and insert under one lock: releasing it between the lookup
+        // and the insert let two concurrent callers for one session open two
+        // `TodoSession`s over the same path, so each kept its own copy of the
+        // list and the later write silently dropped the other's todos.
+        let mut sessions = self.sessions.lock().unwrap();
+        if let Some(value) = sessions.get(&key).cloned() {
             return Ok(value);
         }
         let value = Arc::new(TodoSession::open(
             self.root.join(format!("{}.json", digest(session_id))),
         )?);
-        self.sessions.lock().unwrap().insert(key, value.clone());
+        sessions.insert(key, value.clone());
+        let mut bindings = todo_bindings().lock().unwrap();
+        bindings.retain(|_, (session, _)| session.strong_count() > 0);
+        bindings.insert(
+            Arc::as_ptr(&value) as usize,
+            (Arc::downgrade(&value), session_id.clone()),
+        );
         Ok(value)
+    }
+    pub fn handler(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+    ) -> std::io::Result<Arc<dyn PlanTodoHandler>> {
+        Ok(Arc::new(BoundTodoHandler {
+            session: self.session(session_id)?,
+            session_id: session_id.clone(),
+            turn_id: Some(turn_id.clone()),
+        }))
     }
 }
 impl SessionService for DurableTodoService {
@@ -689,6 +1001,253 @@ fn persist(path: &Path, state: &TodoState) -> Result<(), ToolError> {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+    fn array(value: &JsValue) -> &[JsValue] {
+        if let JsValue::Array(values) = value {
+            values
+        } else {
+            panic!("expected array")
+        }
+    }
+    fn call(method: &str, extra: &[(&str, JsValue)]) -> JsValue {
+        let mut payload = object([
+            ("operation", string("plan_todo")),
+            ("method", string(method)),
+            ("sessionId", string("s")),
+            ("turnId", string("t")),
+        ]);
+        for (key, value) in extra {
+            payload.insert((*key).into(), value.clone());
+        }
+        JsValue::Object(object([("payload", JsValue::Object(payload))]))
+    }
+    fn context(
+        plan_todo: Option<crate::host::modules::capability::RuntimeContext>,
+    ) -> ToolRunContext {
+        use crate::host::modules::tool_context::{HostToolCheckpoint, ToolRuntimeContext};
+        ToolRunContext::new(Arc::new(ToolRuntimeContext {
+            fields: object([("sessionId", string("s")), ("turnId", string("t"))]),
+            files: HostToolCheckpoint::default().tool_context_state(),
+            abort_signal: None,
+            model: None,
+            elicitation: None,
+            user_dialog: None,
+            audit_recorder: None,
+            file_history: None,
+            file_update_notifier: None,
+            now: None,
+            progress: None,
+            subagent: None,
+            plan_todo,
+            goal: None,
+            plan_directory: None,
+        }))
+    }
+    #[tokio::test]
+    async fn bound_plan_handler_mutates_real_state_and_checks_turn_identity() {
+        let service = DurableTodoService::open(root()).unwrap();
+        let handler = service.handler(&"s".into(), &"t".into()).unwrap();
+        let approved = handler
+            .call(call("mark_plan_approved", &[("plan", string(" work "))]))
+            .await
+            .unwrap();
+        let snapshot = approved.get("snapshot").unwrap();
+        assert_eq!(snapshot.get("approvedPlan"), Some(&string("work")));
+        assert_eq!(
+            snapshot.get("requiresInitialization"),
+            Some(&JsValue::Bool(true))
+        );
+        assert_eq!(
+            snapshot.get("todoHistory"),
+            Some(&JsValue::Array(Vec::new()))
+        );
+        let updates =
+            parse_json(r#"[{"id":"a","content":"first","status":"in_progress"}]"#).unwrap();
+        let written = handler
+            .call(call(
+                "write_todos",
+                &[
+                    ("todos", updates),
+                    ("reason", string(" init ")),
+                    ("markdown", string("raw")),
+                ],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            written.get("snapshot").unwrap().get("lastMarkdown"),
+            Some(&string("raw"))
+        );
+        handler
+            .call(call(
+                "mark_tool_progress",
+                &[("toolName", string("read_file"))],
+            ))
+            .await
+            .unwrap();
+        handler
+            .call(call(
+                "mark_tool_progress",
+                &[("toolName", string("todo_write"))],
+            ))
+            .await
+            .unwrap();
+        let read = handler.call(call("read", &[])).await.unwrap();
+        let snapshot = read.get("snapshot").unwrap();
+        assert_eq!(
+            snapshot.get("toolCallsSinceLastTodoWrite"),
+            Some(&JsValue::Number(1.0))
+        );
+        assert_eq!(array(snapshot.get("todoHistory").unwrap()).len(), 1);
+        let wrong = call(
+            "write_todos",
+            &[
+                ("todos", JsValue::Array(Vec::new())),
+                ("turnId", string("other")),
+            ],
+        );
+        assert!(
+            handler
+                .call(wrong)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("identity does not match")
+        );
+        let invalid = parse_json(r#"[{"content":"bad","status":"invalid"}]"#).unwrap();
+        assert!(
+            handler
+                .call(call("write_todos", &[("todos", invalid)]))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            service
+                .session(&"s".into())
+                .unwrap()
+                .snapshot()
+                .unwrap()
+                .todos
+                .len(),
+            1
+        );
+    }
+    struct Probe {
+        handler: Arc<dyn PlanTodoHandler>,
+        methods: Arc<Mutex<Vec<JsString>>>,
+    }
+    impl PlanTodoHandler for Probe {
+        fn call(&self, call: JsValue) -> HostFuture<JsObject> {
+            self.methods.lock().unwrap().push(
+                call.get("payload")
+                    .unwrap()
+                    .get("method")
+                    .unwrap()
+                    .as_string()
+                    .unwrap()
+                    .clone(),
+            );
+            self.handler.call(call)
+        }
+    }
+    #[tokio::test]
+    async fn todo_tool_uses_handler_for_structured_markdown_and_read_with_same_output() {
+        let service = DurableTodoService::open(root()).unwrap();
+        let methods = Arc::new(Mutex::new(Vec::new()));
+        let tool = TodoWriteTool::new().with_plan_todo(Arc::new(Probe {
+            handler: service.handler(&"s".into(), &"t".into()).unwrap(),
+            methods: methods.clone(),
+        }));
+        let written = tool.execute(parse_json(r#"{"todos":[{"id":"a","content":" first ","status":"in_progress"}],"reason":" init "}"#).unwrap(), context(None)).await.unwrap();
+        let data = written.data.unwrap();
+        assert_eq!(data.get("mode"), Some(&string("structured")));
+        assert_eq!(data.get("reason"), Some(&string("init")));
+        assert_eq!(
+            data.get("diagnostics").unwrap().get("writeCount"),
+            Some(&JsValue::Number(1.0))
+        );
+        assert_eq!(
+            written.metadata.unwrap().get("todoCount"),
+            Some(&JsValue::Number(1.0))
+        );
+        let markdown = tool
+            .execute(
+                parse_json(r#"{"markdown":"- [x] done\n- [ ] next","merge":true}"#).unwrap(),
+                context(None),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            markdown.data.as_ref().unwrap().get("mode"),
+            Some(&string("markdown"))
+        );
+        assert_eq!(
+            markdown.data.as_ref().unwrap().get("merge"),
+            Some(&JsValue::Bool(true))
+        );
+        assert!(
+            text(
+                markdown.content[0]
+                    .get("text")
+                    .unwrap()
+                    .as_string()
+                    .unwrap()
+            )
+            .contains("mode=markdown merge=true count=2")
+        );
+        let read = tool
+            .execute(JsValue::Object(JsObject::new()), context(None))
+            .await
+            .unwrap();
+        assert_eq!(
+            read.data.as_ref().unwrap().get("todos"),
+            markdown.data.as_ref().unwrap().get("todos")
+        );
+        assert_eq!(
+            *methods.lock().unwrap(),
+            ["write_todos", "record_todo_write", "read"].map(JsString::from)
+        );
+        let empty = tool
+            .execute(
+                JsValue::Object(object([("markdown", string(""))])),
+                context(None),
+            )
+            .await
+            .unwrap();
+        assert_eq!(empty.data.unwrap().get("markdown"), Some(&string("")));
+    }
+    #[tokio::test]
+    async fn existing_session_context_routes_to_same_handler_without_any_downcast() {
+        let service = DurableTodoService::open(root()).unwrap();
+        let opaque = service.for_session(&"s".into()).unwrap();
+        let tool = TodoWriteTool::new();
+        tool.execute(
+            parse_json(r#"{"todos":[{"content":"kept"}]}"#).unwrap(),
+            context(Some(opaque.clone())),
+        )
+        .await
+        .unwrap();
+        let handler = service.handler(&"s".into(), &"t".into()).unwrap();
+        let read = handler.call(call("read", &[])).await.unwrap();
+        assert_eq!(
+            array(read.get("snapshot").unwrap().get("todos").unwrap()).len(),
+            1
+        );
+        let mut wrong = context(Some(opaque));
+        wrong.fields.insert("sessionId".into(), string("other"));
+        assert!(
+            tool.execute(JsValue::Object(JsObject::new()), wrong)
+                .await
+                .is_err()
+        );
+        let unrelated: crate::host::modules::capability::RuntimeContext = Arc::new(42_u64);
+        assert_eq!(
+            tool.execute(JsValue::Object(JsObject::new()), context(Some(unrelated)))
+                .await
+                .unwrap_err()
+                .code,
+            "unsupported_tool"
+        );
+    }
     fn root() -> PathBuf {
         std::env::temp_dir().join(format!(
             "pdrs-todo-{}",
@@ -734,5 +1293,39 @@ mod tests {
                 .len(),
             4
         );
+    }
+
+    /// Two threads asking for one session must receive the same instance. The
+    /// old split lock released between the lookup and the insert, so both
+    /// threads could open their own `TodoSession` over one path and one write
+    /// would silently overwrite the other.
+    #[test]
+    fn concurrent_session_lookup_returns_one_instance() {
+        let root = root();
+        let service = Arc::new(DurableTodoService::open(&root).unwrap());
+        let (started, starting) = std::sync::mpsc::channel();
+        let handles = (0..8)
+            .map(|_| {
+                let service = Arc::clone(&service);
+                let started = started.clone();
+                std::thread::spawn(move || {
+                    started.send(()).unwrap();
+                    service.session(&"s".into()).unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        for _ in 0..8 {
+            starting.recv().unwrap();
+        }
+        let sessions = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>();
+        for session in &sessions[1..] {
+            assert!(
+                Arc::ptr_eq(&sessions[0], session),
+                "every caller must share one TodoSession"
+            );
+        }
     }
 }

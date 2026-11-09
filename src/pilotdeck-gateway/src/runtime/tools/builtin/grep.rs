@@ -598,9 +598,7 @@ async fn run_ripgrep_with_timeout(
     // already be a group leader and `setsid` would fail EPERM) with no
     // controlling terminal.
     #[cfg(unix)]
-    pilotdeck_child_signals::install_child_detach_session(command.as_std_mut());
-    #[cfg(unix)]
-    pilotdeck_child_signals::install_child_signal_reset(command.as_std_mut());
+    pilotdeck_child_signals::install_detached_child_session(command.as_std_mut());
     // The TS baseline hands `context.env` to `spawn` as the child environment
     // (Node replaces, it does not merge), so mirror that when the host
     // supplies one.

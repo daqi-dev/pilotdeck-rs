@@ -771,7 +771,7 @@ fn ensure_offline_service(
         .filter(|value| !value.is_empty())
         .map(String::as_str)
         .unwrap_or("3001");
-    let port = pilotdeck_protocol::js_value::string_to_number(port_text);
+    let port = crate::js_value::string_to_number(port_text);
     if !port.is_finite() || port.fract() != 0.0 || !(1.0..=65_535.0).contains(&port) {
         return Err(failure(
             "invalidPort",

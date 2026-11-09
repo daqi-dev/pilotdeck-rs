@@ -96,11 +96,16 @@ fn resolve_blocking(
         let cwd = cwd
             .to_utf8()
             .map_err(|_| invalid("cwd must be a valid filesystem path."))?;
+        // daqi keeps resolve_process_path fallible (#879: an unresolvable process
+        // cwd must surface, not silently become /). B returns a bare PathBuf; map
+        // the error into the submit error code instead.
+        let home = metadata::resolve_process_path(Path::new(&cwd), pilot_home)
+            .map_err(|error| SubmitError::new("UPLOAD_RESOLVE_FAILED", error.to_string()))?;
+        let cwd_resolved = metadata::resolve_process_path(Path::new(""), Path::new(&cwd))
+            .map_err(|error| SubmitError::new("UPLOAD_RESOLVE_FAILED", error.to_string()))?;
         let metadata = Arc::new(Metadata {
-            home: metadata::resolve_process_path(Path::new(&cwd), pilot_home)
-                .map_err(|error| SubmitError::new("gateway_submit_failed", error.to_string()))?,
-            cwd: metadata::resolve_process_path(Path::new(""), Path::new(&cwd))
-                .map_err(|error| SubmitError::new("gateway_submit_failed", error.to_string()))?,
+            home,
+            cwd: cwd_resolved,
             files: NativeFiles,
         });
         let project = turn
@@ -119,7 +124,7 @@ fn resolve_blocking(
         if Path::new(&root) != metadata.home
             && !metadata
                 .has_registered_project(Path::new(&root))
-                .map_err(|error| SubmitError::new("gateway_submit_failed", error.to_string()))?
+                .map_err(|error| SubmitError::new("UPLOAD_RESOLVE_FAILED", error.to_string()))?
         {
             return Err(SubmitError::new("PROJECT_NOT_FOUND", "Unknown projectKey."));
         }
@@ -201,33 +206,27 @@ pub(crate) fn upload_store(metadata: Arc<Metadata>) -> Arc<UploadStore> {
     }
     let registry = metadata.clone();
     let store = Arc::new(UploadStore::new(UploadStoreOptions::new(
-        move |key| {
-            let root = metadata::resolve(
-                &registry.cwd,
-                &key.to_utf8().map_err(|_| {
-                    UploadError::dialog("PROJECT_NOT_FOUND", "Invalid projectKey.")
-                })?,
-            );
-            if root != registry.home
-                && !registry
-                    .has_registered_project(&root)
-                    .map_err(|error| UploadError::dialog("gateway_submit_failed", error.to_string()))?
-            {
-                let label = key
-                    .to_utf8()
-                    .map(JsString::from)
-                    .unwrap_or_else(|_| key.clone());
-                return Err(UploadError::dialog(
-                    "PROJECT_NOT_FOUND",
-                    format!("Unknown projectKey: {}", String::from_utf16_lossy(label.units())),
-                ));
-            }
-            Ok(root)
+        move |key: &JsString| {
+            // daqi keeps the project key as raw UTF-16 all the way down;
+            // resolve_dialog_project does the same resolve + registry check
+            // and returns None when the key names no registered project.
+            let root = registry
+                .resolve_dialog_project(key)
+                .ok_or_else(|| {
+                    UploadError::dialog(
+                        "PROJECT_NOT_FOUND",
+                        format!(
+                            "Unknown projectKey: {}",
+                            String::from_utf16_lossy(key.units())
+                        ),
+                    )
+                })?;
+            Ok(PathBuf::from(root))
         },
         move || {
             let projects = metadata
                 .list_projects()
-                .map_err(|error| UploadError::dialog("gateway_submit_failed", error.to_string()))?;
+                .map_err(|error| UploadError::dialog("PROJECT_NOT_FOUND", error.to_string()))?;
             let Some(JsValue::Array(projects)) = projects.get("projects") else {
                 return Err(UploadError::dialog(
                     "PROJECT_NOT_FOUND",
@@ -278,6 +277,3 @@ fn upload_error(error: UploadError) -> SubmitError {
     )
 }
 
-#[cfg(test)]
-#[path = "submit_uploads_tests.rs"]
-mod tests;

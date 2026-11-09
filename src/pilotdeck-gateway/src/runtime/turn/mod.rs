@@ -1,5 +1,6 @@
 //! Gateway turn runtime: replay store, event coordination and AgentEvent → GatewayEvent projection.
 pub mod admission;
+pub(crate) mod capabilities;
 pub mod coordinator;
 pub mod failure_guard;
 pub mod execute_payload;
@@ -21,7 +22,6 @@ pub mod runner;
 pub mod submit;
 pub mod submit_host;
 pub(crate) mod submit_input;
-pub(crate) mod capabilities;
 pub(crate) mod submit_uploads;
 pub mod wiring;
 pub mod wiring_submit;

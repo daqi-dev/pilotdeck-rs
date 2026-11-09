@@ -730,9 +730,7 @@ async fn run_shell(request: ShellRequest, output_limit: usize) -> Result<ShellRe
     // its own process group, which replaces `process_group(0)`, with no
     // controlling terminal) and gets libuv's child-init signal reset.
     #[cfg(unix)]
-    pilotdeck_child_signals::install_child_detach_session(command.as_std_mut());
-    #[cfg(unix)]
-    pilotdeck_child_signals::install_child_signal_reset(command.as_std_mut());
+    pilotdeck_child_signals::install_detached_child_session(command.as_std_mut());
     let mut child = command
         .spawn()
         .map_err(|error| spawn_error(&shell, &error))?;

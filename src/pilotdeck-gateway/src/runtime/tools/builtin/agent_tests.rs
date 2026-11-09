@@ -1853,13 +1853,14 @@ async fn background_launch_returns_task_id_and_owner_drains_the_real_child_on_st
     let mut server = ModelFixture::start(vec![Reply::Stall]).await;
     let resources = BackgroundResources::default();
     let services = Arc::new(
-        crate::cron::native::NativeSessionServices::open(
+        crate::runtime::turn::services::NativeSessionServices::open(
             &root.join("background-home"),
             &root,
             &root.to_string_lossy(),
             &"agent-parent".into(),
             None,
             resources.clone(),
+            None,
         )
         .unwrap(),
     );
@@ -1983,13 +1984,14 @@ async fn observer_uses_the_gateway_owner_without_tools_and_emits_its_real_report
     .await;
     let resources = BackgroundResources::default();
     let services = Arc::new(
-        crate::cron::native::NativeSessionServices::open(
+        crate::runtime::turn::services::NativeSessionServices::open(
             &root.join("observer-home"),
             &root,
             &root.to_string_lossy(),
             &"agent-parent".into(),
             None,
             resources.clone(),
+            None,
         )
         .unwrap(),
     );

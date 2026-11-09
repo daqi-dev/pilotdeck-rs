@@ -394,9 +394,7 @@ impl PreparedSpawn {
         // which replaces `process_group(0)` — with no controlling terminal.
         // The signal reset stays the last installed hook, per its contract.
         #[cfg(unix)]
-        pilotdeck_child_signals::install_child_detach_session(process.as_std_mut());
-        #[cfg(unix)]
-        pilotdeck_child_signals::install_child_signal_reset(process.as_std_mut());
+        pilotdeck_child_signals::install_detached_child_session(process.as_std_mut());
         // Non-Unix keeps the pre-#552 shape: TS detaches only off Windows,
         // and the existing group here is std's `process_group(0)`.
         #[cfg(not(unix))]

@@ -324,3 +324,68 @@ impl NativeSessionServices {
         })
     }
 }
+
+struct RunToolsPhase(Arc<RunTools>);
+
+impl crate::runtime::turn::services::PhaseTools for RunToolsPhase {
+    fn schemas(&self) -> Vec<serde_json::Value> {
+        self.0.schemas()
+    }
+
+    fn call<'a>(
+        &'a self,
+        name: &'a str,
+        input: &'a serde_json::Value,
+    ) -> crate::host::HostFuture<serde_json::Value> {
+        let tools = self.0.clone();
+        let name = name.to_owned();
+        let input = input.clone();
+        Box::pin(async move {
+            tools
+                .call(&name, &input)
+                .await
+                .map_err(|error| {
+                    crate::host::HostError::new(crate::host::HostErrorKind::Callback, error.message)
+                })
+        })
+    }
+}
+
+struct CronRuntimePort(Arc<super::runtime::CronRuntime>);
+
+impl crate::runtime::turn::services::NativeCronPort for CronRuntimePort {
+    fn register_tools(
+        &self,
+        registry: &crate::runtime::tools::ToolRegistry,
+    ) -> std::io::Result<()> {
+        super::tools::register(registry, self.0.clone())
+    }
+}
+
+/// Production channel path: same on-disk session state as [`NativeSessionServices::open`],
+/// typed for Codex `module_host` via [`crate::runtime::turn::services::NativeSessionServices`].
+pub fn open_turn_services(
+    home: &std::path::Path,
+    cwd: &std::path::Path,
+    project: &str,
+    session: &JsString,
+    tools: Option<Arc<RunTools>>,
+    background: crate::runtime::background::BackgroundResources,
+    cron: std::sync::Weak<super::runtime::CronRuntime>,
+) -> std::io::Result<crate::runtime::turn::services::NativeSessionServices> {
+    let phase_tools = tools.map(|tools| {
+        Arc::new(RunToolsPhase(tools)) as Arc<dyn crate::runtime::turn::services::PhaseTools>
+    });
+    let cron_port = cron.upgrade().map(|runtime| {
+        Arc::new(CronRuntimePort(runtime)) as Arc<dyn crate::runtime::turn::services::NativeCronPort>
+    });
+    crate::runtime::turn::services::NativeSessionServices::open(
+        home,
+        cwd,
+        project,
+        session,
+        phase_tools,
+        background,
+        cron_port,
+    )
+}

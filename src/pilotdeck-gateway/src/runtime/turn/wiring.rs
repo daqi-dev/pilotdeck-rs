@@ -1032,7 +1032,7 @@ struct ProductionContinuationSessionFactory {
     pilot_home: PathBuf,
     cwd: JsString,
     snapshot: JsValue,
-    services: Option<Arc<crate::cron::native::NativeSessionServices>>,
+    services: Option<Arc<crate::runtime::turn::services::NativeSessionServices>>,
     spawner: Arc<dyn SidecarSpawner>,
     parent_live: Arc<LiveSessionState>,
     adapter: Arc<AsyncTranscriptAdapter>,
@@ -1809,18 +1809,16 @@ impl SessionFactory for NativeSessionFactory {
             .resources(Some(&project))
             .map_err(|e| RuntimeError::new(e.message));
         let services = resources.and_then(|background| {
-            crate::cron::native::NativeSessionServices::open(
+            crate::cron::native::open_turn_services(
                 &self.pilot_home,
                 &self.cwd_path,
                 &project,
                 &context.session_key,
                 policy.as_ref().and_then(|p| p.tools.clone()),
                 background,
+                self.cron.lock().unwrap().clone(),
             )
-            .map(|mut services| {
-                services.cron = self.cron.lock().unwrap().clone();
-                Arc::new(services)
-            })
+            .map(Arc::new)
             .map_err(|e| RuntimeError::new(e.to_string()))
         });
         let snapshot = load_project_snapshot(&self.pilot_home, &cwd, context.project_key.as_ref())

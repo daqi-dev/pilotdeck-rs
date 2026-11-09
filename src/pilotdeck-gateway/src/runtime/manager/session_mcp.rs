@@ -15,10 +15,50 @@ use crate::runtime::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{path::Path, sync::Arc};
 
+pub(crate) fn spawn_drop_cleanup(
+    executor: tokio::runtime::Handle,
+    resource: &'static str,
+    cleanup: impl std::future::Future<Output = Result<(), RuntimeError>> + Send + 'static,
+) -> std::io::Result<std::thread::JoinHandle<Result<(), RuntimeError>>> {
+    // Like WriterCloseGuard, the blocking owner survives the dropping thread's
+    // runtime context. It drives cleanup and observes its result itself.
+    let thread = std::thread::Builder::new()
+        .name(format!("{resource}-cleanup"))
+        .spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                executor.block_on(cleanup)
+            }))
+            .unwrap_or_else(|panic| {
+                Err(RuntimeError::new(
+                    crate::runtime::cleanup_task::panic_message(panic.as_ref())
+                        .unwrap_or("cleanup panicked"),
+                ))
+            });
+            if let Err(error) = &result {
+                use std::io::Write;
+                let _ = writeln!(
+                    std::io::stderr().lock(),
+                    "{resource} Drop cleanup failed: {error}"
+                );
+            }
+            result
+        });
+    if let Err(error) = &thread {
+        use std::io::Write;
+        let _ = writeln!(
+            std::io::stderr().lock(),
+            "{resource} Drop cleanup thread failed: {error}"
+        );
+    }
+    thread
+}
+
 pub struct SessionMcpOwner {
     registration: Arc<SessionMcpRuntimeRegistration>,
     permission: Lease,
     tools: Vec<Arc<dyn crate::runtime::tools::ExecutableTool>>,
+    // Captured during construction, also usable from Drop without a current runtime.
+    executor: tokio::runtime::Handle,
 }
 impl SessionMcpOwner {
     pub async fn open(
@@ -31,13 +71,21 @@ impl SessionMcpOwner {
         session: &JsString,
     ) -> Result<Option<Arc<Self>>, RuntimeError> {
         let project_key = JsString::from(project.to_string_lossy().into_owned());
-        let resolved = options.resolver.resolve(Some(&project_key)).await
+        let resolved = options
+            .resolver
+            .resolve(Some(&project_key))
+            .await
             .map_err(|e| RuntimeError::new(String::from_utf16_lossy(e.message().units())))?;
-        resolved.refresh().await
+        resolved
+            .refresh()
+            .await
             .map_err(|e| RuntimeError::new(String::from_utf16_lossy(e.message().units())))?;
         let session_key = JsValue::String(session.clone());
         let plugins = resolved.snapshot().await;
-        let session_plugins = options.session_plugins.plugins(&session_key).await
+        let session_plugins = options
+            .session_plugins
+            .plugins(&session_key)
+            .await
             .map_err(|e| RuntimeError::new(String::from_utf16_lossy(e.message().units())))?;
         let mut raw = JsObject::new();
         for plugin in plugins.into_iter().chain(session_plugins) {
@@ -57,19 +105,18 @@ impl SessionMcpOwner {
         }
         // Plugin names remain reserved, including invalid plugin specs.
         for (name, entry) in config.session_mcp_servers(&session_key) {
-            if raw.get_key(&name).is_none()
-                && entry.get("enabled").is_some_and(super::truthy)
-            {
-                let spec = entry.get("config").ok_or_else(|| {
-                    RuntimeError::new("SDK MCP entry is missing its config")
-                })?;
+            if raw.get_key(&name).is_none() && entry.get("enabled").is_some_and(super::truthy) {
+                let spec = entry
+                    .get("config")
+                    .ok_or_else(|| RuntimeError::new("SDK MCP entry is missing its config"))?;
                 raw.insert(name, spec.clone());
             }
         }
         let parsed = parse_plugin_mcp_servers(Some(&raw), options.environment.as_ref());
         if let Some(error) = parsed.diagnostics.first() {
             return Err(RuntimeError::new(format!(
-                "MCP {}: {}", error.id, error.message
+                "MCP {}: {}",
+                error.id, error.message
             )));
         }
         let specs = parsed.servers;
@@ -99,19 +146,26 @@ impl SessionMcpOwner {
         };
         let registration = Arc::new(registration);
         // Session creation can be cancelled while MCP initializes; retain cleanup then too.
-        struct StartupCleanup(Option<Arc<SessionMcpRuntimeRegistration>>);
+        struct StartupCleanup {
+            registration: Option<Arc<SessionMcpRuntimeRegistration>>,
+            executor: tokio::runtime::Handle,
+        }
         impl Drop for StartupCleanup {
             fn drop(&mut self) {
-                if let Some(registration) = self.0.take()
-                    && let Ok(handle) = tokio::runtime::Handle::try_current()
-                {
-                    handle.spawn(async move {
-                        let _ = registration.dispose().await;
-                    });
+                if let Some(registration) = self.registration.take() {
+                    drop(spawn_drop_cleanup(
+                        self.executor.clone(),
+                        "SessionMcpStartup",
+                        async move { registration.dispose().await },
+                    ));
                 }
             }
         }
-        let mut cleanup = StartupCleanup(Some(registration.clone()));
+        let executor = tokio::runtime::Handle::current();
+        let mut cleanup = StartupCleanup {
+            registration: Some(registration.clone()),
+            executor: executor.clone(),
+        };
         let started = runtime.start().await;
         let statuses = match started {
             Ok(statuses) => statuses,
@@ -148,11 +202,12 @@ impl SessionMcpOwner {
             }
         };
         let permission = permissions.acquire(session, None);
-        cleanup.0.take();
+        cleanup.registration.take();
         Ok(Some(Arc::new(Self {
             registration,
             permission,
             tools,
+            executor,
         })))
     }
     pub fn rules(&self) -> RuleSetHandle {
@@ -179,10 +234,86 @@ impl Drop for SessionMcpOwner {
     fn drop(&mut self) {
         self.permission.release();
         let registration = self.registration.clone();
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(async move {
-                let _ = registration.dispose().await;
-            });
+        drop(spawn_drop_cleanup(
+            self.executor.clone(),
+            "SessionMcpOwner",
+            async move { registration.dispose().await },
+        ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::mcp::runtime::{McpFuture, SessionMcpRuntime};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    struct StopProbe(mpsc::Sender<()>);
+    impl SessionMcpRuntime for StopProbe {
+        fn stop(&self) -> McpFuture<'_, Result<(), RuntimeError>> {
+            Box::pin(async move {
+                self.0.send(()).unwrap();
+                Ok(())
+            })
+        }
+    }
+
+    #[test]
+    fn drop_without_current_runtime_disposes_registration() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let (stopped, observed) = mpsc::channel();
+        let registry = SessionMcpRuntimeRegistry::new();
+        let registration = Arc::new(
+            registry
+                .register("drop-test", Arc::new(StopProbe(stopped)))
+                .unwrap(),
+        );
+        let permissions = GatewaySessionPermissionRuleSetRegistry::default();
+        let owner = SessionMcpOwner {
+            registration,
+            permission: permissions.acquire(&"drop-test".into(), None),
+            tools: Vec::new(),
+            executor: runtime.handle().clone(),
+        };
+        std::thread::spawn(move || {
+            assert!(tokio::runtime::Handle::try_current().is_err());
+            drop(owner);
+        })
+        .join()
+        .unwrap();
+        observed.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(registry.size(), 0);
+    }
+
+    #[test]
+    fn drop_cleanup_reports_error_and_panic_to_joiner() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        for panic in [false, true] {
+            let task = spawn_drop_cleanup(runtime.handle().clone(), "test", async move {
+                if panic {
+                    panic!("cleanup probe panic");
+                }
+                Err(RuntimeError::new("cleanup probe error"))
+            })
+            .unwrap();
+            let result = task.join().unwrap().unwrap_err();
+            assert_eq!(
+                result.message,
+                if panic {
+                    "cleanup probe panic"
+                } else {
+                    "cleanup probe error"
+                }
+            );
         }
     }
 }
