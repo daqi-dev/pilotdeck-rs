@@ -2437,24 +2437,46 @@ def count_name_bindings(source, name):
 
     r5-r8 showed a lexical pin on one spelling of an assignment always
     leaves an equivalent-spelling hole open (tail anchor, left space,
-    delimiter, no-space spelling -- the same spot four times).  This walks
-    the AST instead and counts every node that binds the name: Assign
-    (including chained targets), AugAssign, AnnAssign and the walrus
-    NamedExpr, in any spacing, parenthesisation or right-hand spelling.
+    delimiter, no-space spelling -- the same spot four times).  r9's first
+    cut enumerated binding node types (Assign/AugAssign/AnnAssign/
+    NamedExpr) and DS r10 opened it a fifth time through the forms that
+    enumeration misses: tuple/list unpacking targets, ``for``/``with-as``
+    and comprehension targets, ``def``/``class`` names, ``import ... as``,
+    ``except ... as`` and match captures.  So this counts bindings by
+    context, not by node type: every ``ast.Name`` in ``Store`` context
+    (which covers plain/chained/unpacking assignment, augmented and
+    annotated assignment, the walrus, for/with/comprehension targets),
+    plus the str-field binding forms (function/class names, except and
+    match captures, import aliases -- ``import a.b`` binds ``a``).
     Attribute/subscript targets (``self.clock``, ``globals()['clock']``)
     are different names as far as binding goes and are not counted -- the
     guarded fixtures carry a separate byte ban on dynamic-namespace writes
-    (``globals(`` / ``setattr(``) for those.
+    (``globals(`` / ``setattr(``) for those.  Function parameters are not
+    counted: a parameter binds the name in a new scope and cannot rebind
+    the outer name the pins read.
     """
     import ast
     tree = ast.parse(source)
     count = 0
     for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            count += sum(1 for target in node.targets
-                         if isinstance(target, ast.Name) and target.id == name)
-        elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.NamedExpr)):
-            if isinstance(node.target, ast.Name) and node.target.id == name:
+        if isinstance(node, ast.Name):
+            if node.id == name and isinstance(node.ctx, ast.Store):
+                count += 1
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name == name:
+                count += 1
+        elif isinstance(node, ast.ExceptHandler):
+            if node.name == name:
+                count += 1
+        elif isinstance(node, ast.alias):
+            bound = node.asname if node.asname is not None else node.name.split('.')[0]
+            if bound == name:
+                count += 1
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)):
+            if node.name == name:
+                count += 1
+        elif isinstance(node, ast.MatchMapping):
+            if node.rest == name:
                 count += 1
     return count
 
@@ -2773,13 +2795,24 @@ class SameJsonSurfaces(unittest.TestCase):
         # through a guard that refuses at entry, and the live dispositions
         # are *recorded* at that moment (asserting inside __enter__ would
         # be swallowed by main's except into an rc2 refusal) and checked
-        # afterwards.  (b) Structure -- the name must have exactly one
-        # binding in the whole file (the module-level def, no
-        # Assign/AugAssign/AnnAssign/walrus binding anywhere, count_name_
-        # bindings) and the fixture must not contain dynamic-namespace
-        # writes (globals( / setattr( -- zero in the healthy file), which
-        # would rebind names invisibly to every AST and byte pin here
-        # (the same vector as the clock count, DS r8 boundary#1).
+        # afterwards.  Scope note (DS r10 concurrency#2): the dispositions
+        # are sampled once, at guard entry -- overwriting a disposition
+        # *inside* the mutation window (signal.signal(SIGTERM, SIG_DFL)
+        # after entry) is a different, already-registered vector (#2624)
+        # and is NOT closed by this leg.
+        # (b) Structure -- count_name_bindings now counts
+        # every binding form (DS r10 concurrency#1/boundary#1/sibling#1:
+        # def/class names included), so the name must have exactly one
+        # binding in the whole file: the module-level def, with no
+        # expression binding, nested def, import alias or capture
+        # anywhere else.  The fixture must also not contain dynamic-
+        # namespace writes (globals( / setattr( / vars( / exec( /
+        # __dict__ -- zero in the healthy file), which would rebind
+        # names invisibly to every AST and byte pin here (the same
+        # vector as the clock count, DS r8 boundary#1).  These are
+        # substring bans and would fire on a comment mention too --
+        # fail-closed, preferred over the hole they close (DS r10
+        # boundary#2/#3).
         import io
         import signal
         import sys
@@ -2812,9 +2845,12 @@ class SameJsonSurfaces(unittest.TestCase):
                            if isinstance(node, ast.FunctionDef)
                            and node.name == 'install_terminate_handlers']
             self.assertTrue(len(module_defs) == 1
-                           and count_name_bindings(source, 'install_terminate_handlers') == 0
+                           and count_name_bindings(source, 'install_terminate_handlers') == 1
                            and 'globals(' not in source
-                           and 'setattr(' not in source, marker)
+                           and 'setattr(' not in source
+                           and 'vars(' not in source
+                           and 'exec(' not in source
+                           and '__dict__' not in source, marker)
 
             with tempfile.TemporaryDirectory(prefix='pdrs-2552-r9-') as folder:
                 out = Path(folder) / 'out'
@@ -2852,8 +2888,13 @@ class SameJsonSurfaces(unittest.TestCase):
                     # A dead or shadowed call site records nothing (or records
                     # the default dispositions); the guard refuses before the
                     # first mutation, so main exits rc 2 either way and only
-                    # the recorded table tells the two apart.
-                    self.assertTrue(raised is not None
+                    # the recorded table tells the two apart.  The refusal is
+                    # pinned to SystemExit(2): a mid-window SIGTERM lands in
+                    # terminate_cleanly's SystemExit(128+signum), which must
+                    # not read as this leg's expected refusal (DS r10
+                    # concurrency#3 -- same shape as the #2431 sibling pins).
+                    self.assertTrue(isinstance(raised, SystemExit)
+                                    and raised.code == 2
                                     and len(recorded) == len(names)
                                     and all(recorded[name] is main_module.terminate_cleanly
                                              for name in names), marker)
@@ -2954,7 +2995,12 @@ class SameJsonSurfaces(unittest.TestCase):
                                 raised = exit_code
                     finally:
                         for name, disposition in saved.items():
-                            signal.signal(name, disposition)
+                            # getsignal returns None for a non-Python
+                            # handler; signal.signal refuses None (DS r10
+                            # sibling#2 -- guard propagated from the r9
+                            # legs above).
+                            signal.signal(name, disposition if disposition is not None
+                                          else signal.SIG_DFL)
                     self.assertTrue(raised is not None and raised.code == 2
                                     and not out.exists()
                                     and not (out / 'summary.json').exists()
@@ -3047,7 +3093,12 @@ class SameJsonSurfaces(unittest.TestCase):
                                     raised = exit_code
                         finally:
                             for name, disposition in saved.items():
-                                signal.signal(name, disposition)
+                                # getsignal returns None for a non-Python
+                                # handler; signal.signal refuses None (DS
+                                # r10 sibling#2 -- guard propagated from
+                                # the r9 legs above).
+                                signal.signal(name, disposition if disposition is not None
+                                              else signal.SIG_DFL)
                         self.assertTrue(raised is not None
                                         and isinstance(raised, SystemExit)
                                         and raised.code == 2
@@ -3085,14 +3136,18 @@ class SameJsonSurfaces(unittest.TestCase):
         # boundary#2), or by duplicating it inside the loop body, where
         # a per-case reset would silently rearm the budget -- the
         # duplicate is counted semantically, by AST bindings
-        # (count_name_bindings: Assign including chained targets,
-        # AugAssign, AnnAssign, walrus NamedExpr, any spacing or
-        # right-hand spelling -- DS r8 boundary#1, the same spot a
-        # fourth time: no-space clock=time.monotonic() and the RHS
-        # alias clock = monotonic() both survived the r7 regex, live
-        # output in _tmp/20261109-2552-harvest/fix-r8-suspension-report.md;
+        # (count_name_bindings: every Store-context Name plus the
+        # str-field binding forms, so any spacing, right-hand spelling,
+        # unpacking target, for/with/comprehension target, def/class
+        # name, import alias or capture counts -- DS r8 boundary#1, the
+        # same spot a fourth time: no-space clock=time.monotonic() and
+        # the RHS alias clock = monotonic() both survived the r7 regex,
+        # live output in _tmp/20261109-2552-harvest/fix-r8-suspension-report.md;
         # design-change round authorised by coordinator arbitration,
-        # fix-r9), while a different name such as saved_clock
+        # fix-r9; DS r10 concurrency#1/boundary#1/sibling#1 reopened the
+        # first cut's node-type enumeration through tuple-unpacking and
+        # for-target resets, so the count is by binding context, not by
+        # node type), while a different name such as saved_clock
         # (Claude r5 boundary#1) or an attribute form such as
         # self.clock is not a binding of clock and cannot false-red
         # it; the adjacency's clock and for

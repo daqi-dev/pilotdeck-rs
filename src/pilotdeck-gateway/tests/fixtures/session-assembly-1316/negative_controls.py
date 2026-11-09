@@ -824,7 +824,12 @@ def restore_probe():
     finally:
         disarm_restore_watchdog()
         for sig, handler in saved_handlers.items():
-            signal.signal(sig, handler)
+            # getsignal returns None when a non-Python handler holds the
+            # signal; signal.signal refuses None, so map that back to the
+            # default disposition (same guard as the #2552 r9 legs in
+            # test_safety.py, DS r10 sibling#2 / Claude r9 sibling#1).
+            signal.signal(sig, handler if handler is not None
+                          else signal.SIG_DFL)
         signal.pthread_sigmask(signal.SIG_UNBLOCK, STOP_SIGNALS)
     return problems
 
