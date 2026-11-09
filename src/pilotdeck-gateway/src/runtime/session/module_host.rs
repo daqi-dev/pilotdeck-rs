@@ -194,9 +194,8 @@ pub(crate) fn current_mcp_owner()
     MCP_OWNER.with(|slot| slot.borrow().clone())
 }
 
-pub(crate) fn current_subagent_providers(
-) -> Option<Arc<crate::runtime::session::subagent_continuation::NamedContinuationProviderRegistry>>
-{
+pub(crate) fn current_subagent_providers()
+-> Option<Arc<crate::runtime::session::subagent_continuation::NamedContinuationProviderRegistry>> {
     SUBAGENT_PROVIDERS.with(|slot| slot.borrow().clone())
 }
 
@@ -207,7 +206,9 @@ pub(crate) fn with_subagent_providers<T>(
     build: impl FnOnce() -> T,
 ) -> T {
     struct Restore(
-        Option<Arc<crate::runtime::session::subagent_continuation::NamedContinuationProviderRegistry>>,
+        Option<
+            Arc<crate::runtime::session::subagent_continuation::NamedContinuationProviderRegistry>,
+        >,
     );
     impl Drop for Restore {
         fn drop(&mut self) {
@@ -372,12 +373,7 @@ impl TurnEnvironment for Environment {
         session: &JsString,
         turn: &JsString,
     ) -> Result<JsObject, HostError> {
-        lifecycle::build_turn_environment(
-            base.and_then(JsValue::as_object),
-            cwd,
-            session,
-            turn,
-        )
+        lifecycle::build_turn_environment(base.and_then(JsValue::as_object), cwd, session, turn)
     }
 }
 
@@ -603,34 +599,56 @@ impl model::ModelExecution for RecordedModel {
             let stream = inner.stream(input).await?;
             Ok(Box::new(RecordedStream {
                 inner: stream,
-                state,
+                recorder: state.recorder.clone(),
                 session,
                 turn,
+                pending: None,
             }) as Box<dyn model::ModelStream>)
         })
     }
 }
 struct RecordedStream {
     inner: Box<dyn model::ModelStream>,
-    state: Arc<LiveSessionState>,
+    recorder: Arc<crate::storage::recorder::Recorder>,
     session: JsString,
     turn: JsString,
+    // Keep the event and its write across cancelled pulls, like model_port.
+    pending: Option<(JsValue, tokio::task::JoinHandle<Result<(), HostError>>)>,
 }
 impl model::ModelStream for RecordedStream {
     fn next(&mut self) -> model::StreamFuture<'_, Option<JsValue>> {
         Box::pin(async move {
-            let event = self.inner.next().await?;
-            if let Some(event) = &event {
-                self.state
-                    .recorder
-                    .record_model_event(&self.session, &self.turn, event)
-                    .map_err(|e| ModuleError::new(e.to_string()))?;
+            if self.pending.is_none() {
+                let Some(event) = self.inner.next().await? else {
+                    return Ok(None);
+                };
+                let recorder = self.recorder.clone();
+                let session = self.session.clone();
+                let turn = self.turn.clone();
+                let recorded = event.clone();
+                let record = tokio::spawn(crate::runtime::model::cpu::run(move || {
+                    recorder
+                        .record_model_event(&session, &turn, &recorded)
+                        .map_err(|e| ModuleError::new(e.to_string()).into())
+                }));
+                self.pending = Some((event, record));
             }
-            Ok(event)
+            let result = (&mut self.pending.as_mut().unwrap().1).await;
+            let (event, _) = self.pending.take().unwrap();
+            result
+                .map_err(|e| ModuleError::new(e.to_string()))?
+                .map_err(|e| ModuleError::new(e.message))?;
+            Ok(Some(event))
         })
     }
     fn close(&mut self) -> model::StreamFuture<'_, ()> {
-        self.inner.close()
+        Box::pin(async move {
+            if let Some((_, record)) = &mut self.pending {
+                let _ = record.await;
+            }
+            self.pending = None;
+            self.inner.close().await
+        })
     }
 }
 struct RecordedTools {
@@ -865,6 +883,12 @@ impl crate::runtime::permission::PermissionTool for PermissionTool {
 }
 
 struct ProductionPermission {
+    mode: Arc<
+        Mutex<(
+            crate::config::permission::PermissionMode,
+            Option<crate::config::permission::PermissionMode>,
+        )>,
+    >,
     mcp_owner: Option<Arc<crate::runtime::manager::session_mcp::SessionMcpOwner>>,
     interactions: Option<Arc<crate::runtime::interaction::GatewayInteractionCoordinator>>,
     events: Arc<EventBuffer>,
@@ -888,6 +912,7 @@ impl crate::host::modules::permission::PermissionDecision for ProductionPermissi
         let turn = self.turn.clone();
         let cancel = self.cancel.clone();
         let timeout = self.timeout;
+        let mode = self.mode.clone();
         Box::pin(async move {
             let fields = if let Some(context) =
                 context.downcast_ref::<crate::runtime::tools::ToolRunContext>()
@@ -901,6 +926,7 @@ impl crate::host::modules::permission::PermissionDecision for ProductionPermissi
                 return Err(ModuleError::new("Permission requires a host tool context.").into());
             };
             let mut parsed = parse_permission_context(fields)?;
+            parsed.mode = mode.lock().unwrap_or_else(|e| e.into_inner()).0.clone();
             let session = fields
                 .get("permissionSessionId")
                 .and_then(JsValue::as_string)
@@ -1078,10 +1104,76 @@ fn parse_rules(value: Option<&JsValue>) -> Vec<crate::config::permission::Permis
     }
 }
 
-struct NoopObserver;
-impl capability::CapabilityResultObserver for NoopObserver {
-    fn on_capability_results(&self, _results: Vec<JsObject>) -> HostFuture<()> {
+impl capability::CapabilityResultObserver for ProductionPermission {
+    fn on_capability_results(&self, results: Vec<JsObject>) -> HostFuture<()> {
+        let mut state = self.mode.lock().unwrap_or_else(|e| e.into_inner());
+        for result in results {
+            if result.get("type") != Some(&"success".into()) {
+                continue;
+            }
+            let Some(mode) = result
+                .get("data")
+                .and_then(|value| value.get("requestedMode"))
+                .filter(|value| crate::runtime::permission::is_permission_mode(value))
+                .and_then(JsValue::as_string)
+            else {
+                continue;
+            };
+            let mut mode = crate::config::permission::PermissionMode::from(mode.clone());
+            if mode.as_js_string().equals_str("plan") && !state.0.as_js_string().equals_str("plan")
+            {
+                state.1 = Some(state.0.clone());
+            } else if state.0.as_js_string().equals_str("plan")
+                && !mode.as_js_string().equals_str("plan")
+                && let Some(previous) = state.1.take()
+            {
+                mode = previous;
+            }
+            state.0 = mode;
+        }
         Box::pin(async { Ok(()) })
+    }
+}
+
+/// Give plan tools the same current mode that permission decisions observe.
+struct ModeCapabilityContext {
+    inner: CapabilityContext,
+    permission: Arc<ProductionPermission>,
+}
+impl capability::ToolContext for ModeCapabilityContext {
+    fn prepare(&self, call: JsValue) -> HostFuture<capability::ToolInvocationContext> {
+        let prepared = self.inner.prepare(call);
+        let permission = self.permission.clone();
+        Box::pin(async move {
+            let mut context = prepared.await?;
+            let runtime = Arc::get_mut(&mut context.runtime)
+                .and_then(|value| {
+                    value.downcast_mut::<crate::host::modules::tool_context::ToolRuntimeContext>()
+                })
+                .ok_or_else(|| ModuleError::new("Expected owned capability tool context."))?;
+            let mode = permission
+                .mode
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .0
+                .clone();
+            runtime.fields.insert(
+                "permissionMode".into(),
+                JsValue::String(mode.as_js_string().clone()),
+            );
+            let mut permission_context = runtime
+                .fields
+                .get("permissionContext")
+                .and_then(JsValue::as_object)
+                .cloned()
+                .unwrap_or_default();
+            permission_context.insert("mode".into(), JsValue::String(mode.as_js_string().clone()));
+            runtime.fields.insert(
+                "permissionContext".into(),
+                JsValue::Object(permission_context),
+            );
+            Ok(context)
+        })
     }
 }
 
@@ -1422,6 +1514,16 @@ pub fn build_with_router_state(
         )));
     }
     let permission = Arc::new(ProductionPermission {
+        mode: Arc::new(Mutex::new((
+            binding
+                .config
+                .get("permissionMode")
+                .and_then(JsValue::as_string)
+                .cloned()
+                .map(crate::config::permission::PermissionMode::from)
+                .unwrap_or_else(|| crate::config::permission::PermissionMode::from("default")),
+            None,
+        ))),
         mcp_owner: MCP_OWNER.with(|slot| slot.borrow().clone()),
         interactions: interactions.clone(),
         events: events.clone(),
@@ -1576,14 +1678,17 @@ pub fn build_with_router_state(
         },
         capability: capability::Handler::new(
             execution_tools,
-            Arc::new(CapabilityContext {
-                builder: builder.clone(),
-                plan_todo: services.as_ref().map(|value| {
-                    value.plan_todo.clone()
-                        as Arc<dyn crate::host::modules::tool_context::SessionService>
-                }),
+            Arc::new(ModeCapabilityContext {
+                inner: CapabilityContext {
+                    builder: builder.clone(),
+                    plan_todo: services.as_ref().map(|value| {
+                        value.plan_todo.clone()
+                            as Arc<dyn crate::host::modules::tool_context::SessionService>
+                    }),
+                },
+                permission: permission.clone(),
             }),
-            Arc::new(NoopObserver),
+            permission.clone(),
         ),
         permission: permission::Handler::new(
             tools,
@@ -1993,20 +2098,17 @@ impl crate::runtime::tools::ExecutableTool for PhaseTool {
         let tools = self.tools.clone();
         Box::pin(async move {
             use crate::runtime::tools::{ToolError, ToolOutput};
-            let input = phase_input(&input)
-                .map_err(|message| ToolError::new("invalid_params", message))?;
-            let value = tools
-                .call(&name, &input)
-                .await
-                .map_err(|e| {
-                    let code = e
-                        .module_error
-                        .as_ref()
-                        .and_then(|m| m.code.clone())
-                        .map(|code| String::from_utf16_lossy(code.units()).to_string())
-                        .unwrap_or_else(|| "tool_execution_failed".to_owned());
-                    ToolError::new(code, e.message.as_str())
-                })?;
+            let input =
+                phase_input(&input).map_err(|message| ToolError::new("invalid_params", message))?;
+            let value = tools.call(&name, &input).await.map_err(|e| {
+                let code = e
+                    .module_error
+                    .as_ref()
+                    .and_then(|m| m.code.clone())
+                    .map(|code| String::from_utf16_lossy(code.units()).to_string())
+                    .unwrap_or_else(|| "tool_execution_failed".to_owned());
+                ToolError::new(code, e.message.as_str())
+            })?;
             let value = pilotdeck_protocol::parse_json(&value.to_string())
                 .map_err(|e| ToolError::new("serialization_failed", e.to_string()))?;
             Ok(ToolOutput {
@@ -2277,6 +2379,267 @@ mod tests {
         SubagentFollowupPortRequest, SubagentStartPortRequest,
     };
     use pilotdeck_protocol::parse_json;
+
+    fn permission_fixture(mode: &str) -> Arc<ProductionPermission> {
+        Arc::new(ProductionPermission {
+            mode: Arc::new(Mutex::new((mode.into(), None))),
+            mcp_owner: None,
+            interactions: None,
+            events: Arc::new(EventBuffer::default()),
+            session: "s".into(),
+            turn: "t".into(),
+            cancel: Default::default(),
+            timeout: None,
+        })
+    }
+
+    async fn observe(permission: &ProductionPermission, json: &str) {
+        use capability::CapabilityResultObserver;
+        let value = parse_json(json).unwrap();
+        let JsValue::Array(results) = &value else {
+            panic!()
+        };
+        permission
+            .on_capability_results(
+                results
+                    .iter()
+                    .map(|value| value.as_object().unwrap().clone())
+                    .collect(),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn capability_modes_restore_previous_and_ignore_invalid_results() {
+        let permission = permission_fixture("bypassPermissions");
+        observe(&permission, r#"[{"type":"success","data":{"requestedMode":"plan"}},{"type":"success","data":{"requestedMode":"plan"}}]"#).await;
+        assert_eq!(
+            *permission.mode.lock().unwrap(),
+            ("plan".into(), Some("bypassPermissions".into()))
+        );
+        observe(&permission, r#"[{"type":"error","data":{"requestedMode":"default"}},{"type":"success","data":{"requestedMode":"PLAN"}},{"type":"success","data":{"requestedMode":7}},{"type":"success"}]"#).await;
+        assert_eq!(
+            *permission.mode.lock().unwrap(),
+            ("plan".into(), Some("bypassPermissions".into()))
+        );
+        observe(
+            &permission,
+            r#"[{"type":"success","data":{"requestedMode":"default"}}]"#,
+        )
+        .await;
+        assert_eq!(
+            *permission.mode.lock().unwrap(),
+            ("bypassPermissions".into(), None)
+        );
+        observe(&permission, r#"[{"type":"success","data":{"requestedMode":"default"}},{"type":"success","data":{"requestedMode":"plan"}},{"type":"success","data":{"requestedMode":"bypassPermissions"}}]"#).await;
+        assert_eq!(*permission.mode.lock().unwrap(), ("default".into(), None));
+        let permission = permission_fixture("plan");
+        observe(
+            &permission,
+            r#"[{"type":"success","data":{"requestedMode":"default"}}]"#,
+        )
+        .await;
+        assert_eq!(*permission.mode.lock().unwrap(), ("default".into(), None));
+    }
+
+    struct WriteDefinition(JsObject);
+    impl capability::ToolDefinition for WriteDefinition {
+        fn fields(&self) -> &JsObject {
+            &self.0
+        }
+    }
+
+    #[tokio::test]
+    async fn capability_mode_changes_reach_permission_decisions_and_tool_context() {
+        use capability::ToolContext;
+        use permission::PermissionDecision;
+        let permission = permission_fixture("bypassPermissions");
+        let input = parse_json(r#"{"sessionId":"s","turnId":"t","agent":{"cwd":"/tmp","permissionMode":"bypassPermissions","permissionContext":{"bypassAvailable":true}}}"#).unwrap();
+        let binding = TurnBinding {
+            config: input.get("agent").unwrap().as_object().unwrap().clone(),
+            input: input.as_object().unwrap().clone(),
+            checkpoint: HostToolCheckpoint::new(None, &[]).unwrap(),
+            abort_signal: None,
+            environment: Arc::new(Environment),
+        };
+        let context = ModeCapabilityContext {
+            inner: CapabilityContext {
+                builder: ToolContextBuilder::new(binding, ToolContextPorts::default(), false),
+                plan_todo: None,
+            },
+            permission: permission.clone(),
+        };
+        let tool: Arc<dyn capability::ToolDefinition> = Arc::new(WriteDefinition(
+            parse_json(r#"{"name":"write_file","kind":"file"}"#)
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .clone(),
+        ));
+        let stale = context.prepare(JsValue::Null).await.unwrap().runtime;
+        observe(
+            &permission,
+            r#"[{"type":"success","data":{"requestedMode":"plan"}}]"#,
+        )
+        .await;
+        let current = context.prepare(JsValue::Null).await.unwrap().runtime;
+        let fields = &current
+            .downcast_ref::<crate::host::modules::tool_context::ToolRuntimeContext>()
+            .unwrap()
+            .fields;
+        assert_eq!(fields.get("permissionMode"), Some(&"plan".into()));
+        assert_eq!(
+            fields.get("permissionContext").and_then(|v| v.get("mode")),
+            Some(&"plan".into())
+        );
+        let decision = permission
+            .decide(tool.clone(), JsValue::Null, stale.clone(), "call".into())
+            .await
+            .unwrap();
+        assert_eq!(decision.get("type"), Some(&"deny".into()));
+        observe(
+            &permission,
+            r#"[{"type":"success","data":{"requestedMode":"default"}}]"#,
+        )
+        .await;
+        let decision = permission
+            .decide(tool, JsValue::Null, stale, "call".into())
+            .await
+            .unwrap();
+        assert_eq!(decision.get("type"), Some(&"allow".into()));
+    }
+
+    struct RecordingStore {
+        entries: Mutex<Vec<JsValue>>,
+        gate: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+        started: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        fail: std::sync::atomic::AtomicBool,
+        executor: std::thread::ThreadId,
+    }
+    impl crate::storage::TranscriptStore for RecordingStore {
+        fn append(
+            &self,
+            _: &crate::storage::TranscriptKey,
+            entry: &JsValue,
+        ) -> crate::storage::StoreResult<()> {
+            if entry.get("type") == Some(&"model_stream_event".into()) {
+                assert_ne!(std::thread::current().id(), self.executor);
+                if let Some(started) = self.started.lock().unwrap().take() {
+                    let _ = started.send(());
+                }
+                if let Some(gate) = self.gate.lock().unwrap().take() {
+                    gate.recv_timeout(std::time::Duration::from_secs(5))
+                        .unwrap();
+                }
+                if self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Err(crate::storage::LedgerError::Invalid(
+                        "record fixture failed".into(),
+                    ));
+                }
+            }
+            self.entries.lock().unwrap().push(entry.clone());
+            Ok(())
+        }
+        fn read(
+            &self,
+            _: &crate::storage::TranscriptKey,
+            _: Option<u64>,
+        ) -> crate::storage::StoreResult<crate::storage::TranscriptRead> {
+            Ok(crate::storage::TranscriptRead {
+                entries: self.entries.lock().unwrap().clone(),
+                diagnostics: vec![],
+            })
+        }
+    }
+    struct EventStream(std::collections::VecDeque<JsValue>);
+    impl model::ModelStream for EventStream {
+        fn next(&mut self) -> model::StreamFuture<'_, Option<JsValue>> {
+            Box::pin(async move { Ok(self.0.pop_front()) })
+        }
+        fn close(&mut self) -> model::StreamFuture<'_, ()> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+    fn recording_fixture() -> (RecordedStream, Arc<RecordingStore>) {
+        let store = Arc::new(RecordingStore {
+            entries: Mutex::default(),
+            gate: Mutex::default(),
+            started: Mutex::default(),
+            fail: false.into(),
+            executor: std::thread::current().id(),
+        });
+        let recorder = Arc::new(crate::storage::recorder::Recorder::new(
+            store.clone(),
+            crate::storage::TranscriptKey {
+                project_root: PathBuf::new(),
+                pilot_home: PathBuf::new(),
+                session_id: "s".into(),
+                transcript_path: PathBuf::new(),
+            },
+        ));
+        recorder.start_turn(&"s".into(), &"t".into()).unwrap();
+        recorder
+            .record_model_request(&"s".into(), &"t".into(), JsValue::Object(JsObject::new()))
+            .unwrap();
+        (
+            RecordedStream {
+                inner: Box::new(EventStream(vec!["first".into(), "second".into()].into())),
+                recorder,
+                session: "s".into(),
+                turn: "t".into(),
+                pending: None,
+            },
+            store,
+        )
+    }
+
+    #[tokio::test]
+    async fn recorded_stream_preserves_order_across_cancelled_pull() {
+        use model::ModelStream;
+        let (mut stream, store) = recording_fixture();
+        let (release, gate) = std::sync::mpsc::channel();
+        let (started, waiting) = tokio::sync::oneshot::channel();
+        *store.gate.lock().unwrap() = Some(gate);
+        *store.started.lock().unwrap() = Some(started);
+        let mut pull = stream.next();
+        tokio::select! {
+            _ = waiting => {},
+            result = &mut pull => panic!("event yielded before recording: {result:?}"),
+        }
+        drop(pull);
+        release.send(()).unwrap();
+        assert_eq!(stream.next().await.unwrap(), Some("first".into()));
+        assert_eq!(stream.next().await.unwrap(), Some("second".into()));
+        assert_eq!(stream.next().await.unwrap(), None);
+        let entries = store.entries.lock().unwrap();
+        let events: Vec<_> = entries
+            .iter()
+            .filter(|e| e.get("type") == Some(&"model_stream_event".into()))
+            .map(|e| e.get("event").unwrap().clone())
+            .collect();
+        assert_eq!(events, vec!["first".into(), "second".into()]);
+    }
+
+    #[tokio::test]
+    async fn recorded_stream_returns_record_failure_before_yielding_event() {
+        use model::ModelStream;
+        let (mut stream, store) = recording_fixture();
+        store.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            stream.next().await.unwrap_err().message,
+            JsString::from("record fixture failed")
+        );
+        assert!(stream.pending.is_none());
+        assert!(
+            !store
+                .entries
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|e| e.get("type") == Some(&"model_stream_event".into()))
+        );
+    }
 
     struct ContinuationPortFixture;
 
