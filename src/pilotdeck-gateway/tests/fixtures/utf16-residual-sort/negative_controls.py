@@ -7,7 +7,8 @@ instead of the folding `compare_utf16`. Each mutant reinstates the folded
 comparator at exactly one site and must compile, fail that site's bound
 replay assertion (the real TS gold cannot be reproduced by a folded
 U+FFFD order), and pass again after restoration. All selected outcomes are
-reported; --check-anchors is read-only.
+reported; --check-anchors mutates no source (it does take the tree lock,
+so a lock file may appear at the tree root).
 """
 import os
 from pathlib import Path
@@ -159,7 +160,7 @@ def main():
                fixture / 'generate.mts', fixture / 'README.md', Path(__file__),
                *(shared / name for name in (
                    'negative_process.py', 'negative_suite.py', 'negative_panic.py',
-                   'pending_reanchor.py'))]
+                   'pending_reanchor.py', 'negative_selection.py'))]
     try:
         with mutating_sources(root, guarded) as originals:
             for name, path, old, new, test, marker in selected:
