@@ -2243,8 +2243,110 @@ or `functools.partial` callee no longer loses the `status` write
 | **A def rebind, a dead star, a superseded star and a factory do not report** (false FAIL guard): `def imp(name): return None`; `if False: from exported import *`; `from exported import *` then `imp = lambda`; `imp = _factory()` over clean returns -- no module write. | `... kept reporting an import behind a module-scope def rebind / a dead star / a star superseded by a certain rebind / a factory over a clean lambda (round 41)` |
 | **A starred shift moves the selected index** (false PASS guard): `items = (*hs, lambda *a: None); items[1](...)` -- withdraw. | `... lost a receiver behind a starred shift of the selected index (round 41)` |
 | **A `**` merge or dynamic key overrides the selection** (false PASS guard): `items = {'k': lambda, **{'k': hs[0]}}`, `items = {'k': lambda, k2: hs[0]}` -- withdraw. | `... lost a receiver behind a dict merge override / a dynamic key override (round 41)` |
-| **A mutation between take-out and call invalidates the selection** (false PASS guard): `items.reverse()` / `items.pop()` then `items[0](...)` -- withdraw. | `... lost a receiver behind a reverse mutation / a pop mutation between take-out and call (round 41)` |
+| **A mutation between take-out and call invalidates the selection** (false PASS guard): `items.reverse()` / `items.pop(0)` then `items[0](...)` -- withdraw.  (The no-argument `pop()` spelling was the round-41 row's own error: it removes the *last* element and cannot move a leading selection -- the round-42 battery carries it as a clean twin.) | `... lost a receiver behind a reverse mutation / a pop mutation between take-out and call (round 41)` |
 | **A comprehension element and a dictcomp key relay** (false PASS guard): `items = ([h for h in hs],); items[0][0](...)`; `d = {h: None for h in hs}` iterated -- withdraw. | `... lost a receiver behind a comprehension display element / a dictcomp key relay (round 41)` |
 | **A walrus iter or `__getattribute__` callee hands the receiver** (false PASS guard): `for h in (_i := iter)((md,)): h.common = x`; `(_g := md.__getattribute__)('__dict__')`. | `... lost a receiver behind a walrus iter callee / a walrus getattribute callee (round 41)` |
 | **A wrapper whose only free name is the container still carries** (false PASS guard): `iter = lambda x: ((lambda x: None), (h for h in x))[1]` -- the receiver must withdraw. | `... severed the walk at a wrapper whose only free name is the container (round 41)` |
 | **A walrus setattr or partial callee writes the status** (false PASS guard): `(_s := setattr)(r, 'status', 'PASS')`; `(_p := functools.partial)(setattr, r, 'status')('PASS')` -- the write decodes. | `... lost a status write behind a walrus setattr callee / a walrus partial callee (round 41)` |
+
+### Closed by `fix-r1` round 42 (codex r41 C-P0-1..C-P0-9 / C-P1-1..C-P1-5; GLM r41 boundary P0-1 / P1#2, sibling P2#2 / P2#3; probe 2026-11-10)
+
+Every finding was probe-reproduced against the round-41 ruler and the r40
+baseline before any fix (probe log: `_tmp/20261109-issue-1953-revival/probe-r42-postfix.log`
+in the main repo; the "r41" column there is the round-41 commit, the "r42"
+column the fixed ruler).  Two reviewer claims were refuted by measurement and
+closed without code: the in-loop direct back-edge mutation (GLM boundary
+P0-1's primary shape -- a `for` statement's own subtree containment already
+catches it; the real hole was the closure variant) and the deep-tuple parse
+crash (the parser caps right-nested tuples far below the recursion limit on
+Python 3.14) -- the iterative rewrite still subsumes both defensively.
+
+The import family.  A **`class` judged by its `__new__`** (codex C-P0-1):
+`class imp: def __new__(cls, name): return sys` hands the module back and
+the round-41 `ClassDef` event proved nothing -- the capability test now walks
+the `__new__` body (decorator/metaclass keeps the conservative capable
+answer).  A **factory rebound after its `def`** (C-P0-2): a decorator, an
+import alias (`from functools import partial as factory`) and a `global`
+rebind each left the round-41 `factory_returns` resolving a stale def --
+`factory_returns` now refuses decorated defs and any name rebound anywhere in
+the module (`_name_rebound_beyond`: `global`, import aliases including `*`,
+same-named def/class, module-scope for/with targets and except names).  A
+**call whose only carrier is the `while` test** (C-P0-3): `_flow_marks`
+gives a while-test *expression* the outer loops, so the test call lost the
+loop context the r41 back-edge rule needed -- the event and call walks now
+derive loop context from their own walk (test/body inner, orelse and the
+one-shot for-iterable outer), marks only contribute conditionality.  A
+**walrus in a def default or a class base** (C-P0-4): headers evaluate at
+module scope and never entered the event table -- they do now.  A **starred
+unpack** (`imp, = (*(__import__,),)`, C-P0-5a) and a **lambda body that is
+a walrus or an if-expression over a known module** (C-P0-5b/c) complete the
+capable-value bins; the capability evaluation itself is a **worklist** now
+(C-P0-9a, GLM boundary P1#2): a 600-deep factory chain, a 1100-deep
+lambda chain (`_free_name_loads`, C-P0-9c) and a 1100-deep if-expression
+each crashed the whole audit on clean files, and a non-node operand (the
+`None` in `__import__ or None`) fell through the worklist and decided for
+the capable name queued behind it.  The false-report side: a **tuple
+unpack onto another name**, an **if-expression / boolean operator onto a
+clean lambda** (C-P1-1), an **uncalled lambda's walrus** (C-P1-2) and the
+**loop-boundary star shapes** (C-P1-3 -- the else-clause star after an
+in-loop call, the body star after a for-iterable call) no longer report.
+
+The display family.  The wrapper sever test dropped the **first
+generator's free name** (`[h for h in h]` reads its iterable before binding
+-- C-P0-6a) and **lambda defaults** now keep the outer shadow (C-P0-6b);
+`_free_name_loads` is a worklist.  `_display_mutated_between` grew the
+mutation classes the window missed (C-P0-7, GLM boundary P0-1): **closure
+mutations** (a nested def or lambda containing a display-mutating call,
+convicted only when a call to it sits in the window), **alias mutations**
+(`_alias = _items; _alias.reverse()` -- an alias fixpoint over whole-scope
+name assignments), **unbound `list.reverse(_items)`** and **for-target
+subscript writes** (`for _items[0] in (...)`).  Precision on `pop`: a
+no-argument `pop()` removes the *last* element and cannot move a leading
+selection, a literal `pop(k)` is priced against the leading index (C-P1-4;
+the round-41 battery row itself carried the wrong spelling -- now
+`pop(0)`, with the `pop()` clean twin).  `_relay_handle_roots` now checks
+`_carries_at` before reusing a handle-container history bucket, so a
+comprehension element or dictcomp key relayed from a container rebound to
+clean lambdas no longer withdraws (C-P1-5).
+
+The callee sites.  Eight scan/decoder sites read their callee through
+`_callee_expr` (C-P0-8): `_callee_names`, the `_nested_def_exits_zero`
+guard, `_delegated_exit`, the `_exit_target` caller, `_proven_callee`,
+`_unproven_expansion` (which also crashed on a walrus callee),
+`_unproven_update_on_summary` and the inline `update`/`setdefault`
+status check -- `(_u := report.update)(payload)` and `(_e := sys.exit)(0)`
+keep their markers.  `_dict_binding_keys` unwraps the callee too and
+counts `pop`/`popitem`/`clear`/`__setitem__`/`__delitem__` (GLM sibling
+P2#3): a walrus `update` or `__setitem__` callee no longer keeps a dict's
+keys bounded.
+
+Known residuals (follow-up issue, none reviewer-flagged as unfixed):
+the **positional star rule** keeps reporting the three else-clause /
+for-iterable shapes' *trailing* call (C-P1-3's readback) -- a star the call
+can still see by position conservatively re-exports any name, and the
+runtime export list is not statically knowable; a **closure defined after
+the binding and never called** still withdraws (pre-round-42 behaviour,
+conservative direction); and a **module-scope for/with target** rebinding
+a factory name registers as a factory-resolution blocker but not as a
+live() event.  The round-41 negative-control driver's interlock note
+("no strict subset of the import family's hunks reverses into runnable
+code") was overstrong (codex r41 C-P2-1): the builtins-delegation hunk
+reverts independently -- the round-42 driver splits that family so each
+subset carries its own red proof.
+
+| Shape | Self-test |
+|---|---|
+| **A class `__new__` returning the module keeps the alias capable** (false PASS guard): `class imp: def __new__(cls, name): return sys`. | `... dropped a real import behind a class __new__ returning the module (round 42)` |
+| **A factory rebound after its def keeps resolving** (false PASS guard): decorated, import-aliased and `global`-rebound factories over `factory(__import__)`. | `... dropped a real import behind a decorated factory / an import-aliased factory rebind / a global factory rebind (round 42)` |
+| **A while-test call carrier keeps its loop context** (false PASS guard): `while (s := imp('sys')) and (imp := __import__): ...`. | `... dropped a real import behind a while-test call carrier (round 42)` |
+| **A walrus in a def default or class base is a module-scope event** (false PASS guard): `def _g(x=(imp := __import__))`, `class _C(*((imp := __import__) and ()))`. | `... dropped a real import behind a walrus in a def default / a walrus in a class base (round 42)` |
+| **A starred unpack, a lambda-body walrus / if-expression and an `or` over a literal keep the alias capable** (false PASS guard): `imp, = (*(__import__,),)`; `imp = lambda name: (m := sys)`; `imp = lambda name: sys if True else None`; `imp = __import__ or None`; `imp = __import__ if True else None`. | `... dropped a real import behind a starred unpack of the builtin / a lambda body walrus over the module / a lambda body if-expression over the module / an or whose right operand is a literal / an if-expression whose true arm is the builtin (round 42)` |
+| **A tuple unpack onto another name, a decided arm onto a clean lambda and an uncalled walrus do not report** (false FAIL guard): `spare, imp = (__import__, clean)`; `imp = clean if True else __import__`; `imp = clean or __import__`; `f = lambda: (imp := __import__)`. | `... kept reporting an import behind a tuple unpack onto another name / an if-expression onto a clean lambda / a boolean operator onto a clean lambda / a walrus inside an uncalled lambda (round 42)` |
+| **A loop-boundary star does not leak into the loop** (false FAIL guard): an in-loop call under a for/else or while/else star, a for-iterable call under a body star -- the in-loop call stays refused. | `... kept an in-loop call live behind a for/else star after an in-loop call / a while/else star after an in-loop call / a body star after a for-iterable call (round 42)` |
+| **A first-generator free name and a lambda-default capture keep the wrapper** (false PASS guard): `iter = lambda x: (h for h in x)`; `iter = lambda x: (lambda x=x: (h for h in x))()`. | `... lost a receiver behind a first-generator free name / a lambda-default capture wrapper (round 42)` |
+| **Closure, alias, unbound and for-target mutations invalidate the selection** (false PASS guard): `def _mutate(): items.reverse()` called in the window; `alias = items; alias.reverse()`; `list.reverse(items)`; `for items[0] in (...)`. | `... lost a receiver behind a closure mutation defined before the binding / an alias mutation / an unbound list.reverse / a for-target subscript write (round 42)` |
+| **A `pop()` of the last element and relays from clean-rebound containers do not withdraw** (false FAIL guard): `items.pop()`; a comprehension element / dictcomp key over `_hs` rebound to clean lambdas. | `... withdrew a clean receiver behind a pop of the last element / a comprehension element after a clean rebind / a dictcomp key after a clean rebind (round 42)` |
+| **A walrus `report.update` / `sys.exit` callee keeps its marker** (false PASS guard): `(_u := report.update)(payload)`; `(_e := sys.exit)(0)`. | `... lost the write-status marker behind a walrus report.update callee / the exit-call-status marker behind a walrus sys.exit callee (round 42)` |
+| **A walrus update callee with an unproven payload is still an inline status write** (false PASS guard): `(_u := report.update)(payload)` inside a registered point, judged by the same `_unproven_expansion` arm as the plain spelling -- the negctl round-42 driver reverts the `unshared_status_slots` callee hunk alone, and the generic call branch (which already unwraps the callee since round 41) still reads a clean dict literal but not an unproven name, so the probe carries an unproven parameter. | `... did not flag an unproven update payload behind a walrus callee (round 42)` |
+| **A walrus `update` / `__setitem__` callee unbounds dict keys** (false PASS guard): `(_u := d.update)({'common': 1})`; `(_u := d.__setitem__)('common', 1)`. | `... kept dict keys bounded behind a walrus update callee / __setitem__ callee (round 42)` |
+| **Deep factory chains, lambda chains and if-expressions do not crash** (crash guard): a 600-deep factory chain (also clean -- no import reported), a 1100-deep lambda chain, a 1100-deep if-expression. | `... let a deep factory chain crash the import walk / let a deep factory chain report an import / let a deep lambda chain crash the free-name walk / let a deep if-expression crash the capability test (round 42)` |
