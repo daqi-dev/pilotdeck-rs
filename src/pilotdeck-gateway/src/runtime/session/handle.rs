@@ -304,7 +304,11 @@ impl LiveSessionHandle {
 
     fn reserve_activity(&self, maintenance: bool) -> Result<HandleActivity, RuntimeError> {
         let mut progress = self.0.progress.lock().unwrap();
-        if progress.state != HandleState::Active {
+        // #996: reserve-activity-ignores-inactive-handle admits the activity
+        // anyway (session-owner/schemata.py). Off — the original guard.
+        if progress.state != HandleState::Active
+            && !crate::mutants::on("reserve-activity-ignores-inactive-handle")
+        {
             return Err(RuntimeError::new("Agent handle is not active."));
         }
         if progress.activity {
@@ -345,7 +349,16 @@ impl LiveSessionHandle {
         // not an exactly-once dispatch for the lifetime of the handle.
         {
             let mut progress = self.0.progress.lock().unwrap();
-            if progress.state == HandleState::Disposed {
+            // #996: negative-control switches for the abort-contract rows
+            // (session-abort-contract/schemata.py). Off — the original guard.
+            let suppress = if crate::mutants::on("suppress-abort-while-draining") {
+                progress.state != HandleState::Active
+            } else if crate::mutants::on("forward-abort-after-disposed") {
+                false
+            } else {
+                progress.state == HandleState::Disposed
+            };
+            if suppress {
                 return Ok(());
             }
             progress.cancelled.get_or_insert_with(|| reason.clone());
@@ -516,12 +529,34 @@ impl Inner {
                 // composeDisposer inside configuredDisposer — runs before the
                 // session-owned runtime resources are disposed.
                 let mut disposal_failures = Vec::new();
-                if let Some(mut lease) = guard.lease.take()
+                // #996: disposed-before-lease-release marks the handle
+                // Disposed before the guard releases the lease, exposing the
+                // window the abort-contract row kills.
+                if crate::mutants::on("disposed-before-lease-release") {
+                    use std::sync::PoisonError;
+                    // Single line on purpose: the drain-loop anchor in
+                    // session-drop-release counts the multi-line
+                    // `progress\n.lock()\n.unwrap_or_else(...)` shape.
+                    let mut progress = progress.lock().unwrap_or_else(PoisonError::into_inner);
+                    progress.state = HandleState::Disposed;
+                }
+                // #996: reverted-cleanup-order restores the pre-alignment Rust
+                // order — the session window opens first, so the lease window
+                // never opens (killed by the in-test 3-second bound).
+                let lease_first = !crate::mutants::on("reverted-cleanup-order");
+                if lease_first
+                    && let Some(mut lease) = guard.lease.take()
                     && let Err(error) = lease.release().await
                 {
                     disposal_failures.push(error);
                 }
                 if let Err(error) = session.dispose().await {
+                    disposal_failures.push(error);
+                }
+                if !lease_first
+                    && let Some(mut lease) = guard.lease.take()
+                    && let Err(error) = lease.release().await
+                {
                     disposal_failures.push(error);
                 }
                 if let Err(error) = aggregate("Failed to dispose agent session.", disposal_failures)
@@ -602,7 +637,11 @@ impl SessionSubmission {
     pub async fn next(&mut self) -> Result<Option<JsValue>, RuntimeError> {
         let result = self.stream.next().await;
         if !matches!(result, Ok(Some(_))) {
-            self._activity.take();
+            // #996: owner-slot-kept-after-none retains the activity slot
+            // (live-session/schemata.py). Off — the release.
+            if !crate::mutants::on("owner-slot-kept-after-none") {
+                self._activity.take();
+            }
         }
         result
     }

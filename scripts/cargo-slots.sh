@@ -11,6 +11,11 @@
 # 同一进程树只算一次：`cargo clippy` 会派生 `cargo-clippy`，其下再派生 `cargo check`，三层首词都匹配 cargo(-xxx)，
 # 逐个 grep 会把一次 clippy 记成 2–3 次（11-05 巡检据此误判「7–8 棵树绕过闸门」，实际一条都没绕过；
 # fleet.py 已按祖先去重，本脚本对齐）。
+# 计数残余（#2516 fix-r1 仲裁 2026-11-09，登记不修；fix-r3 补齐可修的两半）：本表清点信任
+# 本机 PATH——PATH 受控时整表清点均不在边界内（敌意 argv 的字面 \n 可撕行、撕出片段可拼成
+# 任意「合法」行，表内健全性检查无法完备闭合）。残余登记见
+# src/pilotdeck-gateway/tests/fixtures/model-complete/README.md「已知残余」段与跟进单 #2609
+# （机制重设计：绕开 ps 文本解析）；零可解析行 / 缺调用者 pid 两半已与探针对称当轮修复（#2506）。
 #
 # 用法：scripts/cargo-slots.sh             （不再接受上限参数：名额由统一闸决定）
 #       scripts/cargo-slots.sh --refresh-cap（只刷新名额缓存，供换机 / 首次预热；不数进程）
@@ -19,7 +24,7 @@
 #   0   有空位
 #   1   已满（调用方等待后重试）
 #   2   保留：本脚本从不主动使用。bash 自身语法错误会返回 2，调用方见到就是「脚本坏了」，不得放行。
-#   3   取样失败（ps 失败 / 输出为空），无法判断名额
+#   3   取样失败（ps 失败 / 输出为空 / 零可解析行 / 快照缺调用者 pid），无法判断名额
 #   4   统一闸存在但给不出名额（--status 非 0 / 输出解不出名额 / 冷启动超时且本机无名额缓存 /
 #       HOME 未设或不是目录导致闸路径无法确定 / 本机有 pdrs-ops、pdrs-runner-tools 或共享池迹象
 #       但闸不可执行 / 名额缓存超过 24 h 未从闸刷新）→ fail-closed。冷启动超时的恢复路径是人工跑
@@ -360,15 +365,26 @@ fi
 # awk 对空输入照样 `print c+0`，闸门就变成假 PASS（与 delivery-orphan「探测失败不再被当成没人」同类）。
 snap=$(ps -Aww -o pid=,ppid=,args=) || { echo "cargo-slots: ps 取样失败，无法判断名额（不按 0 放行）" >&2; exit 3; }
 [ -n "$snap" ] || { echo "cargo-slots: ps 输出为空，无法判断名额（不按 0 放行）" >&2; exit 3; }
-n=$(printf '%s\n' "$snap" | awk '
-  { par[$1]=$2; exe=$3; sub(/.*\//,"",exe)
-    if (exe ~ /^cargo(-[a-z]+)?$/) isc[$1]=1 }
+# 与 model-complete 探针 `slots_from_ps` 对称的取样健全性（#2506，#2516 fix-r3）：
+# awk 对不可解析输入照样 `print c+0`，ps 版本/格式漂移打出整表诊断行（rc=0）、或快照
+# 里没有本脚本自身 pid 时，满槽会被读成「有空位」。零可解析行与缺调用者 pid 都说明
+# 这张快照无法作证，按取样失败处理（本脚本 pid 即 `-v me=$$`，真取样必然包含它）。
+counts=$(printf '%s\n' "$snap" | awk -v me=$$ '
+  { if ($1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && NF >= 3) {
+      par[$1]=$2; rows++
+      if ($1 == me) me_seen=1
+      exe=$3; sub(/.*\//,"",exe)
+      if (exe ~ /^cargo(-[a-z]+)?$/) isc[$1]=1
+    } }
   END { for (p in isc) {
           q=par[p]; d=0
           while ((q in par) && !(q in isc) && d++ < 4096) q=par[q]
           if (!(q in isc)) c++
         }
-        print c+0 }')
+        print c+0, rows+0, me_seen+0 }')
+read -r n parsed me_seen <<<"$counts"
+[ "${parsed:-0}" -gt 0 ] || { echo "cargo-slots: ps 输出零可解析行，无法判断名额（不按 0 放行）" >&2; exit 3; }
+[ "${me_seen:-0}" -eq 1 ] || { echo "cargo-slots: ps 快照缺调用者 pid，无法判断名额（不按 0 放行）" >&2; exit 3; }
 # 判定（见头注释「判定口径」）：n 抓得到不走闸的直接 cargo，USED 抓得到「shim 已取槽、还没 exec
 # 出 cargo」的冷 du 窗口。但 USED 只在它确实是最近从闸拿到的时候才算数——缓存里的快照既可能把
 # 「已满」看成空（旧 used=0），也可能把「空」看成满（旧 used=cap 卡住整段 TTL），两个方向都会错。

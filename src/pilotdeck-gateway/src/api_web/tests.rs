@@ -1401,6 +1401,46 @@ fn write_dot_when_the_root_becomes_a_directory_inside_the_window_answers_eisdir(
     let _ = fs::remove_dir_all(&parent);
 }
 
+/// #2568: a root whose existence keeps flipping between the missing-root
+/// open and the ancestor pin. The pre-fix `write_root_itself` ↔
+/// `create_root_file` pair expressed "decide again" as an unbounded
+/// back-call — the same flip repeated crashed the process on a stack
+/// overflow (measured: `_tmp/20261109-p2batch-h/s4-overflow-probe.out`).
+/// The bounded re-decide loop answers the fail-closed boundary refusal
+/// instead, and the write never reports success over a root it could not
+/// settle a verdict on.
+#[cfg(unix)]
+#[test]
+fn write_dot_on_a_root_that_keeps_flipping_answers_the_bounded_refusal() {
+    let (parent, _root) = fixture();
+    let fresh = parent.join("flip-root");
+    let flipping = fresh.clone();
+    let _guard = files::test_hook::set(move |phase| match phase {
+        // Between one decision and the next open the root vanishes again …
+        "root-redecide" => {
+            let _ = fs::remove_dir(&flipping);
+        }
+        // … and inside the pin window it is a directory again, so the tail
+        // is empty and the write has to decide again.
+        "create-root" => {
+            fs::create_dir_all(&flipping).expect("#2568 create the root inside the window");
+        }
+        _ => {}
+    });
+    let service =
+        files::ProjectFileService::new(fresh.to_str().expect("#2568 the flipping root is UTF-8"));
+    let result = service.write_file(".", &pilotdeck_protocol::JsString::from("y"), false);
+    match result {
+        Err(files::FilesError::Workspace { raw }) => assert_eq!(
+            raw, ".",
+            "#2568 the exhausted re-decide answers the boundary refusal on the requested path"
+        ),
+        Err(_) => panic!("#2568 a root that keeps flipping answers the boundary refusal"),
+        Ok(()) => panic!("#2568 a root that keeps flipping must never be written"),
+    }
+    let _ = fs::remove_dir_all(&parent);
+}
+
 /// #2354 fix-r1: Node's EISDIR names the literal target — node v22.22.0
 /// measured (`fix-r1/ts-probe/node-write-refusal.txt`): a write whose path
 /// goes through an in-root directory symlink answers `open '<root>/link'`,

@@ -273,9 +273,34 @@ fn failure<T>(result: Result<T, RuntimeError>) -> String {
         Err(error) => error.message,
     }
 }
+/// #996: owner-tampered-source-hash corrupts the loaded oracle in memory —
+/// the same bytes the old on-disk control wrote to the fixture — zeroing the
+/// recorded hash for src/gateway/SessionRouter.ts so the provenance check
+/// fails before the oracle data is read.
+fn tampered_source_hash(json: &str) -> String {
+    const KEY: &str = "\"src/gateway/SessionRouter.ts\": \"";
+    const ZEROS: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+    let start = json
+        .find(KEY)
+        .expect("#996 owner oracle records the SessionRouter source hash")
+        + KEY.len();
+    let mut corrupted = json[..start].to_string();
+    corrupted.push_str(ZEROS);
+    corrupted.push_str(&json[start + ZEROS.len()..]);
+    corrupted
+}
+
 fn case(name: &str) -> Value {
-    crate::test_baseline::oracle(ORACLE);
-    serde_json::from_str::<Value>(ORACLE).unwrap()["cases"]
+    // #996: the switch zeroes the loaded copy's recorded hash, never the
+    // fixture on disk; the provenance panic fires before the data is read,
+    // the same shape the old on-disk mutation produced.
+    let oracle_json = if crate::mutants::on("owner-tampered-source-hash") {
+        tampered_source_hash(ORACLE)
+    } else {
+        ORACLE.to_string()
+    };
+    crate::test_baseline::oracle(&oracle_json);
+    serde_json::from_str::<Value>(&oracle_json).unwrap()["cases"]
         .as_array()
         .unwrap()
         .iter()

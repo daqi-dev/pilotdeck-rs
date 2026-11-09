@@ -1267,6 +1267,7 @@ mod comparison_tests {
     fn stderr_complete_node_tail_preserves_business_line() {
         let mut normalized = 0;
         let mut retained = 0;
+        let mut normalized_ids: BTreeSet<&str> = BTreeSet::new();
         for row in captured()["captures"]
             .as_array()
             .expect("#1145 captured matrix")
@@ -1291,13 +1292,26 @@ mod comparison_tests {
                         "#1145 complete TS tail preserves business bytes"
                     );
                     normalized += 1;
+                    normalized_ids
+                        .insert(row["input"]["id"].as_str().expect("#1145 captured cell id"));
                 }
             }
         }
         assert_eq!(
             (normalized, retained),
             (20, 8),
-            "#1145 observed business-prefixed and unprefixed denominator"
+            "#2509 observed business-prefixed (20 = 16 pre-#1178 + 4 abort-rst) and unprefixed (8) denominator"
+        );
+        // #2509: specs/cli-parity/normalization.md §7 states the 20
+        // business-prefixed stderr cells are the same ID set as the stable
+        // close-order list. Pin that claim here instead of leaving it a
+        // one-time manual observation: a recapture that flips one cell's
+        // stderr shape while its closes shape stays put would otherwise
+        // keep every count green while the claim silently turns false.
+        let stable: BTreeSet<&str> = STABLE_DIFF_CELLS.iter().map(|(id, _)| *id).collect();
+        assert_eq!(
+            normalized_ids, stable,
+            "#2509 business-prefixed stderr set is the stable close-order list"
         );
     }
 
@@ -2183,34 +2197,56 @@ mod comparison_tests {
     /// #1178: the four abort-rst cells share that causal shape (the RST kills
     /// the query socket before the client's finally closes control) and stay
     /// order-strict the same way.
+    ///
+    /// #2509: the declared list lives at module level so the
+    /// business-prefixed stderr set can be asserted to be the same ID set
+    /// (normalization.md §7). The type keeps the literal 20 on purpose --
+    /// the constant below and the measured source.json set keep the
+    /// triangle's other two independent edit points.
+    const STABLE_DIFF_CELLS: [(&str, u64); 20] = [
+        ("run--query-hello-hold-sigint", 1006),
+        ("run--query-hello-hold-sigterm", 1006),
+        ("run--query-hello-reject-sigint", 4003),
+        ("run--query-hello-reject-sigterm", 4003),
+        ("run--query-model-reject-sigint", 1006),
+        ("run--query-model-reject-sigterm", 1006),
+        ("run--query-resume-reject-sigint", 1006),
+        ("run--query-resume-reject-sigterm", 1006),
+        ("resume--query-hello-hold-sigint", 1006),
+        ("resume--query-hello-hold-sigterm", 1006),
+        ("resume--query-hello-reject-sigint", 4003),
+        ("resume--query-hello-reject-sigterm", 4003),
+        ("resume--query-model-reject-sigint", 1006),
+        ("resume--query-model-reject-sigterm", 1006),
+        ("resume--query-resume-reject-sigint", 1006),
+        ("resume--query-resume-reject-sigterm", 1006),
+        ("run--abort-rst-sigint", 1006),
+        ("run--abort-rst-sigterm", 1006),
+        ("resume--abort-rst-sigint", 1006),
+        ("resume--abort-rst-sigterm", 1006),
+    ];
+
     #[test]
     fn stable_query_before_control_cells_keep_concrete_order() {
+        // #2509: the declared list length gets its own constant, so the
+        // const's type literal, the constant, and the measured source.json
+        // set form a triangle: a list that loses a cell in lockstep with
+        // source.json (the declared list and the measured set shrinking
+        // together) can no longer pass on internal consistency alone. The
+        // type keeps the literal 20 on purpose -- using the constant there
+        // would collapse the triangle and deaden the assert below. 20 = 16
+        // measured #1260 stable-diff cells + 4 #1178 abort-rst cells.
+        const EXPECTED_STABLE_DIFF_COUNT: usize = 20;
         let source: Value =
             serde_json::from_slice(include_bytes!("../fixtures/sdk-signals/source.json"))
                 .expect("#1260 stable order original JSON");
         let registered: BTreeSet<String> = registered_unordered_close_ids().into_iter().collect();
-        let cells: [(&str, u64); 20] = [
-            ("run--query-hello-hold-sigint", 1006),
-            ("run--query-hello-hold-sigterm", 1006),
-            ("run--query-hello-reject-sigint", 4003),
-            ("run--query-hello-reject-sigterm", 4003),
-            ("run--query-model-reject-sigint", 1006),
-            ("run--query-model-reject-sigterm", 1006),
-            ("run--query-resume-reject-sigint", 1006),
-            ("run--query-resume-reject-sigterm", 1006),
-            ("resume--query-hello-hold-sigint", 1006),
-            ("resume--query-hello-hold-sigterm", 1006),
-            ("resume--query-hello-reject-sigint", 4003),
-            ("resume--query-hello-reject-sigterm", 4003),
-            ("resume--query-model-reject-sigint", 1006),
-            ("resume--query-model-reject-sigterm", 1006),
-            ("resume--query-resume-reject-sigint", 1006),
-            ("resume--query-resume-reject-sigterm", 1006),
-            ("run--abort-rst-sigint", 1006),
-            ("run--abort-rst-sigterm", 1006),
-            ("resume--abort-rst-sigint", 1006),
-            ("resume--abort-rst-sigterm", 1006),
-        ];
+        let cells = STABLE_DIFF_CELLS;
+        assert_eq!(
+            cells.len(),
+            EXPECTED_STABLE_DIFF_COUNT,
+            "#2509 stable-diff list length is pinned by its own constant"
+        );
         let unique: BTreeSet<_> = cells.iter().map(|(id, _)| *id).collect();
         assert_eq!(unique.len(), cells.len(), "#1260 unique stable-diff IDs");
         // Exhaustiveness: across all 100 captures the "query (2) closes first,
@@ -2291,22 +2327,39 @@ mod comparison_tests {
         }
     }
 
-    /// #1178: pin the four abort-rst originals. Every surface asserted here is
-    /// TS-measured, including that these cells need neither an approved stderr
-    /// exception nor an unordered-close registration: the business-prefixed Node
-    /// tail normalizes to the single business line, and the query RST close
-    /// causally precedes the client's own control close.
+    /// #1178: pin the four abort-rst originals through the shared comparator
+    /// (the TS original against its Rust projection). The comparator call in
+    /// this test is a projection-shape pin, not a
+    /// value pin: its `actual` side is derived from the same original, so
+    /// the value surfaces (input.signal/stage, status, naturalExit,
+    /// cleanupExit, aborts, connections, activeAfterExit, stdout) keep their
+    /// hand-written literal assertions. What the comparator cannot express
+    /// also stays hand-written: the rstApplied milestone, the reset's trace
+    /// position on the query connection behind the dispatched abort RPC, no
+    /// wire event after the reset, and the business-prefixed Node tail
+    /// normalizing to the single business line. Strict close order and the
+    /// exception-free stderr domain for these cells stay pinned by the
+    /// stable-order list and the approved match-domain tests.
     #[test]
     fn rst_cells_keep_verified_original_shape() {
         let source: Value =
             serde_json::from_slice(include_bytes!("../fixtures/sdk-signals/source.json"))
                 .expect("#1178 RST original JSON");
+        // #2509: the declared rst axis length gets its own constant, the
+        // same literal / constant / measured-set triangle as the
+        // stable-diff list above (4 = run|resume x SIGINT|SIGTERM).
+        const EXPECTED_ABORT_RST_COUNT: usize = 4;
         let cells: [(&str, &str); 4] = [
             ("run--abort-rst-sigint", "SIGINT"),
             ("run--abort-rst-sigterm", "SIGTERM"),
             ("resume--abort-rst-sigint", "SIGINT"),
             ("resume--abort-rst-sigterm", "SIGTERM"),
         ];
+        assert_eq!(
+            cells.len(),
+            EXPECTED_ABORT_RST_COUNT,
+            "#2509 abort-rst list length is pinned by its own constant"
+        );
         // Exhaustiveness: the RST axis is exactly these four measured cells.
         let measured: BTreeSet<&str> = source["captures"]
             .as_array()
@@ -2347,10 +2400,12 @@ mod comparison_tests {
                 json!({"code":1,"signal":null,"cleanup":false}),
                 "#1178 RST natural exit: {id}"
             );
+            // Indexing a missing key also yields `Value::Null`, so pin the
+            // key's presence explicitly: the original records `cleanupExit: null`.
             assert_eq!(
-                expected["cleanupExit"],
-                Value::Null,
-                "#1178 RST cleanup exit: {id}"
+                expected.get("cleanupExit"),
+                Some(&Value::Null),
+                "#1178 RST cleanup exit is recorded null: {id}"
             );
             assert_eq!(expected["aborts"], json!(1), "#1178 RST abort count: {id}");
             assert_eq!(
@@ -2378,26 +2433,6 @@ mod comparison_tests {
                 stderr_matches(raw, b"Gateway WebSocket closed.\n"),
                 "#1178 RST business-prefixed Node tail normalizes to the business line: {id}"
             );
-            assert!(
-                approved_signal_stderr(id).is_none(),
-                "#1178 RST cells take no approved stderr exception: {id}"
-            );
-            assert!(
-                !UNORDERED_CLOSE_CASES.contains(&id),
-                "#1178 RST close order stays strict: {id}"
-            );
-            let closes = expected["closes"].as_array().expect("#1178 RST closes");
-            assert_eq!(closes.len(), 2, "#1178 RST close pair: {id}");
-            assert_eq!(
-                (
-                    closes[0]["connection"].as_u64(),
-                    closes[0]["code"].as_u64(),
-                    closes[1]["connection"].as_u64(),
-                    closes[1]["code"].as_u64(),
-                ),
-                (Some(2), Some(1006), Some(1), Some(1005)),
-                "#1178 RST query RST close precedes the control close: {id}"
-            );
             let trace = expected["trace"].as_array().expect("#1178 RST trace");
             let rst = trace
                 .iter()
@@ -2417,6 +2452,60 @@ mod comparison_tests {
                 trace[rst]["connection"],
                 json!(2),
                 "#1178 RST resets the query connection: {id}"
+            );
+            assert!(
+                trace[rst + 1..]
+                    .iter()
+                    .all(|event| event["kind"] != "wire-receive" && event["kind"] != "wire-send"),
+                "#1178 no wire event after the server RST: {id}"
+            );
+            // #2500: the projection-shape pin. The projection applies the
+            // same TS-to-Rust normalization as the close-order pin: close
+            // rows keep only the compared fields (these cells take no reason
+            // exception), and the TS listener-removal observation collapses
+            // to the Rust hook form. The `actual` side is derived from the
+            // same original, so this call proves the projection stays
+            // accepted by the comparator (and fails if the projection shape
+            // drifts from the comparator's own close/hook derivation) -- it
+            // is not a value pin; the value surfaces keep the hand-written
+            // literal assertions above.
+            let mut actual = expected.clone();
+            let closes = expected["closes"].as_array().expect("#1178 RST closes");
+            assert_eq!(closes.len(), 2, "#1178 RST close pair: {id}");
+            actual["closes"] = json!(
+                closes
+                    .iter()
+                    .map(|row| {
+                        json!({"connection":row["connection"],"code":row["code"],
+                    "reason":row["reason"],"cleanup":row["cleanup"]})
+                    })
+                    .collect::<Vec<_>>()
+            );
+            let removed = expected["hooks"]
+                .as_array()
+                .expect("#1178 RST hooks")
+                .iter()
+                .any(|row| {
+                    row["hook"]["kind"] == "listener-removed"
+                        && row["hook"]["listeners"]["SIGINT"] == 0
+                        && row["hook"]["listeners"]["SIGTERM"] == 0
+                });
+            actual["hooks"] = if removed {
+                json!([{"kind":"listeners-removed"}])
+            } else {
+                json!([])
+            };
+            let stdout = expected["stdout"].as_str().expect("#1178 RST stdout");
+            assert!(
+                compare_surfaces(
+                    id,
+                    expected,
+                    &actual,
+                    stdout.as_bytes(),
+                    ts_stderr(raw).as_bytes()
+                )
+                .is_empty(),
+                "#1178 RST projection shape passes the comparator: {id}"
             );
         }
     }

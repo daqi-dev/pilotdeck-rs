@@ -632,6 +632,193 @@ fn upload_cancel_refuses_completed_and_removes_pending_files() {
     assert_eq!(status(&cancelled), "cancelled");
     assert!(!files.exists(), "cancel removes the in-gate files dir");
 }
+/// #2279: the expiry sweep runs between `complete`'s outside-`get` snapshot
+/// and its in-gate re-read — the rendezvous crosses the clock past
+/// `expiresAt`, then `cleanup_expired` removes the whole task directory. The
+/// pre-fix in-gate fallback to the outside snapshot let `write`'s `make_dir`
+/// resurrect the directory and report a completion whose files the sweep had
+/// already removed (the #1631 shape, recreated through the sweep race).
+#[test]
+fn upload_complete_after_the_sweep_removed_the_record_refuses_without_resurrecting() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    h.store
+        .write_part("upload-1", "file-1", &b"hello"[..])
+        .unwrap();
+    let task_dir = project.join(".tmp/chat-uploads/upload-1");
+    assert!(
+        task_dir.join("files/file-1").exists(),
+        "precondition — uploaded bytes in place"
+    );
+    // The interleave: the clock crosses expiresAt and the sweep removes the
+    // record while `complete` is between its snapshot and the gate.
+    let (store, clock) = (h.store.clone(), h.now.clone());
+    h.store.set_pre_mutate_hook(Some(Arc::new(move || {
+        clock.store(EPOCH + DAY + 1, Ordering::SeqCst);
+        assert_eq!(
+            store.cleanup_expired().unwrap(),
+            1,
+            "the sweep removes the record"
+        );
+    })));
+    let result = h.store.complete("upload-1");
+    h.store.set_pre_mutate_hook(None);
+    match &result {
+        Err(e) => assert_eq!(
+            e.code, "UPLOAD_NOT_FOUND",
+            "a swept upload is refused, not judged on the stale snapshot"
+        ),
+        Ok(record) => panic!(
+            "#2279 complete reported success over a swept record: {}",
+            compact(record)
+        ),
+    }
+    assert!(
+        !task_dir.join("metadata.json").exists(),
+        "#2279 the swept metadata must not be resurrected"
+    );
+    assert!(
+        !task_dir.exists(),
+        "#2279 the swept task directory must stay gone"
+    );
+}
+
+/// The `cancel` sibling of the #2279 interleave: same sweep window, the
+/// pre-fix fallback rebuilt a cancelled record on the empty directory.
+#[test]
+fn upload_cancel_after_the_sweep_removed_the_record_refuses_without_resurrecting() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    h.store
+        .write_part("upload-1", "file-1", &b"hello"[..])
+        .unwrap();
+    let task_dir = project.join(".tmp/chat-uploads/upload-1");
+    let (store, clock) = (h.store.clone(), h.now.clone());
+    h.store.set_pre_mutate_hook(Some(Arc::new(move || {
+        clock.store(EPOCH + DAY + 1, Ordering::SeqCst);
+        assert_eq!(
+            store.cleanup_expired().unwrap(),
+            1,
+            "the sweep removes the record"
+        );
+    })));
+    let result = h.store.cancel("upload-1");
+    h.store.set_pre_mutate_hook(None);
+    match &result {
+        Err(e) => assert_eq!(
+            e.code, "UPLOAD_NOT_FOUND",
+            "a swept upload is refused, not judged on the stale snapshot"
+        ),
+        Ok(record) => panic!(
+            "#2279 cancel reported success over a swept record: {}",
+            compact(record)
+        ),
+    }
+    assert!(
+        !task_dir.join("metadata.json").exists(),
+        "#2279 the swept metadata must not be resurrected"
+    );
+    assert!(
+        !task_dir.exists(),
+        "#2279 the swept task directory must stay gone"
+    );
+}
+
+// #2275: a refusal writes and emits nothing. Both refusal shapes of the
+// pair — completing a settled record and cancelling a completed one — must
+// answer their semantic code, leave the metadata bytes untouched, publish
+// no event, and never surface an injected metadata-write fault in place of
+// the verdict: pre-#2275 the gate rewrote the record even for a refusal, so
+// the fault answered instead of the code and poisoned the queue behind a
+// verdict that needed no disk at all.
+#[test]
+fn upload_refusals_write_nothing_emit_nothing_and_do_not_poison_the_gate() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    completed(&h);
+    let metadata = project.join(".tmp/chat-uploads/upload-1/metadata.json");
+    let before = fs::read(&metadata).unwrap();
+    let sub = h.store.subscribe("upload-1");
+    // Still short of expiresAt, but any `updatedAt` bump would land on this
+    // fresh timestamp and show up in the bytes.
+    h.now.store(EPOCH + DAY - 1000, Ordering::SeqCst);
+    inject(&h, "metadata-write", libc::EIO);
+    assert_eq!(
+        h.store.complete("upload-1").unwrap_err().code,
+        "UPLOAD_INVALID_STATE",
+        "#2275 the refusal answers its semantic code, not the injected write fault"
+    );
+    assert_eq!(
+        h.store.cancel("upload-1").unwrap_err().code,
+        "UPLOAD_ALREADY_COMPLETED",
+        "#2275 the refusal answers its semantic code, not the injected write fault"
+    );
+    assert_eq!(
+        h.store.faults.lock().unwrap().len(),
+        1,
+        "#2275 no refusal reached a metadata write, so the fault is still queued"
+    );
+    assert_eq!(
+        fs::read(&metadata).unwrap(),
+        before,
+        "#2275 the metadata bytes are stable across refusals"
+    );
+    assert!(
+        sub.receiver.try_recv().is_err(),
+        "#2275 a refusal emits no event"
+    );
+    // The gate is not poisoned: the same id still mutates afterwards. Clear
+    // the still-queued fault first, then let the sweep below expire the
+    // record through the very queue the refusals used.
+    h.store.faults.lock().unwrap().clear();
+    h.now.store(EPOCH + DAY + 1, Ordering::SeqCst);
+    assert_eq!(
+        status(&h.store.get("upload-1").unwrap()),
+        "expired",
+        "#2275 the gate still accepts mutations after a refusal"
+    );
+}
+
+// #2275: cancelling an already-cancelled upload is a no-op, not a change:
+// `Ok` with the in-gate record, nothing written, emitted, or stamped.
+#[test]
+fn upload_cancel_of_a_cancelled_upload_is_a_silent_noop() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    h.store.cancel("upload-1").unwrap();
+    let metadata = project.join(".tmp/chat-uploads/upload-1/metadata.json");
+    let before = fs::read(&metadata).unwrap();
+    let sub = h.store.subscribe("upload-1");
+    h.now.store(EPOCH + DAY - 1000, Ordering::SeqCst);
+    let again = h.store.cancel("upload-1").unwrap();
+    assert_eq!(status(&again), "cancelled");
+    assert_eq!(
+        string(&again, "updatedAt").unwrap(),
+        string(
+            &parse_json(&String::from_utf8(before.clone()).unwrap()).unwrap(),
+            "updatedAt"
+        )
+        .unwrap(),
+        "#2275 the no-op leaves updatedAt alone"
+    );
+    assert_eq!(
+        fs::read(&metadata).unwrap(),
+        before,
+        "#2275 the metadata bytes are stable across the no-op"
+    );
+    assert!(
+        sub.receiver.try_recv().is_err(),
+        "#2275 a no-op emits no event"
+    );
+}
+
 fn completed(h: &Harness) {
     let manifest = parse_json(&compact(&value(
         &crate::test_baseline::oracle(ORACLE),
@@ -742,7 +929,7 @@ fn upload_rename_failures_retry_or_clean_temp() {
     for errno in [libc::EPERM, libc::EEXIST, libc::EACCES] {
         inject(&h, "metadata-rename", errno);
         h.store
-            .mutate(&h.store.get("upload-1").unwrap(), |_| {})
+            .mutate(&h.store.get("upload-1").unwrap(), |_| true)
             .unwrap();
         assert_eq!(leftovers(&task_dir_of(&project), ".tmp"), 0);
     }
@@ -2026,12 +2213,17 @@ fn plain_root_rejects_a_root_that_resolves_elsewhere() {
 //
 // The swap happens inside the `now` callback: after the round's plain check and
 // its root snapshot, and before the recursive delete. That is the whole-round
-// window a crafted tree gets, with no timing luck involved.
+// window a crafted tree gets, with no timing luck involved. `fire_at` picks
+// which clock read does the swapping — the sweep paths pass 0 (the first read
+// is already past their snapshot point), the cancel paths pass 1 so the swap
+// lands after `mutate`'s in-gate re-read (#2279 refuses a record the swap has
+// already removed) and before the metadata write and the guarded delete.
 fn store_swapping_tmp(
     project: &Path,
     outside: &Path,
     clock: Arc<AtomicI64>,
     swaps: Arc<AtomicUsize>,
+    fire_at: usize,
 ) -> Arc<UploadStore> {
     let (resolved, listed) = (project.to_owned(), project.to_owned());
     let (root, target) = (project.to_owned(), outside.to_owned());
@@ -2041,7 +2233,7 @@ fn store_swapping_tmp(
         move || Ok(vec![listed.clone()]),
     );
     opts.now = Arc::new(move || {
-        if swap.fetch_add(1, Ordering::SeqCst) == 0 {
+        if swap.fetch_add(1, Ordering::SeqCst) == fire_at {
             fs::rename(root.join(".tmp"), root.join(".tmp.real")).unwrap();
             std::os::unix::fs::symlink(&target, root.join(".tmp")).unwrap();
         }
@@ -2071,6 +2263,7 @@ fn upload_cleanup_does_not_follow_a_root_swapped_mid_round() {
         &outside,
         Arc::new(AtomicI64::new(EPOCH)),
         swaps.clone(),
+        0,
     );
     store.cleanup_expired().unwrap();
 
@@ -2108,7 +2301,7 @@ fn upload_cleanup_record_removal_does_not_follow_a_root_swapped_mid_round() {
 
     let swaps = Arc::new(AtomicUsize::new(0));
     let clock = Arc::new(AtomicI64::new(EPOCH));
-    let store = store_swapping_tmp(&project, &outside, clock.clone(), swaps.clone());
+    let store = store_swapping_tmp(&project, &outside, clock.clone(), swaps.clone(), 0);
     store.cleanup_expired().unwrap();
 
     assert_eq!(
@@ -2181,6 +2374,7 @@ fn upload_lease_cleanup_does_not_follow_a_root_swapped_mid_round() {
         &outside,
         Arc::new(AtomicI64::new(EPOCH)),
         swaps.clone(),
+        0,
     );
     store.cleanup_expired().unwrap();
 
@@ -2476,6 +2670,7 @@ fn store_swapping_dir(
     outside: &Path,
     clock: Arc<AtomicI64>,
     swaps: Arc<AtomicUsize>,
+    fire_at: usize,
 ) -> Arc<UploadStore> {
     let (resolved, listed) = (project.to_owned(), project.to_owned());
     let (target, dir) = (outside.to_owned(), dir);
@@ -2485,7 +2680,7 @@ fn store_swapping_dir(
         move || Ok(vec![listed.clone()]),
     );
     opts.now = Arc::new(move || {
-        if swap.fetch_add(1, Ordering::SeqCst) == 0 {
+        if swap.fetch_add(1, Ordering::SeqCst) == fire_at {
             fs::rename(&dir, dir.with_extension("real")).unwrap();
             std::os::unix::fs::symlink(&target, &dir).unwrap();
         }
@@ -2497,10 +2692,13 @@ fn store_swapping_dir(
 // #1850: the cancel delete is the fourth removal point on the `chat-uploads`
 // tree, and its window is everything between `get`'s record read and the
 // delete: the expiry clock read, then the whole `mutate` rewrite. The device
-// fires at that first clock read, so both the rewrite and the delete below
-// run against a `.tmp` that is already a symlink. The metadata write follows
-// the same link (a pre-existing residual, out of scope here); what this test
-// pins is that the *removal* does not.
+// fires at the second clock read — after `mutate`'s in-gate re-read (which
+// #2279 turns into an `UPLOAD_NOT_FOUND` refusal once the swap has removed
+// the record, so an earlier fire would never reach the delete) and before
+// the metadata write and the delete below, both of which run against a `.tmp`
+// that is already a symlink. The metadata write follows the same link (a
+// pre-existing residual, out of scope here); what this test pins is that the
+// *removal* does not.
 #[test]
 fn upload_cancel_does_not_follow_a_root_swapped_mid_mutate() {
     let scratch = Scratch::new();
@@ -2523,6 +2721,7 @@ fn upload_cancel_does_not_follow_a_root_swapped_mid_mutate() {
         &outside,
         Arc::new(AtomicI64::new(EPOCH)),
         swaps.clone(),
+        1,
     );
     let updated = store.cancel("upload-1").unwrap();
 
@@ -2571,6 +2770,7 @@ fn upload_cancel_does_not_follow_a_task_dir_swapped_mid_mutate() {
         &outside,
         Arc::new(AtomicI64::new(EPOCH)),
         swaps.clone(),
+        1,
     );
     let updated = store.cancel("upload-1").unwrap();
 
@@ -2617,6 +2817,7 @@ fn upload_lease_cleanup_does_not_remove_an_id_dir_swapped_mid_round() {
         &outside,
         Arc::new(AtomicI64::new(EPOCH)),
         swaps.clone(),
+        0,
     );
     store.cleanup_expired().unwrap();
 

@@ -31,6 +31,23 @@ const TEXT_EXTENSIONS: [&str; 28] = [
     "rs", "java", "c", "cpp", "h", "hpp", "sh", "bash", "toml", "ini", "csv", "tsv", "env", "lock",
 ];
 
+/// How many times the root's existence may flip between the missing-root
+/// open and the ancestor pin inside one `path: "."` write (#2568). Every
+/// flip is an independent race window; one re-decide covers the legitimate
+/// racing-`mkdir` shape (#2450 fix-r2), and anything that keeps flipping
+/// past this bound answers the fail-closed boundary refusal instead of the
+/// pre-fix shape's unbounded mutual recursion.
+#[cfg(unix)]
+const ROOT_REDECIDE_LIMIT: usize = 8;
+
+/// #2568: the outcome of `create_root_file` — the finished write's result,
+/// or "the root came to exist inside the window, decide again".
+#[cfg(unix)]
+enum RootDecision {
+    Decided(Result<(), FilesError>),
+    Redecide,
+}
+
 #[derive(Debug)]
 pub(crate) enum FilesError {
     /// `WorkspaceBoundaryError`: the router renders its fixed message.
@@ -406,6 +423,14 @@ impl ProjectFileService {
     /// #2456's cell — TS's `mkdir(dirname(target), {recursive: true})`
     /// creates only the root's *ancestors*, and the write's own open then
     /// creates the root as a regular file and answers 200.
+    ///
+    /// #2568: the root's existence can flip between this open and the
+    /// ancestor pin inside `create_root_file` (a racing mkdir/rmdir), and
+    /// the pre-fix shape expressed "decide again" as a back-call into this
+    /// function — unbounded mutual recursion, so a root that kept flipping
+    /// crashed the process on a stack overflow instead of answering. The
+    /// re-decisions are bounded here; exhaustion fails closed with the
+    /// boundary refusal, never a crash.
     #[cfg(unix)]
     fn write_root_itself(
         &self,
@@ -413,22 +438,39 @@ impl ProjectFileService {
         literal: &Path,
         bytes: &[u8],
     ) -> Result<(), FilesError> {
-        match crate::project_files::open_directory_beneath(&self.root, &self.root) {
-            Ok(_root) => Err(sys_error(
-                &io::Error::from_raw_os_error(libc::EISDIR),
-                "open",
-                literal,
-            )),
-            // A root this write has to create: the ancestors become
-            // directories (the `mkdir(dirname(target))` half), the root
-            // itself is the write's own regular-file leaf.
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                self.create_root_file(relative, literal, bytes)
+        for _ in 0..ROOT_REDECIDE_LIMIT {
+            // Deterministic boundary-probe seam (#2568): the hook may flip
+            // the root's existence here, between the previous decision and
+            // the open below — exactly the racing-window shape.
+            #[cfg(test)]
+            test_hook::notify("root-redecide");
+            match crate::project_files::open_directory_beneath(&self.root, &self.root) {
+                Ok(_root) => {
+                    return Err(sys_error(
+                        &io::Error::from_raw_os_error(libc::EISDIR),
+                        "open",
+                        literal,
+                    ));
+                }
+                // A root this write has to create: the ancestors become
+                // directories (the `mkdir(dirname(target))` half), the root
+                // itself is the write's own regular-file leaf.
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    match self.create_root_file(relative, literal, bytes) {
+                        RootDecision::Decided(result) => return result,
+                        RootDecision::Redecide => continue,
+                    }
+                }
+                // Any other root-open refusal keeps the same mapping as
+                // `root_beneath`: the ELOOP → boundary refusal included.
+                Err(error) => return Err(self.root_open_refusal(relative, error)),
             }
-            // Any other root-open refusal keeps the same mapping as
-            // `root_beneath`: the ELOOP → boundary refusal included.
-            Err(error) => Err(self.root_open_refusal(relative, error)),
         }
+        // The root's existence kept flipping: no single verdict about it can
+        // be acted on. Fail closed like every other boundary violation.
+        Err(FilesError::Workspace {
+            raw: relative.to_owned(),
+        })
     }
 
     /// The #2456 missing-root `path: "."` write. `created_root` would `mkdir`
@@ -441,48 +483,56 @@ impl ProjectFileService {
     /// write out of the workspace. The finished root is a file; nothing in
     /// this write's course re-opens the walk under a directory assumption.
     #[cfg(unix)]
-    fn create_root_file(
-        &self,
-        relative: &str,
-        literal: &Path,
-        bytes: &[u8],
-    ) -> Result<(), FilesError> {
+    fn create_root_file(&self, relative: &str, literal: &Path, bytes: &[u8]) -> RootDecision {
         // Deterministic boundary-probe seam: the missing-root open has
         // already failed, so a test may swap an ancestor before the pin
         // below (same phase as `created_root`).
         #[cfg(test)]
         test_hook::notify("create-root");
         let ancestor = deepest_existing(&self.root);
-        let pinned = crate::project_files::open_directory_beneath(&ancestor, &ancestor)
-            .map_err(|error| self.root_open_refusal(relative, error))?;
-        let tail = self
-            .root
-            .strip_prefix(&ancestor)
-            .map_err(|_| sys_error(&io::Error::from_raw_os_error(libc::EACCES), "open", literal))?;
+        let pinned = match crate::project_files::open_directory_beneath(&ancestor, &ancestor) {
+            Ok(pinned) => pinned,
+            Err(error) => {
+                return RootDecision::Decided(Err(self.root_open_refusal(relative, error)));
+            }
+        };
+        let tail = match self.root.strip_prefix(&ancestor) {
+            Ok(tail) => tail,
+            Err(_) => {
+                return RootDecision::Decided(Err(sys_error(
+                    &io::Error::from_raw_os_error(libc::EACCES),
+                    "open",
+                    literal,
+                )));
+            }
+        };
         // The root came to exist inside the window between the missing-root
         // open above and the pin (the shape a racing `mkdir` leaves), so the
-        // write's target is the root itself again and `write_root_itself`
-        // decides — Node's EISDIR on a directory root, the boundary refusal
-        // on a link swapped in — instead of an empty relative path reaching
-        // the leaf open's `UNKNOWN` diagnostic.
+        // write's target is the root itself again and the caller decides —
+        // Node's EISDIR on a directory root, the boundary refusal on a link
+        // swapped in — instead of an empty relative path reaching the leaf
+        // open's `UNKNOWN` diagnostic. #2568: that re-decide is a bounded
+        // loop iteration now, not a back-call into `write_root_itself`.
         if tail.as_os_str().is_empty() {
-            return self.write_root_itself(relative, literal, bytes);
+            return RootDecision::Redecide;
         }
         // `mkdir(dirname(target), {recursive: true})`: every component of
         // the missing tail except the root itself; the root is this write's
         // own leaf below.
         if let Some(dirs) = tail.parent()
             && !dirs.as_os_str().is_empty()
-        {
-            crate::project_files::create_directories_at(
+            && let Err(error) = crate::project_files::create_directories_at(
                 &pinned,
                 dirs,
                 rustix::fs::Mode::from_raw_mode(0o777),
             )
-            .map_err(|error| self.refusal("mkdir", relative, literal, error))?;
+        {
+            return RootDecision::Decided(Err(self.refusal("mkdir", relative, literal, error)));
         }
-        crate::project_files::overwrite_at(&pinned, tail, bytes)
-            .map_err(|error| self.refusal("open", relative, literal, error))
+        RootDecision::Decided(
+            crate::project_files::overwrite_at(&pinned, tail, bytes)
+                .map_err(|error| self.refusal("open", relative, literal, error)),
+        )
     }
 
     /// Pin the project root itself for the write walk. The root is opened by

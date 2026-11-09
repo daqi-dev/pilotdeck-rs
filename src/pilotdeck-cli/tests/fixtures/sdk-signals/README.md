@@ -175,10 +175,20 @@ abort、连接、监听器和文件树继续严格比较。96 个有效观察格
 `signal_replay::comparison_tests::stable_query_before_control_cells_keep_concrete_order`
 逐格钉住这 16 格的 `(2, 1006|4003)` / `(1, 1005)` 具体先后，并断言反序必被比较器拒绝；
 该名单还与 source.json 里呈同一形状的格集合逐集合相等（防丢格、防新增同形格；
-#1178 的 4 个 abort-rst 格同属该形状，已入名单，名单现 20 格）；
+#1178 的 4 个 abort-rst 格同属该形状，已入名单，名单现 20 格；#2509 起名单长度由测试内
+`EXPECTED_STABLE_DIFF_COUNT = 20` 常量钉住——代码常量、模块级 `const STABLE_DIFF_CELLS:
+[(&str, u64); 20]` 类型字面、source.json 实测三角，防「数组与实测同步丢格」只剩 SHA 链一道防线；
+20 = 16 个 #1260 稳定不同序格 + 4 个 #1178 abort-rst 格，specs/cli-parity/normalization.md
+§7 同步钉住）；
 产品侧负控 `initialization-query-close-before-control` 把顺序改回旧写法点名用例即红。
 `rst_cells_keep_verified_original_shape` 离线钉住 4 格 abort-rst 原件形状（穷尽集合、
-退出码、双关闭序、rstApplied milestone、归一化后 stderr、不适用任何例外登记）。
+input.signal/stage、status、naturalExit、cleanupExit、aborts、connections、activeAfterExit、
+stdout 逐字段字面断言；rstApplied milestone、归一化后 stderr、reset 在 query 连接上的
+trace 位置与 dispatched abort 的先后、reset 之后无 wire 事件；再以 `compare_surfaces`
+校验 TS→Rust 投影形态本身被比较器接受——closes 投影与 listener 折叠，非值钉。格序严格
+与不适用任何例外登记由上面的 stable 名单断言和 `approved_stderr_match_domain_is_exact`
+旁证钉住；20 格业务前缀 stderr 集与 stable 名单的同集合关系由
+`stderr_complete_node_tail_preserves_business_line` 机检钉住）。
 离线 `signal_replay::comparison_tests::*` 用真实原件覆盖边界与配对损坏输入，并验证 SIGINT 包装。
 `approved_stderr_match_domain_is_exact` 用 proc-macro2 读取匹配臂，严格核对独立八 ID 常量与差异条目；
 新增矩阵内独有字节第九臂、矩阵外第九臂、少一臂均须失败。批准 stderr 同时要求原件

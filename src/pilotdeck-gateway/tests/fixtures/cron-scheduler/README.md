@@ -17,8 +17,8 @@
 - `oracle.json` — 10 格金样（wx 发布，Rust 重放前先验 provenance）；
 - `probe.mts` — 矩阵探针：金样覆盖不到的 S/T 格逐格实测，每格一行
   `### <id> <json>` 原始输出（RESULT 贴真跑记录）；
-- `negative_controls.py` — 13 变异负控（锚点唯一性 `--check` 本地可验；
-  全量 KILLED 由协调者在干净树上跑）。
+- `negative_controls.py` — 13 变异负控（锚点唯一性 + README 手工副本机检的
+  `--check` 本地可验；全量 KILLED 由协调者在干净树上跑）。
 
 ## S 组：调度器生命周期
 
@@ -80,7 +80,7 @@ T8-T10 的逐事件 `appendRunEvent` 行（probe 的 `runEvents` 字段）是 TS
 # 金样重放（lib；含 10 格字节比对）：
 cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib \
   runtime::cron::scheduler_tests
-# 负控锚点校验（全量 KILLED 需干净树，协调者跑）：
+# 负控 --check（全量 KILLED 需干净树，协调者跑）：
 python3 -I src/pilotdeck-gateway/tests/fixtures/cron-scheduler/negative_controls.py --check
 # 金样重生成守卫（需 Node v22.22.0 + PDRS_BASELINE）：
 cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib \
@@ -91,3 +91,14 @@ env -u LC_ALL -u LC_MESSAGES LANG=en_US.UTF-8 PDRS_BASELINE=<baseline> \
   --import <baseline>/node_modules/tsx/dist/loader.mjs \
   src/pilotdeck-gateway/tests/fixtures/cron-scheduler/probe.mts <out-dir>
 ```
+
+`--check` 除锚点唯一性外还机检四件手工副本（#2409）：本 README 的变异计数
+与 Rows 清单须与 `negative_controls.py` 的 `mutations` 表逐项一致（顺序
+一致），「N 格金样」计数（文件清单 bullet 与 ```sh 块注释两处）须与
+`oracle.json` 的 cells 数一致，每条变异绑定的测试名须在 `scheduler_tests.rs`
+中确实定义（经 `negative_suite.declares_test` 抹注释与字符串后匹配）。
+Rows: `stop-not-wired`, `re-register-clobbers-stop`, `tick-panic-kills-thread`,
+`panic-unregister-gone`, `poke-no-reschedule`, `tick-not-rescheduled`,
+`start-arms-nothing`, `isdue-inverted`, `delay-skipped`, `fire-not-spawned`,
+`failed-start-resets-running`, `failed-start-loses-seat`,
+`floorless-idle-poll`。

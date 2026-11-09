@@ -51,8 +51,14 @@ pub(crate) fn spawn_after<T: Send + Sync + 'static>(
     spawn_after_with_error(
         executor,
         done,
-        ModuleError::new("Interaction cleanup task was dropped or panicked before completion.")
-            .into(),
+        // #996: cleanup-task-loss-value-lost replaces the loss error
+        // (live-session/schemata.py). Off — the original error.
+        ModuleError::new(if crate::mutants::on("cleanup-task-loss-value-lost") {
+            "lost cleanup task error"
+        } else {
+            "Interaction cleanup task was dropped or panicked before completion."
+        })
+        .into(),
         prepare,
         cleanup,
     );

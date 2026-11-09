@@ -1852,8 +1852,11 @@ async fn dispose_during_an_in_flight_handshake_removes_the_session_directory() {
     // SDK's hardcoded 60 s `initialize` request timeout settles the
     // handshake as failed and `dispose()` then removes the directory before
     // returning (measured in `_tmp/20261107-2225-r5/probe.log`). This test
-    // disposes well inside that window; the positive control is left to
-    // follow-up #2233 rather than widened here.
+    // disposes well inside that window; the positive control, its fixed-value
+    // form, and the before-dispatch teardown residue shape are pinned by the
+    // #2233 sibling tests below instead of widened here (the after-dispatch
+    // residue shape is a probe-measured premise, not an in-tree pin — see the
+    // ③ test's comment below).
     assert_eq!(
         runtime
             .client("mock")
@@ -1895,6 +1898,231 @@ async fn dispose_during_an_in_flight_handshake_removes_the_session_directory() {
         1,
         "#401 no replacement connection is spawned"
     );
+}
+
+/// #2233: one stdio mock whose `initialize` reply is gated behind `g0`, with
+/// a per-session directory — the shared fixture of the directory-lifetime
+/// pins below. The handshake timeout is pinned (120 s) for the same reason as
+/// the dispose test above: the default 10 s timeout branch, not the
+/// epoch-mismatch branch these tests exist for, must never own the cleanup.
+fn gated_per_session_runtime(dir: &Path) -> std::sync::Arc<McpRuntime> {
+    let sessions = dir.join("sessions");
+    std::fs::write(
+        dir.join("script.json"),
+        format!(r#"{{"procs":[{{"initialize":[{{"wait_file":"g0"}},{INIT_REPLY}]}}]}}"#),
+    )
+    .unwrap();
+    std::sync::Arc::new(McpRuntime::new(
+        vec![McpServerSpec {
+            id: "mock".into(),
+            transport: McpTransportSpec::Stdio {
+                command: "node".into(),
+                args: Some(vec![mock_path()]),
+                env: Some(vec![
+                    ("MOCK_DIR".into(), dir.to_string_lossy().into_owned()),
+                    (
+                        "PILOTDECK_SESSION_TMPDIR".into(),
+                        sessions.to_string_lossy().into_owned(),
+                    ),
+                ]),
+                cwd: None,
+                per_session: true,
+            },
+            call_timeout_ms: None,
+        }],
+        McpRuntimeOptions {
+            connect_concurrency: None,
+            client_options: McpClientOptions {
+                handshake_timeout_ms: Some(120_000.0),
+                ..Default::default()
+            },
+        },
+    ))
+}
+
+/// #2233 ① (A6.5-MCP-SESSION-DIR-LIFETIME-001, option A): the positive
+/// control the dispose test above deliberately left open. While the
+/// handshake is in flight (its `initialize` gated), the registry stop — its
+/// per-client `dispose()` → `close()` — returns **and** the per-session
+/// directory still exists at that return: the gated attempt owns the
+/// directory locally, so neither `close()` nor dispose has anything to remove
+/// yet. The sync point is the mock's `spawn` event, and the exact directory
+/// is read back from its `--user-data-dir` argv, never from a listing.
+#[tokio::test]
+async fn stop_during_an_in_flight_handshake_keeps_the_session_directory() {
+    let scratch = Scratch::new("mcp-client-stop-keeps-dir");
+    let dir = std::fs::canonicalize(scratch.path()).unwrap();
+    let runtime = gated_per_session_runtime(&dir);
+    let starting = tokio::spawn({
+        let runtime = runtime.clone();
+        async move { runtime.start().await }
+    });
+    // Sync point per the issue: the mock has spawned, so its argv names the
+    // directory under test; the frame event proves `initialize` was written —
+    // the handshake is genuinely in flight, not merely spawned.
+    wait_logged(&dir, 0, "spawn").await;
+    let session_dir = logged_session_dir(&dir, 0);
+    assert!(
+        session_dir.exists(),
+        "#2233 the per-session directory exists once the mock is spawned"
+    );
+    wait_logged(&dir, 0, "frame").await;
+    // `close()` must return while the handshake is still gated ...
+    tokio::time::timeout(Duration::from_secs(2), runtime.stop())
+        .await
+        .expect("#2233 the registry stop must return while the handshake is gated");
+    // ... and the directory it never owned must still be there.
+    assert!(
+        session_dir.exists(),
+        "#2233 the per-session directory still exists when the registry stop returns during an in-flight handshake"
+    );
+    // Postlude: let the superseded handshake settle so the test leaves no
+    // child or directory behind; the removal's own timing is pinned strictly
+    // by the fixed-value sibling below.
+    open_gate(&dir, "g0");
+    let entries = tokio::time::timeout(Duration::from_secs(30), starting)
+        .await
+        .expect("#2233 the late handshake settles long before the pinned handshake timeout")
+        .expect("#2233 the runtime start task must finish");
+    assert_eq!(entries.len(), 1, "#2233 one server entry");
+    assert_eq!(
+        entries[0].status.as_str(),
+        "error",
+        "#2233 the superseded handshake surfaces as a failed start"
+    );
+    tokio::time::timeout(Duration::from_secs(30), runtime.stop())
+        .await
+        .expect("#2233 the second stop must join the late cleanup");
+    assert!(
+        !session_dir.exists(),
+        "#2233 the late cleanup removes the per-session directory"
+    );
+    settle(&dir, false).await;
+    assert_eq!(
+        read_logs(&dir).len(),
+        1,
+        "#2233 no replacement connection is spawned"
+    );
+}
+
+/// #2233 ②: the fixed-value form. The dispose test above (and #1782's
+/// polling loop before it) only ever pinned *eventual* deletion; this
+/// asserts the directory is **already deleted when the disposal returns** —
+/// no polling, no grace window. Determinism: the epoch-mismatch cleanup
+/// registers a `wait_on_close` ticket in the client's state, `dispose()`
+/// awaits every ticket, and that ticket's task ends only after its awaited
+/// `spawn_blocking(remove_dir_all)`.
+#[tokio::test]
+async fn stop_after_the_late_handshake_settles_returns_with_the_directory_removed() {
+    let scratch = Scratch::new("mcp-client-stop-removed-dir");
+    let dir = std::fs::canonicalize(scratch.path()).unwrap();
+    let runtime = gated_per_session_runtime(&dir);
+    let starting = tokio::spawn({
+        let runtime = runtime.clone();
+        async move { runtime.start().await }
+    });
+    wait_logged(&dir, 0, "spawn").await;
+    let session_dir = logged_session_dir(&dir, 0);
+    assert!(
+        session_dir.exists(),
+        "#2233 the per-session directory exists once the mock is spawned"
+    );
+    wait_logged(&dir, 0, "frame").await;
+    tokio::time::timeout(Duration::from_secs(2), runtime.stop())
+        .await
+        .expect("#2233 the first stop must return while the handshake is gated");
+    assert!(
+        session_dir.exists(),
+        "#2233 the per-session directory survives the first stop while the handshake is gated"
+    );
+    // Release the handshake and let the epoch-mismatch cleanup register its
+    // ticket; only then does the disposal under test run.
+    open_gate(&dir, "g0");
+    let entries = tokio::time::timeout(Duration::from_secs(30), starting)
+        .await
+        .expect("#2233 the late handshake settles long before the pinned handshake timeout")
+        .expect("#2233 the runtime start task must finish");
+    assert_eq!(entries.len(), 1, "#2233 one server entry");
+    assert_eq!(
+        entries[0].status.as_str(),
+        "error",
+        "#2233 the superseded handshake surfaces as a failed start"
+    );
+    // The registry disposal joins the late cleanup, whose task ends only
+    // after the awaited `spawn_blocking(remove_dir_all)`.
+    tokio::time::timeout(Duration::from_secs(30), runtime.stop())
+        .await
+        .expect("#2233 the second stop must join the late cleanup");
+    // The fixed-value assertion: the return itself is the proof.
+    assert!(
+        !session_dir.exists(),
+        "#2233 the registry stop returns only after the per-session directory is already removed (fixed-value form)"
+    );
+    settle(&dir, false).await;
+    assert_eq!(
+        read_logs(&dir).len(),
+        1,
+        "#2233 no replacement connection is spawned"
+    );
+}
+
+/// #2233 ③, before-dispatch shape: teardown that happens before the removal
+/// is even dispatched leaves the per-session directory behind — a definite
+/// residue, not an interleaving guess. The gate never opens, so the
+/// handshake cannot settle and the epoch-mismatch cleanup — the only path
+/// that dispatches `spawn_blocking(remove_dir_all)` — never runs; dropping
+/// the runtime cancels the in-flight handshake (kill_on_drop reaps the mock)
+/// with nobody left to remove anything. The after-dispatch shape is NOT
+/// pinned in-tree: per the #2233 S2 delivery's tokio 1.48.0 probe, drop
+/// waits for an already-started blocking task, so a dispatched
+/// `remove_dir_all` completes before the drop returns. The probe's raw
+/// output and timings live only in its evidence record
+/// (`_tmp/20261109-p2batch-d-harvest2/d5/S2-RESULT.md`); the numbers are
+/// deliberately not inlined here, so they cannot drift from the record.
+/// That is a tokio-version premise recorded in the
+/// `A6.5-MCP-SESSION-DIR-LIFETIME-001-R2` ledger correction
+/// (`specs/gateway-parity/diffs/`; its parity-suite mirror is `-R1`) —
+/// probe-measured, not a repo-pinned invariant — not something this file
+/// asserts.
+#[test]
+fn runtime_teardown_before_the_removal_dispatch_leaves_the_session_directory() {
+    let scratch = Scratch::new("mcp-client-teardown-before-dispatch");
+    let dir = std::fs::canonicalize(scratch.path()).unwrap();
+    let runtime = gated_per_session_runtime(&dir);
+    let probe = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("#2233 the probe runtime must build");
+    let session_dir = probe.block_on(async {
+        // The start attempt runs detached: this test never needs its result,
+        // only the mock events and the directory it created.
+        tokio::spawn({
+            let runtime = runtime.clone();
+            async move { runtime.start().await }
+        });
+        wait_logged(&dir, 0, "spawn").await;
+        let session_dir = logged_session_dir(&dir, 0);
+        wait_logged(&dir, 0, "frame").await;
+        tokio::time::timeout(Duration::from_secs(2), runtime.stop())
+            .await
+            .expect("#2233 the registry stop must return while the handshake is gated");
+        assert!(
+            session_dir.exists(),
+            "#2233 the per-session directory exists while the handshake is gated"
+        );
+        session_dir
+    });
+    // The gate stays closed forever. Dropping the runtime cancels the connect
+    // task and reaps the mock, and no cleanup was ever dispatched: the
+    // directory is definite residue.
+    drop(probe);
+    assert!(
+        session_dir.exists(),
+        "#2233 runtime teardown before the removal dispatch leaves the per-session directory behind"
+    );
+    // The residue is this test's own to clean up — nothing in the production
+    // teardown path removed it, which is the point.
+    std::fs::remove_dir_all(&session_dir).expect("#2233 the residue cleanup must succeed");
 }
 
 /// #681（A6.5-MCP-CONNECT-HOSTNAME-001）：主机名 URL 的拒连文案显示解析出

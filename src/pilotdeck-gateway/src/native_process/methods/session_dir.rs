@@ -1286,4 +1286,107 @@ mod tests {
         r.owner.shutdown().await.expect("#1310 shutdown");
         r.project.dispose().await.expect("#1310 dispose");
     }
+
+    // #2564: request-level `projectKey: null` for the three family members
+    // whose subject key is the project itself. The admission gate reads the
+    // key nullish (#2272), so a null reaches each method's own read, and the
+    // TS baselines differ per method: `closeProjectSessions` gates with
+    // `!input.projectKey?.trim()` (InProcessGateway.ts:2037) so a null is the
+    // missing-key domain error; `listSessions` resolves
+    // `input.projectKey ?? fallbackProjectRoot` (ProjectRuntimeRegistry.ts:1542)
+    // so it lists the configured project; `newSession` reads
+    // `input.projectKey ? \`project=${…}:\` : ""` (InProcessGateway.ts:2029)
+    // so the null omits the prefix. Node v22.22.0 end-to-end probe:
+    // `_tmp/20261026-issue-2562/ts-probe/probe-submit.out`.
+    #[tokio::test]
+    async fn close_project_sessions_null_project_key_is_the_domain_error() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        let error = crate::runtime::turn::gateway::GatewayRequests::request(
+            &r,
+            "close_project_sessions".into(),
+            object([("projectKey", JsValue::Null)]),
+        )
+        .await
+        .expect_err("#2564 a null projectKey is refused by the close_project_sessions gate");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "gateway_request_failed",
+            "#2564 a null projectKey keeps the domain code"
+        );
+        negative_assert_eq!(
+            key_message(&error),
+            "projectKey is required.",
+            "#2564 a null projectKey keeps the domain message"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    #[tokio::test]
+    async fn list_sessions_null_project_key_lists_the_configured_project() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        let value = crate::runtime::turn::gateway::GatewayRequests::request(
+            &r,
+            "list_sessions".into(),
+            object([("projectKey", JsValue::Null)]),
+        )
+        .await
+        .expect("#2564 a null projectKey lists the configured project");
+        negative_assert!(
+            matches!(value.get("sessions"), Some(JsValue::Array(_))),
+            "#2564 a null projectKey falls back to the configured project's catalog"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    #[tokio::test]
+    async fn new_session_null_project_key_omits_the_project_prefix() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        let key_of = |params| {
+            crate::runtime::turn::gateway::GatewayRequests::request(
+                &r,
+                "new_session".into(),
+                params,
+            )
+        };
+        let null_key = key_of(object([
+            ("channelKey", "pdrs-2564".into()),
+            ("projectKey", JsValue::Null),
+        ]))
+        .await
+        .expect("#2564 a null projectKey generates a session key")
+        .get("sessionKey")
+        .and_then(JsValue::as_string)
+        .cloned()
+        .expect("#2564 new_session answers a sessionKey");
+        negative_assert!(
+            String::from_utf16_lossy(null_key.units()).starts_with("pdrs-2564:s_"),
+            "#2564 a null projectKey omits the project= prefix"
+        );
+        // Control: a served string is truthy on both sides, so the prefix
+        // appears and the null above is proven to be the nullish read.
+        let served_key = key_of(object([
+            ("channelKey", "pdrs-2564".into()),
+            (
+                "projectKey",
+                JsValue::String(r.options.project.to_string_lossy().into_owned().into()),
+            ),
+        ]))
+        .await
+        .expect("#2564 the configured project string generates a session key")
+        .get("sessionKey")
+        .and_then(JsValue::as_string)
+        .cloned()
+        .expect("#2564 new_session answers a sessionKey for the served project");
+        negative_assert!(
+            String::from_utf16_lossy(served_key.units()).starts_with("pdrs-2564:project="),
+            "#2564 a served project string keeps the project= prefix"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
 }

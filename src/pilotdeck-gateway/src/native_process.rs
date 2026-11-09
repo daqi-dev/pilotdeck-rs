@@ -51,6 +51,12 @@ pub use tools::{
     session_mcp_tools,
 };
 
+/// The fixed prefix of the switch machine's halt line: `run` prints
+/// `"{NATIVE_SWITCH_HALTED}: {error}"` when the machine halts, and the
+/// executable-level tests observe the child's stderr for the same prefix —
+/// one home for the spelling, shared by production and tests (#2511).
+pub const NATIVE_SWITCH_HALTED: &str = "native switch halted";
+
 /// Start the real serial host, bind WS, then drain on either supported signal.
 /// The listener never starts an upstream gateway/helper.
 pub async fn run(options: Options) -> Result<(), ProxyError> {
@@ -136,7 +142,7 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
             // the death march below still terminates the process (a
             // registered difference — the matrix's surviving-owner semantics
             // cannot outlive SIGTERM), but a halt never exits 0 (D1).
-            eprintln!("native switch halted: {error}");
+            eprintln!("{NATIVE_SWITCH_HALTED}: {error}");
             faces.finish_after_halt().await.map_err(|teardown| {
                 crate::ProxyError::from(format!("{error}; teardown: {teardown}"))
             })?;

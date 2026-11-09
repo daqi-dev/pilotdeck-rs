@@ -23,7 +23,7 @@ fn complete_config_snapshot_replays_real_typescript_oracle() {
         oracle.get("count").and_then(JsValue::as_number),
         Some(cases.len() as f64)
     );
-    assert_eq!(cases.len(), 1140, "#305 exact snapshot fixture count");
+    assert_eq!(cases.len(), 1142, "#305 exact snapshot fixture count");
     let sources = oracle
         .get("sources")
         .and_then(JsValue::as_object)

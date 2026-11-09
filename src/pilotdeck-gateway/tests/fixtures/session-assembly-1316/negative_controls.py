@@ -112,20 +112,20 @@ mutations = [
     # turn, so a redundant arm cannot hide behind a sibling.
     ('always-on-abort-copies-apply-message',
      'native_process/methods/always_on.rs',
-     '                    not_configured_error("Always-On abort is not configured on this gateway."),',
-     '                    not_configured_error("Always-On apply is not configured on this gateway."),',
+     '                not_configured_error("Always-On abort is not configured on this gateway."),',
+     '                not_configured_error("Always-On apply is not configured on this gateway."),',
      'native_process::methods::always_on::tests::always_on_methods_answer_not_configured_envelopes',
      '#1313 always_on_abort message'),
     ('always-on-rerun-copies-apply-message',
      'native_process/methods/always_on.rs',
-     '                    not_configured_error("Always-On rerun is not configured on this gateway."),',
-     '                    not_configured_error("Always-On apply is not configured on this gateway."),',
+     '                not_configured_error("Always-On rerun is not configured on this gateway."),',
+     '                not_configured_error("Always-On apply is not configured on this gateway."),',
      'native_process::methods::always_on::tests::always_on_methods_answer_not_configured_envelopes',
      '#1313 always_on_rerun_plan message'),
     ('always-on-apply-copies-abort-message',
      'native_process/methods/always_on.rs',
-     '                    not_configured_error("Always-On apply is not configured on this gateway."),',
-     '                    not_configured_error("Always-On abort is not configured on this gateway."),',
+     '                not_configured_error("Always-On apply is not configured on this gateway."),',
+     '                not_configured_error("Always-On abort is not configured on this gateway."),',
      'native_process::methods::always_on::tests::always_on_methods_answer_not_configured_envelopes',
      '#1313 always_on_apply message'),
     # #1476 / #1313 r1: the honesty claims themselves, not just their message
@@ -136,14 +136,19 @@ mutations = [
     # advertises one method no control backs, which is the cheapest false
     # capability claim (`assert_ts_capability_subset` only bounds the set from
     # above, so an over-claim has to be killed here).
-    # #1313 r1-fix1 (DS/MM boundary P2): only the abort arm reads
+    # #1313 r1-fix1 (DS/MM boundary P2): only the abort arms read
     # `input.sessionKey`; the nullish-params test is otherwise driven by no
     # mutation. Replacing the read with an empty object drops the boundary
     # TypeError, and the test's expect_err panic is the kill.
+    # #2294 fix-r3c: the bound test drives the *unconfigured* branch (no
+    # manager), so the anchor is that arm's read — the 12-space `params` line
+    # inside `not_configured`'s "always_on_abort" arm. The previous 20-space
+    # anchor pinned the manager arm's `&params` read, which the test never
+    # reaches: CI judged the mutant SURVIVED.
     ('always-on-abort-skips-the-input-read',
      'native_process/methods/always_on.rs',
-     '                    let session_key = super::input_property(&params, "sessionKey")?;',
-     '                    let session_key = super::input_property(&JsValue::Object(Default::default()), "sessionKey")?;',
+     '            let session_key = super::input_property(params, "sessionKey")?;',
+     '            let session_key = super::input_property(&JsValue::Object(Default::default()), "sessionKey")?;',
      'native_process::methods::always_on::tests::always_on_abort_nullish_params_hit_the_session_key_read',
      '#1313 abort nullish answers the TypeError'),
     ('always-on-envelope-code-rewritten',
@@ -157,8 +162,8 @@ mutations = [
      'Capability { name: "supported_agents", methods: &[], wired: compiled_in },',
      'Capability { name: "supported_agents", methods: &[], wired: compiled_in },\n'
      '    Capability { name: "always_on_apply", methods: &[], wired: compiled_in },',
-     'native_process::methods::always_on::tests::always_on_methods_are_not_advertised',
-     '#1313 always_on_apply must not be advertised in describe'),
+     'native_process::methods::always_on::tests::always_on_methods_are_not_advertised_without_a_manager',
+     '#2294 always_on_apply must not be advertised without an always-on manager'),
     ('describe-drops-async-hook-result',
      'native_process/capabilities.rs',
      'name: "async_hook_result",',

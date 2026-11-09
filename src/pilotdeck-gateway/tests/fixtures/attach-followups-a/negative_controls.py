@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""#1458/#1459/#1462/#1464/#1468/#1469: every attach-followups-a mutation.
+"""#1458/#1459/#1462/#1464/#1468/#1469/#1629: every attach-followups-a mutation.
 
 Usage: negative_controls.py --check
        negative_controls.py [--compile-only] NEW_OUTPUT_DIR [mutation ...]
@@ -13,7 +13,9 @@ error arm, the (dev, inode) depth check it complements, the pre-open identity
 itself, the no-follow sampling of that identity (a link planted before the
 approved stat must not become the approved object), and the two legitimate
 homes — the upload-store root and the lease root — each with its own
-containment and leaf-link terms in the shared `canonical_home` guard.
+containment and leaf-link terms in the shared `canonical_home` guard. The two
+#1629 rows pin the last lease_guard softening: the path's own canonicalize
+failure (any errno, not just NotFound) must stay a not-found diagnostic.
 """
 import argparse
 import hashlib
@@ -31,7 +33,7 @@ TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/services_tests.rs'
 # two rows that mutate it directly point here.
 STORE = ROOT / 'src/pilotdeck-gateway/src/upload/mod.rs'
 sys.path.insert(0, str(FIXTURES))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
 
 mutations = [
@@ -95,6 +97,28 @@ mutations = [
             )),''',
      'native_process::services_tests::lease_symlink_escape_softens_to_not_found',
      '#1464 a lease symlink escape must not fail the turn'),
+    # #1629: the last path-inspection failure that could still reject the
+    # turn — the path's own canonicalize failing with a non-`NotFound` errno
+    # under a valid root (ELOOP/ENOTDIR/EACCES/…) — softened like every other
+    # branch: the TS resolver's stat try/catch has no errno filter, so any
+    # stat failure becomes a not-found diagnostic. The row restores the
+    # pre-#1629 hard failure; the ELOOP and ENOTDIR fixtures each bind it so
+    # both spellings of "any failure" are proven live (an ELOOP-only row
+    # would leave the ENOTDIR test unproven, and vice versa).
+    ('lease-path-hard-failure-restored', SERVICES,
+     '            Err(error) => Ok(LeaseGuard::Unresolved(error)),',
+     '''            Err(error) => Err(failure(format!(
+                "Attachment lease path cannot be resolved: {error}."
+            ))),''',
+     'native_process::services_tests::symlink_loop_lease_path_softens_to_not_found_diagnostic',
+     '#1629 a symlink-loop lease path must not fail the turn'),
+    ('lease-path-notdir-hard-failure-restored', SERVICES,
+     '            Err(error) => Ok(LeaseGuard::Unresolved(error)),',
+     '''            Err(error) => Err(failure(format!(
+                "Attachment lease path cannot be resolved: {error}."
+            ))),''',
+     'native_process::services_tests::not_directory_lease_path_softens_to_not_found_diagnostic',
+     '#1629 an ENOTDIR lease path must not fail the turn'),
     ('filter-info-inverted', SERVICES,
      '        DiagnosticSeverity::Info => !registered,',
      '        DiagnosticSeverity::Info => registered,',
@@ -222,9 +246,18 @@ mutations = [
      '        for spelling in [&attachment.resolved] {',
      'native_process::services_tests::dual_registration_dedups_the_set_across_spellings',
      '#1446 the Set must keep one entry per spelling'),
+    # #2495 re-anchored: the note pass now reads `entries` (the TS composer's
+    # membership domain) and normalizes the per-entry lexical spelling, so the
+    # row can no longer swap `attachment.lexical`/`attachment.resolved`. The
+    # same kill — the note line printing the physical spelling instead of the
+    # registered link spelling — is rebuilt as a canonicalize override on the
+    # per-entry lexical, the post-#2495 shape of that bug.
     ('dual-registration-note-uses-realpath', SERVICES,
-     '        let normalized = attachment.lexical.to_string_lossy().into_owned();',
-     '        let normalized = attachment.resolved.to_string_lossy().into_owned();',
+     '        let normalized = lexical.to_string_lossy().into_owned();',
+     '''        let mut normalized = lexical.to_string_lossy().into_owned();
+        if let Ok(canonical) = fs::canonicalize(&lexical) {
+            normalized = canonical.to_string_lossy().into_owned();
+        }''',
      'native_process::services_tests::dual_registration_carries_both_spellings',
      '#1446 the note line must carry the link spelling'),
     # #1448 fix-r2 收编三行（PR #1418 的负控产物不在本机，按
@@ -359,7 +392,12 @@ def main():
                 try:
                     if not args.compile_only and not passed(run(name + '-positive', env, test), test):
                         raise RuntimeError('positive bound test failed')
-                    path.write_text(originals[path].decode().replace(old, new, 1))
+                    # #2495 fix-r1 (concurrency review P2 same-family co-fix):
+                    # one atomic rename, never a truncating in-place write — a
+                    # SIGKILL mid-window must not leave a half-written source
+                    # (#1903, write_source_atomic).
+                    write_source_atomic(
+                        ROOT, path, originals[path].decode().replace(old, new, 1).encode())
                     if run(name + '-compile', env, test, compile_only=True).returncode:
                         raise RuntimeError('mutant did not compile; not a runtime kill')
                     item['compiled'] = True
@@ -374,7 +412,7 @@ def main():
                 except Exception as error:
                     item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
                 finally:
-                    path.write_bytes(originals[path])
+                    write_source_atomic(ROOT, path, originals[path])
                 try:
                     if not args.compile_only:
                         if not passed(run(name + '-restored', env, test), test):

@@ -154,7 +154,22 @@ impl SessionLifecycle {
         });
         // AgentSession ignores effects/errors returned by the hook executor.
         // A dispatch rejection is a different boundary and propagates.
-        Box::pin(async move { future.await.map(|_| ()) })
+        // #996: ordinary-hook-error-rejects-session turns a hook executor
+        // error into a session rejection (live-session/schemata.py). Off —
+        // the ignored result.
+        Box::pin(async move {
+            if crate::mutants::on("ordinary-hook-error-rejects-session") {
+                future.await.and_then(|result| {
+                    if result.non_blocking_errors.is_empty() && result.blocking_errors.is_empty() {
+                        Ok(())
+                    } else {
+                        Err(ModuleError::new("mutated hook error").into())
+                    }
+                })
+            } else {
+                future.await.map(|_| ())
+            }
+        })
     }
     fn close(mut self) -> HostFuture<()> {
         let mut done = self.spawn_close();
@@ -176,7 +191,13 @@ impl SessionLifecycle {
         let cleanup = async move {
             let mut errors = Vec::new();
             if let Err(e) = port.dispose().await {
-                errors.push(e.to_string());
+                // #996: disposer-error-value-lost replaces the disposer error
+                // (live-session/schemata.py). Off — the original error.
+                errors.push(if crate::mutants::on("disposer-error-value-lost") {
+                    format!("lost disposer error: {e}")
+                } else {
+                    e.to_string()
+                });
             }
             if let Some(SessionOwnership {
                 lease,
@@ -214,7 +235,26 @@ impl SessionLifecycle {
         };
         // Keep the same guarded completion contract as the turn-owned cleanup:
         // a stopped executor can discard this future without ever polling it.
-        crate::runtime::cleanup_task::spawn_after(&self.executor, done, || {}, cleanup);
+        // #996: shutdown-bare-spawn replaces the guarded completion with a bare
+        // spawn, and drop-needs-current-runtime drops the lifecycle's runtime
+        // for the current one (live-session/schemata.py). Off — the original
+        // guarded completion on the captured executor.
+        if crate::mutants::on("shutdown-bare-spawn") {
+            self.executor
+                .spawn(async move { done.send_replace(Some(cleanup.await)) });
+        } else {
+            // `let` binding: the current runtime handle is a temporary that
+            // must outlive the spawn call, and it is only taken when the
+            // switch is on — `Handle::current()` panics off-runtime.
+            let current = crate::mutants::on("drop-needs-current-runtime")
+                .then(tokio::runtime::Handle::current);
+            crate::runtime::cleanup_task::spawn_after(
+                current.as_ref().unwrap_or(&self.executor),
+                done,
+                || {},
+                cleanup,
+            );
+        }
         completion
     }
 }
@@ -312,7 +352,11 @@ impl SessionStream {
     }
     fn fail(&mut self, error: RuntimeError, in_turn: bool) -> RuntimeError {
         if in_turn {
-            self.state.lock().unwrap().fail();
+            // #996: runner-error-preserves-running keeps the Running status
+            // (live-session/schemata.py). Off — the original fail().
+            if !crate::mutants::on("runner-error-preserves-running") {
+                self.state.lock().unwrap().fail();
+            }
         }
         self.phase = Phase::Done;
         self.turn = Box::new(EmptyTurn);
@@ -342,15 +386,46 @@ impl LiveTurn for SessionStream {
                         self.phase = Phase::Start;
                     }
                     Phase::Start => {
-                        if let Err(error) =
-                            self.hook("SessionStart", &[("source", "startup")]).await
+                        // #996: skip-start misses the Start hook and
+                        // start-source reports a resumed start
+                        // (live-session/schemata.py). Off — the original
+                        // startup hook.
+                        if let Err(error) = self
+                            .hook(
+                                if crate::mutants::on("skip-start") {
+                                    "MissingStart"
+                                } else {
+                                    "SessionStart"
+                                },
+                                &[(
+                                    "source",
+                                    if crate::mutants::on("start-source") {
+                                        "resume"
+                                    } else {
+                                        "startup"
+                                    },
+                                )],
+                            )
+                            .await
                         {
                             return Err(self.fail(error, false));
                         }
                         self.phase = Phase::Setup;
                     }
                     Phase::Setup => {
-                        if let Err(error) = self.hook("Setup", &[]).await {
+                        // #996: skip-setup misses the Setup hook
+                        // (live-session/schemata.py). Off — the original hook.
+                        if let Err(error) = self
+                            .hook(
+                                if crate::mutants::on("skip-setup") {
+                                    "MissingSetup"
+                                } else {
+                                    "Setup"
+                                },
+                                &[],
+                            )
+                            .await
+                        {
                             return Err(self.fail(error, false));
                         }
                         self.phase = Phase::Turn;
@@ -373,20 +448,54 @@ impl LiveTurn for SessionStream {
                             };
                             self.end_reason = self.state.lock().unwrap().complete(&result);
                             if let Some(lifecycle) = &self.lifecycle {
-                                lifecycle.finish_steer();
+                                // #996: skip-finish-before-end skips the steer
+                                // finish (live-session/schemata.py). Off — the
+                                // original finish.
+                                if !crate::mutants::on("skip-finish-before-end") {
+                                    lifecycle.finish_steer();
+                                }
                             }
                             self.phase = Phase::End;
                         }
                     },
                     Phase::End => {
+                        // #996: skip-end misses the End hook
+                        // (live-session/schemata.py). Off — the original hook.
                         if let Err(error) = self
-                            .hook("SessionEnd", &[("reason", self.end_reason)])
+                            .hook(
+                                if crate::mutants::on("skip-end") {
+                                    "MissingEnd"
+                                } else {
+                                    "SessionEnd"
+                                },
+                                &[("reason", self.end_reason)],
+                            )
                             .await
                         {
                             return Err(self.fail(error, false));
                         }
+                        // #996: recompute-end-reason recomputes the reason from
+                        // the final status (live-session/schemata.py). Off —
+                        // the reason recorded at completion.
+                        if crate::mutants::on("recompute-end-reason") {
+                            self.end_reason =
+                                if self.state.lock().unwrap().status == SessionStatus::Aborted {
+                                    "other"
+                                } else {
+                                    "prompt_input_exit"
+                                };
+                        }
                         self.phase = Phase::Ended;
-                        return Ok(Some(self.event("session_ended")));
+                        // #996: session-ended-event misses the session_ended
+                        // event (live-session/schemata.py). Off — the original
+                        // event.
+                        return Ok(Some(self.event(
+                            if crate::mutants::on("session-ended-event") {
+                                "missing_session_ended"
+                            } else {
+                                "session_ended"
+                            },
+                        )));
                     }
                     Phase::Ended => {
                         if self.pending.is_none()

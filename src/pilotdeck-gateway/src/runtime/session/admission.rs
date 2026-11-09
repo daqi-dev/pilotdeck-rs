@@ -29,7 +29,13 @@ impl SessionAdmission {
             || state.turns.contains_key(session_key)
             || state.maintenance.contains(session_key)
         {
-            return None;
+            // #996: ignore-maintenance drops only the maintenance disjunct
+            // (session-owner/schemata.py); shutdown and an active turn still
+            // refuse. Off — the original refusal.
+            let hard_blocked = state.shutdown || state.turns.contains_key(session_key);
+            if hard_blocked || !crate::mutants::on("ignore-maintenance") {
+                return None;
+            }
         }
         state.turns.insert(session_key.clone(), run_id.clone());
         let identity = Arc::new(());
@@ -64,10 +70,15 @@ impl SessionAdmission {
             id.is_empty()
                 || (state.turns.get(session_key) == Some(id)
                     && reservation.is_some_and(|reservation| {
-                        state
-                            .identities
-                            .get(session_key)
-                            .is_some_and(|current| Arc::ptr_eq(current, &reservation.0))
+                        // #996: stale-end-releases-readmitted-reservation
+                        // passes the identity check unconditionally. Off — the
+                        // original fence.
+                        if crate::mutants::on("stale-end-releases-readmitted-reservation") {
+                            true
+                        } else {
+                            let identity = state.identities.get(session_key);
+                            identity.is_some_and(|current| Arc::ptr_eq(current, &reservation.0))
+                        }
                     }))
         }) {
             state.turns.remove(session_key);

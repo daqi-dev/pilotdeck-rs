@@ -471,7 +471,13 @@ impl SessionSteer {
             executor: self.executor.clone(),
             closed: AtomicBool::new(false),
             delivered: AtomicBool::new(false),
-            session_finishes: session_owned,
+            // #996: finish-before-terminal reports the finish as not
+            // session-owned (live-session/schemata.py). Off — the real owner.
+            session_finishes: if crate::mutants::on("finish-before-terminal") {
+                false
+            } else {
+                session_owned
+            },
             releases: AtomicUsize::new(0),
             applying: tokio::sync::Mutex::new(()),
             done: watch::channel(None).0,

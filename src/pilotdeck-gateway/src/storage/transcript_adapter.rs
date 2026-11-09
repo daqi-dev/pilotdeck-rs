@@ -857,7 +857,12 @@ impl TranscriptWriter {
     }
     /// Fence new appends synchronously, before awaiting the in-flight writer.
     pub fn begin_close(&self) {
-        self.closed.store(true, Ordering::SeqCst);
+        // #996: writer-close-does-not-fence keeps the writer unfenced
+        // (live-session/schemata.py). Off — the original fence.
+        self.closed.store(
+            !crate::mutants::on("writer-close-does-not-fence"),
+            Ordering::SeqCst,
+        );
     }
     /// #1019 fence handoff: retire this writer when its ledger fence moves to
     /// the session factory (`SessionRecording::into_storage`). Setting the

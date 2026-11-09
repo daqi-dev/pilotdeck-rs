@@ -47,66 +47,59 @@ session dispose 完毕，retired project runtime 与新 runtime 使用不同 Arc
 completion/close cleanup，验证只释放精确身份。另验取消等待者仍会排空、周期 idle
 sweep 会停止，以及发布时旧 handle 的 admission cutoff 无需执行资源回调。
 
-`negative.py <evidence-directory>` 使用独占、结束即清理的 `/tmp` 工作区副本，原样复用
-全部 Cargo manifests、依赖和共享溯源守卫；不会修改真实产品文件、基线、node_modules、
-冻结件或 state。全量源码副本仅用于编译变异，specs 副本仅满足已有 include_str。
-先跑原实现，再注入十三项变异：旧 handle 冒充当前 owner、所有 key 共用 factory 队列、
-忽略 maintenance、忽略停止后的发布保护、live abort 不复核目标、旧 close 删除新预约、
-旧 complete 释放新 owner、旧 end_turn 释放重新接纳的同 runId 预约、篡改 sourceSha256、
-非 Active handle 仍接纳活动、idle 忽略进行中创建/排队 close、close 不按 ticket 串行、
-空串 project 被 pause 阻止。每项必须成功编译并在对应测试的指定断言
-处失败；编译失败、外部超时或非预期失败不计通过。全局等待的负控由测试内有界进度
-断言拒绝；abort 负控要求实际观察到 100/100 次命中新 writer。
-原始输出及完整替换表达式记录在指定目录。`CARGO_HOME` 和 `PDRS_BASELINE` 必填；
-每次调用将 `CARGO_TARGET_DIR` 覆盖为独占 `/tmp` 副本内的 `src/target`，
-不与真实树或另一装置共享；结束时与副本一起删除。首次 baseline 冷构建限时 600 秒，
-其余变异限时 240 秒。每次编译前运行任务指定的 cargo-slots 命令。
+#996 起本夹具的负控是编译期开关（`crate::mutants::on`，仅 `--features
+pdrs-mutants` 的库测试二进制可激活），由三份 schemata 声明并经共享执行器
+`_shared/mutant_switch.py` 预编译后逐行执行（正控 → 变异 → 还原，判杀锚 = 绑定测试
+的具名 FAILED 行 + 其自身断言消息）；旧文本替换脚本 `negative.py` 与
+`negative_close_shutdown.py` 已删除，迁移对账见各轮 RESULT。
 
-`negative_close_shutdown.py <evidence-directory>` 是 #1245（close 在 shutdown 进行中
-的错误语义对齐 TS，含 fix-r1 的 close-先于-shutdown 同 tick 格、fix-r2 的混合格与
-drain 守卫）的专用负控，走共享
-M6 执行器（`mutating_sources` 原位变异 + `negative_suite.run_cases` 逐项
-KILLED/SURVIVED/INVALID；登记在 `EQUIVALENT` 表的等价变异另由本脚本反向核验，
-要求仍 SURVIVED 且 restore 后测试通过），要求提交后源码等于 `HEAD`，与 `negative.py`
-的独立 `/tmp` 副本方式并存。十三行变异（十二行必须判杀 + 一行登记为等效变异）：close
-的 shutdown 窗口变异回旧的整个 shutdown 聚合分支、else 分支不 await 就放行、close
-任务的 closing 登记、idle sweep 的
-closing 登记、shutdown drain 的 closing 登记、shutdown 的 drain 清单抢走已有未
-结算 closing 的 key 的 record（最后一项去掉后 close-first-same-tick 格漂移为
-Ok + `shutdown` 原因）、skip 提前 `break` 不再排空其余 key（fix-r2）、per-key
-drain 退回裸 `tokio::spawn` 失去完成守卫（fix-r2，panic 后条目悬空、后续 close
-答 lifecycle-stopped）、closing 守卫先释放 serial ticket 再结算条目
-（fix-r3 `settle-after-release`，窗口②回归，由两个顺序探针测试的事件序列断言
-判杀）、成对删 close 任务的 settle 写与 `Completion` 补发（#1365 fix-r1
-`closing-settle-write-removed`，单删守卫写是实测等价变异——同一 poll 内
-`Completion::finish` 补发同值、无 await 间隙；成对删后 close 答
-lifecycle-stopped）、idle sweep 同型的成对 settle 写删除（#1365 fix-r1
-`idle-settle-write-removed`，close 等 mid-flight idle 驱逐时答 lifecycle-stopped
-而非透传 dispose 聚合）、close 任务 panic 失去完成守卫（#1365 fix-r1
-`close-panic-guard-removed`，退回裸 `tokio::spawn`，panic 后条目无人结算）、
-serial ticket 的释放写删除（#1365 fix-r1 `ticket-release-write-removed`；单删是
-实测等价变异——sender 在 `Drop` 末仍被丢弃，`Ticket::enter` 的 `let _` 吞掉
-`wait_for` 的 `Err(RecvError)`，排队 close 照常排空，`ticket-released` 探针也照常
-记录；登记在脚本 `EQUIVALENT` 表，运行时要求该行仍 SURVIVED 且 restore 后测试
-通过，若转为 KILLED 则报 INVALID 要求转回判杀集合）。一行变异可绑定多个测试
-（每测试一个 `Case`），marker list 走 `negative_suite.classify` 的 alternatives
-语义——绑定测试在任一列名断言失败即 KILLED，不把多个 marker 拆成多个 Case；
-多 `Case` 的行的证据按 `<变异>-<测试短名>-{positive,negative,restored}.log` 分文件
-落盘（单 `Case` 行沿用 `<变异>-…` 的历史名），控制台结论用同一 stem，所以按
-`Case` 计的 KILLED 数可以逐条追到测试名。`EQUIVALENT` 与 `MUTATIONS` 之间有交叉
-校验：等价名必须在变异表内、绑定的测试必须是该行绑定的测试、且不得同时被判为必杀
-（漂移即 `REGISTRY DRIFT` 拒绝运行）；等价侧若守卫失败（源码被判改动）则发布整份
-`INVALID` 的 `equivalent-summary.json`，超时同样把原始输出与异常写进 `{label}.log`；
-带第六元素的行是成对变异（主替换 + 附加 `(before, after)` 位点，经 `Case.scope`
-进本脚本 `mutate`，锚点由 `--check-anchors` 一并核数）。TS 依据为真实路由探针
+```sh
+export CARGO_TARGET_DIR=/absolute/target PDRS_BASELINE=/absolute/PilotDeck
+python3 -I src/pilotdeck-gateway/tests/fixtures/session-owner/schemata.py \
+  _tmp/<date>-issue-996/negative-owner            # 16 行，全部必须 KILLED
+python3 -I src/pilotdeck-gateway/tests/fixtures/session-owner/schemata_close_shutdown.py \
+  _tmp/<date>-issue-996/negative-close-shutdown   # 12 行必须 KILLED
+python3 -I src/pilotdeck-gateway/tests/fixtures/session-owner/schemata_equivalent.py \
+  _tmp/<date>-issue-996/equivalent-ticket-release  # 等价行，必须 SURVIVED
+# 只读锚点预检：--check
+```
+
+`schemata.py` 十六行 = 旧 `negative.py` 的十三项源码变异（旧 handle 冒充当前
+owner、所有 key 共用 factory 队列、忽略 maintenance、忽略停止后的发布保护、
+live abort 不复核目标、旧 close 删除新预约、旧 complete 释放新 owner、旧
+end_turn 释放重新接纳的同 runId 预约、非 Active handle 仍接纳活动、idle 忽略
+进行中创建/排队 close、close 不按 ticket 串行、空串 project 被 pause 阻止、
+idle 三连闸门变异）加 `owner-tampered-source-hash`（旧名 `tampered-source-hash`
+重命名，避免与 session-abort-contract 的同名不同 oracle 开关共享
+`PDRS_MUTANT` 选择值）：开关在 `owner_tests.rs::case()` 加载点对加载态 JSON 的
+SessionRouter.ts 哈希做内存零化，provenance panic 先于数据读取，与旧盘上改写
+同形。
+
+`schemata_close_shutdown.py` 十二行必须 KILLED，是 #1245（close 在 shutdown 进行中
+的错误语义对齐 TS，含 fix-r1 的 close-先于-shutdown 同 tick 格、fix-r2 的混合格
+与 drain 守卫、fix-r3 的 settle-before-release）与 #1365 fix-r1 的专用负控：close
+的 shutdown 窗口变异回旧的整个 shutdown 聚合分支、else 分支不 await 就放行、
+close/idle sweep/shutdown drain 三处 closing 登记移除、shutdown 的 drain 清单
+抢走已有未结算 closing 的 key 的 record、skip 提前 `break` 不再排空其余 key、
+per-key drain 退回裸 `tokio::spawn` 失去完成守卫、closing 守卫先释放 serial
+ticket 再结算条目、成对删 close 任务与 idle sweep 的 settle 写（守卫写 + 重定向
+`done` sender 两个位点归同一开关，`ClosingGuard` 的 `write_settle` 旗标把
+`Drop` 的写关闭，保证每个开关名单调用点）、close 任务 panic 失去完成守卫。
+一行可绑定多个测试（对齐锚点列表逐格判杀）。
+
+`schemata_equivalent.py` 是 #1365 fix-r1 登记的等价变异 `ticket-release-write-removed`
+（单删 serial ticket 的释放写）：sender 在 `Drop` 末仍被丢弃，`Ticket::enter`
+的 `let _` 吞掉 `wait_for` 的 `Err(RecvError)`，排队 close 照常排空，
+`ticket-released` 探针也照常记录——实测 SURVIVED，无产品可观测。执行器要求
+全 KILLED 才退出 0，故该行单独成 runner：发布 summary 中恰一行 SURVIVED 才算
+绿；若某天转为 KILLED，运行报错并要求把该行移回 `schemata_close_shutdown.py`
+的必杀集合。TS 依据为真实路由探针
 `_tmp/20261026-issue-1245/probe/close-during-shutdown.out`、
 `_tmp/20261026-issue-1245/fix-r1/probe/close-first-same-tick.out` 与
 `_tmp/20261026-issue-1245/fix-r2/probe/skip-only-closing-key.out`
 （作者树 `_tmp/20261026-issue-1245/` 下；交付轮副本在同目录的
 `remote-run/artifacts/round/probe/`；Node v22.22.0），差异与修正在
 `specs/gateway-parity/diffs/A7.2-SESSION-CLOSE-DURING-SHUTDOWN-001{-R1,-R2,-R3,-R4,-R5}.md`。
-`--check-anchors` 预检锚点；`--compile-only` 只证明每个变异体能编译；
-`--sample` 只跑 `close-else-awaits-nothing` 一项抽样。
 
 本包提供真实生命周期组件和可注入的 LiveSession/SessionFactory 接口，不提供默认
 空 session。完整 submit/持久接纳、seed/compact 业务执行、MCP/native host adapter

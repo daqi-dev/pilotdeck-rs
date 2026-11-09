@@ -27,25 +27,15 @@ use std::{
     thread,
     time::Duration,
 };
-use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
-    process::Command as AsyncCommand,
-    time::timeout,
-};
+use tokio::{io::AsyncBufReadExt, process::Command as AsyncCommand, time::timeout};
 
-// The RFC 6455 public handshake sample key, shared with the crate-side
-// tests through the same common file.
-#[path = "common/native_ws_sample.rs"]
-mod native_ws_sample;
-use native_ws_sample::RFC6455_SAMPLE_NONCE;
-// The constants shared with `tests/switch_e2e.rs`, the same native entry's
-// sibling test: one spelling per product fact.
+// The constants and stop-side timing segments shared with
+// `tests/switch_e2e.rs`, the same native entry's sibling test: one spelling
+// per product fact, one copy per shared segment (#2511 item 1).
 #[path = "common/native_entry.rs"]
 mod native_entry;
 use native_entry::{
-    ADVERTISEMENT_BUDGET, NATIVE_LISTENING, NATIVE_STOPPING, STDERR_LIMIT, SWITCH_DEADLINE,
-    VALID_HOME_CONFIG, advertises,
+    ADVERTISEMENT_BUDGET, STDERR_LIMIT, SWITCH_DEADLINE, VALID_HOME_CONFIG, advertised_address,
 };
 
 // The product's own advertisement lines, exactly as it writes them: the A4
@@ -506,6 +496,8 @@ async fn both_modes_alternate_on_one_isolated_home() {
 /// own advertisement, prove steady state with a real WS 101 upgrade, then
 /// SIGTERM and require the completed switch's clean exit (the #1353
 /// machine; `tests/switch_e2e.rs` is the deeper contract of the same path).
+/// The upgrade probe, the signal handoff and the completed-switch verdicts
+/// are the shared segments in `tests/common/native_entry.rs` (#2511 item 1).
 /// Returns the advertised address.
 async fn native_child_serves(
     root: &std::path::Path,
@@ -553,12 +545,9 @@ async fn native_child_serves(
     let mut advertisement = String::new();
     let advertised = timeout(ADVERTISEMENT_BUDGET, async {
         while let Some(line) = lines.next_line().await.expect("#1354 native stderr read") {
-            if advertises(&line) {
+            if let Some(address) = advertised_address(&line) {
                 advertisement = line.clone();
-                return line
-                    .strip_prefix(NATIVE_LISTENING)
-                    .and_then(|rest| rest.strip_prefix(' '))
-                    .map(str::to_owned);
+                return Some(address.to_owned());
             }
         }
         None
@@ -572,67 +561,12 @@ async fn native_child_serves(
         .parse()
         .expect("#1354 native advertised address parses");
     // Steady state is served: a real client completes the WS upgrade against
-    // the advertised address (the switch_e2e observation).
-    let mut client = timeout(ADVERTISEMENT_BUDGET, TcpStream::connect(address))
-        .await
-        .expect("#1354 native steady-state connect deadline")
-        .expect("#1354 native steady-state connect");
-    client
-        .write_all(
-            format!(
-                "GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\n\
-                 Upgrade: websocket\r\nSec-WebSocket-Key: {RFC6455_SAMPLE_NONCE}\r\n\r\n"
-            )
-            .as_bytes(),
-        )
-        .await
-        .expect("#1354 native steady-state upgrade write");
-    let mut header = Vec::new();
-    timeout(ADVERTISEMENT_BUDGET, async {
-        while !header.ends_with(b"\r\n\r\n") {
-            let mut byte = [0u8; 1];
-            client
-                .read_exact(&mut byte)
-                .await
-                .expect("#1354 native steady-state upgrade byte");
-            header.push(byte[0]);
-        }
-    })
-    .await
-    .expect("#1354 native steady-state upgrade deadline");
-    assert!(
-        header.starts_with(b"HTTP/1.1 101"),
-        "#1354 native steady-state upgrade status, got {}",
-        String::from_utf8_lossy(&header)
-    );
-    // The client's whole job is the upgrade: drop it before the signal, so
-    // the switch below still runs over an idle server.
-    drop(client);
-    // The signal the production entry is built around. `kill_on_drop` only
-    // SIGKILLs, so the wait below observes the machine's own exit, not this.
-    // A child that already exited cannot take the signal: report its real
-    // status instead of surfacing a bare signal-send failure later.
-    if let Ok(Some(status)) = child.try_wait() {
-        panic!("#1354 native child exited before the signal: {status}");
-    }
-    let pid = rustix::process::Pid::from_raw(child.id().expect("#1354 native child pid") as i32)
-        .expect("#1354 native child pid in range");
-    if let Err(error) = rustix::process::kill_process(pid, rustix::process::Signal::TERM) {
-        // Delivery failed: read the child's own outcome (bounded by the
-        // switch deadline) so the panic names both the error and what the
-        // child actually did.
-        match timeout(SWITCH_DEADLINE, child.wait()).await {
-            Ok(Ok(status)) => {
-                panic!("#1354 SIGTERM delivery failed: {error}; child status: {status}")
-            }
-            Ok(Err(wait_error)) => {
-                panic!("#1354 SIGTERM delivery failed: {error}; child wait: {wait_error}")
-            }
-            Err(_) => panic!(
-                "#1354 SIGTERM delivery failed: {error}; child did not exit within the switch bound"
-            ),
-        }
-    }
+    // the advertised address (the shared switch_e2e observation, #2511
+    // item 1).
+    native_entry::steady_state_ws_upgrade(&address_text).await;
+    // The signal the production entry is built around (the shared handoff,
+    // #2511 item 1).
+    native_entry::sigterm_child(&mut child).await;
     // Read to EOF (the child's exit ends the pipe) under the switch bound:
     // the tail is the evidence for which exit path ran. Retention is
     // bounded but the drain is not, so a chatty child still exits instead
@@ -654,22 +588,9 @@ async fn native_child_serves(
         .expect("#1354 native child exit deadline")
         .expect("#1354 native child exit status");
     // Positive evidence the signal really entered the switch machine (same
-    // rule as switch_e2e): a child that self-exits 0 after its advertisement
-    // would otherwise pass the two assertions below.
-    assert!(
-        tail.iter().any(|line| line == NATIVE_STOPPING),
-        "#1354 the drill's native phase must run the switch machine (no \
-         {NATIVE_STOPPING:?} line); tail: {tail:?}"
-    );
-    assert!(
-        !tail
-            .iter()
-            .any(|line| line.starts_with("native switch halted")),
-        "#1354 the drill's native phase must complete, not halt; tail: {tail:?}"
-    );
-    assert!(
-        status.success(),
-        "#1354 the drill's native phase exits 0, got {status}; tail: {tail:?}"
-    );
+    // rule as switch_e2e), never a halt, and the clean exit: the shared
+    // verdicts, with the tail asserted non-empty first so the "no halt
+    // line" judgement cannot pass over zero output (#2511 item 1).
+    native_entry::assert_completed_switch(&tail, &status);
     address
 }

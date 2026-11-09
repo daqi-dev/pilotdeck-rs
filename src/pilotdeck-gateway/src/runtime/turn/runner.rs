@@ -134,7 +134,13 @@ impl TurnRunner {
                 .map_err(|error| RecorderError::State(error.message))?;
             for message in discarded {
                 self.emit_tail(self.event(
-                    "steer_unapplied",
+                    // #996: drop-steer-unapplied renames the tail event
+                    // (live-session/schemata.py). Off — the original name.
+                    if crate::mutants::on("drop-steer-unapplied") {
+                        "missing_steer_unapplied"
+                    } else {
+                        "steer_unapplied"
+                    },
                     [
                         ("itemId", JsValue::String(message.item_id)),
                         ("reason", "turn_ended".into()),
@@ -167,6 +173,17 @@ impl TurnRunner {
         } else {
             self.owner.clone()
         };
+        // #996: worker-slot also releases the owner before the blocking write
+        // (live-recording/schemata.py). Off — the owner from the gate above.
+        let owner = if crate::mutants::on("worker-slot") {
+            None
+        } else {
+            owner
+        };
+        // #996: worker-lease drops the lease before the write instead of
+        // after (live-recording/schemata.py). Off — write first, then the
+        // drops in the original order.
+        let lease = (!crate::mutants::on("worker-lease")).then_some(lease);
         tokio::task::spawn_blocking(move || {
             let result = write(&recorder, &session, &turn);
             drop(owner);
@@ -207,7 +224,9 @@ impl TurnRunner {
         {
             let _ = port.host_started();
         }
-        if crate::mutants::on("gates-skip-start") {
+        // #996: start-error-propagates swallows the start failure
+        // (live-recording/schemata.py). Off — the propagate.
+        if crate::mutants::on("gates-skip-start") || crate::mutants::on("start-error-propagates") {
             let _ = self.io(|r, s, t| r.start_turn(s, t)).await;
         } else {
             self.io(|r, s, t| r.start_turn(s, t)).await?;
@@ -423,7 +442,13 @@ impl TurnRunner {
                 ]))
                 .await;
         }
-        self.close_session_steer().await?;
+        // #996: completion-delays-steer-close defers the durable steer close
+        // until after the completion write (live-session/schemata.py). Off —
+        // the original ordering.
+        let steer_close_delayed = crate::mutants::on("completion-delays-steer-close");
+        if !steer_close_delayed {
+            self.close_session_steer().await?;
+        }
         self.finish_artifacts(&result).await;
         let written = result.clone();
         if let Err(error) = self
@@ -443,6 +468,9 @@ impl TurnRunner {
                     ("message", JsValue::String(error.to_string().into())),
                 ]))
                 .await;
+        }
+        if steer_close_delayed {
+            self.close_session_steer().await?;
         }
         self.suggestion(&result).await;
         self.finalize_metadata().await;
@@ -465,7 +493,19 @@ impl TurnRunner {
         self.close_session_steer().await?;
         let now = (self.now)();
         let mut result = object([
-            ("type", "error".into()),
+            // #996: accept/complete-failure-not-success reports the integrity
+            // failure terminal as success (live-recording/schemata.py). Off —
+            // the error terminal.
+            (
+                "type",
+                if crate::mutants::on("accept-failure-not-success")
+                    || crate::mutants::on("complete-failure-not-success")
+                {
+                    "success".into()
+                } else {
+                    "error".into()
+                },
+            ),
             ("sessionId", JsValue::String(self.session.clone())),
             ("turnId", JsValue::String(self.turn.clone())),
             (

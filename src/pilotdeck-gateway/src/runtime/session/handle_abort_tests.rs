@@ -227,12 +227,37 @@ async fn record(active: bool) -> Value {
     json!({"active": active, "checkpoints": checkpoints})
 }
 
+/// #996: abort-tampered-source-hash corrupts the loaded oracle in memory —
+/// the same bytes the old on-disk control wrote to the fixture — zeroing the
+/// recorded hash for src/agent/scope/AgentHandle.ts so the provenance check
+/// fails before the oracle data is read.
+fn tampered_source_hash(json: &str) -> String {
+    const KEY: &str = "\"src/agent/scope/AgentHandle.ts\": \"";
+    const ZEROS: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+    let start = json
+        .find(KEY)
+        .expect("#996 abort oracle records the AgentHandle source hash")
+        + KEY.len();
+    let mut corrupted = json[..start].to_string();
+    corrupted.push_str(ZEROS);
+    corrupted.push_str(&json[start + ZEROS.len()..]);
+    corrupted
+}
+
 #[tokio::test]
 async fn abort_at_lease_and_dispose_windows_matches_ts() {
     const ORACLE: &str = include_str!("../../../tests/fixtures/session-abort-contract/oracle.json");
-    crate::test_baseline::oracle(ORACLE);
-    let oracle: Value =
-        serde_json::from_str(ORACLE).expect("#1010 abort-contract setup/observation must succeed");
+    // #996: the switch zeroes the loaded copy's recorded hash, never the
+    // fixture on disk; the provenance panic fires before the data is read,
+    // the same shape the old on-disk mutation produced.
+    let oracle_json = if crate::mutants::on("abort-tampered-source-hash") {
+        tampered_source_hash(ORACLE)
+    } else {
+        ORACLE.to_string()
+    };
+    crate::test_baseline::oracle(&oracle_json);
+    let oracle: Value = serde_json::from_str(&oracle_json)
+        .expect("#1010 abort-contract setup/observation must succeed");
     // Fail closed on an empty or truncated corpus (same shape as owner_tests):
     // the generator enumerates exactly `for (const active of [false, true])`
     // (generate.mts:71), so pin the whole scenario family, not just
