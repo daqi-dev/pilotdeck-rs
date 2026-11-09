@@ -1862,3 +1862,48 @@ Like rounds 24 to 34, these shapes need a module-scope trigger plus a write
 inside a function, which one `(old, new)` replacement cannot express; the
 end-to-end repro and the per-shape detector probes are in the PR body
 (#1953).
+
+### Closed by `fix-r1` round 36 (codex r35 P0-1..P0-5 / P1-1 / P1-2, GLM r35 sibling P1-1 / P2-2, boundary r35 #1 / #2)
+
+Round 35 gated the bare head spelling behind `_head_shadowed`, and every one
+of these findings is a way that gate (or its neighbours) answered wrong.
+`_provably_inert` accepted *any* call-free lambda, so `globals = lambda: vars`
+still handed out the builtin (false PASS; the r35 self-test only covered a
+literal-dict body).  The binding table never registered `import` / `del`, so
+`from builtins import globals` and `del globals` after a shadow left the stale
+shadow in force.  `_flow_marks` marked a walrus inside a `BoolOp` tail or an
+`IfExp` body unconditional, so `report is None and (globals := lambda: {})`
+shadowed the builtin outright.  `_contains_dynamic_lookup` was a plain
+`ast.walk`, so a lambda parameter and a deferred body read the *module* binding
+table: `held = (lambda globals: globals('main'))(eval)` counted the parameter
+as the module's shadow.  `_alias_source_nodes` accepted any target shape, so a
+leaf-target escape (`_a, _obj.slot = main, other`) and the walrus argument /
+target escapes (`_register(_a := main)`, `_obj.slot = (_a := main)`) were
+dropped as value uses.  A sole irrefutable capture (`match x: case _sa:`) was
+forced conditional like any other match, withdrawing a receiver it really
+binds (false FAIL).  The alias branch of the open-call walk resolved the
+terminal head but never asked whether *it* is shadowed: `lk = globals` after
+an inert shadow still reported a site.  On the receiver side the write decoders
+read the raw callee, so `(_g := _f)(md, 'common', <stub>)` vanished (runtime
+differential re-verified, false PASS).
+
+| Shape | Mutant / self-test |
+|---|---|
+| **A call-free lambda over a head is not inert** (false PASS guard): `globals = lambda: vars` / `lambda: sys.modules[__name__].__dict__`, then the double-call chain. | self-test message `... kept a call-free lambda over a head as inert (round 36)`; `_inert_literal_expr` is a recursive whitelist (lambdas with inert defaults and body, constants, literal containers) -- anything else fails closed |
+| **A re-imported head is back in force** (false PASS guard): `globals = lambda: {...}; from builtins import globals`, then the call chain. | self-test message `... let a reimported head stay shadowed (round 36)`; `_module_alias_bindings` registers `Import`/`ImportFrom` head names as dynamic, non-inert entries |
+| **A deleted head is back in force** (false PASS guard): `globals = lambda: {...}; del globals`, then the call chain. | self-test message `... let a deleted head stay shadowed (round 36)`; `ast.Delete` head names register the same way |
+| **A short-circuit walrus does not shadow** (false PASS guard): `report is None and (globals := lambda: {})`, then `held = (_g := globals)()['main']`. | self-test message `... kept a short-circuit walrus shadow (round 36)`; `_flow_marks` marks `BoolOp` values[1:] and `IfExp` body/orelse tails conditional |
+| **A lambda parameter is not the module's shadow** (false PASS guard): `globals = lambda: {...}; held = (lambda globals: globals('main'))(eval)`. | self-test message `... kept a lambda parameter as a head shadow (round 36)`; `_contains_dynamic_lookup` walks with the local names lambdas and comprehensions bind |
+| **A deferred lambda body is a carrier outright** (false PASS guard): `globals = lambda: {...}; held = (lambda: globals()['main'])()`. | self-test message `... kept a deferred lambda body on a shadowed head (round 36)`; a deferred body treats a head spelling as a carrier, fail-closed |
+| **A leaf-target escape is a value use** (false PASS guard): `if False: _a, _obj.slot = main, other`. | self-test message `... dropped a leaf-target escape as a value use (round 36)`; `_leaf_targets_plain` gates pairing at the leaf level |
+| **A walrus-argument escape is a value use** (false PASS guard): `if False: _register(_a := main)`. | self-test message `... dropped a walrus-argument escape as a value use (round 36)`; a walrus not bound as a statement of its own is not a plain hand-off |
+| **A walrus-target escape is a value use** (false PASS guard): `if False: _obj.slot = (_a := main)`. | self-test message `... dropped a walrus-target escape as a value use (round 36)`; the value escapes through the bigger expression |
+| **An irrefutable capture keeps its binding** (false FAIL guard): a sole `case _sa36:` over any subject, then `_sa36(md, 'common', object())`. | self-test message `... kept a receiver written through an irrefutable capture (round 36)`; `_irrefutable_capture` (sole case, no guard, bare `MatchAs` chain) keeps the capture certain |
+| **An alias hop to a shadowed head is not a site** (false FAIL guard): `globals = lambda: {...}; lk = globals; held = lk()['main']`. | self-test message `... kept an alias hop to a shadowed head as a site (round 36)`; both alias branches (`_module_open_calls`, `_contains_dynamic_lookup`) ask `_head_shadowed` about the terminal head |
+| **A walrus callee on the receiver side writes** (false PASS guard): `_f = md.__setattr__; (_g := _f)(md, 'common', object())`. | self-test message `... lost the walrus-callee receiver write (round 36)`; `_write_call_target` and `_container_callee` unwrap the `NamedExpr` callee, and the relay walk reads through `_callee_expr` |
+| **The r35 site assertion actually checks membership** (r35 P1-2): the walrus-callee fixture's two sites must include the `_held` call. | `_m35_walrus_head` compares `site[0]` against the call position -- the sites are `(position, loops)` pairs, so the r35 bare-position membership check was a tautology |
+
+Like rounds 24 to 35, these shapes need a module-scope trigger plus a write
+inside a function, which one `(old, new)` replacement cannot express; the
+end-to-end repro and the per-shape detector probes are in the PR body
+(#1953).

@@ -1375,6 +1375,29 @@ def _match_capture_names(scope):
     return names
 
 
+def _irrefutable_capture(match_node, case_node):
+    """True when *case_node* certainly binds its capture (r36).
+
+    #1953 fix-r1 round 36 (codex r35 P1-1): round 35 forced every match
+    capture conditional because a pattern may fail to match, but the sole
+    ``case _sa:`` of a ``match`` statement -- a bare capture with no guard --
+    never fails.  ``match (lambda *a: None): case _sa: pass`` was read as
+    "maybe not bound" and the audit stayed fail-closed on a receiver the
+    capture provably rebinds to an inert value (false FAIL).  Only a chain of
+    ``MatchAs`` ending in the wildcard is irrefutable, and only as the single
+    case: earlier cases can take the subject first.
+    """
+    if len(match_node.cases) != 1 or case_node.guard is not None:
+        return False
+    names = []
+    pattern = case_node.pattern
+    while isinstance(pattern, ast.MatchAs):
+        if pattern.name is not None:
+            names.append(pattern.name)
+        pattern = pattern.pattern
+    return pattern is None and bool(names)
+
+
 def _default_bound_parameters(function):
     """Parameter names whose default value is supplied by the function itself.
 
@@ -2192,6 +2215,13 @@ def _write_call_target(func, kinds, depth=0):
     """
     if depth > 50:
         return None
+    # #1953 fix-r1 round 36 (GLM r35 sibling P2-2, runtime-verified false
+    # PASS -> P0): the receiver side still read the raw callee, so a walrus
+    # callee -- ``(_g := _f)(md, 'common', <stub>)`` -- fell through every
+    # branch below and the write vanished.  Unwrap it here once, exactly like
+    # :func:`_callee_expr` does for the call tables.
+    while isinstance(func, ast.NamedExpr):
+        func = func.value
     if isinstance(func, ast.Attribute) and func.attr in _MANAGED_WRITE_ATTRS:
         return _managed_write_kind(func.attr), func.value, ()
     if isinstance(func, ast.Name):
@@ -2233,7 +2263,7 @@ def _write_call_target(func, kinds, depth=0):
         return None
     if not isinstance(func, ast.Call):
         return None
-    callee = _callable_name(func.func, kinds)
+    callee = _callable_name(_callee_expr(func), kinds)
     # #892 r32: the three-argument spelling carries a default that a present
     # attribute never reaches -- ``getattr(md, '__setattr__', None)(...)``
     # still writes ``md`` (GLM boundary r31 P0-1).
@@ -2242,7 +2272,8 @@ def _write_call_target(func, kinds, depth=0):
         if (isinstance(literal, ast.Constant) and literal.value in _MANAGED_WRITE_ATTRS):
             return _managed_write_kind(literal.value), func.args[0], ()
         return None
-    if (callee == 'partial' or _expr_kinds(func.func, kinds) & {'fn:partial'}) \
+    if (callee == 'partial'
+            or _expr_kinds(_callee_expr(func), kinds) & {'fn:partial'}) \
             and func.args:
         inner = _write_call_target(func.args[0], kinds, depth + 1)
         if inner is None:
@@ -2490,15 +2521,20 @@ def _container_base(node):
 
 def _container_callee(func):
     """The container name whose element *func* takes out and calls (#1953)."""
+    # #1953 fix-r1 round 36 (GLM r35 sibling P2-2): a walrus callee unwraps
+    # here too, like every call table does.
+    while isinstance(func, ast.NamedExpr):
+        func = func.value
     if isinstance(func, ast.Subscript):
         return _container_base(func.value)
     if isinstance(func, ast.Call):
-        func_id = func.func.id if isinstance(func.func, ast.Name) else None
+        callee = _callee_expr(func)
+        func_id = callee.id if isinstance(callee, ast.Name) else None
         if func_id in _CONTAINER_WRAPPERS and len(func.args) == 1:
             return _container_base(func.args[0])
-        if (isinstance(func.func, ast.Attribute) and func.func.attr == 'copy'
-                and isinstance(func.func.value, ast.Name)):
-            return func.func.value.id
+        if (isinstance(callee, ast.Attribute) and callee.attr == 'copy'
+                and isinstance(callee.value, ast.Name)):
+            return callee.value.id
     return None
 
 
@@ -4351,7 +4387,10 @@ def _comprehension_uses_handle(node, name, kinds):
     for part in _comprehension_parts(node):
         for child in ast.walk(part):
             if isinstance(child, ast.Call):
-                if isinstance(child.func, ast.Name) and child.func.id == name:
+                # #1953 fix-r1 round 36 (GLM r35 sibling P2-2): unwrap a
+                # walrus callee before the name check.
+                callee = _callee_expr(child)
+                if isinstance(callee, ast.Name) and callee.id == name:
                     return True
                 written = _write_call_target(child.func, kinds)
                 if written is not None:
@@ -4931,12 +4970,16 @@ def _receiver_attribute_writes(tree, receivers, shared):
     for scope, node in _walk_scoped(tree):
         if not isinstance(node, ast.Call):
             continue
+        # #1953 fix-r1 round 36 (GLM r35 sibling P2-2): read the callee
+        # through the walrus unwrap -- ``(_g := hs[0])(...)`` relays the same
+        # handles the plain spelling does.
+        callee = _callee_expr(node)
         called = _container_callee(node.func)
-        if called is None and isinstance(node.func, ast.Name):
+        if called is None and isinstance(callee, ast.Name):
             # ``f = hs[0]; f('common', <stub>)`` launders one handle into a
             # plain name first; the alias fixpoint above already recorded it.
-            called = node.func.id
-        if (called is not None and isinstance(node.func, ast.Name)
+            called = callee.id
+        if (called is not None and isinstance(callee, ast.Name)
                 and _freshly_rebound(called, scope, node, allow_container=False)):
             # #1953 fix-r1 round 17 (sibling r16 P1-3): a later, certain
             # fresh rebinding (``_f = lambda *a: None``) ends the relay -- the
@@ -4949,15 +4992,15 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 if (level, called) in handle_containers:
                     carried = handle_containers[(level, called)]
                     break
-        if carried is None and isinstance(node.func, ast.Subscript) and isinstance(
-                node.func.value, (ast.ListComp, ast.SetComp, ast.DictComp,
-                                  ast.GeneratorExp)):
-            carried = _container_handle_roots(node.func.value, kinds, simple)
-        if carried is None and isinstance(node.func, ast.Subscript):
+        if carried is None and isinstance(callee, ast.Subscript) and isinstance(
+                callee.value, (ast.ListComp, ast.SetComp, ast.DictComp,
+                               ast.GeneratorExp)):
+            carried = _container_handle_roots(callee.value, kinds, simple)
+        if carried is None and isinstance(callee, ast.Subscript):
             # #1953 fix-r1 round 7 (GLM sibling r3 P2): the comprehension may
             # be reachable through a name and relay a container the alias table
             # already knows (``g = [h for h in hs]; g[0](...)``).
-            container = node.func.value
+            container = callee.value
             if isinstance(container, ast.Name):
                 values = simple.get(container.id) or ()
                 if len(values) == 1:
@@ -5195,6 +5238,24 @@ def _receiver_attribute_writes(tree, receivers, shared):
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
                                    ast.ClassDef)):
                 add(node.name, node, None, True)
+            elif isinstance(node, ast.Match):
+                # #1953 fix-r1 round 34 (GLM r33 sibling P1-1): round 33 fixed
+                # the two binding walks but not this third one, reached on the
+                # receiver path (``_withdrawn_receivers`` ->
+                # ``_receiver_attribute_writes`` -> ``_write_import_at`` ->
+                # ``_scope_import_events``).  A case has no position, so
+                # ``add`` was reading ``node.lineno`` off it and the audit died
+                # with ``AttributeError`` -- the same crash, one walk further.
+                # #1953 fix-r1 round 36 (codex r35 P1-1): a sole, guard-free
+                # bare capture never fails to match, so it keeps the
+                # statement's certainty; every other pattern stays
+                # conditional.  See :func:`_irrefutable_capture`.
+                for case in node.cases:
+                    for name in _match_capture_names(case.pattern):
+                        add(name, case, None, False,
+                            position=_match_case_position(case),
+                            force_conditional=not _irrefutable_capture(
+                                node, case))
             elif isinstance(node, ast.stmt):
                 names, value = _local_bound_names(node)
                 for name in names:
@@ -5209,18 +5270,6 @@ def _receiver_attribute_writes(tree, receivers, shared):
                     pending.append((items, len(items) - 1,
                                     (node.lineno, node.col_offset),
                                     items[-1][4], node.value))
-            elif isinstance(node, ast.match_case):
-                # #1953 fix-r1 round 34 (GLM r33 sibling P1-1): round 33 fixed
-                # the two binding walks but not this third one, reached on the
-                # receiver path (``_withdrawn_receivers`` ->
-                # ``_receiver_attribute_writes`` -> ``_write_import_at`` ->
-                # ``_scope_import_events``).  A case has no position, so
-                # ``add`` was reading ``node.lineno`` off it and the audit died
-                # with ``AttributeError`` -- the same crash, one walk further.
-                for name in _match_capture_names(node.pattern):
-                    add(name, node, None, False,
-                        position=_match_case_position(node),
-                        force_conditional=True)
         # Round 15 (codex r14 P0-2 / P0-3): an assignment whose right side
         # spells a write helper keeps the spelling one on this side too.
         _resolve_assignment_helpers(events, pending)
@@ -6395,6 +6444,16 @@ def _flow_marks(statements):
     column to order.  *conditional* is true unless the binding is a statement
     of the very list its use is judged in, and *loops* holds the ids of the
     loops the statement sits inside -- the two facts the resolver needs.
+
+    #1953 fix-r1 round 36 (codex r35 P0-3): short-circuit tails execute
+    conditionally even inside an unconditional statement --
+    ``report is None and (globals := lambda: {})`` binds *globals* only when
+    the right operand runs.  The ``setdefault`` below answered the *statement's*
+    certainty, so the walrus was recorded as a certain binding and
+    :func:`_head_shadowed` threw the real head away (false PASS).  The tails
+    of a ``BoolOp`` (every operand but the first) and of an ``IfExp`` (the
+    body and the orelse) are marked conditional directly, overriding the
+    statement-level default.
     """
     marks = {}
 
@@ -6405,6 +6464,19 @@ def _flow_marks(statements):
                 statement, (ast.For, ast.AsyncFor, ast.While)) else loops)
             for node in _local_expression_nodes(statement):
                 marks.setdefault(id(node), (conditional, loops))
+            stack = list(_local_expression_nodes(statement))
+            while stack:
+                node = stack.pop()
+                tails = ()
+                if isinstance(node, ast.BoolOp):
+                    tails = node.values[1:]
+                elif isinstance(node, ast.IfExp):
+                    tails = (node.body, node.orelse)
+                for tail in tails:
+                    marks[id(tail)] = (True, loops)
+                    for inner_node in _local_expression_nodes(tail):
+                        marks[id(inner_node)] = (True, loops)
+                stack.extend(ast.iter_child_nodes(node))
             for inner_block in _statement_blocks(statement):
                 visit(inner_block, True, inner)
 
@@ -6662,10 +6734,16 @@ def _module_value_uses(tree):
     direct = set()
     _module_call_positions(tree, direct)
     dead = _dead_line_ranges(tree)
+    # #1953 fix-r1 round 36 (codex r35 P0-5): only a walrus that is the whole
+    # of an expression statement is a plain hand-off; see
+    # :func:`_alias_source_nodes`.
+    walrus_roots = {id(stmt.value) for stmt in ast.walk(tree)
+                    if isinstance(stmt, ast.Expr)
+                    and isinstance(stmt.value, ast.NamedExpr)}
     dead_alias_loads = set()
     if dead:
         for node in ast.walk(tree):
-            sources = _alias_source_nodes(node)
+            sources = _alias_source_nodes(node, walrus_roots)
             if not sources:
                 continue
             position = (node.lineno, node.col_offset)
@@ -6748,7 +6826,18 @@ def _plain_alias_pairs(node):
             for target, value in _plain_alias_node_pairs(node)]
 
 
-def _alias_source_nodes(node):
+def _leaf_targets_plain(target):
+    """True when every leaf of *target* is a plain name (r36)."""
+    if isinstance(target, ast.Name):
+        return True
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return all(_leaf_targets_plain(item) for item in target.elts)
+    if isinstance(target, ast.Starred):
+        return _leaf_targets_plain(target.value)
+    return False
+
+
+def _alias_source_nodes(node, walrus_roots=None):
     """Value-side ``Name`` nodes a dead alias statement may drop (r35).
 
     #1953 fix-r1 round 35 (codex r34 P0-2 / GLM boundary r34 #1): the
@@ -6764,18 +6853,33 @@ def _alias_source_nodes(node):
       that statement, fail-closed;
     * a name bound to a non-``Name`` value (``_a = _register(main)``) never
       pairs, so its loads were never dropped to begin with.
+
+    #1953 fix-r1 round 36 (codex r35 P0-5): round 35 read the fail-closed
+    gate only at the top level of the target list, so a leaf escape slipped
+    through -- ``if False: _a, _obj.slot = main, other`` pairs the first
+    element yet the second load escapes into the attribute write.  The gate
+    now runs at every leaf.  And a walrus only hands a name off when it *is*
+    the whole expression statement (``(_a := main)``); embedded in a larger
+    expression -- ``_register(_a := main)``, ``_obj.slot = (_a := main)`` --
+    the value still escapes through the surrounding expression, so those
+    loads stay too.
     """
     if isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+        if (isinstance(node, ast.NamedExpr) and walrus_roots is not None
+                and id(node) not in walrus_roots):
+            # A walrus bound as a side effect of a bigger expression is not
+            # a plain hand-off; the value escapes through that expression.
+            return []
         if (isinstance(node.target, ast.Name)
                 and isinstance(node.value, ast.Name)):
             return [node.value]
         return []
     if not isinstance(node, ast.Assign):
         return []
-    if any(not isinstance(target, (ast.Name, ast.Tuple, ast.List))
-           for target in node.targets):
-        # A chained attribute/subscript target consumes the value without
-        # pairing it: the load escapes into the object and must stay.
+    if any(not _leaf_targets_plain(target) for target in node.targets):
+        # A chained attribute/subscript target (at any leaf depth) consumes
+        # the value without pairing it: the load escapes into the object and
+        # must stay.
         return []
     return [value for _target, value in _plain_alias_node_pairs(node)]
 
@@ -6801,6 +6905,26 @@ def _alias_pairs(node):
     return []
 
 
+def _inert_literal_expr(node):
+    """True when *node* is built only from literals and inert lambdas (r36)."""
+    if isinstance(node, ast.Lambda):
+        args = node.args
+        for default in (list(args.defaults)
+                        + [item for item in args.kw_defaults if item is not None]):
+            if not _inert_literal_expr(default):
+                return False
+        return _inert_literal_expr(node.body)
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, ast.Dict):
+        return all(key is None or _inert_literal_expr(key)
+                   for key in node.keys) and all(
+                       _inert_literal_expr(item) for item in node.values)
+    if isinstance(node, (ast.List, ast.Set, ast.Tuple)):
+        return all(_inert_literal_expr(item) for item in node.elts)
+    return False
+
+
 def _provably_inert(value):
     """True when *value* certainly is not a dynamic-lookup head (r35).
 
@@ -6810,10 +6934,18 @@ def _provably_inert(value):
     test below never depends on the order the binding table was built in.
     Anything else (a call, an attribute, a name, a comprehension, ...) is not
     provable and stays "unknown".
+
+    #1953 fix-r1 round 36 (codex r35 P0-1 / GLM r35 boundary P0-1): "no call
+    in the lambda" was too weak -- a call-free body can still *return* a head
+    or a namespace (``lambda: vars``, ``lambda:
+    sys.modules[__name__].__dict__``, a double call ``((_g := globals)())
+    ['main']``).  A lambda now counts as inert only when its whole tree --
+    defaults included -- is literals, literal containers, or further inert
+    lambdas; every other node kind (Name, Attribute, Subscript, Call, ...)
+    keeps it "unknown".
     """
     if isinstance(value, ast.Lambda):
-        return not any(isinstance(item, ast.Call)
-                       for item in ast.walk(value))
+        return _inert_literal_expr(value)
     try:
         ast.literal_eval(value)
     except Exception:  # noqa: BLE001 - any refusal just means "not a literal"
@@ -6862,6 +6994,19 @@ def _head_shadowed(bindings, name, position, loops=(), dead=()):
     return True
 
 
+def _lambda_local_names(node):
+    """The parameter names *node* (a ``Lambda``) binds (r36)."""
+    args = node.args
+    names = {item.arg for item in args.posonlyargs}
+    names.update(item.arg for item in args.args)
+    names.update(item.arg for item in args.kwonlyargs)
+    if args.vararg:
+        names.add(args.vararg.arg)
+    if args.kwarg:
+        names.add(args.kwarg.arg)
+    return names
+
+
 def _contains_dynamic_lookup(value, heads, bindings=None, dead=(), loops=()):
     """True when *value* reaches a name without spelling it (round 27).
 
@@ -6879,29 +7024,72 @@ def _contains_dynamic_lookup(value, heads, bindings=None, dead=(), loops=()):
     ``globals = lambda: {...}; held = (_g := globals)()['main']`` calls the
     *lambda*.  :func:`_head_shadowed` decides; without the binding table the
     spelling stays a carrier, fail-closed.
+
+    #1953 fix-r1 round 36 (codex r35 P0-4): the walk was a plain
+    ``ast.walk``, so a call inside a lambda body still read the *module*
+    binding table -- ``held = (lambda globals: globals('main'))(eval)``
+    counted the parameter as the module's shadow, and a deferred body read
+    module bindings that are not in force at the time it runs.  The walk now
+    carries the local names lambdas and comprehensions bind, and a deferred
+    body treats a head spelling as a carrier outright, fail-closed.
+
+    #1953 fix-r1 round 36 (GLM r35 sibling P1-1): the alias branch resolved
+    the terminal head but never asked whether it is shadowed at the call --
+    ``globals = lambda: {...}; lk = globals; held = lk()['main']`` reported a
+    write a clean module never makes, one hop beyond the bare spelling r35
+    fixed.
     """
-    for node in ast.walk(value):
-        if not isinstance(node, ast.Call):
-            continue
-        # #1953 fix-r1 round 34 (GLM r33 sibling P2-2): the value side has the
-        # same walrus callee -- ``f = (_g := globals)()['main']`` is a carrier,
-        # and reading the raw ``NamedExpr`` dropped it (false PASS direction).
-        func = _callee_expr(node)
-        if isinstance(func, ast.Name):
-            if func.id in heads:
-                if bindings is None or not _head_shadowed(
+
+    def scan(node, local, deferred):
+        if isinstance(node, ast.Call):
+            # #1953 fix-r1 round 34 (GLM r33 sibling P2-2): the value side has
+            # the same walrus callee -- ``f = (_g := globals)()['main']`` is a
+            # carrier, and reading the raw ``NamedExpr`` dropped it (false
+            # PASS direction).
+            func = _callee_expr(node)
+            if isinstance(func, ast.Name):
+                if func.id in heads:
+                    if (func.id in local or deferred
+                            or bindings is None or not _head_shadowed(
+                                bindings, func.id,
+                                (node.lineno, node.col_offset),
+                                dead=dead, loops=loops)):
+                        return True
+                elif bindings is not None:
+                    hits = (_module_alias_sources(
                         bindings, func.id, (node.lineno, node.col_offset),
-                        dead=dead, loops=loops):
-                    return True
-            elif bindings is not None and (
-                    _module_alias_sources(
-                        bindings, func.id, (node.lineno, node.col_offset),
-                        dead=dead)
-                    & _OPEN_CALL_HEADS):
+                        dead=dead) & _OPEN_CALL_HEADS)
+                    if hits and (deferred or any(
+                            not _head_shadowed(bindings, hit,
+                                               (node.lineno, node.col_offset),
+                                               dead=dead, loops=loops)
+                            for hit in hits)):
+                        return True
+            elif isinstance(func, ast.Attribute) and func.attr in heads:
                 return True
-        elif isinstance(func, ast.Attribute) and func.attr in heads:
-            return True
-    return False
+        for child in ast.iter_child_nodes(node):
+            if isinstance(node, ast.Lambda) and child is node.body:
+                # The body runs later and sees the parameters, not the
+                # module's binding of the same spelling.
+                inner = frozenset(local | _lambda_local_names(node))
+                if scan(child, inner, True):
+                    return True
+            elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp,
+                                   ast.GeneratorExp)):
+                # Comprehension targets shadow inside their own scope; a
+                # generator expression defers its elements on top of that.
+                names = set(local)
+                for generator in node.generators:
+                    names.update(_target_names(generator.target))
+                if scan(child, frozenset(names),
+                        deferred or isinstance(node, ast.GeneratorExp)):
+                    return True
+            else:
+                if scan(child, local, deferred):
+                    return True
+        return False
+
+    return scan(value, frozenset(), False)
 
 
 def _dynamic_result_in_force(bindings, name, position, loops=(), strict=False,
@@ -6963,6 +7151,21 @@ def _dynamic_result_in_force(bindings, name, position, loops=(), strict=False,
     return False
 
 
+def _head_binding_names(node, heads):
+    """Head-spelled names *node* (an import or a delete) binds (r36)."""
+    if isinstance(node, ast.Import):
+        return [alias.asname or alias.name.split('.')[0]
+                for alias in node.names
+                if (alias.asname or alias.name.split('.')[0]) in heads]
+    if isinstance(node, ast.ImportFrom):
+        return [alias.asname or alias.name for alias in node.names
+                if (alias.asname or alias.name) in heads]
+    if isinstance(node, ast.Delete):
+        return [target.id for target in node.targets
+                if isinstance(target, ast.Name) and target.id in heads]
+    return []
+
+
 def _module_alias_bindings(tree, dynamic_heads=None):
     """``name -> [((line, col), conditional, source, loops, dynamic, inert)]``.
 
@@ -6992,14 +7195,32 @@ def _module_alias_bindings(tree, dynamic_heads=None):
     now re-resolves **every** entry against the completed table and
     overwrites both directions: a first-pass bare-head hit that the table
     proves shadowed must lose its dynamic mark again.
+
+    #1953 fix-r1 round 36 (codex r35 P0-2 / GLM r35 boundary P0-2): the
+    table only knew value bindings, so an *un-binding* of a head was
+    invisible -- ``globals = lambda: {}; del globals`` falls back to the
+    builtin afterwards, and ``from builtins import globals`` re-imports it,
+    yet :func:`_head_shadowed` kept reading the earlier inert binding as the
+    one in force and dropped the site (false PASS).  Module-level imports
+    and deletes of a head spelling now record their own entries --
+    dynamic, never inert -- so the "in force" selection sees them.  They are
+    not value bindings, so they never join the late pass.
     """
     heads = _OPEN_CALL_HEADS if dynamic_heads is None else dynamic_heads
     marks = _flow_marks(tree.body)
     bindings = {}
     late = []
     for level, node in _walk_scoped(tree):
-        if level is not None or not isinstance(
-                node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+        if level is not None:
+            continue
+        if isinstance(node, (ast.Import, ast.ImportFrom, ast.Delete)):
+            conditional, loops = marks.get(id(node), (True, ()))
+            for name in _head_binding_names(node, heads):
+                bindings.setdefault(name, []).append(
+                    ((node.lineno, node.col_offset), conditional, None,
+                     loops, True, False))
+            continue
+        if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
             continue
         if node.value is None:
             # 1953 fix-r1 round 30 (codex r28 P1): a bare annotation (``x: int``)
@@ -7282,9 +7503,18 @@ def _module_open_calls(tree):
                     # print; lookup(x)`` reads the head only up to the rebind;
                     # the flat closure used to keep the site forever (false
                     # FAIL once a later import moves the reading).
+                    # #1953 fix-r1 round 36 (GLM r35 sibling P1-1): the
+                    # resolved head must also survive the same shadow test
+                    # the bare spelling takes -- ``globals = lambda: {...};
+                    # lk = globals; lk()`` calls the lambda, and recording the
+                    # site anyway reported a write a clean module never makes.
                     sources = _module_alias_sources(bindings, name, position,
                                                     loops, dead=dead)
-                    if sources & _OPEN_CALL_HEADS:
+                    hits = sources & _OPEN_CALL_HEADS
+                    if hits and any(
+                            not _head_shadowed(bindings, hit, position,
+                                               loops, dead)
+                            for hit in hits):
                         sites.append((position, loops))
             elif (isinstance(func, ast.Attribute)
                     and func.attr in _OPEN_CALL_HEADS):
@@ -7613,6 +7843,22 @@ def _module_binding_events(tree):
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
                                ast.ClassDef)):
             add(node.name, node, None)
+        elif isinstance(node, ast.Match):
+            # #1953 fix-r1 round 33 (self-check of the 331-mutant table):
+            # an ``ast.match_case`` has no position of its own, and both
+            # binding walks read ``node.lineno`` off it.  The case-level
+            # branch was folded into this Match-level one so the parent (and
+            # its certainty) is in hand.
+            # #1953 fix-r1 round 36 (codex r35 P1-1): a sole, guard-free bare
+            # capture keeps the statement's certainty; see
+            # :func:`_irrefutable_capture`.
+            for case in node.cases:
+                for name in _match_capture_names(case.pattern):
+                    items = add(name, case, None, False,
+                                position=_match_case_position(case),
+                                force_conditional=not _irrefutable_capture(
+                                    node, case))
+                    items[-1] = items[-1][:1] + (-1,) + items[-1][2:]
         elif isinstance(node, ast.stmt):
             names, value = _local_bound_names(node)
             pairs = dict(_alias_pairs(node)) if value is not None else {}
@@ -7636,12 +7882,6 @@ def _module_binding_events(tree):
                 module_copies.append(
                     (name, (node.lineno, node.col_offset), items[-1][3],
                      items[-1][4], source))
-        elif isinstance(node, ast.match_case):
-            for name in _match_capture_names(node.pattern):
-                items = add(name, node, None, False,
-                            position=_match_case_position(node),
-                            force_conditional=True)
-                items[-1] = items[-1][:1] + (-1,) + items[-1][2:]
     dead_ranges = tuple(_dead_line_ranges(tree))
     _resolve_assignment_helpers(events, pending)
     _resolve_builtins_module_copies(events, module_copies, dead_ranges)
@@ -7790,6 +8030,21 @@ def _imported_write_aliases(function, outer_imports=None):
                              ast.ClassDef)):
             add(node.name, (node.lineno, node.col_offset), None,
                 conditional, loops)
+        elif isinstance(node, ast.Match):
+            # #1953 fix-r1 round 35 (codex r34 P0-1): a capture only
+            # happens when its pattern matches, so the marks-derived
+            # ``conditional`` (which answers the Match *statement's*
+            # certainty) is not enough on its own -- see the two module-side
+            # ``force_conditional`` sites.
+            # #1953 fix-r1 round 36 (codex r35 P1-1): a sole, guard-free bare
+            # capture never fails to match and keeps the statement's
+            # certainty; see :func:`_irrefutable_capture`.
+            for case in node.cases:
+                for name in _match_capture_names(case.pattern):
+                    add(name, _match_case_position(case), None,
+                        conditional if _irrefutable_capture(node, case)
+                        else True,
+                        loops, certain=False)
         elif isinstance(node, ast.stmt):
             names, value = _local_bound_names(node)
             # #1953 fix-r1 round 29 (codex r27 P0-1): the module-scope builder
@@ -7820,15 +8075,6 @@ def _imported_write_aliases(function, outer_imports=None):
                 module_copies.append(
                     (name, (node.lineno, node.col_offset), conditional,
                      loops, source))
-        elif isinstance(node, ast.match_case):
-            for name in _match_capture_names(node.pattern):
-                # #1953 fix-r1 round 35 (codex r34 P0-1): a capture only
-                # happens when its pattern matches, so it is always
-                # conditional here -- the marks-derived ``conditional``
-                # answered the Match *statement's* certainty (see the two
-                # module-side ``force_conditional`` sites).
-                add(name, _match_case_position(node), None,
-                    True, loops, certain=False)
     # Round 15 (codex r14 P0-2 / P0-3): ``w = setattr`` / ``w = w`` keep the
     # spelling a write helper.
     _resolve_assignment_helpers(events, pending)
@@ -12918,7 +13164,10 @@ def aggregation_audit():
         "for _i in (0,):\n"
         "    _held = _held\n"
         "    _held(object())\n")
-    if len(_module_open_calls(_m32_loop)[0]) < 2:
+    # #1953 fix-r1 round 36 (GLM r35 sibling P3-3): pin it as *exactly* two,
+    # the same strengthening ``_m32_walrus`` took in r35 -- a lower bound
+    # stays green when an extra site sneaks in.
+    if len(_module_open_calls(_m32_loop)[0]) != 2:
         failures.append('#1953 aggregation-audit: detector self-test lost the '
                         'live self-copy inside a loop (round 32)')
     # #1953 fix-r1 round 33 (self-check of the 331-mutant table): an
@@ -13048,9 +13297,125 @@ def aggregation_audit():
         _m32_base + "_held = (_g := globals)()['main']\n"
         "import builtins as _bi\n"
         "_held(object())\n")
-    if not _module_open_calls(_m35_walrus_head)[0]:
+    # #1953 fix-r1 round 36 (codex r35 P1-2): pin the exact site set -- the
+    # fixture has two sites (the ``globals()`` head call and the ``_held``
+    # carrier call), and a count that only checks "at least one" stays green
+    # when the carrier half of the shape is lost.
+    _m35_sites = _module_open_calls(_m35_walrus_head)[0]
+    _m35_held = next(
+        (node for node in ast.walk(_m35_walrus_head)
+         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+         and node.func.id == '_held'), None)
+    if (len(_m35_sites) != 2 or _m35_held is None
+            or not any(site[0] == (_m35_held.lineno, _m35_held.col_offset)
+                       for site in _m35_sites)):
         failures.append('#1953 aggregation-audit: detector self-test lost the '
                         'unshadowed walrus-callee site (round 35)')
+    # #1953 fix-r1 round 36 (codex r35 P0-1..P0-5 / P1-1 / P1-2, GLM r35
+    # sibling P1-1 / P2-2 runtime-verified P0 / P3-3): the shapes the three
+    # r35 reviews left open, pinned on the real detector paths.
+    _m36_ns_lambda = ast.parse(
+        _m32_base + "globals = lambda: eval\n"
+        "held = ((_g := globals)())()['main']\n"
+        "import builtins as _bi\n"
+        "held(object())\n")
+    if not _module_open_calls(_m36_ns_lambda)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test kept a '
+                        'call-free lambda over a head as inert (round 36)')
+    _m36_reimport = ast.parse(
+        _m32_base + "globals = lambda: {'main': lambda x: None}\n"
+        "from builtins import globals\n"
+        "held = globals()['main']\n"
+        "import builtins as _bi\n"
+        "held(object())\n")
+    if not _module_open_calls(_m36_reimport)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test let a '
+                        'reimported head stay shadowed (round 36)')
+    _m36_del = ast.parse(
+        _m32_base + "globals = lambda: {'main': lambda x: None}\n"
+        "del globals\n"
+        "held = globals()['main']\n"
+        "import builtins as _bi\n"
+        "held(object())\n")
+    if not _module_open_calls(_m36_del)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test let a '
+                        'deleted head stay shadowed (round 36)')
+    _m36_shortcircuit = ast.parse(
+        _m32_base + "report is None and (globals := lambda: {})\n"
+        "held = (_g := globals)()['main']\n"
+        "import builtins as _bi\n"
+        "held(object())\n")
+    if not _module_open_calls(_m36_shortcircuit)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test kept a '
+                        'short-circuit walrus shadow (round 36)')
+    # The module rebinding is the point: the parameter spelling must not
+    # consult the module's binding table of the same name.
+    _m36_param = ast.parse(
+        _m32_base + "globals = lambda: {'main': lambda x: None}\n"
+        "held = (lambda globals: globals('main'))(eval)\n"
+        "import builtins as _bi\n"
+        "held(object())\n")
+    if not any(item[4] for item in
+               _module_alias_bindings(_m36_param).get('held', ())):
+        failures.append('#1953 aggregation-audit: detector self-test kept a '
+                        'lambda parameter as a head shadow (round 36)')
+    _m36_lambda_late = ast.parse(
+        _m32_base + "globals = lambda: {'main': lambda x: None}\n"
+        "held = (lambda: globals()['main'])()\n"
+        "import builtins as _bi\n"
+        "held(object())\n")
+    if not any(item[4] for item in
+               _module_alias_bindings(_m36_lambda_late).get('held', ())):
+        failures.append('#1953 aggregation-audit: detector self-test kept a '
+                        'deferred lambda body on a shadowed head '
+                        '(round 36)')
+    _m36_leaf_escape = ast.parse(
+        _m32_base + "if False:\n"
+        "    _a, _obj.slot = main, other\n")
+    if 'main' not in _module_value_uses(_m36_leaf_escape):
+        failures.append('#1953 aggregation-audit: detector self-test dropped a '
+                        'leaf-target escape as a value use (round 36)')
+    _m36_walrus_arg = ast.parse(
+        _m32_base + "if False:\n"
+        "    _register(_a := main)\n")
+    if 'main' not in _module_value_uses(_m36_walrus_arg):
+        failures.append('#1953 aggregation-audit: detector self-test dropped a '
+                        'walrus-argument escape as a value use (round 36)')
+    _m36_walrus_target = ast.parse(
+        _m32_base + "if False:\n"
+        "    _obj.slot = (_a := main)\n")
+    if 'main' not in _module_value_uses(_m36_walrus_target):
+        failures.append('#1953 aggregation-audit: detector self-test dropped a '
+                        'walrus-target escape as a value use (round 36)')
+    _m36_match_irrefutable = ast.parse(
+        "from builtins import setattr as _sa36\n"
+        "match (lambda *a: None):\n"
+        "    case _sa36:\n"
+        "        pass\n"
+        "def _m36(report):\n"
+        "    _sa36(md, 'common', object())\n"
+        "    return md.common.aggregate_status(report)\n")
+    if 'md' in _withdrawn_receivers(_m36_match_irrefutable):
+        failures.append('#1953 aggregation-audit: detector self-test kept a '
+                        'receiver written through an irrefutable capture '
+                        '(round 36)')
+    _m36_alias_hop = ast.parse(
+        _m32_base + "globals = lambda: {'main': lambda x: None}\n"
+        "lk = globals\n"
+        "held = lk()['main']\n"
+        "import builtins as _bi\n"
+        "held(object())\n")
+    if _module_open_calls(_m36_alias_hop)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test kept an '
+                        'alias hop to a shadowed head as a site (round 36)')
+    _m36_walrus_receiver = ast.parse(
+        "def _m36r(report):\n"
+        "    _f = md.__setattr__\n"
+        "    (_g := _f)(md, 'common', object())\n"
+        "    return md.common.aggregate_status(report)\n")
+    if 'md' not in _withdrawn_receivers(_m36_walrus_receiver):
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'walrus-callee receiver write (round 36)')
     for _label, _source, _want in (
             ("a handle certainly overwritten in a finally block",
              "def _w42_use():\n"
