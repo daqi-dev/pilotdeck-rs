@@ -8,8 +8,9 @@ original: A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001
 更正件（R 链，承接 `A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R11`；frontmatter
 `original` 按账本机器规则指基础 ID，与 R9-R11 同法，承接关系由文件名与正文表达）。
 登记 #1872 / #1873 / #1874 实现单（分支 `claude/issue-1872-family`，基线
-`a1719f483`，四提交 `af24560dd` + `04784e6cd` + `db7cf305a` + `a6e9f3392`）落地
-后 config 族的两个答案格变化：
+`a1719f483`，收货压为单提交 `44bf56991`——worker 原四提交 `af24560dd` +
+`04784e6cd` + `db7cf305a` + `a6e9f3392` 经 squash+rebase 后不可达，树内容
+逐字节等价以 final.patch 复验）落地后 config 族的两个答案格变化：
 
 - 差异 ①（别名键 busy 格）：`session_model_set` / `session_model_clear` 以别名
   拼写请求（`a-b`，owner 注册为 `a/b`——`sanitize_session_id` 把 `/` 与 `\` 折成
@@ -48,7 +49,7 @@ original: A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001
 
 ## Rust 行为
 
-差异 ①（#1872，`af24560dd` + 锚补 `04784e6cd`）：两个 wrapper
+差异 ①（#1872）：两个 wrapper
 （`config.rs:189-228` set / `:288-323` clear，现行 sha256
 `6c342dc20f576a09b61991460b50f6583796a649d447a0ac0bb41edc67b01fa4`）先以
 `live_transcript_owner`（`:233`）解析别名折叠到的 owner 注册键，请求键与 owner
@@ -59,9 +60,12 @@ transcript-write 预约表（check→append→close 窗口不纳新回合，`:20
 （`close_model_selection_owner`，`:365-390`，#1457 fix-r3 的关闭目标在 #1872 的
 别名门下由正控钉住）。非别名路径（请求键 = owner 键）行为与修前及 TS 完全一致。
 
-差异 ②（#1873，`db7cf305a`；#1874 收拢 `a6e9f3392`）：
-`session_record_status`（`session_dir.rs:448-517`，现行 sha256
-`76bd7eab133b6dc6d9849b597e4dde7b778fe834bb2473f92117781d831333b7`）冷路径经共享
+差异 ②（#1873；#1874 收拢）：
+`session_record_status`（`session_dir.rs:448-517`，squash 时 sha256
+`76bd7eab133b6dc6d9849b597e4dde7b778fe834bb2473f92117781d831333b7`；rebase
+并入 main 侧 #2564 尾部用例后现行
+`798e59ae84ba9e037c1437ccec85d460669c797acac90eaf33d4443a4201871f`，增量
+不在 `:448-517` 段）冷路径经共享
 三段协议 `transcript_locks::append_metadata_with_lease`
 （`transcript_locks.rs:131-174`，sha256
 `c5a2d56b91dffbbeb3da566f97b725c4452beb2478e6de3d30e1ef9b4fe4c05c`）：live
@@ -89,7 +93,7 @@ set/clear 全链，本件零变化）；TS 别名成功格的 Rust 侧对应（R
 
 ## 机器判据
 
-以下现核于 `a6e9f3392`（行号为该提交上的行号）：
+以下现核于 `44bf56991`（行号为该提交上的行号，`.rs`/负控行号在 squash 前后不变）：
 
 - 差异 ① 用例：`session_model_set_rejects_active_turn_on_alias_owner`
   （`config.rs:1373`）与 `session_model_clear_rejects_active_turn_on_alias_owner`
@@ -110,20 +114,24 @@ set/clear 全链，本件零变化）；TS 别名成功格的 Rust 侧对应（R
   holds_the_lease`（`config.rs:1512`）；lease 分层单测
   `try_writer_lease_separates_contention_from_storage_failure`
   （`factory_tests.rs:7735`）。
-- 负控（`tests/fixtures/native-config/negative_controls.py`）：差异 ① 的
-  `set-alias-owner-busy-removed`（`:281`）/ `clear-alias-owner-busy-removed`
+- 负控（`tests/fixtures/native-config/negative_controls.py`，行号为 squash 时
+  行号，rebase 并入 main 侧 #2562/#2564 行与 SERVICES 常量块后各 +6）：差异 ①
+  的 `set-alias-owner-busy-removed`（`:281`）/ `clear-alias-owner-busy-removed`
   （`:291`）（busy 门反改请求键单侧）/ `set-alias-owner-reservation-skipped`
   （`:302`）（owner 侧预约跳过）；差异 ② 的 `writer-lease-folded-to-busy`
   （`:262`，存储故障折回 busy）；三段协议的 `transcript-cold-lease-skipped`(-
   `-status`/`-config`)（`:218`/`:225`/`:232`，同锚不同绑定）与三条
   `*-checked-append-reverted`（`:243`/`:248`/`:253`）。静态核
   `python3 -I negative_controls.py --check` → `#1457 55 mutation anchors OK;
-  #2065 45 literal anchors OK`；九行新/迁行样本跑全 KILLED（改坏红，证据
+  #2065 45 literal anchors OK`（本件九行 + 既有 46/38；收货 rebase 真合并
+  main 侧 #2562/#2564 四行后同表为 59/49，`--check` 复核过）；九行新/迁行
+  样本跑全 KILLED（改坏红，证据
   `_tmp/20261026-issue-1872/negctl-s3-sample/`）。
-- 绿跑（本树 HEAD `a6e9f3392`，工作树干净）：`cargo test -p
+- 绿跑（worker 树 HEAD `1f03a0b95`，工作树干净）：`cargo test -p
   pilotdeck-gateway --lib -- native_process::` → `347 passed; 0 failed`、
   `-- runtime::session::` → `340 passed; 0 failed`；fmt --check 与 clippy
-  --all-targets -D warnings 无输出。
+  --all-targets -D warnings 无输出。收货在 rebase 后 head `44bf56991` 于 cb8
+  独立 verify 树复跑定向套件（证据 `_tmp/20261109-1872-harvest/`）。
 - 账本闸门：`diffs/` 只追加，`check_frozen.py` 的 `check_diffs` 规则要求本件
   frontmatter `original` 写基础 ID（已写 `-001`，非 `-R11`）。
 
