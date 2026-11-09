@@ -3871,8 +3871,11 @@ const PARSER_BAD_REQUEST_400: &[u8] =
 #[tokio::test]
 async fn unknown_method_is_the_bare_parser_400() {
     // #2257 fix-r4: the free gap above the wecom-callback golden replay
-    // segment (18900–18921); 18922–18923 are the http10 pins.
-    const PORT: u16 = 18924;
+    // segment (18900–18921); 18922–18923 are the http10 pins, 18924–18925
+    // belong to `head_timeout_tests` (r1 review caught these two pins
+    // sitting on them), 18926 to the json-null cell — so these pins take
+    // 18927/18928.
+    const PORT: u16 = 18927;
     let case = case_by_name("unknown-method");
     let request = pin_request(&case);
     assert!(
@@ -3918,7 +3921,9 @@ async fn unknown_method_is_the_bare_parser_400() {
 /// header, not a lane-wide presence.
 #[tokio::test]
 async fn missing_host_is_the_headless_parser_400() {
-    const PORT: u16 = 18925;
+    // #2152 fix-r1: see the sibling pin above — 18924/18925 are the
+    // head-timeout ports, so this pin takes 18928.
+    const PORT: u16 = 18928;
     let case = case_by_name("missing-host");
     let request = pin_request(&case);
     let request_head = String::from_utf8_lossy(&request);
@@ -5563,7 +5568,8 @@ async fn json_null_body_is_unhandled_destroy() {
     // sat inside the wecom-callback golden replay segment (18900–18921),
     // held only by the fixture's documented courtesy of skipping 18901 —
     // moved out to the free gap above that segment, same policy as the
-    // 200/404 pins (18923/18922) and the head-timeout ports (18924/18925).
+    // 200/404 pins (18923/18922), the head-timeout ports (18924/18925)
+    // and the #2152 parser-admission pins (18927/18928).
     ensure_replay_port_free(PORT).await;
     let channel = SmsChannel::new(SmsChannelOptions {
         extra: Some(to_js_object(&json!({
