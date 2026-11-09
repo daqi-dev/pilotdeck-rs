@@ -3291,3 +3291,8 @@ updated: 2026-11-05 13:4x · by Claude Code 协调者（13:4x 交接：#1419 合
 
 - Host 非默认端口；仅 `cos_url` 跳过；坏图单条跳过；无 context `queuePendingReply`；上传 Content-Type；307/308 正文；连接池+DNS 缓存。
 - **全量 lib** 4277/0；证据 `pdrs-ext/…/r16/最终报告.md`，`r16/logs/lib-full-r16.log`；已提交，未 push。
+
+### 2026-11-10 pdrs-daqi-b-channels r17（Grok r16 diagnostics/队列/上传/重定向）
+
+- `[Attachment diagnostics]` 回合；三处排队 + `/new` 清队列；上传仅 200；302 后 GET 不重放 POST；建议项一并收口。
+- **全量 lib** 4282/0；证据 `pdrs-ext/…/r17/最终报告.md`，`r17/logs/lib-full-r17.log`；已提交，未 push。
