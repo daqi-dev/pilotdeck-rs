@@ -457,6 +457,14 @@ add('hash-key-order-tool-limits', BASE + `runPolicy: {failureGuard: {toolFailure
 // that are not in the bundled catalog so the protocol table itself is used.
 add('model-protocol-anthropic-defaults', BASE.replace('protocol: openai', 'protocol: anthropic'));
 add('model-protocol-google-defaults', BASE.replace('protocol: openai', 'protocol: google'));
+// #2445: the f64 per-session MCP instance cap must survive the snapshot
+// without truncation. The fractional cell records 2.5 (Math.max(1, 2.5)); the
+// sub-unit cell records the clamp itself (Math.max(1, 0.5) -> 1). Together
+// they keep both halves of the Rust gateway normalization observable in the
+// oracle: a floor mutation changes the 2.5 cell, dropping the `.max(1.0)`
+// clamp changes the 0.5 cell.
+add('gateway-max-per-session-mcp-fractional', BASE + `gateway: {maxPerSessionMcpInstances: 2.5}\n`);
+add('gateway-max-per-session-mcp-clamped', BASE + `gateway: {maxPerSessionMcpInstances: 0.5}\n`);
 
 function encode(value: unknown): unknown {
   if (value === undefined) return { $: 'undefined' };
