@@ -934,7 +934,8 @@ class EnvironmentControls(unittest.TestCase):
         spec_from_file_location 会读 scripts/retirement-outcome-parity/__pycache__/
         self_check.*.pyc；树里预置的 PEP 552 unchecked-hash pyc 被无条件采用、
         不比对源码，兄弟侧的「同源推导」就被抽换的常量抽空（170 → 999 即红）。
-        前缀只服务于加载期；用后即清（mkdtemp 不泄漏）。
+        前缀只服务于加载期；exec 成败都清（try/finally rmtree，评审 r1：
+        exec_module 抛异常 / 外层超时杀子进程时直线 rmtree 不可达）。
         """
         source = (Path(__file__).resolve().parents[3]
                   / 'scripts/retirement-outcome-parity/self_check.py')
@@ -951,8 +952,10 @@ class EnvironmentControls(unittest.TestCase):
             'spec = importlib.util.spec_from_file_location("self_check", '
             f'{str(source)!r})\n'
             'module = importlib.util.module_from_spec(spec)\n'
-            'spec.loader.exec_module(module)\n'
-            'shutil.rmtree(own, ignore_errors=True)\n'
+            'try:\n'
+            '    spec.loader.exec_module(module)\n'
+            'finally:\n'
+            '    shutil.rmtree(own, ignore_errors=True)\n'
             'module._assert_step_budget_coverage(module.retirement_budget_rows())\n'
             + print_statement + '\n')
         result = subprocess.run([sys.executable, '-I', '-c', loader],

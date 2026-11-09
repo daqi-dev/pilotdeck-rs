@@ -953,6 +953,12 @@ def _assert_pass_counting():
             'subprocesses')
 
 
+# #2421（评审 r1 同类跟改）：negative_controls 执行器里 CHECK 常量的 checker 子进程
+# 超时消费点条数（preflight / 控件循环 / 正控循环各 1）。预算负控行的 limit 就是这个
+# 常量——任一处改回字面量 = #2421 形态在执行面复发，当场红。
+EXPECTED_CONTROLS_CHECK_TIMEOUT_SITES = 3
+
+
 def _assert_subprocess_timeout_wiring():
     """#2421：内部超时常量必须被**真实调用点**消费（源码级互证）。
 
@@ -966,7 +972,16 @@ def _assert_subprocess_timeout_wiring():
     check_check 漂移过一次，其余两个没有理由豁免（同类跟改）。
 
     计数用**拼接正则**（同 _assert_pass_counting 的自指规避）：本函数源码里不出现
-    连续的 ``timeout=<常量名>`` 文本，数不进自己。
+    连续的 ``timeout=<常量名>`` 文本，数不进自己。已知边界（同 _assert_pass_counting
+    的文本互证空档，评审 r1 登记跟进）：只认裸标识符形态，括号包裹或经中转变量的
+    消费点不进计数；表达式改写（如 ``timeout=<常量> * 2``）仍按 1 个入账。
+
+    同类跟改（评审 r1 P2，zai/DS 两家撞上）：预算负控行 ``limit`` 的**执行面**在
+    negative_controls 自己的三个 checker 子进程（preflight / 控件 / 正控）——本
+    断言原先只扫 SELF，任一处改回字面量时「预算算常量、执行是字面量」的 #2421
+    形态在那边复发而这边照绿。CONTROLS 侧同款计数：CHECK 常量的消费点恰为
+    ``EXPECTED_CONTROLS_CHECK_TIMEOUT_SITES``（3 处，其余 EMIT/NEGCTL 在那边
+    无调用点，不计）。
     """
     source = SELF.read_text(encoding='utf-8')
     for prefix in ('EMIT', 'CHECK', 'NEGCTL'):
@@ -980,7 +995,21 @@ def _assert_subprocess_timeout_wiring():
                 'constants (a literal timeout means the budget inequality '
                 'covers a number nothing executes, an uncounted extra '
                 'consumer means it under-covers what does run)')
-    return 'EMIT / CHECK / NEGCTL subprocess timeouts consume their constants'
+    checker_constant = 'CHECK' + '_TIMEOUT_' + 'SECONDS'
+    controls_uses = len(re.findall(
+        r'timeout\s*=\s*' + re.escape(checker_constant),
+        CONTROLS.read_text(encoding='utf-8')))
+    if controls_uses != EXPECTED_CONTROLS_CHECK_TIMEOUT_SITES:
+        raise CheckFailure(
+            '#2421 negative_controls.py carries '
+            f'{controls_uses} `{checker_constant}` call sites but '
+            f'{EXPECTED_CONTROLS_CHECK_TIMEOUT_SITES} are registered; the '
+            'negctl budget row derives its limit from this constant (a '
+            'literal timeout there recreates the #2421 drift on the '
+            'execution surface the budget claims to cover)')
+    return ('EMIT / CHECK / NEGCTL subprocess timeouts consume their '
+            'constants; the controls executor consumes its checker '
+            'constant at every checker call site')
 
 
 # —— 行定位正则，**只**给 wiring_samples() 构造变异样本用：把真实 ci.yml 的文本切成
@@ -1073,7 +1102,9 @@ JOB_OVERHEAD_STEPS = frozenset({
 # summary）；第 4 次起挂住的行为落进 step 硬杀——summary.json 只在控件循环全部
 # 结束后才写，硬杀下没有 summary，哪一控挂了不可见。cap 与 limit 的整除关系被
 # 破坏（改声明 30 min / 改负控 checker 上限 600 s）时，「第几次超时开始硬杀」就
-# 变了，`_assert_step_budget_coverage` 据此当场红。
+# 变了，`_assert_step_budget_coverage` 据此当场红。零余量口径（评审 r1）：机器钉
+# 的是声明配置的整除关系；真实硬杀边界受 step 时钟先于 checker 启动、进程启动
+# 开销影响，会**略早于**名义上的第 4 次（第 3 次的记录也可能赶不上 summary）。
 NEGCTL_STEP_CAP_ABSORBED_CHECKER_TIMEOUTS = 3
 
 
@@ -1471,7 +1502,9 @@ def _assert_step_budget_coverage(rows):
     # 「raw > cap」的降级语义机器化——被声明限压到 cap 的必须恰是直跑负控这一行
     # （emit/check 的声明值与入算值相等，raw 不超 cap），且 cap 吸收的整 checker
     # 超时数是登记值：raw = passes × limit（23 次 600 s），cap = 3 × limit，
-    # 第 4 次 checker 超时才落进 step 硬杀（summary 只在控件循环后写，硬杀无迹）。
+    # 名义上第 4 次 checker 超时落进 step 硬杀（summary 只在控件循环后写，硬杀
+    # 无迹；真实边界受启动开销影响略早，见 NEGCTL_STEP_CAP_ABSORBED_CHECKER_TIMEOUTS
+    # 的注释）。
     negctl_label = '负控 N1–N17 全 KILLED'
     over_cap = [row for row in rows if row['cap_seconds'] is not None
                 and row['raw_seconds'] > row['cap_seconds']]
@@ -1488,16 +1521,19 @@ def _assert_step_budget_coverage(rows):
         raise CheckFailure(
             f'#2453 cap absorption: the `{negctl_label}` raw contribution must '
             f'stay passes ({negctl_row["passes"]}) × limit ({limit}s) = '
-            f'{negctl_row["raw_seconds"]:.0f}s, got {negctl_row["raw_seconds"]:.0f}s')
+            f'{negctl_row["passes"] * limit:.0f}s, got '
+            f'{negctl_row["raw_seconds"]:.0f}s')
     if cap % limit or cap // limit != NEGCTL_STEP_CAP_ABSORBED_CHECKER_TIMEOUTS:
         raise CheckFailure(
             f'#2453 cap absorption: the `{negctl_label}` cap ({cap}s) must absorb '
             f'exactly {NEGCTL_STEP_CAP_ABSORBED_CHECKER_TIMEOUTS} whole checker '
             f'timeouts (limit {limit}s; got cap//limit = {cap // limit} with '
-            f'remainder {cap % limit}s); at the registered value the '
-            f'{NEGCTL_STEP_CAP_ABSORBED_CHECKER_TIMEOUTS + 1}th checker timeout '
-            'is what degrades into the step hard-kill (cancelled, no summary of '
-            'which control hung)')
+            f'remainder {cap % limit}s); at the registered value it is nominally '
+            f'the {NEGCTL_STEP_CAP_ABSORBED_CHECKER_TIMEOUTS + 1}th checker '
+            'timeout that degrades into the step hard-kill (cancelled, no '
+            'summary of which control hung; the real boundary lands slightly '
+            'earlier — the step clock starts before the first checker and '
+            'startup overheads eat into the margin)')
 
 
 def _step_with_keys(yaml, path, step, what):
@@ -2464,28 +2500,41 @@ def wiring_samples():
     # 它）——预算接线块被删掉时，这四条 SURVIVED：守卫退化成「没人消费的常量
     # 比对」的机器证据，正是 #2451 点名的形态。第五条（删键）红在 step 键集判定：
     # 键没了是第一道拦截（`plus its registered timeout-minutes`）。——
+    # 待匹配的声明值从 `GATE_STEP_TIMEOUT_MINUTES` 登记面派生（评审 r1 P2：手抄
+    # 5/30 是第二份拷贝，登记值合法变更时这里会红且文案误导为「registered」）；
+    # 定位一律先 `_step_range` 圈住目标 step 块（评审 r1：全文件首匹配在别的
+    # step 未来声明同值时会锚错步）。
     emit_start, emit_end = _step_range(lines, 'emit 复算与金样逐字节比对')
+    emit_registered = GATE_STEP_TIMEOUT_MINUTES['emit 复算与金样逐字节比对']
     emit_timeout = next((index for index in range(emit_start, emit_end)
-                         if lines[index].rstrip('\n') == '        timeout-minutes: 5'), None)
+                         if lines[index].rstrip('\n')
+                         == f'        timeout-minutes: {emit_registered}'), None)
     if emit_timeout is None:
         raise CheckFailure('the emit step does not carry the registered '
-                           '`timeout-minutes: 5` line to mutate')
+                           f'`timeout-minutes: {emit_registered}` line to mutate')
     for label, value in (
-            ('gate-step-timeout-lowered', '        timeout-minutes: 4\n'),
-            ('gate-step-timeout-raised', '        timeout-minutes: 6\n')):
+            ('gate-step-timeout-lowered',
+             f'        timeout-minutes: {emit_registered - 1}\n'),
+            ('gate-step-timeout-raised',
+             f'        timeout-minutes: {emit_registered + 1}\n')):
         mutated = list(lines)
         mutated[emit_timeout] = value
         samples.append((label, ''.join(mutated)))
-    # 负控 step 的 30 是 `NEGCTL_TIMEOUT_SECONDS // 60` 的登记面（声明限把原始
-    # 贡献压低一个量级，降级语义见 NEGCTL_STEP_CAP_ABSORBED_CHECKER_TIMEOUTS）。
-    negctl_timeout = next((index for index, line in enumerate(lines)
-                          if line.rstrip('\n') == '        timeout-minutes: 30'), None)
+    # 负控 step 的登记值是 `NEGCTL_TIMEOUT_SECONDS // 60`（声明限把原始贡献压低
+    # 一个量级，降级语义见 NEGCTL_STEP_CAP_ABSORBED_CHECKER_TIMEOUTS）。
+    negctl_start, negctl_end = _step_range(lines, '负控 N1–N17 全 KILLED')
+    negctl_registered = GATE_STEP_TIMEOUT_MINUTES['负控 N1–N17 全 KILLED']
+    negctl_timeout = next((index for index in range(negctl_start, negctl_end)
+                          if lines[index].rstrip('\n')
+                          == f'        timeout-minutes: {negctl_registered}'), None)
     if negctl_timeout is None:
         raise CheckFailure('the 负控 step does not carry the registered '
-                           '`timeout-minutes: 30` line to mutate')
+                           f'`timeout-minutes: {negctl_registered}` line to mutate')
     for label, value in (
-            ('negctl-step-timeout-lowered', '        timeout-minutes: 29\n'),
-            ('negctl-step-timeout-raised', '        timeout-minutes: 31\n')):
+            ('negctl-step-timeout-lowered',
+             f'        timeout-minutes: {negctl_registered - 1}\n'),
+            ('negctl-step-timeout-raised',
+             f'        timeout-minutes: {negctl_registered + 1}\n')):
         mutated = list(lines)
         mutated[negctl_timeout] = value
         samples.append((label, ''.join(mutated)))
