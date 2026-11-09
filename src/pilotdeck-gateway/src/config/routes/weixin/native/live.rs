@@ -326,6 +326,11 @@ impl LiveOwner {
         } else {
             input
         };
+        let prompt = if prompt.is_empty() && !attachments.is_empty() {
+            "[WeChat attachment]".to_owned()
+        } else {
+            prompt
+        };
         let capture = CapturedReply::default();
         let mut mapper = self.mapper.lock().unwrap().clone();
         let mut ctx = CommandContext {

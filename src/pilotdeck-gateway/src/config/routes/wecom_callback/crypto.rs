@@ -6,7 +6,7 @@ use aes::{
 };
 use base64::Engine;
 use sha1::{Digest, Sha1};
-pub(super) fn signature(token: &str, timestamp: &str, nonce: &str, encrypted: &str) -> String {
+pub(crate) fn signature(token: &str, timestamp: &str, nonce: &str, encrypted: &str) -> String {
     let mut fields = [token, timestamp, nonce, encrypted];
     fields.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
     format!("{:x}", Sha1::digest(fields.concat().as_bytes()))

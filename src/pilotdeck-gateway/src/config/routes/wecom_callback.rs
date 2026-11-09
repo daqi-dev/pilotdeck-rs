@@ -26,7 +26,7 @@ use tokio::{
     sync::{Mutex, watch},
     task::{JoinHandle, JoinSet},
 };
-mod crypto;
+pub(crate) mod crypto;
 mod http;
 #[cfg(test)]
 mod tests;

@@ -770,6 +770,13 @@ pub(crate) fn weixin_inbound_text_and_attachments(message: &Value) -> Option<(St
                     {
                         attachment["url"] = url.into();
                     }
+                    if let Some(file_id) = image
+                        .get("file_id")
+                        .or_else(|| image.get("fileId"))
+                        .and_then(Value::as_str)
+                    {
+                        attachment["metadata"] = json!({ "fileId": file_id });
+                    }
                     attachments.push(attachment);
                 }
             }
@@ -783,8 +790,19 @@ pub(crate) fn weixin_inbound_text_and_attachments(message: &Value) -> Option<(St
                             .and_then(Value::as_str)
                             .unwrap_or("file"),
                     });
-                    if let Some(url) = file.get("url").and_then(Value::as_str) {
+                    if let Some(url) = file
+                        .get("url")
+                        .or_else(|| file.get("cos_url"))
+                        .and_then(Value::as_str)
+                    {
                         attachment["url"] = url.into();
+                    }
+                    if let Some(file_id) = file
+                        .get("file_id")
+                        .or_else(|| file.get("fileId"))
+                        .and_then(Value::as_str)
+                    {
+                        attachment["metadata"] = json!({ "fileId": file_id });
                     }
                     attachments.push(attachment);
                 }
@@ -857,6 +875,25 @@ mod inbound_tests {
         assert_eq!(attachments[0]["type"], "image");
         assert_eq!(attachments[0]["name"], "photo.png");
         assert_eq!(attachments[1]["type"], "file");
+    }
+
+    #[test]
+    fn collects_attachment_only_messages_with_cos_url_and_file_id() {
+        let (text, attachments) = super::weixin_inbound_text_and_attachments(&json!({
+            "message_type": 1,
+            "item_list": [
+                {"type": 3, "file_item": {
+                    "file_name": "doc.pdf",
+                    "cos_url": "https://cdn.example/doc.pdf",
+                    "file_id": "fid-1"
+                }}
+            ]
+        }))
+        .unwrap();
+        assert!(text.is_empty());
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0]["url"], "https://cdn.example/doc.pdf");
+        assert_eq!(attachments[0]["metadata"]["fileId"], "fid-1");
     }
 
     #[test]
