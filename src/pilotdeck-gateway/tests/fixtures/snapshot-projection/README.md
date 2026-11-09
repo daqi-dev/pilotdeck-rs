@@ -125,9 +125,11 @@ cmp "$out/oracle.json" src/pilotdeck-gateway/tests/fixtures/snapshot-projection/
   snapshot 投影只剩 errno 一种宿主形状。
 - 回放之外另有单测覆盖 gateway 包装层挡住/放行的分支：省略 `projectKey` 走
   `fallbackProjectRoot`（只经投影入口）、空 `sessionKey` 不过滤、provider 缺失
-  先于 project 解析、校验先于 capability、未知方法保持转发、errno 形状经
-  `dispatch` 返回 `Forward`；以及孤立代理项 snapshotId 的原始 UTF-16 比较、
-  mkdtemp 前的 `path.join` 词法规范化、native resolver 的相对标记与 slug 回退。
+  先于 project 解析、校验先于 capability、未知方法保持转发、注入返回
+  `node_io_required` 的 resolver 后三个方法经 `dispatch` 都返回 `Forward`
+  （#2308，对齐 memory 家族 `dispatch_forwards_requires_host_boundary`）；以及
+  孤立代理项 snapshotId 的原始 UTF-16 比较、mkdtemp 前的 `path.join` 词法
+  规范化、native resolver 的相对标记与 slug 回退。
 
 ```sh
 cd src
@@ -144,8 +146,9 @@ mkdtemp 与目录树）和 A8.2-pr2 的 `SnapshotGateway` / `SnapshotProjects` �
 
 ## 负控表自身的地基（#1456 r4 补）
 
-`negative_controls.py` 的表共 19 条裁决（17 条源码变异 + 2 条数据变异；#2194 补
-`error-mapped-to-response` 镜像 memory-gateway 家族同名行）。此前删掉
+`negative_controls.py` 的表共 20 条裁决（18 条源码变异 + 2 条数据变异；#2194 补
+`error-mapped-to-response`、#2308 补 `forward-mapped-to-response`，均镜像
+memory-gateway 家族同名行）。此前删掉
 一行、或把某个数据变异的分支整段删掉，其余行全 KILLED 时仍会 `n/n KILLED` 退 0
 （分母静默缩水）。现补两条：① `EXPECTED_NAMES` 与 `mutations` 逐项同序，`main()` 起跑时用
 共享 `negative_selection.registered` 核对，名册漂移 → exit 2 且**不留证据目录**
