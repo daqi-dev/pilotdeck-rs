@@ -8503,6 +8503,46 @@ class DiscoveryAnchorTests(unittest.TestCase):
             any('unsupported f-string path' in problem
                 for problem in problems), problems)
 
+    def test_a_sliced_head_with_an_absolute_or_drive_segment_stays_silent(self):
+        """The two fix-r33-registered blind shapes keep their pinned silence.
+
+        ``Path(WORD[:3]) / <in-repo absolute> / 'lib.rs'`` lands inside the
+        repository and ``Path(WORD[:3]) / 'C:/tmp' / 'mod.rs'`` contradicts
+        the literal-head drive reporting (r20/r21), yet both stay silent:
+        the reset predicate reads any absolute or drive segment as
+        "assumed outside the repository" and cannot tell them apart from
+        ``/tmp``. fix-r33 extended that silence from joins to the ``/``
+        spine — r32 reported both shapes, and their ``os.path.join`` twins
+        have been silent since r29/r32 (measured in
+        ``_tmp/20261109-2136-harvest/fix-r33/p0-reproduction.log`` and
+        ``literal-head-probes.log``; literal heads keep reporting in all
+        four spellings). The slice family stopped after its third hole
+        (board 4f8de196d rule 15, arbitration card
+        ``state/decisions-20261109-2136-slice-family-arbitration.md``):
+        these shapes are registered as blind in the README instead of a
+        fix-r34, and reopening them needs a human ruling on the
+        ``_join_resets_to_absolute`` / ``_resets_join`` semantics.
+        """
+        in_repo = str(FIXTURES.parents[2] / 'src' / 'lib.rs')
+        in_repo_absolute = (
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "WORD = 'src/pilotdeck-gateway/src'\n"
+            "def row():\n"
+            "    return Path(WORD[:3]) / " + repr(in_repo) + " / 'lib.rs'\n"
+        )
+        self.assertEqual(violations(in_repo_absolute,
+                                    'example/negative_controls.py'), [])
+        drive_segment = (
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "WORD = 'src/pilotdeck-gateway/src'\n"
+            "def row():\n"
+            "    return Path(WORD[:3]) / 'C:/tmp' / 'mod.rs'\n"
+        )
+        self.assertEqual(violations(drive_segment,
+                                    'example/negative_controls.py'), [])
+
     def test_a_module_function_with_keyword_arguments_reads_its_first_argument(self):
         """``os.path.realpath(D[name], strict=False)`` builds from the argument.
 
