@@ -974,7 +974,11 @@ def _assert_subprocess_timeout_wiring():
     计数用**拼接正则**（同 _assert_pass_counting 的自指规避）：本函数源码里不出现
     连续的 ``timeout=<常量名>`` 文本，数不进自己。已知边界（同 _assert_pass_counting
     的文本互证空档，评审 r1 登记跟进）：只认裸标识符形态，括号包裹或经中转变量的
-    消费点不进计数；表达式改写（如 ``timeout=<常量> * 2``）仍按 1 个入账。
+    消费点不进计数；表达式改写（如 ``timeout=<常量> * 2``）仍按 1 个入账。词边界
+    ``(?!\w)``（评审 r2 boundary#1）：以常量为前缀的新标识符（如
+    ``CHECK_TIMEOUT_SECONDS_V2``）不算登记常量的消费点——否则消费点改指新常量后
+    计数仍绿、预算行仍读旧常量入算，「预算算 600 / 执行 900」无人红，恰是本守卫
+    要堵的 #2421 形态在改名边界上的复发。
 
     同类跟改（评审 r1 P2，zai/DS 两家撞上）：预算负控行 ``limit`` 的**执行面**在
     negative_controls 自己的三个 checker 子进程（preflight / 控件 / 正控）——本
@@ -986,7 +990,8 @@ def _assert_subprocess_timeout_wiring():
     source = SELF.read_text(encoding='utf-8')
     for prefix in ('EMIT', 'CHECK', 'NEGCTL'):
         constant = prefix + '_TIMEOUT_' + 'SECONDS'
-        uses = len(re.findall(r'timeout\s*=\s*' + re.escape(constant), source))
+        uses = len(re.findall(
+            r'timeout\s*=\s*' + re.escape(constant) + r'(?!\w)', source))
         if uses != 1:
             raise CheckFailure(
                 '#2421 self_check.py carries '
@@ -997,7 +1002,7 @@ def _assert_subprocess_timeout_wiring():
                 'consumer means it under-covers what does run)')
     checker_constant = 'CHECK' + '_TIMEOUT_' + 'SECONDS'
     controls_uses = len(re.findall(
-        r'timeout\s*=\s*' + re.escape(checker_constant),
+        r'timeout\s*=\s*' + re.escape(checker_constant) + r'(?!\w)',
         CONTROLS.read_text(encoding='utf-8')))
     if controls_uses != EXPECTED_CONTROLS_CHECK_TIMEOUT_SITES:
         raise CheckFailure(
