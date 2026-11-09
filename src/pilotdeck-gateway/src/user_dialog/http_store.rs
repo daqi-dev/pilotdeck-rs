@@ -3356,6 +3356,49 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                                 // will ever reach the socket.
                                 let head_request = request.method() == Method::HEAD;
                                 timer.request_started();
+                                // #2152: this store's server is a bare
+                                // `http.createServer`
+                                // (HttpGatewayUserDialogStore.ts:236, no
+                                // options), so llhttp / `_http_server.js`
+                                // reject a bad method, a non-ASCII or
+                                // malformed target, an over-budget header
+                                // block and an HTTP/1.1 request without `Host`
+                                // *before* the handler runs — the same gate
+                                // the webhook and api-server channels run
+                                // (#1683). The `Err` is CONNECT's zero-byte
+                                // close; hyper aborts the connection without
+                                // writing, like the other native lanes. The
+                                // rejection answers before the shutdown /
+                                // keep-alive lifecycle below: a parser 400/431
+                                // is `Connection: close`, so no advertisement
+                                // may touch it (the `Date` / chunked framing
+                                // of the missing-Host 400 is the registered
+                                // shape, not this lane's keep-alive one).
+                                if let Some(rejection) =
+                                    crate::native_http::node_parser_admission(&request)?
+                                {
+                                    if rejection.status()
+                                        == StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE
+                                    {
+                                        // #2152: the over-budget family keeps
+                                        // this lane's #1232 answer —
+                                        // `NODE_431_RESPONSE`'s exact Node
+                                        // bytes through `force_node_response`,
+                                        // the same mechanism `serve`'s
+                                        // backstop uses for the framing the
+                                        // stream guard cannot track
+                                        // (duplicate `Content-Length`,
+                                        // multi-token `Transfer-Encoding`).
+                                        // The rejection is only the
+                                        // placeholder whose `Connection:
+                                        // close` keeps the keep-alive
+                                        // advertisement inert; hyper's own
+                                        // framing of it never reaches the
+                                        // socket.
+                                        timer.force_node_response(NODE_431_RESPONSE);
+                                    }
+                                    return Ok(rejection);
+                                }
                                 let mut response =
                                     serve(handler, request, limits, &timer).await;
                                 // The shutdown decision and the keep-alive
@@ -3423,7 +3466,7 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                                 {
                                     timer.mark_unread_body_close();
                                 }
-                                Ok::<_, Infallible>(response.map(|body| {
+                                Ok::<_, std::io::Error>(response.map(|body| {
                                     // #1947: a 1.0 reply is close-delimited
                                     // (Node's `response.end` store form writes
                                     // no `content-length` on 1.0), so the
@@ -3433,6 +3476,13 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                                     let unknown_size = version == Version::HTTP_10
                                         && !crate::mutants::on("http-store-http10-framing-off");
                                     KeepAliveBody::new(body, timer, unknown_size)
+                                        // #2152: the serve path and the parser
+                                        // admission above now share one
+                                        // response type; a `KeepAliveBody`
+                                        // never fails, so the unreachability
+                                        // is the whole adapter.
+                                        .map_err(|never| match never {})
+                                        .boxed()
                                 }))
                             }
                         });

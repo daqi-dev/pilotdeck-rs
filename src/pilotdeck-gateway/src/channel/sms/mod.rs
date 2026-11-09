@@ -966,6 +966,15 @@ impl std::fmt::Display for DestroyConnection {
     }
 }
 impl std::error::Error for DestroyConnection {}
+// #2152: `node_parser_admission`'s `Err` is the zero-byte socket close a
+// CONNECT to a plain `http.Server` performs, the same wire outcome as the
+// payload guard above, so `?` maps it onto the connection destroy hyper
+// already performs for this error type (the serve result is discarded).
+impl From<std::io::Error> for DestroyConnection {
+    fn from(_error: std::io::Error) -> Self {
+        DestroyConnection
+    }
+}
 
 fn plain_response(status: u16, body: &str) -> Response<Full<Bytes>> {
     Response::builder()
@@ -1059,6 +1068,15 @@ async fn route_request(
     request: Request<Incoming>,
     shared: Arc<SmsShared>,
 ) -> Result<Response<crate::Body>, DestroyConnection> {
+    // #2152: the TS channel is a bare `http.createServer` (SmsChannel.ts:89,
+    // no options), so llhttp / `_http_server.js` reject a bad method, a
+    // non-ASCII or malformed target, an over-budget header block and an
+    // HTTP/1.1 request without `Host` *before* the handler runs — the same
+    // gate the webhook and api-server channels already run (#1683). The
+    // rejection flows through the same `finalize` as every other response.
+    if let Some(rejection) = crate::native_http::node_parser_admission(&request)? {
+        return Ok(rejection);
+    }
     let (path, port, auth_token, host, public_url) = {
         let runtime = shared.runtime.lock().await;
         (
