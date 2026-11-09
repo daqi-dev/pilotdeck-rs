@@ -69,7 +69,13 @@ fn env_lookup(env: &Option<Env>, name: &str) -> Option<JsString> {
     env.as_ref()?(name)
 }
 
-/// `String(value)` for a present, non-nullish option value.
+/// A present, non-nullish option value folded to its string form. The TS
+/// constructor's `password` limb is `options.password ?? env ?? ""` with no
+/// `String()` (BlueBubblesChannel.ts:52-55 — only `serverUrl` goes through
+/// `normalizeBaseUrl`, whose `url.replace` throws on a non-string; see the
+/// #2433 guard in `register`), so a non-string password passes through the
+/// TS constructor and is coerced where it is used; this fold mirrors that
+/// accept-instead-of-throw shape rather than refusing the value.
 fn option_js_string(object: &JsObject, name: &str) -> Option<JsString> {
     match object.get(name) {
         Some(value) if !sms::nullish(value) => Some(sms::js_string_of(value)),
@@ -857,10 +863,28 @@ impl ChannelHandle for BlueBubblesHandle {
 /// Loader mount: builds the adapter from the `bluebubbles` loader option
 /// object (`build_options` already resolved `extra.serverUrl` /
 /// `token ?? extra.password`).
+///
+/// #2433: the TS constructor's
+/// `normalizeBaseUrl(options.serverUrl ?? …)` calls `url.replace`, so a
+/// present non-nullish non-string throws `TypeError: url.replace is not a
+/// function` (Node v22.22.0 probes, `_tmp/20261026-issue-p2batch-f/s5-probe/`)
+/// — the loader catch records the key and continues, and the channel never
+/// enters the startup array. The Rust mount must not paper over that with
+/// `String()` coercion: it applies the same check at construction and
+/// surfaces the same TypeError through the same loader catch.
 pub fn register(mounts: &mut crate::channel::loader::ChannelLoaderMounts) {
     mounts.register(
         "bluebubbles",
         Arc::new(|options: &JsObject| {
+            if let Some(value) = options
+                .get("serverUrl")
+                .filter(|value| !sms::nullish(value))
+                && !matches!(value, JsValue::String(_))
+            {
+                return Err(ChannelError::Plain(
+                    "TypeError: url.replace is not a function".to_owned(),
+                ));
+            }
             Ok(Arc::new(BlueBubblesChannel::new(
                 BlueBubblesOptions {
                     env: Some(Arc::new(|name| {

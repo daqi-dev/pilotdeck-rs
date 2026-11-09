@@ -473,6 +473,44 @@ struct RegistryState {
     dispose: Option<Settle>,
 }
 
+/// `SessionMcpRuntimeRegistry.size`: the count across every session's entries
+/// (the TS registry sums `entriesBySession` the same way), taken while the
+/// caller holds the `inner` lock.
+fn total_entries(by_session: &[(String, Vec<Arc<SessionEntry>>)]) -> usize {
+    by_session.iter().map(|(_, entries)| entries.len()).sum()
+}
+
+/// The shared tail of `register` and `register_below_cap`: assign the id and
+/// push the entry under the already-held `inner` lock (#2442).
+fn insert_locked(
+    state: &mut RegistryState,
+    registry: SessionMcpRuntimeRegistry,
+    session_key: &str,
+    runtime: Arc<dyn SessionMcpRuntime>,
+) -> SessionMcpRuntimeRegistration {
+    state.next_id += 1;
+    let id = state.next_id;
+    let entry = Arc::new(SessionEntry {
+        id,
+        runtime,
+        stop: Mutex::new(None),
+    });
+    match state
+        .by_session
+        .iter_mut()
+        .find(|(key, _)| key == session_key)
+    {
+        Some((_, entries)) => entries.push(entry),
+        None => state.by_session.push((session_key.to_owned(), vec![entry])),
+    }
+    SessionMcpRuntimeRegistration {
+        registry,
+        session_key: session_key.to_owned(),
+        entry: id,
+        released: Mutex::new(false),
+    }
+}
+
 /// `SessionMcpRuntimeRegistry`: per-session runtimes by identity, so an old
 /// and a replacement handle under the same key each release only their own.
 #[derive(Clone, Default)]
@@ -506,11 +544,7 @@ impl SessionMcpRuntimeRegistry {
     }
 
     pub fn size(&self) -> usize {
-        lock(&self.inner)
-            .by_session
-            .iter()
-            .map(|(_, entries)| entries.len())
-            .sum()
+        total_entries(&lock(&self.inner).by_session)
     }
 
     pub fn register(
@@ -526,27 +560,44 @@ impl SessionMcpRuntimeRegistry {
                 current.as_str()
             )));
         }
-        state.next_id += 1;
-        let id = state.next_id;
-        let entry = Arc::new(SessionEntry {
-            id,
+        Ok(insert_locked(
+            &mut state,
+            self.clone(),
+            session_key,
             runtime,
-            stop: Mutex::new(None),
-        });
-        match state
-            .by_session
-            .iter_mut()
-            .find(|(key, _)| key == session_key)
-        {
-            Some((_, entries)) => entries.push(entry),
-            None => state.by_session.push((session_key.to_owned(), vec![entry])),
+        ))
+    }
+
+    /// #2442: the per-session cap re-check and the insertion in one critical
+    /// section. `session_mcp_tools` reads the size and registers in two
+    /// separate `inner` lock acquisitions; on a multi-threaded runtime
+    /// another session's concurrent prepare can register between them, so the
+    /// cap is re-checked here under the same lock that inserts.
+    /// `Ok(None)` is the over-cap refusal (the caller degrades to the TS
+    /// diagnostic); `Err` keeps `register`'s non-active registry failure.
+    pub fn register_below_cap(
+        &self,
+        session_key: &str,
+        runtime: Arc<dyn SessionMcpRuntime>,
+        cap: f64,
+    ) -> Result<Option<SessionMcpRuntimeRegistration>, RuntimeError> {
+        let mut state = lock(&self.inner);
+        let current = state.state.unwrap_or(McpOwnerState::Active);
+        if current != McpOwnerState::Active {
+            return Err(RuntimeError::new(format!(
+                "Cannot register per-session MCP runtime; registry is {}.",
+                current.as_str()
+            )));
         }
-        Ok(SessionMcpRuntimeRegistration {
-            registry: self.clone(),
-            session_key: session_key.to_owned(),
-            entry: id,
-            released: Mutex::new(false),
-        })
+        if total_entries(&state.by_session) as f64 >= cap {
+            return Ok(None);
+        }
+        Ok(Some(insert_locked(
+            &mut state,
+            self.clone(),
+            session_key,
+            runtime,
+        )))
     }
 
     /// The synchronous half of `release`: unlink the entry and start its

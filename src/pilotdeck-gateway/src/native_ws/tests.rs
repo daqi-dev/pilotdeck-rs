@@ -23,6 +23,13 @@ struct Requests {
     entered: Notify,
     release: Notify,
     after_entered: Option<Arc<Semaphore>>,
+    /// #2391: park the next non-submit `request` body at `release`, publishing
+    /// `request_entered` before and `request_done` after — the probe the
+    /// disconnect experiment needs (the request body's own completion,
+    /// observable without a socket to deliver the response on).
+    hold_request: AtomicBool,
+    request_entered: Notify,
+    request_done: Notify,
 }
 impl GatewayRequests for Requests {
     fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
@@ -58,7 +65,22 @@ impl GatewayRequests for Requests {
         })
     }
     fn request(&self, _: JsString, _: JsValue) -> Call<'_, Result<JsValue, RequestError>> {
-        Box::pin(async { Err(RequestError::new("#749 unexpected method")) })
+        Box::pin(async move {
+            if self.hold_request.swap(false, Ordering::SeqCst) {
+                // Register before publishing entered: notify_waiters keeps no
+                // permit for a Notified created after the release broadcast.
+                // #2391 fix-r1: this local is `gate`, not `released` — the
+                // native-ws-notify `skip-release-wait` anchor pins
+                // `released.await;` to exactly the describe_server branch.
+                let gate = self.release.notified();
+                tokio::pin!(gate);
+                gate.as_mut().enable();
+                self.request_entered.notify_one();
+                gate.await;
+                self.request_done.notify_waiters();
+            }
+            Err(RequestError::new("#749 unexpected method"))
+        })
     }
 }
 
@@ -819,6 +841,49 @@ async fn pending_request_and_disconnect() {
         .expect("#749 pending server join");
         crate::test_negative_receipt::expect_ok(result, "#749 disconnect drains pending submit");
     }
+}
+
+/// #2391: settle the two conflicting statements about what the WS layer does
+/// to an in-flight request when its client disconnects — `runtime/settings/
+/// gateway.rs` claimed "the WS layer drops in-flight requests on disconnect",
+/// while the connection contract (`runtime/connection/mod.rs`: drive the
+/// returned future to completion, retain and drain request tasks) and this
+/// transport's retain+drain loops say the job survives. The request body
+/// parks at the fixture gate, the client disconnects, and the body must still
+/// finish: the job is host-owned, not socket-owned, so its transcript-write
+/// reservation (or any other body-held state) is released by the body's own
+/// exit, not by the socket's.
+#[tokio::test]
+async fn disconnect_leaves_in_flight_request_running_to_completion() {
+    let requests = Arc::new(Requests {
+        hold_request: AtomicBool::new(true),
+        ..Requests::default()
+    });
+    let (address, stop, task) = start(requests.clone(), DEADLINE).await;
+    let mut client = Client::connect(address).await;
+    client.hello().await;
+    client.json().await;
+    client
+        .send(json!({"type":"request","id":"held","method":"probe","params":{}}))
+        .await;
+    timeout(DEADLINE, requests.request_entered.notified())
+        .await
+        .expect("#2391 request body entered its await");
+    // Disconnect the client mid-request: close the write side and drop the
+    // socket, so the transport sees EOF rather than a graceful WS close.
+    client.socket.shutdown().await.expect("#2391 client FIN");
+    drop(client);
+    // The job is parked inside the request body. Register the done-waiter
+    // before opening the gate — notify_waiters keeps no permit for a future
+    // registered after the broadcast.
+    let done = requests.request_done.notified();
+    tokio::pin!(done);
+    done.as_mut().enable();
+    requests.release.notify_waiters();
+    timeout(DEADLINE, &mut done)
+        .await
+        .expect("#2391 the disconnected request still runs to completion");
+    finish(stop, task).await;
 }
 #[tokio::test]
 async fn stop_accepting_drains_existing() {
@@ -2430,4 +2495,201 @@ async fn stalled_output_is_bounded_and_cancellable() {
             );
         }
     }
+}
+
+// --------------------------------------------------------------- #2434 stderr
+
+/// The re-exec probe's env: `run:<token>`; the child also requires the token
+/// as an argv positional, so a stray env value alone can never branch a
+/// normal test run into the child path (the #2301 probe-token shape).
+const WS_STDERR_PROBE_ENV: &str = "PDRS_2434_WS_STDERR_PROBE";
+/// Where the child's panic hook leaves its evidence.
+const WS_STDERR_MARKER_ENV: &str = "PDRS_2434_WS_STDERR_MARKER";
+
+fn ws_stderr_probe_token() -> Option<String> {
+    let value = std::env::var_os(WS_STDERR_PROBE_ENV)?.to_str()?.to_owned();
+    let (_, token) = value.split_once(':')?;
+    if token.is_empty() {
+        return None;
+    }
+    std::env::args()
+        .any(|argument| argument == token)
+        .then(|| token.to_owned())
+}
+
+/// #2434: the accept loop's error lines were `eprintln!`, which panics when
+/// the stderr write fails (std behavior). For the connection-error branch
+/// the panic is contained by the JoinSet (the accept loop's `join_next`
+/// branch drops the JoinError), so the blast radius is the dead connection
+/// task and the lost diagnostic — TS's `console.error` never loses either.
+/// The accept-error branch sits in the accept-loop task itself, where the
+/// same panic would take the whole loop down. The fix is the shared
+/// `console_log_line`, which drops the write error. This control drives the
+/// reachable line — the connection error after an invalid upgrade — in a
+/// re-exec'd child whose stderr is a pipe with the read end already dropped
+/// (every write fails with EPIPE); the child installs a panic hook first, so
+/// a panicking `eprintln!` leaves a marker file and exits 33 instead of
+/// passing. A read-only fd is not a failing sink for this purpose:
+/// `std::io::Stderr` redirects EBADF to a fresh `/dev/null` and reports
+/// success, so only EPIPE reaches the `eprintln!` panic. The accept-error
+/// line at the same call site got the same shape, but an `accept()` error
+/// that is neither InvalidInput, PermissionDenied nor Unsupported has no
+/// portable trigger, so it is covered by the shared helper's own contract,
+/// not a second child.
+#[tokio::test]
+async fn connection_error_lines_survive_a_failed_stderr() {
+    if let Some(token) = ws_stderr_probe_token() {
+        ws_stderr_probe_child(&token).await;
+        return;
+    }
+    let token = format!("pdrs-2434-{}", uuid::Uuid::new_v4().simple());
+    let marker = std::env::temp_dir().join(format!("{token}.marker"));
+    let mut child =
+        tokio::process::Command::new(std::env::current_exe().expect("#2434 the probe binary path"))
+            .args([
+                "--exact",
+                "native_ws::tests::connection_error_lines_survive_a_failed_stderr",
+                "--nocapture",
+                "--test-threads=1",
+                &token,
+            ])
+            .env(WS_STDERR_PROBE_ENV, format!("run:{token}"))
+            .env(WS_STDERR_MARKER_ENV, &marker)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("#2434 the failed-stderr probe child spawns");
+    // The failing sink: a pipe whose read end is dropped before the child
+    // writes, so every stderr write fails with EPIPE. (A read-only fd is not
+    // enough: `std::io::Stderr` redirects EBADF to a fresh `/dev/null` and
+    // reports success — only EPIPE reaches the `eprintln!` panic.)
+    drop(child.stderr.take());
+    // The stdout pipe is drained concurrently with the wait, never after it
+    // (the #2301 probe's drain-before-wait shape): a full pipe — a failing
+    // child prints a whole backtrace — would block the child before it could
+    // exit, and the wait below would then report its 30 s deadline as a
+    // false failure of the probe itself.
+    let stdout = child.stdout.take();
+    let console_task = tokio::spawn(async move {
+        let mut out = Vec::new();
+        if let Some(mut pipe) = stdout {
+            let _ = pipe.read_to_end(&mut out).await;
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    });
+    // Every wait states its termination condition: 30 seconds on the child,
+    // then kill + reap before the named failure (the #2301 probe shape).
+    let status = match tokio::time::timeout(DEADLINE * 6, child.wait()).await {
+        Ok(status) => status.expect("#2434 the failed-stderr probe child is waitable"),
+        Err(_) => {
+            child
+                .kill()
+                .await
+                .expect("#2434 the timed-out probe child is killed");
+            let _ = child.wait().await;
+            negative_assert!(
+                false,
+                "#2434 the failed-stderr probe child did not finish within 30s"
+            );
+            unreachable!("negative_assert! panics");
+        }
+    };
+    let console = console_task
+        .await
+        .expect("#2434 the probe's stdout drain finishes");
+    negative_assert!(
+        status.success(),
+        "#2434 the child with a write-failed stderr exits cleanly (exit {status})\n{console}"
+    );
+    // Positive receipt — success alone is not evidence the probe case ran: a
+    // renamed test makes the `--exact` filter match nothing and libtest still
+    // exits 0 with no marker (the vacuous-pass shape `skills_migrate` records
+    // for its own rerun), so a loose contains-check would hold on a child that
+    // executed nothing. The shared exact-receipt criterion — one `running 1
+    // test` banner, the whole per-test line, and the one-test summary — is
+    // what proves the case ran (the child body writes only stderr and the
+    // reached file, so the single-threaded layout cannot splice the line).
+    negative_assert!(
+        crate::test_exact_receipt::single_pass(
+            &status,
+            "native_ws::tests::connection_error_lines_survive_a_failed_stderr",
+            &console,
+        ),
+        "#2434 the child's libtest receipt proves the probe case ran\n{console}"
+    );
+    // The child leaves a reached marker once the invalid upgrade has been
+    // answered — the proof the connection-error line was actually driven, not
+    // merely that one test passed.
+    let reached = std::env::temp_dir().join(format!("{token}.reached"));
+    negative_assert!(
+        reached.exists(),
+        "#2434 the child never reached the invalid-upgrade answer"
+    );
+    let _ = std::fs::remove_file(&reached);
+    negative_assert!(
+        !marker.exists(),
+        "#2434 no panic marker after the connection-error line ({}): {:?}",
+        marker.display(),
+        std::fs::read_to_string(&marker).unwrap_or_default()
+    );
+}
+
+/// The child half of [`connection_error_lines_survive_a_failed_stderr`]:
+/// panic hook first (marker + exit 33), then a real listener and the invalid
+/// upgrade that makes `serve_socket` fail, then a clean drain.
+async fn ws_stderr_probe_child(token: &str) {
+    let marker = std::env::var(WS_STDERR_MARKER_ENV)
+        .unwrap_or_else(|_| panic!("#2434 {token} is missing the marker env"));
+    std::panic::set_hook(Box::new(move |info| {
+        // The default hook would print to the failed stderr; the marker is
+        // the parent's evidence instead.
+        let _ = std::fs::write(&marker, format!("{info}"));
+        std::process::exit(33);
+    }));
+    let host = native_ws_fixture(Arc::new(Requests::default()));
+    let server = NativeWsServer::bind(
+        "127.0.0.1:0".parse().expect("#2434 listen address"),
+        host,
+        "fixture-token".into(),
+        "probe".into(),
+    )
+    .await
+    .expect("#2434 bind native");
+    let address = server.local_addr().expect("#2434 bound address");
+    let (stop, stopped) = oneshot::channel();
+    let task = tokio::spawn(server.run(
+        async {
+            let _ = stopped.await;
+        },
+        DEADLINE,
+    ));
+    let mut socket = TcpStream::connect(address)
+        .await
+        .expect("#2434 invalid upgrade connect");
+    socket
+        .write_all(
+            b"GET /wrong HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: key\r\n\r\n",
+        )
+        .await
+        .expect("#2434 invalid upgrade send");
+    let mut reply = vec![];
+    let read = timeout(DEADLINE, socket.read_to_end(&mut reply)).await;
+    crate::test_negative_receipt::expect_ok(
+        crate::test_negative_receipt::expect_ok(read, "#2434 the invalid upgrade is answered"),
+        "#2434 the invalid upgrade is answered",
+    );
+    // The parent's positive receipt that this half actually drove the
+    // connection-error limb (an `--exact` filter matching nothing still runs
+    // a passing, marker-free child).
+    let _ = std::fs::write(
+        std::env::temp_dir().join(format!("{token}.reached")),
+        b"reached",
+    );
+    stop.send(()).expect("#2434 stop server");
+    timeout(DEADLINE, task)
+        .await
+        .expect("#2434 server finish deadline")
+        .expect("#2434 server task")
+        .expect("#2434 successful drain");
 }

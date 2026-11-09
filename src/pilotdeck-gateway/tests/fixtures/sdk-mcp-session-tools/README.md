@@ -1,9 +1,10 @@
 # #1433 会话 MCP 工具组合负控
 
-`negative_controls.py` 变异 #1433 的生产组合面（`native_process/tools.rs` 的
+`negative_controls.py` 变异 #1433/#2442 的生产组合面（`native_process/tools.rs` 的
 `enabled_session_mcp_servers` / `SessionMcpTools::register` / `SessionMcpRelease::release` /
-`session_mcp_tools` / `native_tools` 的 MCP 注册），逐条验证：正向先行通过、
-变异体可编译、绑定的 `#1433 …` 断言以本轮 nonce receipt 失败、还原后复通过。
+`session_mcp_tools` / `native_tools` 的 MCP 注册，及 `runtime/mcp/registry.rs` 的
+`register_below_cap` 临界区复检），逐条验证：正向先行通过、
+变异体可编译、绑定的 `#1433 …` / `#2442 …` 断言以本轮 nonce receipt 失败、还原后复通过。
 
 绑定关系（9 条）：
 
@@ -13,7 +14,7 @@
 | `shared-conflict-replaced` | shared 工具 `!has` 才注册（SessionMcpRuntimeBundle.ts:62） | `…::register_keeps_shared_names_and_replaces_per_session_names` | `#1433 a shared session MCP tool keeps the existing builtin name` |
 | `per-session-replace-lost` | per-session 工具 `has ? replace : register`（:140） | 同上 | `#1433 a per-session MCP tool replaces the same-name builtin` |
 | `release-order-swapped` | 释放序 per-session → shared（组合序的逆） | `…::session_mcp_release_stops_per_session_before_shared` | `#1433 release order: per-session MCP before shared MCP` |
-| `per-session-limit-off` | `size >= max` 超限跳过（SessionMcpRuntimeBundle.ts:70） | `…::session_mcp_tools_respects_the_per_session_limit` | `#1433 the limit skips the per-session server` |
+| `per-session-limit-off` | `register_below_cap` 临界区复检 `>= cap`（#2442：等号档拒绝——竞态测试的档位是 total=5、cap=5.0，TS `5 >= 5` 拒绝、改成 `>` 会放进第 6 个；tools.rs:701 的 `session_mcp_tools` 预检仍是 TS 对齐快路径，单独翻转不可观测——预检拒绝同走 `limit_diagnostic()` 且假工厂无记录副作用，复检又兜住同一拒绝，故变异锚到复检、绑定竞态测试） | `…::session_mcp_tools_refuses_the_sixth_runtime_when_a_racer_registers_after_the_check` | `#2442 the over-cap compose starts no per-session runtime` |
 | `per-session-limit-truncated` | 小数上限按 f64 比较、不截断为 usize（SessionMcpRuntimeBundle.ts:70；TS 不取整经 fix-r1 真 dist 探针实测，oracle 分数 cell 已由 #2445 落地：2.5 / 0.5→1 两格） | `…::session_mcp_tools_allows_the_third_runtime_under_a_fractional_limit` | `#1433 a 2.5 cap still admits the third per-session runtime` |
 | `start-failure-propagated` | 启动失败降级为诊断（:147） | `…::session_mcp_tools_degrades_per_session_start_failures` | `#1433 composition survives the start failure` |
 | `turn-registry-drops-mcp` | 组合工具进 turn 注册表（#1433 原始缺陷） | `…::native_turn_registry_carries_the_session_mcp_tools` | `#1433 the turn registry carries the session MCP tool` |

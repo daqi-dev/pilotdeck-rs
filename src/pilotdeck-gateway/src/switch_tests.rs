@@ -654,3 +654,320 @@ async fn cron_stop_face_surfaces_manager_rejection() {
         .stop_once()
         .expect("#1353 the failed stop is still observed as done");
 }
+
+/// A gateway whose first `abort_turn` parks until the test releases it and
+/// whose later calls answer `Ok` — the in-body park the #2363 item-6 race
+/// test holds a real dispatch in. Only the first call parks: the parked
+/// caller is the dispatch, and any later caller is a stop round whose abort
+/// must not block a face that runs it synchronously (`CronManager::stop`'s
+/// own abort round, or — under the item-6 mutants — the face's stop before
+/// the drain has waited for the parked dispatch).
+struct ParkingGateway {
+    /// `(arrived, released)`: `arrived` flips inside the first `abort_turn`,
+    /// `released` ends its park.
+    state: Mutex<(bool, bool)>,
+    signal: std::sync::Condvar,
+}
+
+impl ParkingGateway {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new((false, false)),
+            signal: std::sync::Condvar::new(),
+        }
+    }
+
+    fn arrived(&self) -> bool {
+        self.state.lock().expect("#2363 park lock").0
+    }
+
+    /// Bounded readiness wait: the dispatch must reach the park, and a test
+    /// bug that never sends it must fail, not hang.
+    async fn wait_arrived(&self) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while !self.arrived() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "#2363 the dispatch never reached its park"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    fn release(&self) {
+        let mut state = self.state.lock().expect("#2363 park lock");
+        state.1 = true;
+        drop(state);
+        self.signal.notify_all();
+    }
+
+    /// `release()` on any exit path (the storage suite's `BarrierRelease`
+    /// shape): a guard held across the whole test body frees the parked
+    /// dispatch on every panic that can fire while it is parked — an
+    /// anchor, a plain assert, or `wait_arrived`'s own readiness bound —
+    /// so a failure stays a red light instead of hanging the test binary
+    /// on the `#[tokio::test]` runtime's blocking-pool shutdown. The tests'
+    /// explicit `release()` calls stay where they are: the park must end at
+    /// the points the test then awaits, which a drop-at-scope-end guard
+    /// cannot express.
+    fn release_on_drop(&self) -> ParkRelease<'_> {
+        ParkRelease(self)
+    }
+}
+
+/// The drop half of [`ParkingGateway::release_on_drop`]: releases the
+/// park when the test body unwinds for any reason. `release()` is
+/// idempotent, so a scope that already released explicitly re-releases to
+/// a no-op.
+struct ParkRelease<'a>(&'a ParkingGateway);
+
+impl Drop for ParkRelease<'_> {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+
+impl CronAgentGateway for ParkingGateway {
+    fn submit_turn(&self, _input: &crate::runtime::cron::CronTurnSubmit) -> Result<(), CronError> {
+        Ok(())
+    }
+    fn abort_turn(
+        &self,
+        _session_key: &JsString,
+        _run_id: Option<&JsString>,
+        _reason: Option<&JsString>,
+    ) -> Result<(), CronError> {
+        let mut state = self.state.lock().expect("#2363 park lock");
+        let first = !state.0;
+        state.0 = true;
+        self.signal.notify_all();
+        if first {
+            while !state.1 {
+                state = self
+                    .signal
+                    .wait(state)
+                    .expect("#2363 park lock survived a wait");
+            }
+        }
+        Ok(())
+    }
+    fn close_session(
+        &self,
+        _session_key: &JsString,
+        _reason: Option<&JsString>,
+    ) -> Result<(), CronError> {
+        Ok(())
+    }
+}
+
+/// #2363 item 6: the S1 face drains a management dispatch already past the
+/// A6 gate. The pre-item-6 seam checked the closed registry before the
+/// `spawn_blocking`, so a dispatch that had passed the check could run its
+/// whole body on the stopped manager after S1 had already reported Ok. The
+/// real dispatch path (`dispatch_under_management_gate`, the WS seam's own
+/// closure body) runs `cron_stop` against a registered active run whose
+/// `abort_turn` parks: the dispatch holds the management gate's read half
+/// across its body, so the stop face cannot report Ok until the parked body
+/// finishes — and the stop itself lands only after it.
+#[tokio::test]
+async fn the_stop_face_drains_an_in_flight_management_dispatch() {
+    let scratch = Scratch::new("switch-cron-item6");
+    seed_cron_project(&scratch);
+    let manager = cron_manager(&scratch);
+    let parking = Arc::new(ParkingGateway::new());
+    let _park_release = parking.release_on_drop();
+    manager
+        .bind_agent_gateway(parking.clone())
+        .expect("#2363 test gateway binds");
+    load_cron_runtime(&manager);
+    manager
+        .loaded_runtime("/proj")
+        .expect("#2363 the create loaded the runtime")
+        .register_active_run(CronActiveRun {
+            run_id: JsString::from("run-1"),
+            task_id: JsString::from("task-1"),
+            session_key: JsString::from("cron:task-1"),
+            schedule_type: JsString::from("once"),
+            stop_requested: false,
+        });
+    let handle = Arc::new(crate::switch::CronStopHandle::new(
+        manager.clone(),
+        crate::switch::AbortRecord::default(),
+    ));
+    // The in-flight dispatch: the real routing-seam body, on the blocking
+    // pool the seam itself uses, past the (open) gate and parked inside the
+    // method body.
+    let dispatch_cron = Some(manager.clone());
+    let dispatch = tokio::task::spawn_blocking(move || {
+        let input = pilotdeck_protocol::parse_json(
+            r#"{"projectKey":"/proj","taskId":"task-1","runId":"run-1"}"#,
+        )
+        .expect("#2363 stopTask input parses");
+        crate::native_process::dispatch_under_management_gate(&dispatch_cron, "cron_stop", &input)
+    });
+    parking.wait_arrived().await;
+    // S1 while the dispatch is parked: the mark lands on the face's first
+    // poll (inside the timeout below), but the face cannot pass its drain
+    // and report Ok yet.
+    let mut face = handle.stop_face();
+    let elapsed = tokio::time::timeout(Duration::from_millis(500), &mut face).await;
+    negative_assert!(
+        elapsed.is_err(),
+        "#2363 the stop face waits for the in-flight dispatch"
+    );
+    negative_assert!(
+        crate::switch::cron_management_closed(Some(&manager)),
+        "#2363 the A6 mark landed on the face's first poll"
+    );
+    // The parked body finishes; only then the drain acquires, the manager
+    // stops and the face reports Ok.
+    parking.release();
+    let stopped = dispatch
+        .await
+        .expect("#2363 the parked dispatch joins")
+        .expect("#2363 the dispatch is one of the six methods")
+        .expect("#2363 the in-flight dispatch completes with its own result");
+    negative_assert_eq!(
+        stopped.get("stopped").cloned(),
+        Some(pilotdeck_protocol::JsValue::Bool(true)),
+        "#2363 the drained dispatch answers its method's own result"
+    );
+    face.await
+        .expect("#2363 the S1 face reports Ok only after the drain");
+    assert!(
+        handle.is_stopped(),
+        "#2363 the manager stopped after the drain"
+    );
+}
+
+/// #2363 item 6, the cancelled cell: a stop face dropped mid-drain (the
+/// machine's A3 bound) leaves the closed mark standing — it landed on the
+/// first poll, exactly where the pre-item-6 face marked it — while the
+/// admitted dispatch finishes on its own and the manager keeps whatever
+/// the completed faces left it: nothing stopped, nothing half-stopped.
+#[tokio::test]
+async fn a_cancelled_stop_face_leaves_the_gate_closed() {
+    let scratch = Scratch::new("switch-cron-item6-cancel");
+    seed_cron_project(&scratch);
+    let manager = cron_manager(&scratch);
+    let parking = Arc::new(ParkingGateway::new());
+    let _park_release = parking.release_on_drop();
+    manager
+        .bind_agent_gateway(parking.clone())
+        .expect("#2363 test gateway binds");
+    load_cron_runtime(&manager);
+    manager
+        .loaded_runtime("/proj")
+        .expect("#2363 the create loaded the runtime")
+        .register_active_run(CronActiveRun {
+            run_id: JsString::from("run-1"),
+            task_id: JsString::from("task-1"),
+            session_key: JsString::from("cron:task-1"),
+            schedule_type: JsString::from("once"),
+            stop_requested: false,
+        });
+    let handle = Arc::new(crate::switch::CronStopHandle::new(
+        manager.clone(),
+        crate::switch::AbortRecord::default(),
+    ));
+    let dispatch_cron = Some(manager.clone());
+    let dispatch = tokio::task::spawn_blocking(move || {
+        let input = pilotdeck_protocol::parse_json(
+            r#"{"projectKey":"/proj","taskId":"task-1","runId":"run-1"}"#,
+        )
+        .expect("#2363 stopTask input parses");
+        crate::native_process::dispatch_under_management_gate(&dispatch_cron, "cron_stop", &input)
+    });
+    parking.wait_arrived().await;
+    // The face is polled inside the window (the mark lands, the drain queues
+    // behind the dispatch's read half) and then dropped — the machine's
+    // timeout shape. Any assert below that fails while the dispatch is
+    // parked releases it through `_park_release`'s drop on unwind.
+    {
+        let mut face = handle.stop_face();
+        let elapsed = tokio::time::timeout(Duration::from_millis(50), &mut face).await;
+        negative_assert!(
+            elapsed.is_err(),
+            "#2363 the cancelled face is parked in its drain, not done"
+        );
+    }
+    assert!(
+        crate::switch::cron_management_closed(Some(&manager)),
+        "#2363 the cancelled face leaves the closed mark standing"
+    );
+    assert!(
+        !handle.is_stopped(),
+        "#2363 the cancelled face stopped nothing"
+    );
+    parking.release();
+    let stopped = dispatch
+        .await
+        .expect("#2363 the parked dispatch joins")
+        .expect("#2363 the dispatch is one of the six methods")
+        .expect("#2363 the admitted dispatch finishes on its own");
+    negative_assert_eq!(
+        stopped.get("stopped").cloned(),
+        Some(pilotdeck_protocol::JsValue::Bool(true)),
+        "#2363 the un-stopped manager served the admitted dispatch"
+    );
+    // The mark the cancelled face left is not a stray: a fresh face still
+    // drains nothing (the dispatch finished) and stops exactly once.
+    handle
+        .stop_face()
+        .await
+        .expect("#2363 a fresh face completes the stop");
+    assert!(
+        handle.is_stopped(),
+        "#2363 the fresh face stopped the manager"
+    );
+}
+
+/// #2363 (codex concurrency P1 fix): the gate registry keys managers
+/// weakly and sweeps dead entries on lookup — it must never keep a dropped
+/// manager (and with it the manager's scheduler cleanup, which only its
+/// `CronRuntime::drop` wakes) alive past the host's own references. A
+/// strong key here would retire that cleanup to process exit for every
+/// ordinary host that served one management dispatch. The assertions are
+/// identity-based (weak handles to this test's own manager and gate), not
+/// registry-wide counts: the registry is process-global, so a census would
+/// be perturbed by sibling tests registering their own managers — and the
+/// lookups themselves compare keys by pointer without upgrading them, so a
+/// sibling's in-flight lookup cannot lend this test's dropped manager a
+/// fleeting strong reference and turn the death assertion into a
+/// parallel-run false failure.
+#[test]
+fn the_management_gate_registry_forgets_dead_managers() {
+    let scratch = Scratch::new("switch-cron-gate-registry");
+    let first = cron_manager(&scratch);
+    let gate = crate::switch::cron_management_gate(&first);
+    let first_manager = Arc::downgrade(&first);
+    let first_gate = Arc::downgrade(&gate);
+    drop(gate);
+    drop(first);
+    // The registry must not be what keeps the manager alive: with this
+    // test's strong references gone, the weak key is already dead. (A
+    // revert to strong keys fails here — the registry would hold it.)
+    assert!(
+        first_manager.upgrade().is_none(),
+        "#2363 the registry does not keep the dropped manager alive"
+    );
+    // Any later lookup sweeps the dead entry before its own
+    // find-or-create, releasing the gate that entry held. (With the sweep
+    // removed, the dead-key entry — and its gate — would survive; with it,
+    // the weak gate is dead once the sweep has run.)
+    let second = cron_manager(&scratch);
+    let second_gate = crate::switch::cron_management_gate(&second);
+    assert!(
+        first_gate.upgrade().is_none(),
+        "#2363 the dropped manager's entry is swept, not retained"
+    );
+    // The lookup half of the contract: a repeat lookup of a live manager
+    // must reuse the registered gate. (With the registration — or the
+    // pointer-identity find — gone, every lookup would mint a fresh gate
+    // and this fails.)
+    let again = crate::switch::cron_management_gate(&second);
+    negative_assert!(
+        Arc::ptr_eq(&again, &second_gate),
+        "#2363 the lookup reuses the registered gate"
+    );
+}

@@ -40,6 +40,7 @@ RENDER_VISIBLE = "channel::api_server::tests::render_visible_failure_status_name
 DEFAULT_PORT_TEST = "channel::api_server::tests::unconfigured_port_falls_back_to_the_ts_default"
 STREAM_SUBMIT_ERR = "channel::api_server::tests::submit_error_stream_turn_emits_channel_submit_failed"
 BUFFERED_SUBMIT_ERR = "channel::api_server::tests::submit_error_buffered_turn_returns_submit_failed"
+API_KEY_CLASSIFICATION = "channel::api_server::tests::api_key_classification_pins_the_checkauth_table"
 
 mutations = [
     (
@@ -59,12 +60,36 @@ mutations = [
         "#1333 method-dispatch request 3: status differs",
     ),
     (
+        # #2428: the gate reads `ApiKey::is_off` now — a truthy key (string,
+        # array, or never-matching) always checks the Bearer token.
         "auth-bypass",
         SERVER,
-        "    if !shared.api_key.is_empty() && !bearer_matches(&authorization, &shared.api_key) {",
-        "    if false && !shared.api_key.is_empty() && !bearer_matches(&authorization, &shared.api_key) {",
+        "    if !shared.api_key.is_off() && !bearer_matches(&authorization, &shared.api_key) {",
+        "    if false && !shared.api_key.is_off() && !bearer_matches(&authorization, &shared.api_key) {",
         REPLAY,
         "#1333 auth request 0: status differs",
+    ),
+    (
+        # #2428: a falsy number must classify as `Off` — TS's `!0` opens the
+        # gate, so folding it into `Never` would answer 401 where TS answers
+        # 200.
+        "api-key-falsy-number-never",
+        MOD,
+        "            JsValue::Number(number) if *number == 0.0 || number.is_nan() => Self::Off,",
+        "            JsValue::Number(number) if *number == 0.0 || number.is_nan() => Self::Never,",
+        API_KEY_CLASSIFICATION,
+        "#2428 a falsy number apiKey is Off",
+    ),
+    (
+        # #2428: `Buffer.from` wraps array elements modulo 256 — a plain
+        # truncating cast instead maps -1 to 0 and 256 to 255 (float-to-int
+        # casts saturate), drifting from Node's ToUint8.
+        "api-key-to-uint8-truncating-cast",
+        MOD,
+        "    number.trunc().rem_euclid(256.0) as u8",
+        "    number.trunc() as u8",
+        API_KEY_CLASSIFICATION,
+        "#2428 an array apiKey wraps elements modulo 256",
     ),
     (
         "cors-exact-vary",

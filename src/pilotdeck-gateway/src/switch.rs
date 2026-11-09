@@ -30,7 +30,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, Weak,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -458,6 +458,92 @@ pub fn close_cron_management(manager: &Arc<CronManager>) {
     }
 }
 
+/// #2363 item 6: the management face's admission gate — the read-write half
+/// the closed registry alone could not provide. Every management dispatch
+/// holds a read guard across its whole body (dispatches stay concurrent with
+/// one another; the TS baseline gets that serialization for free from the
+/// single-threaded event loop, which the blocking-pool port lost), and the
+/// S1 stop face takes the write guard before stopping the manager: acquiring
+/// it waits for every dispatch already admitted to finish, so a dispatch
+/// either completes before the stop proceeds or — once the write guard has
+/// landed — answers the closed rejection. The pre-item-6 seam checked the
+/// closed registry before the `spawn_blocking`, so a dispatch that had
+/// passed the check could still run its whole body on the stopped manager
+/// after S1 had already reported Ok.
+pub(crate) struct CronManagementGate {
+    admission: tokio::sync::RwLock<()>,
+}
+
+/// The managers' management-admission gates, keyed by manager identity like
+/// [`CRON_MANAGEMENT_CLOSED`] except the key is weak: parallel test
+/// assemblies cannot observe one another's switches, and a stale entry is
+/// swept on the next lookup (a dead key can never match a live manager), so
+/// a freed and reallocated address can never alias another manager's gate
+/// while the registry itself never keeps a manager — and with it the
+/// manager's scheduler cleanup, `CronRuntime::drop` — alive past the host's
+/// own references. Every management dispatch registers here, so a strong
+/// key would retire the cleanup of an ordinary host that never closes the
+/// face to process exit (#2363 codex concurrency P1).
+static CRON_MANAGEMENT_GATES: Mutex<Vec<(Weak<CronManager>, Arc<CronManagementGate>)>> =
+    Mutex::new(Vec::new());
+
+/// The manager's management-admission gate, created on first use.
+pub(crate) fn cron_management_gate(manager: &Arc<CronManager>) -> Arc<CronManagementGate> {
+    let mut gates = CRON_MANAGEMENT_GATES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    // Sweep the dead keys first — that is what keeps the registry from
+    // owning the managers' lifetimes: an entry only survives while its
+    // manager is alive somewhere else, and a dead entry lingers at most
+    // until the next lookup reclaims it (per dead manager at most one
+    // entry — its weak key and the gate it holds).
+    gates.retain(|(held, _)| held.strong_count() > 0);
+    // Compare by pointer, never by upgrading the entry's key: an upgrade
+    // would lend the entry a fleeting strong reference for the length of
+    // the comparison, so a concurrent test asserting the manager's death
+    // (after dropping its own references) could observe it alive — the
+    // same window a lookup could race a concurrent drop through.
+    let key = Arc::downgrade(manager);
+    // `switch-cron-gate-registry-lookup` (negative control, #2363): the
+    // find's match is discarded, so every lookup mints and registers a
+    // fresh gate — the reuse criterion's red shape (a repeat lookup of
+    // the same live manager must answer the same gate).
+    let matched = gates
+        .iter()
+        .find(|(held, _)| held.ptr_eq(&key))
+        .filter(|_| !crate::mutants::on("switch-cron-gate-registry-lookup"));
+    if let Some((_, gate)) = matched {
+        return gate.clone();
+    }
+    let gate = Arc::new(CronManagementGate {
+        admission: tokio::sync::RwLock::new(()),
+    });
+    gates.push((key, gate.clone()));
+    gate
+}
+
+impl CronManagementGate {
+    /// The dispatch half: the read guard a management dispatch holds across
+    /// its whole body. Blocking — the dispatch closure runs on the blocking
+    /// pool (#1509 P2-3b), never from async code. The only wait is behind
+    /// the stop face's write guard, which it acquires after the closed mark
+    /// and holds for an instant alone.
+    pub(crate) fn enter_dispatch(&self) -> tokio::sync::RwLockReadGuard<'_, ()> {
+        self.admission.blocking_read()
+    }
+
+    /// The stop half: the write guard whose acquisition drains every
+    /// in-flight dispatch's read guard (#2363 item 6). Async — the stop face
+    /// runs on the runtime, and an unyielding wait would defeat the
+    /// machine's own A3 bound; dropping the future cancels the queued
+    /// acquisition (the lock is cancel-safe), which is the cancelled-face
+    /// shape: the closed mark stays, the admitted dispatches finish on
+    /// their own, the manager keeps whatever the completed faces left it.
+    async fn drain_dispatches(&self) -> tokio::sync::RwLockWriteGuard<'_, ()> {
+        self.admission.write().await
+    }
+}
+
 /// Where the recording cron gateway accumulates abort rejections.
 pub type AbortRecord = Arc<Mutex<Vec<String>>>;
 
@@ -507,12 +593,29 @@ impl CronStopHandle {
     }
 
     /// The machine's S1 face over this handle: close the management face
-    /// (A6), stop the manager exactly once, and report the abort
-    /// rejections its stop swallowed (A7).
+    /// (A6), drain the dispatches already admitted (#2363 item 6), stop
+    /// the manager exactly once, and report the abort rejections its stop
+    /// swallowed (A7).
     pub fn stop_face(self: &Arc<Self>) -> FaceFuture {
         let handle = self.clone();
         Box::pin(async move {
             close_cron_management(&handle.manager);
+            // #2363 item 6: the admission gate's write half — every dispatch
+            // already past the closed check holds the read half across its
+            // whole body, so acquiring the write half waits for those
+            // bodies to finish before anything stops. The wait is bounded
+            // by the machine's own automation bound (a dispatch whose
+            // predecessor never completes is the same hung-face A3 the
+            // machine already polices); a dispatch arriving after the
+            // write half releases sees the closed mark and rejects.
+            // `switch-cron-stop-no-drain` (negative control, #2363): the
+            // write half skipped — the face reports Ok while an admitted
+            // dispatch is still running, the pre-item-6 check-then-act
+            // window.
+            if !crate::mutants::on("switch-cron-stop-no-drain") {
+                let gate = cron_management_gate(&handle.manager);
+                drop(gate.drain_dispatches().await);
+            }
             handle.stop_once().map_err(|error| {
                 StepFailure::step(format!("cron stop failed: {}", cron_message(&error)))
             })?;

@@ -136,6 +136,24 @@ pub enum SubmitClaim {
     Claimed,
     Conflict,
 }
+/// One held transcript-write reservation. `Drop` releases it — the guard shape
+/// the settings slice's listener `Capture` (`runtime/settings/gateway.rs`)
+/// uses for the same cancellation hazard: the TS `try { … } finally
+/// { release }` wrapper runs under a Promise that cannot be dropped, so the
+/// Rust port's extra exits (a request future dropped at an await point, a
+/// panic unwinding the reserved body) must still release.
+#[must_use = "hold the reservation for the reserved body"]
+pub struct TranscriptWriteReservation<'a> {
+    coordinator: &'a ReplacementCoordinator,
+    key: Option<JsString>,
+}
+impl Drop for TranscriptWriteReservation<'_> {
+    fn drop(&mut self) {
+        if let Some(key) = self.key.take() {
+            self.coordinator.release_transcript_write(&key);
+        }
+    }
+}
 impl ReplacementCoordinator {
     pub fn new(
         storage: ReplacementStorage,
@@ -151,12 +169,19 @@ impl ReplacementCoordinator {
             warn: warn.unwrap_or_else(|| Arc::new(|message, error| eprintln!("{message} {error}"))),
         }))
     }
+    // Poison boundary (deliberate, not a missed sweep): only the three
+    // transcript-write methods below tolerate a poisoned state lock —
+    // `release` runs from `TranscriptWriteReservation::drop`, which also
+    // executes while a panic unwinds the reserved body, where `.unwrap()`
+    // would double-panic and abort. The file's other 13 `state.lock()`
+    // sites never run under unwind and keep the repo-wide mainstream
+    // (poison = the panic propagates).
     pub fn reserve_transcript_write(
         &self,
         key: &JsString,
         operation: &str,
     ) -> Result<(), ReplacementError> {
-        let mut state = self.0.state.lock().unwrap();
+        let mut state = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
         if state.reservations.contains(key) || state.pending.contains_key(key) {
             return Err(ReplacementError::dialog(
                 "SESSION_BUSY",
@@ -167,10 +192,40 @@ impl ReplacementCoordinator {
         Ok(())
     }
     pub fn release_transcript_write(&self, key: &JsString) {
-        self.0.state.lock().unwrap().reservations.remove(key);
+        self.0
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .reservations
+            .remove(key);
     }
     pub fn has_transcript_write_reservation(&self, key: &JsString) -> bool {
-        self.0.state.lock().unwrap().reservations.contains(key)
+        self.0
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .reservations
+            .contains(key)
+    }
+    /// [`Self::reserve_transcript_write`] returning the release as a `Drop`
+    /// guard instead of a paired call, so the caller's whole body — returns,
+    /// errors, and the exits a TS Promise never takes (a request future
+    /// dropped at an await point, a panic in the reserved body) — releases
+    /// the reservation. Without the guard either stray exit strands the key
+    /// at `SESSION_BUSY` until the process restarts. `key: None` holds
+    /// nothing; the wrapped body's own gate reports the missing key.
+    pub fn reserve_transcript_write_held(
+        &self,
+        key: Option<&JsString>,
+        operation: &str,
+    ) -> Result<TranscriptWriteReservation<'_>, ReplacementError> {
+        if let Some(key) = key {
+            self.reserve_transcript_write(key, operation)?;
+        }
+        Ok(TranscriptWriteReservation {
+            coordinator: self,
+            key: key.cloned(),
+        })
     }
     pub fn fork_session(&self, input: JsValue) -> BoxFuture<ReplacementResult> {
         match &self.0.storage.fork_session {

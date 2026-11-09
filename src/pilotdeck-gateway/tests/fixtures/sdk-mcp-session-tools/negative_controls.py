@@ -17,6 +17,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = Path(__file__).resolve().parents[1]
 TOOLS = ROOT / 'src/pilotdeck-gateway/src/native_process/tools.rs'
+REGISTRY = ROOT / 'src/pilotdeck-gateway/src/runtime/mcp/registry.rs'
 PROCESS_TEST = ROOT / 'src/pilotdeck-gateway/tests/sdk_mcp_session_tools.rs'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import (mutating_sources, run_owned, wait_for_slot,
@@ -96,11 +97,18 @@ mutations = [
      'native_process::tools::tests::session_mcp_release_stops_per_session_before_shared',
      '#1433 release order: per-session MCP before shared MCP'),
     # `>=` is the TS limit check; `>` lets one runtime past an integer cap.
-    ('per-session-limit-off', TOOLS,
-     'if options.per_session_runtimes.size() as f64 >= options.max_per_session_instances {',
-     'if options.per_session_runtimes.size() as f64 > options.max_per_session_instances {',
-     'native_process::tools::tests::session_mcp_tools_respects_the_per_session_limit',
-     '#1433 the limit skips the per-session server'),
+    # #2442 fix-r1 (review P1): the cap's enforcement point moved from the
+    # `session_mcp_tools` pre-check (tools.rs, TS-aligned fast path) into
+    # `register_below_cap`'s critical section — flipping only the pre-check
+    # is unobservable (both refusals emit the same `limit_diagnostic()` and
+    # the fake factory has no recording side effect), so the mutation is
+    # re-anchored to the surviving recheck and rebound to the race test
+    # that reaches it past the pre-check.
+    ('per-session-limit-off', REGISTRY,
+     'if total_entries(&state.by_session) as f64 >= cap {',
+     'if total_entries(&state.by_session) as f64 > cap {',
+     'native_process::tools::tests::session_mcp_tools_refuses_the_sixth_runtime_when_a_racer_registers_after_the_check',
+     '#2442 the over-cap compose starts no per-session runtime'),
     # #1433 fix-r1 (review P2#4): the limit must compare the snapshot's f64
     # cap without truncation — casting back to usize floors 2.5 to 2, so the
     # third registration under a 2.5 cap is refused (TS `2 >= 2.5` is false,

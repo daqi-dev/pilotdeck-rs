@@ -1542,8 +1542,8 @@ class EnvironmentControls(unittest.TestCase):
             self.fail('#1632 the fixture must define a literal mutations table')
 
         pinned = rows(source)
-        self.assertEqual(len(pinned), 14,
-                         '#1632/#1476/#1313 fourteen mutations cover the wire-up')
+        self.assertEqual(len(pinned), 15,
+                         '#1632/#1476/#1313/#2302 fifteen mutations cover the wire-up')
         # 只钉行数等于允许「换掉一条真变异、行数不变」：名字逐一钉死（GLM r7 sibling P2），
         # 换成一条平凡可杀的变异同样会红。
         self.assertEqual([ast.literal_eval(row)[0] for row in pinned],
@@ -1558,15 +1558,16 @@ class EnvironmentControls(unittest.TestCase):
                           'always-on-apply-copies-abort-message',
                           'always-on-abort-skips-the-input-read',
                           'always-on-envelope-code-rewritten',
+                          'always-on-abort-drops-the-empty-string-echo',
                           'describe-advertises-always-on-apply',
                           'describe-drops-async-hook-result',
                           'describe-drops-delete-session'],
-                         '#1632/#1476/#1313 the fourteen mutations are exactly these, '
-                         'not merely fourteen rows')
+                         '#1632/#1476/#1313/#2302 the fifteen mutations are exactly these, '
+                         'not merely fifteen rows')
         dropped = ast.get_source_segment(source, pinned[0])
         mutant = source.replace(dropped + ',', '', 1)
         self.assertEqual(mutant.count(dropped), 0, '#1632 the mutant row really left the table')
-        self.assertEqual(len(rows(mutant)), 13,
+        self.assertEqual(len(rows(mutant)), 14,
                          '#1632 dropping a row must change the pinned count')
 
     def test_dispatch_case_table_cannot_shrink_silently(self):
@@ -3295,7 +3296,7 @@ class EnvironmentControls(unittest.TestCase):
     # 盲改一个哈希。下面每条负控都先证明 r7 那版口径（两种形态 + `sorted()` 位置盲）
     # 照绿，再证明闭集判红。
     SESSION_CONTROLS = 'fixtures/session-assembly-1316/negative_controls.py'
-    SESSION_CONTROLS_SHA256 = '4c0927a0ab81815cf0c62f0a6d577b5c5919b5a327ae14c22709278ce8946f47'
+    SESSION_CONTROLS_SHA256 = '60504bfe0e2fdb643472594f3e3322307be9e8d68dbff2e8a0d8155d2a7c904c'
     SESSION_CONTROLS_EXITS = r"""
 <module> | sys.exit() | sys.exit('no mutations defined: the negative control would pass without testing anything')
 acquire_slot | sys.exit() | sys.exit(f'slot timeout must be finite and positive: {timeout!r}')

@@ -162,6 +162,15 @@ MUTATIONS = [
      'Err(RouteError::PayloadTooLarge) => Ok(response(413, None, b"payload too large")),',
      'oversize_post_closes_at_the_cap_with_zero_bytes',
      '#1941 an oversize POST gets no response bytes (zero-byte close, not 413)'),
+    # #2432: the five string-field guards take the loader's catch path the
+    # port's TypeError already owns. Silencing the nullish filter lets the
+    # construction succeed where TS records the key with a console.error line
+    # and skips it — exactly the fail-open this row keeps dead.
+    ('string-field-guard-silenced', source / 'mod.rs',
+     '                if let Some(value) = options.get(field).filter(|value| !nullish(Some(value)))\n',
+     '                if let Some(value) = options.get(field).filter(|_| false)\n',
+     'loader_records_string_field_type_errors_and_continues',
+     '#2432 the loader records the corpId TypeError and skips the key'),
 ]
 
 

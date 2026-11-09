@@ -83,6 +83,12 @@ SCRIPTS = (
     # #2425: same entry shape after the CLI alignment from ``--case NAME`` to
     # positional names (select + claim_dir + registered + verdict_exit).
     ('same-json-surfaces/negative_controls.py', (), ('-I',)),
+    # #2391 fix-r1: the two session-family entries born on the
+    # negative_selection contract (registered + refuse + claim_dir +
+    # missing_target/refuse_unusable_target + verdict_exit); their --check is
+    # also wired into CI.
+    ('session-reservation-2391/negative_controls.py', (), ()),
+    ('session-delete-2392/negative_controls.py', (), ()),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption
@@ -489,7 +495,7 @@ class UnknownControlIsRefused(unittest.TestCase):
 class BareAssertInventory(unittest.TestCase):
     """The class invariant has an explicit, shrink-only register (#1666).
 
-    The twenty-three entries migrated so far (twenty-two fixture directories;
+    The twenty-five entries migrated so far (twenty-four fixture directories;
     ``network-timing`` counts two scripts) are not the whole family. Rather than
     let a hand-written list look like a closed set, the remaining debt is named
     here: a file in ``scanned_entries()`` that is not in

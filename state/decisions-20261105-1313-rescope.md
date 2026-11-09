@@ -41,6 +41,7 @@
 - #1313 本体保持 OPEN，暂缓不关单；标题加「[A 之后]」待后续恢复。
 - **2026-11-06 15:42Z 人批 A**（https://github.com/daqi-dev/pilotdeck-rs/issues/1475#issuecomment-6679878085，回复体「A」）→ question 单 #1475 已回复执行结果并关单；覆盖口径 47/50 + 3 暂缓写进 board #1313 / #1357 行与 #1316 / #1317 正文。
 - **`docs/plan/005` 未改**（2026-11-06 更正）：它是 A5.1 覆盖账本的哈希登记输入（`specs/gateway-coverage/ledger.json` → `input_files`，`scripts/gateway-coverage/check_ledger.py` 逐字节比对），改一个字节 CI `a51-coverage` 即 `input_drift`（PR #1855 实测 run 42194716210）。已撤回原文；是否回写并按冻结程序重新登记，另开 **#1861** 定夺，本轮不动尺子输入。
+- **2026-11-08 解禁执行**（#2302 item 4 追加，不动原条目字节）：2026-11-08 00:1x 人令解禁（「always-on 之类的增值模块加回来派」）后，#1313 r1（PR #2341 MERGED）把三方法从「一律 `CAPABILITY_UNAVAILABLE`」改为 TS 未注入控制态的结果信封（`ok:true` + `error.code="not_configured"`，账本撤回件 `A7.8-ALWAYS-ON-DEFERRED-001-R2.md`）；#2294（PR #2397）续接控制端口与后台运行时。选项 A 的「如实不可用、不静默」实质不变，具体错误码由 `CAPABILITY_UNAVAILABLE` 变为 `not_configured` 信封——「可机检落点」相应换为现名测试 `always_on_methods_answer_not_configured_envelopes`（无 manager 回信封）与 `always_on_methods_are_not_advertised_without_a_manager`（describe 不广告）。
 
 ---
 *2026-11-05 协调者（GLM 谱系）依用户元指令「派子智能体分析给方案之后决定是否采纳」落卡；分析报告 `_tmp/20261105-goal-analysis/report.md`。*

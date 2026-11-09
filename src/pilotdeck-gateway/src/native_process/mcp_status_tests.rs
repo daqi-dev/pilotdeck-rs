@@ -6,7 +6,8 @@
 //! same shared config the four #1319 control methods write, instead of the
 //! #1311 isolated-mode constant empty list. Every TS expectation below was
 //! first produced by the Node v22.22.0 probe on the fixed baseline
-//! (`_tmp/20261107-issue-1432/ts-probe.out.txt`, commit cc7c4e653b) and
+//! (`_tmp/20261108-archive-wt-1432/20261107-issue-1432/ts-probe.out.txt`,
+//! commit cc7c4e653b) and
 //! cross-checked against `tests/fixtures/sdk-mcp/oracle.json` (scenarios
 //! basic / errors / resolve-error / status-order).
 use super::Options;
@@ -583,7 +584,7 @@ async fn nullish_params_report_the_type_error() {
 /// `Ok(None)` for null, so the resolver sees no key and refreshes the
 /// configured project, replaying TS `resolve(projectKey ?? fallback)` in
 /// `ProjectRuntimeRegistry.ts`; probe
-/// `_tmp/20261108-issue-2272-fix1/ts-probe/probe-null.out` shows the same
+/// `_tmp/20261109-archive-wt-2272/20261108-issue-2272-fix1/ts-probe/probe-null.out` shows the same
 /// `{"servers":[]}` answer for null and a missing key). A non-string key is
 /// still an unserved key for the gate and is refused before the shared
 /// config's own `ERR_INVALID_ARG_TYPE` (node:path.resolve) — that one
