@@ -1350,6 +1350,23 @@ def _eval_order_nodes(root):
     never-called closure's body events stay out of the window (they were a
     false report); a mutator handed to ``map`` as a callback keeps the
     pre-r44 clean read -- the registered residual.
+    #1953 fix-r1 round 46 (anthropic r45 concurrency#1/sibling#1/boundary#2,
+    GLM r45 boundary#2, probes b-assign/b-ann/b-dict/b-for-order/a-iife/
+    a-cls): the AST *field* order is not the evaluation order on the
+    remaining composite spellings -- an assignment evaluates the value
+    before the target's subscript components (``Assign``/``AnnAssign``
+    list targets first), a dict display interleaves each key with its
+    value (``Dict`` lists all keys then all values), a ``for`` evaluates
+    the iterable before the target, a class body executes *at* the
+    definition statement while an immediately-invoked lambda's body runs
+    at its call (``class _C: _items.reverse()`` /
+    ``(lambda: ...)()`` dropped their events in r45).  The children here
+    now spell the evaluation order: value first, key/value pairs
+    interleaved, iter before target, class headers then class body, and
+    an IIFE's lambda body after its argument expressions.  An
+    ``AnnAssign`` annotation is *not* evaluated at the statement
+    (PEP 649), so it stays out; which conditional arm actually runs is
+    the round-46 fork model's business, not the order's.
     """
     stack = [(root, False)]
     while stack:
@@ -1358,13 +1375,164 @@ def _eval_order_nodes(root):
             yield node
             continue
         stack.append((node, True))
-        children = (list(_definition_header_nodes(node))
-                    if isinstance(node, (ast.FunctionDef,
-                                         ast.AsyncFunctionDef,
-                                         ast.Lambda, ast.ClassDef))
-                    else list(ast.iter_child_nodes(node)))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.Lambda)):
+            children = list(_definition_header_nodes(node))
+        elif isinstance(node, ast.ClassDef):
+            # the class *body* executes at the definition statement; the
+            # nested defs inside it keep their headers-only rule.
+            children = (list(_definition_header_nodes(node))
+                        + list(node.body))
+        elif isinstance(node, ast.Assign):
+            children = [node.value] + list(node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            children = ([node.value] if node.value is not None
+                        else []) + [node.target]
+        elif isinstance(node, ast.Dict):
+            children = []
+            for key, value in zip(node.keys, node.values):
+                if key is not None:
+                    children.append(key)
+                children.append(value)
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            children = ([node.iter, node.target] + list(node.body)
+                        + list(node.orelse))
+        elif isinstance(node, ast.Call):
+            callee = _callee_expr(node)
+            if isinstance(callee, ast.Lambda):
+                children = (list(_definition_header_nodes(callee))
+                            + list(node.args)
+                            + [keyword.value for keyword in node.keywords]
+                            + [callee.body])
+            else:
+                children = list(ast.iter_child_nodes(node))
+        else:
+            children = list(ast.iter_child_nodes(node))
         for child in reversed(children):
             stack.append((child, False))
+
+
+def _conditional_arm_chains(scope):
+    """Per-node conditional-arm chains and fork kinds (r46).
+
+    #1953 fix-r1 round 46 (anthropic r45 boundary#5, probes c-branch/
+    c-boolop): the round-44/45 replay ran *every* priced event in the
+    window, but each arm of an ``if``/``else``, each alternative of a
+    conditional expression, each ``match`` case body and the
+    short-circuited right side of a boolean chain runs only on its path
+    -- the unexecuted arm's events could cancel the executed arm's move
+    and read the composite clean (a false PASS).  This walk maps every
+    node of *scope* to the chain of ``(fork id, arm)`` placements that
+    conditionally guard it, so the replay can fork per arm combination.
+    An ``if`` without an ``else`` also carries the "no arm runs" choice
+    (``-1``), a ``match`` the no-case-matched one; a ``BoolOp`` operand
+    at index *i* runs when the chain got that far (choice ``>= i``),
+    operand 0 always runs.  ``Try`` arms keep the registered
+    conservative read (all handlers replayed); match *patterns* cannot
+    hold calls or deletes, so only guards sit inside an arm.
+    """
+    chains = {id(scope): ()}
+    forks = {}
+    stack = [(scope, ())]
+
+    def _push(child, chain):
+        chains[id(child)] = chain
+        stack.append((child, chain))
+
+    while stack:
+        node, chain = stack.pop()
+        if isinstance(node, ast.If):
+            forks[id(node)] = ('branch', bool(node.orelse))
+            _push(node.test, chain)
+            arm = chain + ((id(node), 0),)
+            for child in node.body:
+                _push(child, arm)
+            arm = chain + ((id(node), 1),)
+            for child in node.orelse:
+                _push(child, arm)
+            continue
+        # An IfExp's body/orelse are single expressions (its grammar
+        # always has both arms), so exactly one arm runs per path.
+        if isinstance(node, ast.IfExp):
+            forks[id(node)] = ('branch', True)
+            _push(node.test, chain)
+            _push(node.body, chain + ((id(node), 0),))
+            _push(node.orelse, chain + ((id(node), 1),))
+            continue
+        if isinstance(node, ast.Match):
+            forks[id(node)] = ('match', None)
+            _push(node.subject, chain)
+            for index, case in enumerate(node.cases):
+                arm = chain + ((id(node), index),)
+                _push(case.pattern, arm)
+                if case.guard is not None:
+                    _push(case.guard, arm)
+                for child in case.body:
+                    _push(child, arm)
+            continue
+        if isinstance(node, ast.BoolOp):
+            forks[id(node)] = ('boolop', None)
+            for index, child in enumerate(node.values):
+                _push(child, chain if index == 0
+                      else chain + ((id(node), index),))
+            continue
+        for child in ast.iter_child_nodes(node):
+            _push(child, chain)
+    return chains, forks
+
+
+def _toplevel_match_captures(pattern):
+    """Names a case pattern's top-level ``as`` captures bind (r46).
+
+    #1953 fix-r1 round 46 (anthropic r45 sibling#3/GLM r45 boundary#3,
+    probes b-as-capture/b-as-or): ``case [_] as _n2`` and ``case _x as
+    _n2`` bind the *whole subject* just like the bare ``case _n2`` does,
+    not an element -- the alias closure only accepted the bare spelling.
+    A capture nested inside a sequence/mapping pattern (``case [_n3]``)
+    binds an element and stays out; the recursion here stops at the
+    first non-``as`` pattern for exactly that reason.
+    """
+    captured = []
+    while True:
+        if isinstance(pattern, ast.MatchAs):
+            if pattern.name:
+                captured.append(pattern.name)
+            if pattern.pattern is None:
+                return captured
+            pattern = pattern.pattern
+            continue
+        if isinstance(pattern, ast.MatchOr):
+            for arm in pattern.patterns:
+                captured.extend(_toplevel_match_captures(arm))
+        return captured
+
+
+def _window_statements(scope):
+    """Statements the display window prices, class bodies included (r46).
+
+    #1953 fix-r1 round 46 (GLM r45 concurrency#1a, probes a-cls): a
+    *function* body runs at its invocation, so ``_scoped_nodes`` rightly
+    keeps it out of the window -- but a *class* body executes at the
+    ``class`` statement, and ``_scoped_nodes`` never even yields the
+    ``ClassDef`` node itself (it pushes only the header expressions), so
+    the class body's events never entered the replay at all in r45 (an
+    r44 ``ast.walk`` regression -- a false PASS).  This walk is
+    ``_scoped_nodes`` with one rule changed: a ``ClassDef`` child enters
+    the stream as a statement, so its body descends right where the
+    ``class`` line sits; a nested ``def``/``lambda`` inside the class body
+    keeps the headers-only rule, and the ``priced`` dedup keeps every
+    event once.
+    """
+    stack = [scope]
+    while stack:
+        current = stack.pop()
+        yield current
+        for child in ast.iter_child_nodes(current):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.Lambda)):
+                stack.extend(_definition_header_nodes(child))
+                continue
+            stack.append(child)
 
 
 def _walrus_names(scope):
@@ -2506,9 +2674,27 @@ def _import_value_capable(value, kinds, factory=None, seen=frozenset(),
                                     ast.AsyncFunctionDef)):
                     if node.name == '__new__':
                         stack.append((node, path))
+                    # #1953 fix-r1 round 46 (anthropic r45 boundary#8,
+                    # probe c-new-header): a method's *header* -- its
+                    # decorators, defaults, annotations -- evaluates in
+                    # the class scope, so a walrus there binds the class
+                    # attribute ``__new__`` the bare ``continue`` dropped
+                    # (the block comment above promised "header
+                    # expressions still run" for this very walk).
+                    pending.extend(_definition_header_nodes(node))
                     continue
                 if isinstance(node, (ast.Lambda, ast.ClassDef)):
+                    # the same class-scope rule for a nested class's
+                    # bases/decorators and a lambda's defaults.
+                    pending.extend(_definition_header_nodes(node))
                     continue
+                if isinstance(node, ast.Match):
+                    # #1953 fix-r1 round 46 (anthropic r45 sibling#4,
+                    # probe c-new-match): a class-body ``match`` binds
+                    # ``__new__`` through its capture -- the spelling
+                    # ``_local_bound_names`` has no branch for.
+                    if '__new__' in _match_capture_names(node):
+                        return True
                 if '__new__' in _local_bound_names(node)[0]:
                     return True
                 if (isinstance(node, ast.NamedExpr)
@@ -3592,9 +3778,11 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
     in-place method call on the display name (``reverse``/``sort``/
     ``pop``/``insert``/``append``/``update``/...), a subscript assignment
     and a ``del`` of one of its elements, anywhere between the certain
-    binding and the use, makes the selection decline.  Statements inside
-    nested scopes count too: a closure can mutate the very list the
-    selection is about, and missing it would hide a real write.
+    binding and the use, makes the selection decline.  A closure's
+    *body* does not run at its definition (r45): only its invocation in
+    the window convicts, through the mutator net; a class body and an
+    immediately-invoked lambda run where they stand (r46), so their
+    events count directly.
 
     #1953 fix-r1 round 42 (codex r41 C-P0-7 / C-P1-4, GLM r41 boundary
     #P0#1 For-target, probe 2026-11-10): the window guarded only direct
@@ -3752,48 +3940,125 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
     # lambda bound to a mutating body counts under its own name).
     mutators = set()
 
-    def _body_mutates(body):
-        for inner in ast.walk(body):
-            if (isinstance(inner, ast.Call)
-                    and mutates_display(_callee_expr(inner), inner,
-                                        price=False)):
+    def _target_hits_display(target):
+        """A store target whose subscript lands on the display (r46)."""
+        for sub in ast.walk(target):
+            if not isinstance(sub, ast.Subscript):
+                continue
+            base = sub.value
+            while isinstance(base, ast.Subscript):
+                base = base.value
+            if isinstance(base, ast.Name) and base.id in names:
                 return True
         return False
 
-    for statement in ast.walk(scope):
-        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if statement.name not in mutators and _body_mutates(statement):
-                mutators.add(statement.name)
-        elif isinstance(statement, ast.NamedExpr):
-            # #1953 fix-r1 round 45 (anthropic r44 sibling#1, probe
-            # g-walrus): a bare walrus ``(_g := lambda: _items.pop(1))``
-            # binds a mutating lambda the single-target Assign read never
-            # saw, so its call stayed outside ``mutators`` and read clean.
-            if (isinstance(statement.target, ast.Name)
-                    and isinstance(statement.value, ast.Lambda)
-                    and _body_mutates(statement.value)):
-                mutators.add(statement.target.id)
-        elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
-            # #1953 fix-r1 round 45 (anthropic r44 sibling#1, probes
-            # g-ann/g-multi/g-tuple): every binding spelling of a mutating
-            # lambda -- the AnnAssign ``_g: object = lambda: ...``, the
-            # multi-target ``_g = _h = lambda: ...`` and the unpack
-            # projection ``_g, _x = (lambda: ..., 0)`` -- seeds the mutator
-            # set the same way the alias closure below reads alias
-            # spellings, through :func:`_local_bound_values`.
-            for name, bound in _local_bound_values(statement).items():
-                if (isinstance(bound, ast.Lambda)
-                        and _body_mutates(bound)):
-                    mutators.add(name)
-    # #1953 fix-r1 round 43 (GLM r42 boundary#2, probe 2026-11-10): a
-    # mutating closure called through an alias -- ``_m = _mutate; _m()`` --
-    # is a call *to it*, and the contract convicts on any call to the
-    # mutator, so the alias gets the same assignment-transitive closure the
-    # display names got above.  #1953 fix-r1 round 44 (GLM r43 boundary#3,
-    # probe 2026-11-10): the closure reads every binding spelling -- a
-    # walrus / annotated / multi-target / unpack alias called a mutating
-    # closure the single-target fixpoint never saw.
-    mutators |= _name_alias_closure(scope, mutators)
+    def _body_mutates(body):
+        for inner in ast.walk(body):
+            if isinstance(inner, ast.Call):
+                if mutates_display(_callee_expr(inner), inner, price=False):
+                    return True
+            elif isinstance(inner, (ast.Assign, ast.AugAssign,
+                                    ast.AnnAssign, ast.Delete)):
+                # #1953 fix-r1 round 46 (GLM r45 boundary#1, probes
+                # del-composite-closure/a-store-closure): the mutator net
+                # read only *call* mutations, so a closure body that wrote
+                # the display through a subscript store or a ``del`` was
+                # no mutator at all -- its invocation in the window read
+                # clean while r44's whole-scope walk convicted it.  The
+                # same subscript-store reading the window itself uses
+                # seeds the net now.
+                targets = (inner.targets if isinstance(
+                    inner, (ast.Assign, ast.Delete)) else [inner.target])
+                for target in targets:
+                    if _target_hits_display(target):
+                        return True
+            elif isinstance(inner, (ast.For, ast.AsyncFor)):
+                # GLM r41 boundary P0#1 spelling inside a closure body.
+                if _target_hits_display(inner.target):
+                    return True
+        return False
+
+    def _body_calls_mutator(body):
+        for inner in ast.walk(body):
+            if not isinstance(inner, ast.Call):
+                continue
+            callee = _callee_expr(inner)
+            if ((isinstance(callee, ast.Name) and callee.id in mutators)
+                    or (isinstance(callee, ast.Attribute)
+                        and callee.attr in mutators)):
+                return True
+        return False
+
+    # #1953 fix-r1 round 46 (anthropic r45 boundary#1, probe a-indirect):
+    # the collection is a fixpoint -- a wrapper that *calls* a mutator
+    # mutates the display when invoked, so ``def _outer(): _mutate()``
+    # kept a clean read for a real write while r44 convicted the def
+    # body directly.
+    while True:
+        before = len(mutators)
+        for statement in ast.walk(scope):
+            if isinstance(statement, (ast.FunctionDef,
+                                      ast.AsyncFunctionDef)):
+                if (statement.name not in mutators
+                        and (_body_mutates(statement)
+                             or _body_calls_mutator(statement))):
+                    mutators.add(statement.name)
+            elif isinstance(statement, ast.NamedExpr):
+                # #1953 fix-r1 round 45 (anthropic r44 sibling#1, probe
+                # g-walrus): a bare walrus ``(_g := lambda: _items.pop(1))``
+                # binds a mutating lambda the single-target Assign read
+                # never saw, so its call stayed outside ``mutators`` and
+                # read clean.
+                if isinstance(statement.target, ast.Name):
+                    value = statement.value
+                    while isinstance(value, ast.NamedExpr):
+                        value = value.value
+                    if (isinstance(value, ast.Lambda)
+                            and _body_mutates(value)):
+                        mutators.add(statement.target.id)
+            elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                # #1953 fix-r1 round 45 (anthropic r44 sibling#1, probes
+                # g-ann/g-multi/g-tuple): every binding spelling of a
+                # mutating lambda -- the AnnAssign ``_g: object =
+                # lambda: ...``, the multi-target ``_g = _h = lambda:
+                # ...`` and the unpack projection ``_g, _x = (lambda:
+                # ..., 0)`` -- seeds the mutator set the same way the
+                # alias closure below reads alias spellings, through
+                # :func:`_local_bound_values`.
+                for name, bound in _local_bound_values(statement).items():
+                    while isinstance(bound, ast.NamedExpr):
+                        bound = bound.value
+                    if (isinstance(bound, ast.Lambda)
+                            and _body_mutates(bound)):
+                        mutators.add(name)
+            elif isinstance(statement, ast.For):
+                # #1953 fix-r1 round 46 (GLM r45 boundary#1, probe
+                # a-for-lambda): a ``for`` target over a literal tuple of
+                # mutating lambdas binds one each iteration -- the bound
+                # name is a mutator the same way an assignment-spelled
+                # lambda is, and its call in the window convicts.
+                if isinstance(statement.iter, (ast.Tuple, ast.List)):
+                    bound = _target_names(statement.target)
+                    for element in statement.iter.elts:
+                        while isinstance(element, ast.NamedExpr):
+                            element = element.value
+                        if (bound and isinstance(element, ast.Lambda)
+                                and _body_mutates(element)):
+                            mutators.update(bound)
+        # #1953 fix-r1 round 43 (GLM r42 boundary#2, probe 2026-11-10): a
+        # mutating closure called through an alias -- ``_m = _mutate;
+        # _m()`` -- is a call *to it*, and the contract convicts on any
+        # call to the mutator, so the alias gets the same
+        # assignment-transitive closure the display names got above.
+        # #1953 fix-r1 round 44 (GLM r43 boundary#3, probe 2026-11-10):
+        # the closure reads every binding spelling -- a walrus /
+        # annotated / multi-target / unpack alias called a mutating
+        # closure the single-target fixpoint never saw.  It joins the
+        # fixpoint body (r46) so a wrapper calling an *alias* of a
+        # mutator is seen on the next pass too.
+        mutators |= _name_alias_closure(scope, mutators)
+        if len(mutators) == before:
+            break
 
     # #1953 fix-r1 round 44 (GLM r43 boundary#1, probe b1-loop): the nodes
     # a loop re-runs without re-running the binding -- their priced events
@@ -3824,7 +4089,16 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
     # priced event node enters the replay exactly once.
     events = []
     priced = set()
-    for statement in _scoped_nodes(scope):
+    # #1953 fix-r1 round 46 (anthropic r45 boundary#4, probes c-post-use):
+    # an event that sits at or after the *use*'s own source position runs
+    # after the use and cannot move the selection the use reads -- the
+    # statement-start gate let it in while the use lived inside the same
+    # compound statement, and the trailing ``pop()`` cancelled the move
+    # before it (a false PASS; the mirror shape over-reported).  The
+    # ``repeated`` guard stays ahead of the filter: a loop re-runs events
+    # before the *next* iteration's use, so those still convict.
+    chains, forks = _conditional_arm_chains(scope)
+    for statement in _window_statements(scope):
         if not isinstance(statement, ast.stmt):
             continue
         position = (getattr(statement, 'lineno', 0),
@@ -3833,6 +4107,10 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
             continue
         for order, node in enumerate(_eval_order_nodes(statement)):
             node_position = (position, order)
+            own_position = (getattr(node, 'lineno', 0),
+                            getattr(node, 'col_offset', 0))
+            after_use = (own_position != (0, 0)
+                         and own_position >= use_pos)
             if isinstance(node, ast.Call):
                 callee = _callee_expr(node)
                 if (isinstance(callee, ast.Name) and callee.id in mutators):
@@ -3847,9 +4125,12 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
                     return True
                 if id(node) in repeated:
                     return True
+                if after_use:
+                    continue
                 if id(node) not in priced:
                     priced.add(id(node))
-                    events.append((node_position, event))
+                    events.append((node_position, event,
+                                   chains.get(id(node), ())))
                 continue
             if isinstance(node, (ast.For, ast.AsyncFor)):
                 # GLM r41 boundary P0#1: a For *target* is a subscript write
@@ -3884,8 +4165,20 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
                         index = _constant_int(target.slice)
                         if (index is not None and priceable
                                 and id(node) not in repeated):
-                            events.append((node_position,
-                                           ('removal', index)))
+                            # #1953 fix-r1 round 46 (anthropic r45
+                            # concurrency#3/sibling#2 + GLM r45 boundary#4,
+                            # probes d-del-if): the ``del`` append missed
+                            # the ``priced`` dedup the Call branch got in
+                            # r45, so a ``del`` nested in a compound
+                            # statement entered the replay twice and a
+                            # clean single removal read as a composite.
+                            if after_use:
+                                continue
+                            if id(node) not in priced:
+                                priced.add(id(node))
+                                events.append((node_position,
+                                               ('removal', index),
+                                               chains.get(id(node), ())))
                             continue
                         if index is not None and id(node) in repeated:
                             return True
@@ -3908,30 +4201,87 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
     # move it there) takes the slot the selection reads.  A negative index
     # normalizes against the *current* length; the verdict falls out of
     # the invariant ``pos == ln - trailing`` (or ``pos == leading``).
-    pos = sim_pos
-    ln = literal_len
-    for _order, (kind, index) in sorted(events, key=lambda item: item[0]):
-        if kind == 'removal':
-            if index is None:
-                index = ln - 1
-            elif index < 0:
-                index += ln
-            if index == pos:
-                return True
-            if index < pos:
-                pos -= 1
-            ln -= 1
+    # #1953 fix-r1 round 46 (anthropic r45 boundary#5, probes c-branch/
+    # c-boolop): each conditional arm runs only on its path, so the
+    # verdict is the OR over the arm combinations -- any path that reads
+    # dirty convicts (fail-closed), a path with no events reads clean.
+    # An ``if``/``IfExp`` fork carries the taken arm's index (``-1`` the
+    # no-arm choice of an else-less ``if``), a ``match`` fork the matched
+    # case's index (``-1`` no case), a ``BoolOp`` fork the index of the
+    # operand the chain stopped at (operand *i* runs for every choice
+    # ``>= i``).  More than 16 combinations refuses the composite.
+    fork_arms = {}
+    for _position, _event, chain in events:
+        for fork_id, arm in chain:
+            fork_arms.setdefault(fork_id, set()).add(arm)
+    active = []
+    for fork_id, arms in fork_arms.items():
+        kind, has_orelse = forks[fork_id]
+        if kind == 'boolop':
+            choices = {0} | arms
+        elif kind == 'branch':
+            choices = {0, 1} if has_orelse else {0, -1}
         else:
-            if index is None:
-                index = ln
-            elif index < 0:
-                index += ln
-            if index <= pos:
-                pos += 1
-            ln += 1
-    if trailing is not None:
-        return pos != ln - trailing
-    return pos != leading
+            choices = arms | {-1}
+        active.append((fork_id, kind, sorted(choices)))
+    combinations = 1
+    for _fork_id, _kind, choices in active:
+        combinations *= len(choices)
+    if combinations > 16:
+        return True
+    active_kind = {fork_id: kind for fork_id, kind, _choices in active}
+
+    def _replay_convicts(path):
+        pos = sim_pos
+        ln = literal_len
+        for _node_position, event, _chain in sorted(
+                path, key=lambda item: item[0]):
+            kind, index = event
+            if kind == 'removal':
+                if index is None:
+                    index = ln - 1
+                elif index < 0:
+                    index += ln
+                if index == pos:
+                    return True
+                if index < pos:
+                    pos -= 1
+                ln -= 1
+            else:
+                if index is None:
+                    index = ln
+                elif index < 0:
+                    index += ln
+                if index <= pos:
+                    pos += 1
+                ln += 1
+        if trailing is not None:
+            return pos != ln - trailing
+        return pos != leading
+
+    for combination in range(combinations):
+        choice_map = {}
+        remainder = combination
+        for fork_id, _kind, choices in active:
+            choice_map[fork_id] = choices[remainder % len(choices)]
+            remainder //= len(choices)
+        path = []
+        for item in events:
+            runs = True
+            for fork_id, arm in item[2]:
+                choice = choice_map[fork_id]
+                if active_kind[fork_id] == 'boolop':
+                    if choice < arm:
+                        runs = False
+                        break
+                elif choice != arm:
+                    runs = False
+                    break
+            if runs:
+                path.append(item)
+        if path and _replay_convicts(path):
+            return True
+    return False
 
 
 def _unbounded_write(node, kinds):
@@ -4535,9 +4885,15 @@ def _module_load_call(value, proven, sys_poisoned=frozenset(), kinds=None):
     does not hand ``_guard.load`` a loader role; ``importlib.import_module`` is
     the one import-by-name spelling.
     """
-    if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Attribute):
+    if not isinstance(value, ast.Call):
         return False
-    func = value.func
+    # #1953 fix-r1 round 46 (anthropic r45 sibling#5, probe u1): the walrus
+    # callee spelling ``(_g := sys.modules.get)('_guard')`` kept the load
+    # unproven -- the same bare-``.func`` read round 45 retired everywhere
+    # else, so the callee goes through :func:`_callee_expr` here too.
+    func = _callee_expr(value)
+    if not isinstance(func, ast.Attribute):
+        return False
     if func.attr in ('module_from_spec', 'import_module'):
         return _root_name(func.value) in proven
     if func.attr == 'get':
@@ -7547,9 +7903,14 @@ def _iterable_dict_keys(expr, tree):
     # ``.values()`` is deliberately absent: it walks the *values*, so its
     # spellings are not the dict's keys and resolving them as keys would let
     # ``for name in {'X': 'common'}.values(): setattr(md, name, ...)`` pass.
-    if (isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute)
-            and expr.func.attr in ('items', 'keys')):
-        return _iterable_dict_keys(expr.func.value, tree)
+    if isinstance(expr, ast.Call):
+        # #1953 fix-r1 round 46 (anthropic r45 sibling#5, probe u2): the
+        # walrus callee ``(_d := d.keys)()`` read no keys for the same
+        # reason -- the callee goes through :func:`_callee_expr`.
+        func = _callee_expr(expr)
+        if (isinstance(func, ast.Attribute)
+                and func.attr in ('items', 'keys')):
+            return _iterable_dict_keys(func.value, tree)
     if isinstance(expr, (ast.Tuple, ast.List)):
         # #892 r27: a literal sequence of ``(key, value)`` pairs iterates a
         # known key set, which is how the harness restores the modules it
@@ -8081,13 +8442,18 @@ def _name_alias_closure(scope, seeds):
                     subject = subject.value
                 if isinstance(subject, ast.Name) and subject.id in names:
                     for case in node.cases:
-                        pattern = case.pattern
-                        if (isinstance(pattern, ast.MatchAs)
-                                and pattern.pattern is None
-                                and pattern.name
-                                and pattern.name not in names):
-                            names.add(pattern.name)
-                            changed = True
+                        # #1953 fix-r1 round 46 (anthropic r45 sibling#3 /
+                        # GLM r45 boundary#3, probes b-as-capture/b-as-or):
+                        # every *top-level* ``as`` capture binds the whole
+                        # subject -- ``case [_] as _n2`` is the same alias
+                        # the bare ``case _n2`` is -- so the closure reads
+                        # them all through the shared helper; nested
+                        # element captures stay out.
+                        for captured in _toplevel_match_captures(
+                                case.pattern):
+                            if captured not in names:
+                                names.add(captured)
+                                changed = True
                 continue
             if isinstance(node, (ast.For, ast.AsyncFor,
                                   ast.comprehension)):
@@ -8136,6 +8502,17 @@ def _repeated_between(scope, binding_pos):
                      if node.body else (node.lineno, node.col_offset))
             inner = carried or binding_pos < start
             stack.append((node.iter, carried))
+            # #1953 fix-r1 round 46 (anthropic r45 boundary#6, probe
+            # b-for-target-repeated): the *target* re-evaluates every
+            # iteration, so its priced events re-run like body events --
+            # unless the iterable is a one-element literal, where the
+            # single iteration keeps the linear per-iteration read (probe
+            # b-for-order); an empty or longer / non-literal iterable is
+            # unknown, so it takes the conservative ``inner`` flag.
+            target_inner = not (isinstance(node.iter, (ast.Tuple, ast.List))
+                                and len(node.iter.elts) == 1)
+            stack.append((node.target,
+                          inner if target_inner else carried))
             for child in node.body:
                 stack.append((child, inner))
             # #1953 fix-r1 round 45 (GLM r44 sibling#2 + boundary#3 /
@@ -18725,6 +19102,417 @@ def aggregation_audit():
         failures.append('#1953 aggregation-audit: detector self-test '
                         'dropped the import standing behind a tuple-target '
                         'del rebind (round 45)')
+    # #1953 fix-r1 round 46 (GLM r45 boundary#1 P0 / concurrency#1 P0,
+    # probes a-cls/a-indirect/a-iife/a-store-closure/a-for-lambda): a
+    # class body executes at its definition statement and an
+    # immediately-invoked lambda's body runs at the call, so both enter
+    # the window through ``_window_statements``; a wrapper that only
+    # calls a mutator joins ``mutators`` transitively, and a closure
+    # body storing into a display subscript or a for-target bound to a
+    # mutating lambda over a single-element literal seed the same way.
+    for _m46_kind, _m46_src in (
+            ("a class-body composite between binding and use",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    class _C:\n"
+             "        _items.pop(0)\n"
+             "        _items.insert(2, _hs[0])\n"
+             "    _items[-1]('common', object())\n"),
+            ("an indirect mutator call through a wrapper",
+             "    def _mutate():\n"
+             "        _items.pop(0)\n"
+             "        _items.insert(2, _hs[0])\n"
+             "    def _outer():\n"
+             "        _mutate()\n"
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _outer()\n"
+             "    _items[-1]('common', object())\n"),
+            ("an immediately-invoked mutating lambda",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    (lambda _x: _items.insert(2, _hs[0]))(_items.pop(0))\n"
+             "    _items[-1]('common', object())\n"),
+            ("a closure body storing a handle into a display subscript",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    def _mut():\n"
+             "        _items[2] = _hs[0]\n"
+             "    _mut()\n"
+             "    _items[-1]('common', object())\n"),
+            ("a for-target bound to a mutating lambda over a literal",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    for _g in (lambda: _items.insert(3, _hs[0]),):\n"
+             "        _g()\n"
+             "    _items[-1]('common', object())\n")):
+        _m46_display = ast.parse(
+            "def _m46a(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m46_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' not in _withdrawn_receivers(_m46_display):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost a receiver behind ' + _m46_kind
+                            + ' (round 46)')
+    for _m46_kind, _m46_src in (
+            ("a compensating class-body composite",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    class _C:\n"
+             "        _items.pop(0)\n"
+             "        _items.insert(1, _hs[0])\n"
+             "    _items[-1]('common', object())\n"),
+            ("a wrapper calling a clean reader",
+             "    def _reader():\n"
+             "        return len(_items)\n"
+             "    def _outer2():\n"
+             "        return _reader()\n"
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _outer2()\n"
+             "    _items[-1]('common', object())\n"),
+            ("an immediately-invoked clean lambda",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    (lambda _x: _items.insert(1, _hs[0]))(_items.pop(0))\n"
+             "    _items[-1]('common', object())\n"),
+            ("a closure body storing into another name's subscript",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _other = {}\n"
+             "    def _mut2():\n"
+             "        _other[2] = 1\n"
+             "    _mut2()\n"
+             "    _items[-1]('common', object())\n"),
+            ("a for-target bound to a clean reader lambda",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    for _g in (lambda: len(_items),):\n"
+             "        _g()\n"
+             "    _items[-1]('common', object())\n")):
+        _m46_clean = ast.parse(
+            "def _m46b(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m46_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' in _withdrawn_receivers(_m46_clean):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'withdrew a clean receiver behind ' + _m46_kind
+                            + ' (round 46)')
+    # #1953 fix-r1 round 46 (GLM r45 concurrency#2 P0 + anthropic r45
+    # sibling#1/concurrency#1 P0, probes b-assign/b-ann/b-dict/b-for-order/
+    # b-for-target-repeated): CPython evaluates an assignment's value
+    # before its target subscripts, interleaves dict pairs (k1, v1, k2,
+    # v2) and evaluates a for's iterable before its target; a for target
+    # re-runs every iteration, and a double-pop Assign changes the
+    # selection address, where the registered conservative floor
+    # convicts.
+    for _m46_kind, _m46_src in (
+            ("an Assign value-before-target composite",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _d = {}\n"
+             "    _d[_items.insert(2, _hs[0])] = _items.pop(0)\n"
+             "    _items[-1]('common', object())\n"),
+            ("an AnnAssign value-before-target composite",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _d = {}\n"
+             "    _d[_items.insert(2, _hs[0])]: object = _items.pop(0)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a Dict pair-interleaved composite",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _x = {'a': _items.pop(0), "
+             "_items.insert(2, _hs[0]): 1}\n"
+             "    _items[-1]('common', object())\n"),
+            ("a For iter-before-target composite",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _d = {}\n"
+             "    for _d[_items.insert(2, _hs[0])] in [_items.pop(0)]:\n"
+             "        pass\n"
+             "    _items[-1]('common', object())\n"),
+            ("a For target re-evaluated every iteration",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _d = {}\n"
+             "    for _d[_items.pop(1)] in (0, 0):\n"
+             "        pass\n"
+             "    _items[-1]('common', object())\n"),
+            ("a double-pop Assign address change (conservative floor)",
+             "    _items = [lambda *a: None, lambda *a: None, _hs[0]]\n"
+             "    _d = {}\n"
+             "    _d[_items.pop(1)] = _items.pop(0)\n"
+             "    _items[-1]('common', object())\n")):
+        _m46_display = ast.parse(
+            "def _m46c(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m46_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' not in _withdrawn_receivers(_m46_display):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost a receiver behind ' + _m46_kind
+                            + ' (round 46)')
+    for _m46_kind, _m46_src in (
+            ("an Assign composite keeping the use clean",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _d = {}\n"
+             "    _d[_items.insert(1, _hs[0])] = _items.pop(0)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a Dict pair-interleaved composite keeping the use clean",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _x = {'a': _items.pop(0), "
+             "_items.insert(1, _hs[0]): 1}\n"
+             "    _items[-1]('common', object())\n"),
+            ("a For iter-before-target composite keeping the use clean",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _d = {}\n"
+             "    for _d[_items.insert(1, _hs[0])] in [_items.pop(0)]:\n"
+             "        pass\n"
+             "    _items[-1]('common', object())\n"),
+            ("a mirror Assign whose value-first order stays clean",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _x = {}\n"
+             "    _x[_items.pop(0)] = _items.insert(2, _hs[0])\n"
+             "    _items[-1]('common', object())\n")):
+        _m46_clean = ast.parse(
+            "def _m46d(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m46_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' in _withdrawn_receivers(_m46_clean):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'withdrew a clean receiver behind ' + _m46_kind
+                            + ' (round 46)')
+    # #1953 fix-r1 round 46 (GLM r45 concurrency#3 P1 + anthropic r45
+    # boundary#4/#5 P0, probes c-branch/c-boolop/c-post-use): the replay
+    # forks mutually exclusive regions (if/else arms, match cases, boolop
+    # right sides) and convicts when any executed path convicts, and an
+    # event positioned at or after the use never enters the replay.
+    for _m46_kind, _m46_src in (
+            ("a statically-taken if arm with a cancelling else arm",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _flag = True\n"
+             "    if _flag:\n"
+             "        _items.pop(0)\n"
+             "        _items.insert(2, _hs[0])\n"
+             "    else:\n"
+             "        _items.pop(2)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a statically-taken else arm composite",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _flag = False\n"
+             "    if _flag:\n"
+             "        _items.pop(2)\n"
+             "    else:\n"
+             "        _items.pop(0)\n"
+             "        _items.insert(2, _hs[0])\n"
+             "    _items[-1]('common', object())\n"),
+            ("a boolop right side that never runs",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _items.append(_items[0]) and _items.pop()\n"
+             "    _items[-1]('common', object())\n"),
+            ("a trailing pop after the use inside its statement",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _flag = True\n"
+             "    if _flag:\n"
+             "        _items.insert(3, _items.pop(0))\n"
+             "        _items[-1]('common', object())\n"
+             "        _items.pop()\n")):
+        _m46_display = ast.parse(
+            "def _m46e(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m46_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' not in _withdrawn_receivers(_m46_display):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost a receiver behind ' + _m46_kind
+                            + ' (round 46)')
+    for _m46_kind, _m46_src in (
+            ("mutually exclusive arms each pricing safe alone",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _flag = False\n"
+             "    if _flag:\n"
+             "        _items.pop(0)\n"
+             "        _items.insert(0, 0)\n"
+             "    else:\n"
+             "        _items.pop(1)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a trailing pop after a clean move at the use",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _flag = True\n"
+             "    if _flag:\n"
+             "        _items.insert(1, _items.pop(0))\n"
+             "        _items[-1]('common', object())\n"
+             "        _items.pop()\n")):
+        _m46_clean = ast.parse(
+            "def _m46f(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m46_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' in _withdrawn_receivers(_m46_clean):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'withdrew a clean receiver behind ' + _m46_kind
+                            + ' (round 46)')
+    # #1953 fix-r1 round 46 (GLM r45 concurrency#4 P1 + sibling#1 in both
+    # lineages, probes d-del-if/e-walrus-mut): a nested ``del`` enters
+    # the replay once like any other priced event, and a
+    # walrus-wrapped lambda still seeds the mutator set.
+    _m46_del_clean = ast.parse(
+        "def _m46g(report):\n"
+        "    _n = '__setattr__'\n"
+        "    _hs = [getattr(md, _k) for _k in (_n,)]\n"
+        "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+        "    _flag = True\n"
+        "    if _flag:\n"
+        "        del _items[1]\n"
+        "    _items[-1]('common', object())\n"
+        "    return md.common.aggregate_status(report)\n")
+    if 'md' in _withdrawn_receivers(_m46_del_clean):
+        failures.append('#1953 aggregation-audit: detector self-test '
+                        'withdrew a clean receiver behind a single '
+                        'nested del (round 46)')
+    for _m46_kind, _m46_src in (
+            ("two distinct nested dels",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _flag = True\n"
+             "    if _flag:\n"
+             "        del _items[1]\n"
+             "        del _items[1]\n"
+             "    _items[-1]('common', object())\n"),
+            ("a walrus-wrapped lambda mutator called twice",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _g = (_h := lambda: _items.pop(1))\n"
+             "    _g()\n"
+             "    _g()\n"
+             "    _items[-1]('common', object())\n")):
+        _m46_display = ast.parse(
+            "def _m46h(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m46_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' not in _withdrawn_receivers(_m46_display):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost a receiver behind ' + _m46_kind
+                            + ' (round 46)')
+    _m46_walrus_clean = ast.parse(
+        "def _m46i(report):\n"
+        "    _n = '__setattr__'\n"
+        "    _hs = [getattr(md, _k) for _k in (_n,)]\n"
+        "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+        "    _g = (_h := lambda: len(_items))\n"
+        "    _g()\n"
+        "    _g()\n"
+        "    _items[-1]('common', object())\n"
+        "    return md.common.aggregate_status(report)\n")
+    if 'md' in _withdrawn_receivers(_m46_walrus_clean):
+        failures.append('#1953 aggregation-audit: detector self-test '
+                        'withdrew a clean receiver behind a '
+                        'walrus-wrapped reader lambda (round 46)')
+    # #1953 fix-r1 round 46 (GLM r45 boundary-rerun#3 P0 + anthropic
+    # r45 sibling#3 P1, probes b-as-capture/b-as-or/b-as-capture-mut):
+    # a toplevel ``as`` capture binds the whole subject even under a
+    # sub-pattern, and every MatchOr arm that captures the whole subject
+    # joins the alias closure.
+    for _m46_kind, _m46_src in (
+            ("a sub-pattern whole-subject match capture mutation",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    match _items:\n"
+             "        case [*_] as _n2:\n"
+             "            _n2.reverse()\n"
+             "    _items[-1]('common', object())\n"),
+            ("a MatchOr whole-subject capture mutation",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    match _items:\n"
+             "        case ([*_] as _n2) | ([] as _n2):\n"
+             "            _n2.reverse()\n"
+             "    _items[-1]('common', object())\n"),
+            ("a sub-pattern match-capture mutator alias call",
+             "    def _mutate():\n"
+             "        _it.reverse()\n"
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _it = _items\n"
+             "    match _mutate:\n"
+             "        case _ as _m:\n"
+             "            _m()\n"
+             "    _items[-1]('common', object())\n")):
+        _m46_display = ast.parse(
+            "def _m46j(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m46_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' not in _withdrawn_receivers(_m46_display):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost a receiver behind ' + _m46_kind
+                            + ' (round 46)')
+    for _m46_kind, _m46_src in (
+            ("a sub-pattern match capture used only to read",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    match _items:\n"
+             "        case [*_] as _n2:\n"
+             "            len(_n2)\n"
+             "    _items[-1]('common', object())\n"),):
+        _m46_clean = ast.parse(
+            "def _m46k(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m46_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' in _withdrawn_receivers(_m46_clean):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'withdrew a clean receiver behind ' + _m46_kind
+                            + ' (round 46)')
+    # #1953 fix-r1 round 46 (anthropic r45 sibling#4 P1 + boundary#8 P0,
+    # probes c-new-match/c-new-header): a class-body match capture and
+    # a walrus default in a class-body def header both bind ``__new__``
+    # and keep the import standing.
+    for _m46_kind, _m46_src, _m46_want in (
+            ("a match-captured __new__",
+             "def _mk(cls, name):\n"
+             "    return __import__(name)\n"
+             "class _B:\n"
+             "    pass\n"
+             "class imp(_B):\n"
+             "    match staticmethod(_mk):\n"
+             "        case __new__:\n"
+             "            pass\n", True),
+            ("a walrus-default __new__ in a class-body def header",
+             "class _B:\n"
+             "    def f(x=(__new__ := staticmethod(\n"
+             "        lambda cls, name: sys))):\n"
+             "        pass\n"
+             "class imp(_B):\n"
+             "    pass\n", True),
+            ("a match capture on a plain attribute",
+             "def _mk(cls, name):\n"
+             "    return __import__(name)\n"
+             "class _B:\n"
+             "    pass\n"
+             "class imp(_B):\n"
+             "    match staticmethod(_mk):\n"
+             "        case _mkattr:\n"
+             "            pass\n", False),
+            ("a walrus default on a plain attribute",
+             "class _B:\n"
+             "    def f(x=(_q := staticmethod(\n"
+             "        lambda cls, name: sys))):\n"
+             "        pass\n"
+             "class imp(_B):\n"
+             "    pass\n", False)):
+        _m46_new = ast.parse(
+            "import sys\n"
+            "from builtins import __import__ as imp\n"
+            "from types import SimpleNamespace\n" + _m46_src +
+            "s = imp('sys')\n"
+            "s.modules['_guard'] = object()\n"
+            "_guard = sys.modules.get('_guard')\n")
+        if ('_guard' in _sys_modules_write_values(_m46_new)) != _m46_want:
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            + ('dropped the import standing behind '
+                               if _m46_want else
+                               'kept the import standing behind ')
+                            + _m46_kind + ' (round 46)')
+    # #1953 fix-r1 round 46 (GLM r45 sibling#5 P2a, probes u1/u2): the
+    # last two bare ``.func`` reads unwrap a walrus callee like the
+    # r45 sites.
+    if '_guard' not in _proven_module_names(
+            ast.parse("import sys\n"
+                      "_guard = (_g := sys.modules.get)('_guard')\n")):
+        failures.append('#1953 aggregation-audit: detector self-test '
+                        'lost a proven module load behind a walrus '
+                        'callee (round 46)')
+    if _iterable_dict_keys(
+            ast.parse("for _n in (_d := d.keys)(): pass").body[0].iter,
+            ast.parse("d = {'x': 1, 'y': 2}")) != {'x', 'y'}:
+        failures.append('#1953 aggregation-audit: detector self-test '
+                        'withdrew dict keys behind a walrus callee '
+                        '(round 46)')
     for _label, _source, _want in (
             ("a handle certainly overwritten in a finally block",
              "def _w42_use():\n"
