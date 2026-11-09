@@ -713,6 +713,17 @@ mod tests {
         assert!(!cases.is_empty(), "#2140 probe records locales");
         for case in cases {
             let lang = case["lang"].as_str().expect("#2140 probe case lang");
+            // #2170: audit the recorded `resolved` against the row's language
+            // subtag before replaying the pairs, so a corrupted locale column
+            // cannot pass silently.
+            let resolved = case["resolved"]
+                .as_str()
+                .expect("#2170 probe case resolved");
+            let language = lang.split(['.', '@', '_']).next().unwrap_or("");
+            assert!(
+                resolved.starts_with(language),
+                "#2170 {lang}: resolved {resolved:?} keeps the row language {language:?}"
+            );
             let collator = collator(&Env::from_pairs(&[("LANG", lang), ("LC_ALL", lang)]))
                 .expect("#2140 probe collator loads");
             let pairs = case["pairs"].as_array().expect("#2140 probe case pairs");

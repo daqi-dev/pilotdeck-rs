@@ -204,10 +204,20 @@ mutations = [
 def main():
     if sys.argv[1:] == ['--check-anchors']:
         errors = []
+        # #2170 P3: the count below is genuinely deduplicated per (path, old)
+        # anchor — the old "N unique anchors" wording counted table rows.
+        seen, duplicates = set(), []
         for name, path, old, new, _test, _marker in mutations:
+            key = (str(path), old)
+            if key in seen:
+                duplicates.append(name)
+            seen.add(key)
             if path.read_text().count(old) != 1 or old == new:
                 errors.append(f'{name}: expired or invalid anchor')
-        print('\n'.join(errors) if errors else f'{len(mutations)} unique anchors checked')
+        print('\n'.join(errors) if errors else
+              f'{len(seen)} unique anchors checked ({len(mutations)} rows)')
+        if duplicates:
+            print('rows sharing an anchor: ' + ', '.join(duplicates))
         return int(bool(errors))
     args = [a for a in sys.argv[1:] if a != '--compile-only']
     compile_only = '--compile-only' in sys.argv[1:]
