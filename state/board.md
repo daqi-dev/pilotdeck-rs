@@ -5511,3 +5511,26 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | MM 额度 | 恢复后恢复派 MM 评审；未恢复不派 | 协调者 | 下次巡场 fleet |
 | #2296 接生产派单 | 接生产开工即派（前置于接生产） | 协调者 | 接生产排 READY 时 |
 ---
+
+### 段末增记（00:55–06:47 两段并档：合并组消化 + 三老单收货评审全开，coord2/e7）
+
+巡场正本 `_tmp/20261107-coord/patrol-0445.md`（04:4x，未结义务表在内）与本段并档；sweep `_tmp/20261107-coord/sweep-0431.md`、06:3x 复巡三灯（8b/9/10）全清、human-comments 空。02:xx–04:xx 段因压缩窗口漏写 board，本段并档补齐（教训待记：交接段宁短勿缺）。
+
+① **合并组消化（06:13 CST）**：#2757/#2718/#2382 三张同刻合并（GraphQL mergeQueue 实核 + 邮箱核平 `225912+zhengdaqi@users.noreply.github.com`），4 树回收（60→56/60）；#2583 先行 MERGED，cb8 侧回收释放 7.38 GiB。**#1444 解锁即派**：#2382 落地后 dispatch-on-unlock 的 watch-unlock 哨兵已死、S3 误报 HIT（steer.rs:86 代码级核验仍拒绝 attachments，覆盖误报）——按代码事实人工等价派单（issue-assemble + remote-worker cb8，06:4x 起跑），S3 覆盖备案待人复核。#2791（#1355 r26 增量）入队；#2770/#2771 监视在挂。
+② **#1317 关单前置判定（AI 判定备案）**：#1301 人于 11-03T16:54Z 反转选 A（三 suite 按 E1 合同），推翻 11-01 B 口径——#1317 不关单，走①等 #1314/#1315 建成 PASS（两单现役承载 = gateway-integration 车道，他分会话、人授权，仍用 mbp2 按 01:3x 停用令 report-only 不打断）；#1721/#1816/#1870 等旧 B 链处置见跟踪单评论。
+③ **三老单收货（04:4x 派、06:xx 收）**：#2309（ManagerDispatch error 臂）真提交+Draft PR **#2792**；#2310（A6.6-R2 冻结更正件）零提交交付——worker 只交 untracked 文件+final.patch，协调者手动 commit→PR **#2793**（memory auto-receive-no-push 陷阱再次命中）；#2308（Forward 臂补零覆盖）交付齐、waiter 开 Draft PR **#2794**（rust/negctl CI 在跑）。三单 DS+MM 评审齐派。
+④ **评审收束（06:1x–06:4x）**：#2792 MM P1 成立（负控分母未钉死 EXPECT_NAMES/registered()，两家独立撞上取高）+ DS P2a（code()==None dispatch 层无用例）→ **fix-r1 已派 cb8**（pid 36810，任务书本机 PATH 已按 memory remote-taskbook-no-local-path 改远端安全形式）；#2793 DS P2 符号名当轮修（1838cff79，DS 增量 PASS）→ MM P2 错误码归属实测成立（读码核 GatewayWsConnection.ts:223-255 两分支 + client/InProcessGateway.ts:2809-2824）当轮修（d634a533b）→ DS 增量再出 P2 三处 Rust 注释旧锚 231-260 → fix-r3 b6360fd46（check_frozen PASS ×2 / gitleaks clean / fmt OK，DS 增量在跑；修复轮 3/3 已满，再出非 P0 开跟进放行）；#2308 评审在跑。MM 通道额度已恢复（本轮 4 组评审正常出块）。
+⑤ **署名纠偏**：1838cff79 误带 Claude Code 尾注（本会话 GLM 谱系，memory coord-subagents-are-glm-family），旧提交不改，本段起新提交如实带 `GLM-5.3 <noreply@zhipu.com>`。
+⑥ **fleet 06:37**：四机 OK（本机盘 105.1/200 GiB、worktree 57/60；cb8 worker #1444+#2309 fix-r1；mbp2 停用机 report-only）；分池 zai 2/24 · ds 2/16 · mm 0/16 · anthropic 1/2 有余量。
+
+#### 未结义务表（下一步动作 / 唯一责任人 / 最迟复查时间）
+
+| 义务 | 下一步 | 责任人 | 最迟复查 |
+|---|---|---|---|
+| #2793 DS fix-r3 增量 | 出块→贴评审块→收敛即入队（双谱系全 PASS + 三轮 DS 增量） | coord2/e7 | 07:30 |
+| #2792 fix-r1（cb8） | 收货→commit→push→重跑 DS+MM（含 MM concurrency PARTIAL 补齐） | coord2/e7 | 08:30 |
+| #2794 评审（DS+MM） | 出块→贴块→判据对照正文→ready | coord2/e7 | 07:30 |
+| #1444 worker（cb8） | waiter 收货→评审→PR | coord2/e7 | 08:00 |
+| 监视器 #2790/#2770/#2771/#2791 | 终态→邮箱核验→下游三连（#2775 重判 / 收口链） | coord2/e7 | 每轮巡场 |
+| #1953 r45 车道 | 自主迭代至 PR，不占协调带宽 | 车道自身 | 08:45 |
+| 下次两小时交接 | 08:45 前写段（本轮已并档补 02:xx–04:xx 缺口） | coord2/e7 | 08:45 |
