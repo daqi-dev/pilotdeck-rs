@@ -30,6 +30,16 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/cli-parity-isolation/test_negati
 
 ## 锁被保留时怎么解
 
+本节只讲锁的**回收与残留处置**，不含取锁形态。持锁形态决定会不会被自动接管：
+带接管逻辑的装置在锁龄超 `MAX_AGE = 2400 s` 后按 `expired` 接管**没有**
+`cleanupPending` 的锁——活 owner 也会被接管（判据只看锁龄与 pid，无心跳，见
+`scripts/parity/round.py:313` 的注释），因此接近或超过 2400 s 的持锁须发布
+`cleanupPending: true`（对齐 `scripts/parity/round.py` / `scripts/gateway-parity/common.py` /
+`scripts/native-witness/collect.py` 三装置的 `owner.json` 形态：pid / timestamp /
+token / cleanupPending），短块（<2280 s，与本批装置 2280 s 硬截止同口径）不受此约束。
+引用本节作「锁正本」的各 fixture README（如 sdk-signals 的 28999 串行前置段）自行
+写明取锁形态，本节不代写。
+
 运行器报「retaining shared lock」或下次运行报锁被占时：
 1. 看 `/tmp/pdrs-parity.lock/owner.json` 的 pid/token/cleanupPending，并找残留 pgid：
    - **`cleanupPending: true` 不等于「无残留」**：它是获取时先发布的占位，意思是「残留清单还没发布」；
