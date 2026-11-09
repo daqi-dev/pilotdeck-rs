@@ -81,6 +81,25 @@ switches = [
     ('api-web-node-write-refusal-off', FILES,
      'write_to_a_nul_path_answers_node_argument_validation',
      "#1764 the NUL-path write answers Node's argument-validation text"),
+    # #2153 fix-r1 (review r1): the `content-length: 0` exemption is the two
+    # parser bare-400 gates' only — the replay normalizes every oracle cell
+    # with the drop off. The unscoped mutant re-widens the mask inside the
+    # normalize wrapper, so the injected-line unit test fails; the off
+    # mutant drops the gates' exemption, so the gate replay fails; the two
+    # product mutants drop or grow the wire line the raw pin holds in both
+    # directions.
+    ('api-web-replay-cl0-unscoped', ROOT / 'src/pilotdeck-gateway/src/api_web/tests.rs',
+     'only_the_registered_gates_mask_a_content_length_zero',
+     '#2153 an extra content-length: 0 on a replayed response must not normalize away'),
+    ('api-web-replay-cl0-off', ROOT / 'src/pilotdeck-gateway/src/api_web/tests.rs',
+     'gate_bad_method_is_parser_bare_400',
+     '#1765 the bad-method gate answers the parser bare 400 before the route group'),
+    ('native-http-parser-400-cl0-off', NATIVE_HTTP,
+     'content_length_zero_stays_scoped_to_the_registered_gates',
+     '#2153 pin gate-bad-method: the registered bare 400 carries content-length: 0'),
+    ('api-web-head-404-cl0', ROUTER,
+     'content_length_zero_stays_scoped_to_the_registered_gates',
+     '#2153 pin projects-head: the HEAD 404 carries no content-length at all'),
 ]
 GUARDED = [ROUTER, FILES, NATIVE_HTTP, ROOT / 'src/pilotdeck-gateway/src/api_web/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',

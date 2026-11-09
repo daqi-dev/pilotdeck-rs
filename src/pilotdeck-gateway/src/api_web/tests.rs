@@ -434,8 +434,8 @@ async fn replay(id: &str) {
     )
     .await;
     assert_eq!(
-        normalize(&raw, Some(&root)),
-        normalize(&latin1_bytes(&cell.response), None),
+        normalize(&raw, false, Some(&root)),
+        normalize(&latin1_bytes(&cell.response), false, None),
         "#1348 cell {} normalized response",
         cell.id
     );
@@ -719,9 +719,10 @@ async fn gate_bad_method_is_parser_bare_400() {
     )
     .await;
     assert_eq!(
-        normalize(&raw, None),
+        normalize(&raw, true, None),
         normalize(
             b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
+            true,
             None
         ),
         "#1765 the bad-method gate answers the parser bare 400 before the route group"
@@ -747,9 +748,10 @@ async fn gate_missing_host_is_headless_400() {
     )
     .await;
     assert_eq!(
-        normalize(&raw, None),
+        normalize(&raw, false, None),
         normalize(
             b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\ndate: <masked>\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+            false,
             None
         ),
         "#1765 the missing-Host gate answers the headless 400 before the route group"
@@ -774,9 +776,10 @@ async fn gate_non_ascii_target_is_parser_bare_400() {
     )
     .await;
     assert_eq!(
-        normalize(&raw, None),
+        normalize(&raw, true, None),
         normalize(
             b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
+            true,
             None
         ),
         "#1765 the non-ASCII target gate answers the parser bare 400 before the route group"
@@ -785,6 +788,116 @@ async fn gate_non_ascii_target_is_parser_bare_400() {
         closed,
         "#1765 the non-ASCII target gate closes the connection like Node's parser"
     );
+}
+
+/// #2153 fix-r1 (review r1): the `content-length: 0` exemption is the two
+/// parser bare-400 gates' only — the replay normalizes every oracle cell
+/// with the drop off, so a cell recorded as the parser's bare 400 (whose
+/// hyper bytes carry the line the TS golden does not) would replay red at
+/// its own comparison. This guard fails first, with the cell's id, so the
+/// exemption set stays a decision made here instead of a mask the replay
+/// quietly re-widens.
+#[test]
+fn no_oracle_cell_needs_the_content_length_exemption() {
+    let recorded = oracle();
+    let bare: Vec<&str> = recorded["cells"]
+        .as_array()
+        .expect("#1348 oracle cells array")
+        .iter()
+        .filter(|cell| {
+            cell["response"]
+                .as_str()
+                .expect("#1348 oracle cell response")
+                .starts_with("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n")
+        })
+        .map(|cell| cell["id"].as_str().expect("#1348 oracle cell id"))
+        .collect();
+    assert_eq!(
+        bare,
+        Vec::<&str>::new(),
+        "#2153 no oracle cell is a parser bare 400 — the content-length exemption belongs to the gate tests only, re-register it here before recording one"
+    );
+}
+
+/// #2153: the exemption the two gate tests pass is the only masking left —
+/// an injected `content-length: 0` on any replayed response must survive
+/// normalization (an extra hyper length line replays red), while the
+/// registered bare 400's line stays masked.
+#[test]
+fn only_the_registered_gates_mask_a_content_length_zero() {
+    let head = "HTTP/1.1 404 Not Found\r\ncontent-type: application/json\r\nConnection: keep-alive";
+    let plain = format!("{head}\r\n\r\n");
+    let injected = format!("{head}\r\ncontent-length: 0\r\n\r\n");
+    assert!(
+        normalize(injected.as_bytes(), false, None) != normalize(plain.as_bytes(), false, None),
+        "#2153 an extra content-length: 0 on a replayed response must not normalize away"
+    );
+    // The registered direction stays masked: hyper's line on the bare 400 is
+    // the one exemption left, so the TS-shaped bytes still compare equal.
+    let bare = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
+    let hyper_shaped = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\ncontent-length: 0\r\n\r\n";
+    assert_eq!(
+        normalize(hyper_shaped.as_bytes(), true, None),
+        normalize(bare.as_bytes(), true, None),
+        "#2153 the registered gate exemption still masks hyper's content-length: 0"
+    );
+}
+
+/// #2153: the raw bytes behind the gates' exemption and the replay's
+/// verbatim length lines: the two parser bare 400s carry hyper's
+/// `content-length: 0` (the registered direction — a rejection that stopped
+/// carrying the line fails here instead of replaying green), and the two
+/// HEAD 404 cells carry no content-length at all (the unregistered direction
+/// an extra line must not normalize away on). The gate requests are the
+/// gates' own bytes; the HEAD cells go through the same recorded-request
+/// exchange the replay uses.
+#[tokio::test]
+async fn content_length_zero_stays_scoped_to_the_registered_gates() {
+    for (request, id) in [
+        (
+            b"FOO /api/web/projects HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\n\r\n".as_slice(),
+            "gate-bad-method",
+        ),
+        (
+            b"GET /api/web/proj\xe9cts HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\n\r\n".as_slice(),
+            "gate-non-ascii-target",
+        ),
+    ] {
+        let (raw, closed) = exchange(
+            replay_config("unused"),
+            native_config(),
+            request,
+            id,
+        )
+        .await;
+        let lower = latin1_string(&raw).to_ascii_lowercase();
+        assert!(
+            lower.contains("\r\ncontent-length: 0\r\n"),
+            "#2153 pin {id}: the registered bare 400 carries content-length: 0: {lower:?}"
+        );
+        assert!(
+            closed,
+            "#2153 pin {id}: the registered bare 400 closes the connection"
+        );
+    }
+    let (parent, root) = fixture();
+    let root_text = root.to_string_lossy().into_owned();
+    for id in ["projects-head", "files-read-head"] {
+        let cell = cell(id, &percent_encode(&root_text));
+        let (raw, _) = exchange(
+            replay_config(&root_text),
+            native_config(),
+            &cell.request,
+            id,
+        )
+        .await;
+        let lower = latin1_string(&raw).to_ascii_lowercase();
+        assert!(
+            !lower.contains("\r\ncontent-length:"),
+            "#2153 pin {id}: the HEAD 404 carries no content-length at all: {lower:?}"
+        );
+    }
+    let _ = fs::remove_dir_all(&parent);
 }
 
 /// #1765 reference cell: a malformed percent escape is ASCII, so it is *not*
@@ -2271,9 +2384,21 @@ fn write_creates_below_a_directory_link_that_stays_inside_the_root() {
 /// The bytes both sides are compared in: the shared #1209 parser
 /// (#1766, `replay_normalize`) plus the two api-web body masks — both
 /// spellings of the fixture root fold to `<root>` and a directory's `size`
-/// digit run folds to `0` (filesystem-dependent).
-fn normalize(raw: &[u8], root: Option<&Path>) -> Vec<u8> {
-    replay_normalize::normalize(raw, &|body| mask_body(body, root))
+/// digit run folds to `0` (filesystem-dependent). `parser_admission` scopes
+/// the `content-length: 0` drop (#2153) to the parser bare-400 gates — the
+/// only responses whose hyper bytes carry the line the TS golden does not —
+/// so every replayed cell's length lines compare verbatim; the
+/// `no_oracle_cell_needs_the_content_length_exemption` guard holds that
+/// empty set against the oracle.
+fn normalize(raw: &[u8], parser_admission: bool, root: Option<&Path>) -> Vec<u8> {
+    let parser_admission = if crate::mutants::on("api-web-replay-cl0-unscoped") {
+        true
+    } else if crate::mutants::on("api-web-replay-cl0-off") {
+        false
+    } else {
+        parser_admission
+    };
+    replay_normalize::normalize(raw, parser_admission, &|body| mask_body(body, root))
 }
 
 /// The api-web body masks: both spellings of the fixture root fold to

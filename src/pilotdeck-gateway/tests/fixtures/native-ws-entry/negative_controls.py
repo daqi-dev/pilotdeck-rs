@@ -127,6 +127,26 @@ switches = [
     ('native-ws-buffer-close-code', SOURCE, PREFIX + 'buffer_capacity_close_uses_1009', '#749 saturated input admission sends close1009'),
     ('native-ws-server-header-budget', ROOT / 'src/pilotdeck-gateway/src/frame.rs', PREFIX + 'frame_header_budgets_match_encoding', '#749 header budgets cover actual wire encoding'),
     ('native-ws-client-header-budget', ROOT / 'src/pilotdeck-gateway/src/frame.rs', PREFIX + 'frame_header_budgets_match_encoding', '#749 header budgets cover actual wire encoding'),
+    # #2153 fix-r1 (review r1): the budget replay's `content-length: 0` mask
+    # is scoped to the oracle's 431 cells through `fn parser_admission`.
+    # The drop mutant disables the predicate, so a 431 cell's replay fails
+    # at its own byte comparison; the widening mutant fails the coverage
+    # guard that reads the same predicate; the mask-always mutant makes
+    # `budget_normalize` ignore its scope flag, so the injected-line unit
+    # test fails; the two product mutants drop or grow the wire line the
+    # raw pin holds in both directions.
+    ('native-ws-budget-cl0-off', TESTS, PREFIX + 'upgrade_budget_boundary_matches_ts',
+     "#1351 every boundary cell's response matches the recorded TS bytes"),
+    ('native-ws-budget-cl0-wide', TESTS, PREFIX + 'parser_admission_cells_cover_exactly_the_oracle_431s',
+     "#2153 the content-length exemption covers exactly the oracle's 431 cells"),
+    ('native-ws-budget-cl0-mask-always', TESTS, PREFIX + 'only_the_registered_cells_mask_a_content_length_zero',
+     '#2153 an injected content-length: 0 on a served cell must not normalize away'),
+    ('native-http-431-cl0-off', ROOT / 'src/pilotdeck-gateway/src/native_http.rs',
+     PREFIX + 'budget_content_length_zero_stays_scoped_to_the_registered_431s',
+     '#2153 pin: the registered 431 carries content-length: 0'),
+    ('native-ws-101-cl0', ROOT / 'src/pilotdeck-gateway/src/acceptor.rs',
+     PREFIX + 'budget_content_length_zero_stays_scoped_to_the_registered_431s',
+     '#2153 pin: the served cell carries no content-length at all'),
 ]
 
 

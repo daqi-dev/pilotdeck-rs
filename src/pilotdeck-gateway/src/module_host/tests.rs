@@ -1016,19 +1016,85 @@ async fn premature_close_is_a_zero_byte_close() {
     );
 }
 
+/// #2153 fix-r1 (review r1): the replay normalization no longer drops the
+/// empty-body `content-length: 0` — the mask had no registered cell (with
+/// the drop disabled every replay stays green), so it could only hide a
+/// drift in either direction: an extra length line on any cell, or the
+/// `undefbody` golden's own `content-length: 0` going missing, both
+/// replayed green through it. The comparison itself is the check: an
+/// injected line must change the normalized bytes.
+///
+/// Sibling: keep in sync with `content_length_zero_compares_verbatim` in
+/// `src/module_host/approvals/tests.rs`.
+#[test]
+fn content_length_zero_compares_verbatim() {
+    let head = cell("method-head");
+    let injected = head
+        .response
+        .replacen("\r\n\r\n", "\r\ncontent-length: 0\r\n\r\n", 1);
+    crate::negative_assert!(
+        normalize(&latin1_bytes(&injected)) != normalize(&latin1_bytes(&head.response)),
+        "#2153 an extra content-length: 0 on the HEAD 405 must not normalize away"
+    );
+    let undefbody = cell("undefbody");
+    crate::negative_assert!(
+        find(
+            &normalize(&latin1_bytes(&undefbody.response)),
+            b"content-length: 0"
+        )
+        .is_some(),
+        "#2153 the undefbody golden's own content-length: 0 survives normalization"
+    );
+}
+
+/// #2153: the two length-line wire pins behind the verbatim comparison —
+/// the HEAD 405 (hyper suppresses both framing lines on HEAD like Node)
+/// and the `undefbody` 200 (the golden's own `content-length: 0`, which the
+/// old mask could hide losing).
+///
+/// Sibling: keep in sync with `method_head_bytes_stay_pinned` in
+/// `src/module_host/approvals/tests.rs`.
+#[tokio::test]
+async fn method_head_and_undefined_body_bytes_stay_pinned() {
+    let head = cell("method-head");
+    let (raw, _) = exchange(&head.server, &head.request, &head.id, head.half_close).await;
+    let lower = latin1_string(&raw).to_ascii_lowercase();
+    assert!(
+        !lower.contains("\r\ncontent-length:") && !lower.contains("\r\ntransfer-encoding:"),
+        "#2153 pin method-head: the HEAD 405 carries no framing line: {lower:?}"
+    );
+    let undefbody = cell("undefbody");
+    let (raw, _) = exchange(
+        &undefbody.server,
+        &undefbody.request,
+        &undefbody.id,
+        undefbody.half_close,
+    )
+    .await;
+    assert!(
+        latin1_string(&raw)
+            .to_ascii_lowercase()
+            .contains("\r\ncontent-length: 0\r\n"),
+        "#2153 pin undefbody: the empty value body keeps its content-length: 0"
+    );
+}
+
 // -------------------------------------------------------------- normalize
 
 /// The bytes both sides are compared in, the #1209 rules: the Date value is
 /// masked, header names are case-folded (hyper renders Title-Case, TS's
-/// `content-type` is literal lowercase — the registered transport diff), the
-/// empty-body `content-length: 0` line is dropped, and chunk sizes are
-/// case-folded. Status lines are compared verbatim — both stacks write
-/// canonical `HTTP/1.1 200 OK` casing, and the one code without a canonical
-/// reason (499) is answered with Node's `unknown` through hyper's
-/// `ReasonPhrase` extension — and chunk bodies are never folded. Everything
-/// works on the raw wire bytes: a binary body (the `bytes` cell's `0xFA`)
-/// keeps its 1:1 offsets, where the latin1 text the oracle stores would
-/// shift them.
+/// `content-type` is literal lowercase — the registered transport diff), and
+/// chunk sizes are case-folded. `content-length` lines compare verbatim
+/// (#2153: no module-host cell needs an empty-body exemption — measured with
+/// the old drop disabled, every replay stays green — so the one golden
+/// `content-length: 0` (`undefbody`) is matched on the wire and an extra
+/// line on any cell replays red instead of normalizing away). Status lines
+/// are compared verbatim — both stacks write canonical `HTTP/1.1 200 OK`
+/// casing, and the one code without a canonical reason (499) is answered
+/// with Node's `unknown` through hyper's `ReasonPhrase` extension — and
+/// chunk bodies are never folded. Everything works on the raw wire bytes: a
+/// binary body (the `bytes` cell's `0xFA`) keeps its 1:1 offsets, where the
+/// latin1 text the oracle stores would shift them.
 fn normalize(raw: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(raw.len());
     let mut rest = raw;
@@ -1068,8 +1134,12 @@ fn normalize(raw: &[u8]) -> Vec<u8> {
             };
             if name.eq_ignore_ascii_case(b"date") {
                 out.extend_from_slice(b"date: <masked>\r\n");
-            } else if name.eq_ignore_ascii_case(b"content-length") && trim_ascii(value) == b"0" {
-                // hyper's implicit empty-body length.
+            } else if crate::mutants::on("module-host-normalize-cl0-off")
+                && name.eq_ignore_ascii_case(b"content-length")
+                && trim_ascii(value) == b"0"
+            {
+                // #2153 negative control: the pre-fix unconditional drop,
+                // which masked the line on both sides of the comparison.
             } else {
                 out.extend_from_slice(&name.to_ascii_lowercase());
                 out.extend_from_slice(b":");

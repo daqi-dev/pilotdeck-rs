@@ -94,6 +94,17 @@ switches = [
     # is close-delimited, so the pinned value-body reply turns red.
     ('module-host-http10-framing-off', SOURCE, 'http10_value_body_is_close_delimited',
      "#1947 pin http10 value body: the 1.0 reply is close-delimited, no content-length"),
+    # #2153 fix-r1 (review r1): the replay normalization no longer drops the
+    # empty-body `content-length: 0` (no cell needed it — the one golden
+    # `content-length: 0`, `undefbody`, matches on the wire). The mutant
+    # reintroduces the unconditional drop, so the injected-line unit test
+    # fails at its own assertion; the HEAD-405 product mutant grows the wire
+    # line the raw pin holds.
+    ('module-host-normalize-cl0-off', ROOT / 'src/pilotdeck-gateway/src/module_host/tests.rs',
+     'content_length_zero_compares_verbatim',
+     '#2153 an extra content-length: 0 on the HEAD 405 must not normalize away'),
+    ('module-host-head-405-cl0', SOURCE, 'method_head_and_undefined_body_bytes_stay_pinned',
+     '#2153 pin method-head: the HEAD 405 carries no framing line'),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/module_host/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
