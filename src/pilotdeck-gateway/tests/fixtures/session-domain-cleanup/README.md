@@ -1611,3 +1611,35 @@ both parse sites share the `_PARSE_FAILURES` constant.  New `_fsr8` pins
 (six: five positive, one live-relay negative) and `_fsr9` pins (seven) cover
 every face; revert mutants are killed (`mutneg-r24.out`, first-run 14/18
 record `mutneg-r24-run1.out` kept alongside).
+
+fix-r25 (DS r24 boundary#1 P0, human verdict 2026-11-09 — structural
+direction (a), single-direction polarity): the shared-arm-set exemption
+is now fail-closed end to end.  `_inevitably_shared` consults
+`_exit_uncertain` before the surviving arms (`_exit_arms` silently
+drops branches whose pure-literal test it cannot resolve), so a
+PARTIAL arm set certifies no more than the empty one; the relay family
+(slot exemption, exit-argument status exemption, name/container relay
+trust) moved onto one predicate, `_armwise_shared`, which requires
+every certified arm to relay a verdict or inevitably route through the
+map — one shared arm no longer excuses `{'status': 'PASS' if flag else
+<shared>[0]}` and its name-bound twin; `_helper_exits_zero` returns
+True when a judged arm is an attribute/subscript composite (the
+point-level canon already fails closed on that spelling — one source
+may not keep two verdicts through a helper hop); `_delegated_exit`
+gains the `_is_shared_call` guard its module-level twin has carried
+since #892 (a helper returning the aggregated value itself is the
+proof, not a delegation to judge); the remaining `_exit_arms` call
+sites gained RecursionError wraps (function-level kill via
+`wrap-driver.py`; the element/BoolOp wraps are registered-not-e2e —
+`_nested_status_slots` raises first at every reachable depth, same
+call as r24 M19).  Twelve new pins (two `_fsr8`, ten `_fsr9`)
+including the two container-relay sites; the `_fsr9` count above is
+corrected 7 -> 8 (`_fsr9_shared_summary`, r24 simplify#4) -> 18 this
+round.  Revert mutants are killed (`mutneg-r25.out` 31/31; the
+first-run 30/31 record `mutneg-r25-run1.out` is kept alongside — the
+M15 anchor matched mid-indent and its mutant died with
+IndentationError, the same harness-error class the r24 first run
+had).  Evidence `_tmp/20261109-1355-r25/` (matrix 80 cells
+0 RED after, baseline 23 RED before — 负控先证红; r24 probe
+F1-F5 0 of 7 faces confirmed; real-tree aggregation-audit
+self-check PASS with verdicts byte-identical to the r24 head).
