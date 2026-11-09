@@ -21,7 +21,8 @@ from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources,
 from negative_selection import (claim_dir, missing_target, refuse,
                                 refuse_unusable_target, registered, select,
                                 verdict_exit)
-from negative_suite import Case, classify, passed, publish_summary
+from negative_suite import (Case, classify, invalidate_completed, passed,
+                            publish_summary)
 
 root = Path(__file__).resolve().parents[5]
 REGISTRY = root / 'src/pilotdeck-gateway/src/runtime/tools/registry.rs'
@@ -83,6 +84,10 @@ EXPECTED_NAMES = (
     'model-usage-folded',
 )
 
+# Both exit paths publish the same counts schema: a per-call literal would let
+# the guard-failure and verdict paths drift apart for consumers.
+SUMMARY_STATES = ('KILLED', 'SURVIVED', 'INVALID', 'COMPILED')
+
 
 def main():
     # The roster is validated before any branch, so `--check-anchors` also
@@ -90,12 +95,12 @@ def main():
     # EXPECTED_NAMES must not print "anchors OK" (the sdk-mcp-session-tools
     # precedent). Roster, subset selection and target checks are refusals
     # (exit 2, "never started"), never mistaken for a failed control (1).
+    if any(not isinstance(row, tuple) or len(row) != 6 for row in cases):
+        refuse('#2131 malformed case row: every mutation needs 6 fields')
     try:
         registered(cases, EXPECTED_NAMES)
     except ValueError as error:
         refuse(str(error))
-    if any(len(row) != 6 for row in cases):
-        refuse('#2131 malformed case row: every mutation needs 6 fields')
     if sys.argv[1:] == ['--check-anchors']:
         failures = []
         # Hold the tree lock while reading: a sibling mutating runner may
@@ -161,8 +166,28 @@ def main():
                *(shared / name for name in (
                    'negative_process.py', 'negative_suite.py', 'negative_panic.py',
                    'pending_reanchor.py', 'negative_selection.py'))]
+    def startup_refusal(error):
+        # A guard that never started (dirty tree, source-lock wait exhausted)
+        # is a startup refusal, not a red run: rc 2, and the empty directory
+        # claim_dir made is withdrawn so a refusal leaves no evidence dir that
+        # looks claimed (specs/negative-controls/README.md:152/:155/:183).
+        # rmdir only removes the empty case -- a run that already wrote logs
+        # keeps them.
+        try:
+            out.rmdir()
+        except OSError:
+            pass
+        refuse(f'guard refused to start: {error!r}')
+
+    # Startup is everything the guard does before the first mutation; after
+    # `started`, an interruption is a red run (INVALID rows, rc 1), never a
+    # refusal, and a delayed cancellation already leaves as
+    # SystemExit(128+signum) -- the bare `except Exception` below lets it pass
+    # untouched (specs/negative-controls/README.md:151/:155/:157-158).
+    started = False
     try:
         with mutating_sources(root, guarded) as originals:
+            started = True
             for name, path, old, new, test, marker in selected:
                 row = dict(mutation=name, test=test, assertion=marker,
                            status='INVALID', reason='not run', compiled=False)
@@ -195,31 +220,19 @@ def main():
                     row.update(status='INVALID', reason=row['reason'] + f'; restore: {error}')
                 results.append(row)
                 print(f'{name}: {row["status"]}: {row["reason"]}', flush=True)
-    except BaseException as error:
+    except Exception as error:
+        if not started:
+            startup_refusal(error)
         reason = f'source guard: {type(error).__name__}: {error}'
-        if not results:
-            # The guard refused before the first mutation was written, so
-            # nothing was measured: a dirty tree or a lock timeout is a
-            # refusal (2), not a run that came out not-green (1).
-            refuse(reason)
-        # The guard failed (or the run was cancelled) after mutations were
-        # written: every row is untrustworthy, so void what ran, account for
-        # the rest, publish the INVALID summary and exit 2 -- the same
-        # #1076 fix-r1 contract as negative_suite.run_cases: an unverified
-        # restore or a cancellation-invalidated run never reports a 1 that
-        # callers would read as "ran and came out not green".
-        for row in results:
-            row.update(status='INVALID', reason=row['reason'] + '; ' + reason)
-            row['compiled'] = False
+        invalidate_completed(results, reason)
         for name, _path, _old, _new, test, marker in selected[len(results):]:
             results.append(dict(mutation=name, test=test, assertion=marker,
                                 status='INVALID', reason=reason, compiled=False))
             print(f'{name}: INVALID: {reason}', flush=True)
-        publish_summary(out, results,
-                        states=('KILLED', 'SURVIVED', 'INVALID', 'COMPILED'))
-        raise SystemExit(2)
-    publish_summary(out, results,
-                    states=('KILLED', 'SURVIVED', 'INVALID', 'COMPILED'))
+        publish_summary(out, results, states=SUMMARY_STATES)
+        return verdict_exit(results, key='status',
+                            killed='COMPILED' if compile_only else 'KILLED')
+    publish_summary(out, results, states=SUMMARY_STATES)
     return verdict_exit(results, key='status',
                         killed='COMPILED' if compile_only else 'KILLED')
 
