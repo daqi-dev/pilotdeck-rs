@@ -205,11 +205,12 @@ fn finish(
 
 /// Node http.Server's parser-level admission, used by the native listeners that
 /// back a TS `http.createServer` surface: the module-host router here, the
-/// webhook channel's own listener, and the api-server channel (#1683). This is
+/// webhook channel's own listener, the api-server channel (#1683), and the
+/// sms and user_dialog HTTP-store lanes (#2152). This is
 /// not router policy: llhttp and `_http_server.js` enforce it before any request
-/// handler runs, so every such listener has to call it. Not yet wired in the sms
-/// and user_dialog HTTP-store lanes, nor in wecom_callback's private listener
-/// (#2152 / #1774) — those listeners predate this gate and still diverge.
+/// handler runs, so every such listener has to call it. Not yet wired in
+/// wecom_callback's private listener (#1774) — that listener predates this
+/// gate and still diverges.
 /// `Ok(None)` admits the request; `Err` is the zero-byte socket close a
 /// CONNECT to a plain http.Server performs (no `connect` listener).
 pub(crate) fn node_parser_admission<B>(

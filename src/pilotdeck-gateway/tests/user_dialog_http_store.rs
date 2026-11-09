@@ -989,19 +989,29 @@ async fn loopback_server(
 /// path would have compared, so both paths share one assertion.
 async fn raw_hostless_exchange(port: u16, request: &[u8]) -> (u16, Option<String>, String) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-        .await
-        .expect("#2152 connect for the hostless replay");
-    stream
-        .write_all(request)
-        .await
-        .expect("#2152 write the hostless request");
-    // The rejection carries `Connection: close`, so the server ends the read.
-    let mut raw = Vec::new();
-    stream
-        .read_to_end(&mut raw)
-        .await
-        .expect("#2152 the hostless response must close the connection");
+    // #2152 fix-r1 (review r1): the exchange is bounded like the sms lane's
+    // `bounded` — the rejection is expected to close the connection, so a
+    // regression that keeps it open must fail here, not hang the whole
+    // test binary on a `read_to_end` that never returns.
+    let raw = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("#2152 connect for the hostless replay");
+        stream
+            .write_all(request)
+            .await
+            .expect("#2152 write the hostless request");
+        // The rejection carries `Connection: close`, so the server ends the
+        // read.
+        let mut raw = Vec::new();
+        stream
+            .read_to_end(&mut raw)
+            .await
+            .expect("#2152 the hostless response must close the connection");
+        raw
+    })
+    .await
+    .expect("#2152 the hostless replay must finish within 5 s");
     let text = String::from_utf8_lossy(&raw).into_owned();
     let (head, body) = text
         .split_once("\r\n\r\n")
@@ -1073,17 +1083,7 @@ async fn socket_requests_match_typescript_framing() {
         let name = case["name"].as_str().unwrap();
         let request = &case["request"];
         let path = request["path"].as_str().unwrap();
-        // #2152: absence is the normal request (a `Host` is sent); only a
-        // recorded boolean may suppress it — the api-server lane's `setHost`
-        // rule. Anything else is fixture drift that would otherwise replay a
-        // differently-framed request.
-        let set_host = match request.get("setHost") {
-            None => true,
-            Some(Value::Bool(set_host)) => *set_host,
-            Some(other) => {
-                panic!("#2152 request `setHost` must be a boolean, found {other:?} ({name})")
-            }
-        };
+        let set_host = recorded_set_host(request, name);
         let mut builder = hyper::Request::builder()
             .method(request["method"].as_str().unwrap())
             .uri(format!("http://127.0.0.1:{port}{path}"));
@@ -1183,6 +1183,30 @@ fn socket_requests_pin_their_parser_admission_knobs() {
         "#2152 the missing-host cell must record `setHost: false`, or the \
          replay sends a Host header"
     );
+}
+
+/// #2152: absence is the normal request (a `Host` is sent); only a recorded
+/// boolean may suppress it — the api-server lane's `setHost` rule. Anything
+/// else is fixture drift that would otherwise replay a differently-framed
+/// request.
+fn recorded_set_host(request: &Value, name: &str) -> bool {
+    match request.get("setHost") {
+        None => true,
+        Some(Value::Bool(set_host)) => *set_host,
+        Some(other) => {
+            panic!("#2152 request `setHost` must be a boolean, found {other:?} ({name})")
+        }
+    }
+}
+
+/// #2152 fix-r1 (review r1): the fail-closed `setHost` read has its own
+/// unit pin, the api-server lane's `req_spec_refuses_a_non_boolean_set_host`
+/// rule — the read is only embedded in the big replay otherwise.
+#[test]
+#[should_panic(expected = "#2152 request `setHost` must be a boolean, found String(\"no\"")]
+fn socket_request_set_host_refuses_a_non_boolean() {
+    let request = parse_json(r#"{"path": "/x", "setHost": "no"}"#);
+    recorded_set_host(&request, "negative");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
