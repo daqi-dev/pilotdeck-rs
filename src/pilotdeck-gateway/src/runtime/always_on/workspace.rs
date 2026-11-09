@@ -906,6 +906,7 @@ impl NativeWorkspace {
         }
         self.owned(move |owner| {
             Box::pin(async move {
+                let result: Result<(), WorkspaceError> = async {
                 let cwd = native_path(&handle.cwd)?;
                 let paths = owner.0.paths.clone();
                 let strategy = handle.strategy.clone();
@@ -927,15 +928,6 @@ impl NativeWorkspace {
                             && handle.strategy == "git-worktree" =>
                     {
                         return owner.dispose_removed_git(&handle, &cwd).await;
-                    }
-                    Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
-                        // Refusing a cleanup because its directory identity is
-                        // uncertain is a cleanup failure, not prepare failure.
-                        // Keep it observable by the owned-job close drain.
-                        return Err(WorkspaceError::new(
-                            "workspace_cleanup_failed",
-                            error.to_string(),
-                        ));
                     }
                     Err(error) => return Err(error.into()),
                 };
@@ -1038,6 +1030,14 @@ impl NativeWorkspace {
                     owner.io(move || captured.remove()).await?;
                     Ok(())
                 }
+                }.await;
+                // Every owned dispose failure must survive the job drain,
+                // including Git command/CAS and IO errors. Preserve its
+                // original message and missing flag; prepare uses its own domain.
+                result.map_err(|mut error| {
+                    error.code = "workspace_cleanup_failed".into();
+                    error
+                })
             })
         })
         .await

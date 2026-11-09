@@ -5223,3 +5223,8 @@ r130 固定357034288：SOP18/AO119/admission13/owner66及四bin通过，native55
 ### 2026-11-09 08:50 · 实际关闭图通过与清理保护补强
 
 r131 4b48bff9全目标check/strict/四bin通过，SOP18/磁盘resume44格所在4项/switch14/project190过；native555过1审批fixture错误码断言，AO120过1foreign目录错误域失败。前者按config原PermissionDenied→PROJECT_BINDING_STORE_INVALID契约修准确断言，后者确为dispose权限拒绝误标prepare导致close吞错，已修cleanup域并保原message/外物/ref。新增Gitremove失败保ref与移除后已被另处checkout拒删，修旧rollback失败仍CAS。256FD相同曲线cron17全过峰24末6、native峰31末19，真实boot四轮弱图全释放；不冒称所有资源无泄漏。双家SOP/生命周期增量已出一路四角色无P0/P1；P2a补ConfigStore真实解绑、TCP头有界完整读取、disabled resume顺序、复用===与精确oracle排除名，模型proxy缺测试由既有真实r130全链证据承接。下一步r132对应回归及AO独立终审。仅本机提交、Rust只mbp2。
+
+
+### 2026-11-09 08:58 · 全审批回归通过，清理错误统一收口
+
+r132 全目标check、SOP18、approvals131/1忽略、skills CONNECT1、default-mode1通过，完整CLI回归在跑；native556过1仅capability解释缺源码指针，已补真实assembly.rs；AO122过1旧snapshot拒绝后close仍期待成功，现精确断dispose/close同cleanup错误，原外物与ref保全不变。AO双家增量定位其余Git/IO失败也会被close漏记，统一在owned dispose边界保message/missing改cleanup域，补两代CAS失败被close保留、第三代成功与第四代幂等不触CAS。两家P2残余按安全保全处置：准备失败无法证实完整移除时保ref+显式错误，外部Git登记到CAS窗口不宣称原子；使用说明明确。知识consumer固定TS五格与最终可复采脚本逐字一致，credential/非credential原策略不变，测试待r133。后续只做必要定向复验、独立增量确认与源码证据绑定，不增加功能范围。仍仅本机提交、Rust仅mbp2。

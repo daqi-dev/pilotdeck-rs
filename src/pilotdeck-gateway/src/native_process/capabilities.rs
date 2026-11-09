@@ -177,7 +177,7 @@ pub(super) const NOT_ADVERTISED: &[(&str, &str)] = &[
     ),
     (
         "sdk_session_config",
-        "no `set_sdk_session_config` request exists in the wire protocol; native SDK settings are consumed by turn submission, not a request with this capability name",
+        "no `set_sdk_session_config` request exists in the wire protocol; native SDK settings are consumed by turn submission in native_process/assembly.rs, not a request with this capability name",
     ),
 ];
 
