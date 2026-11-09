@@ -1119,15 +1119,25 @@ async fn production_listener_presents_the_api_web_ledger_surface() {
         }
     }
     // The ledger's route ids for the group, in `gateway.http:<METHOD> <path>`
-    // form; the probes below are built from these so the test cannot drift
-    // from the ledger it claims to hold up (`:projectKey` is the ledger's
-    // placeholder, `route_path` substitutes the encoded scratch root).
+    // form; the five in-group probes below are built from these so the test
+    // cannot drift from the ledger it claims to hold up (`:projectKey` is the
+    // ledger's placeholder, `route_path` substitutes the encoded scratch
+    // root). The 404/boundary probes — `/api/web/nope`, the unknown files
+    // sub-path, the no-slash `/api/web` edge, the static lane — deliberately
+    // bypass `route_path`: they assert the ledger-external behavior *around*
+    // the group, not any registered route, so they carry no drift promise.
     const LIST: &str = "GET /api/web/projects";
     const DESCRIBE: &str = "GET /api/web/projects/:projectKey";
     const TREE: &str = "GET /api/web/projects/:projectKey/files/tree";
     const READ: &str = "GET /api/web/projects/:projectKey/files/read";
     const WRITE: &str = "POST /api/web/projects/:projectKey/files/write";
     const ROUTES: [&str; 5] = [LIST, DESCRIBE, TREE, READ, WRITE];
+    // The ledger's `gateway.http:` ids that name fallback lanes, not routes:
+    // they describe exactly the behavior the boundary probes assert (the
+    // plain 404 lane and the static fallback), so they carry no
+    // `<METHOD> <path>` shape on purpose — `enumerate.mjs` registers the
+    // same two.
+    const NON_ROUTE_LANES: [&str; 2] = ["<unmatched-404>", "static-fallback"];
     fn route_path(route: &str, encoded_root: &str) -> String {
         let (_, path) = route.split_once(' ').expect("#2395 route id shape");
         path.replace(":projectKey", encoded_root)
@@ -1157,8 +1167,13 @@ async fn production_listener_presents_the_api_web_ledger_surface() {
             None => continue,
         };
         let path = match route.split_once(' ') {
-            Some((_, path)) => path,
-            None => continue,
+            Some((method, path)) if !method.is_empty() && !path.starts_with(' ') => path,
+            _ if NON_ROUTE_LANES.contains(&route) => continue,
+            // Any other shape (a tab separator, a double space, a missing
+            // path) must die here: `continue` would let the id vanish from
+            // `held_up` silently — the opposite of the "dies here" this
+            // cross-check promises.
+            _ => panic!("#2395 malformed ledger route id: {id}"),
         };
         if path.starts_with("/api/web/") {
             held_up.push((id, group, status));

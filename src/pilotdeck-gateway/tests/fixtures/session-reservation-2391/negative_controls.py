@@ -35,10 +35,13 @@ SOURCE_TEXTS = (REPLACEMENT, CONFIG)
 CFG = 'native_process::methods::config::tests::'
 mutations = [
     # The guard's Drop stops releasing: the pre-#2391 leak restored — a
-    # request dropped at an await point strands the reservation.
+    # request dropped at an await point strands the reservation. The tuple
+    # keeps `key` referenced: a bare `let _ = self.coordinator;` leaves the
+    # `if let Some(key)` binding unused, which a `-D warnings` host turns
+    # into a compile failure (INVALID, not KILLED).
     ('guard-drop-leak', REPLACEMENT,
      'self.coordinator.release_transcript_write(&key);',
-     'let _ = self.coordinator;',
+     'let _ = (self.coordinator, &key);',
      CFG + 'session_model_set_dropped_mid_write_releases_the_reservation',
      '#2391 a dropped request releases its transcript-write reservation'),
     # The set call site releases before the reserved body runs: the parked
@@ -144,10 +147,15 @@ def main():
     if args == ['--check']:
         # Guard first (native-config shape): it reports an unreadable scanned
         # source as a clean refusal, while the anchor count probe below would
-        # raise a bare OSError on the same tree.
-        check_literal_anchors(selected_rows, bound_rows=every_row)
-        for case in selected_rows:
-            mutate(case, case.path.read_text())
+        # raise a bare OSError on the same tree. A stale anchor reaches this
+        # branch as a ValueError, refused the same #1433 way so --check never
+        # reports "ran, not green" (rc 1) for a run that never started.
+        try:
+            check_literal_anchors(selected_rows, bound_rows=every_row)
+            for case in selected_rows:
+                mutate(case, case.path.read_text())
+        except ValueError as error:
+            refuse(str(error))
         print(f'#2391 {len(selected_rows)} mutation anchors OK; '
               f'{len(LITERAL_ANCHORS)} literal anchors OK')
         return 0
