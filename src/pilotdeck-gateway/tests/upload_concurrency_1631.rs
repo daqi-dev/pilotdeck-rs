@@ -379,20 +379,48 @@ fn interleaved_cancel_and_cancel_wins_exactly_once() {
 /// timeout. The three interleaved tests above always deliver both callers,
 /// so without this case the panic branch the fix-r1 guard added would be
 /// dead code in every suite.
+///
+/// fix-r3 (DS r3 boundary#1/sibling#1, after the `upload/tests.rs` #1889
+/// precedent): the test itself must not hang when that arm regresses — a
+/// bare `join()` would wait forever on an unbounded `meet()`, and neither
+/// nextest's `slow-timeout` (report-only) nor the `rust` job kills it, so
+/// the regression would surface as a whole-job timeout, not a named red.
+/// The caller runs under `catch_unwind` and reports through an mpsc whose
+/// `recv_timeout` is the watchdog; the elapsed bound also pins the
+/// injected 50ms cap as the one that reached the deadline (a regression to
+/// the 60s default fails the same watchdog first).
 #[test]
 fn rendezvous_deadline_panics_when_the_pair_never_meets() {
     let rendezvous = Rendezvous::with_cap(Duration::from_millis(50));
     let lone = rendezvous.clone();
-    let handle = thread::spawn(move || lone.meet());
-    let err = handle
-        .join()
-        .expect_err("a lone caller must hit the rendezvous deadline");
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let verdict = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || lone.meet()));
+        let _ = tx.send(verdict);
+    });
+    let start = Instant::now();
+    let verdict = match rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(verdict) => verdict,
+        Err(_) => panic!(
+            "the rendezvous deadline must bound a lone caller — \
+             an unbounded wait hangs here instead of going red"
+        ),
+    };
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "the injected 50ms cap must be the one that reached the deadline"
+    );
+    let err = verdict.expect_err("a lone caller must hit the rendezvous deadline");
     let msg = err
         .downcast_ref::<String>()
         .expect("panic payload is a formatted String");
     assert!(
         msg.contains("only 1 of 2 callers"),
         "the diagnostic must report the arrival count, got: {msg}"
+    );
+    assert!(
+        msg.contains("50ms"),
+        "the diagnostic must name the injected cap, got: {msg}"
     );
     // The panicking caller drops its guard before panicking, so the mutex
     // is not poisoned: a second `meet()` on the SAME rendezvous locks
