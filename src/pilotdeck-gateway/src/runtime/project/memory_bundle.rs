@@ -28,7 +28,8 @@ use crate::runtime::context::memory::MemoryResolver;
 use crate::runtime::memory::{
     MemoryCaptureStrategy, MemoryConfig, MemoryMaintenanceService, MemoryManagementService,
     MemoryModelConfig, MemoryModelProvider, MemoryProviderFactoryFn, MemoryScheduleConfig,
-    NativeProviderFactoryFn, ProjectMemoryBundle, ProjectMemoryBundleOptions,
+    NativeMemoryProviderOptions, NativeProviderFactoryFn, ProjectMemoryBundle,
+    ProjectMemoryBundleOptions,
 };
 use pilotdeck_protocol::{JsString, JsValue};
 use std::{any::Any, sync::Arc};
@@ -237,6 +238,25 @@ fn agent_model(snapshot: &JsValue) -> Option<String> {
         .as_string()?
         .to_utf8()
         .ok()
+}
+
+/// Snapshot-to-options bridge for the B `stage_native_from_snapshot` entry.
+/// daqi already normalizes `snapshot.config.memory` / `.model` / `.agent.model`
+/// for the bundle; this reuses the same readers instead of parsing the
+/// snapshot twice.
+pub fn native_options_from_snapshot(
+    project_root: &std::path::Path,
+    snapshot: &JsValue,
+    _pilot_home: Option<std::path::PathBuf>,
+) -> Result<NativeMemoryProviderOptions, crate::runtime::memory::MemoryBundleError> {
+    Ok(NativeMemoryProviderOptions {
+        project_root: project_root.to_path_buf(),
+        config: memory_config(snapshot),
+        model_config: model_config(snapshot),
+        agent_model: agent_model(snapshot),
+        now: None,
+        telemetry: None,
+    })
 }
 
 /// FamilyResource wrapper for the ProjectMemoryBundle (dispose owner).

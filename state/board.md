@@ -3219,3 +3219,15 @@ updated: 2026-11-05 13:4x · by Claude Code 协调者（13:4x 交接：#1419 合
 - Codex `pdrs-daqi-b-runtime` 远端未到；upstream 仓或有本地分支待核。
 - 渠道自给：`has_execution_config`、B 版 `channel_runtime`、`jsonschema`/user_dialog/hooks；**未改 runtime/**。
 - 构建 **166 err**；交接 `pdrs-ext/…/r4-需要的runtime接口.md`；提交 `dc6eb64`（未 push）。
+
+### 2026-11-09 pdrs-daqi-b-channels r5（merge c412551）
+
+- 已 merge Codex `c412551`（`ad0cb5f` + WIP `f8ac370`）；runtime 冲突采 Codex、渠道层保留 routes/LocalServer。
+- **未绿**：gateway ~125 err（B wiring 与 GatewaySubmitHost、edgeclaw scheduler 类型缝）。
+- 证据 `pdrs-ext/…/channels-cursor-20261109/r5/最终报告.md`；测未跑。
+
+### 2026-11-09 pdrs-daqi-b-channels r6（wiring 收敛 + workspace 绿）
+
+- `wiring_submit.rs`：`GatewaySubmitHost` + `GatewayCompositionBundle` 真接线；edgeclaw/rewind/http `connect_tcp` 等渠道补丁。
+- **`cargo build --workspace` debug 0 err**；`cargo test --lib` / `web_cli` **未交付**（test 编 29 err、缺 bin）。
+- 证据 `pdrs-ext/…/channels-cursor-20261109/r6/最终报告.md`，`logs/build-workspace-ok.log`；upstream runtime 仍 `c412551` 无新 merge。

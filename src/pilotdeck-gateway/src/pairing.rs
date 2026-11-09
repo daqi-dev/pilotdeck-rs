@@ -600,7 +600,7 @@ pub(crate) struct LocalState {
 impl Default for LocalState {
     fn default() -> Self {
         Self {
-            metadata: crate::metadata::Metadata::from_env(),
+            metadata: crate::metadata::Metadata::from_env().ok().flatten(),
             interactions: Arc::default(),
             dialogs: Arc::default(),
             mcp: None,

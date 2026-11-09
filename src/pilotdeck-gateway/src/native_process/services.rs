@@ -152,11 +152,14 @@ impl SubmitHostServices for Services {
     }
     fn prepare_attachment_turn<'a>(
         &'a self,
-        message: &'a JsValue,
-        attachments: Vec<JsValue>,
-        _: Option<&JsString>,
-        _: Option<&JsString>,
+        input: &'a JsValue,
+        _: &'a RunRef,
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
+        let message = input.get("message").cloned().unwrap_or(JsValue::Undefined);
+        let attachments = match input.get("attachments") {
+            Some(JsValue::Array(values)) => values.clone(),
+            _ => Vec::new(),
+        };
         Box::pin(async move {
             super::assembly::validate_profile(&self.options, &self.env)
                 .await
@@ -169,7 +172,7 @@ impl SubmitHostServices for Services {
             if !matches!(message, JsValue::String(_)) {
                 return Err(failure("message must be a string."));
             }
-            Ok(object([("type", "text".into()), ("text", message.clone())]))
+            Ok(object([("type", "text".into()), ("text", message)]))
         })
     }
     fn resolve_model_selection<'a>(

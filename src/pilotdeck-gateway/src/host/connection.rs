@@ -13,7 +13,8 @@ use std::{
     },
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
+    net::TcpStream,
     process::{Child, Command},
     sync::{mpsc, oneshot, watch},
     task::JoinHandle,
@@ -25,8 +26,17 @@ enum WriteCommand {
     Flush(oneshot::Sender<()>),
 }
 
+type Pumps = (
+    mpsc::Sender<WriteCommand>,
+    watch::Sender<Option<Arc<String>>>,
+    watch::Sender<Option<Arc<String>>>,
+    mpsc::Receiver<Result<Frame, HostError>>,
+    Arc<AtomicUsize>,
+    Vec<JoinHandle<()>>,
+);
+
 pub(super) struct Connection {
-    child: Child,
+    child: Option<Child>,
     #[cfg(unix)]
     group: Option<rustix::process::Pid>,
     outgoing: Option<mpsc::Sender<WriteCommand>>,
@@ -36,7 +46,7 @@ pub(super) struct Connection {
     cancel: watch::Sender<Option<Arc<String>>>,
     incoming: mpsc::Receiver<Result<Frame, HostError>>,
     pumps: Vec<JoinHandle<()>>,
-    stderr_task: JoinHandle<()>,
+    stderr_task: Option<JoinHandle<()>>,
     stderr: Arc<Mutex<VecDeque<u8>>>,
     pending_required: Arc<AtomicUsize>,
     pub(super) budget: Arc<Budget>,
@@ -76,9 +86,107 @@ impl Connection {
         let group = child
             .id()
             .and_then(|pid| rustix::process::Pid::from_raw(pid as i32));
-        let mut stdin = child.stdin.take().expect("piped stdin");
+        let stdin = child.stdin.take().expect("piped stdin");
         let stdout = child.stdout.take().expect("piped stdout");
         let mut stderr_pipe = child.stderr.take().expect("piped stderr");
+        let (outgoing, ack, cancel, incoming, pending_required, pumps) =
+            Self::pumps(stdin, stdout, limits, budget.clone(), "stdout");
+        // TS stdio:81-84,158-169: drain continuously, retain only the tail.
+        let stderr = Arc::new(Mutex::new(VecDeque::new()));
+        let retained = stderr.clone();
+        let stderr_task = tokio::spawn(async move {
+            let mut bytes = [0; 4096];
+            while let Ok(size) = stderr_pipe.read(&mut bytes).await {
+                if size == 0 {
+                    break;
+                }
+                let mut tail = retained.lock().unwrap_or_else(|e| e.into_inner());
+                tail.extend(&bytes[..size]);
+                let excess = tail.len().saturating_sub(limits.max_stderr_bytes);
+                tail.drain(..excess);
+            }
+        });
+        Ok(Self {
+            child: Some(child),
+            #[cfg(unix)]
+            group,
+            outgoing: Some(outgoing),
+            ack,
+            cancel,
+            incoming,
+            pumps,
+            stderr_task: Some(stderr_task),
+            stderr,
+            pending_required,
+            budget,
+            limits,
+            closed: false,
+            #[cfg(test)]
+            term_sent: Arc::new(AtomicUsize::new(0)),
+            #[cfg(test)]
+            reap_deadline: None,
+        })
+    }
+
+    pub(super) async fn connect_tcp(
+        host: &str,
+        port: u16,
+        connect_timeout: Option<std::time::Duration>,
+        limits: Limits,
+    ) -> Result<Self, HostError> {
+        let connect = TcpStream::connect((host, port));
+        // tcpAgentLoopSidecarConnection.ts:10,32-35 uses 5 seconds by default.
+        let duration = connect_timeout.unwrap_or(std::time::Duration::from_secs(5));
+        let stream = timeout(duration, connect)
+            .await
+            .map_err(|_| {
+                HostError::new(
+                    HostErrorKind::Timeout,
+                    format!(
+                        "Timed out connecting to sidecar TCP server after {}ms.",
+                        duration.as_millis()
+                    ),
+                )
+            })?
+            .map_err(HostError::io)?;
+        stream.set_nodelay(true).map_err(HostError::io)?;
+        let (read, write) = stream.into_split();
+        let budget = Budget::new(limits.max_buffered_bytes);
+        let (outgoing, ack, cancel, incoming, pending_required, pumps) =
+            Self::pumps(write, read, limits, budget.clone(), "socket");
+        Ok(Self {
+            child: None,
+            #[cfg(unix)]
+            group: None,
+            outgoing: Some(outgoing),
+            ack,
+            cancel,
+            incoming,
+            pumps,
+            stderr_task: None,
+            stderr: Arc::new(Mutex::new(VecDeque::new())),
+            pending_required,
+            budget,
+            limits,
+            closed: false,
+            #[cfg(test)]
+            term_sent: Arc::new(AtomicUsize::new(0)),
+            #[cfg(test)]
+            reap_deadline: None,
+        })
+    }
+
+    fn pumps<W, R>(
+        mut writer_half: W,
+        reader_half: R,
+        limits: Limits,
+        budget: Arc<Budget>,
+        source: &'static str,
+    ) -> Pumps
+    where
+        W: AsyncWrite + Unpin + Send + 'static,
+        R: AsyncRead + Unpin + Send + 'static,
+    {
         let (outgoing, mut writes) = mpsc::channel(limits.queue_capacity);
         let (reads, incoming) = mpsc::channel(limits.queue_capacity);
         let (ack, mut acks) = watch::channel(None::<Arc<String>>);
@@ -94,7 +202,7 @@ impl Connection {
                         let Some(command) = command else { break; };
                         let result = match command {
                             WriteCommand::Frame(line, _lease) => {
-                                let result = stdin.write_all(line.as_bytes()).await;
+                                let result = writer_half.write_all(line.as_bytes()).await;
                                 if result.is_ok() { pending.fetch_sub(1, Ordering::SeqCst); }
                                 result
                             }
@@ -103,9 +211,9 @@ impl Connection {
                                 // failures must not invalidate an authoritative final.
                                 let cancel = cancels.has_changed().unwrap_or(false).then(|| cancels.borrow_and_update().clone()).flatten();
                                 let ack = acks.has_changed().unwrap_or(false).then(|| acks.borrow_and_update().clone()).flatten();
-                                if let Some(line) = cancel { optional_write(&mut stdin, &line).await; }
-                                if let Some(line) = ack { optional_write(&mut stdin, &line).await; }
-                                match stdin.flush().await {
+                                if let Some(line) = cancel { optional_write(&mut writer_half, &line).await; }
+                                if let Some(line) = ack { optional_write(&mut writer_half, &line).await; }
+                                match writer_half.flush().await {
                                     Ok(()) => { let _ = done.send(()); Ok(()) }
                                     Err(e) => Err(e),
                                 }
@@ -119,19 +227,19 @@ impl Connection {
                     changed = cancels.changed() => {
                         if changed.is_err() { break; }
                         let line = cancels.borrow_and_update().clone();
-                        if let Some(line) = line { optional_write(&mut stdin, &line).await; }
+                        if let Some(line) = line { optional_write(&mut writer_half, &line).await; }
                     }
                     changed = acks.changed() => {
                         if changed.is_err() { break; }
                         let line = acks.borrow_and_update().clone();
-                        if let Some(line) = line { optional_write(&mut stdin, &line).await; }
+                        if let Some(line) = line { optional_write(&mut writer_half, &line).await; }
                     }
                 }
             }
         });
         let input_budget = budget.clone();
         let reader = tokio::spawn(async move {
-            let mut reader = BufReader::new(stdout);
+            let mut reader = BufReader::new(reader_half);
             let mut line = Vec::new();
             let mut line_lease = input_budget.reserve(0).expect("empty reservation");
             loop {
@@ -145,7 +253,7 @@ impl Connection {
                         let _ = reads
                             .send(Err(HostError::new(
                                 HostErrorKind::Disconnected,
-                                "Sidecar stdout closed before execute reached a terminal event.",
+                                format!("Sidecar {source} closed before execute reached a terminal event."),
                             )))
                             .await;
                         return;
@@ -164,7 +272,7 @@ impl Connection {
                     let _ = reads
                         .send(Err(HostError::new(
                             HostErrorKind::Limit,
-                            "Sidecar stdout frame exceeds configured byte limit.",
+                            format!("Sidecar {source} frame exceeds configured byte limit."),
                         )))
                         .await;
                     return;
@@ -183,41 +291,14 @@ impl Connection {
                 }
             }
         });
-        // TS stdio:81-84,158-169: drain continuously, retain only the tail.
-        let stderr = Arc::new(Mutex::new(VecDeque::new()));
-        let retained = stderr.clone();
-        let stderr_task = tokio::spawn(async move {
-            let mut bytes = [0; 4096];
-            while let Ok(size) = stderr_pipe.read(&mut bytes).await {
-                if size == 0 {
-                    break;
-                }
-                let mut tail = retained.lock().unwrap_or_else(|e| e.into_inner());
-                tail.extend(&bytes[..size]);
-                let excess = tail.len().saturating_sub(limits.max_stderr_bytes);
-                tail.drain(..excess);
-            }
-        });
-        Ok(Self {
-            child,
-            #[cfg(unix)]
-            group,
-            outgoing: Some(outgoing),
+        (
+            outgoing,
             ack,
             cancel,
             incoming,
-            pumps: vec![reader, writer],
-            stderr_task,
-            stderr,
             pending_required,
-            budget,
-            limits,
-            closed: false,
-            #[cfg(test)]
-            term_sent: Arc::new(AtomicUsize::new(0)),
-            #[cfg(test)]
-            reap_deadline: None,
-        })
+            vec![reader, writer],
+        )
     }
 
     pub(super) fn send(&self, value: &JsValue) -> Result<(), HostError> {
@@ -318,7 +399,7 @@ impl Connection {
             .into()
     }
     pub(super) fn pid(&self) -> Option<u32> {
-        self.child.id()
+        self.child.as_ref().and_then(Child::id)
     }
 
     #[cfg(test)]
@@ -332,14 +413,6 @@ impl Connection {
     #[cfg(test)]
     pub(super) fn term_sent(&self) -> Arc<AtomicUsize> {
         self.term_sent.clone()
-    }
-
-    // #308/#542: the same widening for the integration-style host tests. Only
-    // the post-SIGKILL reap (pure OS scheduling) is widened; EOF/TERM grace
-    // stays at limits.close_timeout. The product default is unchanged.
-    #[cfg(test)]
-    pub(super) fn widen_reap_for_test(&mut self) {
-        self.reap_deadline = Some(std::time::Duration::from_secs(10));
     }
 
     // #542: the deadline for the only wait that depends on real OS scheduling
@@ -364,6 +437,9 @@ impl Connection {
             .map_err(|error| HostError::io(error.into()))
     }
     async fn stop_child(&mut self) -> Result<(), HostError> {
+        if self.child.is_none() {
+            return Ok(());
+        }
         #[cfg(unix)]
         {
             if !self.wait_for_exit_unreaped().await? {
@@ -378,12 +454,14 @@ impl Connection {
         }
         #[cfg(not(unix))]
         {
-            if let Ok(result) = timeout(self.limits.close_timeout, self.child.wait()).await {
+            let child = self.child.as_mut().expect("checked child");
+            if let Ok(result) = timeout(self.limits.close_timeout, child.wait()).await {
                 return result.map(|_| ()).map_err(HostError::io);
             }
-            let _ = self.child.start_kill();
+            let _ = child.start_kill();
         }
-        timeout(self.reap_deadline(), self.child.wait())
+        let deadline = self.reap_deadline();
+        timeout(deadline, self.child.as_mut().expect("checked child").wait())
             .await
             .map_err(|_| {
                 HostError::new(HostErrorKind::Timeout, "Sidecar did not exit after kill.")
@@ -409,12 +487,13 @@ impl Connection {
         let result = self.stop_child().await;
         // TS stdio:123-154 keeps collecting exit diagnostics. EOF normally wins;
         // a descendant that escaped the owned process group cannot hang close.
-        if timeout(self.limits.close_timeout, &mut self.stderr_task)
-            .await
-            .is_err()
+        if let Some(mut stderr_task) = self.stderr_task.take()
+            && timeout(self.limits.close_timeout, &mut stderr_task)
+                .await
+                .is_err()
         {
-            self.stderr_task.abort();
-            let _ = timeout(self.limits.close_timeout, &mut self.stderr_task).await;
+            stderr_task.abort();
+            let _ = timeout(self.limits.close_timeout, &mut stderr_task).await;
         }
         let _ = timeout(self.limits.close_timeout, async {
             for task in self.pumps.drain(..) {
@@ -435,7 +514,9 @@ impl Drop for Connection {
         for pump in &self.pumps {
             pump.abort();
         }
-        self.stderr_task.abort();
+        if let Some(stderr_task) = &self.stderr_task {
+            stderr_task.abort();
+        }
         // Child::kill_on_drop also reaps dropped spawn/execute futures.
     }
 }
@@ -455,9 +536,9 @@ async fn deliver(
     let valid = value.is_ok();
     sender.send(value).await.is_ok() && valid
 }
-async fn optional_write(stdin: &mut tokio::process::ChildStdin, line: &str) {
+async fn optional_write<W: AsyncWrite + Unpin>(writer: &mut W, line: &str) {
     // TS client:943-970: cancel and ACK failures never enter the input stream.
-    if let Err(error) = stdin.write_all(line.as_bytes()).await {
+    if let Err(error) = writer.write_all(line.as_bytes()).await {
         best_effort_log(format_args!(
             "Sidecar optional write failed (best-effort): {error}"
         ));
@@ -519,7 +600,7 @@ mod tests {
     // wait after SIGKILL is real OS scheduling (Tokio's SIGCHLD reaping), so
     // widen that single stage; the protocol deadlines stay short on purpose.
     fn widen_reap(connection: &mut Connection) {
-        connection.widen_reap_for_test();
+        connection.reap_deadline = Some(Duration::from_secs(10));
     }
     fn controlled_queue(capacity: usize) -> (Connection, mpsc::Receiver<WriteCommand>) {
         let mut connection = Connection::spawn(&mut peer("handshake-hang"), limits()).unwrap();
@@ -563,6 +644,58 @@ mod tests {
         connection.close().await.unwrap();
         println!("NDJSON_PASS one write: frames 1,2 + partial 3; second write: completed 3");
     }
+
+    #[tokio::test]
+    async fn tcp_connection_completes_the_real_handshake_and_closes_without_a_child() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (read, mut write) = stream.into_split();
+            let mut lines = BufReader::new(read).lines();
+            for method in ["hello", "capabilities"] {
+                let line = lines.next_line().await.unwrap().unwrap();
+                let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["method"], method);
+                let mut response = serde_json::json!({
+                    "kind":"response",
+                    "messageId":format!("response-{method}"),
+                    "inReplyTo":method,
+                    "ok":true,
+                    "protocolVersion":"2.0",
+                    "moduleId":"pilotdeck-agent-loop",
+                    "moduleInstanceId":"tcp-instance",
+                    "connectionGeneration":"tcp-generation",
+                    "capabilitiesVersion":"v1"
+                });
+                if method == "capabilities" {
+                    response["payload"] = serde_json::json!({
+                        "capabilitiesVersion":"v1",
+                        "methods":[{"name":"execute","profiles":["streaming"]}]
+                    });
+                }
+                write
+                    .write_all(format!("{response}\n").as_bytes())
+                    .await
+                    .unwrap();
+            }
+            assert!(lines.next_line().await.unwrap().is_none());
+        });
+        let client = HostClient::connect_tcp(
+            "127.0.0.1",
+            port,
+            Some(Duration::from_secs(1)),
+            Some(&"pilotdeck-agent-loop".into()),
+            Limits::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(client.child_id(), None);
+        client.close().await.unwrap();
+        server.await.unwrap();
+    }
     #[tokio::test]
     #[cfg(all(
         unix,
@@ -593,7 +726,7 @@ mod tests {
         assert!(connection.wait_for_exit_unreaped().await.unwrap());
         connection.kill_group();
         assert!(connection.group.is_none());
-        connection.child.wait().await.unwrap();
+        connection.child.as_mut().unwrap().wait().await.unwrap();
         assert_eq!(connection.pid(), None);
         connection.close().await.unwrap();
         assert!(connection.group.is_none());

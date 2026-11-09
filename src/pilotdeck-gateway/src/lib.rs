@@ -194,12 +194,15 @@ impl Drop for LocalServer {
 impl LocalServer {
     pub fn new(proxy: std::sync::Arc<http_proxy::Proxy>) -> Result<Self, ProxyError> {
         let token = Self::token_from_env()?;
-        let mcp = metadata::Metadata::from_env().map(|metadata| {
-            std::sync::Arc::new(runtime::mcp::routes::McpRoutes::native(
-                metadata.home,
-                metadata.cwd,
-            ))
-        });
+        let mcp = metadata::Metadata::from_env()
+            .ok()
+            .flatten()
+            .map(|metadata| {
+                std::sync::Arc::new(runtime::mcp::routes::McpRoutes::native(
+                    metadata.home,
+                    metadata.cwd,
+                ))
+            });
         let mut server = Self::with_token(proxy, token)?;
         server.mcp = mcp;
         Ok(server)
@@ -239,7 +242,7 @@ impl LocalServer {
                     files: metadata::NativeFiles,
                 })
             })
-            .or_else(metadata::Metadata::from_env);
+            .or_else(|| metadata::Metadata::from_env().ok().flatten());
         if let Some(gateway) = self.http.ws_gateway.clone() {
             pairing::run_local_with_gateway(stream, self.http.token.clone(), gateway).await
         } else {

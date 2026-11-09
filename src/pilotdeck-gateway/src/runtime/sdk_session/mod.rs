@@ -158,7 +158,7 @@ fn number(value: &JsValue) -> f64 {
     js_value::to_number(value).unwrap_or(f64::NAN)
 }
 
-fn path_js(path: &Path) -> JsString {
+pub(crate) fn path_js(path: &Path) -> JsString {
     JsString::from(path.to_string_lossy().into_owned())
 }
 

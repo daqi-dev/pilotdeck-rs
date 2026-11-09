@@ -295,7 +295,8 @@ impl NativeSessionServices {
             project_root: project.into(),
             session_id: session.clone(),
             now: None,
-        });
+        })
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
         storage
             .restore()
             .map_err(|e| std::io::Error::other(e.to_string()))?;

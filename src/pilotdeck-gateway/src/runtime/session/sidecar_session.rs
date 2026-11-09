@@ -59,7 +59,7 @@ pub struct SidecarSessionConfig {
     pub cwd: JsString,
     /// Already-loaded configuration snapshot shared by every turn.
     pub snapshot: JsValue,
-    pub services: Option<Arc<crate::runtime::turn::services::NativeSessionServices>>,
+    pub services: Option<Arc<crate::cron::native::NativeSessionServices>>,
 }
 
 /// One gateway session backed by a fresh sidecar process per turn. TS also

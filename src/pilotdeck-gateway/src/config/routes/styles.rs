@@ -5,6 +5,7 @@ use crate::{
     runtime::{plugins::PluginOutputStyleContribution, sdk_session::SdkRuntimeResolver},
 };
 use pilotdeck_protocol::{JsString, JsValue};
+use crate::runtime::sdk_session::path_js;
 
 pub(super) fn project_key(params: &JsValue) -> Result<Option<JsString>> {
     match field(params, "projectKey") {
@@ -211,18 +212,24 @@ impl ConfigRoutes {
             .collect();
         self.output_styles
             .insert(runtime.project_root.clone(), next);
+        let project_root = path_js(&runtime.project_root);
         let sessions: Vec<_> = self
             .sdk
             .project_entries()
             .iter()
             .filter(|(session, project)| {
-                (key.as_ref().is_none_or(|k| k.is_empty()) || project == &runtime.project_root)
-                    && self.sdk.session_config(session).is_some()
+                (key.as_ref().is_none_or(|k| k.is_empty()) || project == &project_root)
+                    && session
+                        .as_string()
+                        .is_some_and(|s| self.sdk.session_config(s).is_some())
             })
             .map(|(session, _)| session.clone())
             .collect();
         for session in sessions {
-            self.gateway_close_session(&session, "sdk_output_styles_reloaded")
+            let Some(session_key) = session.as_string() else {
+                continue;
+            };
+            self.gateway_close_session(session_key, "sdk_output_styles_reloaded")
                 .await?;
         }
         Ok(object([

@@ -89,14 +89,18 @@ pub trait SdkTaskBudget: Send + Sync {
 
 /// Adapter over the merged [`TaskBudgetStore`].
 pub struct TaskBudgetStorePort {
-    store: Mutex<TaskBudgetStore>,
+    store: Arc<Mutex<TaskBudgetStore>>,
 }
 
 impl TaskBudgetStorePort {
     pub fn new(store: TaskBudgetStore) -> Self {
         Self {
-            store: Mutex::new(store),
+            store: Arc::new(Mutex::new(store)),
         }
+    }
+
+    pub fn with_shared(store: Arc<Mutex<TaskBudgetStore>>) -> Self {
+        Self { store }
     }
 }
 
@@ -267,6 +271,10 @@ impl SdkSessionRegistry {
         &self.options
     }
 
+    pub fn set_organization_policy(&mut self, policy: Option<OrganizationPolicy>) {
+        self.options.organization_policy = policy;
+    }
+
     pub fn set_agent_mcp_resolver(&mut self, resolver: Weak<dyn SdkAgentMcpResolver>) {
         self.agent_mcp_resolver = Some(resolver);
     }
@@ -313,6 +321,56 @@ impl SdkSessionRegistry {
 
     pub fn session_project(&self, session_key: &JsString) -> Option<JsString> {
         self.projects.project(&JsValue::String(session_key.clone()))
+    }
+
+    /// Acquire one project/plugin generation for the lifetime of the live
+    /// session. SDK overlays are resolved from the same project as model and
+    /// permission settings, so callbacks cannot leak across projects.
+    pub async fn acquire_hook_settings(
+        &self,
+        session_key: &JsString,
+        project_key: Option<&JsString>,
+    ) -> Result<
+        (
+            crate::hooks::protocol::HooksSettings,
+            Option<JsValue>,
+            crate::runtime::plugins::PluginSessionContributionLease,
+        ),
+        SdkSessionError,
+    > {
+        let runtime = self.options.resolver.resolve(project_key)?;
+        runtime
+            .plugin_runtime
+            .refresh_with_report()
+            .await
+            .map_err(plugin_error)?;
+        let lease = runtime
+            .plugin_runtime
+            .acquire_session_contributions(self.session_plugins(session_key).to_vec())
+            .await
+            .map_err(plugin_error)?;
+        let mut settings = crate::hooks::config::parse_hooks_config(field(
+            field(&runtime.snapshot, "config"),
+            "hooks",
+        ))
+        .settings;
+        crate::runtime::hooks::session::merge_settings(
+            &mut settings,
+            lease.contributions.hooks.clone(),
+        );
+        let config = self.resolve_session_config(session_key, &runtime)?;
+        crate::runtime::hooks::session::merge_settings(
+            &mut settings,
+            crate::runtime::hooks::session::sdk_hook_settings(
+                config.as_ref().and_then(|config| config.get("hooks")),
+            )
+            .into_iter()
+            .filter(|(event, _)| {
+                !event.equals_str("ConfigChange") && !event.equals_str("FileChanged")
+            })
+            .collect(),
+        );
+        Ok((settings, config, lease))
     }
 
     /// `None` means no override entry; `Some(Null)` is an explicit `null`.
@@ -518,6 +576,28 @@ impl SdkSessionRegistry {
                 .and_then(|config| own(config, "managedModels")),
             &resolved,
         )
+    }
+
+    /// CONFIG has already checked the name against the current plugin view.
+    pub(crate) fn store_output_style(
+        &mut self,
+        key: &JsString,
+        name: Option<&JsString>,
+        project: PathBuf,
+    ) {
+        let mut next = pilotdeck_protocol::JsObject::new();
+        if let Some(previous) = self.session_config(key).and_then(JsValue::as_object) {
+            for (k, v) in previous.entries() {
+                if !k.equals_str("outputStyle") {
+                    next.insert(k.clone(), v.clone());
+                }
+            }
+        }
+        if let Some(name) = name {
+            next.insert("outputStyle".into(), JsValue::String(name.clone()));
+        }
+        self.set_config(key, JsValue::Object(next));
+        self.set_project(key, project);
     }
 
     /// `setSessionThinkingForSdk`: `None` deletes the override, `Some(Null)`

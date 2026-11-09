@@ -2,7 +2,7 @@ use super::{
     SdkSessionError, array, field, math_min, number, number_text, own, set_property, slash,
     trim_units, truthy,
 };
-use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 use regex::Regex;
 use std::{collections::HashSet, sync::OnceLock};
 
@@ -478,4 +478,330 @@ impl OrganizationPolicy {
                 || settings.enforced_session_settings.is_some()
         }) || self.max_task_budget_usd.is_some()
     }
+
+    /// Parse `organizationPolicy` from gateway JSON (execution limits file).
+    pub fn apply_execution_limits_json(
+        &mut self,
+        value: &serde_json::Value,
+    ) -> Result<(), SdkSessionError> {
+        let policy = organization_json_object(value, "organizationPolicy must be an object.")?; // file body is the policy object
+        self.models = normalize_organization_selector_json(policy.get("models"), SelectorKind::Models)?;
+        self.providers = normalize_organization_providers_json(policy.get("providers"))?;
+        self.setting_sources =
+            normalize_organization_setting_sources_json(policy.get("settingSources"))?;
+        let limits = policy
+            .get("limits")
+            .map(|value| organization_json_object(value, "organizationPolicy.limits must be an object."))
+            .transpose()?;
+        let settings = policy
+            .get("settings")
+            .map(|value| {
+                organization_json_object(value, "organizationPolicy.settings must be an object.")
+            })
+            .transpose()?;
+        self.max_turns = optional_json_safe_integer(
+            limits.as_ref().and_then(|limits| limits.get("maxTurns")),
+            false,
+            "organizationPolicy.limits.maxTurns must be a positive safe integer.",
+        )?;
+        self.max_subagent_depth = optional_json_safe_integer(
+            limits.as_ref().and_then(|limits| limits.get("maxSubagentDepth")),
+            true,
+            "organizationPolicy.limits.maxSubagentDepth must be a non-negative safe integer.",
+        )?;
+        self.max_task_budget_usd = optional_json_positive_finite(
+            limits.as_ref().and_then(|limits| limits.get("maxTaskBudgetUsd")),
+            "organizationPolicy.limits.maxTaskBudgetUsd must be a positive finite number.",
+        )?;
+        self.max_subagent_timeout_ms = optional_json_safe_integer(
+            settings.as_ref().and_then(|settings| settings.get("maxSubagentTimeoutMs")),
+            false,
+            "organizationPolicy.settings.maxSubagentTimeoutMs must be a positive safe integer.",
+        )?;
+        if settings.as_ref().and_then(|s| s.get("canUpdateLocalSettings")).is_some_and(|value| {
+            value != &serde_json::Value::Bool(false)
+        }) {
+            return Err(SdkSessionError::new(
+                "UNSUPPORTED_GATEWAY_ORGANIZATION_POLICY",
+                "organizationPolicy.settings.canUpdateLocalSettings may only disable SDK settings updates.",
+            ));
+        }
+        let max_context_tokens = optional_json_safe_integer(
+            settings.as_ref().and_then(|settings| settings.get("maxContextTokens")),
+            false,
+            "organizationPolicy.settings.maxContextTokens must be a positive safe integer.",
+        )?;
+        let max_output_tokens = optional_json_safe_integer(
+            settings.as_ref().and_then(|settings| settings.get("maxOutputTokens")),
+            false,
+            "organizationPolicy.settings.maxOutputTokens must be a positive safe integer.",
+        )?;
+        let max_thinking_tokens = optional_json_safe_integer(
+            settings.as_ref().and_then(|settings| settings.get("maxThinkingTokens")),
+            true,
+            "organizationPolicy.settings.maxThinkingTokens must be a non-negative safe integer.",
+        )?;
+        let session_defaults = normalize_organization_session_settings_json(
+            settings.as_ref().and_then(|settings| settings.get("sessionDefaults")),
+        )?;
+        let managed_session_settings = normalize_organization_session_settings_json(
+            settings.as_ref().and_then(|settings| settings.get("managedSessionSettings")),
+        )?;
+        let enforced_session_settings = normalize_organization_session_settings_json(
+            settings.as_ref().and_then(|settings| settings.get("enforcedSessionSettings")),
+        )?;
+        let session_default_sources = normalize_organization_session_sources_json(
+            settings.as_ref().and_then(|settings| settings.get("sessionDefaultSources")),
+        )?;
+        let can_update_local_settings = settings
+            .as_ref()
+            .and_then(|settings| settings.get("canUpdateLocalSettings"))
+            .map(|_| false);
+        let organization_settings = OrganizationSettingsPolicy {
+            can_update_local_settings,
+            max_context_tokens,
+            max_output_tokens,
+            max_thinking_tokens,
+            max_subagent_timeout_ms: self.max_subagent_timeout_ms,
+            session_defaults,
+            managed_session_settings,
+            session_default_sources,
+            enforced_session_settings,
+        };
+        self.settings = organization_settings_has_json_values(&organization_settings)
+            .then_some(organization_settings);
+        Ok(())
+    }
+}
+
+fn invalid_organization_json(message: impl Into<String>) -> SdkSessionError {
+    SdkSessionError::new("INVALID_GATEWAY_ORGANIZATION_POLICY", message)
+}
+
+fn organization_json_object<'a>(
+    value: &'a serde_json::Value,
+    message: &str,
+) -> Result<&'a serde_json::Map<String, serde_json::Value>, SdkSessionError> {
+    value
+        .as_object()
+        .ok_or_else(|| invalid_organization_json(message))
+}
+
+fn organization_settings_has_json_values(settings: &OrganizationSettingsPolicy) -> bool {
+    settings.can_update_local_settings.is_some()
+        || settings.max_context_tokens.is_some()
+        || settings.max_output_tokens.is_some()
+        || settings.max_thinking_tokens.is_some()
+        || settings.max_subagent_timeout_ms.is_some()
+        || settings.session_defaults.is_some()
+        || settings.managed_session_settings.is_some()
+        || settings.session_default_sources.is_some()
+        || settings.enforced_session_settings.is_some()
+}
+
+fn organization_json_string_array(
+    value: Option<&serde_json::Value>,
+    label: &str,
+) -> Result<Vec<String>, SdkSessionError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let Some(items) = value.as_array() else {
+        return Err(invalid_organization_json(format!(
+            "{label} must be an array of non-empty strings."
+        )));
+    };
+    let mut result = Vec::with_capacity(items.len());
+    for item in items {
+        let Some(item) = item.as_str() else {
+            return Err(invalid_organization_json(format!(
+                "{label} must be an array of non-empty strings."
+            )));
+        };
+        let item = item.trim();
+        if item.is_empty() {
+            return Err(invalid_organization_json(format!(
+                "{label} must be an array of non-empty strings."
+            )));
+        }
+        if result.iter().any(|existing| existing == item) {
+            return Err(invalid_organization_json(format!(
+                "{label} cannot contain duplicate entries."
+            )));
+        }
+        result.push(item.to_owned());
+    }
+    Ok(result)
+}
+
+fn normalize_organization_selector_json(
+    value: Option<&serde_json::Value>,
+    kind: SelectorKind,
+) -> Result<Option<SelectorPolicy>, SdkSessionError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let name = match kind {
+        SelectorKind::Models => "models",
+        SelectorKind::Tools => "tools",
+    };
+    organization_json_object(value, &format!("organizationPolicy.{name} must be an object."))?;
+    let regex = match kind {
+        SelectorKind::Models => model_selector(),
+        SelectorKind::Tools => tool_selector(),
+    };
+    let normalize = |label: &str| -> Result<Vec<String>, SdkSessionError> {
+        let values = organization_json_string_array(
+            value.get(label),
+            &format!("organizationPolicy.{name}.{label}"),
+        )?;
+        if values
+            .iter()
+            .any(|value| value != "*" && !regex.is_match(value))
+        {
+            return Err(invalid_organization_json(format!(
+                "organizationPolicy.{name}.{label} contains an invalid selector."
+            )));
+        }
+        Ok(values)
+    };
+    let policy = SelectorPolicy {
+        allow: normalize("allow")?,
+        deny: normalize("deny")?,
+    };
+    Ok((!policy.allow.is_empty() || !policy.deny.is_empty()).then_some(policy))
+}
+
+fn normalize_organization_setting_sources_json(
+    value: Option<&serde_json::Value>,
+) -> Result<Option<SelectorPolicy>, SdkSessionError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    organization_json_object(
+        value,
+        "organizationPolicy.settingSources must be an object.",
+    )?;
+    let policy = SelectorPolicy {
+        allow: organization_json_string_array(
+            value.get("allow"),
+            "organizationPolicy.settingSources.allow",
+        )?,
+        deny: organization_json_string_array(
+            value.get("deny"),
+            "organizationPolicy.settingSources.deny",
+        )?,
+    };
+    Ok((!policy.allow.is_empty() || !policy.deny.is_empty()).then_some(policy))
+}
+
+fn normalize_organization_providers_json(
+    value: Option<&serde_json::Value>,
+) -> Result<Option<ProviderPolicy>, SdkSessionError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    organization_json_object(value, "organizationPolicy.providers must be an object.")?;
+    let policy = ProviderPolicy {
+        allow: organization_json_string_array(
+            value.get("allow"),
+            "organizationPolicy.providers.allow",
+        )?,
+        deny: organization_json_string_array(value.get("deny"), "organizationPolicy.providers.deny")?,
+        origins: SelectorPolicy {
+            allow: organization_json_string_array(
+                value.get("origins").and_then(|v| v.get("allow")),
+                "organizationPolicy.providers.origins.allow",
+            )?,
+            deny: organization_json_string_array(
+                value.get("origins").and_then(|v| v.get("deny")),
+                "organizationPolicy.providers.origins.deny",
+            )?,
+        },
+        credentials: SelectorPolicy {
+            allow: organization_json_string_array(
+                value.get("credentials").and_then(|v| v.get("allow")),
+                "organizationPolicy.providers.credentials.allow",
+            )?,
+            deny: organization_json_string_array(
+                value.get("credentials").and_then(|v| v.get("deny")),
+                "organizationPolicy.providers.credentials.deny",
+            )?,
+        },
+    };
+    let nonempty = !policy.allow.is_empty()
+        || !policy.deny.is_empty()
+        || !policy.origins.allow.is_empty()
+        || !policy.origins.deny.is_empty()
+        || !policy.credentials.allow.is_empty()
+        || !policy.credentials.deny.is_empty();
+    Ok(nonempty.then_some(policy))
+}
+
+fn optional_json_safe_integer(
+    value: Option<&serde_json::Value>,
+    allow_zero: bool,
+    message: &str,
+) -> Result<Option<f64>, SdkSessionError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let Some(number) = value.as_f64() else {
+        return Err(invalid_organization_json(message));
+    };
+    if !number.is_finite() || number.fract() != 0.0 {
+        return Err(invalid_organization_json(message));
+    }
+    if allow_zero {
+        if number < 0.0 {
+            return Err(invalid_organization_json(message));
+        }
+    } else if number <= 0.0 {
+        return Err(invalid_organization_json(message));
+    }
+    Ok(Some(number))
+}
+
+fn optional_json_positive_finite(
+    value: Option<&serde_json::Value>,
+    message: &str,
+) -> Result<Option<f64>, SdkSessionError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let Some(number) = value.as_f64() else {
+        return Err(invalid_organization_json(message));
+    };
+    if !number.is_finite() || number <= 0.0 {
+        return Err(invalid_organization_json(message));
+    }
+    Ok(Some(number))
+}
+
+fn json_to_js(value: &serde_json::Value) -> Result<JsValue, SdkSessionError> {
+    parse_json(&value.to_string()).map_err(|_| {
+        invalid_organization_json("organizationPolicy settings must be JSON values.")
+    })
+}
+
+fn normalize_organization_session_settings_json(
+    value: Option<&serde_json::Value>,
+) -> Result<Option<JsValue>, SdkSessionError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = json_to_js(value)?;
+    super::validate_session_settings(Some(&value))?;
+    Ok(Some(value))
+}
+
+fn normalize_organization_session_sources_json(
+    value: Option<&serde_json::Value>,
+) -> Result<Option<JsValue>, SdkSessionError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = json_to_js(value)?;
+    super::validate_setting_sources(Some(&value))?;
+    Ok(Some(value))
 }

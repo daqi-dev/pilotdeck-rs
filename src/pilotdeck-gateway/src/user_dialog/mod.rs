@@ -20,7 +20,7 @@ pub mod routes;
 mod schema;
 mod store;
 
-pub use crate::runtime::user_dialog::{
+pub use gateway::{
     DialogPersistence, DialogSession, DialogSessionResolver, DialogStore, GatewayUserDialogs,
 };
 pub use bus::{ConsumeResult, GatewayUserDialogBus, PendingDialog};

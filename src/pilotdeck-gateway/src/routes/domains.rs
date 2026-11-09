@@ -37,7 +37,10 @@ impl Projects {
     fn resolve(&self, key: &JsString) -> Option<PathBuf> {
         let path = crate::metadata::resolved_identity(&self.0.cwd, key)?;
         let path = PathBuf::from(path);
-        self.0.has_registered_project(&path).then_some(path)
+        match self.0.has_registered_project(&path) {
+            Ok(true) => Some(path),
+            _ => None,
+        }
     }
 }
 impl ProjectMemoryRegistry for Projects {
@@ -83,7 +86,11 @@ impl ProjectMemoryRegistry for Projects {
             .map_err(|_| MemoryProviderError::host_required())?
             .map(PathBuf::from)
             .unwrap_or_else(|| self.0.home.join("memory"));
-        let root = crate::metadata::resolve_process_path(&self.0.cwd, &root);
+        let root = crate::metadata::resolve_process_path(&self.0.cwd, &root).map_err(|error| {
+            let mut failure = MemoryProviderError::new(error.to_string());
+            failure.code = Some("gateway_request_failed".into());
+            failure
+        })?;
         Ok(Some(Arc::new(
             crate::runtime::memory::edgeclaw::DiskMemoryManagement::open(
                 &project,
@@ -234,7 +241,9 @@ fn upload_project_params(
     let identity = crate::metadata::resolved_identity(&metadata.cwd, key);
     if !identity.as_ref().is_some_and(|root| {
         std::path::Path::new(root) == metadata.home
-            || metadata.has_registered_project(std::path::Path::new(root))
+            || metadata
+                .has_registered_project(std::path::Path::new(root))
+                .unwrap_or(false)
     }) {
         let mut message: Vec<u16> = "Unknown projectKey: ".encode_utf16().collect();
         message.extend_from_slice(key.units());

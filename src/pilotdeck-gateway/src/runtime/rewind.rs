@@ -39,13 +39,20 @@ pub struct RewindFilesInput<'a> {
 /// Runs one `rewind_files` request. Every error path is the TS `catch` branch:
 /// `{ canRewind: false, error }` with the original `Error.message` text.
 pub fn rewind_files(input: RewindFilesInput<'_>) -> JsValue {
-    match run(input) {
+    let message_id = JsString::from(input.user_message_id);
+    rewind_files_exact(input, &message_id)
+}
+
+/// The RPC id remains raw UTF-16. `input.user_message_id` is only the legacy
+/// UTF-8 entry point's field and is superseded by `message_id` here.
+fn rewind_files_exact(input: RewindFilesInput<'_>, message_id: &JsString) -> JsValue {
+    match run(input, message_id) {
         Ok(result) => JsValue::Object(result),
         Err(error) => JsValue::Object(failure(&error)),
     }
 }
 
-fn run(input: RewindFilesInput<'_>) -> Result<JsObject, String> {
+fn run(input: RewindFilesInput<'_>, message_id: &JsString) -> Result<JsObject, String> {
     let storage = input
         .adapter
         .create_session_storage(SessionStorageInput {
@@ -58,9 +65,31 @@ fn run(input: RewindFilesInput<'_>) -> Result<JsObject, String> {
     let read = storage
         .read_transcript(None)
         .map_err(|error| storage_error(error, &storage.transcript_path))?;
-    let snapshots = snapshot_entries(&read.entries)?;
+    let mut snapshots = snapshot_entries(&read.entries)?;
     if snapshots.is_empty() {
         return Ok(failure(NO_CHECKPOINT));
+    }
+    // FileHistoryStore has an existing UTF-8 id API. For this operation's
+    // temporary replay only, encode every raw UTF-16 id into an injective
+    // ASCII representation. Do not change live replay or persisted entries.
+    for (snapshot, entry) in snapshots.iter_mut().zip(snapshot_rows(&read.entries)) {
+        snapshot.message_id = string_field(entry, "messageId").map(message_token);
+    }
+    let message_token = message_token(message_id);
+    if !snapshots
+        .iter()
+        .any(|snapshot| snapshot.message_id.as_deref() == Some(&message_token))
+    {
+        let mut message = JsString::from("No snapshot for messageId ")
+            .units()
+            .to_vec();
+        message.extend_from_slice(message_id.units());
+        let mut result = failure("");
+        result.insert(
+            "error".into(),
+            JsValue::String(JsString::from_utf16(message)),
+        );
+        return Ok(result);
     }
     let mut options = FileHistoryOptions::new(storage.file_history_dir.clone());
     options.now = input.now.clone();
@@ -68,13 +97,13 @@ fn run(input: RewindFilesInput<'_>) -> Result<JsObject, String> {
     history.replay_from_transcript(&snapshots);
 
     let conflicts = history
-        .get_conflict_paths(input.user_message_id)
+        .get_conflict_paths(&message_token)
         .map_err(|error| error.to_string())?;
     if !conflicts.is_empty() {
         return Ok(conflict(&conflicts));
     }
     let stats = history
-        .get_diff_stats(input.user_message_id)
+        .get_diff_stats(&message_token)
         .map_err(|error| error.to_string())?;
     if input.dry_run {
         let mut result = JsObject::new();
@@ -84,7 +113,7 @@ fn run(input: RewindFilesInput<'_>) -> Result<JsObject, String> {
         return Ok(result);
     }
     let rewind = history
-        .rewind(input.user_message_id)
+        .rewind(&message_token)
         .map_err(|error| error.to_string())?;
     if !rewind.conflicts.is_empty() {
         return Ok(conflict(&rewind.conflicts));
@@ -164,16 +193,28 @@ fn strings(values: Vec<String>) -> JsValue {
 /// `Object.entries`, i.e. the transcript JSON object's own key order.
 pub(crate) fn snapshot_entries(entries: &[JsValue]) -> Result<Vec<SnapshotRecordedEntry>, String> {
     let mut snapshots = Vec::new();
-    for entry in entries {
-        if entry
-            .get("type")
-            .and_then(JsValue::as_string)
-            .is_some_and(|kind| text(kind) == "file_snapshot_recorded")
-        {
-            snapshots.push(snapshot_entry(entry)?);
-        }
+    for entry in snapshot_rows(entries) {
+        snapshots.push(snapshot_entry(entry)?);
     }
     Ok(snapshots)
+}
+
+fn snapshot_rows(entries: &[JsValue]) -> impl Iterator<Item = &JsValue> {
+    entries.iter().filter(|entry| {
+        entry
+            .get("type")
+            .and_then(JsValue::as_string)
+            .is_some_and(|kind| kind.equals_str("file_snapshot_recorded"))
+    })
+}
+
+fn message_token(message: &JsString) -> String {
+    use std::fmt::Write;
+    let mut token = String::with_capacity(message.units().len() * 4);
+    for unit in message.units() {
+        write!(&mut token, "{unit:04x}").expect("writing into String");
+    }
+    token
 }
 
 fn snapshot_entry(entry: &JsValue) -> Result<SnapshotRecordedEntry, String> {
@@ -315,9 +356,7 @@ fn string_field<'a>(value: &'a JsValue, name: &str) -> Option<&'a JsString> {
     value.get(name).and_then(JsValue::as_string)
 }
 
-/// UTF-16 to text. Property names and message ids are valid UTF-8 in every
-/// transcript the TS writer can produce; replacement decoding keeps a corrupt
-/// entry from aborting the request.
+/// Path-facing UTF-16 to text. Rewind lookup ids use `message_token` instead.
 fn text(value: &JsString) -> String {
     value
         .to_utf8()
@@ -414,7 +453,7 @@ pub async fn handle(
             .chat_dir(&key.project_root.to_string_lossy())
         }),
     );
-    Ok(rewind_files(
+    Ok(rewind_files_exact(
         RewindFilesInput {
             adapter: &adapter,
             project_root: &project,

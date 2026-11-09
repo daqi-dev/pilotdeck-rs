@@ -73,10 +73,8 @@ pub trait SubmitHostServices: Send + Sync {
     /// (InProcessGateway.ts:1481-1486). Input attachments precede lease ones.
     fn prepare_attachment_turn<'a>(
         &'a self,
-        message: &'a JsValue,
-        attachments: Vec<JsValue>,
-        project: Option<&JsString>,
-        session: Option<&JsString>,
+        input: &'a JsValue,
+        run: &'a RunRef,
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>>;
     /// `resolveTurnModelSelection(input)` → `{ source, selection? }`
     /// (InProcessGateway.ts:1509-1515). createLocalGateway always wires the
@@ -239,12 +237,18 @@ impl SubmitHost for GatewaySubmitHost {
                 true => Some(self.services.resolve_attachments(input).await?),
                 false => None,
             };
+            let mut turn_input = input.clone();
             let mut attachments = match field(input, "attachments") {
                 JsValue::Array(values) => values.to_vec(),
                 _ => Vec::new(),
             };
             if let Some(lease) = &lease {
                 attachments.extend(lease.attachments.iter().cloned());
+            }
+            if !attachments.is_empty() {
+                if let JsValue::Object(fields) = &mut turn_input {
+                    fields.insert("attachments".into(), JsValue::Array(attachments));
+                }
             }
             // The lease is owned from here: a failure in any later prepare
             // step still reaches finish_pump, which releases it.
@@ -259,12 +263,7 @@ impl SubmitHost for GatewaySubmitHost {
             }
             let agent_input = self
                 .services
-                .prepare_attachment_turn(
-                    field(input, "message"),
-                    attachments,
-                    field(input, "projectKey").as_string(),
-                    field(input, "sessionKey").as_string(),
-                )
+                .prepare_attachment_turn(&turn_input, run)
                 .await?;
             let model_selection = self.services.resolve_model_selection(input).await?;
             let plan = field(input, "mode") == &JsValue::from("plan");

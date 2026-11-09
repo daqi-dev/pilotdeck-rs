@@ -50,6 +50,10 @@ impl GatewayUserDialogBus {
         }
     }
 
+    pub fn is_connected(&self) -> bool {
+        self.on_change.is_some()
+    }
+
     pub fn register(&mut self, session: &JsString, entry: PendingDialog) {
         self.response_checks
             .remove(&(session.clone(), entry.request_id.clone()));

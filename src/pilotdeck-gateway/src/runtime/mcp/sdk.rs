@@ -290,6 +290,10 @@ pub struct SdkMcpConfig {
 }
 
 impl SdkMcpConfig {
+    pub fn options(&self) -> &SdkMcpConfigOptions {
+        &self.options
+    }
+
     pub fn new(options: SdkMcpConfigOptions) -> Self {
         Self {
             options,

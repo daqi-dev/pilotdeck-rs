@@ -183,6 +183,12 @@ impl SessionOwner {
         self.0.creation_sent.subscribe()
     }
 
+    pub fn memory_registry(
+        &self,
+    ) -> Option<crate::runtime::session::context_resources::ProjectMemoryRegistry> {
+        self.0.options.factory.memory_registry()
+    }
+
     pub fn new(options: SessionOwnerOptions) -> Self {
         let interval = options.idle_sweep_interval_ms;
         let owner = Self(Arc::new(Inner {

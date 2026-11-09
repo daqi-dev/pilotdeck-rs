@@ -49,7 +49,9 @@ pub(crate) fn call_webui_blocking(
 pub(crate) fn response<F: Files>(request: &JsValue, metadata: Option<&Metadata<F>>) -> Route {
     let result = (|| {
         let method = text_field(request, "method").expect("registered method");
-        let fallback = Metadata::from_env();
+        let fallback = Metadata::from_env().map_err(|error| {
+            RouteError::new("gateway_request_failed", error.to_string())
+        })?;
         let (home, cwd) = metadata
             .map(|m| (&m.home, &m.cwd))
             .or_else(|| fallback.as_ref().map(|m| (&m.home, &m.cwd)))
@@ -176,11 +178,10 @@ fn start_watching(state: &SharedConfigRoutes) {
     });
     let mut routes = state.lock().unwrap();
     routes.watch_subscription = Some(routes.store.subscribe(listener));
-    routes.watcher = Some(
-        routes
-            .store
-            .start_watching_on(WatchOptions::default(), executor().handle()),
-    );
+    routes.watcher = routes
+        .store
+        .start_watching(WatchOptions::default())
+        .ok();
 }
 
 // An upstream's private busy state/policy cannot be inferred from authentication.

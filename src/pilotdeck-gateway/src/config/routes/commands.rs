@@ -330,8 +330,11 @@ impl ConfigRoutes {
             cwd: self.cwd.clone(),
             files: NativeFiles,
         };
+        let projects = metadata
+            .list_projects()
+            .map_err(|error| RouteError::new("gateway_request_failed", error.to_string()))?;
         let registered =
-            if let JsValue::Array(projects) = field(&metadata.list_projects(), "projects") {
+            if let JsValue::Array(projects) = field(&projects, "projects") {
                 projects.iter().any(|p| {
                     text_field(p, "projectKey")
                         .is_some_and(|p| crate::metadata::resolve(&self.cwd, &p) == project)

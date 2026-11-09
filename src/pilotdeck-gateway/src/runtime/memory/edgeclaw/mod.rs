@@ -23,6 +23,7 @@ pub mod llm;
 pub mod messages;
 mod node_fs;
 pub mod provider;
+pub mod runtime_surface;
 #[path = "retrieval/helpers.rs"]
 pub mod retrieval;
 #[path = "retrieval/retriever.rs"]
@@ -35,11 +36,13 @@ pub use file_memory::{
     EdgeClawFileStores, FileMemoryError, FileMemoryStore, FileMemoryStoreOptions,
 };
 
-pub use model::native_llm_from_snapshot;
-pub use provider::{
-    NativeEdgeClawLlm, NativeEdgeClawLlmFuture, NativeEdgeClawOptions, NativeEdgeClawRuntime,
-};
 pub use storage::{EdgeClawStorage, IndexingSettings, L0SessionRecord, StorageError};
+pub use model::native_llm_from_snapshot;
+pub use runtime_surface::{
+    NativeEdgeClawClock, NativeEdgeClawLlm, NativeEdgeClawLlmFuture, NativeEdgeClawOptions,
+    NativeEdgeClawRuntime, stage_native_from_snapshot,
+};
+pub use runtime_surface::read_workspace_dir_from_data_dir;
 
 pub mod factory;
 mod owner;
@@ -88,7 +91,15 @@ impl super::MemoryManagementService for DiskMemoryManagement {
         &self,
         limit: usize,
     ) -> Result<Vec<pilotdeck_protocol::JsValue>, super::MemoryProviderError> {
-        self.0.list_memory_entries(limit).map_err(management_error)
+        let mut options = pilotdeck_protocol::JsObject::new();
+        options.insert("limit".into(), pilotdeck_protocol::JsValue::Number(limit as f64));
+        let value = self.0.list_memory_entries(&options).map_err(management_error)?;
+        match &value {
+            pilotdeck_protocol::JsValue::Array(items) => Ok(items.clone()),
+            _ => Err(super::MemoryProviderError::new(
+                "Native memory list did not return an array.",
+            )),
+        }
     }
     fn clear(&self, scope: &str) -> Result<(), super::MemoryProviderError> {
         if scope == "all_memory" {
@@ -110,27 +121,6 @@ impl super::MemoryManagementService for DiskMemoryManagement {
             .clear_session_memory_data(&session)
             .map(|_| ())
             .map_err(management_error)
-    }
-}
-
-/// Reads `workspaceDir` from `data_dir/control.sqlite` if present.
-/// Aligns with `ui/server/services/memoryService.js:61-82`.
-pub fn read_workspace_dir_from_data_dir(data_dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    let db_path = data_dir.join("control.sqlite");
-    if !db_path.exists() {
-        return None;
-    }
-    let storage = storage::EdgeClawStorage::open(&db_path).ok()?;
-    let value = storage.get_pipeline_state("workspaceDir").ok()??;
-    let s = match &value {
-        pilotdeck_protocol::JsValue::String(s) => s.to_utf8().ok()?,
-        _ => return None,
-    };
-    let trimmed = s.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(std::path::PathBuf::from(trimmed))
     }
 }
 

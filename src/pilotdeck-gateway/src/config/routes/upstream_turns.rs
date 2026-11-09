@@ -68,3 +68,9 @@ impl Drop for UpstreamTurns {
         }
     }
 }
+
+impl crate::runtime::session::routes::passthrough::UpstreamTurnObserver for UpstreamTurns {
+    fn response(&self, frame: &JsValue) {
+        UpstreamTurns::response(self, frame);
+    }
+}

@@ -1,53 +1,12 @@
 //! Shared native dialog ownership; channel and storage behavior stay in user_dialog.
-use crate::{
-    runtime::connection::RequestError,
-    user_dialog::{
-        DialogRuntime, GatewayUserDialogBus, GatewayUserDialogJournal, HttpGatewayUserDialogStore,
-        LiveGatewayUserDialogStore, StoreKey,
-    },
+pub use crate::user_dialog::{
+    DialogPersistence, DialogSession, DialogSessionResolver, DialogStore, GatewayUserDialogs,
 };
-use pilotdeck_protocol::JsValue;
-use std::sync::{Arc, Mutex};
-
-pub type DialogSessionResolver =
-    Arc<dyn Fn(&JsValue) -> Result<Option<DialogSession>, RequestError> + Send + Sync>;
-
-pub struct DialogSession {
-    pub key: StoreKey,
-    pub journal: Option<Arc<GatewayUserDialogJournal>>,
-}
-
-#[derive(Clone)]
-pub enum DialogStore {
-    Native(Arc<dyn LiveGatewayUserDialogStore>),
-    Http(Arc<HttpGatewayUserDialogStore>),
-}
-
-pub struct DialogPersistence {
-    pub store: Option<DialogStore>,
-    pub resolve_session: DialogSessionResolver,
-}
-
-pub struct GatewayUserDialogs {
-    pub bus: Arc<Mutex<GatewayUserDialogBus>>,
-    pub persistence: Option<Arc<DialogPersistence>>,
-}
-
-impl Default for GatewayUserDialogs {
-    fn default() -> Self {
-        Self {
-            bus: Arc::new(Mutex::new(GatewayUserDialogBus::new(
-                DialogRuntime::default(),
-                None,
-            ))),
-            persistence: None,
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use crate::user_dialog::{
         ChannelOptions, DialogAnswer, GatewayUserDialogChannel, InputRequest,
     };

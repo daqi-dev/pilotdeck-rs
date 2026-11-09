@@ -219,10 +219,12 @@ impl Automation {
     pub async fn stop(&self) -> Result<(), AlwaysOnError> {
         let result = self.cron.stop().await;
         self.always_on.stop().await;
-        let native =
-            self.host.turn.shutdown().await.map_err(|e| {
-                AlwaysOnError::new(e.code, String::from_utf16_lossy(e.message.units()))
-            });
+        let native = self
+            .host
+            .turn
+            .shutdown(std::time::Duration::from_secs(30))
+            .await
+            .map_err(|message| AlwaysOnError::new("gateway_request_failed", message));
         self.background.stop().await;
         result.and(native)
     }

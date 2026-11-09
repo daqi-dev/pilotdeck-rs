@@ -148,6 +148,11 @@ where
         }
     }
 
+    /// Synchronous domain dispatch: native binding only (routes/domains.rs).
+    pub fn call_native(&self, method: SkillMethod, input: &JsValue) -> Result<JsValue> {
+        self.native.call(method, input)
+    }
+
     pub async fn call(&self, method: SkillMethod, input: &JsValue) -> Result<JsValue> {
         // `input.projectKey` is read before the binding resolves.
         let project_key = if method.routes_by_project() {

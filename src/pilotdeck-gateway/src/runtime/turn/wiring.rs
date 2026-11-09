@@ -6,12 +6,13 @@
 //! a half-wired gateway can never look successful.
 use super::coordinator::TurnEventCoordinator;
 use super::gateway::{GatewayRequests, GatewayServices, TurnGateway};
-use super::projector::GatewayAgentEventProjector;
+use super::projector::{GatewayAgentEventProjector, GatewayAgentEventProjectorOptions};
 use super::publish::FileRegistry;
 use super::read;
 use super::replay::TurnReplayOptions;
 use super::submit::{TurnSubmitter, WorkspaceAdmissions};
-use super::submit_host::{NativeSubmitHost, NativeSubmitProviders};
+use super::submit_host::NativeSubmitProviders;
+use super::wiring_submit::{GatewayCompositionBundle, build_composition_submit_host};
 use crate::metadata::object;
 use crate::runtime::connection::{Call, RequestError};
 use crate::runtime::interaction::GatewayInteractionCoordinator;
@@ -125,7 +126,7 @@ struct RuntimeRequests {
     reader: Arc<FileRegistry>,
     coordinator: Arc<TurnEventCoordinator>,
     sessions: Arc<SessionRoutes>,
-    host: Arc<NativeSubmitHost>,
+    bundle: Arc<GatewayCompositionBundle>,
     usage: Arc<super::routes::usage::UsageRegistry>,
 }
 
@@ -133,7 +134,7 @@ impl GatewayRequests for RuntimeRequests {
     fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async move {
             let mut info = self.sessions.describe_server();
-            let sdk_defaults = if let Some(sdk) = &self.host.providers.sdk {
+            let sdk_defaults = if let Some(sdk) = &self.bundle.providers.sdk {
                 sdk.lock()
                     .await
                     .options()
@@ -171,13 +172,13 @@ impl GatewayRequests for RuntimeRequests {
                             | "user_dialog_list"
                             | "rewind_files" => false,
                             "sdk_session_defaults" => sdk_defaults,
-                            "manager_browsers" => self.host.providers.manager_browsers.is_some(),
+                            "manager_browsers" => self.bundle.providers.manager_browsers.is_some(),
                             "mcp_server_status"
                             | "set_mcp_servers"
                             | "mcp_server_reconnect"
                             | "mcp_server_toggle"
                             | "set_mcp_permission_mode_override" => self.mcp.is_some(),
-                            "sdk_session_config" => self.host.providers.sdk.is_some(),
+                            "sdk_session_config" => self.bundle.providers.sdk.is_some(),
                             _ => true,
                         }
                     })
@@ -260,7 +261,7 @@ impl GatewayRequests for RuntimeRequests {
                 .unwrap_or_default();
             match name.as_str() {
                 "manager_browsers" => {
-                    self.host
+                    self.bundle
                         .providers
                         .manager_browsers
                         .as_ref()
@@ -278,15 +279,15 @@ impl GatewayRequests for RuntimeRequests {
                 }
                 "steer_turn" | "cancel_steer" => {
                     let composer = super::routes::control::ProductionSteerTurnComposer::new(
-                        PathBuf::from(self.host.cwd.to_utf8().unwrap_or_default()),
+                        PathBuf::from(self.bundle.cwd.to_utf8().unwrap_or_default()),
                     );
                     let routes =
-                        super::routes::control::ControlRoutes::new(&self.host.owner, &composer);
+                        super::routes::control::ControlRoutes::new(&self.bundle.owner, &composer);
                     routes.handle(&name, &params).expect("control method").await
                 }
                 "session_model_set" | "session_model_clear" | "session_model_get" => {
                     let sdk = self
-                        .host
+                        .bundle
                         .providers
                         .sdk
                         .as_ref()
@@ -294,10 +295,10 @@ impl GatewayRequests for RuntimeRequests {
                     super::routes::models::handle(
                         &super::routes::models::Models {
                             sdk,
-                            owner: &self.host.owner,
-                            replacement: &self.host.providers.replacement,
-                            transcripts: &self.host.providers.transcripts,
-                            pilot_home: &self.host.providers.pilot_home,
+                            owner: &self.bundle.owner,
+                            replacement: &self.bundle.providers.replacement,
+                            transcripts: &self.bundle.providers.transcripts,
+                            pilot_home: &self.bundle.providers.pilot_home,
                         },
                         &name,
                         &params,
@@ -305,8 +306,8 @@ impl GatewayRequests for RuntimeRequests {
                     .await
                 }
                 "usage_snapshot" | "model_usage_snapshot" => {
-                    let home = self.host.providers.pilot_home.clone();
-                    let cwd = self.host.cwd.clone();
+                    let home = self.bundle.providers.pilot_home.clone();
+                    let cwd = self.bundle.cwd.clone();
                     let usage = self.usage.clone();
                     tokio::task::spawn_blocking(move || {
                         let resolve = |project: Option<&JsString>| {
@@ -346,9 +347,9 @@ impl GatewayRequests for RuntimeRequests {
                     Ok(object([("ok", JsValue::Bool(true))]))
                 }
                 _ => {
-                    let home = self.host.providers.pilot_home.clone();
+                    let home = self.bundle.providers.pilot_home.clone();
                     let cwd = PathBuf::from(
-                        self.host
+                        self.bundle
                             .cwd
                             .to_utf8()
                             .map_err(|error| RequestError::new(error.to_string()))?,
@@ -562,7 +563,7 @@ fn compose_with_user_dialogs_impl(
         },
     ));
     let cwd_path = std::path::PathBuf::from(options.cwd.to_utf8().map_err(std::io::Error::other)?);
-    let pilot_home = crate::metadata::resolve_process_path(&cwd_path, &options.pilot_home);
+    let pilot_home = crate::metadata::resolve_process_path(&cwd_path, &options.pilot_home)?;
     let layout_cwd = cwd_path.clone();
     let adapter = Arc::new(AsyncTranscriptAdapter::new(
         Arc::new(SessionTranscriptStore::new(
@@ -724,23 +725,26 @@ fn compose_with_user_dialogs_impl(
             )
         });
         *mcp_config.lock().unwrap() = mcp.as_ref().map(|routes| routes.sdk_config());
-        let host = Arc::new(NativeSubmitHost {
-            owner: owner.clone(),
-            interactions: interactions_slot.clone(),
+        let (gateway_host, composition_bundle) = build_composition_submit_host(
+            owner.clone(),
+            interactions_slot.clone(),
             providers,
-            failure_guard_enabled: options.failure_guard_enabled,
-            abort_turn_timeout_ms: options.abort_turn_timeout_ms,
-            cwd: options.cwd.clone(),
-            policies: options.policies.clone(),
-            activity: options.activity.clone(),
-            max_output_tokens: runtime_env.max_output_tokens,
-        });
+            options.cwd.clone(),
+            options.policies.clone(),
+            options.activity.clone(),
+            options.failure_guard_enabled,
+            options.abort_turn_timeout_ms,
+            runtime_env.max_output_tokens,
+        );
         let submitter = Arc::new(TurnSubmitter {
             owner,
             coordinator: coordinator.clone(),
             registry: Some(registry_slot.clone()),
-            projector: Arc::new(GatewayAgentEventProjector::default()),
-            host: host.clone(),
+            projector: Arc::new(
+                GatewayAgentEventProjector::new(GatewayAgentEventProjectorOptions::default())
+                    .map_err(|error| std::io::Error::other(error.to_string()))?,
+            ),
+            host: gateway_host,
             workspace_admissions: WorkspaceAdmissions::default(),
         });
         Ok(GatewayServices {
@@ -753,7 +757,7 @@ fn compose_with_user_dialogs_impl(
                 reader: registry_slot.clone(),
                 coordinator,
                 sessions,
-                host: host.clone(),
+                bundle: composition_bundle,
                 usage,
             }),
         })
@@ -777,7 +781,7 @@ fn compose_with_user_dialogs_impl(
 fn open_registry(pilot_home: &std::path::Path) -> std::io::Result<Arc<FileRegistry>> {
     let dir = pilot_home.join("gateway");
     std::fs::create_dir_all(&dir)?;
-    let file = FileRunRegistry::open_journaled(dir.join("runs.json"))
+    let file = FileRunRegistry::open(dir.join("runs.json"))
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     Ok(Arc::new(FileRegistry::new(file)?))
 }
@@ -1016,6 +1020,7 @@ fn runtime_failures(message: &str, mut failures: Vec<RuntimeError>) -> Result<()
         _ => Err(RuntimeError {
             message: message.into(),
             causes: failures,
+            js_error: None,
         }),
     }
 }
@@ -1045,7 +1050,8 @@ impl ProductionContinuationSessionFactory {
             pilot_home: self.pilot_home.clone(),
             session_id: self.parent_session_id.clone(),
             now: None,
-        });
+        })
+        .map_err(|error| RuntimeError::new(error.to_string()))?;
         let parent = self.parent_live.recorder.writer();
         let path = parent
             .path()
@@ -1862,7 +1868,8 @@ impl SessionFactory for NativeSessionFactory {
         Box::pin(async move {
             let project_root =
                 project_root.map_err(|error| RuntimeError::new(error.to_string()))?;
-            let project_root = crate::metadata::resolve_process_path(&cwd_path, &project_root);
+            let project_root = crate::metadata::resolve_process_path(&cwd_path, &project_root)
+                .map_err(|error| RuntimeError::new(error.to_string()))?;
             history
                 .recover_replacements(&object([
                     ("sessionKey", JsValue::String(context.session_key.clone())),
@@ -1873,6 +1880,7 @@ impl SessionFactory for NativeSessionFactory {
                 Some(config) => {
                     crate::runtime::manager::session_mcp::SessionMcpOwner::open(
                         &config,
+                        config.options(),
                         &permissions,
                         &home,
                         &project_root,
@@ -1982,7 +1990,8 @@ impl SessionFactory for NativeSessionFactory {
                 pilot_home: home.clone(),
                 session_id: context.session_key.clone(),
                 now: None,
-            });
+            })
+            .map_err(|error| RuntimeError::new(error.to_string()))?;
             let mut config = config;
             config.services = Some(services.clone());
             let mut hook_sources = match &sdk {
@@ -2033,6 +2042,7 @@ impl SessionFactory for NativeSessionFactory {
                     RuntimeError {
                         message: "Failed to construct session custom routers.".into(),
                         causes: errors,
+                        js_error: None,
                     }
                 });
             }
@@ -2544,7 +2554,8 @@ impl crate::runtime::sdk_session::SdkRuntimeResolver for DiskSdkResolver {
         let root = crate::metadata::resolve_process_path(
             &self.cwd,
             std::path::Path::new(project.as_deref().unwrap_or(".")),
-        );
+        )
+        .map_err(|error| SdkSessionError::new("gateway_request_failed", error.to_string()))?;
         let snapshot = crate::config::load_snapshot(
             &self.pilot_home,
             &self.cwd,

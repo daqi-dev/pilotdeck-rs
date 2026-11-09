@@ -24,3 +24,4 @@ pub(crate) mod submit_input;
 pub(crate) mod capabilities;
 pub(crate) mod submit_uploads;
 pub mod wiring;
+pub mod wiring_submit;

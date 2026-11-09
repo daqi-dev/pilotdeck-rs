@@ -209,8 +209,12 @@ fn execute(
                 files: NativeFiles,
             };
             let result = match route {
-                Route::Projects => metadata.list_projects(),
-                Route::Project(key) => metadata.describe_project(&JsString::from(key.as_str())),
+                Route::Projects => metadata
+                    .list_projects()
+                    .map_err(|error| internal(error.to_string()))?,
+                Route::Project(key) => metadata
+                    .describe_project(&JsString::from(key.as_str()))
+                    .map_err(|error| internal(error.to_string()))?,
                 _ => unreachable!(),
             };
             let text = stringify_json(&result)

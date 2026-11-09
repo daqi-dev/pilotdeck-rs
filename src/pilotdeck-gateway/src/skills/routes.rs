@@ -4,7 +4,7 @@
 //! Host-required errors are terminal local errors, never a reason to forward.
 
 use super::{SkillError, SkillMethod, SkillsFacade};
-use pilotdeck_protocol::{JsObject, JsValue};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
 /// Synchronous domain calls perform filesystem I/O; G0 owns scheduling them.
 /// No environment, paths, configuration, or upstream transport is created here.
@@ -14,7 +14,7 @@ where
 {
     // SkillMethod covers exactly the eight wire methods; anything else is G0's.
     let method = SkillMethod::from_wire(method)?;
-    Some(encode(facade.call(method, params)))
+    Some(encode(facade.call_native(method, params)))
 }
 
 fn encode(outcome: Result<JsValue, SkillError>) -> JsValue {
@@ -25,15 +25,14 @@ fn encode(outcome: Result<JsValue, SkillError>) -> JsValue {
             body.insert("result".into(), result);
         }
         Err(error) => {
-            let code = if error.code.is_empty() && matches!(error.name, "TypeError" | "RangeError")
-            {
-                "gateway_request_failed"
+            let code = if error.code.is_empty() && matches!(error.name, "TypeError" | "RangeError") {
+                JsString::from("gateway_request_failed")
             } else {
-                &error.code
+                error.code.clone()
             };
             let mut fields = JsObject::new();
-            fields.insert("code".into(), code.into());
-            fields.insert("message".into(), error.message.as_str().into());
+            fields.insert("code".into(), JsValue::String(code));
+            fields.insert("message".into(), JsValue::String(error.message.clone()));
             if let Some(validation) = error.validation {
                 fields.insert("validation".into(), *validation);
             }

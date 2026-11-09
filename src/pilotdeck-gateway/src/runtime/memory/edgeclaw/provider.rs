@@ -822,10 +822,3 @@ mod sync_turn_tests {
         thread.join().expect("#777 reentrant thread completed");
     }
 }
-
-pub type NativeEdgeClawLlmFuture =
-    std::pin::Pin<Box<dyn std::future::Future<Output = Result<pilotdeck_protocol::JsValue, crate::runtime::memory::MemoryProviderError>> + Send + 'static>>;
-
-pub trait NativeEdgeClawLlm: Send + Sync {
-    fn execute(&self, operation: &'static str, input: pilotdeck_protocol::JsValue) -> NativeEdgeClawLlmFuture;
-}

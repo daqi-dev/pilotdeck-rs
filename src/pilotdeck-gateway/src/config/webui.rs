@@ -403,7 +403,7 @@ pub(crate) fn validate_source(
     );
     let metadata = Metadata {
         home: pilot_home.to_path_buf(),
-        cwd: super::absolute_cwd(cwd),
+        cwd: super::absolute_cwd(cwd)?,
         files: CandidateFiles {
             path: candidate,
             source: source.as_bytes().to_vec(),

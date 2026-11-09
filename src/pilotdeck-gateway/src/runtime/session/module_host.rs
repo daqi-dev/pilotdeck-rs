@@ -1138,7 +1138,7 @@ pub fn build_with_services_runtime(
     cancel: crate::runtime::network::Cancellation,
     steers: crate::runtime::steer::TurnSteers,
     stats: Option<crate::runtime::turn::routes::usage::SharedUsageStats>,
-    services: Option<Arc<crate::runtime::turn::services::NativeSessionServices>>,
+    services: Option<Arc<crate::cron::native::NativeSessionServices>>,
 ) -> std::io::Result<ModuleRouter> {
     build_with_services_interactions(
         snapshot, input, events, cancel, steers, stats, services, None,
@@ -1154,7 +1154,7 @@ pub fn build_with_services_interactions(
     cancel: crate::runtime::network::Cancellation,
     steers: crate::runtime::steer::TurnSteers,
     stats: Option<crate::runtime::turn::routes::usage::SharedUsageStats>,
-    services: Option<Arc<crate::runtime::turn::services::NativeSessionServices>>,
+    services: Option<Arc<crate::cron::native::NativeSessionServices>>,
     interactions: Option<Arc<crate::runtime::interaction::GatewayInteractionCoordinator>>,
 ) -> std::io::Result<ModuleRouter> {
     build_with_router_state(
@@ -1178,7 +1178,7 @@ pub fn build_with_router_state(
     cancel: crate::runtime::network::Cancellation,
     steers: crate::runtime::steer::TurnSteers,
     stats: Option<crate::runtime::turn::routes::usage::SharedUsageStats>,
-    services: Option<Arc<crate::runtime::turn::services::NativeSessionServices>>,
+    services: Option<Arc<crate::cron::native::NativeSessionServices>>,
     interactions: Option<Arc<crate::runtime::interaction::GatewayInteractionCoordinator>>,
     router_state: Option<Arc<RouterSharedState>>,
 ) -> std::io::Result<ModuleRouter> {
@@ -1843,7 +1843,7 @@ mod live_bridge_tests;
 
 struct PhaseTool {
     fields: JsObject,
-    tools: Arc<dyn crate::runtime::turn::services::PhaseTools>,
+    tools: Arc<crate::cron::always_on::RunTools>,
 }
 
 /// Phase tool arguments cross the JS boundary as JSON, like the channel-side
@@ -1993,22 +1993,14 @@ impl crate::runtime::tools::ExecutableTool for PhaseTool {
         let tools = self.tools.clone();
         Box::pin(async move {
             use crate::runtime::tools::{ToolError, ToolOutput};
-            let input = phase_input(&input)
-                .map_err(|message| ToolError::new("invalid_params", message))?;
+            let input = crate::cron::native::from_js(&input)
+                .map_err(|e| ToolError::new(e.code, e.message))?;
             let value = tools
                 .call(&name, &input)
                 .await
-                .map_err(|e| {
-                    let code = e
-                        .module_error
-                        .as_ref()
-                        .and_then(|m| m.code.clone())
-                        .map(|code| String::from_utf16_lossy(code.units()).to_string())
-                        .unwrap_or_else(|| "tool_execution_failed".to_owned());
-                    ToolError::new(code, e.message.as_str())
-                })?;
-            let value = pilotdeck_protocol::parse_json(&value.to_string())
-                .map_err(|e| ToolError::new("serialization_failed", e.to_string()))?;
+                .map_err(|e| ToolError::new(e.code, e.message))?;
+            let value = crate::cron::native::to_js(&value)
+                .map_err(|e| ToolError::new(e.code, e.message))?;
             Ok(ToolOutput {
                 content: match value.get("content") {
                     Some(JsValue::Array(v)) => v.clone(),
@@ -2058,7 +2050,7 @@ fn tool_selector_allows(policy: &Option<(Vec<String>, Vec<String>)>, name: &str)
 
 pub fn build_registry(
     input: &JsValue,
-    services: Option<Arc<crate::runtime::turn::services::NativeSessionServices>>,
+    services: Option<Arc<crate::cron::native::NativeSessionServices>>,
 ) -> std::io::Result<ToolRegistry> {
     let allowed = input.get("allowedTools").and_then(|value| match value {
         JsValue::Array(items) => Some(
@@ -2174,8 +2166,8 @@ pub fn build_registry(
     crate::runtime::tools::builtin::register_shell_tools(&registry)
         .map_err(|error| std::io::Error::other(error.message))?;
     if let Some(services) = services {
-        if let Some(cron) = services.cron.as_ref() {
-            cron.register_tools(&registry)?;
+        if let Some(cron) = services.cron.upgrade() {
+            crate::cron::tools::register(&registry, cron)?;
         }
         #[cfg(unix)]
         for tool in crate::runtime::tools::builtin::task::task_tools(Some(
@@ -2187,8 +2179,8 @@ pub fn build_registry(
         }
         if let Some(phase) = &services.tools {
             for schema in phase.schemas() {
-                let fields = pilotdeck_protocol::parse_json(&schema.to_string())
-                    .map_err(|e| std::io::Error::other(e.to_string()))?
+                let fields = crate::cron::native::to_js(&schema)
+                    .map_err(|e| std::io::Error::other(e.message))?
                     .as_object()
                     .cloned()
                     .ok_or_else(|| std::io::Error::other("Invalid phase tool descriptor"))?;

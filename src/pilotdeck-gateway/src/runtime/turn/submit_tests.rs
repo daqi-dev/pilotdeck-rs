@@ -434,12 +434,11 @@ impl SubmitHostServices for Services {
     }
     fn prepare_attachment_turn<'a>(
         &'a self,
-        message: &'a JsValue,
-        _attachments: Vec<JsValue>,
-        _: Option<&JsString>,
-        _: Option<&JsString>,
+        input: &'a JsValue,
+        _: &'a RunRef,
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
-        Box::pin(async {
+        let message = input.get("message").cloned().unwrap_or(JsValue::Undefined);
+        Box::pin(async move {
             self.session.log.host("prepare");
             if self.session.setup["prepareGate"] == true {
                 self.prepare.wait().await;
@@ -447,7 +446,7 @@ impl SubmitHostServices for Services {
             if self.session.setup["epochFailure"] == true {
                 return Err(SubmitError::new("HISTORY_EPOCH", "history epoch changed"));
             }
-            Ok(object([("type", "text".into()), ("text", message.clone())]))
+            Ok(object([("type", "text".into()), ("text", message)]))
         })
     }
     fn resolve_model_selection<'a>(

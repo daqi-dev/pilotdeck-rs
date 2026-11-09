@@ -276,12 +276,10 @@ impl SubmitHostServices for Services {
     }
     fn prepare_attachment_turn<'a>(
         &'a self,
-        message: &'a JsValue,
-        _: Vec<JsValue>,
-        _: Option<&JsString>,
-        _: Option<&JsString>,
+        input: &'a JsValue,
+        _: &'a RunRef,
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
-        let message = message.clone();
+        let message = input.get("message").cloned().unwrap_or(JsValue::Undefined);
         Box::pin(async move { Ok(js(json!({"type":"text","text":val(&message)}))) })
     }
     fn resolve_model_selection<'a>(

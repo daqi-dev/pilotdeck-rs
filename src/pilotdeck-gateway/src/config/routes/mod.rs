@@ -55,6 +55,15 @@ impl From<&super::Error> for RouteError {
         Self::new(&error.code, String::from_utf16_lossy(error.message.units()))
     }
 }
+impl From<crate::runtime::sdk_session::SdkSessionError> for RouteError {
+    fn from(error: crate::runtime::sdk_session::SdkSessionError) -> Self {
+        if error.code.is_empty() {
+            Self::new("gateway_request_failed", error.message)
+        } else {
+            Self::new(error.code, error.message)
+        }
+    }
+}
 
 use super::{
     Env,

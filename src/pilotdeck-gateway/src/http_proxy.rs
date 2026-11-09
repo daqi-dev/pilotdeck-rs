@@ -1,7 +1,7 @@
 //! Native HTTP/WS upgrade coordination; historical proxy fixtures are test-only.
-use crate::{Body, HttpClient, acceptor};
+use crate::{Body, HttpClient, ProxyError, acceptor};
 #[cfg(test)]
-use crate::{ProxyError, pairing, upstream};
+use crate::{pairing, upstream};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{
@@ -11,10 +11,14 @@ use hyper_util::rt::TokioIo;
 use std::{
     convert::Infallible,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
     task::{Context, Poll, Waker},
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::sync::watch;
 pub struct Proxy {
     pub upstream: String,
     pub client: HttpClient,
@@ -277,6 +281,8 @@ impl Drop for ReadLease {
 pub(crate) struct UpgradeReadGate<S> {
     pub(crate) stream: S,
     state: SharedReadState,
+    activity: watch::Sender<Option<tokio::time::Instant>>,
+    served: Arc<AtomicBool>,
 }
 impl<S: AsyncRead + Unpin> AsyncRead for UpgradeReadGate<S> {
     fn poll_read(
@@ -291,7 +297,21 @@ impl<S: AsyncRead + Unpin> AsyncRead for UpgradeReadGate<S> {
                 return Poll::Pending;
             }
         }
-        Pin::new(&mut self.stream).poll_read(cx, buf)
+        let filled = buf.filled().len();
+        match Pin::new(&mut self.stream).poll_read(cx, buf) {
+            Poll::Ready(Ok(())) => {
+                if buf.filled().len() > filled
+                    && !crate::mutants::on("native-http-read-refresh-off")
+                    && (crate::mutants::on("native-http-unserved-read-arms-idle")
+                        || self.served.load(Ordering::Relaxed))
+                {
+                    self.activity
+                        .send_replace(Some(tokio::time::Instant::now()));
+                }
+                Poll::Ready(Ok(()))
+            }
+            other => other,
+        }
     }
 }
 impl<S: AsyncWrite + Unpin> AsyncWrite for UpgradeReadGate<S> {
@@ -321,6 +341,64 @@ pub(crate) fn is_upgrade(request: &Request<Incoming>) -> bool {
             .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
 }
 
+const NODE_KEEP_ALIVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const NODE_KEEP_ALIVE_TIMEOUT_BUFFER: std::time::Duration = std::time::Duration::from_secs(1);
+
+pub(crate) async fn serve_connection_native_with_shutdown<S, F, Fut>(
+    stream: S,
+    handler: F,
+    stop: watch::Receiver<bool>,
+) -> Result<(), hyper::Error>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    F: Fn(Request<Incoming>, Option<ReadLease>) -> Fut,
+    Fut: std::future::Future<Output = Result<Response<Body>, std::io::Error>>,
+{
+    serve_connection_configured(stream, handler, true, Some(stop)).await
+}
+
+struct InFlightRequest(Arc<AtomicUsize>);
+impl Drop for InFlightRequest {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+struct IdleBody {
+    body: Body,
+    held: Option<(InFlightRequest, watch::Sender<Option<tokio::time::Instant>>)>,
+}
+impl IdleBody {
+    fn release(&mut self) {
+        if let Some((guard, activity)) = self.held.take() {
+            drop(guard);
+            activity.send_replace(Some(tokio::time::Instant::now()));
+        }
+    }
+}
+impl hyper::body::Body for IdleBody {
+    type Data = Bytes;
+    type Error = ProxyError;
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<Option<Result<hyper::body::Frame<Bytes>, ProxyError>>> {
+        let poll = Pin::new(&mut self.body).poll_frame(context);
+        if matches!(poll, Poll::Ready(None)) {
+            self.release();
+        }
+        poll
+    }
+    fn size_hint(&self) -> http_body::SizeHint {
+        self.body.size_hint()
+    }
+}
+impl Drop for IdleBody {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 pub(crate) async fn serve_connection_with<S, F, Fut>(
     stream: S,
     handler: F,
@@ -330,14 +408,35 @@ where
     F: Fn(Request<Incoming>, Option<ReadLease>) -> Fut,
     Fut: std::future::Future<Output = Result<Response<Body>, std::io::Error>>,
 {
+    serve_connection_configured(stream, handler, false, None).await
+}
+
+async fn serve_connection_configured<S, F, Fut>(
+    stream: S,
+    handler: F,
+    native: bool,
+    stop: Option<watch::Receiver<bool>>,
+) -> Result<(), hyper::Error>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    F: Fn(Request<Incoming>, Option<ReadLease>) -> Fut,
+    Fut: std::future::Future<Output = Result<Response<Body>, std::io::Error>>,
+{
     let state = SharedReadState::default();
+    let served = Arc::new(AtomicBool::new(false));
+    let in_flight = Arc::new(AtomicUsize::new(0));
+    let (activity, mut activity_rx) = watch::channel(None::<tokio::time::Instant>);
     let stream = UpgradeReadGate {
         stream,
         state: state.clone(),
+        activity: activity.clone(),
+        served: served.clone(),
     };
+    let served_in_connection = served.clone();
+    let in_flight_in_connection = in_flight.clone();
+    let activity_in_connection = activity.clone();
     let service = service_fn(move |request| {
-        // This must run before returning a future: Hyper can poll read again
-        // before it polls that future. Invalid upgrade requests close anyway.
+        served_in_connection.store(true, Ordering::Relaxed);
         let lease = if is_upgrade(&request)
             && matches!(request.uri().path(), "/ws" | "/runtime/ws")
             && acceptor::websocket_accept(request.headers()).is_some()
@@ -347,12 +446,121 @@ where
         } else {
             None
         };
-        handler(request, lease)
+        activity_in_connection.send_replace(Some(tokio::time::Instant::now()));
+        in_flight_in_connection.fetch_add(1, Ordering::Relaxed);
+        let in_flight = InFlightRequest(in_flight_in_connection.clone());
+        let activity = activity_in_connection.clone();
+        let handler = handler(request, lease);
+        async move {
+            let result = handler.await;
+            match result {
+                Ok(response) => {
+                    let held = if crate::mutants::on("native-http-inflight-body-off") {
+                        drop(in_flight);
+                        activity.send_replace(Some(tokio::time::Instant::now()));
+                        None
+                    } else {
+                        Some((in_flight, activity))
+                    };
+                    Ok(response.map(|body| IdleBody { body, held }.boxed()))
+                }
+                Err(error) => {
+                    drop(in_flight);
+                    Err(error)
+                }
+            }
+        }
     });
-    http1::Builder::new()
+    let mut builder = http1::Builder::new();
+    if native {
+        builder.title_case_headers(true).auto_date_header(false);
+        if !crate::mutants::on("native-http-header-count-off") {
+            if crate::mutants::on("native-http-header-cap-low") {
+                builder.max_headers(3000);
+            } else {
+                builder.max_headers(16384);
+            }
+        }
+    }
+    let connection = builder
         .serve_connection(TokioIo::new(stream), service)
-        .with_upgrades()
-        .await
+        .with_upgrades();
+    let Some(stop) = stop else {
+        return connection.await;
+    };
+    tokio::pin!(connection);
+    let idle = async {
+        if crate::mutants::on("native-http-keep-alive-timeout-off") {
+            std::future::pending::<()>().await;
+        }
+        let buffer = if crate::mutants::on("native-http-idle-close-buffer-off") {
+            std::time::Duration::ZERO
+        } else if crate::mutants::on("native-http-idle-close-buffer-half") {
+            std::time::Duration::from_millis(500)
+        } else {
+            NODE_KEEP_ALIVE_TIMEOUT_BUFFER
+        };
+        loop {
+            let deadline = activity_rx
+                .borrow_and_update()
+                .map(|at| at + NODE_KEEP_ALIVE_TIMEOUT + buffer);
+            let Some(deadline) = deadline else {
+                if activity_rx.changed().await.is_err() {
+                    std::future::pending::<()>().await;
+                }
+                continue;
+            };
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline) => {
+                    if in_flight.load(Ordering::Relaxed) > 0 {
+                        if activity_rx.changed().await.is_err() {
+                            std::future::pending::<()>().await;
+                        }
+                        continue;
+                    }
+                    return;
+                }
+                _ = activity_rx.changed() => {}
+            }
+        }
+    };
+    tokio::pin!(idle);
+    let mut stop = Some(stop);
+    loop {
+        tokio::select! {
+            result = &mut connection => return result,
+            changed = async {
+                match stop.as_mut() {
+                    Some(receiver) => receiver
+                        .wait_for(|stopped| *stopped)
+                        .await
+                        .map(|stopped| *stopped),
+                    None => std::future::pending::<
+                        Result<bool, tokio::sync::watch::error::RecvError>,
+                    >()
+                    .await,
+                }
+            } => {
+                if changed.is_err() {
+                    stop = None;
+                    continue;
+                }
+                let idle_now = (served.load(Ordering::Relaxed)
+                    && (in_flight.load(Ordering::Relaxed) == 0
+                        || crate::mutants::on("native-http-inflight-close")))
+                    || crate::mutants::on("native-http-unserved-close");
+                if idle_now && !crate::mutants::on("native-http-idle-close-off") {
+                    connection.as_mut().graceful_shutdown();
+                }
+                stop = None;
+                continue;
+            }
+            _ = &mut idle => {
+                connection.as_mut().graceful_shutdown();
+                return connection.as_mut().await;
+            }
+        }
+    }
 }
 
 #[cfg(test)]

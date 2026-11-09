@@ -359,7 +359,7 @@ impl GatewayServices {
         admission: std::sync::Arc<crate::runtime::session::SessionAdmission>,
         async_hooks: crate::runtime::async_hooks::AsyncHookRegistry,
     ) -> Self {
-        let cwd = crate::config::absolute_cwd(&cwd);
+        let cwd = crate::config::absolute_cwd(&cwd).unwrap_or(cwd);
         let home = if home.as_os_str().is_empty() {
             home
         } else {
@@ -382,14 +382,15 @@ impl GatewayServices {
     }
     pub(crate) fn from_env() -> Self {
         use crate::runtime::async_hooks::{AsyncHookRegistry, TokioHookClock};
-        let metadata = crate::metadata::Metadata::from_env();
+        let metadata = crate::metadata::Metadata::from_env().ok().flatten();
         Self::new(
             metadata
                 .as_ref()
                 .map(|m| m.home.clone())
                 .unwrap_or_default(),
             metadata
-                .map(|m| m.cwd)
+                .as_ref()
+                .map(|m| m.cwd.clone())
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
             Default::default(),
             AsyncHookRegistry::new(std::sync::Arc::new(TokioHookClock), |_| None, |_, _| {}),

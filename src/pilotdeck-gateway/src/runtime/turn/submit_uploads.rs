@@ -97,8 +97,10 @@ fn resolve_blocking(
             .to_utf8()
             .map_err(|_| invalid("cwd must be a valid filesystem path."))?;
         let metadata = Arc::new(Metadata {
-            home: metadata::resolve_process_path(Path::new(&cwd), pilot_home),
-            cwd: metadata::resolve_process_path(Path::new(""), Path::new(&cwd)),
+            home: metadata::resolve_process_path(Path::new(&cwd), pilot_home)
+                .map_err(|error| SubmitError::new("gateway_submit_failed", error.to_string()))?,
+            cwd: metadata::resolve_process_path(Path::new(""), Path::new(&cwd))
+                .map_err(|error| SubmitError::new("gateway_submit_failed", error.to_string()))?,
             files: NativeFiles,
         });
         let project = turn
@@ -114,7 +116,11 @@ fn resolve_blocking(
             })?;
         let root = metadata::resolved_identity(&metadata.cwd, project)
             .ok_or_else(|| SubmitError::new("PROJECT_NOT_FOUND", "Unknown projectKey."))?;
-        if Path::new(&root) != metadata.home && !metadata.has_registered_project(Path::new(&root)) {
+        if Path::new(&root) != metadata.home
+            && !metadata
+                .has_registered_project(Path::new(&root))
+                .map_err(|error| SubmitError::new("gateway_submit_failed", error.to_string()))?
+        {
             return Err(SubmitError::new("PROJECT_NOT_FOUND", "Unknown projectKey."));
         }
         let store = upload_store(metadata);
@@ -196,17 +202,32 @@ pub(crate) fn upload_store(metadata: Arc<Metadata>) -> Arc<UploadStore> {
     let registry = metadata.clone();
     let store = Arc::new(UploadStore::new(UploadStoreOptions::new(
         move |key| {
-            let root = metadata::resolve(&registry.cwd, key);
-            if root != registry.home && !registry.has_registered_project(&root) {
+            let root = metadata::resolve(
+                &registry.cwd,
+                &key.to_utf8().map_err(|_| {
+                    UploadError::dialog("PROJECT_NOT_FOUND", "Invalid projectKey.")
+                })?,
+            );
+            if root != registry.home
+                && !registry
+                    .has_registered_project(&root)
+                    .map_err(|error| UploadError::dialog("gateway_submit_failed", error.to_string()))?
+            {
+                let label = key
+                    .to_utf8()
+                    .map(JsString::from)
+                    .unwrap_or_else(|_| key.clone());
                 return Err(UploadError::dialog(
                     "PROJECT_NOT_FOUND",
-                    format!("Unknown projectKey: {key}"),
+                    format!("Unknown projectKey: {}", String::from_utf16_lossy(label.units())),
                 ));
             }
             Ok(root)
         },
         move || {
-            let projects = metadata.list_projects();
+            let projects = metadata
+                .list_projects()
+                .map_err(|error| UploadError::dialog("gateway_submit_failed", error.to_string()))?;
             let Some(JsValue::Array(projects)) = projects.get("projects") else {
                 return Err(UploadError::dialog(
                     "PROJECT_NOT_FOUND",
@@ -253,7 +274,7 @@ fn upload_error(error: UploadError) -> SubmitError {
         } else {
             &error.code
         },
-        error.message,
+        error.message_string(),
     )
 }
 

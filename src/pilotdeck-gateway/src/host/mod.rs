@@ -505,6 +505,47 @@ impl HostClient {
             }
         }
     }
+    pub async fn connect_tcp(
+        host: &str,
+        port: u16,
+        connect_timeout: Option<std::time::Duration>,
+        expected_module_id: Option<&JsString>,
+        limits: Limits,
+    ) -> Result<Self, HostError> {
+        limits.validate()?;
+        let mut connection =
+            Connection::connect_tcp(host, port, connect_timeout, limits).await?;
+        let handshake = timeout(
+            limits.handshake_timeout,
+            handshake(&mut connection, expected_module_id, None),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Err(HostError::new(
+                HostErrorKind::Timeout,
+                "Sidecar handshake timed out.",
+            ))
+        });
+        match handshake {
+            Ok((binding, ack_enabled, cancel_enabled)) => Ok(Self {
+                connection,
+                binding,
+                ack_enabled,
+                cancel_enabled,
+                limits,
+                reconnect_command: None,
+                reconnect_attempted: false,
+                reconnect_succeeded: false,
+                #[cfg(test)]
+                test_signals: tests::ExecutionSignals::default(),
+            }),
+            Err(mut error) => {
+                let _ = connection.close().await;
+                append_diagnostic(&mut error, &connection);
+                Err(error)
+            }
+        }
+    }
     /// Opt in only when this command reconnects to a retained stream owner.
     /// Own the original builder so cwd, env_clear, env removals and platform
     /// options survive replacement exactly. No second execute is ever sent.

@@ -141,11 +141,14 @@ impl SubmitHostServices for Fake {
     }
     fn prepare_attachment_turn<'a>(
         &'a self,
-        _: &'a JsValue,
-        attachments: Vec<JsValue>,
-        _: Option<&JsString>,
-        _: Option<&JsString>,
+        input: &'a JsValue,
+        _: &'a RunRef,
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
+        let attachments = input
+            .get("attachments")
+            .and_then(JsValue::as_array)
+            .map(|values| values.as_slice())
+            .unwrap_or(&[]);
         self.attachments_seen.lock().unwrap().push(
             attachments
                 .iter()
