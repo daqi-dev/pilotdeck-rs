@@ -135,6 +135,11 @@ impl CompactionOrchestrator {
                 .as_ref()
                 .and_then(|s| s.downcast_ref::<Cancellation>())
                 .cloned();
+            value.transport_signal = input
+                .abort_signal
+                .as_ref()
+                .and_then(|s| s.downcast_ref::<crate::runtime::network::Cancellation>())
+                .cloned();
             value
         };
         let result = summary

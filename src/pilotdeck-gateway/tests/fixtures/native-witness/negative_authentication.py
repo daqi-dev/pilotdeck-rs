@@ -88,7 +88,7 @@ cases = [
     ('settle-no-wait', collector, '                if stable >= 3:', '                if stable >= 1:', 'test_settle_three_samples'),
     ('settle-ignore-append', collector, 'stable = stable + 1 if after == previous else 1', 'stable = stable + 1', 'test_settle_resets_on_write'),
     ('settle-accept-running', collector, "registry_terminal = record.get('state') in SESSION_TERMINAL_STATES", 'registry_terminal = True', 'test_settle_timeout_not_run'),
-    ('settle-timeout-scores', collector, "return None, identity, dict(source, collectionError='落盘未完成' + detail)", "return last[0], identity, dict(source, collectionError='落盘未完成' + detail)", 'test_settle_timeout_not_run'),
+    ('settle-timeout-scores', collector, "return None, identity, dict(source, collectionError='落盘未完成' + detail,", "return retained, identity, dict(source, collectionError='落盘未完成' + detail,", 'test_settle_timeout_not_run'),
     ('settle-ignore-deadline', collector, 'end = min(deadline, time.monotonic() + SESSION_SETTLE_LIMIT_SECONDS)', 'end = time.monotonic() + SESSION_SETTLE_LIMIT_SECONDS', 'test_settle_timeout_not_run'),
     ('settle-final-means-durable', collector, '    previous, stable, last, last_error = None, 0, None, None', '    return read_observation(home, project, session, run_id, received, request_id, retain=True)\n    previous, stable, last, last_error = None, 0, None, None', 'test_settle_mock_final_before_disk'),
     ('settle-drop-reason', session, "'detail': reasons.get(case) or 'observation missing'", "'detail': 'observation missing'", 'test_settle_timeout_not_run'),

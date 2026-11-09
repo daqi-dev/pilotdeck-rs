@@ -101,8 +101,8 @@ with mutating_sources(repo, [source, connection]) as snapshots:
         ('stale-publisher-record', source, '            self.coordinator.record_registered(\n                &self.publication.run.session_key,\n                event,\n                &self._registration,\n            );', '            self.coordinator.record(&self.publication.run.session_key, event);', 'late_old_publisher_cannot_corrupt_reused_run_or_detach_successor'),
         ('stale-publisher-retain', source, '                    self.coordinator.retain_terminal_registered(\n                        &self.publication.run.session_key,\n                        &self.publication.run.run_id,\n                        &self._registration,\n                    );', '                    self.coordinator.retain_terminal(&self.publication.run.session_key, &self.publication.run.run_id);', 'late_old_publisher_cannot_corrupt_reused_run_or_detach_successor'),
         ('file-adapter-skips-durable', source,
-         '            return self.call(move |registry| registry.append(&run, &event));',
-         '            return self.call(move |_registry| { let _ = (&run, &event); Ok(()) });',
+         '        if self.stimulus.is_none() {\n            return self.call(move |registry| registry.append(&run, &event));\n        }',
+         '        if self.stimulus.is_none() {\n            return self.call(move |_registry| { let _ = (&run, &event); Ok(()) });\n        }',
          'file_registry_publication_preserves_fifo_across_workers'),
     ]
     summary = []

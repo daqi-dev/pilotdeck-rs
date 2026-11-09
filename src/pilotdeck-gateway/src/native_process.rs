@@ -485,6 +485,11 @@ mod tests;
 
 #[cfg(test)]
 mod channel_lifecycle_tests;
+#[cfg(all(test, unix))]
+mod hard_endpoint_interaction_tests;
+#[cfg(all(test, unix))]
+#[path = "channel/telegram/actual_host_tests.rs"]
+mod telegram_actual_host_tests;
 
 mod channel_search;
 

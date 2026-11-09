@@ -86,6 +86,7 @@ fn recovery_preserves_live_owner_and_reports_missing_backup() {
             "transactionId",
         ),
     )
+    .unwrap()
     .unwrap();
     set(&mut record, "version", JsValue::Number(1.));
     // TS honors an owner field even on a v1 journal. Remove that live owner
@@ -112,6 +113,7 @@ fn finalize_rollback_restores_original_raw_bytes_and_commit_keeps_new_bytes() {
             .nth(2)
             .unwrap(),
     )
+    .unwrap()
     .unwrap()
     .get("transactionId")
     .unwrap()
@@ -423,4 +425,234 @@ fn write_and_read_refuse_symlink_ancestor_without_touching_outside() {
     assert!(!outside.0.join("payload").exists());
     fs::write(outside.0.join("original"), b"keep").unwrap();
     assert!(read_bytes(&scratch.0.join("alias/original")).is_err());
+}
+
+#[test]
+fn unreadable_journal_preserves_transcript_and_every_sidecar() {
+    let scratch = Scratch::new();
+    let (path, backup, journal) = transaction(&scratch.0, b"original", b"current", None);
+    fs::remove_file(&journal).unwrap();
+    fs::create_dir(&journal).unwrap(); // EISDIR cannot be treated as a missing journal.
+    let report = recover_chats(std::slice::from_ref(&scratch.0));
+    assert_eq!(report.failures.len(), 1);
+    assert_eq!(report.rolled_back, 0);
+    assert_eq!(fs::read(path).unwrap(), b"current");
+    assert_eq!(fs::read(backup).unwrap(), b"original");
+    assert!(journal.is_dir());
+}
+
+fn accepted_line(session: &str) -> Vec<u8> {
+    body(&[object([
+        ("type", string("accepted_input")),
+        ("sessionId", string(session)),
+        ("sequence", JsValue::Number(1.)),
+        ("entryId", string("input")),
+        ("turnId", string("old")),
+        ("createdAt", string("2026-01-01T00:00:00.000Z")),
+        (
+            "messages",
+            json(r#"[{"role":"user","content":[{"type":"text","text":"original prompt"}]}]"#),
+        ),
+    ])])
+    .unwrap()
+}
+
+#[tokio::test]
+async fn public_delete_removes_replacement_artifacts_before_session_key_reuse() {
+    use crate::runtime::turn::gateway::GatewayRequests;
+    let (_scratch, requests) = super::super::management_tests::setup();
+    let chat = super::super::methods::session_dir::bounded_chat_dir(
+        &requests.options.home,
+        &requests.options.project,
+    )
+    .unwrap();
+    fs::create_dir_all(&chat).unwrap();
+    let (path, backup, journal) = transaction(&chat, &accepted_line("session"), b"", None);
+    let other = chat.join(".session.not-a-uuid.replace.bak");
+    fs::write(&other, b"unrelated").unwrap();
+    requests
+        .request(
+            "delete_session".into(),
+            object([
+                (
+                    "projectKey",
+                    string(requests.options.project.to_string_lossy().as_ref()),
+                ),
+                ("sessionKey", string("session")),
+            ]),
+        )
+        .await
+        .unwrap();
+    assert!(!path.exists() && !backup.exists() && !journal.exists());
+    assert_eq!(fs::read(&other).unwrap(), b"unrelated");
+    let fresh = b"{\"type\":\"accepted_input\",\"turnId\":\"fresh-session\"}\n";
+    fs::write(&path, fresh).unwrap();
+    let report = recover_chats(&[chat]);
+    assert!(report.failures.is_empty());
+    assert_eq!(report.rolled_back, 0);
+    assert_eq!(fs::read(path).unwrap(), fresh);
+    requests.project.dispose().await.unwrap();
+    requests.owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn concurrent_source_forks_publish_distinct_targets_and_keep_source() {
+    let (_scratch, requests) = super::super::management_tests::setup();
+    let chat = super::super::methods::session_dir::bounded_chat_dir(
+        &requests.options.home,
+        &requests.options.project,
+    )
+    .unwrap();
+    fs::create_dir_all(&chat).unwrap();
+    let original = accepted_line("session");
+    fs::write(chat.join("session.jsonl"), &original).unwrap();
+    let ports = storage(
+        requests.options.home.clone(),
+        requests.options.project.clone(),
+        requests.owner.clone(),
+    );
+    let fork = ports.fork_session.unwrap();
+    let input = object([
+        ("sessionKey", string("session")),
+        ("fromEntryId", string("input")),
+    ]);
+    let (left, right) = tokio::join!(fork(input.clone()), fork(input));
+    let left = left.unwrap();
+    let right = right.unwrap();
+    let left = field(&left, "newSessionKey").as_string().unwrap();
+    let right = field(&right, "newSessionKey").as_string().unwrap();
+    assert_ne!(left, right);
+    for key in [left, right] {
+        assert!(
+            chat.join(format!("{}.jsonl", sanitize_session_id(key)))
+                .is_file()
+        );
+    }
+    assert_eq!(fs::read(chat.join("session.jsonl")).unwrap(), original);
+    requests.project.dispose().await.unwrap();
+    requests.owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn aliased_transcript_replacements_cannot_both_rewrite_the_old_turn() {
+    let (_scratch, requests) = super::super::management_tests::setup();
+    let chat = super::super::methods::session_dir::bounded_chat_dir(
+        &requests.options.home,
+        &requests.options.project,
+    )
+    .unwrap();
+    fs::create_dir_all(&chat).unwrap();
+    fs::write(chat.join("a-b.jsonl"), accepted_line("a/b")).unwrap();
+    let replace = storage(
+        requests.options.home.clone(),
+        requests.options.project.clone(),
+        requests.owner.clone(),
+    )
+    .replace_last_turn
+    .unwrap();
+    let input = |key: &str, turn: &str| {
+        object([
+            ("sessionKey", string(key)),
+            ("expectedTurnId", string("old")),
+            ("replacementTurnId", string(turn)),
+        ])
+    };
+    let (left, right) = tokio::join!(
+        replace(input("a/b", "left")),
+        replace(input("a-b", "right"))
+    );
+    assert_eq!(
+        usize::from(left.is_ok()) + usize::from(right.is_ok()),
+        1,
+        "{left:?}; {right:?}"
+    );
+    assert_eq!(
+        fs::read_dir(&chat)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".replace.bak"))
+            .count(),
+        1
+    );
+    requests.project.dispose().await.unwrap();
+    requests.owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn real_storage_commit_during_active_turn_unlinks_only_its_sidecars() {
+    let (_scratch, requests) = super::super::management_tests::setup();
+    let chat = super::super::methods::session_dir::bounded_chat_dir(
+        &requests.options.home,
+        &requests.options.project,
+    )
+    .unwrap();
+    fs::create_dir_all(&chat).unwrap();
+    let (path, backup, journal) = transaction(&chat, b"backup", b"accepted new bytes", None);
+    let record = parse_json(&fs::read_to_string(&journal).unwrap()).unwrap();
+    let key = JsString::from("session");
+    let run = JsString::from("active-run");
+    let turn = requests.owner.begin_turn(&key, &run).unwrap();
+    let writer = crate::runtime::session::transcript_locks::cold_write_lease(&path).unwrap();
+    let finalize = storage(
+        requests.options.home.clone(),
+        requests.options.project.clone(),
+        requests.owner.clone(),
+    )
+    .finalize_last_turn_replacement
+    .unwrap();
+    finalize(object([
+        ("sessionKey", string("session")),
+        ("transactionId", field(&record, "transactionId").clone()),
+        ("action", string("commit")),
+    ]))
+    .await
+    .unwrap();
+    assert_eq!(fs::read(path).unwrap(), b"accepted new bytes");
+    assert!(!backup.exists() && !journal.exists());
+    drop(writer);
+    requests.owner.end_turn(&key, Some(&run), Some(&turn));
+    requests.project.dispose().await.unwrap();
+    requests.owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn source_fork_waits_for_the_canonical_transcript_fence() {
+    let (_scratch, requests) = super::super::management_tests::setup();
+    let chat = super::super::methods::session_dir::bounded_chat_dir(
+        &requests.options.home,
+        &requests.options.project,
+    )
+    .unwrap();
+    fs::create_dir_all(&chat).unwrap();
+    let path = chat.join("session.jsonl");
+    let original = accepted_line("session");
+    fs::write(&path, &original).unwrap();
+    let fence = crate::runtime::session::transcript_locks::acquire(&path)
+        .await
+        .unwrap();
+    let fork = storage(
+        requests.options.home.clone(),
+        requests.options.project.clone(),
+        requests.owner.clone(),
+    )
+    .fork_session
+    .unwrap();
+    let mut pending = fork(object([
+        ("sessionKey", string("session")),
+        ("fromEntryId", string("input")),
+    ]));
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), &mut pending)
+            .await
+            .is_err(),
+        "a held canonical fence must block the actual source read"
+    );
+    assert_eq!(fs::read(&path).unwrap(), original);
+    drop(fence);
+    tokio::time::timeout(std::time::Duration::from_secs(5), pending)
+        .await
+        .unwrap()
+        .unwrap();
+    requests.project.dispose().await.unwrap();
+    requests.owner.shutdown().await.unwrap();
 }

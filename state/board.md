@@ -5489,3 +5489,12 @@ Draft #2786 保持2b72c477未合并。mbp2 r37完整Gateway/CLI nextest实际775
 ### 2026-11-10 · Gateway 整合 r43 接续（未收口）
 
 整合树继续由 Codex 独占，统一 CLI/前端树及旧快照未改。已逐块接入 main #2498 四提交，保留 native reliable durability budget；当前 main 固定 0f4c64b43，产品增量无遗漏。r40 严格 clippy/四 bin 通过；15 项定向复验中通知顺序、附件接入和渠道 fixture 仍有失败，旧原件保留。现已实现内部 typed 渠道附件缓存授权（普通 WS 不放宽）、Weixin 出站媒体、可选浏览器 provider 嵌入与配置通知就绪 checkpoint；r43 在 mbp2 编译及定向回归，未以候选冒充通过。本机只编辑与静态检查，未构建。Linux r38 数据恢复/lineage/后台归档真实验证通过；53 两轮原始严格差异仍红（TS25/Rust48），新增23均定位为跨通道交错，未改尺子；72 原生采集仍有缺项，独立修 collector。SOP/MCP/AO/重连/后台停止已完成5轮双端产品实测，正式 session suite 接线继续。证据主索引仍 _tmp/20261110-gateway-integration/；机械替换零命中规则见 state/memory/20261110-checked-source-edits.md。下一步以同一固定头完成附件/停机负例、正式采集及独立双谱系评审，再更新 Draft PR #2786。
+
+
+### 2026-11-10 · r45 整合与实测仲裁接续（未收口）
+
+当前HEAD6c3277c19；r43严格clippy/四bin通过，98项定向93过5失败，不混算此前各批。微信CDN关闭竞态、飞书附件后吞final、会话删除后旧replacement sidecar复活风险已补候选；真实Server通知顺序与旧回放夹具冲突，经固定TS五次实测定位为夹具未模拟setImmediate Pending，保留golden并修夹具。r45清单390c240c绑定5098文件，整合真实模型压缩/预算/回合钩子与取消、FIFO witness独立实例/RunRef/nonce作用域及四平台交互consumer；mbp2首次fmt因可用15.4GiB低于20GiB闸门退出76，未运行编译，不绕闸；正在清本任务automation独占可重建incremental并复跑。两家非作者数据和压缩增量评审在跑，正式72采集/完整session suite/退役门仍未通过。原CLI/app/GPUI/file_edit树、快照与Draft2786均保留，未切换统一目录；证据_tmp/20261110-gateway-integration/。下一步同头真实渠道/压缩/数据/取消回归，静态与真实负控复算后提交推送；全量回归、正式验收与最终handoff仍必须完成。
+
+### 2026-11-10 · r50 持久数据与渠道控制接续（未收口）
+
+Draft #2786 已推6c3277c19，当前继续本地共同候选。r49 mbp2严格clippy/四bin与2项真实取消信号测试通过；304定向302过2失败。r50严格检查/四bin通过，101定向100过1失败；新目录句柄安全重开与刷盘、删除失败保备份/写者占用拒绝、portable孤儿清理、通知夹具和SOP/durable压缩作用域均已取得相应证据。飞书/new已能重置；剩余actual失败暴露渠道控制没有接abort_turn，已补共享owner精确取消候选，待编译及真实回放；测试CLI隔离注入亦待下一批。三条TS渠道异常只新增未批准差异，不增判分豁免。mbp2空间闸曾拒跑r48 targeted，未绕过；本任务已完成编译的rcgu.o可重建缓存2709项（逻辑8.18GB）经清单SHA后清理，源码/冻结bin/原log保留。cb8新collector复采使同45b版本适用54项12→14 WITNESSED，余项仍NOT_RUN；四拓扑、session全域、retirement、最终回归及人工签字仍未闭合。main已固定ad3710106待批量逐块收取；原CLI/app/GPUI/file_edit目录及快照未动。本机无Rust编译。证据主仓_tmp/20261110-gateway-integration/，下一步收main与真实渠道新缺项，在干净HEAD复算负控并继续正式采集，不把分批通过数相加为最终成绩。

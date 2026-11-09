@@ -433,8 +433,22 @@ impl Requests {
         let key_clone = key.clone();
         let project_clone = project_root.clone();
         let (chat_dir, permit) = resolve_chat_dir(home.clone(), project_root.clone()).await?;
+        let transcript = chat_dir.join(format!(
+            "{}.jsonl",
+            crate::storage::sanitize_session_id(&key)
+        ));
+        let lease_path = transcript.clone();
+        let writer = tokio::task::spawn_blocking(move || {
+            transcript_locks::cold_write_lease(&lease_path)
+                .ok_or_else(transcript_locks::writer_busy_error)
+        })
+        .await
+        .map_err(|error| RequestError::new(error.to_string()))??;
+        let fence = transcript_locks::acquire(&transcript).await?;
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
+            let _writer = writer;
+            let _fence = fence;
             let adapter = AsyncTranscriptAdapter::new(
                 Arc::new(JsonlTranscriptStore::new_bounded()),
                 Arc::new(move |_: &ProjectKey| chat_dir.clone()),
@@ -469,6 +483,10 @@ impl Requests {
                 std::fs::remove_file(&storage.transcript_path)
                     .map_err(|e| RequestError::new(e.to_string()))?;
             }
+            // A failed delete must preserve rollback data. Only a completed
+            // transcript deletion invalidates these replacement transactions.
+            crate::storage::replacement_artifacts::discard(&storage.transcript_path)
+                .map_err(|e| RequestError::new(e.to_string()))?;
             // Remove file history and tool results directories.
             for dir in [
                 &storage.file_history_dir,
@@ -1349,6 +1367,83 @@ mod tests {
     /// #2392: `clearSdkSessionState` runs only after every storage delete
     /// succeeded (createLocalGateway.ts:1150-1160); `SESSION_NOT_FOUND`
     /// leaves before any clear, so the seeded rows survive the refusal.
+    #[tokio::test]
+    async fn failed_transcript_unlink_preserves_replacement_backup_and_journal() {
+        let (_scratch, requests) = crate::native_process::management_tests::setup();
+        let key: JsString = "failed-delete-with-backup".into();
+        let storage = _make_adapter(&requests)
+            .create_session_storage(SessionStorageInput {
+                project_root: requests.options.project.clone(),
+                pilot_home: requests.options.home.clone(),
+                session_id: key.clone(),
+                now: None,
+            })
+            .unwrap();
+        std::fs::create_dir_all(storage.transcript_path.parent().unwrap()).unwrap();
+        std::fs::create_dir(&storage.transcript_path).unwrap();
+        let parent = storage.transcript_path.parent().unwrap();
+        let safe = storage
+            .transcript_path
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap();
+        let id = uuid::Uuid::new_v4();
+        let backup = parent.join(format!(".{safe}.{id}.replace.bak"));
+        let journal = parent.join(format!(".{safe}.{id}.replace.json"));
+        std::fs::write(&backup, b"original rollback bytes").unwrap();
+        std::fs::write(&journal, b"original journal bytes").unwrap();
+        let error = requests
+            .session_delete(&object([("sessionKey", JsValue::String(key))]))
+            .await;
+        assert!(error.is_err(), "unlink of a directory must fail");
+        assert_eq!(std::fs::read(&backup).unwrap(), b"original rollback bytes");
+        assert_eq!(std::fs::read(&journal).unwrap(), b"original journal bytes");
+        assert!(storage.transcript_path.is_dir());
+    }
+
+    #[tokio::test]
+    async fn session_delete_preserves_all_files_while_another_writer_owns_the_transcript() {
+        let (_scratch, requests) = crate::native_process::management_tests::setup();
+        let key: JsString = "delete-writer-busy".into();
+        let storage = _make_adapter(&requests)
+            .create_session_storage(SessionStorageInput {
+                project_root: requests.options.project.clone(),
+                pilot_home: requests.options.home.clone(),
+                session_id: key.clone(),
+                now: None,
+            })
+            .unwrap();
+        let parent = storage.transcript_path.parent().unwrap();
+        std::fs::create_dir_all(parent).unwrap();
+        std::fs::write(&storage.transcript_path, b"owned transcript\n").unwrap();
+        let backup = parent.join(format!(
+            ".delete-writer-busy.{}.replace.bak",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::write(&backup, b"rollback bytes").unwrap();
+        std::fs::create_dir_all(&storage.file_history_dir).unwrap();
+        let history = storage.file_history_dir.join("owned-history");
+        std::fs::write(&history, b"history bytes").unwrap();
+        let lease = transcript_locks::cold_write_lease(&storage.transcript_path).unwrap();
+        let params = object([("sessionKey", JsValue::String(key))]);
+        let error = requests.session_delete(&params).await.unwrap_err();
+        assert_eq!(error.code.as_str(), "SESSION_WRITER_BUSY");
+        assert_eq!(
+            std::fs::read(&storage.transcript_path).unwrap(),
+            b"owned transcript\n"
+        );
+        assert_eq!(std::fs::read(&backup).unwrap(), b"rollback bytes");
+        assert_eq!(std::fs::read(&history).unwrap(), b"history bytes");
+        drop(lease);
+        requests.session_delete(&params).await.unwrap();
+        assert!(!storage.transcript_path.exists());
+        assert!(!backup.exists());
+        assert!(!storage.file_history_dir.exists());
+        requests.owner.shutdown().await.unwrap();
+        requests.project.dispose().await.unwrap();
+    }
+
     #[tokio::test]
     async fn session_delete_not_found_keeps_the_sdk_session_state() {
         let (_scratch, requests) = crate::native_process::management_tests::setup();

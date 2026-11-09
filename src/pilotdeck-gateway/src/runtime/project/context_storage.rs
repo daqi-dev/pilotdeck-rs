@@ -73,6 +73,156 @@ pub struct SessionContextOptions {
     /// retrieval and instruction discovery use it; otherwise the generation's
     /// project root is used (`ProjectSessionRuntimeBundle.ts:518,572`).
     pub host_workspace_root: Option<PathBuf>,
+    /// Per-session compaction owner; model/router belongs to its generation.
+    pub compaction: Option<Arc<crate::runtime::context::compaction::engine::port::CompactionPort>>,
+}
+
+/// TS compaction model calls use the owning session and fixed compact turn.
+struct CompactModel {
+    inner: Arc<dyn crate::host::modules::model::ModelExecution>,
+    session: pilotdeck_protocol::JsString,
+}
+impl crate::host::modules::model::ModelExecution for CompactModel {
+    fn prepare(
+        &self,
+        mut input: crate::host::modules::model::PrepareInput,
+    ) -> crate::host::modules::model::ModelFuture<crate::host::modules::model::PreparedInvocation>
+    {
+        input
+            .context
+            .insert("sessionId".into(), JsValue::String(self.session.clone()));
+        input.context.insert("turnId".into(), "compact".into());
+        self.inner.prepare(input)
+    }
+    fn stream(
+        &self,
+        mut input: crate::host::modules::model::StreamInput,
+    ) -> crate::host::modules::model::ModelFuture<Box<dyn crate::host::modules::model::ModelStream>>
+    {
+        input
+            .context
+            .insert("sessionId".into(), JsValue::String(self.session.clone()));
+        input.context.insert("turnId".into(), "compact".into());
+        self.inner.stream(input)
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct CompactScope {
+    lifecycle: Option<Arc<dyn crate::host::modules::lifecycle::LifecyclePort>>,
+    session: pilotdeck_protocol::JsString,
+    cwd: pilotdeck_protocol::JsString,
+    emit: Arc<dyn Fn(JsValue) -> bool + Send + Sync>,
+}
+impl CompactScope {
+    pub(crate) fn new(
+        lifecycle: Option<Arc<dyn crate::host::modules::lifecycle::LifecyclePort>>,
+        session: pilotdeck_protocol::JsString,
+        cwd: pilotdeck_protocol::JsString,
+        emit: Arc<dyn Fn(JsValue) -> bool + Send + Sync>,
+    ) -> Self {
+        Self {
+            lifecycle,
+            session,
+            cwd,
+            emit,
+        }
+    }
+}
+impl CompactScope {
+    pub(crate) fn with_emit(mut self, emit: Arc<dyn Fn(JsValue) -> bool + Send + Sync>) -> Self {
+        self.emit = emit;
+        self
+    }
+}
+tokio::task_local! { static COMPACT_SCOPE: CompactScope; }
+pub(crate) fn current_compact_scope() -> Option<CompactScope> {
+    COMPACT_SCOPE.try_with(Clone::clone).ok()
+}
+pub(crate) async fn with_compact_scope<F: std::future::Future>(
+    scope: Option<CompactScope>,
+    future: F,
+) -> F::Output {
+    match scope {
+        Some(scope) => COMPACT_SCOPE.scope(scope, future).await,
+        None => future.await,
+    }
+}
+struct CompactLifecycle;
+impl crate::runtime::context::compaction::engine::CompactionLifecycle for CompactLifecycle {
+    fn dispatch(&self, event: &'static str, payload: JsValue) -> crate::host::HostFuture<()> {
+        let scope = COMPACT_SCOPE.try_with(Clone::clone).ok();
+        Box::pin(async move {
+            let Some(scope) = scope else {
+                return Ok(());
+            };
+            let mut base = pilotdeck_protocol::JsObject::new();
+            base.insert("sessionId".into(), JsValue::String(scope.session));
+            base.insert("transcriptPath".into(), "".into());
+            base.insert("cwd".into(), JsValue::String(scope.cwd.clone()));
+            base.insert("permissionMode".into(), "default".into());
+            let Some(lifecycle) = scope.lifecycle else {
+                return Ok(());
+            };
+            lifecycle
+                .dispatch(crate::runtime::hooks::LifecycleDispatchInput {
+                    event: event.into(),
+                    base_input: base,
+                    payload: payload.as_object().cloned(),
+                    match_query: Some(event.into()),
+                    cwd: scope.cwd,
+                    env: None,
+                    signal: None,
+                })
+                .await?;
+            Ok(())
+        })
+    }
+}
+/// Compose native budget, policy, model summary and recovery stages.
+/// Caller supplies the model bound to this session's admitted generation.
+pub fn native_compaction(
+    model: Arc<dyn crate::host::modules::model::ModelExecution>,
+    session: pilotdeck_protocol::JsString,
+    provider: pilotdeck_protocol::JsString,
+    model_id: pilotdeck_protocol::JsString,
+) -> Arc<crate::runtime::context::compaction::engine::port::CompactionPort> {
+    use crate::runtime::context::compaction::{
+        MicroCompactionEngine, MicroCompactionEngineOptions, SnipEngine, SnipEngineOptions,
+        engine::{CompactionEngine, CompactionEngineOptions, port::CompactionPort},
+        policy::AutoCompactionPolicy,
+        recovery::ContextOverflowRecovery,
+    };
+    use crate::runtime::model::token_accounting::TokenBudgetManager;
+    let budget = Arc::new(TokenBudgetManager::default());
+    let model = Arc::new(CompactModel {
+        inner: model,
+        session,
+    });
+    let mut summary_options = CompactionEngineOptions::new(model, provider, model_id);
+    let estimate_budget = budget.clone();
+    summary_options.estimate_messages = Some(Arc::new(move |messages| {
+        crate::runtime::context::compaction::engine::port::CompactionBudgetPort::estimate_messages(
+            &*estimate_budget,
+            messages,
+        )
+    }));
+    summary_options.lifecycle = Some(Arc::new(CompactLifecycle));
+    summary_options.event_emitter = Some(Arc::new(|event| {
+        let _ = COMPACT_SCOPE.try_with(|scope| (scope.emit)(event));
+    }));
+    let summary = CompactionEngine::new(summary_options);
+    Arc::new(CompactionPort {
+        budget: Some(budget.clone()),
+        policy: Some(Arc::new(AutoCompactionPolicy::new(budget))),
+        summary: Some(Arc::new(summary)),
+        micro: Some(Arc::new(MicroCompactionEngine::new(
+            MicroCompactionEngineOptions::default(),
+        ))),
+        snip: Some(Arc::new(SnipEngine::new(SnipEngineOptions::default()))),
+        recovery: Some(Arc::new(ContextOverflowRecovery::default())),
+        ..CompactionPort::default()
+    })
 }
 
 /// Owned by one session/context composition. Scoped callers use
@@ -179,6 +329,7 @@ impl ContextStorageResources {
             .unwrap_or(30_000.0);
         let context_runtime = DefaultContextRuntime::new(ContextOptions {
             max_context_tokens,
+            compaction: options.compaction,
             extension: options.extension,
             runtime_context_surface: self.runtime_context_surface,
             instruction_discovery: Some(InstructionDiscovery::from_environment(
@@ -272,5 +423,95 @@ fn convert_runtime_context_surface(
     match value {
         super::RuntimeContextSurface::SystemPrompt => ContextRuntimeContextSurface::SystemPrompt,
         super::RuntimeContextSurface::UserMessage => ContextRuntimeContextSurface::UserMessage,
+    }
+}
+#[cfg(test)]
+mod native_compaction_scope_tests {
+    use super::*;
+    use crate::{
+        host::{HostFuture, modules::lifecycle::LifecyclePort},
+        runtime::{
+            context::compaction::engine::CompactionLifecycle,
+            hooks::{LifecycleDispatchInput, LifecycleDispatchResult},
+        },
+    };
+    use std::sync::Mutex;
+    struct Hooks(Arc<Mutex<Vec<(String, String, String)>>>);
+    impl LifecyclePort for Hooks {
+        fn dispatch(&self, input: LifecycleDispatchInput) -> HostFuture<LifecycleDispatchResult> {
+            let log = self.0.clone();
+            Box::pin(async move {
+                let str_field = |key: &str| {
+                    String::from_utf16_lossy(
+                        input
+                            .base_input
+                            .get(key)
+                            .unwrap()
+                            .as_string()
+                            .unwrap()
+                            .units(),
+                    )
+                };
+                log.lock().unwrap().push((
+                    String::from_utf16_lossy(input.event.units()),
+                    str_field("sessionId"),
+                    str_field("permissionMode"),
+                ));
+                Ok(LifecycleDispatchResult::default())
+            })
+        }
+    }
+    #[tokio::test]
+    async fn callbacks_are_bound_to_current_turn_and_removed_after_call() {
+        let hooks = Arc::new(Mutex::new(Vec::new()));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let run = |session: &str| {
+            let hooks = hooks.clone();
+            let events = events.clone();
+            let session = session.to_owned();
+            async move {
+                let sink = events.clone();
+                let scope = CompactScope::new(
+                    Some(Arc::new(Hooks(hooks))),
+                    session.as_str().into(),
+                    "/project".into(),
+                    Arc::new(move |event| {
+                        sink.lock().unwrap().push(event);
+                        true
+                    }),
+                );
+                with_compact_scope(Some(scope), async {
+                    tokio::task::yield_now().await;
+                    CompactLifecycle
+                        .dispatch("PreCompact", JsValue::Object(Default::default()))
+                        .await
+                        .unwrap();
+                    COMPACT_SCOPE.with(|scope| {
+                        (scope.emit)("compact_start".into());
+                    });
+                    CompactLifecycle
+                        .dispatch("PostCompact", JsValue::Object(Default::default()))
+                        .await
+                        .unwrap();
+                })
+                .await;
+                assert!(COMPACT_SCOPE.try_with(|_| ()).is_err());
+            }
+        };
+        tokio::join!(run("one"), run("two"));
+        let log = hooks.lock().unwrap();
+        assert_eq!(log.len(), 4);
+        for session in ["one", "two"] {
+            let matching: Vec<_> = log.iter().filter(|entry| entry.1 == session).collect();
+            assert_eq!(
+                matching
+                    .iter()
+                    .map(|entry| entry.0.as_str())
+                    .collect::<Vec<_>>(),
+                ["PreCompact", "PostCompact"]
+            );
+            assert!(matching.iter().all(|entry| entry.2 == "default"));
+        }
+        assert_eq!(events.lock().unwrap().len(), 2);
     }
 }

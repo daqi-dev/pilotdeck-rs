@@ -141,7 +141,9 @@ fn new_dir(path: &Path) -> Result<(), ReplacementError> {
     mkdirat(&fd, name, Mode::from_raw_mode(0o700)).map_err(io)
 }
 fn read_bytes(path: &Path) -> Result<Vec<u8>, ReplacementError> {
-    let f = crate::project_files::open_beneath(Path::new("/"), path).map_err(io)?;
+    read_open_artifact(crate::project_files::open_beneath(Path::new("/"), path).map_err(io)?)
+}
+fn read_open_artifact(f: File) -> Result<Vec<u8>, ReplacementError> {
     if !f.metadata().map_err(io)?.is_file() {
         return Err(io("Transcript artifact must be a regular file."));
     }
@@ -266,9 +268,10 @@ pub(super) fn storage(home: PathBuf, fallback: PathBuf, owner: SessionOwner) -> 
                 let permit = super::methods::session_dir::session_io_permit()
                     .await
                     .map_err(request_error)?;
-                let (project, permit) = tokio::task::spawn_blocking(move || {
-                    super::project_scope::registered(&home, &requested)
-                        .map(|project| (project, permit))
+                let (project, chat, permit) = tokio::task::spawn_blocking(move || {
+                    let project = super::project_scope::registered(&home, &requested)?;
+                    let chat = super::methods::session_dir::bounded_chat_dir(&home, &project)?;
+                    Ok::<_, crate::runtime::connection::RequestError>((project, chat, permit))
                 })
                 .await
                 .map_err(io)?
@@ -304,13 +307,29 @@ pub(super) fn storage(home: PathBuf, fallback: PathBuf, owner: SessionOwner) -> 
                             .ok_or_else(|| error("SESSION_BUSY", "Session is busy."))?,
                     )
                 };
+                let path = chat.join(format!("{}.jsonl", sanitize_session_id(&key)));
+                // Raw session keys can alias one stored filename (a/b == a-b).
+                // Reuse the canonical transcript fence, also shared by metadata
+                // and hydration, rather than a process-global storage mutex.
+                // The writer lease precedes the fence, as in the session factory.
+                let writer = if kind == 1 || kind == 2 && !committing {
+                    let lease_path = path.clone();
+                    Some(tokio::task::spawn_blocking(move || {
+                        crate::runtime::session::transcript_locks::cold_write_lease(&lease_path)
+                            .ok_or_else(|| request_error(crate::runtime::session::transcript_locks::writer_busy_error()))
+                    }).await.map_err(io)??)
+                } else {
+                    None
+                };
+                let fence = crate::runtime::session::transcript_locks::acquire(&path)
+                    .await
+                    .map_err(request_error)?;
                 tokio::task::spawn_blocking(move || {
                     let _guard = guard;
                     let _background = background;
                     let _permit = permit;
-                    let chat = super::methods::session_dir::bounded_chat_dir(&state.home, &project)
-                        .map_err(request_error)?;
-                    let path = chat.join(format!("{}.jsonl", sanitize_session_id(&key)));
+                    let _writer = writer;
+                    let _fence = fence;
                     match kind {
                         0 => fork(&state, &input, &project, &chat, &path),
                         1 => replace(&state, &input, &chat, &path),
@@ -1203,9 +1222,17 @@ fn accepted_ids(bytes: &[u8]) -> HashSet<String> {
         .map(|e| text(&e, "turnId"))
         .collect()
 }
-fn read_journal(path: &Path, id: &str) -> Option<JsValue> {
-    let bytes = read_bytes(path).ok()?;
-    let value = parse_json(std::str::from_utf8(&bytes).ok()?).ok()?;
+fn read_journal(path: &Path, id: &str) -> Result<Option<JsValue>, ReplacementError> {
+    let file = match crate::project_files::open_beneath(Path::new("/"), path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(io(e)),
+    };
+    let bytes = read_open_artifact(file)?;
+    Ok(parse_journal(&bytes, id))
+}
+fn parse_journal(bytes: &[u8], id: &str) -> Option<JsValue> {
+    let value = parse_json(std::str::from_utf8(bytes).ok()?).ok()?;
     let version = field(&value, "version").as_number()?;
     if !matches!(version, 1. | 2.)
         || text(&value, "transactionId") != id
@@ -1239,11 +1266,32 @@ fn mtime(path: &Path) -> f64 {
 fn recover_chats(chats: &[PathBuf]) -> RecoveryReport {
     let mut report = RecoveryReport::default();
     let mut groups: HashMap<PathBuf, Vec<Artifact>> = HashMap::new();
+    let mut unreadable = HashSet::new();
+    let mut unreadable_chats = HashSet::new();
     for chat in chats {
-        let Ok(names) = fs::read_dir(chat) else {
-            continue;
+        let names = match fs::read_dir(chat) {
+            Ok(names) => names,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                report.failures.push(RecoveryFailure {
+                    scope: chat.clone(),
+                    message: e.to_string(),
+                });
+                continue;
+            }
         };
-        for name in names.flatten() {
+        for name in names {
+            let name = match name {
+                Ok(name) => name,
+                Err(e) => {
+                    unreadable_chats.insert(chat.clone());
+                    report.failures.push(RecoveryFailure {
+                        scope: chat.clone(),
+                        message: e.to_string(),
+                    });
+                    continue;
+                }
+            };
             let name = name.file_name();
             let Some(name) = name.to_str() else { continue };
             let Some(stem) = name.strip_prefix('.').and_then(|n| {
@@ -1264,13 +1312,23 @@ fn recover_chats(chats: &[PathBuf]) -> RecoveryReport {
                 continue;
             }
             let path = chat.join(format!("{safe}.jsonl"));
-            let artifacts = groups.entry(path).or_default();
+            let artifacts = groups.entry(path.clone()).or_default();
             if artifacts.iter().any(|a| a.id == id) {
                 continue;
             }
             let backup = chat.join(format!(".{safe}.{id}.replace.bak"));
             let journal = chat.join(format!(".{safe}.{id}.replace.json"));
-            let record = read_journal(&journal, id);
+            let record = match read_journal(&journal, id) {
+                Ok(record) => record,
+                Err(e) => {
+                    unreadable.insert(path.clone());
+                    report.failures.push(RecoveryFailure {
+                        scope: journal.clone(),
+                        message: e.to_string(),
+                    });
+                    None
+                }
+            };
             let prepared = record
                 .as_ref()
                 .and_then(|r| chrono::DateTime::parse_from_rfc3339(&text(r, "preparedAt")).ok())
@@ -1289,6 +1347,13 @@ fn recover_chats(chats: &[PathBuf]) -> RecoveryReport {
         }
     }
     for (path, mut artifacts) in groups {
+        if unreadable.contains(&path)
+            || path
+                .parent()
+                .is_some_and(|parent| unreadable_chats.contains(parent))
+        {
+            continue;
+        }
         artifacts.sort_by(|a, b| b.order.total_cmp(&a.order));
         let latest = &artifacts[0];
         let operation = (|| -> Result<u8, ReplacementError> {
@@ -1359,14 +1424,35 @@ pub(super) fn recover(home: &Path) -> Result<RecoveryReport, ReplacementError> {
         Err(e) => return Err(io(e)),
     };
     let mut chats = Vec::new();
-    if let Ok(projects) = fs::read_dir(home.join("projects")) {
-        for project in projects.flatten() {
-            if project.file_type().map_err(io)?.is_dir() {
-                chats.push(project.path().join("chats"));
+    let projects = match fs::read_dir(home.join("projects")) {
+        Ok(projects) => projects,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(RecoveryReport::default()),
+        Err(e) => return Err(io(e)),
+    };
+    let mut failures = Vec::new();
+    for project in projects {
+        let project = match project {
+            Ok(project) => project,
+            Err(error) => {
+                failures.push(RecoveryFailure {
+                    scope: home.join("projects"),
+                    message: error.to_string(),
+                });
+                continue;
             }
+        };
+        match project.file_type() {
+            Ok(kind) if kind.is_dir() => chats.push(project.path().join("chats")),
+            Ok(_) => {}
+            Err(error) => failures.push(RecoveryFailure {
+                scope: project.path(),
+                message: error.to_string(),
+            }),
         }
     }
-    Ok(recover_chats(&chats))
+    let mut report = recover_chats(&chats);
+    report.failures.extend(failures);
+    Ok(report)
 }
 
 #[cfg(test)]

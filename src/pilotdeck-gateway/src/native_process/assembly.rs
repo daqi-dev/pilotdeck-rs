@@ -1017,6 +1017,19 @@ async fn start_assembly(
                     config.insert("nativeEphemeralRoot".into(),JsValue::String(root.path().to_string_lossy().into_owned().into()));Some(root)
                 }else{None};
                 let session_artifact_project=config.get("nativeEphemeralRoot").and_then(JsValue::as_string).and_then(|s|s.to_utf8().ok()).map(std::path::PathBuf::from).unwrap_or_else(||options.project.clone());
+                let summary_model = crate::host::modules::model_port::ports(
+                    router.router.clone(), router.model_config.clone(), None,
+                    crate::host::modules::model_port::RouterModelPortOptions {
+                        is_main_agent: false,
+                        project_path: Some(options.project.to_string_lossy().into_owned().into()),
+                        ..Default::default()
+                    }, &context.session_key,
+                ).execution;
+                let compaction = crate::runtime::project::context_storage::native_compaction(
+                    summary_model, context.session_key.clone(),
+                    selected.get("provider").and_then(JsValue::as_string).cloned().ok_or_else(|| RuntimeError::new("Agent model provider is missing."))?,
+                    selected.get("model").and_then(JsValue::as_string).cloned().ok_or_else(|| RuntimeError::new("Agent model name is missing."))?,
+                );
                 let native_context = Arc::new(
                     context_storage
                         .create_session_with_options(
@@ -1026,6 +1039,7 @@ async fn start_assembly(
                             ),
                             crate::runtime::project::context_storage::SessionContextOptions {
                                 extension: Some(Arc::new(native_extensions)),
+                                compaction: Some(compaction),
                                 memory_disabled: config.get("nativeMemoryDisabled")
                                     == Some(&JsValue::Bool(true)),
                                 ..Default::default()
@@ -1432,8 +1446,11 @@ async fn start_assembly(
                                     "Native persistence has the wrong type.".into(),
                                 )
                             })?;
-                        persistence
-                            .create_session_bounded(context.session_key.clone(), Some(open_path.clone()))
+                        let recording = persistence
+                            .create_session_bounded(context.session_key.clone(), Some(open_path.clone()))?;
+                        crate::storage::replacement_artifacts::cleanup_if_missing(&open_path)
+                            .map_err(|e| crate::storage::recorder::RecorderError::Type(e.to_string()))?;
+                        Ok(recording)
                     }),
                 }))
             })
@@ -1579,6 +1596,8 @@ async fn start_assembly(
                 })
                 .flatten(),
         };
+        #[cfg(all(test, unix))]
+        let channel_system_cli = channel_endpoints.channel_system_cli.clone();
         let channel_assembly = Arc::new(super::channels::NativeChannels::new(
             super::channels::NativeChannelsOptions {
                 #[cfg(test)]
@@ -1616,6 +1635,8 @@ async fn start_assembly(
                     std::io::Error::other("Native executable has no installation directory")
                 })?
                 .join("pilotdeck");
+            #[cfg(test)]
+            let cli = channel_system_cli.unwrap_or(cli);
             let mut channel_env = env.clone();
             channel_env.insert(
                 "PILOT_HOME".into(),

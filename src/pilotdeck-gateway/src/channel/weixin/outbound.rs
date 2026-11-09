@@ -57,6 +57,38 @@ pub(super) fn encrypt(buffer: &[u8], key: &[u8; 16]) -> Vec<u8> {
 fn hex(buffer: &[u8]) -> String {
     buffer.iter().map(|b| format!("{b:02x}")).collect()
 }
+/// Own only media I/O; cancelling this never aborts the shared A7 run.
+#[derive(Default)]
+pub(super) struct Lifetime {
+    active: std::sync::atomic::AtomicUsize,
+    drained: tokio::sync::Notify,
+}
+struct MediaGuard(Arc<Lifetime>);
+impl Drop for MediaGuard {
+    fn drop(&mut self) {
+        if self
+            .0
+            .active
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst)
+            == 1
+        {
+            self.0.drained.notify_waiters();
+        }
+    }
+}
+impl Lifetime {
+    pub(super) async fn drain(&self) {
+        loop {
+            let notified = self.drained.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.active.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
 impl WeixinChannel {
     #[cfg(test)]
     pub(super) async fn send_attachment_with_cdn(
@@ -73,32 +105,54 @@ impl WeixinChannel {
     }
     async fn send_attachment_impl(&self, user: &JsString, value: &JsValue, cdn: &str) -> bool {
         let attachment = attachment(value);
-        let present = {
+        let (present, abort, _guard) = {
             let inner = self.lock_inner();
-            inner.client.is_some() && inner.context_tokens.contains_key(user)
-        };
-        if !present {
-            self.send_reply(
-                user,
-                &format_im_attachment_fallback(&attachment).into(),
-                true,
+            if inner.abort.as_ref().is_some_and(Cancellation::is_aborted) {
+                return false;
+            }
+            self.0
+                .outbound
+                .active
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            (
+                inner.client.is_some() && inner.context_tokens.contains_key(user),
+                inner.abort.clone(),
+                MediaGuard(self.0.outbound.clone()),
             )
-            .await;
-            return false;
+        };
+        let delivery = async {
+            if !present {
+                self.send_reply(
+                    user,
+                    &format_im_attachment_fallback(&attachment).into(),
+                    true,
+                )
+                .await;
+                return false;
+            }
+            let sink = Arc::new(Sink {
+                channel: self.clone(),
+                user: user.clone(),
+                cdn: cdn.to_owned(),
+            });
+            let logger = self.clone();
+            ImAttachmentDelivery::new(ImAttachmentDeliveryOptions {
+                max_bytes: media::WEIXIN_ATTACHMENT_MAX_BYTES,
+                sink,
+                logger: Some(Arc::new(move |message| logger.log("error", message.into()))),
+            })
+            .send(&attachment)
+            .await
+        };
+        if let Some(abort) = abort {
+            tokio::select! {
+                biased;
+                _ = abort.cancelled() => false,
+                sent = delivery => sent,
+            }
+        } else {
+            delivery.await
         }
-        let sink = Arc::new(Sink {
-            channel: self.clone(),
-            user: user.clone(),
-            cdn: cdn.to_owned(),
-        });
-        let logger = self.clone();
-        ImAttachmentDelivery::new(ImAttachmentDeliveryOptions {
-            max_bytes: media::WEIXIN_ATTACHMENT_MAX_BYTES,
-            sink,
-            logger: Some(Arc::new(move |message| logger.log("error", message.into()))),
-        })
-        .send(&attachment)
-        .await
     }
 }
 struct Sink {

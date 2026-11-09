@@ -326,14 +326,17 @@ async fn real_server_model_dialog_requested_and_answered_are_broadcast() {
         .unwrap()
         .to_owned();
     send(&mut observer, json!({"type":"request","id":"answer","method":"user_dialog_respond","params":{"sessionKey":session,"requestId":request_id,"result":{"behavior":"answered","value":"notification-answer"}}})).await;
+    let client_requested = until_named(&mut client, "user_dialog_changed").await;
+    assert_eq!(
+        client_requested["payload"]["type"], "requested",
+        "{client_requested:?}"
+    );
+    assert_eq!(client_requested["payload"]["sessionKey"], session);
+    assert_eq!(
+        client_requested["payload"]["request"]["requestId"],
+        request_id
+    );
     let settled = until_named(&mut client, "user_dialog_changed").await;
-    // The first notification on the initiating connection is the requested
-    // event; consume it before asserting the later settled event.
-    let settled = if settled["payload"]["type"] == "requested" {
-        until_named(&mut client, "user_dialog_changed").await
-    } else {
-        settled
-    };
     assert_eq!(settled["payload"]["type"], "settled", "{settled:?}");
     assert_eq!(settled["payload"]["requestId"], request_id);
     let answer = until_response(&mut observer, "answer").await;

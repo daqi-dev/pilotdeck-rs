@@ -34,7 +34,7 @@
 //!   registry barrier held at the same time never release each other.
 //! - `<dir>/witness/<seq>.json`: product receipts, published atomically
 //!   (tmp + rename). Phases: `block` (a matched write entered the barrier),
-//!   `queued` (a write arrived at the site while a barrier was held — the FIFO
+//!   `queued` (an admitted write is pending behind a held barrier — the FIFO
 //!   witness), `release` (with `bounded: true` when the bound expired instead
 //!   of a collector release), `fault` (with `code: "EIO"`) and `complete`
 //!   (the blocked write's real storage finished).
@@ -50,11 +50,8 @@ use super::{ledger::field, transcript::timestamp};
 use crate::metadata::object;
 use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
 use std::{
-    fs,
-    future::Future,
-    io,
+    fs, io,
     path::PathBuf,
-    pin::Pin,
     sync::{Arc, LazyLock, Mutex},
     thread,
     time::{Duration, Instant},
@@ -91,10 +88,14 @@ pub(crate) enum Applied {
 struct SiteState {
     /// Block receipt sequence of the currently held barrier.
     held: Option<u64>,
+    held_published: bool,
+    held_scope: Option<RegistryAppendScope>,
     barrier_consumed: Option<String>,
     fault_fired: Option<String>,
 }
 struct Inner {
+    next_ticket: u64,
+    registry_pending: std::collections::BTreeMap<u64, std::sync::Weak<AppendTicket>>,
     next_seq: u64,
     writer: SiteState,
     registry: SiteState,
@@ -139,6 +140,8 @@ impl StorageStimulus {
             dir: dir.into(),
             inner: Mutex::new(Inner {
                 next_seq: 0,
+                next_ticket: 0,
+                registry_pending: std::collections::BTreeMap::new(),
                 writer: SiteState::default(),
                 registry: SiteState::default(),
             }),
@@ -240,11 +243,29 @@ impl StorageStimulus {
             let bound = barrier.bound;
             let seq = next_sequence(&mut inner);
             site_state(&mut inner, site).held = Some(seq);
+            site_state(&mut inner, site).held_scope = if site == Site::Registry {
+                REGISTRY_APPEND_SCOPE.with(|scope| scope.borrow().clone())
+            } else {
+                None
+            };
+            site_state(&mut inner, site).held_published = false;
             drop(inner);
-            let receipt = object([("boundMs", JsValue::Number(bound.as_millis() as f64))]);
+            let mut receipt = object([("boundMs", JsValue::Number(bound.as_millis() as f64))]);
+            if let Some(scope) = REGISTRY_APPEND_SCOPE.with(|scope| scope.borrow().clone()) {
+                scope.add_fields(&mut receipt);
+            }
             let outcome = self
                 .publish(seq, site, key, "block", Some(&receipt))
-                .and_then(|()| self.wait_for_release(seq, bound));
+                .and_then(|()| {
+                    {
+                        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+                        site_state(&mut inner, site).held_published = true;
+                    }
+                    if site == Site::Registry {
+                        self.publish_pending_registry();
+                    }
+                    self.wait_for_release(seq, bound)
+                });
             let released = match outcome {
                 Ok(released) => released,
                 Err(error) => {
@@ -256,6 +277,8 @@ impl StorageStimulus {
             };
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             site_state(&mut inner, site).held = None;
+            site_state(&mut inner, site).held_scope = None;
+            site_state(&mut inner, site).held_published = false;
             let release_seq = next_sequence(&mut inner);
             drop(inner);
             let bounded = (!released).then(|| object([("bounded", JsValue::Bool(true))]));
@@ -282,6 +305,8 @@ impl StorageStimulus {
     fn clear_hold(&self, site: Site) {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         site_state(&mut inner, site).held = None;
+        site_state(&mut inner, site).held_scope = None;
+        site_state(&mut inner, site).held_published = false;
     }
 
     fn wait_for_release(&self, block_seq: u64, bound: Duration) -> io::Result<bool> {
@@ -495,64 +520,356 @@ pub(crate) fn writer_stimulus_queued_entry(
         .map_err(super::LedgerError::Io)
 }
 
-/// A witness receipt owed by an async port: already decided and sequenced on
-/// the entry tick, with its write running off the executor.
-pub(crate) type PendingReceipt =
-    Pin<Box<dyn Future<Output = Result<(), super::RunRegistryError>> + Send>>;
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RegistryAppendScope {
+    pub(crate) registry: uuid::Uuid,
+    pub(crate) sequence: u64,
+    pub(crate) run: super::RunRef,
+}
+impl RegistryAppendScope {
+    fn follows(&self, held: &Self) -> bool {
+        self.registry == held.registry && self.run == held.run && self.sequence > held.sequence
+    }
+    fn add_fields(&self, value: &mut JsValue) {
+        let identity = object([
+            (
+                "registryInstance",
+                JsValue::String(self.registry.to_string().into()),
+            ),
+            ("appendSequence", JsValue::Number(self.sequence as f64)),
+            (
+                "appendProjectKey",
+                self.run
+                    .project_key
+                    .clone()
+                    .map(JsValue::String)
+                    .unwrap_or(JsValue::Null),
+            ),
+            (
+                "appendSessionKey",
+                JsValue::String(self.run.session_key.clone()),
+            ),
+            ("appendRunId", JsValue::String(self.run.run_id.clone())),
+        ]);
+        if let (JsValue::Object(target), JsValue::Object(fields)) = (value, &identity) {
+            for (key, value) in fields.entries() {
+                target.insert(key.clone(), value.clone());
+            }
+        }
+    }
+}
+thread_local! { static REGISTRY_APPEND_SCOPE: std::cell::RefCell<Option<RegistryAppendScope>> = const { std::cell::RefCell::new(None) }; }
+pub(crate) struct RegistryAppendScopeGuard {
+    previous: Option<RegistryAppendScope>,
+    _thread: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+impl RegistryAppendScopeGuard {
+    fn enter(scope: RegistryAppendScope) -> Self {
+        let previous = REGISTRY_APPEND_SCOPE.with(|active| active.replace(Some(scope)));
+        Self {
+            previous,
+            _thread: std::marker::PhantomData,
+        }
+    }
+}
+impl Drop for RegistryAppendScopeGuard {
+    fn drop(&mut self) {
+        REGISTRY_APPEND_SCOPE.with(|active| {
+            active.replace(self.previous.take());
+        });
+    }
+}
 
-/// Entry hook for the registry site (`runRegistry.append` invoked): `queued`
-/// receipt while a barrier is held. `stimulus` is the caller's registry
-/// handle (`None` keeps the entry inert).
-///
-/// The async port owes two things the synchronous writer site does not: the
-/// receipt has to be decided on the caller's tick (it is only meaningful while
-/// the barrier still holds the write behind it), and the write must not run on
-/// a Tokio executor thread. So the in-memory decision and the sequence happen
-/// here, and the handoff to the blocking pool happens here too — not from
-/// inside the returned future, which a publication only first polls after its
-/// predecessor settles. `None` means no receipt is owed, and awaiting the
-/// returned future surfaces write failures to the append.
-///
-/// The returned receiver is settled by the receipt write itself (`true` on
-/// success), never by the caller's poll, and only exists when a receipt is
-/// actually owed. A witnessed job queued behind this entry can therefore run
-/// as soon as the receipt exists, even when its caller withholds the returned
-/// future; the receipt outcome alone decides the durable write.
-pub(crate) fn registry_stimulus_queued_pending(
+/// A real registry job admitted behind the currently armed barrier. The
+/// admission handle is separate from the job guard: dropping an awaiter does
+/// not cancel already accepted blocking I/O or fabricate its completion.
+#[derive(Clone)]
+pub(crate) struct RegistryAppendAdmission {
+    stimulus: Arc<StorageStimulus>,
+    ticket: Arc<AppendTicket>,
+}
+pub(crate) struct RegistryAppendJob {
+    admission: RegistryAppendAdmission,
+}
+#[derive(Default)]
+struct AppendTicketState {
+    enqueued: bool,
+    initialized: bool,
+    initializing: bool,
+    #[cfg(test)]
+    initialization_flushed: bool,
+    arm_id: Option<String>,
+    initialization_error: Option<String>,
+    started: bool,
+    settled: bool,
+    claimed: bool,
+    receipt: Option<Result<(), String>>,
+}
+struct AppendTicket {
+    id: u64,
+    key: String,
+    scope: RegistryAppendScope,
+    state: Mutex<AppendTicketState>,
+    changed: std::sync::Condvar,
+    failure: tokio::sync::watch::Sender<bool>,
+}
+
+/// Registration alone proves nothing. Only `enqueued()` after a successful
+/// worker handoff can owe a queued receipt; `start()` removes it before I/O.
+pub(crate) fn registry_append_ticket(
     stimulus: Option<&Arc<StorageStimulus>>,
     event: &JsValue,
-) -> Option<(PendingReceipt, std::sync::mpsc::Receiver<bool>)> {
-    let stimulus = Arc::clone(stimulus?);
-    let seq = stimulus.reserve_queued(Site::Registry)?;
-    let key = registry_event_key(event);
-    let write = move || stimulus.write_queued(seq, Site::Registry, &key);
-    let (settled, gate) = std::sync::mpsc::channel::<bool>();
-    let receipt = match tokio::runtime::Handle::try_current() {
-        Ok(handle) => {
-            let write = handle.spawn_blocking(move || {
-                let outcome = write();
-                let _ = settled.send(outcome.is_ok());
-                outcome
-            });
-            Box::pin(async move {
-                write
-                    .await
-                    .map_err(|_| {
-                        super::RunRegistryError::Invalid(
-                            "Storage stimulus witness task stopped.".into(),
-                        )
-                    })?
-                    .map_err(super::RunRegistryError::Io)
-            }) as PendingReceipt
-        }
-        // No executor to protect: the caller's own thread writes the receipt.
-        Err(_) => {
-            let outcome = write();
-            let _ = settled.send(outcome.is_ok());
-            Box::pin(std::future::ready(
-                outcome.map_err(super::RunRegistryError::Io),
-            ))
-        }
+    scope: RegistryAppendScope,
+) -> io::Result<Option<(RegistryAppendAdmission, RegistryAppendJob)>> {
+    let Some(stimulus) = stimulus else {
+        return Ok(None);
     };
-    Some((receipt, gate))
+    let mut inner = stimulus.inner.lock().unwrap_or_else(|e| e.into_inner());
+    let id = inner.next_ticket;
+    inner.next_ticket = inner
+        .next_ticket
+        .checked_add(1)
+        .ok_or_else(|| invalid("registry ticket exhausted"))?;
+    let ticket = Arc::new(AppendTicket {
+        id,
+        key: registry_event_key(event),
+        scope,
+        state: Mutex::new(AppendTicketState::default()),
+        changed: std::sync::Condvar::new(),
+        failure: tokio::sync::watch::channel(false).0,
+    });
+    inner.registry_pending.insert(id, Arc::downgrade(&ticket));
+    drop(inner);
+    let admission = RegistryAppendAdmission {
+        stimulus: Arc::clone(stimulus),
+        ticket,
+    };
+    Ok(Some((admission.clone(), RegistryAppendJob { admission })))
 }
+
+impl RegistryAppendAdmission {
+    pub(crate) async fn failure(&self) -> io::Error {
+        let mut changed = self.ticket.failure.subscribe();
+        loop {
+            if let Some(message) = self.failure_message() {
+                return invalid(message);
+            }
+            if changed.changed().await.is_err() {
+                return invalid("Registry witness failure channel stopped.");
+            }
+        }
+    }
+    fn failure_message(&self) -> Option<String> {
+        let state = self.ticket.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.initialization_error.clone().or_else(|| {
+            state
+                .receipt
+                .as_ref()
+                .and_then(|value| value.as_ref().err().cloned())
+        })
+    }
+    pub(crate) fn enqueued(&self) {
+        {
+            let _inner = self
+                .stimulus
+                .inner
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let mut state = self.ticket.state.lock().unwrap_or_else(|e| e.into_inner());
+            if state.settled || state.initialized || state.initializing {
+                return;
+            }
+            state.initializing = true;
+            state.enqueued = !state.started;
+        }
+        let admission = self.clone();
+        let initialize = move || {
+            let config = admission.stimulus.read_config();
+            {
+                let _inner = admission
+                    .stimulus
+                    .inner
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                let mut state = admission
+                    .ticket
+                    .state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                if state.settled {
+                    return;
+                }
+                match config {
+                    Ok(config) => state.arm_id = config.registry.barrier.map(|arm| arm.id),
+                    Err(error) => state.initialization_error = Some(error.to_string()),
+                }
+                state.initialized = true;
+                if state.initialization_error.is_some() {
+                    admission.ticket.failure.send_replace(true);
+                }
+                admission.ticket.changed.notify_all();
+            }
+            admission.stimulus.publish_pending_registry();
+            #[cfg(test)]
+            {
+                let mut state = admission
+                    .ticket
+                    .state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                state.initialization_flushed = true;
+                admission.ticket.changed.notify_all();
+            }
+        };
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn_blocking(initialize);
+        } else {
+            initialize();
+        }
+    }
+}
+impl RegistryAppendJob {
+    pub(crate) fn enter(&self) -> RegistryAppendScopeGuard {
+        RegistryAppendScopeGuard::enter(self.admission.ticket.scope.clone())
+    }
+    pub(crate) fn start(&self, bound: Duration) -> io::Result<()> {
+        {
+            let mut inner = self
+                .admission
+                .stimulus
+                .inner
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            inner.registry_pending.remove(&self.admission.ticket.id);
+            let mut state = self
+                .admission
+                .ticket
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            state.started = true;
+        }
+        let ticket = &self.admission.ticket;
+        let state = ticket.state.lock().unwrap_or_else(|e| e.into_inner());
+        let (state, timed) = ticket
+            .changed
+            .wait_timeout_while(state, bound, |state| {
+                !state.initialized || (state.claimed && state.receipt.is_none())
+            })
+            .unwrap_or_else(|e| e.into_inner());
+        if timed.timed_out() && (!state.initialized || (state.claimed && state.receipt.is_none())) {
+            return Err(invalid("Storage stimulus queued witness timed out."));
+        }
+        if let Some(error) = &state.initialization_error {
+            return Err(invalid(error.clone()));
+        }
+        match &state.receipt {
+            Some(Err(message)) => Err(invalid(message.clone())),
+            _ => Ok(()),
+        }
+    }
+}
+impl Drop for RegistryAppendJob {
+    fn drop(&mut self) {
+        let mut inner = self
+            .admission
+            .stimulus
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        inner.registry_pending.remove(&self.admission.ticket.id);
+        let mut state = self
+            .admission
+            .ticket
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        state.settled = true;
+        self.admission.ticket.changed.notify_all();
+    }
+}
+
+impl StorageStimulus {
+    #[cfg(test)]
+    pub(crate) fn pending_ready_for_test(&self) -> usize {
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner
+            .registry_pending
+            .values()
+            .filter_map(std::sync::Weak::upgrade)
+            .filter(|ticket| {
+                let state = ticket.state.lock().unwrap_or_else(|e| e.into_inner());
+                state.enqueued && state.initialization_flushed && !state.started && !state.settled
+            })
+            .count()
+    }
+    fn publish_pending_registry(&self) {
+        let pending = {
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(block_seq) = inner
+                .registry
+                .held
+                .filter(|_| inner.registry.held_published)
+            else {
+                return;
+            };
+            let Some(held_scope) = inner.registry.held_scope.clone() else {
+                return;
+            };
+            let Some(arm_id) = inner.registry.barrier_consumed.clone() else {
+                return;
+            };
+            let tickets: Vec<_> = inner
+                .registry_pending
+                .values()
+                .filter_map(std::sync::Weak::upgrade)
+                .collect();
+            let mut owed = Vec::new();
+            for ticket in tickets {
+                let mut state = ticket.state.lock().unwrap_or_else(|e| e.into_inner());
+                if !ticket.scope.follows(&held_scope)
+                    || state.arm_id.as_deref() != Some(arm_id.as_str())
+                    || state.initialization_error.is_some()
+                    || !state.initialized
+                    || !state.enqueued
+                    || state.started
+                    || state.settled
+                    || state.claimed
+                {
+                    continue;
+                }
+                state.claimed = true;
+                let seq = next_sequence(&mut inner);
+                owed.push((seq, block_seq, arm_id.clone(), Arc::clone(&ticket)));
+            }
+            owed
+        };
+        for (seq, block_seq, arm_id, ticket) in pending {
+            let mut binding = object([
+                ("barrierId", arm_id.as_str().into()),
+                ("barrierSeq", JsValue::Number(block_seq as f64)),
+                ("appendTicket", JsValue::Number(ticket.id as f64)),
+            ]);
+            ticket.scope.add_fields(&mut binding);
+            let mut state = ticket.state.lock().unwrap_or_else(|e| e.into_inner());
+            if state.settled {
+                state.receipt = Some(Err("Registry append settled before queued witness.".into()));
+                ticket.changed.notify_all();
+                ticket.failure.send_replace(true);
+                continue;
+            }
+            let outcome = self
+                .publish(seq, Site::Registry, &ticket.key, "queued", Some(&binding))
+                .map_err(|error| error.to_string());
+            state.receipt = Some(outcome);
+            if state.receipt.as_ref().is_some_and(Result::is_err) {
+                ticket.failure.send_replace(true);
+            }
+            ticket.changed.notify_all();
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "stimulus_pending_tests.rs"]
+mod pending_tests;

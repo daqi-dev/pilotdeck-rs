@@ -373,6 +373,7 @@ struct Inner {
 }
 
 struct Shared {
+    outbound: Arc<outbound::Lifetime>,
     host_ports: WeixinHostPorts,
     interaction: Arc<dyn InteractionPort>,
     key: ChannelKey,
@@ -409,6 +410,7 @@ impl WeixinChannel {
             Arc::new(media::WeixinAttachmentFetcher::new()),
         ));
         Self(Arc::new(Shared {
+            outbound: Arc::new(outbound::Lifetime::default()),
             host_ports: options.host_ports.unwrap_or_default(),
             interaction: options
                 .interaction
@@ -809,6 +811,7 @@ impl WeixinChannel {
             }
             (inner.poll_task.take(), inner.recovery_task.take())
         };
+        self.0.outbound.drain().await;
         self.save_cursor();
         // TS awaits the poll and recovery promises; the QR login task only
         // gets its marker dropped (stale-generation checks end it).
@@ -1490,8 +1493,14 @@ impl WeixinChannel {
         let Some(gateway) = self.0.gateway.clone() else {
             return;
         };
-        let generation = self.lock_inner().chat_state.generation(user);
-        let is_current = || self.lock_inner().chat_state.is_current(user, generation);
+        let (generation, channel_generation) = {
+            let inner = self.lock_inner();
+            (inner.chat_state.generation(user), inner.generation)
+        };
+        let is_current = || {
+            let inner = self.lock_inner();
+            inner.generation == channel_generation && inner.chat_state.is_current(user, generation)
+        };
         // `void this.sendTypingIfPossible(userId)` — unawaited.
         let typing_channel = self.clone();
         let typing_user = user.clone();

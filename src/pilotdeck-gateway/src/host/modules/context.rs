@@ -77,6 +77,7 @@ fn unsupported(operation: Operation) -> HostFuture<JsValue> {
 #[derive(Default)]
 pub struct Handler {
     recorder: Option<Arc<crate::storage::recorder::Recorder>>,
+    compact_scope: Option<crate::runtime::project::context_storage::CompactScope>,
     runtime: Option<Arc<dyn ContextRuntime>>,
     identity: Option<ContextRequestIdentity>,
     config: JsObject,
@@ -91,6 +92,7 @@ impl Handler {
     ) -> Self {
         Self {
             recorder: None,
+            compact_scope: None,
             runtime: Some(runtime),
             identity: Some(identity),
             config,
@@ -109,11 +111,28 @@ impl Handler {
     ) -> Self {
         Self {
             recorder: None,
+            compact_scope: None,
             runtime: None,
             identity: Some(identity),
             config,
             signal,
         }
+    }
+    pub(crate) fn bind_compact_scope(
+        &mut self,
+        scope: crate::runtime::project::context_storage::CompactScope,
+    ) {
+        self.compact_scope = Some(scope);
+    }
+    pub(crate) fn inherit_compact_scope(
+        &mut self,
+        parent: &Self,
+        emit: Arc<dyn Fn(JsValue) -> bool + Send + Sync>,
+    ) {
+        self.compact_scope = parent
+            .compact_scope
+            .clone()
+            .map(|scope| scope.with_emit(emit));
     }
     /// Whether composition installed a context module. TS registers the
     /// handler only for an installed module (`dispatcher:190-195`); the
@@ -182,6 +201,7 @@ impl Handler {
         let signal = self.signal.clone();
         let runtime = self.runtime.clone();
         let recorder = self.recorder.clone();
+        let compact_scope = self.compact_scope.clone();
         let budget = budget
             .ports
             .as_ref()
@@ -314,10 +334,20 @@ impl Handler {
                     runtime.capture_turn(input).await?;
                     JsValue::Null
                 }
-                Operation::TryAutoCompact => match recorder {
-                    Some(recorder) => compact_with_recorder(runtime, recorder, input).await?,
-                    None => runtime.try_auto_compact(input).await?,
-                },
+                Operation::TryAutoCompact => {
+                    crate::runtime::project::context_storage::with_compact_scope(
+                        compact_scope,
+                        async move {
+                            match recorder {
+                                Some(recorder) => {
+                                    compact_with_recorder(runtime, recorder, input).await
+                                }
+                                None => runtime.try_auto_compact(input).await,
+                            }
+                        },
+                    )
+                    .await?
+                }
             };
             Ok(object([("result", result)]))
         })

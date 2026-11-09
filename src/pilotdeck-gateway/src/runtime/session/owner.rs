@@ -2106,7 +2106,11 @@ impl Drop for ArchiveReservation {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 self.owner.0.turns.admission.end_maintenance(&self.key);
             }));
-            self.done.send_replace(Some(Ok(())));
+            self.done.send_replace(Some(if std::thread::panicking() {
+                Err(RuntimeError::new("Session archive IO panicked."))
+            } else {
+                Ok(())
+            }));
         }
     }
 }
@@ -2116,7 +2120,11 @@ pub(crate) struct BackgroundIoReservation {
 }
 impl Drop for BackgroundIoReservation {
     fn drop(&mut self) {
-        self.done.send_replace(Some(Ok(())));
+        self.done.send_replace(Some(if std::thread::panicking() {
+            Err(RuntimeError::new("Session background IO panicked."))
+        } else {
+            Ok(())
+        }));
     }
 }
 

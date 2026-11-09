@@ -36,7 +36,7 @@ impl Wire {
         self.incoming.lock().unwrap().push_back(json!({"from_user_id":"chat","context_token":"ctx","message_type":1,"item_list":[{"type":1,"text_item":{"text":s}}]}));
     }
     fn media(&self, origin: &str) {
-        self.incoming.lock().unwrap().push_back(json!({"from_user_id":"chat","context_token":"ctx","message_type":1,"message_id":"incoming-media","item_list":[{"type":2,"image_item":{"cdn_url":format!("{origin}/incoming.png"),"aeskey":"33333333333333333333333333333333"}},{"type":4,"file_item":{"file_name":"inbound.txt","file_size":FILE_IN.len(),"cdn_url":format!("{origin}/incoming.txt"),"aeskey":"33333333333333333333333333333333"}}]}));
+        self.incoming.lock().unwrap().push_back(json!({"from_user_id":"chat","context_token":"ctx","message_type":1,"message_id":"incoming-media","item_list":[{"type":2,"image_item":{"cdn_url":format!("{origin}/incoming.png"),"aeskey":"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e"}},{"type":4,"file_item":{"file_name":"inbound.txt","file_size":FILE_IN.len(),"cdn_url":format!("{origin}/incoming.txt"),"aeskey":"0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e"}}]}));
     }
     fn sent(&self, s: &str) -> bool {
         self.sent
@@ -124,8 +124,8 @@ async fn peer(file: std::path::PathBuf, image: std::path::PathBuf) -> Peer {
             let mut raw=vec![];while !raw.ends_with(b"\r\n\r\n"){let mut b=[0];if socket.read_exact(&mut b).await.is_err(){return}raw.push(b[0]);assert!(raw.len()<65536);}
             let header=String::from_utf8(raw).unwrap();let path=header.lines().next().unwrap().split_whitespace().nth(1).unwrap().to_owned();let size=header.lines().find_map(|l|l.to_ascii_lowercase().strip_prefix("content-length:").map(|v|v.trim().parse::<usize>().unwrap())).unwrap_or(0);let mut raw=vec![0;size];if socket.read_exact(&mut raw).await.is_err(){return}let body:Value=serde_json::from_slice(&raw).unwrap_or(Value::Null);
             let(status,mime,data,extra)=if path.ends_with("/getupdates"){state.polls.fetch_add(1,Ordering::SeqCst);let msg=state.incoming.lock().unwrap().pop_front();tokio::time::sleep(Duration::from_millis(50)).await;("200 OK","application/json",json!({"ret":0,"msgs":msg.into_iter().collect::<Vec<_>>(),"get_updates_buf":"cursor"}).to_string().into_bytes(),String::new())
-            }else if path=="/incoming.png"{("200 OK","application/octet-stream",encrypt(&base64::engine::general_purpose::STANDARD.decode(PNG).unwrap(),&[0x33;16]),String::new())
-            }else if path=="/incoming.txt"{("200 OK","application/octet-stream",encrypt(FILE_IN.as_bytes(),&[0x33;16]),String::new())
+            }else if path=="/incoming.png"{("200 OK","application/octet-stream",encrypt(&base64::engine::general_purpose::STANDARD.decode(PNG).unwrap(),&[0x0e;16]),String::new())
+            }else if path=="/incoming.txt"{("200 OK","application/octet-stream",encrypt(FILE_IN.as_bytes(),&[0x0e;16]),String::new())
             }else if path=="/missing.png"{("404 Not Found","application/json",b"{}".to_vec(),String::new())
             }else if path.ends_with("/getuploadurl"){state.uploads.lock().unwrap().push(body);("200 OK","application/json",json!({"ret":0,"upload_full_url":format!("http://{address}/cdn-upload")}).to_string().into_bytes(),String::new())
             }else if path=="/cdn-upload"{
@@ -175,6 +175,7 @@ async fn rig() -> Rig {
     let path = requests.options.home.join("pilotdeck.yaml");
     let base = std::fs::read_to_string(&path)
         .unwrap()
+        .replace("test: {}", "test: {multimodal: {input: [text, image]}}")
         .replace("http://127.0.0.1:1", &format!("{}/v1", peer.origin));
     std::fs::write(
         &path,
@@ -247,7 +248,16 @@ async fn weixin_actual_server_encrypted_inbound_media_a7_tool_upload_and_reload_
     .await;
     let models = state.models.lock().unwrap().clone();
     assert!(
-        models[0].to_string().contains(PNG),
+        models[0]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(
+                |message| message["content"].as_array().is_some_and(|blocks| blocks
+                    .iter()
+                    .any(|block| block["type"] == "image_url"
+                        && block["image_url"]["url"] == format!("data:image/png;base64,{PNG}")))
+            ),
         "decrypted image bytes must reach actual model"
     );
     assert!(

@@ -28,29 +28,19 @@ sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
 
-# The entry-tick receipt write, and the lazy variant of it that defers the
-# `spawn_blocking` (and with it the `queued` receipt) into the returned future.
+# Initialization/receipt dispatch starts after the real FIFO handoff, never
+# from the caller's first poll. The lazy variant defers that dispatch.
 # Shared by the two mutations that must each be bound to their own case.
-LAZY_DISPATCH_FROM = '''            let write = handle.spawn_blocking(move || {
-                let outcome = write();
-                let _ = settled.send(outcome.is_ok());
-                outcome
-            });
-            Box::pin(async move {'''
-LAZY_DISPATCH_TO = '''            Box::pin(async move {
-                let write = handle.spawn_blocking(move || {
-                    let outcome = write();
-                    let _ = settled.send(outcome.is_ok());
-                    outcome
-                });'''
+LAZY_DISPATCH_FROM = '        if queued {\n            admission.enqueued();\n        }\n        Box::pin(async move {'
+LAZY_DISPATCH_TO = '        Box::pin(async move {\n            if queued { admission.enqueued(); }'
 
 mutations = [
     # The barrier must actually hold the write: skipping the bounded wait
     # releases instantly, so the bound-expiry release receipt loses its
     # `bounded: true` marker first.
     ('writer-barrier-never-blocks', STIMULUS,
-     '.and_then(|()| self.wait_for_release(seq, bound));',
-     '.and_then(|()| Ok(true));',
+     'self.wait_for_release(seq, bound)',
+     'Ok(true)',
      'storage::stimulus_tests::writer_barrier_bound_releases_without_release_file', '#1370 bound expiry releases with bounded true'),
     # The bound is the safety release: without the deadline the barrier never
     # self-releases, so the release receipt wait fails at its observation cap.
@@ -123,27 +113,21 @@ mutations = [
     # entry tick, while the barrier is held, before the caller queues on the
     # chain lock.
     ('registry-queued-after-release', STIMULUS,
-     '''        let held = site_state_ref(&inner, site).held.is_some();
-        if !held {
-            return None;
-        }''',
-     '''        let held = site_state_ref(&inner, site).held.is_none();
-        if !held {
-            return None;
-        }''',
+     '.filter(|_| inner.registry.held_published)',
+     '.filter(|_| !inner.registry.held_published)',
      'storage::stimulus_tests::registry_port_appends_queue_with_witness_receipts', '#1370 registry queued receipt is published while held'),
     # fix-r2: the receipt is dispatched on the entry tick, not from inside the
     # returned future. Publication only first polls an append after its
     # predecessor settles, so a lazy dispatch writes the receipt after the
     # barrier already released — the collector's wait then never sees it.
-    ('registry-witness-lazily-dispatched', STIMULUS,
+    ('registry-witness-lazily-dispatched', PUBLISH,
      LAZY_DISPATCH_FROM,
      LAZY_DISPATCH_TO,
      'storage::stimulus_tests::publication_queued_receipt_survives_predecessor_serialization', '#1370 publication publishes the queued receipt while the barrier is held'),
     # #1648: the same entry-tick dispatch is also the FIFO case's entry-tick
     # proof. Its future is deliberately withheld, so a lazy receipt write never
     # appears while the barrier is held and the `queued` wait times out.
-    ('registry-witness-lazily-dispatched-fifo', STIMULUS,
+    ('registry-witness-lazily-dispatched-fifo', PUBLISH,
      LAZY_DISPATCH_FROM,
      LAZY_DISPATCH_TO,
      'storage::stimulus_tests::witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append', '#1370 fifo fixture owes the second append a receipt'),
@@ -153,43 +137,27 @@ mutations = [
     # `WITNESS_SETTLE`, so the append behind a withheld witnessed future starves
     # past the observation cap and the receipt-bound assertion fires.
     ('registry-witness-settle-not-from-write', STIMULUS,
-     '''                let _ = settled.send(outcome.is_ok());
-                outcome''',
-     '''                std::mem::forget(settled);
-                outcome''',
+     'state.receipt = Some(outcome);',
+     'let _ = outcome; // deliberately never settles the owed receipt',
      'storage::stimulus_tests::withheld_witnessed_future_does_not_park_the_registry_worker', '#1370 a withheld witnessed future does not park the registry worker'),
     # fix-r2: a barrier that fails while held must release the hold, or every
     # later entry at the site is stamped with a queued receipt it does not owe.
     ('registry-hold-not-cleared-on-error', STIMULUS,
-     '''    fn clear_hold(&self, site: Site) {
-        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        site_state(&mut inner, site).held = None;
-    }''',
-     '''    fn clear_hold(&self, site: Site) {
-        let _ = site;
-    }''',
+     '    fn clear_hold(&self, site: Site) {\n        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());\n        site_state(&mut inner, site).held = None;\n        site_state(&mut inner, site).held_scope = None;\n        site_state(&mut inner, site).held_published = false;\n    }',
+     '    fn clear_hold(&self, site: Site) {\n        let _ = site;\n    }',
      'storage::stimulus_tests::failed_barrier_releases_its_hold_before_later_entries', '#1370 a failed barrier releases its hold before later entries'),
     # fix-r2: the queue slot is taken on the entry tick and only the job's
     # execution waits for the receipt; queueing the job from inside the returned
     # future lets a later plain append overtake it.
     ('registry-witness-deferred-past-entry', PUBLISH,
-     '''        let append = Self::witnessed_within(self.jobs.clone(), gate, run, event, WITNESS_SETTLE);
-        Box::pin(async move {
-            witness.await?;
-            append.await
-        })''',
-     '''        let parts = (self.jobs.clone(), gate, run, event);
-        Box::pin(async move {
-            witness.await?;
-            Self::witnessed_within(parts.0, parts.1, parts.2, parts.3, WITNESS_SETTLE).await
-        })''',
-     'storage::stimulus_tests::witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append',
-     '#1370 a witnessed append keeps its FIFO slot before a later plain append'),
+     '        let (tx, rx) = oneshot::channel();\n        let queued = self\n            .jobs\n            .send(Box::new(move |registry| {\n                let result = job\n                    .start(WITNESS_SETTLE)\n                    .map_err(RunRegistryError::Io)\n                    .and_then(|()| {\n                        let _scope = job.enter();\n                        registry.append(&run, &event)\n                    });\n                let _ = tx.send(result);\n                drop(job);\n            }))\n            .is_ok();\n        drop(append_order);\n        if queued {\n            admission.enqueued();\n        }\n        Box::pin(async move {',
+     '        let jobs = self.jobs.clone();\n        drop(append_order);\n        admission.enqueued();\n        Box::pin(async move {\n        let (tx, rx) = oneshot::channel();\n        let queued = jobs.send(Box::new(move |registry| {\n                let result = job\n                    .start(WITNESS_SETTLE)\n                    .map_err(RunRegistryError::Io)\n                    .and_then(|()| {\n                        let _scope = job.enter();\n                        registry.append(&run, &event)\n                    });\n                let _ = tx.send(result);\n                drop(job);\n            }))\n            .is_ok();\n        if queued {\n            admission.enqueued();\n        }\n',
+     'storage::stimulus_tests::witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append', '#1370 a witnessed append keeps its FIFO slot before a later plain append'),
     # fix-r2: the job runs only once the receipt it is stamped with settled, so
     # a witness failure fails the append before the durable write can happen.
-    ('registry-witness-gate-ignored', PUBLISH,
-     'match gate.recv_timeout(settle) {',
-     'match { let _ = gate.recv_timeout(settle); Ok::<bool, ()>(true) } {',
+    ('registry-witness-gate-ignored', STIMULUS,
+     'Some(Err(message)) => Err(invalid(message.clone())),',
+     'Some(Err(_message)) => Ok(()),',
      'storage::stimulus_tests::failed_queued_witness_fails_the_append_before_the_worker', '#1370 a failed queued witness never dispatches the durable append'),
     # Production default: an unset entry must stay unarmed.
     ('stimulus-unset-activates', STIMULUS,

@@ -192,6 +192,8 @@ fn default_weixin_maker() -> WeixinChannelMaker {
 #[cfg(test)]
 #[derive(Clone, Default)]
 pub struct ChannelEndpointOverrides {
+    /// Isolated executable used by actual channel command tests; unavailable in production.
+    pub channel_system_cli: Option<PathBuf>,
     pub sms_twilio_api_base: Option<String>,
     pub slack_api_base: Option<String>,
     pub wecom_callback_api_base: Option<String>,

@@ -55,6 +55,8 @@ pub struct FileRegistry {
     /// #1370 controlled stimulus captured from the wrapped registry once at
     /// construction, so the entry witness below never re-resolves mid-flight.
     stimulus: Option<Arc<crate::storage::stimulus::StorageStimulus>>,
+    instance_id: uuid::Uuid,
+    append_sequence: Mutex<u64>,
 }
 impl FileRegistry {
     pub fn new(registry: FileRunRegistry) -> std::io::Result<Self> {
@@ -67,7 +69,12 @@ impl FileRegistry {
                     job(&registry);
                 }
             })?;
-        Ok(Self { jobs, stimulus })
+        Ok(Self {
+            jobs,
+            stimulus,
+            instance_id: uuid::Uuid::new_v4(),
+            append_sequence: Mutex::new(0),
+        })
     }
     pub(crate) fn call<T: Send + 'static>(
         &self,
@@ -96,6 +103,7 @@ impl FileRegistry {
     /// durable write from happening at all. The wait bound is a parameter so a
     /// test can exercise the timeout branch without blocking a worker for the
     /// production bound.
+    #[cfg(test)]
     fn witnessed_within(
         jobs: mpsc::Sender<RegistryJob>,
         gate: mpsc::Receiver<bool>,
@@ -136,32 +144,69 @@ impl TurnRunRegistry for FileRegistry {
         })
     }
     fn append(&self, run: &RunRef, event: &JsValue) -> RegistryFuture<()> {
-        // #1370 FIFO witness at the `runRegistry.append` port. The queued
-        // receipt is decided, sequenced and handed to the blocking pool right
-        // here, on the caller's tick: publication only first polls an append
-        // after its predecessor settles, and by then the barrier that owes this
-        // receipt is released. Nothing below waits for that first poll.
         let run = run.clone();
         let event = event.clone();
-        // The receipt write settles the gate itself
-        // (`registry_stimulus_queued_pending`), so a caller that invokes
-        // `append` but withholds the returned future cannot park the single
-        // registry worker on an unpolled future.
-        let Some((witness, gate)) = crate::storage::stimulus::registry_stimulus_queued_pending(
+        if self.stimulus.is_none() {
+            return self.call(move |registry| registry.append(&run, &event));
+        }
+        // The admission sequence and the real FIFO handoff are one critical
+        // section. A concurrent caller cannot take a later slot first.
+        let mut append_order = self
+            .append_sequence
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let sequence = *append_order;
+        let Some(next) = sequence
+            .checked_add(1)
+            .filter(|next| *next <= 9_007_199_254_740_991)
+        else {
+            return Box::pin(std::future::ready(Err(RunRegistryError::Invalid(
+                "Registry append sequence exhausted.".into(),
+            ))));
+        };
+        *append_order = next;
+        let scope = crate::storage::stimulus::RegistryAppendScope {
+            registry: self.instance_id,
+            sequence,
+            run: run.clone(),
+        };
+        let ticket = match crate::storage::stimulus::registry_append_ticket(
             self.stimulus.as_ref(),
             &event,
-        ) else {
+            scope,
+        ) {
+            Ok(ticket) => ticket,
+            Err(error) => return Box::pin(std::future::ready(Err(RunRegistryError::Io(error)))),
+        };
+        let Some((admission, job)) = ticket else {
             return self.call(move |registry| registry.append(&run, &event));
         };
-        // The job keeps this invocation's FIFO slot: it is queued on the same
-        // tick as every other append. Deferring the queueing instead would let a
-        // plain append overtake it, and the worker order would stop matching the
-        // host's call order. The job itself waits for the receipt it owes, so a
-        // witness failure still fails the append before anything is written.
-        let append = Self::witnessed_within(self.jobs.clone(), gate, run, event, WITNESS_SETTLE);
+        // The closure owns the ticket until its real I/O finishes. Only the
+        // successful FIFO handoff below admits a pending queued witness.
+        let (tx, rx) = oneshot::channel();
+        let queued = self
+            .jobs
+            .send(Box::new(move |registry| {
+                let result = job
+                    .start(WITNESS_SETTLE)
+                    .map_err(RunRegistryError::Io)
+                    .and_then(|()| {
+                        let _scope = job.enter();
+                        registry.append(&run, &event)
+                    });
+                let _ = tx.send(result);
+                drop(job);
+            }))
+            .is_ok();
+        drop(append_order);
+        if queued {
+            admission.enqueued();
+        }
         Box::pin(async move {
-            witness.await?;
-            append.await
+            tokio::select! {
+                result = rx => result.map_err(|_| RunRegistryError::Invalid("Run registry worker stopped.".into()))?,
+                error = admission.failure() => Err(RunRegistryError::Io(error)),
+            }
         })
     }
 }

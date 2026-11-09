@@ -144,6 +144,18 @@ async fn wecom_actual_host_permission_allow() {
         options.project.join("WECOM_FORBIDDEN_SIDE_EFFECT").exists(),
         "approved bash did not execute"
     );
+    eventually(
+        || {
+            state
+                .frames
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(_, frame)| frame.to_string().contains("WECOM_PERMISSION_DONE"))
+        },
+        "actual resumed final reaches external WeCom transport",
+    )
+    .await;
     host.shutdown(options.drain_budget).await.unwrap();
     let count = state.frames.lock().unwrap().len();
     tokio::time::sleep(Duration::from_millis(300)).await;

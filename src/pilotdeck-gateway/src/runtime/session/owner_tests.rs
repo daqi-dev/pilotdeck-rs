@@ -2454,3 +2454,72 @@ async fn native_project_binding_rejects_unbound_creation_before_and_during_scope
     bounded(generic.get_or_create(missing)).await.unwrap();
     bounded(generic.shutdown()).await.unwrap();
 }
+
+#[tokio::test]
+async fn background_io_panic_is_reported_to_waiting_shutdown() {
+    let owner = Probe::default().owner();
+    let ticket = owner
+        .begin_background_io(&"commit".into(), &"project".into())
+        .unwrap();
+    let (release, released) = std::sync::mpsc::channel();
+    let worker = tokio::task::spawn_blocking(move || {
+        let _ticket = ticket;
+        released.recv().unwrap();
+        panic!("controlled background IO panic");
+    });
+    let mut shutdown = owner.shutdown();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut shutdown)
+            .await
+            .is_err()
+    );
+    release.send(()).unwrap();
+    assert!(worker.await.unwrap_err().is_panic());
+    let error = tokio::time::timeout(Duration::from_secs(2), shutdown)
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(
+        contains_runtime_cause(&error, "Session background IO panicked."),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn archive_io_panic_is_reported_to_waiting_shutdown() {
+    let owner = Probe::default().owner();
+    let ticket = owner
+        .try_reserve_archive(&"commit".into(), true)
+        .unwrap()
+        .unwrap();
+    let (release, released) = std::sync::mpsc::channel();
+    let worker = tokio::task::spawn_blocking(move || {
+        let _ticket = ticket;
+        released.recv().unwrap();
+        panic!("controlled archive IO panic");
+    });
+    let mut shutdown = owner.shutdown();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut shutdown)
+            .await
+            .is_err()
+    );
+    release.send(()).unwrap();
+    assert!(worker.await.unwrap_err().is_panic());
+    let error = tokio::time::timeout(Duration::from_secs(2), shutdown)
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(
+        contains_runtime_cause(&error, "Session archive IO panicked."),
+        "{error}"
+    );
+}
+
+fn contains_runtime_cause(error: &RuntimeError, message: &str) -> bool {
+    error.message == message
+        || error
+            .causes
+            .iter()
+            .any(|cause| contains_runtime_cause(cause, message))
+}

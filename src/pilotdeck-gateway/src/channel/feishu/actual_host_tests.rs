@@ -213,7 +213,7 @@ async fn peer(
             state.models.lock().unwrap().push(body);let phase=state.phase.fetch_add(1,Ordering::SeqCst);let generation=state.generation.load(Ordering::SeqCst);
             let(delta,finish)=match phase{
             0=>(json!({"role":"assistant","tool_calls":[{"index":0,"id":"feishu-send-file","type":"function","function":{"name":"send_attachment","arguments":json!({"file_path":output,"name":"reply.txt","mime_type":"text/plain"}).to_string()}}]}),"tool_calls"),
-            2|5=>{let path=if phase==2{approved}else{denied};(json!({"role":"assistant","tool_calls":[{"index":0,"id":format!("feishu-permission-{phase}"),"type":"function","function":{"name":"bash","arguments":json!({"command":format!("printf approved > '{}'",path.display())}).to_string()}}]}),"tool_calls")},
+            2|5|9=>{let path=if phase==2{approved}else{denied};(json!({"role":"assistant","tool_calls":[{"index":0,"id":format!("feishu-permission-{phase}"),"type":"function","function":{"name":"bash","arguments":json!({"command":format!("printf approved > '{}'",path.display())}).to_string()}}]}),"tool_calls")},
             3=>(json!({"role":"assistant","tool_calls":[{"index":0,"id":"feishu-question","type":"function","function":{"name":"ask_user_question","arguments":json!({"questions":[{"header":"Choice","question":"Feishu choose mock option","options":[{"label":"One","description":"Mock one"},{"label":"Two","description":"Mock two"}],"multiSelect":false}]}).to_string()}}]}),"tool_calls"),
             _=>(json!({"role":"assistant","content":format!("feishu-actual-final-{generation}-{phase}")}),"stop")};
             ("200 OK","text/event-stream",format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",json!({"id":"mock","choices":[{"index":0,"delta":delta,"finish_reason":null}]}),json!({"id":"mock","choices":[{"index":0,"delta":{},"finish_reason":finish}]})).into_bytes())
@@ -252,7 +252,7 @@ async fn feishu_actual_server_media_a7_upload_interactions_new_reload_shutdown()
     let peer = peer(output, approved.clone(), denied.clone()).await;
     *peer.state.home.lock().unwrap() = Some(requests.options.home.clone());
     let path = requests.options.home.join("pilotdeck.yaml");
-    let mut config = json!({"schemaVersion":1,"agent":{"model":"test/test"},"model":{"providers":{"test":{"protocol":"openai","url":format!("{}/v1",peer.origin),"apiKey":"mock-only","models":{"test":{}}}}},"adapters":{"feishu":{"enabled":true,"appId":"cli_0123456789abcdef","appSecret":"mock-secret","connectionMode":"stream"}}});
+    let mut config = json!({"schemaVersion":1,"agent":{"model":"test/test"},"model":{"providers":{"test":{"protocol":"openai","url":format!("{}/v1",peer.origin),"apiKey":"mock-only","models":{"test":{"multimodal":{"input":["text","image"]}}}}}},"adapters":{"feishu":{"enabled":true,"appId":"cli_0123456789abcdef","appSecret":"mock-secret","connectionMode":"stream"}}});
     std::fs::write(&path, config.to_string()).unwrap();
     let mut options = requests.options.clone();
     options.sidecar = std::env::var_os("PDRS_CHANNEL_SIDECAR")
@@ -301,7 +301,16 @@ async fn feishu_actual_server_media_a7_upload_interactions_new_reload_shutdown()
     .await;
     let models = peer.state.models.lock().unwrap().clone();
     assert!(
-        models[0].to_string().contains(PNG),
+        models[0]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(
+                |message| message["content"].as_array().is_some_and(|blocks| blocks
+                    .iter()
+                    .any(|block| block["type"] == "image_url"
+                        && block["image_url"]["url"] == format!("data:image/png;base64,{PNG}")))
+            ),
         "image bytes must reach actual model as image content"
     );
     assert!(
@@ -367,11 +376,28 @@ async fn feishu_actual_server_media_a7_upload_interactions_new_reload_shutdown()
     )
     .await;
     assert_eq!(std::fs::read_to_string(&approved).unwrap(), "approved");
-    assert!(
-        peer.state.models.lock().unwrap()[4]
-            .to_string()
-            .contains("One")
-    );
+    {
+        let models = peer.state.models.lock().unwrap();
+        let after_permission = models[3]["messages"].as_array().unwrap();
+        assert!(
+            after_permission
+                .iter()
+                .any(|message| message["role"] == "tool"
+                    && message["tool_call_id"] == "feishu-permission-2"),
+            "actual approved bash result must resume the same model history"
+        );
+        let after_question = models[4]["messages"].as_array().unwrap();
+        let answer = after_question
+            .iter()
+            .rev()
+            .find(|message| message["role"] == "tool")
+            .expect("actual elicitation must produce a tool result");
+        assert_eq!(answer["tool_call_id"], "feishu-question");
+        assert!(
+            answer["content"].to_string().contains("One"),
+            "latest real tool result must contain the chosen answer, not a prior question option"
+        );
+    }
     let count = peer
         .state
         .sent
@@ -440,6 +466,34 @@ async fn feishu_actual_server_media_a7_upload_interactions_new_reload_shutdown()
         peer.state.sent("feishu-actual-final-1-8")
     })
     .await;
+    let prompts = peer
+        .state
+        .sent
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|frame| frame.to_string().contains("回复 1 允许一次"))
+        .count();
+    peer.state.text("stop-pending-permission");
+    until(
+        &peer.state,
+        "real owned A7 waits for permission at shutdown",
+        || {
+            peer.state
+                .sent
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|frame| frame.to_string().contains("回复 1 允许一次"))
+                .count()
+                > prompts
+        },
+    )
+    .await;
+    assert!(
+        !denied.exists(),
+        "shutdown fixture must stop before tool approval"
+    );
     connection.closed().await.unwrap();
     host.shutdown(options.drain_budget).await.unwrap();
     until(&peer.state, "shutdown closes Feishu transport", || {
@@ -455,6 +509,30 @@ async fn feishu_actual_server_media_a7_upload_interactions_new_reload_shutdown()
             logs.push_str(&std::fs::read_to_string(p).unwrap());
         }
     }
+    assert!(
+        !denied.exists(),
+        "shutdown must not execute the pending bash"
+    );
+    let entries = logs
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .collect::<Vec<_>>();
+    let accepted = entries
+        .iter()
+        .rev()
+        .find(|entry| {
+            entry["type"] == "accepted_input"
+                && entry["messages"]
+                    .to_string()
+                    .contains("stop-pending-permission")
+        })
+        .expect("real pending input persisted");
+    assert!(
+        entries
+            .iter()
+            .any(|entry| entry["type"] == "turn_result" && entry["turnId"] == accepted["turnId"]),
+        "owned pending A7 must terminate and retain its transcript at shutdown"
+    );
     for marker in [
         "feishu-actual-final-0-1",
         "feishu-actual-final-0-4",

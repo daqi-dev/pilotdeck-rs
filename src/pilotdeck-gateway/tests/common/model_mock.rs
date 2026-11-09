@@ -284,6 +284,10 @@ fn serve(
                     .tcp()
                     .set_read_timeout(Some(Duration::from_secs(3)))
                     .unwrap();
+                if get(&reply, "observeHold") == &JsValue::Bool(true) {
+                    exchange.lock().unwrap().requests[index]
+                        .insert("holding".into(), JsValue::Bool(true));
+                }
                 let mut probe = [0u8; 64];
                 let closed = loop {
                     match socket.read(&mut probe) {

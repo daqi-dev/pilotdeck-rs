@@ -59,10 +59,17 @@ pub(super) fn for_generation(home: PathBuf, generation: Arc<RuntimeLease>) -> Cr
                                 "Native persistence has the wrong type.".into(),
                             )
                         })?;
-                    persistence.create_session_bounded(
+                    let recording = persistence.create_session_bounded(
                         context.session_key.clone(),
                         Some(open_path.clone()),
-                    )
+                    )?;
+                    // The recording holds the ledger lock; the factory holds its
+                    // process writer lease. Only a genuinely new transcript may
+                    // invalidate crash debris belonging to an earlier lifetime.
+                    crate::storage::replacement_artifacts::cleanup_if_missing(&open_path).map_err(
+                        |e| crate::storage::recorder::RecorderError::Type(e.to_string()),
+                    )?;
+                    Ok(recording)
                 }),
             }))
         })
@@ -73,6 +80,65 @@ pub(super) fn for_generation(home: PathBuf, generation: Arc<RuntimeLease>) -> Cr
 mod tests {
     use super::*;
     use crate::runtime::session::SessionContext;
+    #[tokio::test]
+    async fn missing_native_transcript_discards_orphans_but_reopen_preserves_live_sidecars() {
+        let (_scratch, requests) = crate::native_process::management_tests::setup();
+        let registry = super::super::assembly::project_registry(&requests.options, &requests.env);
+        let generation = Arc::new(registry.acquire(None).unwrap());
+        let factory = for_generation(requests.options.home.clone(), generation.clone());
+        let SessionStorage::Recording(plan) = factory(SessionContext {
+            session_key: "orphan-native".into(),
+            project_key: None,
+            channel_key: "cli".into(),
+            allowed_tools: None,
+            disallowed_tools: None,
+        })
+        .await
+        .unwrap() else {
+            panic!("native recording");
+        };
+        let path = plan.transcript_path.clone();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let stem = path.file_stem().unwrap().to_str().unwrap();
+        let id = uuid::Uuid::new_v4();
+        let backup = path
+            .parent()
+            .unwrap()
+            .join(format!(".{stem}.{id}.replace.bak"));
+        let journal = path
+            .parent()
+            .unwrap()
+            .join(format!(".{stem}.{id}.replace.json"));
+        std::fs::write(&backup, b"old deleted lifetime backup").unwrap();
+        std::fs::write(&journal, b"old deleted lifetime journal").unwrap();
+        assert!(!path.exists());
+        let opened = (plan.open)().unwrap();
+        assert!(!backup.exists() && !journal.exists());
+        assert!(opened.read().unwrap().entries.is_empty());
+        opened
+            .recorder
+            .start_turn(&"orphan-native".into(), &"fresh-turn".into())
+            .unwrap();
+        assert_eq!(opened.read().unwrap().entries.len(), 1);
+        drop(opened);
+        std::fs::write(&backup, b"live replacement backup").unwrap();
+        std::fs::write(&journal, b"live replacement journal").unwrap();
+        let reopened = (plan.open)().unwrap();
+        assert_eq!(reopened.read().unwrap().entries.len(), 1);
+        assert_eq!(std::fs::read(&backup).unwrap(), b"live replacement backup");
+        assert_eq!(
+            std::fs::read(&journal).unwrap(),
+            b"live replacement journal"
+        );
+        drop(reopened);
+        drop(plan);
+        drop(factory);
+        drop(generation);
+        registry.dispose().await.unwrap();
+        requests.owner.shutdown().await.unwrap();
+        requests.project.dispose().await.unwrap();
+    }
+
     #[tokio::test]
     async fn native_storage_uses_prepared_generation_root_instead_of_fallback_or_input() {
         let (_scratch, requests) = crate::native_process::management_tests::setup();
@@ -168,10 +234,17 @@ pub(super) fn for_ephemeral(
                                 "Native persistence has the wrong type.".into(),
                             )
                         })?;
-                    persistence.create_session_bounded(
+                    let recording = persistence.create_session_bounded(
                         context.session_key.clone(),
                         Some(open_path.clone()),
-                    )
+                    )?;
+                    // The recording holds the ledger lock; the factory holds its
+                    // process writer lease. Only a genuinely new transcript may
+                    // invalidate crash debris belonging to an earlier lifetime.
+                    crate::storage::replacement_artifacts::cleanup_if_missing(&open_path).map_err(
+                        |e| crate::storage::recorder::RecorderError::Type(e.to_string()),
+                    )?;
+                    Ok(recording)
                 }),
             }))
         })

@@ -400,6 +400,12 @@ def case_plan(case):
     return {'timeoutMs': SESSION_TIMEOUT_MS, 'delay': 0.0, 'stimulus': stimulus}
 
 
+def readable_registry_evidence(observation, source):
+    """Raw readback only. Never turns an unsettled read into a scored row."""
+    readable = observation if observation is not None else source.get('lastReadableObservation')
+    return readable.get('registry', {}) if isinstance(readable, dict) else {}
+
+
 def session_row(case, identity, observation, source, evidence=None):
     execution = stimuli.execution(case_plan(case)['stimulus'], evidence)
     row = {'case': case, 'identity': identity, 'stimulus': execution,
@@ -556,9 +562,10 @@ def wait_observation(home, project, session, run_id, received, request_id, deadl
     if last is None:
         detail = '' if last_error is None else f'; last error: {last_error!r}'
         raise Blocked('#1140 落盘未完成: no readable transcript/registry before deadline' + detail)
-    _, identity, source = last
+    retained, identity, source = last
     detail = '' if last_error is None else f' (last error: {last_error!r})'
-    return None, identity, dict(source, collectionError='落盘未完成' + detail)
+    return None, identity, dict(source, collectionError='落盘未完成' + detail,
+                                lastReadableObservation=retained)
 
 
 def publish_session_domain(output, observer, rows, requests, endpoint, driver, sources=None):
@@ -793,7 +800,10 @@ def _native_run(gateway, sidecar, output, port, session_domain=False, registry='
                         # seq envelopes. The registry-off closure evidence is
                         # the product's own stderr receipt plus the collector's
                         # file-absence observation — never the absence alone.
-                        surfaces = (observation or {}).get('registry', {})
+                        # Retain raw readable evidence even when durability never settled.
+                        # Only `observation` reaches scoring; the retained read is
+                        # diagnostic evidence and cannot satisfy the settle gate.
+                        surfaces = readable_registry_evidence(observation, source)
                         evidence = control.evidence(
                             case, run_id, request_id, driven,
                             (folder / 'stderr.log').read_text(errors='replace'),
@@ -801,6 +811,10 @@ def _native_run(gateway, sidecar, output, port, session_domain=False, registry='
                              if isinstance(entry, dict)],
                             surfaces.get('record') or None,
                             source.get('registryText') is None)
+                        # Keep failed-target raw evidence too: execution() only
+                        # exposes complete target witnesses, so that projection
+                        # alone cannot reproduce an honest NOT_RUN.
+                        source['stimulusEvidence'] = evidence
                         row = session_row(case, identity, observation, source, evidence=evidence)
                         rows.append(row)
                         driver_hello['identities'].append(identity)

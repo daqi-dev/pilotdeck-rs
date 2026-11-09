@@ -212,6 +212,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn queued_external_broadcast_delivers_only_to_live_authenticated_connections() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let owner = HostNotifications::new(tx);
+        owner.bind_host_thread();
+        let live = Arc::new(Sink::default());
+        let closed = Arc::new(Sink::default());
+        let unauthenticated = Arc::new(Sink::default());
+        let mut connections = Vec::new();
+        let mut registrations = Vec::new();
+        for (index, sink) in [live.clone(), closed.clone(), unauthenticated.clone()]
+            .into_iter()
+            .enumerate()
+        {
+            let connection = Arc::new(GatewayConnection::new(
+                sink,
+                Arc::new(TestGateway),
+                "token".into(),
+                "test".into(),
+            ));
+            if index < 2 {
+                connection.receive(r#"{"type":"hello","protocolVersion":"1.2","clientName":"ui","clientVersion":"test","token":"token"}"#).await.unwrap();
+            }
+            registrations.push(owner.register(&connection));
+            connections.push(connection);
+        }
+        let external = owner.clone();
+        std::thread::spawn(move || external.broadcast_notification("external", &"payload".into()))
+            .join()
+            .unwrap();
+        // Closing after admission but before the host executes the job must
+        // prevent delivery. The live connection proves the queued job ran.
+        registrations[1].close();
+        rx.try_recv().unwrap().await;
+        assert!(rx.try_recv().is_err());
+        for (sink, expected) in [(live, 1), (closed, 0), (unauthenticated, 0)] {
+            let frames = sink.frames.lock().unwrap();
+            assert_eq!(
+                frames
+                    .iter()
+                    .filter(|frame| frame.contains(r#""name":"external""#))
+                    .count(),
+                expected,
+                "{frames:?}"
+            );
+        }
+        drop(connections);
+    }
+
+    #[tokio::test]
     async fn reentrant_close_skips_later_connection_from_snapshot() {
         let (tx, _rx) = mpsc::unbounded_channel();
         let owner = HostNotifications::new(tx);

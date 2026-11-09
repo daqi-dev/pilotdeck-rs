@@ -673,6 +673,11 @@ fn settlement_on_a_stopped_executor_warns_instead_of_vanishing() {
             "warn:[pilotdeck] Config runtime refresh lost; the runtime executor stopped before the reload settled::agent.model",
         ])
     );
+    // The settlement's sender was dropped without ever being polled. The
+    // warning above is observable; callers must not wait on a dead executor.
+    let mut checkpoint = Box::pin(bundle.settle_ready_notifications());
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    assert!(std::future::Future::poll(checkpoint.as_mut(), &mut cx).is_ready());
     bundle.dispose();
 }
 

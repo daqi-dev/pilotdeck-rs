@@ -78,6 +78,8 @@ pub struct CompactionInput {
     pub attachments: Vec<JsValue>,
     pub hook_results: Vec<JsValue>,
     pub signal: Option<Cancellation>,
+    /// Native turn cancellation, also passed unchanged to the HTTP provider.
+    pub transport_signal: Option<crate::runtime::network::Cancellation>,
     pub session_id: Option<JsString>,
     pub turn_id: Option<JsString>,
 }
@@ -96,6 +98,7 @@ impl CompactionInput {
             attachments: Vec::new(),
             hook_results: Vec::new(),
             signal: None,
+            transport_signal: None,
             session_id: None,
             turn_id: None,
         }
@@ -481,9 +484,9 @@ impl CompactionEngine {
         ]);
         let signal = input.signal.as_ref();
         let aborted = async {
-            match signal {
-                Some(signal) => signal.cancelled().await,
-                None => std::future::pending().await,
+            tokio::select! {
+                _ = async { match signal { Some(signal) => signal.cancelled().await, None => std::future::pending().await } } => {},
+                _ = async { match &input.transport_signal { Some(signal) => signal.cancelled().await, None => std::future::pending().await } } => {},
             }
         };
         tokio::pin!(aborted);
@@ -491,16 +494,21 @@ impl CompactionEngine {
             _ = &mut aborted => return Err(abort_failure(signal)),
             result = self.options.model.prepare(PrepareInput { request, context: JsObject::new() }) => result?,
         };
+        // Host and transport cancellation are distinct; forward before close.
+        let provider_abort = input
+            .transport_signal
+            .clone()
+            .or_else(|| signal.map(|_| crate::runtime::network::Cancellation::new()));
         let mut stream = tokio::select! { biased;
-            _ = &mut aborted => return Err(abort_failure(signal)),
-            result = self.options.model.stream(StreamInput { prepared, context: JsObject::new(), abort: None }) => result?,
+            _ = &mut aborted => { if let Some(abort) = &provider_abort { abort.abort(); } return Err(abort_failure(signal)); },
+            result = self.options.model.stream(StreamInput { prepared, context: JsObject::new(), abort: provider_abort.clone() }) => result?,
         };
         let mut units = Vec::new();
         let mut usage = None;
         let mut finish = JsValue::Undefined;
         let outcome = loop {
             let next = tokio::select! { biased;
-                _ = &mut aborted => break Err(abort_failure(signal)),
+                _ = &mut aborted => { if let Some(abort) = &provider_abort { abort.abort(); } break Err(abort_failure(signal)); },
                 event = stream.next() => event,
             };
             match next {
@@ -530,6 +538,11 @@ impl CompactionEngine {
             }
         };
         if outcome.is_err() {
+            if input.transport_signal.is_none()
+                && let Some(abort) = &provider_abort
+            {
+                abort.abort();
+            }
             // Async-iterator return() is part of the error/abort path.
             let _ = stream.close().await;
         }

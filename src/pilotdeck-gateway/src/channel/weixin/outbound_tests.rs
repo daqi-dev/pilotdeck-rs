@@ -112,7 +112,9 @@ fn normalize(rows: &mut [Value]) {
                 .encode(plain)
                 .into();
         }
-        if !filekey.is_empty() && let Some(path) = row["path"].as_str() {
+        if !filekey.is_empty()
+            && let Some(path) = row["path"].as_str()
+        {
             row["path"] = path.replace(&filekey, "$FILEKEY").into();
         }
         if let Some(body) = row.get_mut("body") {

@@ -969,10 +969,14 @@ async fn failed_barrier_releases_its_hold_before_later_entries() {
     use crate::runtime::turn::publish::{FileRegistry, TurnRunRegistry};
     let scratch = Scratch::new();
     let control = scratch.control();
+    let stimulus = armed(&control);
     let port = Arc::new(
         FileRegistry::new(
-            FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
-                .unwrap(),
+            FileRunRegistry::open_with_stimulus(
+                scratch.0.join("runs.json"),
+                Some(stimulus.clone()),
+            )
+            .unwrap(),
         )
         .unwrap(),
     );
@@ -995,9 +999,37 @@ async fn failed_barrier_releases_its_hold_before_later_entries() {
         failed.is_err(),
         "#1370 an unreadable release fails the held append"
     );
-    let appended = port
-        .append(&run(), &agent_status_event("input_accepted"))
-        .await;
+    // Force a real pending follower, rather than racing an idle worker that
+    // can start the append before a stale hold has a chance to mis-stamp it.
+    struct ReleaseWorker(Option<std::sync::mpsc::Sender<()>>);
+    impl Drop for ReleaseWorker {
+        fn drop(&mut self) {
+            if let Some(sender) = self.0.take() {
+                let _ = sender.send(());
+            }
+        }
+    }
+    let (release_worker, receive_worker) = std::sync::mpsc::channel();
+    let release_worker = ReleaseWorker(Some(release_worker));
+    let (entered, observe) = std::sync::mpsc::channel();
+    let blocker = port.call(move |_| {
+        let _ = entered.send(());
+        let _ = receive_worker.recv_timeout(OBSERVE);
+        Ok(())
+    });
+    observe.recv_timeout(OBSERVE).unwrap();
+    let appended = port.append(&run(), &agent_status_event("input_accepted"));
+    let end = Instant::now() + OBSERVE;
+    while stimulus.pending_ready_for_test() == 0 {
+        assert!(
+            Instant::now() < end,
+            "pending follower initialization never completed"
+        );
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    drop(release_worker);
+    blocker.await.unwrap();
+    let appended = appended.await;
     negative_assert!(
         appended.is_ok(),
         "#1370 the site accepts entries again after a failed barrier"

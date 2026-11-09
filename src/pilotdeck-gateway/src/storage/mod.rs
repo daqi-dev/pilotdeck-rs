@@ -7,6 +7,8 @@ pub mod file_history;
 mod ledger;
 mod projection;
 pub mod recorder;
+#[cfg(unix)]
+pub(crate) mod replacement_artifacts;
 mod run_registry;
 mod session_domain;
 pub(crate) mod stimulus;

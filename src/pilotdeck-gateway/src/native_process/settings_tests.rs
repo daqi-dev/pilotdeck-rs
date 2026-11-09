@@ -10,7 +10,7 @@
 //! layers the TS generator drives: the real [`ConfigStore`] over real
 //! scratch YAML trees, the real #1011 session owner, and the real
 //! [`RefreshBundle`] with recording collaborators, one of them the settling
-//! registry (`reload()` resolves on the first poll) that reproduces the TS
+//! registry (`reload()` yields before resolving) that reproduces the TS
 //! delegate's `setImmediate` settlement so the golden's full chain — log →
 //! sdk dispatch → registry.reload() → settle → markAllDirty → broadcast —
 //! is pinned, with the broadcast frame landing AFTER the reload response
@@ -75,14 +75,21 @@ const ORACLE: &str = include_str!("../../tests/fixtures/native-settings/oracle.j
 
 /// The generator's registry delegate: `reload()` records the call and
 /// settles on a setImmediate macrotask — modelled here as a future that
-/// resolves on its first poll, so the settlement (markAllDirty +
+/// returns Pending on its first poll, so the settlement (markAllDirty +
 /// broadcast) runs on the next driver yield after the RPC response, the
 /// exact ordering the golden's before/after split pins.
-struct SettlingRegistry(Probe);
+struct SettlingRegistry(Probe, Mutex<Vec<tokio::sync::oneshot::Sender<()>>>);
 impl RefreshRegistry for SettlingRegistry {
     fn reload(&self) -> Result<BoxFuture<RuntimeResult>, crate::runtime::project::RuntimeError> {
         self.0.event("registry-reload");
-        Ok(Box::pin(async { Ok(()) }))
+        let (released, release) = tokio::sync::oneshot::channel();
+        lock(&self.1).push(released);
+        Ok(Box::pin(async move {
+            release
+                .await
+                .expect("fixture macrotask must be explicitly driven");
+            Ok(())
+        }))
     }
     fn invalidate(&self, project_key: Option<&JsString>) {
         self.0.event(match project_key {
@@ -417,8 +424,14 @@ async fn call(
 /// (scheduled during the store reload, before the response send) run its
 /// markAllDirty + broadcast chain; nothing after it can still be pending.
 /// The bound only guards a broken settlement, never orders work.
-async fn drain() {
+async fn drain(registry: &SettlingRegistry) {
+    // The TS fixture uses setImmediate, not a resolved Promise. A bare
+    // yield_now can resume before the waiting RPC on Tokio. Advance the
+    // deferred delegate here, after this fixture's request(s) have answered.
     for _ in 0..50 {
+        for release in std::mem::take(&mut *lock(&registry.1)) {
+            let _ = release.send(());
+        }
         tokio::task::yield_now().await;
     }
 }
@@ -445,7 +458,7 @@ struct Stack {
 
 fn stack(keys: &[String]) -> Stack {
     let probe = Probe::new();
-    let settling = Arc::new(SettlingRegistry(probe.clone()));
+    let settling = Arc::new(SettlingRegistry(probe.clone(), Mutex::new(Vec::new())));
     let harness = harness_with(keys, probe.clone(), settling.clone());
     let connections = Arc::new(Connections::default());
     harness.bundle.bind_server(Arc::new(BroadcastServer {
@@ -662,7 +675,7 @@ async fn native_settings_replays_the_real_ts_oracle() {
             params,
         )
         .await;
-        drain().await;
+        drain(&stack.settling).await;
         let frames = primary.frames();
         let at = primary
             .index_of_response(&format!("r{request_id}"))
@@ -741,7 +754,7 @@ async fn native_settings_replays_the_real_ts_oracle() {
         // the second call's future execute the shared flight and answer
         // first — the TS wire pins the first-sent response first).
         let (first, second) = tokio::join!(biased; first, second);
-        drain().await;
+        drain(&stack.settling).await;
         let frames = primary.frames();
         let at = primary
             .index_of_response(&format!("r{second_id}"))
@@ -828,7 +841,7 @@ async fn native_settings_replays_the_real_ts_oracle() {
             JsValue::Undefined,
         );
         let (mid, reload) = tokio::join!(mid, reload);
-        drain().await;
+        drain(&stack.settling).await;
         let second = stack.connections.add();
         let second_read_id = counter.next();
         let second_read = call(
@@ -954,7 +967,7 @@ async fn native_settings_replays_the_real_ts_oracle() {
             JsValue::Undefined,
         )
         .await;
-        drain().await;
+        drain(&stack.settling).await;
         let frames = primary.frames();
         let at = primary
             .index_of_response(&format!("r{response_id}"))
@@ -1047,7 +1060,7 @@ async fn native_settings_replays_the_real_ts_oracle() {
                 params,
             )
             .await;
-            drain().await;
+            drain(&stack.settling).await;
             let frames = connection.frames();
             let at = connection
                 .index_of_response(&format!("r{request_id}"))
@@ -1157,7 +1170,7 @@ async fn reload_config_inflight_is_shared() {
         JsValue::Undefined,
     );
     let (first, second) = tokio::join!(first, second);
-    drain().await;
+    drain(&stack.settling).await;
     let first_paths = changed_paths(&first, "#1320 inflight: the first reload");
     let second_paths = changed_paths(&second, "#1320 inflight: the second reload");
     assert_eq!(
@@ -1244,7 +1257,7 @@ async fn resolve_settings_generation_across_reconnect() {
         JsValue::Undefined,
     );
     let (mid, reload) = tokio::join!(mid, reload);
-    drain().await;
+    drain(&stack.settling).await;
     let second = stack.connections.add();
     let second_read = call(
         &stack.requests,
@@ -1375,7 +1388,7 @@ async fn reload_config_dirty_then_broadcast_order() {
         JsValue::Undefined,
     )
     .await;
-    drain().await;
+    drain(&stack.settling).await;
     assert_eq!(
         changed_paths(&response, "#1320 dirty-then-broadcast: the reload"),
         ["agent.model.id", "agent.model.model"],
@@ -1443,7 +1456,7 @@ async fn reload_extensions_order_per_key() {
         project_params,
     )
     .await;
-    drain().await;
+    drain(&stack.settling).await;
     assert_eq!(
         changed_paths(&project, "#1320 extensions-order: the project reload"),
         Vec::<String>::new(),
@@ -1478,7 +1491,7 @@ async fn reload_extensions_order_per_key() {
         JsValue::Undefined,
     )
     .await;
-    drain().await;
+    drain(&stack.settling).await;
     assert_eq!(
         changed_paths(
             &all_runtimes,
@@ -1511,7 +1524,7 @@ async fn reload_extensions_order_per_key() {
         paths_params,
     )
     .await;
-    drain().await;
+    drain(&stack.settling).await;
     assert_eq!(
         changed_paths(&changed, "#1320 extensions-order: the changed-paths reload"),
         ["ext/a.ts", "ext/b.ts"],
@@ -1635,8 +1648,8 @@ impl ProjectRuntimeFactory for StageFactory {
 /// previous ticket's settlement callbacks (markAllDirty + broadcast) ran —
 /// the ticket is released observably, not just without hanging. The first
 /// settlement parks inside its `markAllDirty` (a gated router) while the
-/// second change's reload is already answered, proving the second reload
-/// stays queued behind the first ticket until the release.
+/// second change is admitted, proving the second registry reload stays queued
+/// behind the first ticket until release. Both RPCs retain their checkpoints.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn reload_ticket_releases_after_settlement() {
     let harness = harness(&[]);
@@ -1689,27 +1702,29 @@ async fn reload_ticket_releases_after_settlement() {
         reload_config: Some(bundle.clone()),
         reload_extensions: None,
     }));
-    let requests = base_requests(&root, &probe.owner());
+    let requests = Arc::new(base_requests(&root, &probe.owner()));
     let connection = Arc::new(Connection::new());
     probe.clear_events();
 
-    // First change: the response resolves while its settlement parks
-    // inside markAllDirty, holding the first ticket.
+    // First change: its ready settlement parks inside markAllDirty, holding
+    // both the registry ticket and the response checkpoint.
     std::fs::write(&config, OTHER_MODEL).expect("#1320 ticket: the changed config must be written");
-    let first = call(
-        &requests,
-        &connection,
-        gateway.clone(),
-        0,
-        "reload_config",
-        JsValue::Undefined,
-    )
-    .await;
-    assert_eq!(
-        changed_paths(&first, "#1320 ticket: the first reload"),
-        ["agent.model.id", "agent.model.model"],
-        "#1320 ticket: the first reload must report its change"
-    );
+    let first = {
+        let requests = requests.clone();
+        let connection = connection.clone();
+        let gateway = gateway.clone();
+        tokio::spawn(async move {
+            call(
+                &requests,
+                &connection,
+                gateway,
+                0,
+                "reload_config",
+                JsValue::Undefined,
+            )
+            .await
+        })
+    };
     tokio::task::spawn_blocking(move || {
         entered_rx
             .recv()
@@ -1718,26 +1733,42 @@ async fn reload_ticket_releases_after_settlement() {
     .await
     .expect("#1320 ticket: the gate join must succeed");
 
-    // Second change: answered while the first ticket is still held — the
-    // second reload must stay queued (no stage, no markAllDirty).
+    // Second change: admitted while the first ticket is held. The second
+    // registry reload must stay queued (no stage, no markAllDirty).
     std::fs::write(&config, BASE).expect("#1320 ticket: the base config must be restored");
-    let second = call(
-        &requests,
-        &connection,
-        gateway.clone(),
-        1,
-        "reload_config",
-        JsValue::Undefined,
-    )
-    .await;
-    assert_eq!(
-        changed_paths(&second, "#1320 ticket: the second reload"),
-        ["agent.model.id", "agent.model.model"],
-        "#1320 ticket: the second reload must report its change"
+    let second = {
+        let requests = requests.clone();
+        let connection = connection.clone();
+        let gateway = gateway.clone();
+        tokio::spawn(async move {
+            call(
+                &requests,
+                &connection,
+                gateway,
+                1,
+                "reload_config",
+                JsValue::Undefined,
+            )
+            .await
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while probe
+            .events()
+            .iter()
+            .filter(|event| event.starts_with("store-event:"))
+            .count()
+            < 2
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("second change must enter while the first settlement is held");
+    assert!(
+        !first.is_finished(),
+        "ready settlement publishes before its response"
     );
-    for _ in 0..200 {
-        tokio::task::yield_now().await;
-    }
     let events = probe.events();
     assert!(
         !events.iter().any(|event| event == "stage:3"),
@@ -1757,6 +1788,16 @@ async fn reload_ticket_releases_after_settlement() {
     release_tx
         .send(())
         .expect("#1320 ticket: the gate must be released");
+    for (name, request) in [("first", first), ("second", second)] {
+        let response = tokio::time::timeout(Duration::from_secs(10), request)
+            .await
+            .expect("RPC must finish after releasing the settlement")
+            .unwrap();
+        assert_eq!(
+            changed_paths(&response, name),
+            ["agent.model.id", "agent.model.model"]
+        );
+    }
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         let events = probe.events();
@@ -1814,7 +1855,9 @@ impl crate::runtime::refresh::RefreshRouter for GatedRouter {
             let _ = entered.send(());
             // The bound only limits how long a broken queue gets to
             // overtake; a correct queue cannot pass while this runs.
-            let _ = release.recv_timeout(Duration::from_millis(300));
+            release
+                .recv_timeout(Duration::from_secs(10))
+                .expect("test must explicitly release the settlement gate");
         }
         self.probe.event(format!("mark-all-dirty:{reason}"));
         2

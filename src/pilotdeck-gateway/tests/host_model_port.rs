@@ -2637,3 +2637,108 @@ async fn pulls_after_the_cancel_still_publish_the_terminal_failure() {
         "every pulled event is on disk in pull order"
     );
 }
+
+// Exercise compaction through the real router and HTTP transport, against a
+// loopback provider that deliberately keeps its response open after its frames.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compaction_cancel_reaches_delayed_http_provider() {
+    use pilotdeck_gateway::runtime::context::compaction::engine::{
+        CompactionEngine, CompactionEngineOptions, CompactionInput, ProtectedTools,
+    };
+    let oracle = baseline::oracle(ORACLE);
+    let providers = get(&oracle, "providers").clone();
+    let case = items(get(&oracle, "cases"))
+        .iter()
+        .find(|case| case_name(case) == "http-text-stream")
+        .unwrap();
+    let frames = items(get(&items(get(get(case, "spec"), "replies"))[0], "chunks"));
+    let exchange = Arc::new(Mutex::new(model_mock::Exchange {
+        replies: vec![obj(&[
+            (
+                "chunks",
+                JsValue::Array(
+                    frames
+                        .iter()
+                        .take(2)
+                        .map(|frame| obj(&[("text", frame.clone())]))
+                        .collect(),
+                ),
+            ),
+            ("end", "hold".into()),
+            ("observeHold", JsValue::Bool(true)),
+        ])],
+        ..Default::default()
+    }));
+    let excluded = items(get(&oracle, "transportHeaders"))
+        .iter()
+        .map(text)
+        .collect();
+    let server = model_mock::start_mock(exchange.clone(), excluded, None);
+    let mut configured = providers.as_object().cloned().unwrap();
+    let mut provider = configured
+        .get_key(&"a".into())
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .clone();
+    provider.insert(
+        "url".into(),
+        format!("{}/a/v1", server.origin).as_str().into(),
+    );
+    configured.insert("a".into(), JsValue::Object(provider));
+    let config = obj(&[("providers", JsValue::Object(configured))]);
+    let trace: Trace = Arc::default();
+    let invoker: Arc<dyn RouterModelInvocation> = Arc::new(HttpRouterInvocation::new(
+        Arc::new(ScriptedInvoker {
+            providers: providers.clone(),
+            spec: obj(&[("scripts", JsValue::Array(vec![]))]),
+            calls: Arc::default(),
+        }),
+        Arc::new(HyperModelTransport::new()),
+        config.clone(),
+    ));
+    let execution = model_port::ports(
+        test_router(invoker, &trace),
+        config,
+        None,
+        RouterModelPortOptions::default(),
+        &"s1".into(),
+    )
+    .execution;
+    let engine = CompactionEngine::new(CompactionEngineOptions::new(
+        execution,
+        "a".into(),
+        "m".into(),
+    ));
+    let messages = parsed(
+        r#"[{"role":"user","content":[{"type":"text","text":"old question"}]},{"role":"assistant","content":[{"type":"text","text":"old answer"}]},{"role":"user","content":[{"type":"text","text":"new question"}]},{"role":"assistant","content":[{"type":"text","text":"new answer"}]}]"#,
+    );
+    let signal = pilotdeck_gateway::host::Cancellation::default();
+    let mut input = CompactionInput::new("manual", items(&messages).to_vec());
+    input.target_post_tokens = Some(1.0);
+    input.protected_tool_names = ProtectedTools::Disabled;
+    input.signal = Some(signal.clone());
+    let task = tokio::spawn(async move { engine.run(input).await });
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if exchange
+                .lock()
+                .unwrap()
+                .requests
+                .iter()
+                .any(|request| request.get("holding") == Some(&JsValue::Bool(true)))
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("summary request reached loopback provider");
+    signal.cancel(None);
+    wait_client_closed(&exchange, "cancel must close summary HTTP request").await;
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), task)
+        .await
+        .expect("compaction settles after cancellation")
+        .unwrap();
+}

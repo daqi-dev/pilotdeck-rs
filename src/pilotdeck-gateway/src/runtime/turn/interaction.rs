@@ -246,6 +246,26 @@ impl InteractionTurn {
             // before this turn may dispatch anything.
             hooks.wait_ready().await?;
         }
+        // Keep compaction on the normal identity-checked event buffer and
+        // Gateway projector, including its timeline allocation and close gate.
+        let compact_events = turn.ports.events.clone();
+        let compact_emit: Arc<dyn Fn(JsValue) -> bool + Send + Sync> = Arc::new(move |event| {
+            compact_events
+                .as_ref()
+                .zip(event.as_object())
+                .is_some_and(|(sink, value)| event::EventSink::emit(sink, value.clone()).is_ok())
+        });
+        router.context.bind_compact_scope(
+            crate::runtime::project::context_storage::CompactScope::new(
+                turn.ports
+                    .hooks
+                    .as_ref()
+                    .map(|hooks| Arc::new(hooks.clone()) as Arc<dyn lifecycle::LifecyclePort>),
+                identity.session_id.clone(),
+                context.project_root().to_string_lossy().into_owned().into(),
+                compact_emit,
+            ),
+        );
         if let Some(resource) = resource::<InteractionSteer>(&context, Resource::InteractionSteer)?
         {
             if turn.record_message.is_none() {
@@ -386,6 +406,17 @@ impl InteractionTurn {
             identity.run_id.clone(),
             &mut router,
         )?;
+        // SOP node borrows the parent's session lifecycle, but owns a fresh
+        // node event token and therefore must publish through that node buffer.
+        let compact_events = node_events.clone();
+        let compact_emit: Arc<dyn Fn(JsValue) -> bool + Send + Sync> = Arc::new(move |event| {
+            event
+                .as_object()
+                .is_some_and(|value| event::EventSink::emit(&compact_events, value.clone()).is_ok())
+        });
+        router
+            .context
+            .inherit_compact_scope(&self.router.context, compact_emit);
         let permission_context = self
             .manifest
             .get("permissionContext")

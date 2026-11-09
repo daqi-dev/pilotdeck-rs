@@ -437,19 +437,31 @@ pub(crate) async fn restore_guarded<G: Send + 'static>(
         .acquire_owned()
         .await
         .map_err(|e| RequestError::new(e.to_string()))?;
-    tokio::task::spawn_blocking(move || {
-        use std::os::unix::fs::DirBuilderExt;
-        use std::sync::Arc;
-        let (_permit, _guard) = (permit, guard);
-        validate_archive(&archive)?;
-        let path = super::reader::history_path(&files, &session).map_err(RequestError::new)?;
-        let _lease = crate::runtime::session::transcript_locks::cold_write_lease(&path)
-            .ok_or_else(|| {
+    let check_archive = archive.clone();
+    let check_files = files.clone();
+    let check_session = session.clone();
+    let (path, lease) = tokio::task::spawn_blocking(move || {
+        validate_archive(&check_archive)?;
+        let path =
+            super::reader::history_path(&check_files, &check_session).map_err(RequestError::new)?;
+        let lease = crate::runtime::session::transcript_locks::cold_write_lease(&path).ok_or_else(
+            || {
                 domain(
                     "SESSION_BUSY",
                     "Cannot restore over an active Gateway session.",
                 )
-            })?;
+            },
+        )?;
+        Ok::<_, RequestError>((path, lease))
+    })
+    .await
+    .map_err(|e| RequestError::new(e.to_string()))??;
+    let fence = crate::runtime::session::transcript_locks::acquire(&path).await?;
+    tokio::task::spawn_blocking(move || {
+        use std::os::unix::fs::DirBuilderExt;
+        use std::sync::Arc;
+        let (_permit, _guard) = (permit, guard);
+        let (_lease, _fence) = (lease, fence);
         let target = crate::atomic_file::Target::prepare_new(&path).map_err(restore_io)?;
         struct Scratch(std::path::PathBuf);
         impl Drop for Scratch {
@@ -530,6 +542,8 @@ pub(crate) async fn restore_guarded<G: Send + 'static>(
             .map_err(|e| RequestError::new(e.to_string()))?;
         storage.transcript.close();
         let bytes = std::fs::read(&storage.transcript_path)
+            .map_err(|e| RequestError::new(e.to_string()))?;
+        crate::storage::replacement_artifacts::cleanup_if_missing(&path)
             .map_err(|e| RequestError::new(e.to_string()))?;
         target.publish(&bytes).map_err(restore_io)?;
         let mut result = pilotdeck_protocol::JsObject::new();
@@ -613,6 +627,7 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("pdrs-portable-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&root).unwrap();
+        let root = root.canonicalize().unwrap();
         let home = root.join("home");
         let project = root.join("project");
         std::fs::create_dir(&home).unwrap();
@@ -629,12 +644,31 @@ mod tests {
             .unwrap()
             .clone();
         let session = JsString::from("portable-test");
+        let target_path = super::super::reader::history_path(&files, &session).unwrap();
+        std::fs::create_dir_all(target_path.parent().unwrap()).unwrap();
+        let stem = target_path.file_stem().unwrap().to_str().unwrap();
+        let id = uuid::Uuid::new_v4();
+        let orphan_backup = target_path
+            .parent()
+            .unwrap()
+            .join(format!(".{stem}.{id}.replace.bak"));
+        let orphan_journal = target_path
+            .parent()
+            .unwrap()
+            .join(format!(".{stem}.{id}.replace.json"));
+        std::fs::write(&orphan_backup, b"deleted old lifetime").unwrap();
+        std::fs::write(&orphan_journal, b"old restore rollback").unwrap();
+        assert!(!target_path.exists());
         let restored = restore_guarded(files.clone(), session.clone(), archive.clone(), ())
             .await
             .unwrap();
         assert_eq!(
             restored.get("importedMessages"),
             Some(&JsValue::Number(2.0))
+        );
+        assert!(
+            !orphan_backup.exists() && !orphan_journal.exists(),
+            "a genuinely new portable restore invalidates orphan replacement state"
         );
         let path = super::super::reader::history_path(&files, &session).unwrap();
         let read = crate::storage::read_transcript_bounded(&path).unwrap().read;
@@ -699,10 +733,20 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(exported, archive);
+        std::fs::write(&orphan_backup, b"current live backup").unwrap();
+        std::fs::write(&orphan_journal, b"current live journal").unwrap();
         let error = restore_guarded(files.clone(), session.clone(), archive.clone(), ())
             .await
             .unwrap_err();
         assert_eq!(error.code, "SESSION_RESTORE_CONFLICT");
+        assert_eq!(
+            std::fs::read(&orphan_backup).unwrap(),
+            b"current live backup"
+        );
+        assert_eq!(
+            std::fs::read(&orphan_journal).unwrap(),
+            b"current live journal"
+        );
         assert_eq!(
             export_guarded(files.clone(), session, ()).await.unwrap(),
             archive

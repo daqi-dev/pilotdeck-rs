@@ -256,6 +256,8 @@ class StimulusDriver:
         state = self._active
         if state is None or state['case'] != case:
             raise StimulusIncomplete('#2396 drive without prepare: ' + str(case))
+        if self.registry_setting == 'off' and plan['variant'].get('slowAppend'):
+            state['notes']['unavailableStorageActions'] = ['registry slowAppend (capture registry off)']
         prefix_type = PREFIX_TYPES[plan['phase']]
         state['notes']['timeoutMs'] = timeout_ms
         state['requestId'] = request_id
@@ -269,20 +271,17 @@ class StimulusDriver:
             self._settle_milestones(plan)
             if self._turn_complete(plan):
                 break
-            if state['final'] is not None:
-                # Every real outcome trigger is satisfied at or before the
-                # final frame — the native final is itself gated behind the
-                # barrier releases (#1370) — so a trigger still missing a
-                # milestone after final is a stuck choreography, not a slow
-                # one. Bounded grace only; the honest result either way is
-                # the same precise missing.
+            if state['final'] is not None and self._storage_actions_complete(plan):
+                # Once configured storage actions are issued, preserve the
+                # original bounded final/outcome grace. A reliable hard close
+                # may precede durable I/O; pending storage arms still own the
+                # original case budget, not this shorter final grace.
                 end = min(end, state['finalAt'] + MILESTONE_SECONDS)
-            # Every receipt-gated storage step necessarily precedes the final
-            # frame (the native final is gated behind the held durable writes,
-            # #1370), so final + a released outcome means the choreography has
-            # interacted with every boundary it is going to. Trailing receipts
-            # (loop final, K-P return) get the bounded top-up below.
-            if self._final_seen() and state['outcome'] is not None:
+            # A wire final cannot cancel a configured second barrier. Only
+            # stop this loop after its actual control actions are complete;
+            # trailing loop/return receipts retain the same bounded top-up.
+            if (self._final_seen() and state['outcome'] is not None
+                    and self._storage_actions_complete(plan)):
                 break
         # A loop final receipt can trail the last frame by a few polls; give
         # it the same bounded top-up as any other milestone. Frames arriving
@@ -496,16 +495,45 @@ class StimulusDriver:
                 atomic_write(self.storage_dir / 'stimulus.json', json.dumps(state['arms']))
                 self._action('rearm-storage', state['arms']['registry'])
                 self._release_storage(step['blockSeq'])
+                step['lastRelease'] = {'key': arm['key'], 'seq': step['blockSeq']}
                 step['phase'] = 'second-arm'
                 return
             self._release_storage(step['blockSeq'])
+            step['lastRelease'] = {'key': arm['key'], 'seq': step['blockSeq']}
             step['phase'] = 'done'
         if step['phase'] == 'second-arm':
             second = second_append_key(variant)
             blocked = self.storage_receipt('registry', 'block', second) if second else []
             if blocked:
                 self._release_storage(blocked[-1]['seq'])
+                step['lastRelease'] = {'key': second, 'seq': blocked[-1]['seq']}
                 step['phase'] = 'done'
+
+    def _release_observed(self, site, key, block_seq):
+        return any(type(receipt.get('seq')) is int and receipt['seq'] > block_seq
+                   and 'bounded' not in receipt
+                   for receipt in self.storage_receipt(site, 'release', key))
+
+    def _storage_actions_complete(self, plan):
+        """Wire final is not an I/O fence (#2498). Do not disarm an owed arm.
+
+        This gates collection only: no missing boundary is certified here.
+        Registry-off remains explicitly unobservable to the unchanged judge.
+        """
+        steps = self._active['storageSteps']
+        for name, key in (('slowStatus', 'turn_timeout'),
+                          ('slowCatchStatus', 'gateway_submit_failed')):
+            if plan['variant'].get(name):
+                seq = steps.get(name, {}).get('seq')
+                if seq is None or not self._release_observed('writer', key, seq):
+                    return False
+        if plan['variant'].get('slowAppend') and self.registry_setting == 'on':
+            step = steps.get('slowAppend', {})
+            released = step.get('lastRelease')
+            if (step.get('phase') != 'done' or released is None
+                    or not self._release_observed('registry', released['key'], released['seq'])):
+                return False
+        return True
 
     def _turn_complete(self, plan):
         state = self._active
@@ -517,7 +545,7 @@ class StimulusDriver:
             return False
         if plan['order'] == 'known-final-before-timeout-pending' and not state['returnReleased']:
             return False
-        return True
+        return self._storage_actions_complete(plan)
 
     def _observe_orders(self, plan):
         """Record the driver-side ordering observations the attestation uses."""

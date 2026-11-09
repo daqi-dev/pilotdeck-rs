@@ -14,7 +14,15 @@ pub fn compact_with_recorder(
     // terminal fact. Run the bracket on a detached task; dropping this
     // caller's JoinHandle detaches it instead of dropping the bracket.
     Box::pin(async move {
-        let task = tokio::spawn(compact_task(runtime, recorder, input));
+        // Tokio task locals do not propagate across spawn. The durable task
+        // owns the same revocable turn scope until its I/O and hooks settle.
+        let scope = crate::runtime::project::context_storage::current_compact_scope();
+        let task = tokio::spawn(
+            crate::runtime::project::context_storage::with_compact_scope(
+                scope,
+                compact_task(runtime, recorder, input),
+            ),
+        );
         match task.await {
             Ok(result) => result,
             Err(error) => {

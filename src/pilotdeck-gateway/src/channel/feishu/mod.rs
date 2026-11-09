@@ -26,6 +26,8 @@ mod client;
 pub(crate) mod commands;
 pub use commands::FeishuHostPorts;
 mod crypto;
+#[cfg(test)]
+mod lifecycle_tests;
 mod live;
 #[cfg(test)]
 mod live_tests;
@@ -329,7 +331,42 @@ pub struct FeishuChannel {
     runtime: Arc<Runtime>,
 }
 
+struct AnsweringSlot {
+    runtime: Arc<Runtime>,
+    chat: String,
+    token: u64,
+    _work: Option<OwnedWork>,
+}
+impl Drop for AnsweringSlot {
+    fn drop(&mut self) {
+        let mut state = self.runtime.state.lock().expect("feishu answering slot");
+        if state.permission_answering.get(&self.chat) == Some(&self.token) {
+            state.permission_answering.remove(&self.chat);
+        }
+    }
+}
+struct OwnedWork(Arc<Runtime>);
+impl Drop for OwnedWork {
+    fn drop(&mut self) {
+        if self
+            .0
+            .owned_work
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst)
+            == 1
+        {
+            self.0.work_drained.notify_waiters();
+        }
+    }
+}
+fn is_new_command(text: &str) -> bool {
+    let text = js_trim(text);
+    text == "/new" || text.starts_with("/new ")
+}
 struct Runtime {
+    stopped: std::sync::atomic::AtomicBool,
+    stop_signal: Mutex<crate::runtime::network::Cancellation>,
+    owned_work: std::sync::atomic::AtomicUsize,
+    work_drained: tokio::sync::Notify,
     key: ChannelKey,
     /// TS mutates `this.appId`/`encryptKey`/… from `deps.config` in `start()`;
     /// the merged view lives here so the webhook entry sees it.
@@ -352,6 +389,29 @@ struct Runtime {
 }
 
 impl Runtime {
+    fn begin_work(self: &Arc<Self>) -> Option<(OwnedWork, crate::runtime::network::Cancellation)> {
+        let _state = self.state.lock().expect("feishu owned work");
+        if self.stopped.load(std::sync::atomic::Ordering::SeqCst) {
+            return None;
+        }
+        self.owned_work
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Some((
+            OwnedWork(self.clone()),
+            self.stop_signal.lock().expect("feishu stop signal").clone(),
+        ))
+    }
+    async fn drain_owned_work(&self) {
+        loop {
+            let notified = self.work_drained.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.owned_work.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                return;
+            }
+            notified.await;
+        }
+    }
     fn log(&self, level: &str, message: &str) {
         self.logger.log(level, message);
     }
@@ -374,6 +434,16 @@ impl Runtime {
         self: &Arc<Self>,
         deps: ChannelStartDeps,
     ) -> Result<Arc<dyn ChannelHandle>, ChannelError> {
+        {
+            let _state = self.state.lock().expect("feishu restart");
+            if self
+                .stopped
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                *self.stop_signal.lock().expect("feishu stop signal") =
+                    crate::runtime::network::Cancellation::new();
+            }
+        }
         // TS `start()`: gateway/logger first, then the config merge.
         *self.gateway.lock().expect("#1329 gateway mutex") = deps.turn_gateway;
         self.logger.install(deps.log);
@@ -576,6 +646,22 @@ impl Runtime {
     // ----- inbound pipeline ------------------------------------------------
 
     fn enqueue_inbound(self: &Arc<Self>, input: InboundMessage) {
+        if self.stopped.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        if is_new_command(&input.text) {
+            // The batch drainer may be awaiting this chat's pending A7 tool.
+            // A reset must wake that run, not queue behind the run it resets.
+            let Some((work, _stop)) = self.begin_work() else {
+                return;
+            };
+            let runtime = self.clone();
+            tokio::spawn(async move {
+                let _work = work;
+                runtime.process_inbound_messages(&[input]).await;
+            });
+            return;
+        }
         if self.try_handle_pending_interaction(&input) {
             return;
         }
@@ -630,16 +716,27 @@ impl Runtime {
         if self.gateway().is_none() {
             return false;
         }
+        // Reset is a command, never an answer to a pending tool prompt.
+        if is_new_command(&input.text) {
+            return false;
+        }
         let chat_id = input.chat_id.clone();
         if self.interaction.elicitation_pending(&chat_id) {
+            let Some((work, stop)) = self.begin_work() else {
+                return true;
+            };
             let runtime = self.clone();
             let text = input.text.clone();
             tokio::spawn(async move {
-                if let Err(error) = runtime.answer_pending_elicitation(&chat_id, &text).await {
-                    runtime.log(
-                        "error",
-                        &format!("feishu: elicitation answer error: {error}"),
-                    );
+                let _work = work;
+                tokio::select! {
+                    biased;
+                    _ = stop.cancelled() => {},
+                    result = runtime.answer_pending_elicitation(&chat_id, &text) => {
+                        if let Err(error) = result {
+                            runtime.log("error", &format!("feishu: elicitation answer error: {error}"));
+                        }
+                    }
                 }
             });
             return true;
@@ -661,18 +758,30 @@ impl Runtime {
             state.permission_answering.insert(chat_id.clone(), token);
             token
         };
+        // Reservation lock is already released: begin_work takes it itself.
+        // Own both guards from spawn time, including cancellation before first poll.
+        let mut answering = AnsweringSlot {
+            runtime: self.clone(),
+            chat: chat_id.clone(),
+            token,
+            _work: None,
+        };
+        let Some((work, stop)) = self.begin_work() else {
+            return true;
+        };
+        answering._work = Some(work);
         let runtime = self.clone();
         let text = input.text.clone();
         tokio::spawn(async move {
-            if let Err(error) = runtime.answer_pending_permission(&chat_id, &text).await {
-                runtime.log(
-                    "error",
-                    &format!("feishu: permission answer error: {error}"),
-                );
-            }
-            let mut state = runtime.state.lock().expect("#1329 state mutex");
-            if state.permission_answering.get(&chat_id) == Some(&token) {
-                state.permission_answering.remove(&chat_id);
+            let _answering = answering;
+            tokio::select! {
+                biased;
+                _ = stop.cancelled() => {},
+                result = runtime.answer_pending_permission(&chat_id, &text) => {
+                    if let Err(error) = result {
+                        runtime.log("error", &format!("feishu: permission answer error: {error}"));
+                    }
+                }
             }
         });
         true
@@ -799,6 +908,9 @@ impl Runtime {
     }
 
     async fn process_inbound_messages(self: &Arc<Self>, inputs: &[InboundMessage]) {
+        let Some((_work, stop)) = self.begin_work() else {
+            return;
+        };
         if self.gateway().is_none() {
             return;
         }
@@ -806,9 +918,11 @@ impl Runtime {
             return;
         };
         let chat_id = first.chat_id.clone();
-        let extracted =
-            futures_util::future::join_all(inputs.iter().map(|input| media::extract(self, input)))
-                .await;
+        let extracted = tokio::select! {
+            biased;
+            _ = stop.cancelled() => return,
+            items = futures_util::future::join_all(inputs.iter().map(|input| media::extract(self, input))) => items,
+        };
         let mut attachments = Vec::new();
         let mut diagnostics = Vec::new();
         for (items, notes) in extracted {
@@ -831,7 +945,7 @@ impl Runtime {
             return;
         }
 
-        if self.interaction.elicitation_pending(&chat_id) {
+        if !is_new_command(&message_text) && self.interaction.elicitation_pending(&chat_id) {
             if let Err(error) = self
                 .answer_pending_elicitation(&chat_id, &message_text)
                 .await
@@ -843,7 +957,7 @@ impl Runtime {
             }
             return;
         }
-        if self.interaction.permission_pending(&chat_id) {
+        if !is_new_command(&message_text) && self.interaction.permission_pending(&chat_id) {
             if let Err(error) = self
                 .answer_pending_permission(&chat_id, &message_text)
                 .await
@@ -953,7 +1067,8 @@ impl Runtime {
     }
 
     fn is_current(&self, chat_id: &str, generation: u64) -> bool {
-        self.generation(chat_id) == generation
+        !self.stopped.load(std::sync::atomic::Ordering::SeqCst)
+            && self.generation(chat_id) == generation
     }
 
     fn set_active_run(&self, chat_id: &str, run: ActiveRun) {
@@ -1080,6 +1195,9 @@ impl Runtime {
     }
 
     async fn process_turn(self: &Arc<Self>, chat_id: &str, turn: &QueuedTurn) {
+        let Some((_work, stop)) = self.begin_work() else {
+            return;
+        };
         let Some(gateway) = self.gateway() else {
             return;
         };
@@ -1142,7 +1260,7 @@ impl Runtime {
                         None => std::future::pending::<()>().await,
                     }
                 };
-                let next = tokio::select! {biased;next=events.next()=>Some(next),_=timer=>None};
+                let next = tokio::select! {biased;_=stop.cancelled()=>break,next=events.next()=>Some(next),_=timer=>None};
                 let Some(next) = next else {
                     if live.fire_due_timers().await.turn_timed_out {
                         self.log(
@@ -1212,9 +1330,13 @@ impl Runtime {
                                 }
                             }
                             "assistant_attachment" => {
-                                live.flush_final().await;
+                                live.flush_segment(true).await;
                                 if let Some(attachment) = event.get("attachment") {
-                                    media::send(self.clone(), chat_id, attachment).await;
+                                    tokio::select! {
+                                        biased;
+                                        _ = stop.cancelled() => break,
+                                        _ = media::send(self.clone(), chat_id, attachment) => {},
+                                    }
                                 }
                             }
                             "error"
@@ -1238,6 +1360,17 @@ impl Runtime {
                     }
                 }
             },
+        }
+        if stop.is_aborted() {
+            // Admission may have completed after stop took its active-run
+            // snapshot. This turn owns this session key, so abort it here too.
+            let active = self.active_run(chat_id);
+            self.abort_turn(
+                &turn.session_key,
+                active.as_ref().and_then(|run| run.run_id.as_deref()),
+                Some("system:channel-stop"),
+            )
+            .await;
         }
         if self.is_current(chat_id, turn.generation) {
             self.interaction.elicitation_clear(chat_id);
@@ -1290,10 +1423,17 @@ impl Runtime {
     /// `sendTextMessage` (the TS `explicitSend` seam has no production
     /// caller, so the raw text send is the whole path here).
     async fn send_text_message(self: &Arc<Self>, chat_id: &str, text: &str) -> SendResult {
+        let Some((_work, stop)) = self.begin_work() else {
+            return SendResult::Failed;
+        };
         let Some(api) = self.api() else {
             return SendResult::Failed;
         };
-        api.send_raw(chat_id, "text", text_content(text)).await
+        tokio::select! {
+            biased;
+            _ = stop.cancelled() => SendResult::Failed,
+            result = api.send_raw(chat_id, "text", text_content(text)) => result,
+        }
     }
 
     /// `send(message)`: `(await sendTextMessage(message)) !== false`.
@@ -1436,6 +1576,10 @@ impl FeishuChannel {
     ) -> Self {
         let runtime = Arc::new(Runtime {
             key: ChannelKey::new(CHANNEL_KEY),
+            stopped: std::sync::atomic::AtomicBool::new(false),
+            stop_signal: Mutex::new(crate::runtime::network::Cancellation::new()),
+            owned_work: std::sync::atomic::AtomicUsize::new(0),
+            work_drained: tokio::sync::Notify::new(),
             options: Mutex::new(options),
             gateway: Mutex::new(None),
             interaction,
@@ -1519,6 +1663,46 @@ impl ChannelHandle for FeishuHandle {
         let runtime = self.runtime.clone();
         Box::pin(async move {
             runtime.log("info", &format!("feishu: stopping ({reason})"));
+            let active = {
+                let mut state = runtime.state.lock().expect("feishu stop ownership");
+                runtime
+                    .stopped
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                runtime
+                    .stop_signal
+                    .lock()
+                    .expect("feishu stop signal")
+                    .abort();
+                state.batches.clear();
+                let active = state
+                    .chats
+                    .iter()
+                    .filter_map(|(chat, entry)| {
+                        entry.active_run.clone().map(|run| (chat.clone(), run))
+                    })
+                    .collect::<Vec<_>>();
+                for entry in state.chats.values_mut() {
+                    entry.generation += 1;
+                    entry.queue.clear();
+                }
+                active
+            };
+            // Each owned turn aborts its exact session/run in finally, even
+            // if admission was still in flight when stop took this snapshot.
+            for (chat, _run) in active {
+                runtime.interaction.elicitation_clear(&chat);
+                runtime.interaction.permission_clear(&chat);
+            }
+            runtime.drain_owned_work().await;
+            {
+                let mut state = runtime.state.lock().expect("feishu stopped state");
+                state.permission_answering.clear();
+                for entry in state.chats.values_mut() {
+                    entry.active_run = None;
+                    entry.queue.clear();
+                }
+            }
+            // Socket closure is the observable end boundary, after turn finally.
             if let Some(stream) = runtime.stream.lock().await.take() {
                 stream.stop().await;
             }

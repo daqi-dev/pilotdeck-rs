@@ -140,15 +140,32 @@ async fn wecom_actual_host_elicitation_answer() {
         "elicitation answer reaches real model continuation",
     )
     .await;
-    assert!(
-        state
-            .model
-            .lock()
-            .unwrap()
+    {
+        let models = state.model.lock().unwrap();
+        let messages = models.last().unwrap()["messages"].as_array().unwrap();
+        let answer = messages
             .iter()
-            .any(|v| v.to_string().contains("Alpha")),
-        "selected answer must reach the model"
-    );
+            .rev()
+            .find(|message| message["role"] == "tool")
+            .expect("real elicitation result");
+        assert_eq!(answer["tool_call_id"], "wecom-bash");
+        assert!(
+            answer["content"].to_string().contains("Alpha"),
+            "the actual latest tool answer, not the offered option, reaches the model"
+        );
+    }
+    eventually(
+        || {
+            state
+                .frames
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(_, frame)| frame.to_string().contains("WECOM_ELICIT_DONE"))
+        },
+        "actual resumed final reaches external WeCom transport",
+    )
+    .await;
     host.shutdown(options.drain_budget).await.unwrap();
     let count = state.frames.lock().unwrap().len();
     tokio::time::sleep(Duration::from_millis(300)).await;
