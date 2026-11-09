@@ -439,6 +439,47 @@ fn snapshot_adapters_cover_every_channel_loader_key() {
     );
 }
 
+/// #2428 review r1 (arbitrated against the TS source): the TS snapshot layer
+/// itself folds a non-string `apiKey` — `parsePlatformAdapter` reads it with
+/// `stringField` (`parseGatewayConfig.ts:102-112`), which keeps only strings
+/// and otherwise yields `undefined` — and Rust's `platform()` mirrors that
+/// with `as_string()`. The never-fold guarantee #2428 pins therefore lives at
+/// the loader's option/`extra` mount seam (where
+/// `non_string_api_keys_never_fold_to_unset` drives it); this pin holds the
+/// snapshot side of the split, so the two layers cannot silently swap roles
+/// and leave the mount test vacuously green.
+#[test]
+fn snapshot_folds_a_non_string_platform_api_key_like_string_field() {
+    let root = std::env::temp_dir().join(format!("pdrs-2428-fold-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("#2428 scratch home");
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _cleanup = Cleanup(root.clone());
+    std::fs::write(
+        root.join("pilotdeck.yaml"),
+        "schemaVersion: 1\nagent:\n  model: test/test\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:1\n      apiKey: test-only\n      models:\n        test: {}\nadapters:\n  apiServer:\n    enabled: true\n    apiKey: 123\n  telegram:\n    enabled: true\n    apiKey: []\n",
+    )
+    .expect("#2428 scratch config");
+    let env = Env::from([("PILOT_HOME".to_owned(), root.to_string_lossy().into_owned())]);
+    let snapshot = load_snapshot(&root, &root, &env, None, 1.0, "1970-01-01T00:00:00.000Z")
+        .expect("#2428 the non-string apiKey config loads");
+    for key in ["apiServer", "telegram"] {
+        let folded = snapshot
+            .get("config")
+            .and_then(|config| config.get("adapters"))
+            .and_then(|adapters| adapters.get(key))
+            .and_then(|adapter| adapter.get("apiKey"));
+        crate::negative_assert!(
+            matches!(folded, None | Some(JsValue::Undefined)),
+            "#2428 the snapshot folds a non-string platform apiKey to undefined ({key})"
+        );
+    }
+}
+
 /// #261: config-source merging must read `output[key]` through the explicit
 /// prototype chain and keep the key's UTF-16 units. Here a lone-surrogate key
 /// lives on the prototype object and is then overridden: the old

@@ -1041,7 +1041,9 @@ fn config_port_follows_number_semantics() {
 #[test]
 fn constructor_string_fields_report_the_ts_type_error() {
     let constructor = WeComCallbackChannel::constructor(no_interaction());
-    for field in ["corpId", "agentId", "secret", "token", "encodingAesKey"] {
+    // The same list `from_object` coerces — a sixth string field added to
+    // one half of the mirror must fail this loop, not silently skip the guard.
+    for field in super::STRING_FIELDS.map(|(name, _env)| name) {
         let mut options = JsObject::new();
         options.insert(
             field.into(),

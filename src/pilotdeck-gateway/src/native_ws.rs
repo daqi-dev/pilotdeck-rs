@@ -364,9 +364,13 @@ impl PhasedInner {
                                 .await
                             {
                                 // #2434: a best-effort console line, like TS's
-                                // `console.error` — `eprintln!` panics when
-                                // the write fails (std behavior), taking the
-                                // whole accept-loop task down with it.
+                                // `console.error` — an `eprintln!` here panics
+                                // when the write fails (std behavior); the
+                                // JoinSet contains it (the `join_next` branch
+                                // drops the JoinError), so the blast radius
+                                // is the dead connection task and the lost
+                                // diagnostic line, while TS's `console.error`
+                                // loses neither the line nor the handler.
                                 crate::native_process::channels::console_log_line(
                                     &mut std::io::stderr(),
                                     &format!("native WS connection: {error}"),

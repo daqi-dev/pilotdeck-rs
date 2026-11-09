@@ -2453,9 +2453,12 @@ fn ws_stderr_probe_token() -> Option<String> {
 }
 
 /// #2434: the accept loop's error lines were `eprintln!`, which panics when
-/// the stderr write fails (std behavior) — a failing stderr would take the
-/// whole accept-loop task down with it, while TS's `console.error` is
-/// best-effort and never fails the lifecycle. The fix is the shared
+/// the stderr write fails (std behavior). For the connection-error branch
+/// the panic is contained by the JoinSet (the accept loop's `join_next`
+/// branch drops the JoinError), so the blast radius is the dead connection
+/// task and the lost diagnostic — TS's `console.error` never loses either.
+/// The accept-error branch sits in the accept-loop task itself, where the
+/// same panic would take the whole loop down. The fix is the shared
 /// `console_log_line`, which drops the write error. This control drives the
 /// reachable line — the connection error after an invalid upgrade — in a
 /// re-exec'd child whose stderr is a pipe with the read end already dropped
@@ -2497,6 +2500,19 @@ async fn connection_error_lines_survive_a_failed_stderr() {
     // enough: `std::io::Stderr` redirects EBADF to a fresh `/dev/null` and
     // reports success — only EPIPE reaches the `eprintln!` panic.)
     drop(child.stderr.take());
+    // The stdout pipe is drained concurrently with the wait, never after it
+    // (the #2301 probe's drain-before-wait shape): a full pipe — a failing
+    // child prints a whole backtrace — would block the child before it could
+    // exit, and the wait below would then report its 30 s deadline as a
+    // false failure of the probe itself.
+    let stdout = child.stdout.take();
+    let console_task = tokio::spawn(async move {
+        let mut out = Vec::new();
+        if let Some(mut pipe) = stdout {
+            let _ = pipe.read_to_end(&mut out).await;
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    });
     // Every wait states its termination condition: 30 seconds on the child,
     // then kill + reap before the named failure (the #2301 probe shape).
     let status = match tokio::time::timeout(DEADLINE * 6, child.wait()).await {
@@ -2514,17 +2530,33 @@ async fn connection_error_lines_survive_a_failed_stderr() {
             unreachable!("negative_assert! panics");
         }
     };
-    let console = {
-        let mut out = Vec::new();
-        if let Some(mut stdout) = child.stdout.take() {
-            let _ = stdout.read_to_end(&mut out).await;
-        }
-        String::from_utf8_lossy(&out).into_owned()
-    };
+    let console = console_task
+        .await
+        .expect("#2434 the probe's stdout drain finishes");
     negative_assert!(
         status.success(),
         "#2434 the child with a write-failed stderr exits cleanly (exit {status})\n{console}"
     );
+    // Positive receipt — success alone is not evidence the probe case ran: a
+    // renamed test makes the `--exact` filter match nothing and libtest still
+    // exits 0 with no marker (the vacuous-pass shape `skills_migrate` records
+    // for its own rerun), so both assertions below would hold on a child that
+    // executed nothing. Only the child's libtest receipt proves the case ran.
+    negative_assert!(
+        console.contains(
+            "test native_ws::tests::connection_error_lines_survive_a_failed_stderr ... ok"
+        ) && console.contains("test result: ok. 1 passed; 0 failed;"),
+        "#2434 the child's libtest receipt proves the probe case ran\n{console}"
+    );
+    // The child leaves a reached marker once the invalid upgrade has been
+    // answered — the proof the connection-error line was actually driven, not
+    // merely that one test passed.
+    let reached = std::env::temp_dir().join(format!("{token}.reached"));
+    negative_assert!(
+        reached.exists(),
+        "#2434 the child never reached the invalid-upgrade answer"
+    );
+    let _ = std::fs::remove_file(&reached);
     negative_assert!(
         !marker.exists(),
         "#2434 no panic marker after the connection-error line ({}): {:?}",
@@ -2576,6 +2608,13 @@ async fn ws_stderr_probe_child(token: &str) {
     crate::test_negative_receipt::expect_ok(
         crate::test_negative_receipt::expect_ok(read, "#2434 the invalid upgrade is answered"),
         "#2434 the invalid upgrade is answered",
+    );
+    // The parent's positive receipt that this half actually drove the
+    // connection-error limb (an `--exact` filter matching nothing still runs
+    // a passing, marker-free child).
+    let _ = std::fs::write(
+        std::env::temp_dir().join(format!("{token}.reached")),
+        b"reached",
     );
     stop.send(()).expect("#2434 stop server");
     timeout(DEADLINE, task)
