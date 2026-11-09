@@ -198,10 +198,11 @@ pub(crate) fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
 }
 
 /// Per-call reads of `TZ` and the `/etc/*` fallbacks are intentional, not a
-/// #2314 named-zone cache miss: like `ZonedPartsResolver::resolve_local`,
-/// there is no immutable key to invalidate on (`TZ` is mutable in-process
-/// and `/etc/localtime` is repointable), so every call re-reads the host.
-/// Only the *zone parsing* goes through the cache.
+/// #2314 named-zone cache miss: like the free function
+/// `pilotdeck_transport::system_clock::resolve_local`, there is no immutable
+/// key to invalidate on (`TZ` is mutable in-process and `/etc/localtime` is
+/// repointable), so every call re-reads the host. Only the *zone parsing*
+/// goes through the cache.
 fn host_timezone(zone_cache: &CronZoneResolverCache) -> String {
     if let Ok(timezone) = std::env::var("TZ") {
         let timezone = timezone.strip_prefix(':').unwrap_or(&timezone).to_owned();
@@ -238,6 +239,7 @@ mod zone_cache_tests {
     use super::*;
     use crate::host::modules::tool_context::{HostToolCheckpoint, ToolRuntimeContext};
     use pilotdeck_protocol::JsString;
+    use pilotdeck_transport::system_clock::ZonedPartsResolver;
 
     const FIXED_NOW: f64 = 1_767_225_600_000.0;
 
@@ -435,18 +437,33 @@ mod zone_cache_tests {
             timezone_of(&second),
             "#2314 tool empty zone: both calls must agree on the host zone"
         );
-        // Host-robust form (review r3/r4, both families): `host_timezone`
-        // admits `TZ` on every call and failed admissions are never
-        // memoized (#2314 contract, `schedule.rs` `parses += 1` on every
-        // probe), so a set-but-unparseable `TZ` (POSIX spellings like
-        // `CST-8`) adds exactly one parse to the second call. Anything
-        // beyond that delta means the fallback zone itself was re-parsed
-        // instead of hitting the cache.
-        assert!(
-            cache.parse_count() - after_first <= 1,
+        // Host-robust form (review r3/r4/r5, both families): compute the
+        // expected delta for this host shape instead of a slack `<= 1`
+        // bound. `host_timezone` admits `TZ` on every call and failed
+        // admissions are never memoized (#2314 contract, `schedule.rs`
+        // `parses += 1` on every probe), so a set-but-unparseable `TZ`
+        // (POSIX spellings like `CST-8`) adds exactly one parse to the
+        // second call; every other shape (TZ unset, or set and admitted)
+        // must add zero — the fallback zone itself may never re-parse.
+        // `ZonedPartsResolver::new` + `parts_at(0)` is the same admission
+        // the tool performs, taken outside the cache so the probe does not
+        // perturb `parse_count`.
+        let host_tz = std::env::var("TZ")
+            .ok()
+            .map(|value| value.strip_prefix(':').unwrap_or(&value).to_owned());
+        let tz_admitted = host_tz.as_deref().map(|tz| {
+            !tz.is_empty()
+                && ZonedPartsResolver::new(tz)
+                    .and_then(|resolver| resolver.parts_at(0))
+                    .is_ok()
+        });
+        let expected = if tz_admitted == Some(false) { 1 } else { 0 };
+        assert_eq!(
+            cache.parse_count() - after_first,
+            expected,
             "#2314 tool empty zone: the second call must not re-parse the \
-             fallback zone (at most one extra TZ re-probe: {} after {})",
-            cache.parse_count(),
+             fallback zone (expected delta {expected}, got {} after {})",
+            cache.parse_count() - after_first,
             after_first
         );
     }

@@ -2073,12 +2073,13 @@ async fn stop_after_the_late_handshake_settles_returns_with_the_directory_remove
 /// that dispatches `spawn_blocking(remove_dir_all)` — never runs; dropping
 /// the runtime cancels the in-flight handshake (kill_on_drop reaps the mock)
 /// with nobody left to remove anything. The after-dispatch shape is NOT
-/// pinned in-tree: per the #2233 S2 delivery's tokio 1.48.0 probe
-/// (entering `Runtime::drop` returned after 809.7 ms for an 800 ms
-/// `spawn_blocking` task — i.e. ~9.7 ms after the task finished; a separate
-/// `/tmp` probe measured 800.6 ms), drop waits for an already-started
-/// blocking task, so a dispatched `remove_dir_all` completes before the
-/// drop returns. That is a tokio-version premise recorded in the
+/// pinned in-tree: per the #2233 S2 delivery's tokio 1.48.0 probe, drop
+/// waits for an already-started blocking task, so a dispatched
+/// `remove_dir_all` completes before the drop returns. The probe's raw
+/// output and timings live only in its evidence record
+/// (`_tmp/20261109-p2batch-d-harvest2/d5/S2-RESULT.md`); the numbers are
+/// deliberately not inlined here, so they cannot drift from the record.
+/// That is a tokio-version premise recorded in the
 /// `A6.5-MCP-SESSION-DIR-LIFETIME-001-R2` ledger correction
 /// (`specs/gateway-parity/diffs/`; its parity-suite mirror is `-R1`) —
 /// probe-measured, not a repo-pinned invariant — not something this file
