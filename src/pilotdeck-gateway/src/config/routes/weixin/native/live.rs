@@ -1,46 +1,49 @@
 //! Live per-chat ownership: polling keeps accepting answers while a turn waits.
+//!
+//! TS baseline (cc7c4e65): WeixinChannel.ts:403-800 (dispatchMessage,
+//! runQueuedTurns, processMessage, createLiveReplyTransport) plus the protocol
+//! helpers in native/live/{reply,permissions,session}.rs.
 use super::*;
 use crate::config::channel_commands::ChannelEventSink;
-use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex as StdMutex;
+use reply::{ActivityKind, LiveReplyController, LiveReplyOptions, WeixinLiveTransport, WeixinReplyIo};
+pub(crate) use std::collections::{HashMap, HashSet, VecDeque};
+pub(crate) use std::sync::Mutex as StdMutex;
 
-#[derive(Default)]
+mod permissions;
+mod reply;
+mod session;
+use permissions::{AnswerStep, ElicitationState, PermissionState};
+use session::{ActiveRun, ChatSessionState, QueuedTurn, WEIXIN_MAX_PENDING_TURNS_PER_CHAT};
+
 struct Chat {
     generation: u64,
-    active_session: Option<String>,
     context: Option<String>,
-    permissions: VecDeque<(String, Value)>,
-    elicitation: Option<(String, Value)>,
+    permissions: PermissionState,
+    elicitation: ElicitationState,
     changed: Arc<tokio::sync::Notify>,
-    answering: bool,
-    initial_prompt: bool,
-    prompt_retry: Option<String>,
-    deferred_clear: bool,
+    live: Option<Arc<Mutex<LiveReplyController>>>,
 }
-impl Chat {
-    fn finish_answer(&mut self) {
-        self.answering = false;
-        if self.deferred_clear && self.permissions.is_empty() && self.prompt_retry.is_none() {
-            self.deferred_clear = false;
-            self.permissions.clear();
-            self.initial_prompt = false;
+impl Default for Chat {
+    fn default() -> Self {
+        Self {
+            generation: 0,
+            context: None,
+            permissions: PermissionState::new(),
+            elicitation: ElicitationState::new(),
+            changed: Arc::new(tokio::sync::Notify::new()),
+            live: None,
         }
     }
-    /// The generation fence and its state mutation form one locked transition.
-    fn finish_turn(&mut self, generation: u64) -> bool {
+}
+impl Chat {
+    /// WeixinChannel.ts:719-742 / ImPermissionHelper.ts:151-164 — a finished turn
+    /// never clears a permission decision that is still in flight.
+    fn finish_turn(&mut self, chat: &str, generation: u64) -> bool {
         if self.generation != generation {
             return false;
         }
-        self.active_session = None;
-        self.elicitation = None;
-        if (self.answering && !self.initial_prompt) || self.prompt_retry.is_some() {
-            self.deferred_clear = true;
-        } else {
-            self.permissions.clear();
-            self.answering = false;
-            self.initial_prompt = false;
-            self.prompt_retry = None;
-        }
+        self.elicitation.clear(chat);
+        self.permissions.clear_after_turn(chat);
         true
     }
 }
@@ -51,6 +54,8 @@ pub(super) struct LiveOwner {
     mapper: StdMutex<ChannelSessionState>,
     chats: StdMutex<HashMap<String, Arc<Mutex<Chat>>>>,
     queues: StdMutex<HashMap<String, Arc<Mutex<()>>>>,
+    sessions: StdMutex<HashMap<String, ChatSessionState>>,
+    pending: StdMutex<HashMap<String, VecDeque<PendingTurn>>>,
     delivery: Arc<super::WeixinDelivery>,
 }
 impl LiveOwner {
@@ -68,6 +73,8 @@ impl LiveOwner {
             mapper: StdMutex::new(mapper),
             chats: Default::default(),
             queues: Default::default(),
+            sessions: Default::default(),
+            pending: Default::default(),
             delivery,
         }
     }
@@ -86,6 +93,61 @@ impl LiveOwner {
             .entry(id.into())
             .or_default()
             .clone()
+    }
+    fn sessions(&self) -> std::sync::MutexGuard<'_, HashMap<String, ChatSessionState>> {
+        self.sessions.lock().unwrap()
+    }
+    fn session_running(&self, chat: &str) -> bool {
+        self.sessions()
+            .get(chat)
+            .is_some_and(|session| session.is_running(chat))
+    }
+    fn enter_run(&self, chat: &str) -> bool {
+        self.sessions()
+            .entry(chat.into())
+            .or_default()
+            .enter_run(chat)
+    }
+    fn leave_run(&self, chat: &str) {
+        if let Some(session) = self.sessions().get_mut(chat) {
+            session.leave_run(chat);
+        }
+    }
+    fn queue_turn(&self, chat: &str, turn: QueuedTurn) {
+        self.sessions()
+            .entry(chat.into())
+            .or_default()
+            .queue_turn(chat, turn);
+    }
+    fn shift_turn(&self, chat: &str) -> Option<QueuedTurn> {
+        self.sessions().get_mut(chat).and_then(|s| s.shift_turn(chat))
+    }
+    fn pending_turns(&self, chat: &str) -> usize {
+        self.sessions()
+            .get(chat)
+            .map(|s| s.pending_len(chat))
+            .unwrap_or(0)
+    }
+    fn active_run(&self, chat: &str) -> Option<ActiveRun> {
+        self.sessions().get(chat).and_then(|s| s.active_run(chat))
+    }
+    fn set_active_run(&self, chat: &str, session: &str, run_id: Option<String>, generation: u64) {
+        self.sessions()
+            .entry(chat.into())
+            .or_default()
+            .set_active_run(
+                chat,
+                ActiveRun {
+                    session_key: session.into(),
+                    run_id,
+                    generation,
+                },
+            );
+    }
+    fn clear_active_run(&self, chat: &str) {
+        if let Some(session) = self.sessions().get_mut(chat) {
+            session.clear_active_run(chat);
+        }
     }
     fn save_mapper(&self) -> Result<()> {
         self.storage
@@ -159,12 +221,54 @@ impl LiveOwner {
         )
         .await
     }
+    /// WeixinChannel.ts:875-893 — best effort: a missing context or a failed RPC
+    /// only logs.
+    async fn send_typing(&self, credentials: &Value, chat: &str) {
+        let context = self.chat(chat).lock().await.context.clone();
+        if context.is_none() {
+            return;
+        }
+        if let Err(error) = self.typing_rpc(credentials, chat, context.as_deref()).await {
+            eprintln!("weixin: sendTyping failed: {}", error.message);
+        }
+    }
+    /// weixin-ilink api.js:68-75: getconfig supplies typing_ticket, then sendtyping.
+    async fn typing_rpc(
+        &self,
+        credentials: &Value,
+        chat: &str,
+        context: Option<&str>,
+    ) -> Result<()> {
+        let base = text(credentials, "baseUrl").unwrap_or("");
+        let token = text(credentials, "botToken");
+        let config = self
+            .http
+            .json(
+                base,
+                "ilink/bot/getconfig",
+                token,
+                Some(json!({"ilink_user_id":chat,"context_token":context.unwrap_or("")})),
+            )
+            .await?;
+        let Some(ticket) = text(&config, "typing_ticket").filter(|ticket| !ticket.is_empty())
+        else {
+            return Ok(());
+        };
+        self.http
+            .json(
+                base,
+                "ilink/bot/sendtyping",
+                token,
+                Some(json!({"ilink_user_id":chat,"typing_ticket":ticket,"status":1})),
+            )
+            .await
+            .map(|_| ())
+    }
     pub async fn process_batch(
         self: &Arc<Self>,
         credentials: &Value,
         mut batch: Value,
-    ) -> Result<()> {
-        let id = text(&batch, "id")
+    ) -> Result<()> {        let id = text(&batch, "id")
             .ok_or_else(|| failure("Invalid Weixin batch"))?
             .to_owned();
         if id.len() != 64 || !id.bytes().all(|c| c.is_ascii_hexdigit()) {
@@ -206,8 +310,8 @@ impl LiveOwner {
                 let result = owner.message(&credentials, &id, index, &message).await;
                 (index, result)
             });
-            // Let an earlier ordinary message acquire its chat queue before
-            // dispatching the next item. Answers/new do not enter that queue.
+            // An earlier ordinary message claims the chat run loop before the
+            // next item dispatches. Answers and /new never enter that queue.
             tokio::task::yield_now().await;
         }
         let mut completed = std::collections::BTreeSet::new();
@@ -226,8 +330,9 @@ impl LiveOwner {
         self.save_mapper()?;
         super::super::inbox::WeixinInbox::new(self.storage.home.clone()).acknowledge(&id, None)
     }
+    /// WeixinChannel.ts:403-519 — command, answer, and ordinary-turn dispatch.
     async fn message(
-        &self,
+        self: &Arc<Self>,
         credentials: &Value,
         id: &str,
         index: usize,
@@ -284,7 +389,6 @@ impl LiveOwner {
                 .await;
         }
         let is_new = input == "/new" || input.starts_with("/new ");
-        let mut queued_generation = chat.lock().await.generation;
         if is_new {
             if let Some(saved) = receipt.get("resolvedNew").and_then(Value::as_str) {
                 self.mapper
@@ -294,25 +398,16 @@ impl LiveOwner {
                     .insert(chat_id.into(), saved.into());
                 self.save_mapper()?;
             } else {
-                let previous = {
-                    let mut state = chat.lock().await;
-                    state.generation += 1;
-                    state.permissions.clear();
-                    state.elicitation = None;
-                    state.answering = false;
-                    state.initial_prompt = false;
-                    state.prompt_retry = None;
-                    state.deferred_clear = false;
-                    state.changed.notify_waiters();
-                    state.active_session.take()
-                };
+                let previous_generation = self.reset_chat(chat_id).await;
+                let previous = previous_generation.0;
                 self.delivery.clear_pending_replies(chat_id);
                 let previous = previous
                     .unwrap_or_else(|| self.mapper.lock().unwrap().session("weixin", chat_id));
-                let _ = self
-                    .gateway
-                    .request("abort_turn", json!({"sessionKey":previous}))
-                    .await;
+                let mut params = json!({"sessionKey":previous});
+                if let Some(run_id) = previous_generation.1 {
+                    params["runId"] = run_id.into();
+                }
+                let _ = self.gateway.request("abort_turn", params).await;
                 self.mapper.lock().unwrap().reset("weixin", chat_id);
                 self.save_mapper()?;
                 receipt["resolvedNew"] = self
@@ -324,7 +419,7 @@ impl LiveOwner {
                 self.save_receipt(&receipt_path, &receipt)?;
             }
             if input == "/new" {
-                // `WeixinChannel.ts:431` — no queueOnFailure for session confirmation.
+                // WeixinChannel.ts:431 — no queueOnFailure for session confirmation.
                 let context = chat.lock().await.context.clone();
                 let _ = super::send_reply(
                     &self.storage,
@@ -341,41 +436,11 @@ impl LiveOwner {
                 self.save_receipt(&receipt_path, &receipt)?;
                 return Ok(());
             }
-            queued_generation = chat.lock().await.generation;
-        } else if self
-            .answer(credentials, chat_id, input.as_str(), queued_generation)
-            .await?
-        {
-            return Ok(());
         }
-        let queue = self.queue(chat_id);
-        let _queue = loop {
-            let changed = chat.lock().await.changed.clone();
-            let notified = changed.notified();
-            tokio::pin!(notified);
-            // Enable before checking pending state to avoid losing a prompt
-            // transition between answer() and waiting on the queue.
-            notified.as_mut().enable();
-            if chat.lock().await.generation != queued_generation {
-                receipt["complete"] = true.into();
-                self.save_receipt(&receipt_path, &receipt)?;
-                return Ok(());
-            }
-            if !is_new
-                && self
-                    .answer(credentials, chat_id, input.as_str(), queued_generation)
-                    .await?
-            {
-                return Ok(());
-            }
-            tokio::select! {
-                queue=queue.lock()=>break queue,
-                _=&mut notified=>{},
-            }
-        };
-        if chat.lock().await.generation != queued_generation {
-            receipt["complete"] = true.into();
-            self.save_receipt(&receipt_path, &receipt)?;
+        // WeixinChannel.ts:413 — dispatched inputs carry the generation they
+        // were admitted under; /new above already bumped it.
+        let generation = self.chat_generation(chat_id).await;
+        if !is_new && self.answer(credentials, chat_id, input.as_str(), generation).await? {
             return Ok(());
         }
         let prompt = if is_new {
@@ -429,52 +494,341 @@ impl LiveOwner {
                 mapper.project(chat_id).map(str::to_owned),
             )
         };
-        let generation = {
-            let mut state = chat.lock().await;
-            state.active_session = Some(session.clone());
-            state.generation
+        let turn = QueuedTurn {
+            session_key: session,
+            message: prompt,
+            project_key: project,
+            attachments,
         };
-        let mut params = json!({"sessionKey":session,"channelKey":"weixin","runId":format!("weixin:{id}:{index}"),"message":prompt,"allowPlanModeTools":false});
-        if let Some(project) = project {
+        // WeixinChannel.ts:453-477 — answer with the prompt gate still open;
+        // otherwise hand the turn to the per-chat run loop (or its queue).
+        if self
+            .await_chat_slot(credentials, chat_id, &turn.message, generation)
+            .await?
+        {
+            return Ok(());
+        }
+        if self.session_running(chat_id) {
+            self.enqueue_turn(chat_id, turn, receipt_path, receipt)?;
+            return Ok(());
+        }
+        self.dispatch_turn(credentials, chat_id, generation, turn, receipt_path, receipt)
+            .await
+    }
+    /// WeixinChannel.ts:453-477 — the permission answer path runs before the
+    /// active-chat queue. Only a reply that can be an answer to an in-flight
+    /// interaction waits for it; ordinary text queues immediately.
+    async fn await_chat_slot(
+        &self,
+        credentials: &Value,
+        chat_id: &str,
+        input: &str,
+        generation: u64,
+    ) -> Result<bool> {
+        if !self.session_running(chat_id) {
+            return Ok(false);
+        }
+        let interacting = matches!(input.trim(), "0" | "1" | "2") || {
+            let chat = self.chat(chat_id);
+            let state = chat.lock().await;
+            state.permissions.has_pending(chat_id)
+                || state.permissions.is_answering(chat_id)
+                || state.elicitation.has_pending(chat_id)
+        };
+        if !interacting {
+            return Ok(false);
+        }
+        let chat = self.chat(chat_id);
+        loop {
+            let changed = chat.lock().await.changed.clone();
+            let notified = changed.notified();
+            tokio::pin!(notified);
+            // Enable before checking state so a prompt transition between
+            // answer() and the wait is not lost.
+            notified.as_mut().enable();
+            if self.chat_generation(chat_id).await != generation {
+                return Ok(true);
+            }
+            if !self.session_running(chat_id) {
+                return Ok(false);
+            }
+            if self.answer(credentials, chat_id, input, generation).await? {
+                return Ok(true);
+            }
+            if !self.session_running(chat_id) {
+                return Ok(false);
+            }
+            notified.await;
+        }
+    }
+    /// WeixinChannel.ts:520-546 — one run loop per chat. The first message runs
+    /// inline; later messages land in the bounded pending-turn queue and are
+    /// drained by that loop, each with its own staged receipt.
+    async fn dispatch_turn(
+        self: &Arc<Self>,
+        credentials: &Value,
+        chat_id: &str,
+        generation: u64,
+        turn: QueuedTurn,
+        receipt_path: std::path::PathBuf,
+        receipt: Value,
+    ) -> Result<()> {
+        if !self.enter_run(chat_id) {
+            self.enqueue_turn(chat_id, turn, receipt_path, receipt)?;
+            return Ok(());
+        }
+        let mut next = Some((turn, receipt_path, receipt));
+        let mut outcome = Ok(());
+        while let Some((turn, receipt_path, mut receipt)) = next {
+            if self.chat_generation(chat_id).await != generation {
+                // /new replaced the session: drop this turn and everything queued.
+                receipt["complete"] = true.into();
+                self.save_receipt(&receipt_path, &receipt)?;
+                break;
+            }
+            // The old post-lock re-check: a queued reply may answer the prompt.
+            if self
+                .answer(credentials, chat_id, &turn.message, generation)
+                .await?
+            {
+                next = self.dequeue_turn(chat_id);
+                continue;
+            }
+            outcome = self
+                .process_message(credentials, chat_id, generation, turn, &receipt_path, &mut receipt)
+                .await;
+            if outcome.is_err() {
+                break;
+            }
+            next = self.dequeue_turn(chat_id);
+        }
+        self.leave_run(chat_id);
+        outcome
+    }
+    /// ImChatSessionState.ts:38-45 — cap at 20 pending turns, dropping the oldest.
+    fn enqueue_turn(
+        &self,
+        chat: &str,
+        turn: QueuedTurn,
+        receipt_path: std::path::PathBuf,
+        receipt: Value,
+    ) -> Result<()> {
+        let dropped = {
+            let mut pending = self.pending.lock().unwrap();
+            let queue = pending.entry(chat.into()).or_default();
+            queue.push_back(PendingTurn {
+                turn,
+                receipt_path,
+                receipt,
+            });
+            let mut dropped = Vec::new();
+            while queue.len() > WEIXIN_MAX_PENDING_TURNS_PER_CHAT {
+                if let Some(entry) = queue.pop_front() {
+                    dropped.push(entry);
+                }
+            }
+            dropped
+        };
+        for mut entry in dropped {
+            entry.receipt["complete"] = true.into();
+            self.save_receipt(&entry.receipt_path, &entry.receipt)?;
+        }
+        if let Some(session) = self.sessions().get_mut(chat) {
+            session.queue_turn(
+                chat,
+                QueuedTurn {
+                    session_key: String::new(),
+                    message: String::new(),
+                    project_key: None,
+                    attachments: vec![],
+                },
+            );
+        }
+        Ok(())
+    }
+    fn dequeue_turn(&self, chat: &str) -> Option<(QueuedTurn, std::path::PathBuf, Value)> {
+        let entry = self
+            .pending
+            .lock()
+            .unwrap()
+            .get_mut(chat)
+            .and_then(|queue| queue.pop_front())?;
+        if let Some(session) = self.sessions().get_mut(chat) {
+            session.shift_turn(chat);
+        }
+        Some((entry.turn, entry.receipt_path, entry.receipt))
+    }
+    /// /new drops every queued turn (REPORT 113/158/159); their receipts complete
+    /// so the inbox does not replay them.
+    fn clear_pending(&self, chat: &str) -> Result<()> {
+        let dropped: Vec<PendingTurn> = self
+            .pending
+            .lock()
+            .unwrap()
+            .remove(chat)
+            .map(|queue| queue.into_iter().collect())
+            .unwrap_or_default();
+        for mut entry in dropped {
+            entry.receipt["complete"] = true.into();
+            self.save_receipt(&entry.receipt_path, &entry.receipt)?;
+        }
+        if let Some(session) = self.sessions().get_mut(chat) {
+            session.reset_for_new_session(chat);
+        }
+        Ok(())
+    }
+    async fn chat_generation(&self, chat: &str) -> u64 {
+        self.chat(chat).lock().await.generation
+    }
+    /// WeixinChannel.ts:524-529 — generation++, clear answers, abort the active run.
+    async fn reset_chat(&self, chat: &str) -> (Option<String>, Option<String>) {
+        let active = self.active_run(chat);
+        let _ = self.clear_pending(chat);
+        let guarded = self.chat(chat);
+        let mut state = guarded.lock().await;
+        state.generation += 1;
+        state.permissions.clear(chat);
+        state.elicitation.clear(chat);
+        state.live = None;
+        state.changed.notify_waiters();
+        (
+            active.as_ref().map(|run| run.session_key.clone()),
+            active.and_then(|run| run.run_id),
+        )
+    }
+    /// WeixinChannel.ts:655-745 — one turn: live reply controller in, final flush out.
+    async fn process_message(
+        self: &Arc<Self>,
+        credentials: &Value,
+        chat_id: &str,
+        generation: u64,
+        turn: QueuedTurn,
+        receipt_path: &std::path::Path,
+        receipt: &mut Value,
+    ) -> Result<()> {
+        let chat = self.chat(chat_id);
+        self.set_active_run(chat_id, &turn.session_key, None, generation);
+        struct ReplyIo {
+            owner: Arc<LiveOwner>,
+            credentials: Value,
+            chat: String,
+            failed: Arc<StdMutex<Vec<String>>>,
+        }
+        impl WeixinReplyIo for ReplyIo {
+            fn typing_available(&self) -> bool {
+                true
+            }
+            fn send_reply<'a>(&'a self, text: &'a str, queue_on_failure: bool) -> ChannelCall<'a, bool> {
+                Box::pin(async move {
+                    let owner = self.owner.clone();
+                    let chat = self.chat.clone();
+                    let context = owner.chat(&chat).lock().await.context.clone();
+                    match super::send_reply(
+                        &owner.storage,
+                        &owner.http,
+                        &self.credentials,
+                        &chat,
+                        context.as_deref(),
+                        text,
+                    )
+                    .await
+                    {
+                        Ok(()) => Ok(true),
+                        Err(error) => {
+                            eprintln!("weixin: live reply send failed: {}", error.message);
+                            // WeixinChannel.ts:789-790 — queue the segment and let
+                            // the durable receipt resend it on the next poll.
+                            owner.delivery.queue_pending_reply(&chat, text);
+                            self.failed.lock().unwrap().push(text.into());
+                            Ok(queue_on_failure)
+                        }
+                    }
+                })
+            }
+            fn send_typing_if_possible(&self) -> ChannelCall<'_, ()> {
+                Box::pin(async move {
+                    self.owner.send_typing(&self.credentials, &self.chat).await;
+                    Ok(())
+                })
+            }
+        }
+        let failed = Arc::new(StdMutex::new(Vec::<String>::new()));
+        let transport = Arc::new(WeixinLiveTransport::new(Arc::new(ReplyIo {
+            owner: self.clone(),
+            credentials: credentials.clone(),
+            chat: chat_id.into(),
+            failed: failed.clone(),
+        })));
+        // WeixinChannel.ts:666-676 — the Weixin options disable the controller's
+        // own watchdog; turn_timeout arrives as an event instead.
+        let live = Arc::new(Mutex::new(LiveReplyController::with_options(
+            transport.clone(),
+            LiveReplyOptions::weixin(),
+        )));
+        chat.lock().await.live = Some(live.clone());
+        let mut params = json!({
+            "sessionKey":turn.session_key,
+            "channelKey":"weixin",
+            "runId":format!("weixin:{chat_id}:{}", uuid::Uuid::new_v4()),
+            "message":turn.message,
+            "allowPlanModeTools":false
+        });
+        if let Some(project) = turn.project_key.clone() {
             params["projectKey"] = project.into();
         }
-        if !attachments.is_empty() {
-            params["attachments"] = serde_json::Value::Array(attachments);
+        if !turn.attachments.is_empty() {
+            params["attachments"] = serde_json::Value::Array(turn.attachments);
         }
         let sink = LiveSink {
-            owner: self,
+            owner: self.clone(),
             credentials,
             chat: chat_id,
-            session: &session,
+            session: &turn.session_key,
             generation,
-            text: StdMutex::new(String::new()),
+            live,
+            timeout: StdMutex::new(None),
         };
+        // WeixinChannel.ts:707 — typing before the turn starts.
+        let _ = transport.send_typing_if_possible().await;
         let result = self.gateway.stream_turn(params, &sink).await;
-        let current = chat.lock().await.finish_turn(generation);
-        if current {
-            if result.is_err() {
-                receipt["outbox"] =
-                    json!(["Failed to process this message. Please retry."]);
-                self.save_receipt(&receipt_path, &receipt)?;
-                return self
-                    .deliver_outbox(credentials, chat_id, &receipt_path, &mut receipt)
-                    .await;
-            }
-            let text = sink.text.lock().unwrap().clone();
-            receipt["outbox"] = if text.is_empty() {
-                json!([])
-            } else {
-                json!([text])
-            };
-            self.save_receipt(&receipt_path, &receipt)?;
-            self.deliver_outbox(credentials, chat_id, &receipt_path, &mut receipt)
-                .await?;
-        } else {
+        let current = chat.lock().await.finish_turn(chat_id, generation);
+        self.clear_active_run(chat_id);
+        if !current {
             receipt["complete"] = true.into();
-            self.save_receipt(&receipt_path, &receipt)?;
+            self.save_receipt(receipt_path, receipt)?;
+            return Ok(());
         }
-        result.map(|()| ())
+        if result.is_err() {
+            // WeixinChannel.ts:734-743 — a submit failure becomes a visible status.
+            sink.live
+                .lock()
+                .await
+                .handle_event(&json!({
+                    "type":"agent_status",
+                    "event":"channel_submit_failed",
+                    "detail":{"message":"Failed to process this message. Please retry.","visible":true,"severity":"error"}
+                }))
+                .await?;
+        }
+        let mut controller = sink.live.lock().await;
+        controller.flush_final().await?;
+        drop(controller);
+        chat.lock().await.live = None;
+        // WeixinChannel.ts:789 — a failed segment is staged in the receipt so the
+        // next poll resends it without re-submitting the turn.
+        let failed = failed.lock().unwrap().clone();
+        if failed.is_empty() {
+            receipt["outbox"] = json!([]);
+            receipt["complete"] = true.into();
+        } else {
+            // WeixinChannel.ts:789-790 — every failed segment is retried separately.
+            receipt["outbox"] = json!(failed);
+            receipt["sentIndex"] = json!(0);
+        }
+        self.save_receipt(receipt_path, receipt)?;
+        result
     }
+    /// WeixinChannel.ts:452-477 + ImPermissionHelper.ts:185-274.
     async fn answer(
         &self,
         credentials: &Value,
@@ -488,160 +842,148 @@ impl LiveOwner {
         if state.generation != generation {
             return Ok(true);
         }
-        if state.answering {
-            let initial = state.initial_prompt;
-            let retry = state.prompt_retry.take();
+        if state.elicitation.has_pending(chat_id) {
+            let pending = state.elicitation.answer(chat_id, input);
             drop(state);
-            if let Some(prompt) = retry {
-                let result = self
-                    .reply(
-                        credentials,
-                        chat_id,
-                        "上一条权限提示发送失败，正在重试。",
-                        false,
-                    )
-                    .await;
-                if result.is_ok()
-                    && self
-                        .reply(credentials, chat_id, &prompt, false)
-                        .await
-                        .is_ok()
-                {
-                    let mut state = chat.lock().await;
-                    if state.generation == generation {
-                        state.finish_answer();
-                    }
-                } else {
-                    let mut state = chat.lock().await;
-                    if state.generation == generation {
-                        state.prompt_retry = Some(prompt);
-                    }
-                }
-            } else {
-                let _ = self
-                    .reply(
-                        credentials,
-                        chat_id,
-                        if initial {
-                            "权限提示发送中，请稍候。"
-                        } else {
-                            "权限决定处理中，请稍候。"
-                        },
-                        false,
-                    )
-                    .await;
-            }
-            return Ok(true);
-        }
-        if let Some((session, event)) = state.elicitation.take() {
-            drop(state);
-            let answer = elicitation_answer(&event, input);
+            let Some(pending) = pending else {
+                return Ok(true);
+            };
             self.gateway
                 .request(
                     "elicitation_respond",
-                    json!({"sessionKey":session,"requestId":event["requestId"],"answer":answer}),
+                    json!({
+                        "sessionKey":pending.session_key,
+                        "requestId":pending.request_id,
+                        "answer":pending.answer
+                    }),
                 )
                 .await?;
-            if input == "0" {
-                self.reply(credentials, chat_id, "已取消。", false).await?;
+            if let Some(confirmation) = pending.confirmation {
+                let context = chat.lock().await.context.clone();
+                // WeixinChannel.ts:439-442 — the confirmation is best effort and a
+                // failed send never fails the turn (REPORT 132, 八项④).
+                let _ = super::send_reply(
+                    &self.storage,
+                    &self.http,
+                    credentials,
+                    chat_id,
+                    context.as_deref(),
+                    &confirmation,
+                )
+                .await;
             }
             return Ok(true);
         }
-        let Some((session, event)) = state.permissions.front().cloned() else {
+        if !state.permissions.has_pending(chat_id) {
             return Ok(false);
-        };
-        if !matches!(input, "0" | "1" | "2") {
-            drop(state);
-            self.reply(
-                credentials,
-                chat_id,
-                "请回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。",
-                false,
-            )
-            .await?;
-            return Ok(true);
         }
-        // The answer gate serializes duplicate inputs. Never retain the state
-        // mutex across RPC: /new must be able to invalidate this generation
-        // and abort the old turn while a permission response is blocked.
-        let mut params = json!({"sessionKey":session,"requestId":event["requestId"],"decision":if input=="0"{"deny"}else{"allow"}});
-        if input == "0" {
-            params["reason"] = "User denied permission from IM channel.".into();
-        } else {
-            params["remember"] = json!(input == "2");
-        }
-        state.answering = true;
-        let generation = state.generation;
-        drop(state);
-        let result = self.gateway.request("permission_decide", params).await;
-        let mut state = chat.lock().await;
-        if state.generation != generation {
-            return Ok(true);
-        }
-        let result = match result {
-            Ok(result) => result,
-            Err(error) => {
-                state.answering = false;
-                return Err(error);
+        let step = state.permissions.answer_step(chat_id, input);
+        match step {
+            AnswerStep::NotHandled => return Ok(false),
+            AnswerStep::Reply(text) => {
+                drop(state);
+                self.reply(credentials, chat_id, &text, false).await?;
+                return Ok(true);
             }
-        };
-        state.permissions.pop_front();
-        let next = state
-            .permissions
-            .front()
-            .map(|(_, event)| permission_prompt(event));
-        drop(state);
-        let confirmation = self
-            .reply(
-                credentials,
-                chat_id,
-                if result["delivered"] != true {
-                    "权限请求已失效，已跳过，继续处理。"
-                } else {
-                    match input {
-                        "0" => "已拒绝，继续处理。",
-                        "2" => "已允许本会话，继续执行。",
-                        _ => "已允许一次，继续执行。",
-                    }
-                },
-                false,
-            )
-            .await;
-        if confirmation.is_err() {
-            let mut state = chat.lock().await;
-            if state.generation == generation {
-                state.answering = false;
-                state.prompt_retry = next;
-                if state.prompt_retry.is_none() {
-                    state.finish_answer();
-                }
-            }
-            return Ok(true);
-        }
-        if chat.lock().await.generation != generation {
-            return Ok(true);
-        }
-        if let Some(next) = next {
-            if self
-                .reply(credentials, chat_id, &next, false)
-                .await
-                .is_err()
-            {
-                let mut state = chat.lock().await;
-                if state.generation == generation {
-                    state.answering = false;
-                    state.prompt_retry = Some(next);
+            AnswerStep::Swallow => return Ok(true),
+            AnswerStep::Retry => {
+                drop(state);
+                // ImPermissionHelper.ts:192-194 — retry the queued prompt while the
+                // lock stays held, then confirm it (REPORT 128/129, 八项③).
+                let _ = self
+                    .reply(credentials, chat_id, permissions::PERMISSION_RETRY, false)
+                    .await;
+                let prompt = {
+                    let mut state = chat.lock().await;
+                    state.permissions.take_next_prompt(chat_id, None)
+                };
+                if let Some(prompt) = prompt {
+                    let delivered = self.reply(credentials, chat_id, &prompt, false).await;
+                    let request_id = {
+                        let state = chat.lock().await;
+                        state.permissions.get_prompt_request_id(chat_id, None)
+                    };
+                    let mut state = chat.lock().await;
+                    state.permissions.confirm_next_prompt(
+                        chat_id,
+                        delivered.is_ok(),
+                        request_id.as_deref(),
+                        None,
+                    );
                 }
                 return Ok(true);
             }
-        }
-        {
-            let mut state = chat.lock().await;
-            if state.generation == generation {
-                state.finish_answer();
+            AnswerStep::Decide(answer) => {
+                drop(state);
+                let params = PermissionState::decision_params(&answer);
+                let token = answer.token;
+                let entry = answer.entry.clone();
+                let result = self.gateway.request("permission_decide", params).await;
+                if result.is_err() {
+                    let mut state = chat.lock().await;
+                    state.permissions.abort_answer(chat_id, token, entry);
+                    return result.map(|_| true);
+                }
+                let delivered = result.unwrap_or_default()["delivered"] == true;
+                let confirmation = {
+                    let mut state = chat.lock().await;
+                    state.permissions.complete_answer(chat_id, token, delivered)
+                };
+                let Some(confirmation) = confirmation else {
+                    return Ok(true);
+                };
+                if self
+                    .reply(credentials, chat_id, &confirmation.text, false)
+                    .await
+                    .is_err()
+                {
+                    // ImPermissionHelper.ts:129-137 — keep the lock so the next
+                    // message retries; never let an unseen request be decided.
+                    let mut state = chat.lock().await;
+                    state.permissions.release_answer(chat_id, Some(token));
+                    return Ok(true);
+                }
+                if confirmation.can_advance || confirmation.retry_prompt {
+                    let prompt = {
+                        let mut state = chat.lock().await;
+                        state
+                            .permissions
+                            .take_next_prompt(chat_id, confirmation.answer_token)
+                    };
+                    if let Some(prompt) = prompt {
+                        let request_id = {
+                            let state = chat.lock().await;
+                            state
+                                .permissions
+                                .get_prompt_request_id(chat_id, confirmation.answer_token)
+                        };
+                        let delivered =
+                            self.reply(credentials, chat_id, &prompt, false).await.is_ok();
+                        let mut state = chat.lock().await;
+                        state.permissions.confirm_next_prompt(
+                            chat_id,
+                            delivered,
+                            request_id.as_deref(),
+                            confirmation.answer_token,
+                        );
+                    }
+                }
+                if (input.trim() == "1" || input.trim() == "2")
+                    && confirmation.text.starts_with("已允许")
+                {
+                    let live = chat.lock().await.live.clone();
+                    let pending = chat.lock().await.permissions.has_pending(chat_id);
+                    if let Some(live) = live.filter(|_| !pending) {
+                        let _ = live
+                            .lock()
+                            .await
+                            .resume_activity(ActivityKind::Tool, false)
+                            .await;
+                    }
+                }
+                Ok(true)
             }
         }
-        Ok(true)
     }
 }
 
@@ -652,215 +994,176 @@ mod generation_tests {
     fn stale_turn_completion_cannot_clear_replacement_interactions() {
         let mut chat = Chat {
             generation: 2,
-            active_session: Some("new-session".into()),
-            answering: true,
-            initial_prompt: true,
-            prompt_retry: Some("new prompt".into()),
-            permissions: VecDeque::from([(
-                "new-session".into(),
-                json!({"requestId":"new-permission"}),
-            )]),
-            elicitation: Some(("new-session".into(), json!({"requestId":"new-question"}))),
             ..Default::default()
         };
-        assert!(!chat.finish_turn(1));
-        assert_eq!(chat.active_session.as_deref(), Some("new-session"));
-        assert_eq!(chat.permissions[0].1["requestId"], "new-permission");
-        assert_eq!(
-            chat.elicitation.as_ref().unwrap().1["requestId"],
-            "new-question"
+        chat.permissions.capture(
+            "chat",
+            "new-session",
+            "new-permission",
+            "write_file",
+            &json!({}),
         );
-        assert!(chat.answering && chat.initial_prompt);
-        assert_eq!(chat.prompt_retry.as_deref(), Some("new prompt"));
+        chat.elicitation.capture(
+            "chat",
+            "new-session",
+            &json!({"requestId":"new-question","questions":[]}),
+        );
+        assert!(!chat.finish_turn("chat", 1));
+        assert!(chat.permissions.has_pending("chat"));
+        assert!(chat.elicitation.has_pending("chat"));
+        assert!(chat.finish_turn("chat", 2));
     }
 }
+struct PendingTurn {
+    turn: QueuedTurn,
+    receipt_path: std::path::PathBuf,
+    receipt: Value,
+}
 struct LiveSink<'a> {
-    owner: &'a LiveOwner,
+    owner: Arc<LiveOwner>,
     credentials: &'a Value,
     chat: &'a str,
     session: &'a str,
     generation: u64,
-    text: StdMutex<String>,
+    live: Arc<Mutex<LiveReplyController>>,
+    timeout: StdMutex<Option<tokio::task::JoinHandle<()>>>,
+}
+impl Drop for LiveSink<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut timeout) = self.timeout.lock() {
+            if let Some(task) = timeout.take() {
+                task.abort();
+            }
+        }
+    }
 }
 impl ChannelEventSink for LiveSink<'_> {
     fn event(&self, event: Value) -> ChannelCall<'_, ()> {
         Box::pin(async move {
             let chat = self.owner.chat(self.chat);
-            let mut state = chat.lock().await;
-            if state.generation != self.generation {
-                return Ok(());
+            let kind = text(&event, "type").unwrap_or("");
+            {
+                let state = chat.lock().await;
+                if state.generation != self.generation {
+                    return Ok(());
+                }
             }
-            let prompt = match event["type"].as_str() {
-                Some("permission_request") => {
-                    let first = state.permissions.is_empty() && !state.answering;
-                    state
-                        .permissions
-                        .push_back((self.session.into(), event.clone()));
-                    state.changed.notify_waiters();
-                    if first {
-                        state.answering = true;
-                        state.initial_prompt = true;
+            match kind {
+                "turn_started" => {
+                    if let Some(run_id) = text(&event, "runId") {
+                        self.owner.set_active_run(
+                            self.chat,
+                            self.session,
+                            Some(run_id.into()),
+                            self.generation,
+                        );
                     }
-                    first.then(|| permission_prompt(&event))
                 }
-                Some("elicitation_request") => {
-                    state.elicitation = Some((self.session.into(), event.clone()));
-                    state.changed.notify_waiters();
-                    Some(elicitation_prompt(&event))
-                }
-                Some("assistant_text_delta") => {
-                    if let Some(text) = event["text"].as_str() {
-                        self.text.lock().unwrap().push_str(text);
-                    }
-                    None
-                }
-                Some("assistant_attachment") => {
-                    let attachment = event["attachment"].clone();
-                    let Some(context) = state.context.clone() else {
-                        drop(state);
-                        eprintln!("weixin: attachment send skipped: missing context");
-                        self.owner
-                            .delivery
-                            .queue_attachment_fallback(self.chat, &attachment);
-                        return Ok(());
+                "permission_request" => {
+                    // WeixinChannel.ts:729-738 — pause activity, then capture and
+                    // deliver the prompt with confirmInitialPrompt's result.
+                    self.live.lock().await.pause_activity().await?;
+                    let prompt = {
+                        let mut state = chat.lock().await;
+                        state.permissions.capture(
+                            self.chat,
+                            self.session,
+                            text(&event, "requestId").unwrap_or(""),
+                            text(&event, "toolName").unwrap_or(""),
+                            &event["payload"],
+                        )
                     };
-                    drop(state);
-                    match super::super::attachments::send_outbound(
-                        &self.owner.http,
-                        self.credentials,
-                        self.chat,
-                        &context,
-                        &attachment,
-                    )
-                    .await
-                    {
-                        Ok(true) => return Ok(()),
-                        Ok(false) => {
-                            eprintln!("weixin: attachment send failed: missing content");
-                        }
-                        Err(error) => {
-                            eprintln!("weixin: attachment send failed: {}", error.message);
+                    chat.lock().await.changed.notify_waiters();
+                    if let Some(prompt) = prompt {
+                        let delivered = self
+                            .owner
+                            .reply(self.credentials, self.chat, &prompt, false)
+                            .await
+                            .is_ok();
+                        let mut state = chat.lock().await;
+                        if state.generation == self.generation {
+                            state.permissions.confirm_initial_prompt(
+                                self.chat,
+                                delivered,
+                                text(&event, "requestId"),
+                            );
+                            state.changed.notify_waiters();
                         }
                     }
-                    let fallback =
-                        super::super::attachments::format_attachment_fallback(&attachment);
+                    // A failed prompt keeps the request and the lock (八项③).
+                    return Ok(());
+                }
+                "elicitation_request" => {
+                    self.live.lock().await.pause_activity().await?;
+                    let prompt = {
+                        let mut state = chat.lock().await;
+                        state.elicitation.capture(self.chat, self.session, &event)
+                    };
+                    chat.lock().await.changed.notify_waiters();
+                    // WeixinChannel.ts:722-726 — a failed question never fails the turn.
                     let _ = self
                         .owner
-                        .reply(self.credentials, self.chat, &fallback, true)
+                        .reply(self.credentials, self.chat, &prompt, false)
                         .await;
                     return Ok(());
                 }
-                Some("error") => event["message"].as_str().map(str::to_owned),
-                _ => None,
-            };
-            drop(state);
-            if let Some(prompt) = prompt {
-                let queue_on_failure = event["type"] != "permission_request"
-                    && event["type"] != "elicitation_request";
-                let result = self
-                    .owner
-                    .reply(self.credentials, self.chat, &prompt, queue_on_failure)
-                    .await;
-                if event["type"] == "permission_request" {
-                    let mut state = chat.lock().await;
-                    if state.generation == self.generation {
-                        state.initial_prompt = false;
-                        if result.is_ok() {
-                            state.answering = false;
-                        } else {
-                            state.prompt_retry = Some(prompt);
-                        }
-                        state.changed.notify_waiters();
+                "assistant_attachment" => return self.attachment(event).await,
+                "error" if text(&event, "code") == Some("agent_aborted") => {
+                    // WeixinChannel.ts:739 — a timeout notice already replaced the
+                    // terminal text, so an abort after it is not appended twice.
+                    if self.timeout.lock().unwrap().is_some() {
+                        return Ok(());
                     }
-                    // Delivery failure retains the request and prevents an
-                    // unseen permission from being decided by the next input.
+                    self.live.lock().await.mark_aborted().await?;
                     return Ok(());
                 }
-                if event["type"] == "elicitation_request" && result.is_err() {
-                    // `WeixinChannel.ts:722-726` — elicitation prompt failure does not fail the turn.
+                "error" if text(&event, "code") == Some("turn_timeout") => {
+                    self.live.lock().await.mark_timed_out().await?;
                     return Ok(());
                 }
-                result?;
+                _ => {}
             }
-            Ok(())
+            self.live.lock().await.handle_event(&event).await
         })
     }
 }
-fn permission_prompt(event: &Value) -> String {
-    let payload = serde_json::to_string_pretty(&event["payload"]).unwrap_or_default();
-    let units: Vec<_> = payload.trim().encode_utf16().collect();
-    let payload = if units.len() > 800 {
-        format!("{}...", String::from_utf16_lossy(&units[..800]))
-    } else if units.is_empty() {
-        "(空)".into()
-    } else {
-        payload.trim().into()
-    };
-    format!(
-        "工具 {} 需要权限才能继续执行。\n\n请求内容：\n{payload}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。",
-        event["toolName"].as_str().unwrap_or("")
-    )
-}
-fn elicitation_prompt(event: &Value) -> String {
-    let mut lines = Vec::new();
-    for q in event["questions"].as_array().into_iter().flatten() {
-        if let Some(header) = text(q, "header") {
-            lines.push(format!("**{header}**"));
+impl LiveSink<'_> {
+    async fn attachment(&self, event: Value) -> Result<()> {
+        let attachment = event["attachment"].clone();
+        let chat = self.owner.chat(self.chat);
+        let Some(context) = chat.lock().await.context.clone() else {
+            eprintln!("weixin: attachment send skipped: missing context");
+            self.owner
+                .delivery
+                .queue_attachment_fallback(self.chat, &attachment);
+            return Ok(());
+        };
+        match super::super::attachments::send_outbound(
+            &self.owner.http,
+            self.credentials,
+            self.chat,
+            &context,
+            &attachment,
+        )
+        .await
+        {
+            Ok(true) => return Ok(()),
+            Ok(false) => eprintln!("weixin: attachment send failed: missing content"),
+            Err(error) => eprintln!("weixin: attachment send failed: {}", error.message),
         }
-        if let Some(question) = text(q, "question") {
-            lines.push(question.into());
-        }
-        for (i, option) in q["options"].as_array().into_iter().flatten().enumerate() {
-            let description = text(option, "description")
-                .map(|text| format!(" — {text}"))
-                .unwrap_or_default();
-            lines.push(format!(
-                "{}. {}{description}",
-                i + 1,
-                option["label"].as_str().unwrap_or("")
-            ));
-        }
+        let fallback = super::super::attachments::format_attachment_fallback(&attachment);
+        let _ = self
+            .owner
+            .reply(self.credentials, self.chat, &fallback, true)
+            .await;
+        Ok(())
     }
-    lines.extend([
-        String::new(),
-        "回复数字选择（多选用逗号分隔），回复 0 取消。".into(),
-    ]);
-    lines.join("\n")
 }
-fn elicitation_answer(event: &Value, input: &str) -> Value {
-    if input == "0" {
-        return json!({"type":"cancelled","reason":"user cancelled"});
-    }
-    let mut answers = serde_json::Map::new();
-    for q in event["questions"].as_array().into_iter().flatten() {
-        let mut selected: Vec<_> = input
-            .split(|ch: char| ch == ',' || ch == '，' || ch.is_whitespace())
-            .filter_map(|token| {
-                let token = token.trim_start();
-                let sign = if token.starts_with('-') { -1 } else { 1 };
-                let digits = token
-                    .trim_start_matches(['+', '-'])
-                    .chars()
-                    .take_while(char::is_ascii_digit)
-                    .collect::<String>();
-                let index = digits.parse::<usize>().ok()?;
-                if sign < 0 || index == 0 {
-                    return None;
-                }
-                q["options"].get(index - 1)?.get("label").cloned()
-            })
-            .collect();
-        if selected.is_empty() {
-            selected.push(input.into());
-        }
-        answers.insert(
-            q["question"].as_str().unwrap_or("").into(),
-            if q["multiSelect"] == true {
-                json!(selected)
-            } else {
-                selected[0].clone()
-            },
-        );
-    }
-    json!({"type":"answered","answers":answers})
+impl LiveSink<'_> {
+
 }
+
+
+
+
+

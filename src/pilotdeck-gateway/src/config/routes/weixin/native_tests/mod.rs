@@ -121,6 +121,11 @@ async fn server(fail_first: bool) -> Server {
             let first = recorded.lock().unwrap().is_empty();
             let body = if path.ends_with("getupdates") {
                 r#"{"ret":0,"msgs":[]}"#
+            } else if path.ends_with("getconfig") {
+                // WeixinChannel.ts:880-888 — typing needs the ticket first.
+                r#"{"typing_ticket":"fixture-ticket"}"#
+            } else if path.ends_with("sendtyping") {
+                r#"{"ret":0}"#
             } else {
                 assert!(path.ends_with("sendmessage"));
                 recorded.lock().unwrap().push(value);
@@ -182,6 +187,10 @@ async fn server_reject_all_sends() -> Server {
                 }
                 let body = if path.ends_with("getupdates") {
                     r#"{"ret":0,"msgs":[]}"#.to_owned()
+                } else if path.ends_with("getconfig") {
+                    r#"{"typing_ticket":"fixture-ticket"}"#.to_owned()
+                } else if path.ends_with("sendtyping") {
+                    r#"{"ret":0}"#.to_owned()
                 } else {
                     if header + length <= bytes.len() && length > 0 {
                         let _ =
