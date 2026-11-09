@@ -158,6 +158,22 @@ GIT_ERROR = 125  # git()/git_bytes() return this when the call itself failed
 
 
 # ---------------------------------------------------------------- git helpers
+# #2398 fix-r1: same git isolation as the frozen apparatus checkers — never
+# inherit GIT_* from the caller, never read a global gitconfig, never enable
+# optional locks / fsmonitor / hooks. safe.directory=* keeps cross-uid
+# checkouts usable: pinning GIT_CONFIG_GLOBAL drops the caller's
+# safe.directory, and without it a dubious-ownership repo would turn this
+# delivery precheck into a wrong READY/FAIL.
+GIT_ISOLATION = ['git', '--no-optional-locks', '-c', 'core.fsmonitor=false',
+                 '-c', 'core.hooksPath=/dev/null', '-c', 'safe.directory=*']
+
+
+def isolated_git_env():
+    env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
+    env['GIT_CONFIG_GLOBAL'] = os.devnull
+    return env
+
+
 def git(root, *args):
     """Return (returncode, stdout, stderr); never raises for a git failure.
 
@@ -166,8 +182,9 @@ def git(root, *args):
     treating a transient fork/exec failure as a missing file).
     """
     try:
-        proc = subprocess.run(['git', '-C', str(root), *args], capture_output=True,
-                              text=True, errors='replace', timeout=CHECK_TIMEOUT)
+        proc = subprocess.run([*GIT_ISOLATION, '-C', str(root), *args], capture_output=True,
+                              text=True, errors='replace', env=isolated_git_env(),
+                              timeout=CHECK_TIMEOUT)
     except (OSError, subprocess.SubprocessError) as error:
         return GIT_ERROR, '', str(error)
     return proc.returncode, proc.stdout, proc.stderr
@@ -176,8 +193,8 @@ def git(root, *args):
 def git_bytes(root, *args):
     """Like git(), but keeps stdout as bytes (blob content may be binary)."""
     try:
-        proc = subprocess.run(['git', '-C', str(root), *args], capture_output=True,
-                              timeout=CHECK_TIMEOUT)
+        proc = subprocess.run([*GIT_ISOLATION, '-C', str(root), *args], capture_output=True,
+                              env=isolated_git_env(), timeout=CHECK_TIMEOUT)
     except (OSError, subprocess.SubprocessError) as error:
         return GIT_ERROR, b'', str(error).encode()
     return proc.returncode, proc.stdout, proc.stderr

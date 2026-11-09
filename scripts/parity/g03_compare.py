@@ -68,13 +68,17 @@ def baseline_path() -> 'Path':
             return Path(configured).resolve()
         raise FileNotFoundError(f"PDRS_BASELINE={configured} is not a directory")
     candidates = [WORKTREE / "resources/PilotDeck"]
-    # #2398: same git isolation as check_frozen.py — never inherit GIT_* from
-    # the caller, never read a global gitconfig, and never hang past the bound.
+    # #2398 fix-r1: same git isolation as check_frozen.py — never inherit GIT_*
+    # from the caller, never read a global gitconfig, and never hang past the
+    # bound. safe.directory=* keeps cross-uid checkouts usable: pinning
+    # GIT_CONFIG_GLOBAL drops the caller's safe.directory, and without it a
+    # dubious-ownership repo would turn the freeze gate into a false FAIL.
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     env["GIT_CONFIG_GLOBAL"] = os.devnull
     try:
         common = subprocess.run(["git", "--no-optional-locks", "-c", "core.fsmonitor=false",
-                                 "-c", "core.hooksPath=/dev/null", "-C", str(WORKTREE), "rev-parse",
+                                 "-c", "core.hooksPath=/dev/null", "-c", "safe.directory=*",
+                                 "-C", str(WORKTREE), "rev-parse",
                                  "--path-format=absolute", "--git-common-dir"],
                                 capture_output=True, text=True, env=env, timeout=GIT_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
@@ -108,17 +112,69 @@ def sha256(path: 'Path') -> 'str':
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def write_result_exclusive(path: 'Path', data: 'str') -> 'None':
-    """#2398: create the result file exclusively; a later run must never
-    overwrite an earlier run's results (write_text truncates in place)."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _result_temporary(path: 'Path') -> 'Path':
+    """#2398 fix-r1: sibling temp path — never the target itself, so a crash
+    between create and publish can only leave a dotfile behind, never a 0-byte
+    or half-written result that blocks every later run at the published path."""
+    return path.with_name(f'.{path.name}.tmp.{os.getpid()}')
+
+
+def _write_result_temporary(path: 'Path', data: 'str') -> 'Path':
+    temporary = _result_temporary(path)
+    with open(temporary, 'x', encoding='utf-8') as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+    return temporary
+
+
+def _publish_exclusive(temporary: 'Path', path: 'Path') -> 'None':
+    # os.link publishes atomically and refuses an existing target: the result
+    # becomes visible only when it is complete, and a later run can never
+    # overwrite an earlier run's results.
     try:
-        with open(path, 'x', encoding='utf-8') as stream:
-            stream.write(data)
+        os.link(temporary, path)
     except FileExistsError:
         raise SystemExit(f'#2398 result file already exists: {path} '
                          '(an earlier run produced it; remove it or pass a different --json path)')
+
+
+def write_result_exclusive(path: 'Path', data: 'str') -> 'None':
+    """#2398: create the result file exclusively and publish it atomically.
+    Unlike the device-patches 20261108-1841 variant (which falls back to
+    .attempt-N and exits 0), this helper exits loudly: the parity CLIs refuse
+    to replace an earlier run's results."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = _write_result_temporary(path, data)
+    try:
+        _publish_exclusive(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def write_results_exclusive(entries: 'list[tuple[Path, str]]') -> 'None':
+    """#2398 fix-r1: publish a group of result files (json + markdown) as one
+    unit: every temp file is fully written first, then all targets are linked;
+    a failure unlinks what this call already published, so a consumer never
+    sees a half-published group (new json + stale markdown)."""
+    paths = [Path(path) for path, _ in entries]
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    temporaries = [(path, _write_result_temporary(path, data))
+                   for path, (_, data) in zip(paths, entries)]
+    published = []
+    try:
+        for path, temporary in temporaries:
+            _publish_exclusive(temporary, path)
+            published.append(path)
+    except BaseException:
+        for path in published:
+            path.unlink(missing_ok=True)
+        raise
+    finally:
+        for _, temporary in temporaries:
+            temporary.unlink(missing_ok=True)
 
 
 def canon(value: 'Any') -> 'str':
