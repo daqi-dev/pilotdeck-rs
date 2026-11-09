@@ -3194,3 +3194,28 @@ updated: 2026-11-05 13:4x · by Claude Code 协调者（13:4x 交接：#1419 合
 - 回归：**cancel_steer 3**、**transcript_incremental 6**、**sop stub 8**、**bash_tool 15** — 全 PASS；日志 `证据/daqi-migrate-b/resume-20261109-104117/logs/`。
 - SOP：**stub 门序通过 ≠ StaffDeck 完成**；`opt-r2-migration-coverage.md` 记真实差集。
 - **未提交**；待非实施者验收 `implementation-result.md`。
+
+### 2026-11-09 pdrs-daqi-b-channels（Cursor 多渠道）
+
+- `config/routes/**` 96 文件自 B `dc123d18` 落盘；可编译接线仍为 Codex 子集 + `channel_runtime`/`composition`/`protocol frame`。
+- **debug build 绿**；定向测：cancel 3、transcript 6、sop 9、bash 15、memory 1、channel_http 13。
+- **未接**：全量 routes mod、web_cli/application；证据 `证据/daqi-migrate-b/channels-cursor-20261109/`。
+
+### 2026-11-09 pdrs-daqi-b-channels r2（Cursor resume 4c119e01）
+
+- B 宿主线整树合并失败（编译 48–188 err），**回滚 runtime 至 5aa8811** 保绿。
+- **已提交**：`lib` 导出 `application`+`web_cli`；`routes/mod.rs` 增 `RouteError::ordered` + 全信道接线说明（仍仅 `channel_http`/`channel_state`/`im_cron` 编译）；`application::serve_web` shim。
+- **未完成**：`LocalServer`/`http`/`cron` crate 宿主线；`tests/web_cli`（缺 `pilotdeck-web` bin、`cron::client`）。
+- 证据：`证据/daqi-migrate-b/channels-cursor-20261109/最终报告-r2.md`，`logs/build-r2-final.txt`。
+
+### 2026-11-09 pdrs-daqi-b-channels r3（Cursor 续跑 4c119e01）
+
+- 已合 upstream `e18cc94`（`5b15dd6`）；`routes/mod.rs` 全量 pub mod + `http`/`cron`/`LocalServer`/`application` B 面接线。
+- **未绿**：`cargo build -p pilotdeck-gateway` ~173 err（B HTTP 宿主 vs daqi runtime 符号不齐，需 runtime 合流决策）。
+- 本地提交 `3f74cc7`（未 push）；证据 `pdrs-ext/…/channels-cursor-20261109/r3/最终报告.md`。
+
+### 2026-11-09 pdrs-daqi-b-channels r4（Cursor 路2）
+
+- Codex `pdrs-daqi-b-runtime` 远端未到；upstream 仓或有本地分支待核。
+- 渠道自给：`has_execution_config`、B 版 `channel_runtime`、`jsonschema`/user_dialog/hooks；**未改 runtime/**。
+- 构建 **166 err**；交接 `pdrs-ext/…/r4-需要的runtime接口.md`；提交 `dc6eb64`（未 push）。

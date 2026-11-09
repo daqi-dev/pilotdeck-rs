@@ -10,6 +10,7 @@
 //! non-ignored `upload_golden_bytes_match_ts_fixtures` guards the format in CI.
 mod error;
 pub mod gateway;
+pub mod routes;
 #[cfg(test)]
 mod gateway_tests;
 #[cfg(test)]

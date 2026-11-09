@@ -76,7 +76,7 @@ fn registered(request: &JsValue) -> Option<(&'static Module, &'static FileRequir
 impl Module {
     fn handle<F: Files>(&self, request: &JsValue, metadata: Option<&Metadata<F>>) -> Route {
         match self.handler {
-            Handler::Metadata => dispatch::route_metadata(request, metadata),
+            Handler::Metadata => dispatch::route_with_metadata(request, metadata),
             Handler::Config => crate::config::routes::native::response(request, metadata),
         }
     }
@@ -344,6 +344,7 @@ pub(crate) fn route<F: Files>(request: &JsValue, metadata: Option<&Metadata<F>>)
 }
 
 /// Shared native services, owned by the server rather than a socket.
+
 pub struct GatewayServices {
     pub browsers: Option<crate::runtime::manager::BrowserManager>,
     pub home: std::path::PathBuf,

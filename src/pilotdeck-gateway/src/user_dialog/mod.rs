@@ -28,9 +28,6 @@ pub use channel::{
     AbortSignal, ChannelOptions, ChannelRequest, ConfirmRequest, FormRequest,
     GatewayUserDialogChannel, InputRequest, SelectChoice, SelectRequest, UserDialogStore,
 };
-pub use gateway::{
-    DialogPersistence, DialogSession, DialogSessionResolver, DialogStore, GatewayUserDialogs,
-};
 pub use http_store::{
     GatewayUserDialogStoreHttpHandler, GatewayUserDialogStoreHttpServer,
     HttpGatewayUserDialogStore, HttpGatewayUserDialogStoreOptions, HttpStoreAnswer,

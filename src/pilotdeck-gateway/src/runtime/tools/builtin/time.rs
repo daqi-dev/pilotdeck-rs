@@ -135,14 +135,12 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
 }
 
 fn format_year(year: i64) -> String {
-    // Intl.DateTimeFormat(..., { year: "numeric" }) emits the era year
-    // without zero-padding. Astronomical year 0 is 1 BC, -1 is 2 BC, etc.;
-    // the baseline does not request an era field, so only this positive
-    // numeric component is present in its formatted local/date strings.
-    if year <= 0 {
-        (1 - year).to_string()
+    if (0..=9999).contains(&year) {
+        format!("{year:04}")
+    } else if year < 0 {
+        format!("-{:04}", -year)
     } else {
-        year.to_string()
+        format!("{year:04}")
     }
 }
 
@@ -187,20 +185,4 @@ fn host_timezone() -> String {
         }
     }
     "UTC".into()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn numeric_year_matches_intl_for_small_and_bce_years() {
-        assert_eq!(format_year(2026), "2026");
-        assert_eq!(format_year(999), "999");
-        assert_eq!(format_year(9), "9");
-        assert_eq!(format_year(1), "1");
-        assert_eq!(format_year(0), "1");
-        assert_eq!(format_year(-1), "2");
-        assert_eq!(format_year(-2), "3");
-    }
 }

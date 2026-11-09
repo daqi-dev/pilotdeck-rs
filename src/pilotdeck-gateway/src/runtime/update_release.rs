@@ -1154,7 +1154,7 @@ fn child_has_exited(child: &mut std::process::Child, pid: u32) -> io::Result<boo
         let _ = child;
         let pid = rustix::process::Pid::from_raw(pid as i32)
             .ok_or_else(|| io::Error::other("Invalid child identity."))?;
-        pilotdeck_process::process_group::leader_exited_unreaped(pid).map_err(Into::into)
+        crate::process_group::leader_exited_unreaped(pid).map_err(Into::into)
     }
     #[cfg(not(unix))]
     {
@@ -1198,20 +1198,20 @@ fn stop_managed_child(
     {
         let group = rustix::process::Pid::from_raw(pid as i32)
             .ok_or_else(|| io::Error::other("Invalid child identity."))?;
-        pilotdeck_process::process_group::kill(Some(group), rustix::process::Signal::TERM);
+        crate::process_group::kill(Some(group), rustix::process::Signal::TERM);
         // Match processTree.js: descendants receive the grace period even if
         // the leader has exited. The leader remains unreaped throughout it.
         thread::sleep(Duration::from_millis(1500));
-        pilotdeck_process::process_group::kill(Some(group), rustix::process::Signal::KILL);
+        crate::process_group::kill(Some(group), rustix::process::Signal::KILL);
         let deadline = Instant::now() + Duration::from_secs(3);
-        while !pilotdeck_process::process_group::leader_exited_unreaped(group)? {
+        while !crate::process_group::leader_exited_unreaped(group)? {
             if Instant::now() >= deadline {
                 return Err(io::Error::other("Command termination is unconfirmed."));
             }
             thread::sleep(Duration::from_millis(10));
         }
         let status = child.wait()?;
-        while pilotdeck_process::process_group::group_exists(group) {
+        while crate::process_group::group_exists(group) {
             if Instant::now() >= deadline {
                 return Err(io::Error::other("Command descendants did not stop."));
             }

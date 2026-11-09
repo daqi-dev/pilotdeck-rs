@@ -9,7 +9,14 @@
 //! rejection) is delegated to the admission host; the WS adapter and final
 //! assembly are separate packages. Snapshot capture stays behind the existing
 //! [`SubmitSnapshots`] port (`NativeSubmitSnapshots` in production).
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
+use crate::runtime::replacement::ReplacementCoordinator;
+use crate::runtime::sdk_session::SdkSessionRegistry;
+use crate::storage::{ContentAddressedWorkspaceSnapshotRecorder, TaskBudgetStore};
 
 use pilotdeck_protocol::{JsString, JsValue};
 
@@ -492,3 +499,32 @@ pub(crate) fn accepted_input_metadata(input: &JsValue) -> Option<JsObject> {
     }
     (!metadata.is_empty()).then_some(metadata)
 }
+
+pub type NativeSubmitHost = GatewaySubmitHost;
+
+type RecoverHistory = Arc<dyn Fn(&JsValue) -> Result<(), SubmitError> + Send + Sync>;
+
+pub struct NativeSubmitProviders {
+    pub manager_browsers: Option<crate::runtime::manager::BrowserManager>,
+    pub recover_history: Option<RecoverHistory>,
+    pub replacement: Arc<ReplacementCoordinator>,
+    pub snapshots: Option<Arc<ContentAddressedWorkspaceSnapshotRecorder>>,
+    pub workspace_id: Option<JsString>,
+    pub sdk: Option<Arc<tokio::sync::Mutex<SdkSessionRegistry>>>,
+    pub task_budget: Option<Arc<Mutex<TaskBudgetStore>>>,
+    pub memory: Option<Arc<dyn crate::runtime::context::memory::MemoryResolver>>,
+    pub memory_maintenance: Option<Arc<dyn crate::runtime::refresh::MemoryMaintenance>>,
+    pub builtin_plugins: Vec<Arc<crate::runtime::plugins::LoadedPlugin>>,
+    pub builtin_skills_root: Option<PathBuf>,
+    pub pilot_home: PathBuf,
+    pub transcripts: Arc<crate::storage::AsyncTranscriptAdapter>,
+    pub(super) uploads:
+        Arc<Mutex<std::collections::HashMap<JsString, super::submit_uploads::UploadedTurn>>>,
+}
+
+pub(crate) fn shared_task_budget_port(
+    store: Arc<Mutex<TaskBudgetStore>>,
+) -> Arc<dyn crate::runtime::sdk_session::SdkTaskBudget> {
+    Arc::new(crate::runtime::sdk_session::TaskBudgetStorePort::with_shared(store))
+}
+

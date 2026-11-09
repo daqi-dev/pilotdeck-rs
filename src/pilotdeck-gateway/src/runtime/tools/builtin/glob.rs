@@ -7,7 +7,7 @@
 //! ascending, the direction observed from ripgrep 15; exact-mtime ties fall
 //! back to the path so the result stays stable.
 use super::{
-    basename, dirname, grep, is_absolute, object, resolve_workspace_path, schema, string, text,
+    basename, dirname, is_absolute, object, resolve_workspace_path, schema, string, text,
     tool_error,
 };
 use crate::{
@@ -16,13 +16,9 @@ use crate::{
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use regex::Regex;
-use std::{
-    path::Path,
-    time::{Duration, Instant, UNIX_EPOCH},
-};
+use std::{path::Path, time::UNIX_EPOCH};
 
 const DEFAULT_LIMIT: usize = 1_000;
-const SEARCH_TIMEOUT: Duration = Duration::from_secs(20);
 const IGNORED_DIRECTORIES: &[&str] = &[".git", "node_modules", "dist"];
 
 pub struct GlobTool {
@@ -57,7 +53,7 @@ impl ToolDefinition for GlobTool {
 
 impl ExecutableTool for GlobTool {
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
-        Box::pin(async move { execute(&input, &context).await })
+        Box::pin(async move { execute(&input, &context) })
     }
 }
 
@@ -82,7 +78,7 @@ fn definition() -> JsObject {
     ])
 }
 
-async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, ToolError> {
+fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, ToolError> {
     let pattern = input
         .get("pattern")
         .and_then(JsValue::as_string)
@@ -107,27 +103,17 @@ async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput
     } else {
         format!("{}/", text(&resolved.relative))
     };
-    let normalized_pattern =
-        normalize_glob_pattern(&text(&search_pattern), &super::os_path(&resolved.absolute));
+    let files = walk(&super::os_path(&resolved.absolute), &search_pattern)?;
     let limit = input
         .get("limit")
         .and_then(JsValue::as_number)
         .unwrap_or(DEFAULT_LIMIT as f64);
-    let listing = grep::ripgrep_files_listing(
-        &resolved.absolute,
-        &normalized_pattern,
-        usize::MAX,
-        context,
-    )
-    .await?;
-    let all_files: Vec<String> = listing
-        .files
+    let selected = slice_limit(&files, limit);
+    let truncated = selected.len() < files.len();
+    let workspace_files: Vec<String> = selected
         .iter()
         .map(|file| format!("{prefix}{file}"))
         .collect();
-    let workspace_files = slice_limit(&all_files, limit);
-    let truncated = workspace_files.len() < all_files.len();
-    let total = all_files.len();
     let limit_text = if input.get("limit").is_some() {
         format!(" limit={}", js_number_string(limit))
     } else {
@@ -142,7 +128,7 @@ async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput
     output_lines.push(format!(
         "[glob pagination] returned={} total={} truncated={}{limit_text}",
         workspace_files.len(),
-        total,
+        files.len(),
         if truncated { "true" } else { "false" }
     ));
     if truncated {
@@ -165,7 +151,7 @@ async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput
         supplemental_messages: None,
         data: Some(JsValue::Object(object([
             ("files", data_files),
-            ("count", JsValue::Number(total as f64)),
+            ("count", JsValue::Number(files.len() as f64)),
             ("truncated", JsValue::Bool(truncated)),
         ]))),
         metadata: Some(object([("truncated", JsValue::Bool(truncated))])),
@@ -174,17 +160,6 @@ async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput
 
 fn js_number_string(value: f64) -> String {
     crate::js_value::number_string(value)
-}
-
-/// JS `files.slice(0, limit)` length cap for ripgrep listing.
-fn slice_limit_len(limit: f64) -> usize {
-    if limit.is_nan() {
-        return 0;
-    }
-    if limit <= 0.0 {
-        return usize::MAX;
-    }
-    limit.floor() as usize
 }
 
 /// JS `files.slice(0, limit)` including negative and non-finite limits.
@@ -210,15 +185,10 @@ fn slice_limit(files: &[String], limit: f64) -> Vec<String> {
     files[start..end as usize].to_vec()
 }
 
-fn walk(
-    root: &Path,
-    pattern: &JsString,
-    context: &ToolRunContext,
-) -> Result<Vec<String>, ToolError> {
+fn walk(root: &Path, pattern: &JsString) -> Result<Vec<String>, ToolError> {
     let matcher = GlobMatcher::new(pattern)?;
     let mut files: Vec<(String, i64)> = Vec::new();
-    let started = Instant::now();
-    walk_directory(root, "", &matcher, &mut files, context, started)?;
+    walk_directory(root, "", &matcher, &mut files)?;
     files.sort_by(|left, right| {
         left.1
             .cmp(&right.1)
@@ -232,10 +202,7 @@ fn walk_directory(
     relative: &str,
     matcher: &GlobMatcher,
     files: &mut Vec<(String, i64)>,
-    context: &ToolRunContext,
-    started: Instant,
 ) -> Result<(), ToolError> {
-    check_search_state(context, started)?;
     let entries = std::fs::read_dir(directory).map_err(|error| {
         tool_error(
             "tool_execution_failed",
@@ -243,7 +210,6 @@ fn walk_directory(
         )
     })?;
     for entry in entries {
-        check_search_state(context, started)?;
         let entry = entry.map_err(|error| {
             tool_error(
                 "tool_execution_failed",
@@ -273,7 +239,7 @@ fn walk_directory(
             if IGNORED_DIRECTORIES.contains(&name.as_ref()) {
                 continue;
             }
-            walk_directory(&entry.path(), &path, matcher, files, context, started)?;
+            walk_directory(&entry.path(), &path, matcher, files)?;
         } else if file_type.is_file() && matcher.matches(&path) {
             let Ok(metadata) = entry.metadata() else {
                 continue;
@@ -287,76 +253,6 @@ fn walk_directory(
         }
     }
     Ok(())
-}
-
-fn check_search_state(context: &ToolRunContext, started: Instant) -> Result<(), ToolError> {
-    if context.is_aborted() {
-        return Err(tool_error("tool_aborted", "glob search aborted."));
-    }
-    if started.elapsed() >= SEARCH_TIMEOUT {
-        return Err(tool_error(
-            "tool_timeout",
-            "glob search timed out after 20000ms.",
-        ));
-    }
-    Ok(())
-}
-
-const GLOB_ESCAPE_CHARS: &[char] = &['*', '?', '[', ']', '{', '}', '\\'];
-
-/// Match `normalizeRipgrepGlobPattern`: a backslash is normally a Windows path
-/// separator, except when it deliberately escapes a glob metacharacter. The
-/// ambiguous case is resolved by checking whether the static prefix names an
-/// existing directory beneath the selected search root.
-fn normalize_glob_pattern(pattern: &str, root: &Path) -> String {
-    let chars: Vec<char> = pattern.chars().collect();
-    let mut output = String::new();
-    let mut index = 0;
-    while index < chars.len() {
-        let character = chars[index];
-        if character != '\\' {
-            output.push(character);
-            index += 1;
-            continue;
-        }
-        let Some(next) = chars.get(index + 1).copied() else {
-            output.push('\\');
-            break;
-        };
-        let globstar_segment = next == '*'
-            && chars.get(index + 2) == Some(&'*')
-            && matches!(chars.get(index + 3), None | Some('/') | Some('\\'));
-        let last_segment = output.rsplit('/').next().unwrap_or(&output);
-        let prefix_has_glob = has_unescaped_glob_special(last_segment);
-        let static_directory = !output.is_empty()
-            && !has_unescaped_glob_special(&output)
-            && root.join(&output).is_dir();
-        if !GLOB_ESCAPE_CHARS.contains(&next)
-            || globstar_segment
-            || prefix_has_glob
-            || static_directory
-        {
-            output.push('/');
-        } else {
-            output.push('\\');
-        }
-        index += 1;
-    }
-    output
-}
-
-fn has_unescaped_glob_special(value: &str) -> bool {
-    let mut escaped = false;
-    for character in value.chars() {
-        if escaped {
-            escaped = false;
-        } else if character == '\\' {
-            escaped = true;
-        } else if matches!(character, '*' | '?' | '[' | '{') {
-            return true;
-        }
-    }
-    false
 }
 
 struct GlobMatcher {
@@ -602,7 +498,6 @@ fn extract_glob_base_directory(pattern: &JsString) -> (JsString, JsString) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     fn files() -> Vec<String> {
         ["a", "b", "c"]
@@ -623,18 +518,5 @@ mod tests {
         assert!(slice_limit(&files, f64::NAN).is_empty());
         assert_eq!(slice_limit(&files, f64::INFINITY), files);
         assert!(slice_limit(&files, f64::NEG_INFINITY).is_empty());
-    }
-
-    #[test]
-    fn normalizes_windows_path_separators_but_preserves_literal_escapes() {
-        let root = std::env::temp_dir().join(format!("pdrs-glob-normalize-{}", std::process::id()));
-        fs::create_dir_all(root.join("src")).unwrap();
-        assert_eq!(normalize_glob_pattern(r"src\file.ts", &root), "src/file.ts");
-        assert_eq!(normalize_glob_pattern(r"src\**\*.ts", &root), "src/**/*.ts");
-        assert_eq!(
-            normalize_glob_pattern(r"literal\*.ts", &root),
-            r"literal\*.ts"
-        );
-        let _ = fs::remove_dir_all(root);
     }
 }

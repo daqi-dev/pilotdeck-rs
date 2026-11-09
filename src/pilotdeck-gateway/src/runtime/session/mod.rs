@@ -137,5 +137,3 @@ impl SessionTurns {
 
 #[cfg(test)]
 mod tests;
-
-pub mod sidecar_session;

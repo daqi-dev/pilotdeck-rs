@@ -820,7 +820,7 @@ impl Matcher<'_> {
         }
     }
 }
-pub(super) fn test(pattern: &[u16], query: &[u16]) -> bool {
+pub(crate) fn test(pattern: &[u16], query: &[u16]) -> bool {
     let mut parser = Parser::new(pattern);
     let Ok(root) = parser.parse() else {
         return false;

@@ -54,6 +54,7 @@
 //! Abrupt host death that bypasses close/Drop has no descendant cleanup guarantee.
 mod budget;
 mod connection;
+pub mod deployment;
 mod execution;
 pub mod modules;
 mod recovery;

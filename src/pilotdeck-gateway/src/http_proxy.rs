@@ -669,3 +669,16 @@ mod tests {
 #[cfg(test)]
 #[path = "http_proxy_tests.rs"]
 mod read_boundary_tests;
+
+pub(crate) fn upgraded_stream<S>(downstream: hyper::upgrade::Upgraded) -> std::io::Result<S>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    use hyper_util::rt::TokioIo;
+    use crate::http_proxy::UpgradeReadGate;
+    let parts = downstream
+        .downcast::<TokioIo<UpgradeReadGate<S>>>()
+        .map_err(|_| std::io::Error::other("unexpected downstream upgrade IO type"))?;
+    drop(parts.read_buf);
+    Ok(parts.io.into_inner().stream)
+}

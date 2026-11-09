@@ -10,6 +10,7 @@
 //! object key order. Live TS cross-tests are `#[ignore]` (need PDRS_BASELINE);
 //! the non-ignored golden test replays tests/fixtures/skills/oracle.json.
 mod binding;
+pub mod routes;
 mod error;
 mod external;
 #[cfg(test)]

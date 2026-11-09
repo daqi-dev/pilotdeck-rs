@@ -4,8 +4,8 @@
 //! no cross-process lock or transaction in TS; failures can leave a new inverse
 //! snapshot installed before live roots or pipeline state have changed.
 use super::super::file_memory::{
-    EdgeClawFileStores, FileMemoryError, FileMemoryStoreOptions, OperationGuard, absolute,
-    io_mkdir, io_write, operation_lock, repository_global_options, repository_workspace_options,
+    EdgeClawFileStores, FileMemoryError, FileMemoryStoreOptions, OperationScope, absolute,
+    io_mkdir, io_write, repository_global_options, repository_workspace_options,
 };
 use crate::{
     metadata::object,
@@ -17,7 +17,10 @@ use sha1::{Digest, Sha1};
 use std::{
     fs, io,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 type Result<T> = std::result::Result<T, FileMemoryError>;
 const KEYS: [&str; 3] = ["lastDreamAt", "lastDreamStatus", "lastDreamSummary"];
@@ -46,11 +49,34 @@ pub struct MemoryRepositoryStage {
     pub staged_global_root: PathBuf,
     pub staged_db_path: PathBuf,
     io: SnapshotIoHook,
+    /// Latched by the first [`Self::dispose`] call, whatever its outcome:
+    /// [`Drop`] only cleans a stage nobody ever disposed explicitly. TS has
+    /// no cancellation and leaves a failed explicit dispose's residue to
+    /// the caller (the `restore-dispose-failure` oracle cell), who may still
+    /// retry `dispose` itself.
+    explicit: AtomicBool,
+    /// Set once a cleanup succeeded: a successful `dispose` stays idempotent
+    /// while a failed one remains retryable (#1036 fix-r1 P2-2 — TS's
+    /// `dispose` was repeatable cleanup).
+    disposed: AtomicBool,
 }
 impl MemoryRepositoryStage {
-    /// Explicit, repeatable cleanup, as in TS. No implicit Drop cleanup: callers
-    /// may retain a stage or inspect its partial state after a failed operation.
+    /// Explicit cleanup, as in TS. Idempotent for a stage whose cleanup
+    /// succeeded: a second `dispose` returns `Ok(())` instead of removing
+    /// again. A failed cleanup resets the success latch so a retrying caller
+    /// gets another chance instead of a success that never cleaned.
     pub fn dispose(&self) -> Result<()> {
+        self.explicit.store(true, Ordering::Release);
+        if self.disposed.swap(true, Ordering::AcqRel) {
+            return Ok(());
+        }
+        let result = self.cleanup();
+        if result.is_err() {
+            self.disposed.store(false, Ordering::Release);
+        }
+        result
+    }
+    fn cleanup(&self) -> Result<()> {
         let _ = self.repository.close();
         for p in [
             &self.staged_workspace_root,
@@ -60,6 +86,22 @@ impl MemoryRepositoryStage {
             remove(&self.io, p)?;
         }
         Ok(())
+    }
+}
+impl Drop for MemoryRepositoryStage {
+    /// Fallback cleanup (issue #1036 P2-5): every completed path disposes
+    /// explicitly, but a `dream` future dropped at an await point (caller
+    /// timeout, `select!`) owns an undisposed stage. TS has no cancellation
+    /// so no oracle cell covers this; `Drop` removes the staged roots here
+    /// on a best-effort basis, because it cannot propagate errors. A stage
+    /// whose owner already attempted an explicit `dispose` is NOT cleaned
+    /// here: TS keeps a failed dispose's residue observable (the
+    /// `restore-dispose-failure` cell), and only the caller's own retry may
+    /// remove it.
+    fn drop(&mut self) {
+        if !*self.explicit.get_mut() {
+            let _ = self.cleanup();
+        }
     }
 }
 fn s(s: impl AsRef<str>) -> JsValue {
@@ -88,13 +130,7 @@ fn text(v: &JsValue) -> String {
         .unwrap_or_default()
 }
 fn truthy(v: &JsValue) -> bool {
-    match v {
-        JsValue::Undefined | JsValue::Null => false,
-        JsValue::Bool(b) => *b,
-        JsValue::Number(n) => *n != 0.0 && !n.is_nan(),
-        JsValue::String(s) => !s.units().is_empty(),
-        _ => true,
-    }
+    super::js_truthy(v)
 }
 fn array(v: &JsValue) -> Result<&[JsValue]> {
     if let JsValue::Array(a) = v {
@@ -249,13 +285,39 @@ fn rename(h: &SnapshotIoHook, src: &Path, dst: &Path) -> Result<()> {
         Err(e) => Err(pair_error(e, "rename", src, dst).into()),
     }
 }
-fn temp(p: &Path, label: &str) -> PathBuf {
+/// `createSiblingTempPath(targetDir, label)` (`sqlite.ts:422-429`):
+/// `.${basename}.${label}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`.
+/// Each call consumes one `Math.random` draw in TS, so the injected fragment
+/// seam must draw from the same source the caller's fixtures froze.
+fn temp(p: &Path, label: &str, now_ms: i64, fragment: &str) -> PathBuf {
     p.with_file_name(format!(
-        ".{}.{}-{}",
+        ".{}.{}-{}-{}",
         p.file_name().unwrap_or_default().to_string_lossy(),
         label,
-        uuid::Uuid::new_v4().simple()
+        base36(now_ms),
+        fragment
     ))
+}
+
+/// `Number.prototype.toString(36)` for the integer `Date.now()` — the same
+/// digit alphabet and `-` sign V8 emits.
+fn base36(mut value: i64) -> String {
+    const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    if value == 0 {
+        return "0".into();
+    }
+    let negative = value < 0;
+    let mut out = Vec::new();
+    while value != 0 {
+        let digit = (value % 36).unsigned_abs() as usize;
+        out.push(DIGITS[digit]);
+        value /= 36;
+    }
+    if negative {
+        out.push(b'-');
+    }
+    out.reverse();
+    String::from_utf8(out).expect("base36 digits are ASCII")
 }
 fn write_files(h: &SnapshotIoHook, root: &Path, files: &JsValue) -> Result<()> {
     mkdir(h, root)?;
@@ -362,23 +424,26 @@ impl EdgeClawFileStores {
         self.repository.snapshot_io = hook;
     }
     pub(super) fn snapshot_operation<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
-        let mut roots = vec![
-            absolute(self.workspace_memory.get_root_dir())?,
-            absolute(self.global_user_memory.get_root_dir())?,
-        ];
-        // Workspace manifest repair calls the global provider while holding
-        // the workspace lock. Use that same order here to avoid an inversion
-        // with a concurrent FileMemoryStore call on these live roots.
-        roots.dedup();
-        let locks = roots
-            .iter()
-            .map(|p| operation_lock(p))
-            .collect::<Result<Vec<_>>>()?;
-        let _guards = locks
-            .iter()
-            .map(|l| OperationGuard::enter(l))
-            .collect::<Result<Vec<_>>>()?;
+        let _scope = self.snapshot_operation_scope()?;
         f()
+    }
+
+    /// A holdable [`Self::snapshot_operation`]: composite callers that must
+    /// keep the root operation locks across several repository calls (the
+    /// dream success tail spans install, replace and the state writes in one
+    /// TS-synchronous segment) acquire the guards once here. No LLM await may
+    /// happen while the returned scopes are alive. Same-thread calls below
+    /// reenter the already-held locks, so the guards compose with every
+    /// `snapshot_operation` inside the held region.
+    pub(crate) fn snapshot_operation_scope(
+        &self,
+    ) -> Result<(OperationScope<'_>, OperationScope<'_>)> {
+        // The workspace store predeclares the provider's global root and
+        // acquires the complete set in root order, even if another repository
+        // uses one of these paths in the opposite role.
+        let workspace = self.workspace_memory.operation_scope()?;
+        let global = self.global_user_memory.operation_scope()?;
+        Ok((workspace, global))
     }
     fn runtime_state(&self) -> Result<JsValue> {
         let mut out = JsObject::new();
@@ -486,7 +551,12 @@ impl EdgeClawFileStores {
     }
     fn replace_dir(&self, live: &Path, staged: &Path) -> Result<()> {
         let h = &self.repository.snapshot_io;
-        let backup = temp(live, "backup");
+        let backup = temp(
+            live,
+            "backup",
+            (self.temp_now_ms)(),
+            &(self.temp_random_fragment)(),
+        );
         let mut moved = false;
         let result = (|| {
             if live.exists() {
@@ -515,10 +585,16 @@ impl EdgeClawFileStores {
         if !path.exists() {
             return Ok(None);
         }
-        let metadata = parse_json(&String::from_utf8_lossy(
-            &fs::read(&path).map_err(|e| crate::node_io::path_error(e, "open", &path))?,
-        ))
-        .unwrap_or(JsValue::Null);
+        // sqlite.ts:1315 reads the metadata through `readFileSync`: an open
+        // error names its path, a descriptor read error (EISDIR after a
+        // directory swap, EIO, ...) is `read` without one (node v22.22.0,
+        // `_tmp/20261025-issue-656/node-probe/read-stages.out`).
+        let mut file =
+            fs::File::open(&path).map_err(|e| crate::node_io::path_error(e, "open", &path))?;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut file, &mut bytes)
+            .map_err(|e| crate::node_io::descriptor_error(e, "read"))?;
+        let metadata = parse_json(&String::from_utf8_lossy(&bytes)).unwrap_or(JsValue::Null);
         if field(&metadata, "version") != &JsValue::Number(1.0)
             || !root.join("workspace").exists()
             || !root.join("global").exists()
@@ -562,9 +638,26 @@ impl EdgeClawFileStores {
     }
     fn stage_from(&self, snapshot: &JsValue, label: &str) -> Result<MemoryRepositoryStage> {
         let h = &self.repository.snapshot_io;
-        let ws = temp(self.workspace_memory.get_root_dir(), label);
-        let gl = temp(self.global_user_memory.get_root_dir(), label);
-        let db = temp(self.storage.path(), label);
+        let now_ms = (self.temp_now_ms)();
+        // Three separate `Math.random` draws, one per path, like TS.
+        let ws = temp(
+            self.workspace_memory.get_root_dir(),
+            label,
+            now_ms,
+            &(self.temp_random_fragment)(),
+        );
+        let gl = temp(
+            self.global_user_memory.get_root_dir(),
+            label,
+            now_ms,
+            &(self.temp_random_fragment)(),
+        );
+        let db = temp(
+            self.storage.path(),
+            label,
+            now_ms,
+            &(self.temp_random_fragment)(),
+        );
         // Deliberately outside try, matching TS's partial mkdir failure state.
         mkdir(h, &ws)?;
         mkdir(h, &gl)?;
@@ -572,14 +665,17 @@ impl EdgeClawFileStores {
         let result = (|| {
             write_files(h, &ws, field(snapshot, "workspaceFiles"))?;
             write_files(h, &gl, field(snapshot, "globalFiles"))?;
-            repo = Some(Self::with_workspace_clock(
-                &db,
-                &ws,
-                &gl,
-                self.current_workspace()?,
-                &self.repository.general_workspace,
-                self.repository.clock.clone(),
-            )?);
+            repo = Some(
+                Self::with_workspace_clock(
+                    &db,
+                    &ws,
+                    &gl,
+                    self.current_workspace()?,
+                    &self.repository.general_workspace,
+                    self.repository.clock.clone(),
+                )?
+                .with_temp_name_seams(self.temp_now_ms.clone(), self.temp_random_fragment.clone()),
+            );
             repo.as_ref().unwrap().repair_workspace_manifest()?;
             Ok(())
         })();
@@ -599,6 +695,8 @@ impl EdgeClawFileStores {
             staged_global_root: gl,
             staged_db_path: db,
             io: h.clone(),
+            explicit: AtomicBool::new(false),
+            disposed: AtomicBool::new(false),
         })
     }
     pub fn replace_live_roots_with_stage(
@@ -645,7 +743,12 @@ impl EdgeClawFileStores {
     ) -> Result<()> {
         self.snapshot_operation(|| {
             let h = &self.repository.snapshot_io;
-            let stage = temp(&self.last_root(), "snapshot");
+            let stage = temp(
+                &self.last_root(),
+                "snapshot",
+                (self.temp_now_ms)(),
+                &(self.temp_random_fragment)(),
+            );
             mkdir(h, &stage)?;
             let result = (|| {
                 write_files(
@@ -849,6 +952,45 @@ mod round6_tests {
             round6_io::deny(&last(root).join("metadata.json"), false);
             repo.get_last_dream_snapshot_overview().unwrap_err()
         });
+    }
+    /// sqlite.ts:1315 reads the metadata through `readFileSync`, so a
+    /// directory occupying metadata.json (the exists check passes, the
+    /// read-only open succeeds on POSIX) must report the descriptor read
+    /// stage like Node: `EISDIR: illegal operation on a directory, read`
+    /// without the path (node v22.22.0,
+    /// `_tmp/20261025-issue-656/node-probe/read-stages.out`), not the open
+    /// label with it.
+    #[test]
+    fn metadata_directory_reports_the_read_stage() {
+        let root = std::env::temp_dir().join(format!(
+            "pdrs-snapshot-eisdir-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let repo = EdgeClawFileStores::with_workspace_clock(
+            root.join("control.sqlite"),
+            root.join("current/memory"),
+            root.join("global"),
+            root.join("workspace"),
+            root.join("workspace"),
+            Arc::new(|| "2026-10-23T00:00:00.000Z".into()),
+        )
+        .unwrap();
+        let last = root.join("last_dream");
+        fs::create_dir_all(last.join("workspace")).unwrap();
+        fs::create_dir_all(last.join("global")).unwrap();
+        fs::create_dir(last.join("metadata.json")).unwrap();
+        let error = repo.get_last_dream_snapshot_overview().unwrap_err();
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(
+            error.to_string(),
+            "EISDIR: illegal operation on a directory, read"
+        );
+        assert_eq!(error.io_code(), Some("EISDIR"));
     }
     #[test]
     fn snapshot_mkdir_matches_real_ts() {

@@ -331,3 +331,105 @@ fn epoch_ms(value: &JsString) -> Option<i64> {
         _ => None,
     }
 }
+
+pub async fn handle(
+    services: &crate::GatewayServices,
+    params: &JsValue,
+) -> Result<JsValue, crate::runtime::connection::RequestError> {
+    use crate::{
+        metadata::{Metadata, NativeFiles, resolve, text_field},
+        runtime::connection::RequestError,
+    };
+    use std::sync::Arc;
+    let required = |key: &str, code: &str, message: &str| -> Result<JsString, RequestError> {
+        if matches!(params, JsValue::Null | JsValue::Undefined) {
+            let kind = if params.is_undefined() {
+                "undefined"
+            } else {
+                "null"
+            };
+            return Err(RequestError::new(format!(
+                "Cannot read properties of {kind} (reading '{key}')"
+            )));
+        }
+        if params
+            .get(key)
+            .is_some_and(|v| !matches!(v, JsValue::String(_) | JsValue::Null | JsValue::Undefined))
+        {
+            return Err(RequestError::new(format!(
+                "input.{key}?.trim is not a function"
+            )));
+        }
+        params
+            .get(key)
+            .and_then(JsValue::as_string)
+            .filter(|v| !crate::metadata::js_trim(&String::from_utf16_lossy(v.units())).is_empty())
+            .cloned()
+            .ok_or_else(|| {
+                let mut error = RequestError::new(message);
+                error.code = code.to_owned();
+                error
+            })
+    };
+    let session = required(
+        "sessionKey",
+        "INVALID_SESSION_KEY",
+        "sessionKey is required.",
+    )?;
+    let message = required(
+        "userMessageId",
+        "INVALID_MESSAGE_ID",
+        "userMessageId is required.",
+    )?;
+    if !services.admission.begin_maintenance(&session) {
+        let mut error = RequestError::new("Cannot rewind files while a turn is active.");
+        error.code = "SESSION_BUSY".into();
+        return Err(error);
+    }
+    struct Reservation<'a>(&'a crate::runtime::session::SessionAdmission, JsString);
+    impl Drop for Reservation<'_> {
+        fn drop(&mut self) {
+            self.0.end_maintenance(&self.1);
+        }
+    }
+    let _reservation = Reservation(&services.admission, session.clone());
+    if services.home.as_os_str().is_empty() {
+        return Err(RequestError::new(
+            "Local gateway requires an explicit PILOT_HOME.",
+        ));
+    }
+    let project = resolve(
+        &services.cwd,
+        &text_field(params, "projectKey")
+            .unwrap_or_else(|| services.cwd.to_string_lossy().into_owned()),
+    );
+    let adapter = AsyncTranscriptAdapter::new(
+        Arc::new(crate::storage::JsonlTranscriptStore::new()),
+        Arc::new(|key| {
+            Metadata {
+                home: key.pilot_home.clone(),
+                cwd: key.project_root.clone(),
+                files: NativeFiles,
+            }
+            .chat_dir(&key.project_root.to_string_lossy())
+        }),
+    );
+    Ok(rewind_files(
+        RewindFilesInput {
+            adapter: &adapter,
+            project_root: &project,
+            pilot_home: &services.home,
+            session_key: &session,
+            // The RPC entry point passes its exact identity separately.
+            user_message_id: "",
+            dry_run: params.get("dryRun").is_some_and(|value| match value {
+                JsValue::Undefined | JsValue::Null | JsValue::Bool(false) => false,
+                JsValue::Number(n) => *n != 0.0 && !n.is_nan(),
+                JsValue::String(s) => !s.is_empty(),
+                _ => true,
+            }),
+            now: None,
+        },
+        &message,
+    ))
+}
