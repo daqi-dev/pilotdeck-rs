@@ -8503,6 +8503,25 @@ class DiscoveryAnchorTests(unittest.TestCase):
             any('unsupported f-string path' in problem
                 for problem in problems), problems)
 
+    def test_the_registered_single_interpolation_nested_form_stays_silent(self):
+        """``f'{WORD[:3] + ("/" + name)}'`` stays silent — the pinned twin.
+
+        The display counter above reports fail-closed (r33 arbitration
+        option (a)); this same-root nested form has no successor segment,
+        so it rides the registered "opaque directory + runtime name"
+        silence instead (README: r33 residual registration, found by the
+        r33 anthropic review at P2 — a registered silence needs its
+        reverse control or a drift toward reporting passes unnoticed).
+        """
+        single_interpolation = (
+            "DISCOVERY_ANCHORS = ()\n"
+            "WORD = 'src/pilotdeck-gateway/src'\n"
+            "def row(name):\n"
+            "    return f'{WORD[:3] + (\"/\" + name)}'\n"
+        )
+        self.assertEqual(violations(single_interpolation,
+                                    'example/negative_controls.py'), [])
+
     def test_a_sliced_head_with_an_absolute_or_drive_segment_stays_silent(self):
         """The two fix-r33-registered blind shapes keep their pinned silence.
 
