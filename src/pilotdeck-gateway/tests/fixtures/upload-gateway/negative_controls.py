@@ -129,6 +129,10 @@ INTEGRATION_TESTS = {
     'interleaved_complete_and_cancel_cannot_both_win': 'upload_concurrency_1631',
     'interleaved_complete_and_complete_has_one_winner': 'upload_concurrency_1631',
     'interleaved_cancel_and_cancel_wins_exactly_once': 'upload_concurrency_1631',
+    # fix-r2 (DS r2 boundary#1): registered for the same reason as the three
+    # above — the deadline test is a `#[test]` of this target, and the
+    # every-test-registered invariant above must stay true.
+    'rendezvous_deadline_panics_when_the_pair_never_meets': 'upload_concurrency_1631',
 }
 
 # (name, source, original, mutant, named test, exclusive failure text)

@@ -104,29 +104,37 @@ enum Op {
 /// or panicked before reaching the pre-mutate hook (its outside `get()`
 /// failed, say) left its partner blocked forever, turning a would-be red
 /// test into a hung test binary. The deadline below makes "the other racer
-/// never came" a panic instead.
+/// never came" a panic instead. The cap is injectable (`Rendezvous::with_cap`)
+/// so the deadline arm itself has a cheap test (fix-r2, DS r2 boundary#1)
+/// instead of being a branch no suite ever executes.
 const RENDEZVOUS_CAP: Duration = Duration::from_secs(60);
 
 /// The #2276 rendezvous, with the hard deadline from `RENDEZVOUS_CAP`.
 struct Rendezvous {
     arrived: Mutex<usize>,
     both: Condvar,
+    cap: Duration,
 }
 
 impl Rendezvous {
-    fn new() -> Arc<Self> {
+    fn with_cap(cap: Duration) -> Arc<Self> {
         Arc::new(Self {
             arrived: Mutex::new(0),
             both: Condvar::new(),
+            cap,
         })
     }
 
-    /// Wait for the second party but never past `RENDEZVOUS_CAP`.
+    fn new() -> Arc<Self> {
+        Self::with_cap(RENDEZVOUS_CAP)
+    }
+
+    /// Wait for the second party but never past the rendezvous cap.
     fn meet(&self) {
         let mut arrived = self.arrived.lock().unwrap();
         *arrived += 1;
         self.both.notify_all();
-        let deadline = Instant::now() + RENDEZVOUS_CAP;
+        let deadline = Instant::now() + self.cap;
         while *arrived < 2 {
             let (guard, timeout) = self
                 .both
@@ -134,9 +142,15 @@ impl Rendezvous {
                 .unwrap();
             arrived = guard;
             if timeout.timed_out() && *arrived < 2 {
+                // Read the count and drop the guard before panicking, so the
+                // mutex is not poisoned and the diagnostic survives (the
+                // partner's join would otherwise only see a PoisonError).
+                let count = *arrived;
+                let cap = self.cap;
+                drop(arrived);
                 panic!(
-                    "the racing pair never met: only {arrived} of 2 callers \
-                     reached the rendezvous within {RENDEZVOUS_CAP:?}"
+                    "the racing pair never met: only {count} of 2 callers \
+                     reached the rendezvous within {cap:?}"
                 );
             }
         }
@@ -357,4 +371,37 @@ fn interleaved_cancel_and_cancel_wins_exactly_once() {
         );
     }
     assert_rounds_floor(ran);
+}
+
+/// fix-r2 (DS r2 boundary#1): the deadline arm of the rendezvous is itself
+/// under test — a lone caller with a tiny cap must fail fast with the
+/// arrival-count diagnostic, not hang the binary until some external
+/// timeout. The three interleaved tests above always deliver both callers,
+/// so without this case the panic branch the fix-r1 guard added would be
+/// dead code in every suite.
+#[test]
+fn rendezvous_deadline_panics_when_the_pair_never_meets() {
+    let rendezvous = Rendezvous::with_cap(Duration::from_millis(50));
+    let lone = rendezvous.clone();
+    let handle = thread::spawn(move || lone.meet());
+    let err = handle
+        .join()
+        .expect_err("a lone caller must hit the rendezvous deadline");
+    let msg = err
+        .downcast_ref::<String>()
+        .expect("panic payload is a formatted String");
+    assert!(
+        msg.contains("only 1 of 2 callers"),
+        "the diagnostic must report the arrival count, got: {msg}"
+    );
+    // The panicking caller drops its guard before panicking, so the mutex
+    // is not poisoned: a second `meet()` on the SAME rendezvous locks
+    // cleanly — it takes the lock, pushes the arrival count to 2 and
+    // returns without waiting (a poisoned lock would surface as a
+    // PoisonError panic here instead).
+    let paired = rendezvous;
+    let second = thread::spawn(move || paired.meet());
+    second
+        .join()
+        .expect("the uncontended lock after the deadline panic must not be poisoned");
 }
