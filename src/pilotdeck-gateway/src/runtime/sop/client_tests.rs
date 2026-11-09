@@ -362,7 +362,7 @@ async fn body_deadline_keeps_post_header_failure_distinct_from_connect_failure()
     assert!(matches!(answer, Err(JsonFailure::Body(_))));
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn absent_deadline_waits_past_thirty_seconds_for_actual_http_response() {
     use crate::module_host::approvals::native_http::HyperJsonTransport;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -371,14 +371,22 @@ async fn absent_deadline_waits_past_thirty_seconds_for_actual_http_response() {
     let (started_tx,started_rx)=tokio::sync::oneshot::channel();
     let (release_tx,release_rx)=tokio::sync::oneshot::channel();
     let server=tokio::spawn(async move {
-        let (mut stream,_)=listener.accept().await.unwrap();let mut buf=[0;4096];stream.read(&mut buf).await.unwrap();started_tx.send(()).unwrap();
+        let (mut stream,_)=listener.accept().await.unwrap();let mut buf=[0;4096];assert!(stream.read(&mut buf).await.unwrap()>0);started_tx.send(()).unwrap();
         release_rx.await.unwrap();stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").await.unwrap();
     });
     let mut request=get(url::Url::parse(&format!("http://{address}/fixture")).unwrap(),Duration::from_secs(2));request.timeout=None;
     let client=tokio::spawn(async move {HyperJsonTransport::default().request(request).await});
-    started_rx.await.unwrap();tokio::time::advance(Duration::from_secs(31)).await;tokio::task::yield_now().await;
-    assert!(!client.is_finished(),"absent timeout must not invent a 30s deadline");
-    release_tx.send(()).unwrap();let response=client.await.unwrap().unwrap();assert_eq!(response.body,JsValue::Object(JsObject::new()));server.await.unwrap();
+    tokio::time::timeout(Duration::from_secs(3), started_rx).await.expect("server must receive request").unwrap();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(31)).await;
+    tokio::task::yield_now().await;
+    let finished = client.is_finished();
+    tokio::time::resume();
+    assert!(!finished, "absent timeout must not invent a 30s deadline");
+    release_tx.send(()).unwrap();
+    let response=tokio::time::timeout(Duration::from_secs(3), client).await.expect("client must complete").unwrap().unwrap();
+    assert_eq!(response.body,JsValue::Object(JsObject::new()));
+    tokio::time::timeout(Duration::from_secs(3),server).await.expect("server must finish").unwrap();
 }
 #[test]
 fn sop_client_uses_optional_configured_timeout() {

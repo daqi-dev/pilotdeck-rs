@@ -106,17 +106,17 @@ pub(super) fn build_mcp_gateway(
     // registry state; the McpGateway owns validation, the busy gate,
     // and the post-success close. The close_session callback mirrors
     // the TS `closeSession` that the registry calls after its commit.
-    let close_owner = owner.clone();
+    // Config is retained by the session factory. Its callback must not own
+    // the router that in turn owns that same factory.
+    let close_owner = owner.weak_close();
     let close_session: SdkMcpCloseSession = Arc::new(move |session_key, _reason| {
         let key = match &session_key {
             JsValue::String(key) => key.clone(),
             _ => JsString::from(""),
         };
-        let owner = close_owner.clone();
+        let closing = close_owner(&key);
         Box::pin(async move {
-            owner
-                .close(&key)
-                .await
+            closing.await
                 .map_err(|error| SdkMcpError::plain("Error", JsString::from(error.message)))
         })
     });

@@ -818,7 +818,7 @@ async fn shutdown_releases_the_real_assembly_submission_graph() {
             while submission.upgrade().is_some() || factory.upgrade().is_some() {
                 tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             }
-        }).await.expect("actual native assembly retained its submitter/factory after shutdown/drop");
+        }).await.unwrap_or_else(|error| panic!("actual assembly retained graph configured={configured}, submitter={}, factory={}, wait={error}", submission.strong_count(), factory.strong_count()));
         drop(_scratch);
     }
 }

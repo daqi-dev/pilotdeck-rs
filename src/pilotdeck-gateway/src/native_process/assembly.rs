@@ -923,7 +923,7 @@ async fn start_assembly(
                 } else if let Some(root)=ephemeral_root {
                     super::project_storage::for_ephemeral(generation,root)
                 } else {
-                    super::project_storage::for_generation(options.home.clone(), generation)
+                    ephemeral.durable_storage(super::project_storage::for_generation(options.home.clone(), generation))
                 };
                 retained.set_storage_factory(storage_factory)?;
                 let admission_sop = sop.clone();

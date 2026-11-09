@@ -401,6 +401,7 @@ impl Requests {
                 .close_then(&key.clone(), move || {
                     Box::pin(async move {
                         if ephemeral.delete(key.clone()).await? {
+                            deleted_result.store(true, std::sync::atomic::Ordering::Release);
                             if let Some(clear) = clear {
                                 clear(key.clone()).await.map_err(|error| {
                                     crate::runtime::project::RuntimeError::new(
@@ -411,7 +412,6 @@ impl Requests {
                             mcp.config()
                                 .clear_sdk_session_state(&JsValue::String(key.clone()));
                             overrides.clear_sdk_state(&key);
-                            deleted_result.store(true, std::sync::atomic::Ordering::Release);
                         }
                         Ok(())
                     })

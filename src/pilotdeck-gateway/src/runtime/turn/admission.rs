@@ -53,6 +53,8 @@ pub struct CompactionAbort {
 struct CompactionAbortState {
     reason: Mutex<Option<JsString>>,
     notified: tokio::sync::Notify,
+    #[cfg(test)]
+    before_wait: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 impl CompactionAbort {
     pub fn abort(&self, reason: JsString) {
@@ -71,6 +73,10 @@ impl CompactionAbort {
             notified.as_mut().enable();
             if let Some(reason) = self.reason() {
                 return reason;
+            }
+            #[cfg(test)]
+            if let Some(before_wait) = self.state.before_wait.lock().unwrap().take() {
+                before_wait();
             }
             notified.await;
         }

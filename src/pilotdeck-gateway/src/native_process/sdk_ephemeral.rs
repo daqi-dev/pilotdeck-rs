@@ -1,7 +1,7 @@
 //! Gateway-owned SDK temporary session storage, matching ProjectRuntimeRegistry.
 //! No extra session state machine: the normal RecordingPlan owns the writer.
 use pilotdeck_protocol::JsString;
-use std::{collections::HashMap,fs::File,path::{Path,PathBuf},sync::{Arc,Mutex,OnceLock}};
+use std::{collections::{HashMap,HashSet},fs::File,path::{Path,PathBuf},sync::{Arc,Mutex,OnceLock}};
 use crate::runtime::project::RuntimeError;
 
 pub(crate) struct TemporaryRoot {path:PathBuf, identity:File}
@@ -25,7 +25,9 @@ impl TemporaryRoot {
     fn remove(&self)->Result<(),RuntimeError>{self.verify()?;std::fs::remove_dir_all(&self.path).map_err(io_error)}
 }
 fn io_error(error:std::io::Error)->RuntimeError{RuntimeError::new(error.to_string())}
-#[derive(Default)]struct State{closed:bool,roots:HashMap<JsString,Arc<TemporaryRoot>>}
+const MAX_IDENTITIES: usize = 4096;
+const MAX_IDENTITY_UNITS: usize = 1024 * 1024;
+#[derive(Default)]struct State{closed:bool,roots:HashMap<JsString,Arc<TemporaryRoot>>,deleted:HashSet<JsString>}
 type Shutdown=Arc<dyn Fn()->crate::runtime::refresh::BoxFuture<crate::runtime::project::RuntimeResult>+Send+Sync>;
 #[derive(Default)]pub(crate) struct EphemeralSessions{state:Arc<Mutex<State>>,gate:Arc<tokio::sync::Mutex<()>>,shutdown:OnceLock<Shutdown>}
 impl EphemeralSessions {
@@ -37,21 +39,83 @@ impl EphemeralSessions {
         // Admission and insertion finish in the owned blocking job even when
         // its async waiter disappears; host cleanup can still see the root.
         tokio::task::spawn_blocking(move||{let _gate=gate;let _permit=permit;
-            {let state=state.lock().unwrap_or_else(|e|e.into_inner());if state.closed{return Err(RuntimeError::new("SDK temporary storage is closed."));}if let Some(root)=state.roots.get(&session){return Ok(root.clone());}}
+            {let state=state.lock().unwrap_or_else(|e|e.into_inner());if state.closed{return Err(RuntimeError::new("SDK temporary storage is closed."));}if let Some(root)=state.roots.get(&session){return Ok(root.clone());}
+                if !state.deleted.contains(&session) {
+                    let units = state.roots.keys().chain(state.deleted.iter()).fold(0usize, |sum,key| sum.saturating_add(key.units().len()));
+                    if state.roots.len().saturating_add(state.deleted.len()) >= MAX_IDENTITIES
+                        || units.saturating_add(session.units().len()) > MAX_IDENTITY_UNITS {
+                        return Err(RuntimeError::new("SDK temporary session identity budget exceeded."));
+                    }
+                }
+            }
             let root=Arc::new(TemporaryRoot::create()?);
-            state.lock().unwrap_or_else(|e|e.into_inner()).roots.insert(session,root.clone());Ok(root)
+            let mut state=state.lock().unwrap_or_else(|e|e.into_inner());state.deleted.remove(&session);state.roots.insert(session,root.clone());Ok(root)
         }).await.map_err(|e|RuntimeError::new(e.to_string()))?
     }
     /// Caller must have drained the real SessionOwner (including children).
     pub(crate) async fn delete(&self,session:JsString)->Result<bool,RuntimeError>{
         let gate=self.gate.clone().lock_owned().await;let permit=super::methods::session_dir::session_io_permit().await.map_err(|e|RuntimeError::new(String::from_utf16_lossy(e.message.units())))?;let state=self.state.clone();
-        tokio::task::spawn_blocking(move||{let _gate=gate;let _permit=permit;let root=state.lock().unwrap_or_else(|e|e.into_inner()).roots.get(&session).cloned();let Some(root)=root else{return Ok(false)};root.remove()?;state.lock().unwrap_or_else(|e|e.into_inner()).roots.remove(&session);Ok(true)}).await.map_err(|e|RuntimeError::new(e.to_string()))?
+        tokio::task::spawn_blocking(move||{let _gate=gate;let _permit=permit;let root=state.lock().unwrap_or_else(|e|e.into_inner()).roots.get(&session).cloned();let Some(root)=root else{return Ok(state.lock().unwrap_or_else(|e|e.into_inner()).deleted.contains(&session))};root.remove()?;let mut state=state.lock().unwrap_or_else(|e|e.into_inner());state.roots.remove(&session);state.deleted.insert(session);Ok(true)}).await.map_err(|e|RuntimeError::new(e.to_string()))?
+    }
+    /// Only a successfully opened new durable recording retires a prior
+    /// temporary deletion identity. This runs under the owner's same-key ticket.
+    pub(crate) fn durable_storage(self: &Arc<Self>, storage: crate::runtime::session::factory::CreateStorage)
+        -> crate::runtime::session::factory::CreateStorage {
+        let owner = self.clone();
+        Arc::new(move |context| {
+            let opened = storage(context.clone());
+            let owner = owner.clone();
+            Box::pin(async move {
+                let mut result = opened.await?;
+                let crate::runtime::session::factory::SessionStorage::Recording(plan) = &mut result else {
+                    return Err(RuntimeError::new("Native durable admission requires recording storage."));
+                };
+                let open = plan.open.clone();
+                let session = context.session_key;
+                plan.open = Arc::new(move || {
+                    let recording = open()?;
+                    owner.state.lock().unwrap_or_else(|error|error.into_inner()).deleted.remove(&session);
+                    Ok(recording)
+                });
+                Ok(result)
+            })
+        })
     }
     /// Owner shutdown precedes this barrier; a failed remove remains retryable.
     pub(crate) async fn close(&self)->Result<(),RuntimeError>{
         if let Some(shutdown)=self.shutdown.get(){shutdown().await?;}
         let gate=self.gate.clone().lock_owned().await;let permit=super::methods::session_dir::session_io_permit().await.map_err(|e|RuntimeError::new(String::from_utf16_lossy(e.message.units())))?;let state=self.state.clone();
         tokio::task::spawn_blocking(move||{let _gate=gate;let _permit=permit;let roots={let mut state=state.lock().unwrap_or_else(|e|e.into_inner());state.closed=true;state.roots.iter().map(|(k,v)|(k.clone(),v.clone())).collect::<Vec<_>>()};let mut errors=Vec::new();for(session,root)in roots {match root.remove(){Ok(())=>{state.lock().unwrap_or_else(|e|e.into_inner()).roots.remove(&session);},Err(e)=>errors.push(e.to_string())}}if errors.is_empty(){Ok(())}else{Err(RuntimeError::new(errors.join("; ")))}}).await.map_err(|e|RuntimeError::new(e.to_string()))?
+    }
+}
+
+#[cfg(test)]mod identity_budget_tests {
+    use super::*;
+    #[tokio::test]
+    async fn deletion_identities_are_bounded_and_never_evicted_to_admit_new_keys() {
+        let sessions = EphemeralSessions::default();
+        for i in 0..MAX_IDENTITIES-1 {
+            sessions.state.lock().unwrap().deleted.insert(format!("old-{i}").as_str().into());
+        }
+        let last = sessions.acquire("last".into()).await.unwrap();
+        assert!(sessions.acquire("overflow".into()).await.err().unwrap().to_string().contains("identity budget"));
+        sessions.delete("last".into()).await.unwrap();
+        assert!(!last.path().exists());
+        // A deleted identity is still owned; repeated deletes never fall back.
+        assert!(sessions.delete("old-0".into()).await.unwrap());
+        let reopened = sessions.acquire("old-0".into()).await.unwrap();
+        assert!(reopened.path().exists());
+        { let state=sessions.state.lock().unwrap(); assert_eq!(state.roots.len()+state.deleted.len(), MAX_IDENTITIES); }
+        sessions.close().await.unwrap();
+    }
+    #[tokio::test]
+    async fn retained_identity_budget_counts_utf16_units() {
+        let sessions = EphemeralSessions::default();
+        sessions.state.lock().unwrap().deleted.insert(JsString::from_utf16(vec![0xd800;MAX_IDENTITY_UNITS-1]));
+        let root = sessions.acquire("x".into()).await.unwrap();
+        assert!(sessions.acquire("y".into()).await.err().unwrap().to_string().contains("identity budget"));
+        sessions.close().await.unwrap();
+        assert!(!root.path().exists());
     }
 }
 

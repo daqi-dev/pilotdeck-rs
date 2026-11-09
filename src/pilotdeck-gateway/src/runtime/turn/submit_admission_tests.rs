@@ -1291,3 +1291,11 @@ async fn compaction_abort_reaches_all_waiters_and_late_subscribers() {
         assert_eq!(results,("bounded-fixture".into(),"bounded-fixture".into(),"bounded-fixture".into()));
     }
 }
+
+#[tokio::test]
+async fn compaction_abort_between_state_read_and_first_wait_poll_is_not_lost() {
+    let signal=CompactionAbort::default();let writer=signal.clone();
+    *signal.state.before_wait.lock().unwrap()=Some(Box::new(move||writer.abort("after-state-read".into())));
+    let result=tokio::time::timeout(std::time::Duration::from_secs(1),signal.aborted()).await;
+    assert_eq!(result.expect("abort between reason read and first wait poll must wake"),JsString::from("after-state-read"));
+}

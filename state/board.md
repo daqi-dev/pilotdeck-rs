@@ -5198,3 +5198,8 @@ r125固定4722244全目标check/strict/四bin通过，native544/AO116/SOP13/SDK2
 ### 2026-11-09 07:58 · 关闭真实引用环与补齐失败收尾
 
 r126 ad7a416 全目标check/strict/四bin、native545、default_mode原SHA单测均过。已导入两个真实装配引用环Weak修复（automation回调、async hook owner），同真实boot/shutdown观测submitter+factory四轮drop，待r127；补CompactionAbort多等待方enable以及workspace缺分支仍收目录/空capture失败回收。SDK真实Edit权限执行链与event_sink多drainer补回归。SOP真实TS已核取消错误文本及无默认30秒定时器，相关片与8MiB/四槽有界排队差异登记已导入待编。使用说明入docs/changes/arch/002_cli-native-machine.md，32技能和多项目更新。源码安装两代功能断言全过，但原监视器22项PID变化令原总FAIL保留；独立两次清理普查无483条旧身份存活，不能补猜检测瞬间新birth。SDK重复delete与在飞close错误仍在修，CLI未完。仅本机提交、Rust只mbp2。
+
+
+### 2026-11-09 08:12 · 删除重试和真实关闭图修复
+
+r127全目标check/四bin、AO119/admission12通过；native两失败定位为MCP配置捕获owner第三强环及Edit回归缺实际读文件前提，均已修待r128。SDK重复delete保护与在飞close失败传导、普通close隔离cleanup错误、真实票据barrier候选逐SHA导入；CompactionAbort加入读取状态与首次poll之间的确定性反例。SOP无默认timeout测试的真实HTTP虚拟时钟死锁与读量lint已修，保留原失败记录。第二谱系SOP四角色P0/P1=0、四项P2集中收口，不改冻结标准。全Gateway5859名单已无漏无重，旧9失败与当前差异需分别收证。仅本机提交、Rust只mbp2，CLI尚未完成。

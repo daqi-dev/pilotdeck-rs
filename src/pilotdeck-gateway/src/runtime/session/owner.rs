@@ -16,6 +16,7 @@ use std::{
 };
 use tokio::sync::watch;
 type CloseAfter = Box<dyn FnOnce() -> BoxFuture<RuntimeResult> + Send>;
+type CleanupClose = (Arc<()>, watch::Receiver<Option<RuntimeResult>>);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionContext {
@@ -270,6 +271,9 @@ struct State {
     /// close task, the idle sweep or a shutdown drain. A record-less close
     /// awaits the entry; a settled entry behaves as removed.
     closings: HashMap<JsString, watch::Receiver<Option<RuntimeResult>>>,
+    /// Native cleanup holds the publication ticket after eviction has settled.
+    /// A plain close observes only that eviction result, never SDK cleanup.
+    cleanup_closings: HashMap<JsString, CleanupClose>,
     paused_projects: HashSet<JsString>,
     shutdown: Option<watch::Receiver<Option<RuntimeResult>>>,
 }
@@ -1088,6 +1092,24 @@ impl SessionOwner {
     pub fn close(&self, key: &JsString) -> BoxFuture<RuntimeResult> {
         self.close_after(key, None)
     }
+    /// MCP configuration is retained by the session factory itself.
+    pub(crate) fn weak_close(
+        &self,
+    ) -> impl Fn(&JsString) -> BoxFuture<RuntimeResult> + Send + Sync + 'static {
+        let owner = Arc::downgrade(&self.0);
+        move |key| match owner.upgrade() {
+            Some(owner) => Self(owner).close(key),
+            None => Box::pin(async { Err(RuntimeError::new("Session router is shut down.")) }),
+        }
+    }
+    #[cfg(test)]
+    pub(crate) fn publication_ticket_probe(&self, key: &JsString) -> watch::Receiver<bool> {
+        let state = self.0.state.lock().unwrap();
+        let serial = state.gates.get(key).and_then(Weak::upgrade)
+            .expect("session has an owned publication ticket");
+        let probe = serial.tail.lock().unwrap().clone();
+        probe
+    }
     /// Native storage cleanup is part of the same owned close operation. The
     /// same-key publication ticket remains held through this callback, including
     /// an absent cached record and cancellation of the public waiter.
@@ -1107,10 +1129,14 @@ impl SessionOwner {
         // own result; no entry means `await undefined`: fulfilled. The
         // whole-shutdown aggregate stays shutdown()'s own answer
         // (A7.2-SESSION-CLOSE-DURING-SHUTDOWN-001, #1245).
-        if after.is_none()
-            && let Some(closing) = unsettled_closing(&mut state, key)
-        {
-            return Box::pin(wait_result(closing));
+        let previous_close = unsettled_closing(&mut state, key);
+        if after.is_none() {
+            if let Some(closing) = previous_close.clone() {
+                return Box::pin(wait_result(closing));
+            }
+            if let Some((_, closing)) = state.cleanup_closings.get(key) {
+                return Box::pin(wait_result(closing.clone()));
+            }
         }
         if state.shutdown.is_some() {
             return if after.is_some() {
@@ -1126,10 +1152,30 @@ impl SessionOwner {
             .get(key)
             .and_then(|record| record.context.project_key.clone());
         track(&mut state, key.clone(), project, completion.clone());
-        state.closings.insert(key.clone(), completion.clone());
+        let (close_phase, registration) = if after.is_some() {
+            let (phase_done, phase) = watch::channel(None);
+            if previous_close.is_none() {
+                state.closings.insert(key.clone(), phase.clone());
+            }
+            let identity = Arc::new(());
+            state.cleanup_closings.insert(key.clone(), (identity.clone(), phase));
+            (
+                Some(super::super::cleanup_task::Completion::new(phase_done,
+                    RuntimeError::new("Session eviction task was dropped or panicked before completion."))),
+                Some(CleanupClosingRegistration {
+                    owner: Arc::downgrade(&self.0), key: key.clone(), identity,
+                }),
+            )
+        } else {
+            state.closings.insert(key.clone(), completion.clone());
+            (None, None)
+        };
         let settle = done.clone();
         let owner = self.clone();
         let key = key.clone();
+        // The cleanup registration's Drop also removes its index. A stopped
+        // executor may drop the spawned future synchronously.
+        drop(state);
         super::super::cleanup_task::spawn_with_error(
             &tokio::runtime::Handle::current(),
             done,
@@ -1146,6 +1192,18 @@ impl SessionOwner {
                 // staged, so the outer `Completion` guard settles this entry
                 // with its dropped error after the ticket's release instead.
                 let mut closing = ClosingGuard::new(settle, Some(ticket.enter().await));
+                // Drop this index before ClosingGuard releases its ticket, so
+                // it can never mask a newly published same-key record.
+                let _registration = registration;
+                let mut close_phase = close_phase;
+                let predecessor = match previous_close {
+                    Some(previous) => wait_result(previous).await,
+                    None => Ok(()),
+                };
+                if let Err(error) = predecessor {
+                    if let Some(phase) = close_phase.take() { phase.finish(Err(error.clone())); }
+                    return closing.settle(Err(error));
+                }
                 let (record, identity) = {
                     let mut state = owner.0.state.lock().unwrap();
                     state.order.retain(|item| item != &key);
@@ -1172,6 +1230,7 @@ impl SessionOwner {
                 } else {
                     Ok(())
                 };
+                if let Some(phase) = close_phase.take() { phase.finish(outcome.clone()); }
                 let outcome = match outcome {
                     Ok(()) => match after {
                         Some(after) => after().await,
@@ -1460,6 +1519,23 @@ impl SessionOwner {
     fn emit(&self, key: &JsString, reason: EvictionReason) {
         if let Some(callback) = &self.0.options.on_evict {
             callback(key, reason);
+        }
+    }
+}
+
+struct CleanupClosingRegistration {
+    owner: Weak<Inner>,
+    key: JsString,
+    identity: Arc<()>,
+}
+impl Drop for CleanupClosingRegistration {
+    fn drop(&mut self) {
+        if let Some(owner) = self.owner.upgrade() {
+            let mut state = owner.state.lock().unwrap_or_else(|error| error.into_inner());
+            if state.cleanup_closings.get(&self.key)
+                .is_some_and(|(identity, _)| Arc::ptr_eq(identity, &self.identity)) {
+                state.cleanup_closings.remove(&self.key);
+            }
         }
     }
 }
