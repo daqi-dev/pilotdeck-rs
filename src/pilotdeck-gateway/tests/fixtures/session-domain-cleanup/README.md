@@ -1278,3 +1278,56 @@ unchanged production domains (65535 top-valid on both port-matrix paths,
 census and witness pid 2**31/2**31-1), and the P3 comment fixes reworded
 the budget's docstring scope and the `/ws` hit predicate's wire-outcome
 condition — no behavior to mutate.
+fix-r12 (DS r11 concurrency P1 + P2 — the pass budget, probe-verified)
+again added no mutants.  The r10/r11 budgets still belonged to *one
+top-level fold*: `_exit_arms` starts a fresh fold per IfExp test and per
+BoolOp operand (and `_helper_exits_zero` folds up to three summary values),
+so per-fold caps bounded nothing at the file level — every fold re-drew a
+fresh 4M allowance and ~778 of them (~11 KB of crafted source, one measured
+at 0.2314 s) ran the 180 s `CHECK_TIMEOUT` down.  One shared
+`_AUDIT_PASS_BUDGET` cell (`_AUDIT_PASS_WORK_CAP = 4 × _FOLD_SIZE_WORK_CAP`,
+comfortably above one legal at-cap fold plus a file's ordinary audit work)
+now belongs to each audited file in the scan loop; while it is active the
+fold mint reuses it instead of drawing fresh, and an exhausted cell resolves
+`_LITERAL_TEST_UNRESOLVED` — the arm callers read that fail-closed (an
+empty arm set excuses nothing).  The BoolOp value fold also became lazy in
+the same round: it folds operands in order and stops at the settling one,
+the mirror of the interpreter's own short-circuit (the eager form folded
+and retained ~292 MB of folded strings from a 5.4 KB source before the
+reduce), while an unresolvable operand *before* the settling one still
+rejects the whole value.  The self-tests pin the pass budget (a later fold
+on a shared reduced allowance fails closed), the short-circuit, the
+pre-settle rejection, and the file-loop wiring (`audit_pass_files == 0` is
+itself a failure); four revert mutants (eager BoolOp, mint ignoring the
+cell, activation removed, UNRESOLVED check removed) are killed by the named
+pins.
+
+fix-r13 (DS r12 sibling#1 + concurrency#1 P1, both roles independently;
+boundary#2 materialisation P1 + sibling#2 string-fold P2 same family)
+extended the pass budget to the two faces r12 left unbilled.  First, the
+cell's scope ended with the file loop, but the registered-point loop after
+it (`unshared_status_slots`) folds return leaves through `_exit_arms` too —
+each on a freshly minted 4M, so a registered point carrying ~200
+``return <pile> and 0`` leaves (8 KB of source, one leaf measured at
+0.9125 s) re-attained the 180 s face.  The points phase now draws its own
+cell (pinned by the `audit_pass_tail` wiring check), `aggregation_audit`
+became a thin ``try/finally`` wrapper so an exception escaping the scan can
+no longer leak a half-spent module-level cell, and a non-UTF-8 file in the
+scan directory resolves to a recorded failure instead of an escaped
+`UnicodeDecodeError`.  Second, nothing debited the *interpreter's* copy
+work: a BinOp materialisation (`[''] * 999999` builds an ~8 MB list before
+any cap is consulted) was free while the pass cell stayed full, so ~300k
+materialising operands (~3.3 MB of source) timed out on copies alone.  The
+three materialising families (sequence×int repetition either way, sequence
++ sequence, ``%`` formatting) are now charged in the same units the
+container branches pay, before the op runs; int results stay on the bit
+caps, which already bound them by result size.  Third, `_folded_string`
+(the other half of the shared-implementation pair with the value fold)
+mints from the same cell and charges its quadratic ``+`` chain.  The
+self-tests pin the materialisation (second 1e6-unit BinOp on a reduced
+allowance fails closed), the string fold (second 1e6-char repetition
+returns None), and the points wiring; four revert mutants (billing
+removed, points activation removed, string-fold budget removed, and the
+production `<= 599` status bound relaxed to `<= 600`) are killed by the
+named pins and the `test_safety` 600-as-NO_HIT pin that joined the same
+round.
