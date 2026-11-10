@@ -3249,6 +3249,80 @@ fn ended_by_408_close(served: Result<(), hyper::Error>, what: &str) {
     }
 }
 
+/// #1517: probe at the current virtual time while the response tail is stuck
+/// in hyper's write buffer — unlike `probe_still_open`, the stuck bytes are
+/// the expected reading (the client is the backpressure), and only an EOF
+/// fails: the tail's close owns the connection at its grid landing, never
+/// before it.
+async fn probe_open_with_stuck_tail(
+    buffer: &mut Vec<u8>,
+    client: &mut tokio::io::DuplexStream,
+    what: &str,
+) {
+    let mut chunk = [0u8; 64];
+    let pending = timeout(Duration::from_millis(50), client.read(&mut chunk));
+    tokio::time::advance(Duration::from_millis(60)).await;
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    match pending.await {
+        Ok(Ok(0)) => panic!("#1517 {what}"),
+        Ok(Ok(count)) => buffer.extend_from_slice(&chunk[..count]),
+        Ok(Err(error)) => panic!("#1517 {what}: {error}"),
+        Err(_open) => {}
+    }
+}
+
+/// #1517: read everything the connection still offers until its close,
+/// inside the same windowed probe pattern as `stream_ends_silently_at_grid_point`,
+/// but with bytes allowed — the verdict is what they are: Node's destroy
+/// leaves the flushed prefix in front of the EOF and never the 51-byte 408
+/// (`probe-1517.out` T1/T2), and it cuts the tail mid-chunk, so the chunked
+/// terminator never arrives either. A stray 408 (the
+/// `native-http-408-into-unflushed-tail` mutant) fails with the bytes read.
+async fn drain_to_close_without_408(client: &mut tokio::io::DuplexStream, mut buffer: Vec<u8>) {
+    let mut closed = false;
+    for _ in 0..24 {
+        let mut chunk = [0u8; 256];
+        let pending = timeout(Duration::from_millis(50), client.read(&mut chunk));
+        tokio::time::advance(Duration::from_millis(60)).await;
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        match pending.await {
+            Ok(Ok(0)) => {
+                closed = true;
+                break;
+            }
+            Ok(Ok(count)) => buffer.extend_from_slice(&chunk[..count]),
+            Ok(Err(error)) => panic!("#1517 the unflushed-tail drain: {error}"),
+            Err(_open) => {}
+        }
+    }
+    assert!(
+        closed,
+        "#1517 the unflushed-tail drain: the connection was never closed after its grid landing (buffer so far: {:?})",
+        latin1_string(&buffer)
+    );
+    let text = latin1_string(&buffer);
+    assert!(
+        text.starts_with("HTTP/1.1 200 OK\r\n"),
+        "#1517 the unflushed-tail response head is the flushed 200, got {text:?}"
+    );
+    assert!(
+        text.contains("part1-"),
+        "#1517 the flushed prefix carries the first chunk, got {text:?}"
+    );
+    assert!(
+        !text.contains("HTTP/1.1 408"),
+        "#1517 the unflushed-tail expiry: the unflushed tail never carries the 51-byte 408 — Node destroys the started response instead, got {text:?}"
+    );
+    assert!(
+        !text.ends_with("0\r\n\r\n"),
+        "#1517 the unflushed tail is cut at the close like Node's destroy(), the chunked terminator never arrives, got {text:?}"
+    );
+}
+
 /// #1292 (matrix M-7 rows 1–2, probes `b1-T1a.out`/`b1-T1b.out`): Node's
 /// `headersTimeout` (60 s default) bounds the still-unserved first head — a
 /// partial head and even a zero-byte connection are answered with the
@@ -4008,6 +4082,119 @@ async fn pipelined_mid_stream_head_keeps_own_deadline_like_ts() {
         ended_by_408_close(
             served,
             "the pipeline connection future ends at the 408 close",
+        );
+    })
+    .await;
+}
+
+/// #1517 (the #1292 fix-r2 grid's one uncovered cell): the previous response's
+/// body is complete — every frame handed to hyper, the in-flight slot gone —
+/// but its tail has not flushed: the client never read, so the 1 KiB duplex
+/// keeps the 8 KiB last chunk stuck in hyper's write buffer and the gate's
+/// `poll_flush` never returned. Node's expiry guard is the response's own
+/// state — `_httpMessage` stays attached until `finish`, which needs the
+/// flush (`probe-1517.out` T1: `end()` at +88 s, `writableLength` 2 097 167
+/// still unflushed at the +90 s expiry, and the destroy carries no 408; T2
+/// pins the same bytes on the real `GatewayServer`) — so the close is silent
+/// and the client reads the flushed prefix and then EOF. Binds the negative
+/// control `native-http-408-into-unflushed-tail` (the clear back to the
+/// in-flight slot alone — the pre-#1517 behavior — so the 408 is armed ahead
+/// of the stuck tail and this cell reads its bytes).
+#[tokio::test(start_paused = true)]
+async fn unflushed_response_tail_headers_timeout_closes_silently_like_ts() {
+    manual_clock(async {
+        let grid_anchor = tokio::time::Instant::now();
+        // The 1 KiB duplex is the cell's point: the 8 KiB last chunk can never
+        // flush into it, so the response ends with its tail stuck in hyper's
+        // write buffer — the paused probe client of `probe-1517.out` T1.
+        let (server, mut client) = tokio::io::duplex(1024);
+        let (_stop, stop_rx) = watch::channel(false);
+        let (release_tx, release_rx) = watch::channel(false);
+        let last = "x".repeat(8192);
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            server,
+            move |_request, _lease| {
+                let release = release_rx.clone();
+                let last = last.clone();
+                async move {
+                    hyper::Response::builder()
+                        .status(hyper::StatusCode::OK)
+                        .header(hyper::header::CONTENT_TYPE, "text/plain")
+                        .body(held_body("part1-", &last, release))
+                        .map_err(std::io::Error::other)
+                }
+            },
+            stop_rx,
+            None,
+            Some(grid_anchor),
+        ));
+        client
+            .write_all(&latin1_bytes(
+                "GET /held HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            ))
+            .await
+            .expect("#1517 write the streaming request");
+        // The flushed prefix: the head and the first chunk land before
+        // anything can stall.
+        let mut buffer = Vec::new();
+        read_until(
+            &mut buffer,
+            &mut client,
+            "part1-",
+            "unflushed-tail first chunk",
+        )
+        .await;
+        // t = +1 s: the follow-up head's first byte, while the response body
+        // is still held. Its deadline (+61 s) quantizes to +90 s.
+        tokio::time::advance(Duration::from_millis(1_000)).await;
+        client
+            .write_all(&latin1_bytes(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Len",
+            ))
+            .await
+            .expect("#1517 write the mid-stream half head");
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // t ≈ +60.4 s: just before the mid-stream head's own deadline.
+        tokio::time::advance(Duration::from_millis(59_440)).await;
+        probe_still_open(
+            &mut client,
+            "#1517 the held response is not interrupted before the mid-stream head's deadline",
+        )
+        .await;
+        // t = +88.4 s: release the last chunk. The body ends — every frame is
+        // handed to hyper, the in-flight slot is gone — but the tail cannot
+        // flush into the full duplex, so the response stays unflushed exactly
+        // like Node's backpressured `writableLength`.
+        tokio::time::advance(Duration::from_millis(28_000)).await;
+        release_tx.send_replace(true);
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // t ≈ +89.4 s: past the deadline, before the +90 s grid landing — the
+        // stuck tail's bytes are the expected reading, only an early close
+        // fails.
+        tokio::time::advance(Duration::from_millis(1_000)).await;
+        probe_open_with_stuck_tail(
+            &mut buffer,
+            &mut client,
+            "the unflushed tail keeps the connection open until its +90 s grid landing",
+        )
+        .await;
+        // Past the landing: Node destroys the started-but-unflushed response
+        // without the 408 — the client reads the flushed prefix and then EOF,
+        // and the close cuts the tail mid-chunk.
+        tokio::time::advance(Duration::from_millis(600)).await;
+        drain_to_close_without_408(&mut client, buffer).await;
+        // The release sender outlives the connection (it drops at scope end):
+        // dropping it earlier would fail the held body's wait instead of
+        // leaving the grid-point close as the cell's verdict.
+        let _release_hold = release_tx;
+        let served = task.await.expect("#1517 unflushed-tail task join");
+        ended_by_408_close(
+            served,
+            "the unflushed-tail connection future ends at the silent close",
         );
     })
     .await;
