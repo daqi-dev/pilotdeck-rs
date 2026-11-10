@@ -122,7 +122,8 @@ switches = [
     # #2557: the final walk's re-issue of the host teardown request — the
     # synchronous guard deleted, so the final-cancellation cell (the final
     # walk itself owning the first finish, cut off inside the close-notice
-    # window) regresses to the unawaited `StopHost` drop backstop alone.
+    # window) defers the teardown request to the `StopHost` drop after the
+    # walk returns — a no-op on exits that skip Drop.
     ('switch-halt-owner-skip-reissue', WIRING,
      WIRING_PREFIX + 'the_final_cancellation_cell_still_requests_the_host_teardown',
      '#2557 the final walk re-issues the host teardown request'),
