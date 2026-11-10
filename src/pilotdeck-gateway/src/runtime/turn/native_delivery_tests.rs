@@ -161,6 +161,32 @@ async fn timeout_entry(native: bool) {
     .await
     .unwrap()
     .unwrap();
+    // A FIFO read through the real worker proves previously accepted IO has
+    // finished; the wrapper future counter alone cannot establish that.
+    let events = tokio::time::timeout(
+        Duration::from_secs(3),
+        registry.file.events(&RunRef {
+            project_key: Some("p".into()),
+            session_key: "s".into(),
+            run_id: "r".into(),
+        }),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(
+        events.iter().any(|e| e.get("type") == Some(&"error".into())
+            && e.get("code") == Some(&"turn_timeout".into()))
+    );
+    // stopped is published before the host thread drops its runtime. Wait for
+    // actual observer completion/Drop, not an arbitrary scheduling sleep.
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while registry.pending.load(Ordering::SeqCst) != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("registry wrapper futures settle or Drop after host shutdown");
     assert_eq!(registry.pending.load(Ordering::SeqCst), 0);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -173,4 +199,27 @@ async fn native_initializer_retains_exact_timeout_notifications_and_real_drain_o
 #[tokio::test]
 async fn legacy_initializer_preserves_ts_timeout_queue_close() {
     timeout_entry(false).await;
+}
+
+#[tokio::test]
+async fn unpolled_registry_wrapper_drop_releases_its_count() {
+    let root = std::env::temp_dir().join(format!("pdrs-registry-counter-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("registry.json");
+    let registry = Registry {
+        file: FileRegistry::new(FileRunRegistry::open(&path).unwrap()).unwrap(),
+        fail: false,
+        pending: Arc::default(),
+        path,
+    };
+    let future: RegistryFuture<()> = registry.track(Box::pin(std::future::pending()));
+    assert_eq!(registry.pending.load(Ordering::SeqCst), 1);
+    drop(future);
+    assert_eq!(
+        registry.pending.load(Ordering::SeqCst),
+        0,
+        "an unpolled waiter must not permanently leak the fixture count"
+    );
+    drop(registry);
+    std::fs::remove_dir_all(root).unwrap();
 }

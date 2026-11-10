@@ -1,0 +1,139 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/context/compaction/CompactionEngine.ts": "980a17fa07b74aea328ff3d715db2857c13ddb9ee07704abcf8d3d8ddd0df53e"
+  },
+  "node": "22.22.0",
+  "icu": "78.2",
+  "cases": [
+    {
+      "id": "stream-failure",
+      "error": "mock stream refused",
+      "summaryGenerated": false,
+      "diagnostics": [
+        {
+          "code": "compact_summary_failed",
+          "severity": "warning",
+          "message": "mock stream refused"
+        }
+      ],
+      "boundaryMarker": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "<compact-boundary trigger=\"manual\" preTokens=\"24\" messagesSummarized=\"2\" status=\"summary_failed\" />"
+          }
+        ]
+      },
+      "messagesToKeep": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "new question"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "new answer"
+            }
+          ]
+        }
+      ],
+      "parentAborted": false,
+      "providerSignalIsParent": true
+    },
+    {
+      "id": "iterator-failure",
+      "error": "mock next failed",
+      "summaryGenerated": false,
+      "diagnostics": [
+        {
+          "code": "compact_summary_failed",
+          "severity": "warning",
+          "message": "mock next failed"
+        }
+      ],
+      "boundaryMarker": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "<compact-boundary trigger=\"manual\" preTokens=\"24\" messagesSummarized=\"2\" status=\"summary_failed\" />"
+          }
+        ]
+      },
+      "messagesToKeep": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "new question"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "new answer"
+            }
+          ]
+        }
+      ],
+      "parentAborted": false,
+      "providerSignalIsParent": true
+    },
+    {
+      "id": "parent-cancellation",
+      "error": "This operation was aborted",
+      "summaryGenerated": false,
+      "diagnostics": [
+        {
+          "code": "compact_summary_failed",
+          "severity": "warning",
+          "message": "This operation was aborted"
+        }
+      ],
+      "boundaryMarker": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "<compact-boundary trigger=\"manual\" preTokens=\"24\" messagesSummarized=\"2\" status=\"summary_failed\" />"
+          }
+        ]
+      },
+      "messagesToKeep": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "new question"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "new answer"
+            }
+          ]
+        }
+      ],
+      "parentAborted": true,
+      "providerSignalIsParent": true
+    }
+  ]
+}

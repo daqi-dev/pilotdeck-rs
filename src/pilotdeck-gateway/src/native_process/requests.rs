@@ -195,6 +195,10 @@ impl GatewayRequests for Requests {
                     JsValue::Number(self.owner.cached_session_count() as f64),
                 ),
                 (
+                    "projectKey",
+                    self.options.project.to_string_lossy().as_ref().into(),
+                ),
+                (
                     "capabilities",
                     // One table, composed per provider: `capabilities::advertised`
                     // drops a name when its provider is not bound here or when a

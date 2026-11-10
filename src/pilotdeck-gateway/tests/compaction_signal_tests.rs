@@ -7,7 +7,8 @@ use pilotdeck_gateway::{
         },
     },
     runtime::context::compaction::engine::{
-        CompactionEngine, CompactionEngineOptions, CompactionInput, ProtectedTools,
+        CompactionEngine, CompactionEngineOptions, CompactionInput, CompactionResult,
+        ProtectedTools,
     },
 };
 use pilotdeck_protocol::JsValue;
@@ -41,6 +42,38 @@ impl ModelExecution for Delayed {
 fn messages() -> Vec<JsValue> {
     match pilotdeck_protocol::parse_json(r#"[{"role":"user","content":[{"type":"text","text":"old one"}]},{"role":"assistant","content":[{"type":"text","text":"old answer"}]},{"role":"user","content":[{"type":"text","text":"new question"}]},{"role":"assistant","content":[{"type":"text","text":"new answer"}]}]"#).unwrap() { JsValue::Array(ref messages) => messages.clone(), _ => unreachable!() }
 }
+fn assert_failure_contract(result: &CompactionResult, id: &str) {
+    let oracle = pilotdeck_protocol::parse_json(include_str!(
+        "fixtures/compaction-failure-contract/oracle.json"
+    ))
+    .unwrap();
+    let JsValue::Array(cases) = oracle.get("cases").unwrap() else {
+        panic!("actual TS cases")
+    };
+    let case = cases
+        .iter()
+        .find(|case| case.get("id") == Some(&id.into()))
+        .unwrap();
+    assert_eq!(
+        Some(JsValue::Bool(result.summary_generated)),
+        case.get("summaryGenerated").cloned()
+    );
+    assert!(result.summary_message.is_none());
+    assert_eq!(
+        result.error.clone().map(JsValue::String),
+        case.get("error").cloned()
+    );
+    assert_eq!(
+        Some(JsValue::Array(result.diagnostics.clone())),
+        case.get("diagnostics").cloned()
+    );
+    assert_eq!(Some(&result.boundary_marker), case.get("boundaryMarker"));
+    assert_eq!(
+        Some(JsValue::Array(result.messages_to_keep.clone())),
+        case.get("messagesToKeep").cloned()
+    );
+}
+
 #[tokio::test]
 async fn summary_model_receives_forwarded_cancellation_and_cancellation_settles() {
     let (tx, rx) = oneshot::channel();
@@ -107,7 +140,11 @@ async fn summary_failure_aborts_owned_provider_child_without_aborting_turn() {
     input.transport_signal = Some(parent.clone());
     input.target_post_tokens = Some(1.0);
     input.protected_tool_names = ProtectedTools::Disabled;
-    assert!(engine.run(input).await.is_err());
+    let result = engine
+        .run(input)
+        .await
+        .expect("TS resolves a structured summary failure");
+    assert_failure_contract(&result, "stream-failure");
     assert!(
         !parent.is_cancelled(),
         "summary error must not abort its owning turn"
@@ -147,11 +184,12 @@ async fn native_parent_cancellation_reaches_owned_provider_child() {
     tokio::time::timeout(std::time::Duration::from_secs(3), child.cancelled())
         .await
         .expect("child cancellation");
-    tokio::time::timeout(std::time::Duration::from_secs(3), task)
+    let result = tokio::time::timeout(std::time::Duration::from_secs(3), task)
         .await
         .expect("engine settled")
         .unwrap()
-        .expect_err("cancel rejects summary");
+        .expect("TS records summary cancellation in its result");
+    assert_failure_contract(&result, "parent-cancellation");
 }
 
 struct BrokenIterator;
@@ -193,7 +231,11 @@ async fn summary_iterator_failure_aborts_child_and_keeps_parent_alive() {
     input.transport_signal = Some(parent.clone());
     input.target_post_tokens = Some(1.0);
     input.protected_tool_names = ProtectedTools::Disabled;
-    assert!(engine.run(input).await.is_err());
+    let result = engine
+        .run(input)
+        .await
+        .expect("TS resolves a structured summary failure");
+    assert_failure_contract(&result, "iterator-failure");
     assert!(!parent.is_cancelled());
     assert!(seen.lock().unwrap().as_ref().unwrap().is_cancelled());
 }

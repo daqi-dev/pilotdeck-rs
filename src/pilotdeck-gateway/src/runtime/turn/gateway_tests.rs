@@ -284,12 +284,20 @@ struct Registry {
 }
 impl Registry {
     fn track<T: Send + 'static>(&self, future: RegistryFuture<T>) -> RegistryFuture<T> {
+        // Count wrapper future ownership, including cancellation before its
+        // first poll. The actual registry worker independently owns queued IO.
+        struct Pending(Arc<AtomicUsize>);
+        impl Drop for Pending {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
         let pending = self.pending.clone();
         pending.fetch_add(1, Ordering::SeqCst);
+        let pending = Pending(pending);
         Box::pin(async move {
-            let result = future.await;
-            pending.fetch_sub(1, Ordering::SeqCst);
-            result
+            let _pending = pending;
+            future.await
         })
     }
 }

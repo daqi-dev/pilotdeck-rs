@@ -1318,6 +1318,11 @@ async fn hello_reports_the_same_capabilities_as_describe_server() {
         described,
         "#1352 hello_ok.serverInfo equals the describe_server result"
     );
+    negative_assert_eq!(
+        server_info["projectKey"],
+        options.project.to_string_lossy().as_ref(),
+        "hello and describe_server expose the bound project"
+    );
     negative_assert!(
         server_info["capabilities"]
             .as_array()

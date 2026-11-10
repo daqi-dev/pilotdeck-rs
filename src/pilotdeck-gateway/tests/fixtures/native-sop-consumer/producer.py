@@ -3,6 +3,7 @@ import os, subprocess, socket, time, json, pathlib, signal, hashlib
 import argparse
 parser=argparse.ArgumentParser()
 parser.add_argument("--engine",choices=("ts","native"),required=True)
+parser.add_argument("--scenario",choices=("budget-negative","normal-capacity"),default="budget-negative")
 for field in ("baseline","out","candidate-manifest","source-manifest"):
  parser.add_argument("--"+field,type=pathlib.Path,required=True)
 parser.add_argument("--expected-source-sha",required=True)
@@ -61,7 +62,8 @@ class Provider(http.server.BaseHTTPRequestHandler):
   self.wfile.flush()
 provider=http.server.ThreadingHTTPServer(('127.0.0.1',0),Provider);threading.Thread(target=provider.serve_forever,daemon=True).start()
 (h/'token').write_text('test-token\n');(h/'token').chmod(0o600)
-(h/'pilotdeck.yaml').write_text('schemaVersion: 1\nagent: {model: fixture/mock, maxOutputTokens: 256, maxContextTokens: 7000}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:MOCK_PORT/v1\n      apiKey: mock-only\n      models: {mock: {}}\ntelemetry: {enabled: false}\n'.replace('MOCK_PORT',str(provider.server_port)))
+context_tokens=7000 if args.scenario=='budget-negative' else 64000
+(h/'pilotdeck.yaml').write_text('schemaVersion: 1\nagent: {model: fixture/mock, maxOutputTokens: 256, maxContextTokens: 7000}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:MOCK_PORT/v1\n      apiKey: mock-only\n      models: {mock: {}}\ntelemetry: {enabled: false}\n'.replace('MOCK_PORT',str(provider.server_port)).replace('maxContextTokens: 7000','maxContextTokens: '+str(context_tokens)))
 (p/'definitions.json').write_text(json.dumps({'sops':[{'id':'fixture','name':'Fixture','content':{'start_node_id':'node','nodes':[{'node_id':'node','instruction':'Complete the fixture.','allowed_actions':['completed']}]}}]}))
 with (h/'pilotdeck.yaml').open('a') as f:f.write('modules: '+json.dumps({'sop':{'enabled':True,'implementationId':'fixture.owner','contract':'sop.lifecycle/v2','transport':'sop-http-v2','endpoint':'http://127.0.0.1:'+str(provider.server_port),'manifestPath':'/healthz','definitionsPath':str(p/'definitions.json'),'defaultSopId':'fixture','timeoutMs':30000}})+'\n')
 (h/'projects/fixture').mkdir(parents=True);(h/'projects/fixture/.cwd').write_text(str(p)+'\n')
@@ -89,14 +91,24 @@ with (d/'server.stdout').open('wb') as out, (d/'server.stderr').open('wb') as er
     with socket.create_connection(('127.0.0.1',port),timeout=.2):break
    except OSError:time.sleep(.05)
   else:raise TimeoutError('server ready')
-  result=subprocess.run([node,'--import',loader,str(pathlib.Path(__file__).parent/'driver.mts'),f'ws://127.0.0.1:{port}/ws',str(p),str(d/'driver')],env=env,cwd=p,timeout=70)
-  (d/'provenance.json').write_text(json.dumps({'baseline':str(root),'head':head,'node':subprocess.check_output([node,'-p','JSON.stringify(process.versions)'],text=True),'clientExit':result.returncode,'serverCommand':command,'engine':args.engine,'sourceManifestSha256':args.expected_source_sha,'candidateManifestSha256':hashlib.sha256(args.candidate_manifest.read_bytes()).hexdigest(),'sourceSha256':hashlib.sha256((root/'src/cli/pilotdeck.ts').read_bytes()).hexdigest()},indent=2))
+  result=subprocess.run([node,'--import',loader,str(pathlib.Path(__file__).parent/('driver.mts' if args.scenario=='budget-negative' else 'driver-success.mts')),f'ws://127.0.0.1:{port}/ws',str(p),str(d/'driver')],env=env,cwd=p,timeout=70)
+  (d/'provenance.json').write_text(json.dumps({'baseline':str(root),'head':head,'node':subprocess.check_output([node,'-p','JSON.stringify(process.versions)'],text=True),'clientExit':result.returncode,'serverCommand':command,'engine':args.engine,'scenario':args.scenario,'contextTokens':context_tokens,'sourceManifestSha256':args.expected_source_sha,'candidateManifestSha256':hashlib.sha256(args.candidate_manifest.read_bytes()).hexdigest(),'sourceSha256':hashlib.sha256((root/'src/cli/pilotdeck.ts').read_bytes()).hexdigest()},indent=2))
   assert result.returncode==0, 'business interaction driver failed'
   assert any(row.get('requestId') for row in rows), 'SOP service was not called'
-  assert any('conversation summarizer' in json.dumps(row).lower() for row in rows), 'SOP summary not called'
-  assert (d/'hook-input.jsonl').exists(), 'SOP hooks missing'
-  wire=(d/'driver/wire.jsonl').read_text();assert 'compact_started' in wire and 'compact_completed' in wire, 'SOP compact notifications missing'
-  hooks=[json.loads(line) for line in (d/'hook-input.jsonl').read_text().splitlines()];assert any(x.get('hookEventName')=='PreCompact' for x in hooks) and any(x.get('hookEventName')=='PostCompact' for x in hooks);assert all(x.get('sessionId')=='web:sop-fixture' for x in hooks), 'wrong lifecycle session'
+  if args.scenario=='budget-negative':
+   assert any('conversation summarizer' in json.dumps(row).lower() for row in rows), 'SOP summary not called'
+   assert (d/'hook-input.jsonl').exists(), 'SOP hooks missing'
+   wire=(d/'driver/wire.jsonl').read_text();assert 'compact_started' in wire and 'compact_completed' in wire, 'SOP compact notifications missing'
+   hooks=[json.loads(line) for line in (d/'hook-input.jsonl').read_text().splitlines()];assert any(x.get('hookEventName')=='PreCompact' for x in hooks) and any(x.get('hookEventName')=='PostCompact' for x in hooks);assert all(x.get('sessionId')=='web:sop-fixture' for x in hooks), 'wrong lifecycle session'
+  else:
+   wire=(d/'driver/wire.jsonl').read_text()
+   assert 'agent_context_recovery_failed' not in wire
+   assert any('sop.prepare:' in str(row.get('requestId','')) for row in rows)
+   assert any('sop.submit:' in str(row.get('requestId','')) for row in rows)
+   if (d/'hook-input.jsonl').exists():
+    hooks=[json.loads(line) for line in (d/'hook-input.jsonl').read_text().splitlines()]
+    assert all(x.get('sessionId')=='web:sop-fixture' for x in hooks)
+
  finally:
   (d/'model-requests.json').write_text(json.dumps(rows,indent=2));provider.shutdown();provider.server_close()
   if proc.poll() is None:proc.send_signal(signal.SIGTERM)
