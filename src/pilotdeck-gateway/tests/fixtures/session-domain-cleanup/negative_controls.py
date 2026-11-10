@@ -4052,6 +4052,33 @@ MUTATIONS = [
      "                        bi50 = bi49\n"
      "                        bi50['setattr'](report, 'status', 'PASS')\n"
      "                    report['status'] = overall\n"),
+    # #1652 fix-r31 (anthropic r31 boundary#1/#2 P1, probe-verified —
+    # _tmp/20261110-1355-r26-harvest/probe-r31-fold-budget.out and
+    # probe-r31-render.out): reversion controls for the r31 fold-ledger
+    # battery — with either charge reverted, a shape the battery must
+    # resolve fail-closed folds instead.
+    ('mult-fold-budget-unthreaded', CHECK,
+     "                        content = _folded_size(sequence, budget)",
+     "                        content = _folded_size(sequence)"),
+    ('mod-render-bound-reverted', CHECK,
+     "            if isinstance(right, (str, bytes)):\n"
+     "                payload = len(right)\n"
+     "            elif isinstance(right, (list, tuple, set, frozenset, dict)):\n"
+     "                try:\n"
+     "                    payload = _render_bound(right, budget)\n"
+     "                except _FoldedSizeOverflow:\n"
+     "                    return _LITERAL_TEST_UNRESOLVED\n"
+     "            else:\n"
+     "                payload = len(str(right))",
+     "            if isinstance(right, (str, bytes)):\n"
+     "                payload = len(right)\n"
+     "            elif isinstance(right, (list, tuple)):\n"
+     "                payload = _folded_size(right)\n"
+     "                if payload is None:\n"
+     "                    return _LITERAL_TEST_UNRESOLVED\n"
+     "                payload += 2 * len(right)\n"
+     "            else:\n"
+     "                payload = len(str(right))"),
 ]
 
 def calibrate_dict_namespace_update(rows):
@@ -4572,6 +4599,42 @@ def calibrate_partial_name_status(rows):
 def calibrate_builtins_chain_four(rows):
     """#892 fix-r33: builtins chain four."""
     return _unrouted_status(rows, 'calibrate-builtins-chain-four')
+
+def mult_budget_unthreaded(rows):
+    """#1652 fix-r31: the Mult content walk must draw from the shared
+    audit-pass cell — with the per-call mint reverted, the ``* 1``-chain
+    pin folds inside a cell it never touched."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any('minted its own traversal allowance' in failure
+               for failure in failures):
+        return False, (f'failures={failures!r}, '
+                       'want the r31 Mult-budget battery failure')
+    return True, ('aggregation-audit: the Mult budget mint reverted, '
+                  'battery flagged, passed=False')
+
+def mod_render_reverted(rows):
+    """#1652 fix-r31: the Mod container payload must charge the render
+    bound — with the charge reverted to the folded content, the render
+    pins fold past the cap."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any('charged the folded content, not the render' in failure
+               for failure in failures):
+        return False, (f'failures={failures!r}, '
+                       'want the r31 Mod-render battery failure')
+    return True, ('aggregation-audit: the Mod render bound reverted, '
+                  'battery flagged, passed=False')
 
 JUDGES = {
     'empty-group-probe-removed': (
@@ -5151,6 +5214,10 @@ JUDGES = {
         'aggregation-audit', calibrate_partial_setdefault_prebound, False, ()),
     'calibrate-builtins-chain-fiftyone': (
         'aggregation-audit', calibrate_builtins_chain_fiftyone, False, ()),
+    'mult-fold-budget-unthreaded': (
+        'aggregation-audit', mult_budget_unthreaded, False, ()),
+    'mod-render-bound-reverted': (
+        'aggregation-audit', mod_render_reverted, False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')

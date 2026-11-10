@@ -967,7 +967,13 @@ def _expectation_structure(row):
                 return side + ' registry result'
         else:
             return side + ' registry applicable'
-    if row['ts']['registry']['applicable'] != row['rust']['registry']['applicable']:
+    # fix-r31 (r31 structural round, DS sibling#1/#3 + anthropic sibling#1
+    # family): every witness/evidence numeric or equality comparison now
+    # goes through ``native_evidence.same_json`` (type-strict on booleans,
+    # #1372 semantics on numbers) or a real-int gate — a bare ``==`` lets
+    # ``True == 1`` / ``1.0 == 1`` collapse a drifted document into a pass.
+    if not native_evidence.same_json(row['ts']['registry']['applicable'],
+                                     row['rust']['registry']['applicable']):
         return 'registry applicability'
     return None
 
@@ -1038,7 +1044,7 @@ def validate_expectations(registration, observations):
     require(set(measured) == set(registered), 'EXPECTATION_COVERAGE',
             'measured cases must equal the registered expectation cases')
     for case, row in registered.items():
-        require(row['ts'] == measured[case], 'EXPECTATION_TS_DRIFT',
+        require(native_evidence.same_json(row['ts'], measured[case]), 'EXPECTATION_TS_DRIFT',
                 case + ': ts expectation drifted from the calibrate measurement')
         surfaces = _expectation_diff_surfaces(row['ts'], row['rust'])
         require(all(surface in A19_ALLOWED_SURFACES[row['a19Class']] for surface in surfaces),
@@ -1046,7 +1052,7 @@ def validate_expectations(registration, observations):
                 case + ': rust differs from ts outside the A19-HOST listed surfaces: '
                 + ','.join(surfaces))
         if row['a19Class'] == 'ts-equal':
-            require(row['rust'] == row['ts'], 'EXPECTATION_RUST_DERIVATION',
+            require(native_evidence.same_json(row['rust'], row['ts']), 'EXPECTATION_RUST_DERIVATION',
                     case + ': non-timeout-first ordering must match TS exactly')
             continue
         canonical = A19_CANONICAL_RUST[row['a19Class']]
@@ -1085,11 +1091,13 @@ def calibration_coverage(registration, manifest):
             'COVERAGE', 'model/tool x five repetitions required')
     expected = [f"{cell['name']}/{variant['name']}/{phase}"
                 for cell in registration['cells'] for variant in cell['variants'] for phase in registration['phases']]
-    require(expected == contract['cases'] and all(c['variants'] for c in registration['cells']),
+    require(native_evidence.same_json(expected, contract['cases'])
+            and all(c['variants'] for c in registration['cells']),
             'COVERAGE', 'preregistration must match independent E1 case manifest; no denominator shrink')
     require(len(expected) == len(set(expected)) and expected,
             'COVERAGE', 'nonempty unique cases required')
-    require(manifest['expectedCases'] == expected and manifest['executedCases'] == expected,
+    require(native_evidence.same_json(manifest['expectedCases'], expected)
+            and native_evidence.same_json(manifest['executedCases'], expected),
             'COVERAGE', 'missing/duplicate/extra cases')
     return expected
 
@@ -1133,7 +1141,12 @@ def validate_calibration(folder, output, baseline):
         observations.extend(rows)
         groups.append({'id': cell['name'], 'status': 'OBSERVED', 'measurements': len(rows),
                        'path': str(raw / (cell['name'] + '.json'))})
-    require(manifest['totalMeasurements'] == len(observations), 'COVERAGE', 'total measurement mismatch')
+    # fix-r31 (r31 structural round): the manifest's declared count is an
+    # external document read compared against a number — it goes through a
+    # real-int gate first (``True == 1`` / ``1.0 == 1`` must not pass it).
+    require(type(manifest['totalMeasurements']) is int
+            and manifest['totalMeasurements'] == len(observations),
+            'COVERAGE', 'total measurement mismatch')
     rounds = [{'repetition': i, 'status': 'OBSERVED',
                'observations': [o['id'] for o in observations if o['repetition'] == i]}
               for i in range(1, REPEATS + 1)]
@@ -1145,9 +1158,13 @@ def validate_calibration(folder, output, baseline):
     require(len(controls) == 9 and len({c['name'] for c in controls}) == 9
             and all(c['detected'] is True and c['hitRule'] == c['expectedRule'] for c in controls),
             'CONTROLS', 'A5.2a original observation controls missing/failed')
-    require(oracle['controls'] == controls, 'CONTROLS', 'recorded controls differ from independently rerun original controls')
+    require(native_evidence.same_json(oracle['controls'], controls), 'CONTROLS',
+            'recorded controls differ from independently rerun original controls')
     launch = read(folder / 'launch.json')
-    require(launch.get('exitCode') == 0 and launch.get('childReaped') is True,
+    # fix-r31 (r31 structural round): the launch exit code is an external
+    # document read — a real-int gate precedes the ``== 0``.
+    require(type(launch.get('exitCode')) is int and launch.get('exitCode') == 0
+            and launch.get('childReaped') is True,
             'CLEANUP', 'A5.2a did not finish/reap its child')
     return {'groups': groups, 'expectedCases': expected, 'executedCases': manifest['executedCases'],
             'repeats': REPEATS, 'measurements': len(observations), 'oracle': oracle,
@@ -1222,11 +1239,13 @@ def audit_native(evidence, contract):
         require(_retirement_real_pid(pid) and pid in by_pid and row['event'] in ('exec', 'exit'),
                 'PROCESS_WITNESS', 'unknown process/event, including short-lived children')
         if row['event'] == 'exec':
-            require(pid not in started and all(row.get(k) == by_pid[pid][k]
-                    for k in ('ppid', 'argv', 'executable', 'sha256')),
+            require(pid not in started
+                    and all(native_evidence.same_json(row.get(k), by_pid[pid][k])
+                            for k in ('ppid', 'argv', 'executable', 'sha256')),
                     'PROCESS_WITNESS', 'exec identity disagrees with recorded launch identity')
             require(_retirement_real_pid(row['ppid'])
-                    and (row['ppid'] == contract['launcherPid'] or row['ppid'] in live),
+                    and (native_evidence.same_json(row['ppid'], contract['launcherPid'])
+                         or row['ppid'] in live),
                     'PROCESS_WITNESS', 'child exec before parent or after parent exit')
             live.add(pid)
             started.add(pid)
@@ -1240,7 +1259,8 @@ def audit_native(evidence, contract):
         require(call['target'] in contract['externalEndpoints'] and _retirement_real_pid(call['ownerPid'])
                 and call['ownerPid'] in actual_pids,
                 'HIDDEN_HELPER', 'undeclared helper/endpoint invocation')
-    require(evidence['expectedCases'] == contract['cases'] and evidence['executedCases'] == contract['cases']
+    require(native_evidence.same_json(evidence['expectedCases'], contract['cases'])
+            and native_evidence.same_json(evidence['executedCases'], contract['cases'])
             and len(set(contract['cases'])) == len(contract['cases']) and contract['cases'],
             'COVERAGE', 'missing/duplicate/extra native groups')
     # #1140 fix-r2: no capabilities equality here -- load_native_capture
@@ -1291,9 +1311,11 @@ def audit_native(evidence, contract):
         binding = frame.get('interactionBinding', {})
         require(frame.get('protocolVersion') == '1.2' and type(binding.get('generation')) is int
                 and binding['generation'] >= 1 and isinstance(binding.get('connectionId'), str)
-                and bool(binding['connectionId']) and binding == contract['binding'],
+                and bool(binding['connectionId'])
+                and native_evidence.same_json(binding, contract['binding']),
                 'BINDING', 'actual server hello has invalid/wrong/old binding')
-    if contract['cases'] == read(SCRIPT / 'fixtures/session-calibration.json')['cases']:
+    if native_evidence.same_json(contract['cases'],
+                                 read(SCRIPT / 'fixtures/session-calibration.json')['cases']):
         try:
             native_evidence.session_profile(contract, contract['cases'])
             native_evidence.session_windows(evidence, contract['cases'], evidence['transcriptPaths'])
@@ -1318,7 +1340,9 @@ def _audit_observer_rows(rows):
         decoder = Decoder(decoded.append, row['direction'])
         decoder.feed(b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n' + bytes.fromhex(row['wireHex']))
         require(len(decoded) == 1
-                and decoded[0].get('raw' if row['direction'] == 'send' else 'frame') == row['frame'],
+                and native_evidence.same_json(
+                    decoded[0].get('raw' if row['direction'] == 'send' else 'frame'),
+                    row['frame']),
                 'OBSERVER_WIRE', 'wire observation disagrees with recorder')
 
 
@@ -1387,11 +1411,12 @@ def _load_native_artifacts(folder):
     # not an adversarial writer rewriting driver, observer and receipt together.
     # The driver record is a consistency copy, not an independently signed anchor.
     driver = read(folder / 'session-domain/driver.json')
-    require(isinstance(driver, dict) and driver.get('binding') == contract['binding'], 'BINDING',
+    require(isinstance(driver, dict)
+            and native_evidence.same_json(driver.get('binding'), contract['binding']), 'BINDING',
             'driver-recorded hello binding disagrees with the observer hello record')
     cases_document, provider = read(folder / 'session-domain/cases.json'), read(folder / 'session-domain/provider.json')
     expected = read(SCRIPT / 'fixtures/session-calibration.json')['cases']
-    require(contract.get('cases') == expected, 'COVERAGE',
+    require(native_evidence.same_json(contract.get('cases'), expected), 'COVERAGE',
             'the native capture must declare the full E1 case manifest; no denominator shrink')
     rows = cases_document.get('cases') if isinstance(cases_document, dict) else None
     require(isinstance(rows, list) and rows, 'OBSERVATION_STRUCTURE', 'case rows malformed')
@@ -1885,9 +1910,9 @@ def _retirement_census_verdict(census):
     # established anything, so it is a non-PASS observation (the fake PASS on
     # ``{'rows': [], 'declaredAlive': True}`` is exactly the hole this closes).
     rows = census.get('rows')
-    rows = rows if isinstance(rows, list) else []
+    rows = _retirement_list_rows(rows)
     declared = census.get('declared')
-    declared = declared if isinstance(declared, list) else []
+    declared = _retirement_list_rows(declared)
     # fix-r6 (DS boundary P0 + MiniMax boundary P0, both families,
     # probe-verified — ``fix-r6-audit/probe-before.out`` A1/A2): ``None``
     # cannot double as "this row names no pid" and as a declared entry —
@@ -2031,7 +2056,7 @@ def _retirement_network_verdict(connections):
     """
     connections = connections if isinstance(connections, dict) else {}
     rows = connections.get('rows')
-    rows = rows if isinstance(rows, list) else []
+    rows = _retirement_list_rows(rows)
     unparsed = [row for row in rows if not isinstance(row, dict) or row.get('peer') is None]
     # fix-r2 (DS concurrency P2) kept the tally type-safe; fix-r3 (DS r2
     # boundary P0, both the boundary and concurrency roles) closes the
@@ -2501,7 +2526,7 @@ def _retirement_controls(round_row, expected, verdict=None):
     # observation — normalise to [] instead of raising TypeError out of the
     # controls (which run before every audit face and would drop all of them).
     census_rows = census.get('rows')
-    census_rows = census_rows if isinstance(census_rows, list) else []
+    census_rows = _retirement_list_rows(census_rows)
     gateway_pid = _retirement_gateway_pid(round_row)
     # fix-r8 (MM sibling r7 P1, probe-verified — fix-r8-audit/probe-r8-mm-
     # before.out C2): the row-side pid read here was a bare ``==``, the one
@@ -2534,7 +2559,7 @@ def _retirement_controls(round_row, expected, verdict=None):
         # on its own.  Remove only the gateway pid from the declared set and
         # attribute the verdict to that pid.
         declared_original = census.get('declared')
-        declared_original = declared_original if isinstance(declared_original, list) else []
+        declared_original = _retirement_list_rows(declared_original)
         # fix-r8 (MM sibling r7 P1): same real-pid predicate on the declared
         # side — a declared ``True`` is not a declaration of pid 1, so the
         # "the round never declared this pid" gate must not read it as one.

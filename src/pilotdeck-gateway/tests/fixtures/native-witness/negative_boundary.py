@@ -32,7 +32,9 @@ cases = [
     ('witness-hello-scope', witness_doc, 'hello 观测独立于被测网关与预注册 contract，不独立于 driver。', 'hello 观测独立于 driver。', 'test_documented_boundary'),
     ('witness-independent-claim', witness_doc, '能够同时重写三者的对抗写者不在此威胁模型内', 'driver 记录提供独立锚', 'test_documented_boundary'),
     ('controls-independent-claim', controls_doc, '不防共同重钉', '独立锚', 'test_documented_boundary'),
-    ('drop-consistency-check', session, "isinstance(driver, dict) and driver.get('binding') == contract['binding']", 'True', 'test_binding_writer_boundary'),
+    # fix-r31: re-anchored to the same_json spelling (mutation unchanged —
+    # the whole condition, now line-wrapped, still folds to True).
+    ('drop-consistency-check', session, "isinstance(driver, dict)\n            and native_evidence.same_json(driver.get('binding'), contract['binding'])", 'True', 'test_binding_writer_boundary'),
     ('omit-boundary-case', Path(__file__).resolve(), "    ('om" + "it-common-guard', Path(__file__).resolve(), 'guarded_' + 'sources = [common,', 'guarded_' + 'sources = [', 'test_guarded_sources_include_common'),\n", '', 'test_expected_case_count'),
     ('memory-rehearsal-without-lock', Path(__file__).resolve(), '        if memory:\n            with tree_' + 'lock(root, timeout=900):\n                for row in selected:\n                    one(row)\n        else:', '        if memory:\n            for row in selected:\n                one(row)\n        else:', 'test_memory_rehearsal_holds_tree_lock'),
 ]

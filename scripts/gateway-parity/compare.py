@@ -248,7 +248,13 @@ def wire_frame(row):
         raise ValueError('wire bytes/header disagree')
     metadata = {'opcode': opcode, 'fin': bool(data[0] & 128), 'rsv': data[0] & 0x70,
                 'masked': masked, 'lengthCode': length_code, 'payloadLength': size}
-    if metadata != row['wire']:
+    # fix-r31 (r31 structural round, DS sibling#4 P2 read as the same
+    # family; #2424 :251): the decoded metadata carries ints and bools —
+    # a recorded ``fin: 1`` folded onto a decoded ``fin: True`` through
+    # ``1 == True`` and the wire cross-check passed.  Every decoded-vs-
+    # recorded equality below goes through same_json (type-strict on
+    # booleans, #1372 semantics on numbers).
+    if not native_evidence.same_json(metadata, row['wire']):
         raise ValueError('wire FIN/RSV/mask/length metadata disagree')
     if masked:
         payload = bytes(byte ^ mask[i % 4] for i, byte in enumerate(payload))
@@ -258,7 +264,7 @@ def wire_frame(row):
     elif row['direction'] == 'receive' and opcode == 8:
         value = {'code': int.from_bytes(payload[:2], 'big') if len(payload) >= 2 else 1005,
                  'reason': payload[2:].decode('utf8', errors='replace')}
-    if value != row.get('frame'):
+    if not native_evidence.same_json(value, row.get('frame')):
         raise ValueError('wire bytes/decoded frame disagree')
     return data[:offset].hex()
 
@@ -287,7 +293,13 @@ def validate(path, local_methods=()):
                 result, complete = load(folder / 'result.json'), load(folder / 'complete.json')
                 if result.get('scenario') != name or complete.get('scenario') != name:
                     fail('G1.coverage', f'{name}: wrong scenario identity')
-                if result.get('status') != 'PASS' or run.get('scenarios', {}).get(name, {}).get('exitCode') != 0:
+                # fix-r31 (r31 structural round, DS sibling#4 P2 read as
+                # the same family; #2424 :290): the run document's exit
+                # code is an external read compared against a number — a
+                # real-int gate precedes the ``!= 0`` (``True != 0`` is
+                # False in Python, so a boolean exitCode audited clean).
+                exit_code = run.get('scenarios', {}).get(name, {}).get('exitCode')
+                if result.get('status') != 'PASS' or type(exit_code) is not int or exit_code != 0:
                     fail('G3.oracle', f'{name}: driver failed its independent expectations')
                 rows = []
                 if name != 'http':
@@ -299,10 +311,20 @@ def validate(path, local_methods=()):
                         raise ValueError('recorder rows must be objects')
                     if not rows:
                         fail('G2.recording', f'{name}: empty log')
-                if complete.get('complete') is not True or complete.get('records') != len(rows):
+                # fix-r31 (r31 structural round, DS sibling#4 P2 read as
+                # the same family; #2424 :302/:305): the footer's counts
+                # are external reads compared against numbers — real-int
+                # gates precede both ``==`` uses, so a boolean or float
+                # footer cannot fold onto the true count (``True == 1``).
+                records = complete.get('records')
+                connection_count = complete.get('connections', 0)
+                if (complete.get('complete') is not True
+                        or type(records) is not int or records != len(rows)):
                     fail('G2.recording', f'{name}: count/footer mismatch')
                 connections = {row.get('connection') for row in rows}
-                if name != 'http' and connections != set(range(1, complete.get('connections', 0) + 1)):
+                if (name != 'http'
+                        and (type(connection_count) is not int or connection_count < 0
+                             or connections != set(range(1, connection_count + 1)))):
                     fail('G2.recording', f'{name}: connection count/identity mismatch')
                 pending = {}
                 for number, row in enumerate(rows, 1):
@@ -315,7 +337,7 @@ def validate(path, local_methods=()):
                             parsed = json.loads(row['raw'])
                         except ValueError:
                             parsed = row['raw']  # auth deliberately sends invalid JSON.
-                        if parsed != row.get('frame'):
+                        if not native_evidence.same_json(parsed, row.get('frame')):
                             fail('G2.recording', f'{name}: raw/parsed disagreement at {number}')
                     if 'wire' in row:
                         wire_frame(row)
@@ -459,7 +481,15 @@ def validate(path, local_methods=()):
             fail('G3.oracle', 'HTTP projects / file read fixture missing')
         for row in http[-2:]:
             chunks = row['chunks']
-            if len(chunks) < 2 or chunks[-1]['elapsedMs'] - chunks[0]['elapsedMs'] < 300 or 'first' not in row['body'] or 'last' not in row['body']:
+            # fix-r31 (r31 structural round): the elapsed timestamps are
+            # external document reads entering arithmetic — ``True - True``
+            # is 0 and passed the 300 ms bound.  A real-number gate
+            # (type() excludes bool) precedes the subtraction.
+            if (len(chunks) < 2
+                    or any(type(chunk.get('elapsedMs')) not in (int, float)
+                           for chunk in (chunks[0], chunks[-1]))
+                    or chunks[-1]['elapsedMs'] - chunks[0]['elapsedMs'] < 300
+                    or 'first' not in row['body'] or 'last' not in row['body']):
                 fail('G3.oracle', 'stream buffered/truncated')
         quirks = load(path / 'scenarios/quirks/result.json').get('results', [])
         if [row.get('kind') for row in quirks] != ['rsv', 'continuation', 'client-close', 'unmasked'] or not all(row.get('ok') is True for row in quirks):
@@ -601,7 +631,11 @@ def compare(left, right, local_methods=()):
             pass
     if len(runs) == 2:
         for field in ('runtime', 'ports', 'baseline', 'baselineSourceSha256', 'baselineDistSha256'):
-            if runs['left'].get(field) != runs['right'].get(field):
+            # fix-r31 (r31 structural round, #2424 :604): both sides are
+            # external run documents — the path-alignment diff must not
+            # fold a boolean/float onto a number (``True == 1`` reading as
+            # "no difference" would hide a post-hoc path alignment).
+            if not native_evidence.same_json(runs['left'].get(field), runs['right'].get(field)):
                 failures.append({'rule': 'G0.paths', 'detail': f'{field} differs; no post-hoc path alignment allowed'})
     if not failures:
         try:

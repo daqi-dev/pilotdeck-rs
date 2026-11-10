@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 238 mutants:
+`JUDGES`, keyed by the same names. The current table has 240 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -427,7 +427,8 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-handle-annassign`, `calibrate-handle-argument`,
 `calibrate-ordered-binding`, `calibrate-partial-update-prebound`,
 `calibrate-partial-setdefault-prebound`,
-`calibrate-builtins-chain-fiftyone`.
+`calibrate-builtins-chain-fiftyone`,
+`mult-fold-budget-unthreaded`, `mod-render-bound-reverted`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1853,3 +1854,51 @@ variant, and the suite-level resource-exhaustion pin, for 169/169; this
 round touches three registered files, so gateway-parity
 `check_frozen --write` re-registers the hashes (event
 `frozen/20261108-1355-r1.md` fix-r30 section).
+
+fix-r31 (r31 structural round, per the coordinator's capping directive —
+anthropic r31 sibling#1/boundary#1/boundary#2 P1 + DS r31 sibling#1 P1,
+sibling#2/#3/#4 P2 read as the same family; probes in
+`_tmp/20261110-1355-r26-harvest/`): the round is the *family* closure the
+lexical rounds could not reach. (A) The fold ledger's remaining
+unthreaded walks: the Mult content walk minted a fresh
+`_FOLD_SIZE_WORK_CAP` per call, so a ``* 1``-chain re-walked ~250k
+elements per link while the shared ledger charged ``max(len, content) *
+1`` (probe-r31-fold-budget.out), and the Mod container payload charged
+the folded *content* instead of the *repr* — a float folds to 1 and
+reprs to ~24 characters, an unpaired surrogate folds to 1 and reprs to
+10, so ``'%s' % ([2.2e-308] * 999990,)`` rendered ~25M characters
+against a ~1M-charged bound (probe-r31-render.out). `_render_bound`
+bounds the render (str 10 chars/char + quotes, bytes 4, ints digits,
+floats a 32 constant, containers twice their element count plus every
+child) through the *same shared budget* the fold threads, and the Mult
+content walk draws from the caller's budget; the aggregation audit pins
+both with sentinel probes plus a twin-sized folding control. Two revert
+mutants join the table (`mult-fold-budget-unthreaded`,
+`mod-render-bound-reverted`, 240 total), each bound to a new judge that
+requires the battery's own failure text. (S) The boolean-folding family
+in the frozen comparison sites: every witness/evidence equality on
+external documents now goes through `native_evidence.same_json`
+(type-strict on booleans, #1372 number semantics — `True == 1` /
+``fin: 1`` folds no longer audit clean) or a preceding real-int gate;
+`native_evidence.session_windows` gates the *host-side* pid of the
+host-owned comparison (r30 gated only the entry side,
+probe-r31-hostpid.out), and `session_profile` compares the manifest with
+`same_json`. (F) The account is now machine-checked: a
+`ComparisonPointLedger` AST sweep in `test_safety.py` walks the family
+(`_COMPARISON_POINT_DOCUMENTS`: one-level loader/container-constructed
+document tracking, `Compare` nodes with a document-read operand against
+a document read or numeric expression) and requires a bidirectional
+empty diff against a 30-entry registry — every residual bare comparison
+site is registered with kind GATE/EXEMPT and a reason, a new unguarded
+site fails the suite, and a registered site that disappears fails it
+too; five pins cover the four surfaces (B/C/D/S — folded host pid,
+contract binding generation, footer counts, wire metadata int folds)
+with equal-type controls. `#164-fix-r7` NON_AGGREGATION_POINTS registers
+the D-surface pin's minimal manifest tree (documents carry status keys
+as input, not as a batch summary), and the five sibling anchors whose
+production spelling moved to `same_json` re-anchor in place (mutation
+semantics unchanged; anchor selfcheck 122/122, errors=0 —
+anchor-selfcheck-r31b.out). test_safety runs 174 with the deadline
+lease the only residue until `--write`; this round touches four
+registered files, so gateway-parity `check_frozen --write` re-registers
+the hashes (event `frozen/20261108-1355-r1.md` fix-r31 section).

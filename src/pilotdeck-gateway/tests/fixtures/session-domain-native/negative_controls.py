@@ -59,10 +59,12 @@ MUTATIONS = [
     ('accept-preregistered-binding', SESSION, "    for key in ('binding', 'observerRows', 'bindingSource'):\n        require(key not in launch and key not in prelaunch, 'BINDING',\n                'runtime binding/observer records must not be pre-registered before launch')\n", '    pass\n'),
     ('drop-egress-crosscheck', SESSION, "    require(not requests or provider['endpoint'] in targets, 'NETWORK_WITNESS',\n            'driver-observed provider traffic missing from the egress witness')\n", '    pass\n'),
     ('drop-binding-source-require', SESSION, "    require(contract.get('bindingSource') == 'observer-hello', 'BINDING',\n            'binding must be recorded by the independent observer at hello and bound '\n            'to the contract afterwards; pre-registered/SYNTHETIC bindings are rejected')\n", '    pass\n'),
-    ('drop-manifest-equality', SESSION, "    require(contract.get('cases') == expected, 'COVERAGE',\n            'the native capture must declare the full E1 case manifest; no denominator shrink')\n", '    pass\n'),
+    # fix-r31: re-anchored to the same_json spelling (mutation unchanged).
+    ('drop-manifest-equality', SESSION, "    require(native_evidence.same_json(contract.get('cases'), expected), 'COVERAGE',\n            'the native capture must declare the full E1 case manifest; no denominator shrink')\n", '    pass\n'),
     ('bypass-batch-aggregation', SESSION, "    statuses = [cell['status'] for cell in cells]\n", "    statuses = [cell['status'] for cell in cells if cell['status'] != 'NOT_RUN']\n"),
     ('hardcode-native-cell-pass', SESSION, "            cell['status'], _ = common.aggregate_status(*(row['status'] for row in native['verdicts']))\n", "            cell['status'] = 'PASS'\n"),
-    ('drop-driver-binding-crosscheck', SESSION, "    require(isinstance(driver, dict) and driver.get('binding') == contract['binding'], 'BINDING',\n            'driver-recorded hello binding disagrees with the observer hello record')\n", '    pass\n'),
+    # fix-r31: re-anchored to the same_json spelling (mutation unchanged).
+    ('drop-driver-binding-crosscheck', SESSION, "    require(isinstance(driver, dict)\n            and native_evidence.same_json(driver.get('binding'), contract['binding']), 'BINDING',\n            'driver-recorded hello binding disagrees with the observer hello record')\n", '    pass\n'),
     ('drop-session-window-rule', NATIVE, 'need(windows == [0] + [1] * len(cases),', 'need(True,'),
 ]
 

@@ -365,7 +365,11 @@ def ws_profile(direction, wire):
 
 def session_profile(contract, cases):
     """Independent frozen profile; a submitted contract cannot widen it."""
-    need(contract.get('cases') == cases, 'session profile full manifest')
+    # fix-r31 (r31 structural round, DS sibling#1 P1 + anthropic sibling#1
+    # P2 — the same finding from both lineages): the manifest comparison is
+    # a deep structural equality on two decoded documents — same_json, not
+    # a bare ``==`` (``[1] == [True]`` must not audit as the manifest).
+    need(same_json(contract.get('cases'), cases), 'session profile full manifest')
     need(Counter(contract.get('processRoles', [])) == Counter(['host'] + ['sidecar'] * len(cases))
          and set(contract.get('binaries', {})) == {'host', 'sidecar'}, 'session profile roles')
     # #2039: the launch contract is a JSON original on the live audit path;
@@ -394,6 +398,15 @@ def session_windows(evidence, cases, paths):
          and witness.get('source') == 'strace-openat' and isinstance(witness.get('opens'), list),
          'session capture must carry the complete transcript-open witness')
     host = next(p['pid'] for p in processes if p['role'] == 'host')
+    # fix-r31 (r31 structural round, DS sibling#1 P1 + anthropic sibling#1
+    # P2 — the same finding from both lineages, probe-verified —
+    # _tmp/20261110-1355-r26-harvest/probe-r31-hostpid.out): fix-r30 gated
+    # only the entry side of the host-owned comparison — a host record with
+    # ``pid: True`` folded onto an entry ``pid: 1`` through ``True == 1``
+    # and the host-owned gate passed.  The host side now carries the same
+    # type gate before any ``==`` sees it.
+    need(type(host) is int and host > 0,
+         'session capture must record a plain-integer host pid')
     need(len(paths) == len(cases) and len(set(paths)) == len(paths), 'session transcript path coverage')
     first = {}
     for entry in witness['opens']:

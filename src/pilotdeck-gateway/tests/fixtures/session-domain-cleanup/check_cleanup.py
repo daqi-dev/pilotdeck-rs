@@ -944,6 +944,11 @@ NON_AGGREGATION_POINTS = {
     # instead of raising TypeError out of the controls.
     ('scripts/gateway-parity/test_safety.py', '_fake_observable_network_verdict'):
         'test-only fake per-face verdict for an impossible observable corrupt sample; not a batch summary',
+    # fix-r31: the footer-count pin builds a minimal manifest tree whose
+    # run/result documents carry status keys; the tree is the audit's input
+    # fixture, never a batch summary of children.
+    ('scripts/gateway-parity/test_safety.py', 'test_compare_validate_footer_counts_refuse_boolean_folds'):
+        'test-only minimal manifest tree for the footer gates; documents carry status keys as input, not a batch',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
      'batch_aggregation_control'):
         'test-only; calls the shared function to assert the order',
@@ -5143,6 +5148,65 @@ def _folded_size(value, budget=None):
         return None
 
 
+def _render_bound(value, budget):
+    """A `!r`-rendering upper bound for one folded operand, in characters.
+
+    fix-r31 (anthropic r31 boundary#2 P1, probe-verified —
+    _tmp/20261110-1355-r26-harvest/probe-r31-render.out): the Mod payload
+    charged the container's *folded size* — the recursive content metric
+    `_folded_size` returns — but ``'%s' % container`` renders the repr of
+    every element, and the two metrics disagree by an order of magnitude:
+    a float reprs to ~24 characters but folds to 1, an unpaired surrogate
+    or ``\\U000e0000`` character reprs to 10 characters but folds to 1,
+    and nested containers re-add separators the content metric never
+    counted.  ``'%s' % ([2.2250738585072014e-308] * 999990,)`` measured a
+    ~25,000,000-character render against a ~1,000,000-charged bound.  This
+    walk bounds the *render* instead: str counts its characters with the
+    10-character worst-case escape plus quotes, bytes the 4-character
+    escape plus quotes, bool/None a small constant, ints their decimal
+    digits, floats a 32-character constant (the longest CPython repr is
+    ~24), containers twice their element count plus every child's bound,
+    and each visited node spends one unit from the same shared budget the
+    fold threads — exhausting it raises `_FoldedSizeOverflow` and the
+    caller resolves the same fail-closed sentinel.  The bound is
+    deliberately loose (a plain ASCII str in a container renders at 3
+    characters per element, the bound charges 12): over-charging pushes
+    borderline shapes to the sentinel, never past a cap.
+
+    fix-r31 (anthropic r31 boundary#1 P1, same family): the budget is
+    mandatory — the ``budget=None`` mint of `_folded_size` only serves
+    direct outside calls, and a per-call fresh allowance here would put
+    the render walk outside the fold's shared ledger exactly the way the
+    unthreaded `_folded_size` calls did.
+    """
+    def bound(item):
+        budget[0] -= 1
+        if budget[0] < 0:
+            raise _FoldedSizeOverflow
+        if isinstance(item, str):
+            return len(item) * 10 + 2
+        if isinstance(item, (bytes, bytearray)):
+            return len(item) * 4 + 2
+        if isinstance(item, bool) or item is None:
+            return 6
+        if isinstance(item, int):
+            return item.bit_length() // 3 + 2
+        if isinstance(item, float):
+            return 32
+        if isinstance(item, (list, tuple, set, frozenset)):
+            total = 2
+            for element in item:
+                total += bound(element) + 2
+            return total
+        if isinstance(item, dict):
+            total = 2
+            for key, val in item.items():
+                total += bound(key) + bound(val) + 4
+            return total
+        return 32
+    return bound(value)
+
+
 def _literal_test_value_fold(node, budget=None):
     """Value of an expression built only from literals and operators.
 
@@ -5412,13 +5476,25 @@ def _literal_test_value_fold(node, budget=None):
             # an over-budget traversal resolves the same fail-closed
             # sentinel.  ``str``/``bytes`` keep their length, other scalars
             # ``len(str(right))`` as before.
+            # fix-r31 (anthropic r31 boundary#2 P1 + DS r31 sibling#2 P2
+            # read as the same family, probe-verified —
+            # _tmp/20261110-1355-r26-harvest/probe-r31-render.out): the
+            # r30 charge still under-counted the render an order of
+            # magnitude — the folded *content* metric is not the *repr*
+            # metric (a float folds to 1 and reprs to ~24 chars; a
+            # ``\\U000e0000`` folds to 1 and reprs to 10; nested containers
+            # re-add separators).  The container payload now charges the
+            # render bound itself (``_render_bound``, threaded through the
+            # same shared budget — a fresh allowance per call would undo
+            # the ledger), and the traversal overflow resolves the same
+            # fail-closed sentinel.
             if isinstance(right, (str, bytes)):
                 payload = len(right)
-            elif isinstance(right, (list, tuple)):
-                payload = _folded_size(right)
-                if payload is None:
+            elif isinstance(right, (list, tuple, set, frozenset, dict)):
+                try:
+                    payload = _render_bound(right, budget)
+                except _FoldedSizeOverflow:
                     return _LITERAL_TEST_UNRESOLVED
-                payload += 2 * len(right)
             else:
                 payload = len(str(right))
             if len(left) + len(specs) * max(payload, width) > _FOLD_MAX_ITEMS:
@@ -5452,7 +5528,16 @@ def _literal_test_value_fold(node, budget=None):
                     if isinstance(sequence, (str, bytes)):
                         size = len(sequence)
                     else:
-                        content = _folded_size(sequence)
+                        # fix-r31 (anthropic r31 boundary#1 P1,
+                        # probe-verified — probe-r31-fold-budget.out): the
+                        # content walk minted a fresh `_FOLD_SIZE_WORK_CAP`
+                        # per call, so a ``* 1``-chain re-walked ~4e6 nodes
+                        # per link while the shared ledger only charged
+                        # ``max(len, content) * 1`` — the fix-r11 invariant
+                        # ("the fold always passes its own") was broken by
+                        # the two r30 call sites.  The traversal now draws
+                        # from the same budget the caller threads.
+                        content = _folded_size(sequence, budget)
                         if content is None:
                             return _LITERAL_TEST_UNRESOLVED
                         size = max(len(sequence), content)
@@ -9231,6 +9316,66 @@ def _aggregation_audit_impl():
             or _vfm_late is not _LITERAL_TEST_UNRESOLVED):
         failures.append('#892 aggregation-audit: the value Mod cost the '
                         'audit-pass cell nothing (#1652)')
+    # fix-r31 (anthropic r31 boundary#1 P1, probe-verified —
+    # _tmp/20261110-1355-r26-harvest/probe-r31-fold-budget.out): the Mult
+    # content walk must draw from the shared audit-pass cell — with the
+    # per-call mint reverted, a ``* 1``-chain re-walks the ~250k-element
+    # child on every link while the ledger only charges ``max(len,
+    # content) * 1`` per link, and the chain folds inside a cell it never
+    # touched.  The pin keeps one fold's charge small enough that the
+    # threaded walk (6 links x ~250k visits) exhausts the reduced
+    # allowance while the minting spelling stays far under it.
+    _vfb_probe = ast.parse("[[''] * 250000] * 1 * 1 * 1 * 1 * 1 * 1",
+                           mode='eval').body
+    _AUDIT_PASS_BUDGET = [3 * _FOLD_MAX_ITEMS // 2]
+    try:
+        _vfb_fold = _literal_test_value(_vfb_probe)
+    finally:
+        _AUDIT_PASS_BUDGET = None
+    if _vfb_fold is not _LITERAL_TEST_UNRESOLVED:
+        failures.append('#892 aggregation-audit: the Mult content walk '
+                        'minted its own traversal allowance (#1652)')
+    # fix-r31 (anthropic r31 boundary#2 P1 + DS r31 sibling#2 P2 read as
+    # the same family, probe-verified —
+    # _tmp/20261110-1355-r26-harvest/probe-r31-render.out): the Mod
+    # container payload must charge the render bound, not the folded
+    # content — a float folds to 1 and reprs to ~24 characters, so the
+    # pre-fix bound let a ~25M-character render through the 1e6 cap.
+    # The oversized probe resolves the sentinel; the twin-sized control
+    # probe (999 elements, same shapes and operators) folds, so the
+    # sentinel is the render bound tripping, not the probe shape.
+    _vfr_probe = ast.parse("'%s' % ([2.2250738585072014e-308] * 30000,)",
+                          mode='eval').body
+    _vfr_ctrl = ast.parse("'%s' % ([2.2250738585072014e-308] * 999,)",
+                         mode='eval').body
+    _AUDIT_PASS_BUDGET = [3 * _FOLD_MAX_ITEMS // 2]
+    try:
+        _vfr_fold = _literal_test_value(_vfr_probe)
+    finally:
+        _AUDIT_PASS_BUDGET = None
+    _AUDIT_PASS_BUDGET = [3 * _FOLD_MAX_ITEMS // 2]
+    try:
+        _vfr_ok = _literal_test_value(_vfr_ctrl)
+    finally:
+        _AUDIT_PASS_BUDGET = None
+    if _vfr_fold is not _LITERAL_TEST_UNRESOLVED or _vfr_ok is _LITERAL_TEST_UNRESOLVED:
+        failures.append('#892 aggregation-audit: the Mod container payload '
+                        'charged the folded content, not the render (#1652)')
+    # fix-r31 (anthropic r31 boundary#2 P1, str-escape arm of the same
+    # probe — probe-r31-render.out): a ``\\U000e0000`` character reprs to
+    # 10 characters and folds to 1, so the pre-fix bound under-charged an
+    # all-ASCII-escape payload ~10x; the render bound trips the 1e6 cap
+    # where the content bound stayed at ~0.45e6.
+    _vfu_probe = ast.parse(
+        "'%s' % (('\\U000e0000' * 50000,) * 9)", mode='eval').body
+    _AUDIT_PASS_BUDGET = [3 * _FOLD_MAX_ITEMS // 2]
+    try:
+        _vfu_fold = _literal_test_value(_vfu_probe)
+    finally:
+        _AUDIT_PASS_BUDGET = None
+    if _vfu_fold is not _LITERAL_TEST_UNRESOLVED:
+        failures.append('#892 aggregation-audit: the Mod escape payload '
+                        'charged the folded content, not the render (#1652)')
     # #1652 fix-r14 (DS boundary#1 + concurrency#1 r13 P0, probe-verified —
     # fix-r14-audit/probe-r14-p0.out B): a fold stopped by the shared cell
     # must read as *possible* status evidence at every consumer — with the

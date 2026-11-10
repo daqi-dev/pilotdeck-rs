@@ -3476,6 +3476,7 @@ class RetirementScoring(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.session = _load('session_domain', common.SCRIPT / 'session_domain.py')
+        cls.native = _load('native_evidence', common.SCRIPT / 'native_evidence.py')
 
     @staticmethod
     def _frames(send_only=False, final=False):
@@ -5150,8 +5151,11 @@ class RetirementScoring(unittest.TestCase):
                  'PROCESS_WITNESS', 'unknown process'),
                 ('event pid float', ('evidence', 'execWitness', 'events', 0, 'pid'), 1.0,
                  'PROCESS_WITNESS', 'unknown process'),
+                # fix-r31: the exec-identity comparison itself went
+                # same_json, so a boolean event ppid is caught one gate
+                # earlier — at the identity mismatch, not the parent gate.
                 ('event ppid', ('evidence', 'execWitness', 'events', 0, 'ppid'), True,
-                 'PROCESS_WITNESS', 'child exec before parent'),
+                 'PROCESS_WITNESS', 'exec identity disagrees with recorded launch identity'),
                 ('egress ownerPid', ('evidence', 'networkWitness', 'calls', 0, 'ownerPid'),
                  True, 'HIDDEN_HELPER', 'undeclared helper'),
                 ('contract launcherPid', ('contract', 'launcherPid'), True,
@@ -5208,6 +5212,173 @@ class RetirementScoring(unittest.TestCase):
             self.assertNotEqual(raised.exception.rule, 'CONNECTIONS',
                                 'fix-r30 equal-type connections pass the CONNECTIONS gate, '
                                 f'not {raised.exception}')
+
+    def test_session_windows_rejects_a_folded_host_pid(self):
+        # fix-r31 (r31 structural round, DS sibling#1 P1 + anthropic
+        # sibling#1 P2 — the same finding from both lineages, probe-verified
+        # — _tmp/20261110-1355-r26-harvest/probe-r31-hostpid.out): fix-r30
+        # type-gated only the entry side of the host-owned comparison, so a
+        # host record with ``pid: True`` folded onto an entry ``pid: 1``
+        # through ``True == 1`` and the host-owned gate passed.  The host
+        # side now carries the same type gate before any ``==`` sees it.
+        witness = {'complete': True, 'source': 'strace-openat',
+                   'opens': [{'path': '/x/chats/a.b.jsonl', 'pid': 1, 'afterExecs': 0,
+                              'flags': 'r', 'result': '3'}]}
+        evidence = {'processes': [{'role': 'host', 'pid': 1},
+                                   {'role': 'sidecar', 'pid': 2}],
+                    'transcriptWitness': witness}
+        cases, paths = ['a/b'], ['/x/chats/a.b.jsonl']
+        for bad in (True, False, 0, 1.0):
+            corrupt = json.loads(json.dumps(evidence))
+            corrupt['processes'][0]['pid'] = bad
+            with self.assertRaises(self.native.Incomplete) as raised:
+                self.native.session_windows(corrupt, cases, paths)
+            self.assertIn('plain-integer host pid', str(raised.exception),
+                          f'fix-r31 host pid {bad!r}')
+        # The equal-type control passes the whole window audit.
+        self.native.session_windows(json.loads(json.dumps(evidence)), cases, paths)
+        # The entry side keeps its fix-r30 gate (the channel must stay
+        # closed on both sides independently).
+        flipped = json.loads(json.dumps(evidence))
+        flipped['transcriptWitness']['opens'][0]['pid'] = True
+        with self.assertRaises(self.native.Incomplete) as raised:
+            self.native.session_windows(flipped, cases, paths)
+        self.assertIn('host-owned session transcripts', str(raised.exception))
+
+    def test_audit_native_rejects_a_folded_contract_binding_generation(self):
+        # fix-r31 (r31 structural round, DS sibling#3 P1): the hello binding
+        # gate compared the frame binding and the contract binding with a
+        # bare dict ``==`` — the frame side was type-gated but the contract
+        # side was not, so ``{"generation": true}`` folded onto a witnessed
+        # ``{"generation": 1}`` and the binding gate passed.  The comparison
+        # is same_json now (#2039 semantics: booleans are type-strict; an
+        # int/float numeric pair like ``1.0`` vs ``1`` is the same JSON
+        # number by the frozen value rule, so the boolean channel is the
+        # fold this pin kills — the float spelling is not a difference).
+        # The rows below are wire-complete: the observer row is a real
+        # receive text frame carrying the hello, so it clears
+        # _audit_observer_rows (wire metadata + independent decoder replay).
+        with tempfile.TemporaryDirectory(prefix='pdrs-1355-r31-') as folder:
+            binary = Path(folder) / 'bin'
+            binary.write_bytes(b'witness-probe-binary')
+            argv = ['probe']
+            sha = self.session.digest(binary)
+            hello = {'type': 'hello_ok', 'protocolVersion': '1.2',
+                     'interactionBinding': {'generation': 1, 'connectionId': 'c1'}}
+            payload = json.dumps(hello).encode()
+            self.assertLess(len(payload), 126, 'single-byte length code required here')
+            row = {'connection': 1, 'direction': 'receive',
+                   'wireHex': (bytes([0x81, len(payload)]) + payload).hex(),
+                   'frame': hello,
+                   'wire': {'opcode': 1, 'fin': True, 'rsv': 0, 'masked': False,
+                            'lengthCode': len(payload), 'payloadLength': len(payload)}}
+            base = {'evidence': {
+                'topology': 'native',
+                'processes': [{'pid': 1, 'ppid': 1, 'argv': argv, 'role': 'host',
+                               'sha256': sha, 'executable': str(binary)}],
+                'execWitness': {'complete': True, 'source': 'exec-monitor',
+                                'events': [{'pid': 1, 'event': 'exec', 'ppid': 1,
+                                            'argv': argv, 'executable': str(binary),
+                                            'sha256': sha},
+                                           {'pid': 1, 'event': 'exit'}]},
+                'networkWitness': {'complete': True,
+                                   'calls': [{'target': '127.0.0.1:29000',
+                                              'ownerPid': 1}]},
+                'expectedCases': ['c1'], 'executedCases': ['c1'],
+                'cleanup': {'allStopped': True},
+                'surfaces': {k: {'status': 'RECORDED',
+                                 'artifacts': [{'path': str(binary), 'sha256': sha}]}
+                             for k in ('output', 'disk', 'http')},
+                'observer': {'rows': [row], 'connections': 1}},
+                'contract': {'host': 'rust', 'processRoles': ['host'],
+                             'binaries': {'host': {'path': str(binary), 'sha256': sha,
+                                                  'argv': argv}},
+                             'launcherPid': 1,
+                             'externalEndpoints': ['127.0.0.1:29000'],
+                             'connections': 1, 'cases': ['c1'],
+                             'bindingSource': 'observer-hello',
+                             'binding': {'generation': 1, 'connectionId': 'c1'}}}
+            for tag, binding in (
+                    ('boolean generation', {'generation': True, 'connectionId': 'c1'}),
+                    ('honest value mismatch', {'generation': 2, 'connectionId': 'c1'})):
+                case = json.loads(json.dumps(base))
+                case['contract']['binding'] = binding
+                with self.assertRaises(self.session.EvidenceError) as raised:
+                    self.session.audit_native(case['evidence'], case['contract'])
+                self.assertEqual(raised.exception.rule, 'BINDING', f'fix-r31 {tag}')
+                self.assertIn('invalid/wrong/old binding', str(raised.exception),
+                              f'fix-r31 {tag}')
+            # The equal-type control (the binding the witness actually
+            # recorded) passes the whole native audit.
+            self.session.audit_native(json.loads(json.dumps(base['evidence'])),
+                                      json.loads(json.dumps(base['contract'])))
+
+    def test_compare_validate_footer_counts_refuse_boolean_folds(self):
+        # fix-r31 (r31 structural round, DS sibling#4 P2 read as the same
+        # family; #2424 :290/:302/:305): the complete.json footer's counts
+        # are external document reads compared against numbers — a boolean
+        # or float count folded onto the true count through ``True == 1`` /
+        # ``1.0 == 1`` and passed the footer gates.  Real-int gates now
+        # precede both ``==`` uses.  The tree below is the minimal manifest
+        # tree that reaches the footer gates; every later failure it hits
+        # is an honest unrelated oracle, never the footer rules.
+        with tempfile.TemporaryDirectory(prefix='pdrs-1355-r31-footer-') as folder:
+            root = Path(folder)
+            run_doc = {'status': 'DONE', 'audit': {'allStopped': True},
+                       'scenarios': {name: {'exitCode': 0} for name in common.SCENARIOS}}
+            (root / 'run.json').write_text(json.dumps(run_doc))
+            for name in common.SCENARIOS:
+                scenario = root / 'scenarios' / name
+                scenario.mkdir(parents=True)
+                (scenario / 'result.json').write_text(
+                    json.dumps({'scenario': name, 'status': 'PASS'}))
+                (scenario / 'complete.json').write_text(json.dumps(
+                    {'scenario': name, 'complete': True,
+                     'records': 0 if name == 'http' else 1, 'connections': 1}))
+                if name != 'http':
+                    (scenario / 'frames.jsonl').write_text(json.dumps(
+                        {'seq': 1, 'connection': 1, 'direction': 'send', 'frame': 'x'}) + '\n')
+            target = root / 'scenarios' / 'auth'
+
+            def footer_errors(records, connections):
+                complete = json.loads((target / 'complete.json').read_text())
+                complete['records'], complete['connections'] = records, connections
+                (target / 'complete.json').write_text(json.dumps(complete))
+                _, errors = compare_module.validate(root)
+                return [error['detail'] for error in errors]
+
+            for records, connections, marker in (
+                    (True, 1, 'count/footer mismatch'),
+                    (1.0, 1, 'count/footer mismatch'),
+                    (1, True, 'connection count/identity mismatch'),
+                    (1, 1.0, 'connection count/identity mismatch')):
+                details = footer_errors(records, connections)
+                self.assertIn(f'auth: {marker}', details,
+                              f'fix-r31 footer fold records={records!r} connections={connections!r}')
+            # The equal-type control: the honest counts pass both footer
+            # gates; whatever else fails is a later, unrelated oracle.
+            honest = footer_errors(1, 1)
+            self.assertNotIn('auth: count/footer mismatch', honest)
+            self.assertNotIn('auth: connection count/identity mismatch', honest)
+
+    def test_wire_metadata_cross_check_refuses_int_folds_of_booleans(self):
+        # fix-r31 (r31 structural round; #2424 :251): the decoded wire
+        # metadata carries bools and ints — a recorded ``fin: 1`` or
+        # ``masked: 0`` folded onto a decoded ``fin: True`` / ``masked:
+        # False`` through ``1 == True`` and the wire cross-check passed.
+        # The metadata comparison is same_json now (type-strict on
+        # booleans, #1372 semantics on numbers).
+        payload = b'{}'
+        row = {'direction': 'receive', 'wireHex': (bytes([0x81, len(payload)]) + payload).hex(),
+               'frame': {},
+               'wire': {'opcode': 1, 'fin': True, 'rsv': 0, 'masked': False,
+                        'lengthCode': len(payload), 'payloadLength': len(payload)}}
+        self.assertEqual(wire_frame(row), bytes([0x81, len(payload)]).hex())
+        for field, folded in (('fin', 1), ('masked', 0)):
+            corrupt = json.loads(json.dumps(row))
+            corrupt['wire'][field] = folded
+            with self.assertRaises(ValueError):
+                wire_frame(corrupt)
 
     def test_forwarding_control_normalizes_a_corrupt_rows_sample_before_injection(self):
         # fix-r29 (DS r28-b simplify#2 P2, read as P1 by the P2b rule — the
@@ -5354,12 +5525,252 @@ def _fake_observable_network_verdict(connections):
     # class-4 mutation's own read can be pinned to ``_retirement_list_rows``
     # instead of raising TypeError out of the controls; the status it returns
     # is the fake's own, never a batch aggregation.
+    # fix-r31 (DS simplify#1 P2): the stand-in reads through the one real
+    # normalization instead of an inline twin, so the pinned read cannot
+    # drift from ``_retirement_list_rows``.
     rows = connections.get('rows')
-    rows = rows if isinstance(rows, list) else []
+    rows = _load('session_domain', common.SCRIPT / 'session_domain.py')._retirement_list_rows(rows)
     undeclared = [row['peer'] for row in rows if isinstance(row, dict)]
     return {'rule': 'NETWORK_FALLBACK', 'undeclared': undeclared,
             'unparsed': [], 'observable': True,
             'status': 'FAIL' if undeclared else 'PASS'}
+
+
+# fix-r31 (r31 structural round — the coordinator's fallback order ②: one
+# structural round closes the comparison-semantics collapse channel as a
+# family instead of hole-by-hole): every numeric/boolean-fold-capable
+# comparison site in the three frozen gateway-parity documents is either
+# behind a real-type gate (same_json / ``type(x) is int`` / a realness rule)
+# or is registered below with the reason its domain cannot carry the fold.
+# The AST sweep (``_comparison_family_sites``) and the registry must agree
+# exactly in both directions:
+#   * a NEW site appears when someone reintroduces a bare ``==``/``<`` on a
+#     document read (or reverts a same_json gate back to ``==``) — the test
+#     goes red until the site is either gated or registered with a reason;
+#   * a STALE entry appears when a registered site moves, is renamed or is
+#     itself gated — the test goes red until the ledger is updated on
+#     purpose.  The ledger is the guarantee-scope boundary the PR body
+#     states: comparisons outside this family definition (string domains,
+#     apparatus-internal constructions the sweep already excludes) are the
+#     "enumerated face" the r31 scope-narrowing order declares.
+_COMPARISON_POINT_DOCUMENTS = ('session_domain.py', 'native_evidence.py', 'compare.py')
+
+# The family definition is the guarantee boundary.  DOC_NAMES names every
+# variable that may hold an external document (witness JSON, footer, manifest,
+# launch doc); the one-level assignment tracker adds names assigned directly
+# from a loader call or a display literal construction.  A comparison site
+# is in the family when one operand reads such a name and the other operand
+# is a document read, a document construction or a numeric expression.
+_COMPARISON_DOC_NAMES = {
+    'evidence', 'contract', 'observer', 'complete', 'run', 'witness', 'launch',
+    'processes', 'row', 'rows', 'frame', 'binding', 'case', 'cases', 'controls',
+    'oracle', 'capture', 'launch_doc', 'evidence_doc', 'checked', 'replay',
+    'ledger', 'drift', 'profile', 'capsule', 'report', 'result', 'results',
+    'entry', 'opens', 'events', 'calls', 'connections', 'census', 'census_rows',
+    'declared', 'round_row', 'mutated', 'folder', 'rel', 'value', 'key',
+    'http', 'quirks', 'chunks', 'measured', 'manifest', 'registration',
+    'observations', 'rounds', 'outcomes', 'sources', 'driver', 'expectation',
+    'expectations', 'submitted', 'received', 'finals', 'sends', 'responses',
+    'final_events', 'actual_pids', 'by_pid', 'live', 'started', 'exited',
+}
+_COMPARISON_DOC_LOADERS = {'load', 'read', 'json_loads'}
+
+
+def _comparison_doc_construction(node):
+    import ast
+
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name) and (
+                node.func.id in _COMPARISON_DOC_LOADERS or node.func.id == 'load'):
+            return True
+        if isinstance(node.func, ast.Attribute) and node.func.attr == 'loads':
+            return True
+    return isinstance(node, (ast.Dict, ast.List, ast.Set, ast.ListComp, ast.DictComp))
+
+
+def _comparison_doc_read(node, constructed):
+    import ast
+
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+            and node.func.attr == 'get':
+        return _comparison_doc_read(node.func.value, constructed) \
+            or _comparison_doc_base(node.func.value, constructed)
+    if isinstance(node, ast.Subscript):
+        return _comparison_doc_read(node.value, constructed) \
+            or _comparison_doc_base(node.value, constructed)
+    if isinstance(node, ast.Attribute):
+        return _comparison_doc_read(node.value, constructed) \
+            or _comparison_doc_base(node.value, constructed)
+    return _comparison_doc_base(node, constructed)
+
+
+def _comparison_doc_base(node, constructed):
+    import ast
+
+    return isinstance(node, ast.Name) and (
+        node.id in _COMPARISON_DOC_NAMES or node.id in constructed)
+
+
+def _comparison_numeric_expr(node):
+    import ast
+
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) \
+            and not isinstance(node.value, bool):
+        return True
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name) and node.func.id == 'len':
+            return True
+        if isinstance(node.func, ast.Attribute) \
+                and node.func.attr in ('bit_length', 'count'):
+            return True
+        return any(_comparison_numeric_expr(argument) for argument in node.args)
+    if isinstance(node, ast.BinOp):
+        return _comparison_numeric_expr(node.left) or _comparison_numeric_expr(node.right)
+    if isinstance(node, ast.UnaryOp):
+        return _comparison_numeric_expr(node.operand)
+    return False
+
+
+def _comparison_family_sites():
+    """Every fold-capable Compare site in the three frozen documents."""
+    import ast
+
+    sites = set()
+    for name in _COMPARISON_POINT_DOCUMENTS:
+        src = (common.SCRIPT / name).read_text()
+        tree = ast.parse(src)
+        parents, constructed = {}, set()
+        stack = [(tree, [])]
+        while stack:
+            node, chain = stack.pop()
+            parents[node] = chain
+            for child in ast.iter_child_nodes(node):
+                stack.append((child, chain + [node]))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) \
+                            and _comparison_doc_construction(node.value):
+                        constructed.add(target.id)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Compare):
+                continue
+            ops = {ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE}
+            if not any(isinstance(op, tuple(ops)) for op in node.ops):
+                continue
+            operands = [node.left] + node.comparators
+            doc_sides = [_comparison_doc_read(operand, constructed)
+                         for operand in operands]
+            if not any(doc_sides):
+                continue
+            if not any(doc_sides[i] and (doc_sides[j] or _comparison_numeric_expr(operands[j]))
+                       for i in range(len(operands)) for j in range(len(operands)) if i != j):
+                continue
+            snippet = ast.get_source_segment(src, node) or '?'
+            snippet = ' '.join(snippet.split())
+            if len(snippet) > 140:
+                snippet = snippet[:137] + '...'
+            function = '<module>'
+            for ancestor in reversed(parents[node]):
+                if isinstance(ancestor, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    function = ancestor.name
+                    break
+            sites.add((name, function, node.lineno, snippet))
+    return sites
+
+
+# (document, function, line, snippet, kind, reason) — kind is 'GATE' (a
+# real-type gate guards the comparison) or 'EXEMPT' (the domain cannot
+# carry a boolean/float fold; the reason says why).  Line and snippet both
+# anchor each entry: a moved site or a same-line drift turns the ledger red.
+_COMPARISON_POINT_REGISTRY = (
+    ('session_domain.py', 'validate_calibration', 1125, "data['cell'] == cell['name']",
+     'EXEMPT', 'string domain: cell names are identity strings on both sides'),
+    ('session_domain.py', 'validate_calibration', 1148,
+     "manifest['totalMeasurements'] == len(observations)",
+     'GATE', 'fix-r31: a real-int gate (type is int) precedes the =='),
+    ('session_domain.py', 'validate_calibration', 1166, "launch.get('exitCode') == 0",
+     'GATE', 'fix-r31: a real-int gate precedes the =='),
+    ('session_domain.py', 'audit_native', 1256, 'started == exited == set(actual_pids)',
+     'GATE', 'operands gated upstream: fix-r8 real-pid census + fix-r29 event-pid type gates'),
+    ('session_domain.py', 'audit_native', 1285,
+     "observer['connections'] == len({r['connection'] for r in observer['rows']})",
+     'GATE', 'fix-r30: _retirement_real_count precedes on both sides'),
+    ('session_domain.py', 'audit_native', 1286,
+     "observer['connections'] == contract['connections']",
+     'GATE', 'fix-r30: _retirement_real_count precedes on both sides'),
+    ('session_domain.py', 'audit_native', 1313, "binding['generation'] >= 1",
+     'GATE', 'type is int precedes inside the same condition'),
+    ('session_domain.py', '_load_native_artifacts', 1427, 'named == expected',
+     'GATE', 'isinstance str gate precedes'),
+    ('session_domain.py', '_retirement_census', 1752, 'result.returncode == 0',
+     'EXEMPT', 'subprocess returncode is always a plain int'),
+    ('session_domain.py', '_retirement_real_pid', 1815, '0 < value <= 2 ** 31 - 1',
+     'GATE', 'this IS the realness gate body (bool excluded before the comparison)'),
+    ('session_domain.py', '_retirement_real_count', 1829, 'value >= 0',
+     'GATE', 'this IS the realness gate body (type is int precedes)'),
+    ('session_domain.py', '_retirement_real_port', 1846, '0 < value <= 65535',
+     'GATE', 'this IS the realness gate body (bool excluded before the comparison)'),
+    ('session_domain.py', '_retirement_connections', 2013, 'result.returncode != 0',
+     'EXEMPT', 'subprocess returncode is always a plain int'),
+    ('session_domain.py', '_retirement_listener_verdict', 2116, 'addresses != expected',
+     'EXEMPT', 'string domain: only string addresses can equal the constructed endpoint list'),
+    ('session_domain.py', 'score_retirement_round', 2359, 'events.get(identifier, 0) < 1',
+     'EXEMPT', "events is the scorer's own int-valued counter over wire frames"),
+    ('session_domain.py', '_retirement_controls', 2622, "mutated.get('outcomes') == outcomes",
+     'EXEMPT', 'apparatus-compared own constructions; a fold only fails the control harder'),
+    ('session_domain.py', '_retirement_baseline_revision', 3237, 'result.returncode == 0',
+     'EXEMPT', 'subprocess returncode is always a plain int'),
+    ('session_domain.py', 'main', 3560, "report['frozen']['exitCode'] != 0",
+     'EXEMPT', 'apparatus-produced report field (frozen-check exit code)'),
+    ('session_domain.py', 'main', 3576, "audit['exitCode'] == 0",
+     'EXEMPT', 'apparatus-produced audit field (launcher exit code)'),
+    ('session_domain.py', 'main', 3624, "report['frozen']['exitCode'] != 0",
+     'EXEMPT', 'apparatus-produced report field (frozen-check exit code)'),
+    ('native_evidence.py', 'session_windows', 424,
+     "0 <= entry['afterExecs'] <= len(processes)",
+     'GATE', 'type is int precedes inside the same condition (fix-r30)'),
+    ('native_evidence.py', 'session_windows', 436, 'windows == [0] + [1] * len(cases)',
+     'EXEMPT', 'windows is sum()-built over role tests, always plain ints'),
+    ('native_evidence.py', 'session_chain', 641, "frame['seq'] == len(received[request_id])",
+     'GATE', 'type is int precedes inside the same condition'),
+    ('compare.py', 'validate', 327, 'connections != set(range(1, connection_count + 1))',
+     'GATE', 'fix-r31: a real-int gate precedes the comparison'),
+    ('compare.py', 'validate', 333, "row['connection'] < 1",
+     'GATE', 'fix-r31 row gate: type is int precedes in the same condition'),
+    ('compare.py', 'validate', 347, "row['connection'] != 4",
+     'GATE', 'fix-r31 row gate precedes the auth special case'),
+    ('compare.py', 'validate', 355, "binding['generation'] < 1",
+     'GATE', 'type is int precedes inside the same condition'),
+    ('compare.py', 'validate', 381, "frame['seq'] != expected",
+     'GATE', 'type is int precedes inside the same condition'),
+    ('compare.py', 'validate', 476, "body != row['body']",
+     'EXEMPT', 'string domain: decoded UTF-8 chunk text vs recorded body'),
+    ('compare.py', 'validate', 501, "row['connection'] == 4",
+     'GATE', 'quirks rows already passed the fix-r31 row gate above'),
+)
+
+
+class ComparisonPointLedger(unittest.TestCase):
+    """fix-r31: the comparison-point ledger matches the family AST sweep."""
+
+    def test_registered_comparison_points_match_the_ast_family_sweep(self):
+        sites = _comparison_family_sites()
+        keys = {(entry[0], entry[1], entry[2], entry[3])
+                for entry in _COMPARISON_POINT_REGISTRY}
+        self.assertEqual(len(keys), len(_COMPARISON_POINT_REGISTRY),
+                         'duplicate ledger entries')
+        self.assertEqual(
+            sorted(sites - keys), [],
+            'unregistered comparison sites in the frozen documents '
+            '(gate them or register them with a reason)')
+        self.assertEqual(
+            sorted(keys - sites), [],
+            'stale ledger entries (a registered site moved, was renamed '
+            'or was gated — update the ledger on purpose)')
+        self.assertTrue(all(entry[4] in ('GATE', 'EXEMPT')
+                            and entry[5] for entry in _COMPARISON_POINT_REGISTRY),
+                        'every ledger entry carries a kind and a reason')
 
 
 if __name__ == '__main__':
