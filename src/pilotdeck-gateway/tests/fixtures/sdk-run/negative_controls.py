@@ -11,7 +11,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic
 from negative_suite import ReceiptRun, judge, passed
 
 root = Path(__file__).resolve().parents[5]
@@ -153,7 +153,11 @@ def main():
                         killed,reason,_ = judge(result,'',[(test,assertion)],receipt)
                         item.update(status='KILLED' if killed else ('SURVIVED' if passed(result,test) else 'INVALID'),reason=reason)
                 finally:
-                    path.write_bytes(originals[path])
+                    # Only restore bytes supplied by the official HEAD guard.
+                    # #1903: one atomic rename, never a truncating write -- a
+                    # SIGKILL mid-restore must not leave a half-written common
+                    # module that fails every sibling suite's baseline.
+                    write_source_atomic(root, path, originals[path])
                     if path.read_bytes() != originals[path]:
                         raise RuntimeError('restoration mismatch')
                 if not compile_only and not passed(run(name+'-restored',test,env),test):
