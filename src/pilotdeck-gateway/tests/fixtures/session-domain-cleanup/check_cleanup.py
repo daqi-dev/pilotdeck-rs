@@ -22041,6 +22041,11 @@ def negative_restored_replays(output):
     ``Path.write_*`` guard intercepts -- pin that entry too, or the replay
     really renames the guarded sources on disk (no tree lock, no parity
     lease; an inode probe confirmed it before this guard existed).
+
+    r2 hardening: the guard is fail-closed (``Path(path)`` coercion; a call
+    outside the guarded set is recorded, never forwarded) and asserts the
+    publish *role* -- the mutant payload itself must be seen through the
+    guarded global, not just any call count.
     """
     nc = load_negative_controls()
     name = nc.MUTATIONS[0][0]
@@ -22049,6 +22054,7 @@ def negative_restored_replays(output):
     real_write_bytes = Path.write_bytes
     real_write_atomic = nc.write_source_atomic
     atomic_calls = []
+    unguarded = []
 
     def guarded_write_text(path, data, *args, **kwargs):
         if path in sources:
@@ -22061,10 +22067,17 @@ def negative_restored_replays(output):
         return real_write_bytes(path, data, *args, **kwargs)
 
     def guarded_write_atomic(root, path, data, *, mode=None):
-        if path in sources:
-            atomic_calls.append(Path(path))
+        # Fail-closed on both axes (r2 concurrency #1 / boundary #2): the
+        # real ``write_source_atomic`` coerces ``path = Path(path)`` on its
+        # first line, so an un-coerced membership test would let a str
+        # spelling of a guarded source through to the real rename; and every
+        # call in this replay must hit the guard -- one that slips outside the
+        # guarded set is recorded, never forwarded, and fails the case below.
+        if Path(path) in sources:
+            atomic_calls.append((Path(path), bytes(data)))
             return None
-        return real_write_atomic(root, path, data, mode=mode)
+        unguarded.append(Path(path))
+        return None
 
     @contextlib.contextmanager
     def fake_mutating(*_args, **_kwargs):
@@ -22100,6 +22113,8 @@ def negative_restored_replays(output):
         nc.sys.argv = ['negative_controls.py', '--output', str(case), '--only', name]
         nc.sys.platform = platform
         intercepted = len(atomic_calls)
+        unguarded_before = len(unguarded)
+        pristine = {source: source.read_bytes() for source in sources}
         try:
             with patch.object(Path, 'write_text', guarded_write_text), \
                     patch.object(Path, 'write_bytes', guarded_write_bytes):
@@ -22108,7 +22123,8 @@ def negative_restored_replays(output):
             observed = (report.get('status'), code)
             failures = [] if observed == want else [
                 f'#164-fix-r7 negative-restored {tag}: {observed!r}, want {want!r}']
-            if len(atomic_calls) == intercepted:
+            case_calls = atomic_calls[intercepted:]
+            if not case_calls:
                 # The guard itself must stay live: if the replayed main()
                 # stops resolving its writes through write_source_atomic
                 # (or the guard is dropped again), the in-memory promise
@@ -22116,6 +22132,19 @@ def negative_restored_replays(output):
                 failures.append(
                     f'#2743 negative-restored {tag}: the replay never reached '
                     'write_source_atomic -- the in-memory write guard is dead')
+            elif not any(data != pristine.get(path)
+                         for path, data in case_calls):
+                # The mutant publish must resolve through the guarded global
+                # too: a publish that escapes it writes real bytes while the
+                # restores keep the liveness count non-zero (r2 boundary #2).
+                failures.append(
+                    f'#2743 negative-restored {tag}: the mutant publish never '
+                    'resolved through the guarded write_source_atomic global')
+            if unguarded[unguarded_before:]:
+                failures.append(
+                    f'#2743 negative-restored {tag}: write_source_atomic was '
+                    f'called outside the guarded set: '
+                    f'{[str(p) for p in unguarded[unguarded_before:]]}')
         except Exception as error:
             observed = (None, None)
             failures = [f'#164-fix-r7 negative-restored {tag}: '
