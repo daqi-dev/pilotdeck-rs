@@ -225,9 +225,9 @@ impl Requests {
         // blank-key guard for it — and only the reservation is skipped, by
         // the `owner_reserved` conjunct.
         let reserved_key = params.get("sessionKey").and_then(JsValue::as_string);
-        let owner = self.live_transcript_owner(reserved_key.as_ref());
+        let owner = self.live_transcript_owner(reserved_key);
         let owner_reserved = matches!(
-            (&owner, reserved_key.as_ref()),
+            (&owner, reserved_key),
             (Some(owner), Some(key)) if owner != key && trimmed_string_is_non_empty(key)
         );
         let owner_guard = self
@@ -328,9 +328,9 @@ impl Requests {
         // a blank key before the busy gate can consult it) and only the
         // reservation is skipped.
         let reserved_key = params.get("sessionKey").and_then(JsValue::as_string);
-        let owner = self.live_transcript_owner(reserved_key.as_ref());
+        let owner = self.live_transcript_owner(reserved_key);
         let owner_reserved = matches!(
-            (&owner, reserved_key.as_ref()),
+            (&owner, reserved_key),
             (Some(owner), Some(key)) if owner != key && trimmed_string_is_non_empty(key)
         );
         let owner_guard = self
