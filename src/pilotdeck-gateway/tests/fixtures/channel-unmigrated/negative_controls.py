@@ -178,6 +178,36 @@ MUTATIONS = [
      'const SUBSET_CHANNEL_KEYS: [&str; 20] = [\n    "probe1853",\n    "wecom",',
      'loader_keys_partition_rejected_and_implemented',
      '#2301 every module subset key is implemented or a bundle key'),
+    # M20 (#2367 boundary#2): the module subset whitelist loses the
+    # native-mount key `slack`; the implemented group's whitelist cell is the
+    # kill — M18 pins that cell through `sms` only (same cell, different key,
+    # the M13/M16 precedent), so the slack spelling had no dedicated row.
+    # The array length is decremented alongside, exactly like M18, so the
+    # mutant compiles.
+    ('subset-whitelist-loses-slack', source / 'tests.rs',
+     'const SUBSET_CHANNEL_KEYS: [&str; 19] = [\n    "wecom",\n    "discord",\n    "whatsapp",\n    "dingtalk",\n    "email",\n    "qq",\n    "telegram",\n    "matrix",\n    "signal",\n    "mattermost",\n    "homeassistant",\n    "weixin",\n    "feishu",\n    "apiServer",\n    "webhook",\n    "wecomCallback",\n    "sms",\n    "bluebubbles",\n    "slack",\n];',
+     'const SUBSET_CHANNEL_KEYS: [&str; 18] = [\n    "wecom",\n    "discord",\n    "whatsapp",\n    "dingtalk",\n    "email",\n    "qq",\n    "telegram",\n    "matrix",\n    "signal",\n    "mattermost",\n    "homeassistant",\n    "weixin",\n    "feishu",\n    "apiServer",\n    "webhook",\n    "wecomCallback",\n    "sms",\n    "bluebubbles",\n];',
+     'loader_keys_partition_rejected_and_implemented',
+     '#2301 every implemented loader key is in the module subset whitelist'),
+    # M21 (#2367 sibling#2): the module subset whitelist loses the bundle key
+    # `weixin`; only the bundle reverse closure (#2367) catches it — the
+    # subset loop iterates the whitelist itself and every behavior cell stays
+    # green, while `unmigrated_subset_channels_stay_loadable` silently tests
+    # one key fewer. Array length decremented like M18/M20.
+    ('subset-whitelist-loses-bundle-weixin', source / 'tests.rs',
+     'const SUBSET_CHANNEL_KEYS: [&str; 19] = [\n    "wecom",\n    "discord",\n    "whatsapp",\n    "dingtalk",\n    "email",\n    "qq",\n    "telegram",\n    "matrix",\n    "signal",\n    "mattermost",\n    "homeassistant",\n    "weixin",\n    "feishu",\n    "apiServer",\n    "webhook",\n    "wecomCallback",\n    "sms",\n    "bluebubbles",\n    "slack",\n];',
+     'const SUBSET_CHANNEL_KEYS: [&str; 18] = [\n    "wecom",\n    "discord",\n    "whatsapp",\n    "dingtalk",\n    "email",\n    "qq",\n    "telegram",\n    "matrix",\n    "signal",\n    "mattermost",\n    "homeassistant",\n    "feishu",\n    "apiServer",\n    "webhook",\n    "wecomCallback",\n    "sms",\n    "bluebubbles",\n    "slack",\n];',
+     'loader_keys_partition_rejected_and_implemented',
+     '#2367 every bundle key is in the module subset whitelist'),
+    # M22 (#2367 review r2 MM sibling): the same bundle cell loses the other
+    # spelling `feishu` — same cell, different key, the M13/M16 and M18/M20
+    # precedent (a dedicated row per spelling). Array length decremented like
+    # M18/M20/M21 so the mutant compiles.
+    ('subset-whitelist-loses-bundle-feishu', source / 'tests.rs',
+     'const SUBSET_CHANNEL_KEYS: [&str; 19] = [\n    "wecom",\n    "discord",\n    "whatsapp",\n    "dingtalk",\n    "email",\n    "qq",\n    "telegram",\n    "matrix",\n    "signal",\n    "mattermost",\n    "homeassistant",\n    "weixin",\n    "feishu",\n    "apiServer",\n    "webhook",\n    "wecomCallback",\n    "sms",\n    "bluebubbles",\n    "slack",\n];',
+     'const SUBSET_CHANNEL_KEYS: [&str; 18] = [\n    "wecom",\n    "discord",\n    "whatsapp",\n    "dingtalk",\n    "email",\n    "qq",\n    "telegram",\n    "matrix",\n    "signal",\n    "mattermost",\n    "homeassistant",\n    "weixin",\n    "apiServer",\n    "webhook",\n    "wecomCallback",\n    "sms",\n    "bluebubbles",\n    "slack",\n];',
+     'loader_keys_partition_rejected_and_implemented',
+     '#2367 every bundle key is in the module subset whitelist'),
 ]
 
 

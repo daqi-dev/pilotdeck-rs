@@ -682,12 +682,16 @@ for (const token of [undefined, '', '   ', 'ok']) {
 // socketRequests: real loopback TS server framing
 // ---------------------------------------------------------------------------
 const socketRequests: any[] = [];
-function rawHttp(port: number, { method, path, headers = [], body }: any): Promise<{ status: number; contentType: string | null; body: string }> {
+function rawHttp(port: number, { method, path, headers = [], body, setHost }: any): Promise<{ status: number; contentType: string | null; body: string }> {
   return new Promise((resolveRequest, rejectRequest) => {
     // A raw header array suppresses Node's automatic Host header, which makes
     // the HTTP/1.1 parser reject the request before the handler runs. Add the
     // Host a normal client sends while still allowing raw duplicate headers.
-    const request = httpRequest({ host: '127.0.0.1', port, method, path, headers: [['host', `127.0.0.1:${port}`], ...headers] as any }, (response) => {
+    // #2152: `setHost: false` (Node `http.request`'s own option, the same knob
+    // the api-server generator records) suppresses it for the missing-Host
+    // cell — an admitted request would turn the 400 into a routed answer.
+    const hostHeaders = setHost === false ? [] : [['host', `127.0.0.1:${port}`]];
+    const request = httpRequest({ host: '127.0.0.1', port, method, path, setHost: setHost !== false, headers: [...hostHeaders, ...headers] as any }, (response) => {
       const chunks: Buffer[] = [];
       response.on('data', (chunk) => chunks.push(chunk));
       response.on('end', () => resolveRequest({
@@ -731,6 +735,15 @@ function rawHttp(port: number, { method, path, headers = [], body }: any): Promi
       ['bom-body', { method: 'POST', path: '/v1/gateway-user-dialog-store/clear', headers: [authHeader], body: `\uFEFF${JSON.stringify({ version: 1, key })}` }],
       ['invalid-utf8', { method: 'POST', path: '/v1/gateway-user-dialog-store/clear', headers: [authHeader], body: Buffer.from([0x7b, 0xff, 0x7d]) }],
       ['content-type-text', { method: 'POST', path: '/v1/gateway-user-dialog-store/clear', headers: [authHeader, ['content-type', 'text/plain']], body: JSON.stringify({ version: 1, key }) }],
+      // #2152: the two parser-admission cells. `FROB` is outside Node's
+      // `http.METHODS`, so llhttp rejects the method token before the
+      // handler runs (the bare parser 400); the HTTP/1.1 request without a
+      // `Host` header is rejected by `_http_server.js` first (its 400 carries
+      // a Date and a chunked empty body). Both record `setHost` so the Rust
+      // replay reads the knob fail-closed: a Host line sent for the second
+      // cell would turn it into an admitted routed answer.
+      ['unknown-method', { method: 'FROB', path: '/v1/gateway-user-dialog-store/clear' }],
+      ['missing-host', { method: 'GET', path: '/v1/gateway-user-dialog-store/clear', setHost: false }],
     ] as const;
     for (const [name, request] of cases) {
       const result = await rawHttp(port, request);

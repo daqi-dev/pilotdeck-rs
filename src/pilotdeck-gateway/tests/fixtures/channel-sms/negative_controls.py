@@ -3,11 +3,13 @@
 positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one sms-channel behavior and is killed by the oracle replay
-cell or dedicated test that pins that behavior's TS bytes (26 → 73; `#1984`
+cell or dedicated test that pins that behavior's TS bytes (26 → 77; `#1984`
 added `sms-oracle-boundary-unregistered`, `#1957` added
 `sms-oracle-signed-signature-header`, `#1913` added
-`sms-oracle-recorded-version` — the `switches` table is the truth
-source). `#1879` only rewrites existing reads (`recorded_present`
+`sms-oracle-recorded-version`, `#2152` added
+`sms-oracle-recorded-omit-host`, `#2691` added the three port-guard
+switches — the `switches` table is the truth source). `#1879` only
+rewrites existing reads (`recorded_present`
 covers `env` / `sendFailAt` / `turn.*` / `truncate` / `halfClose` / `headers` /
 `reason` / `extra` now), so it adds no switch. Run one sample in the authoring
 session; the coordinator runs the complete list after the patch is committed.
@@ -332,6 +334,45 @@ switches = [
     ('sms-oracle-recorded-version', SMS / 'tests.rs',
      'recorded_version_rejects_wrong_type',
      '#1913 rejects version type drift'),
+    # #2152: the recorded `omitHost` field is read fail-open — a corrupted
+    # value replays as "keep the Host line" and the missing-host cell sends a
+    # Host header, turning the parser-rejection 400 into an admitted routed
+    # answer. Killed by the wrong-type rejection, same shape as the other
+    # recorded-field switches.
+    ('sms-oracle-recorded-omit-host', SMS / 'tests.rs',
+     'recorded_omit_host_rejects_wrong_type',
+     '#2152 rejects omitHost type drift'),
+    # #2691: the preflight's v6 half runs for every host again (the pre-fix
+    # over-strict shape) — a v6-only occupier of `[::]:port` that cannot
+    # collide with the product's 127.0.0.1 bind fails the pin as a false red.
+    ('sms-port-preflight-v6-any-host', SMS / 'tests.rs',
+     'v6_only_occupier_does_not_block_the_fixed_127_0_0_1_host',
+     '#2691 the v6 half probed the fixed 127.0.0.1 host'),
+    # #2691 fix-r3 (review r3, three roles): the post-start bind guard is
+    # disarmed — both ownership forms must fail under the switch. The drop
+    # form drops the channel before the guard; the replay form keeps it
+    # alive (the cron steps), so its threshold is raised by
+    # OWNERS_KEPT_ALIVE_ACROSS_START — a start that lost the bind race
+    # degrades to the no-op handle again and the pin silently measures the
+    # occupier's listener (the pre-fix TOCTOU shape).
+    ('sms-pin-bind-race-unchecked', SMS / 'tests.rs',
+     ['a_pin_start_that_loses_the_bind_race_is_caught_after_start',
+      'a_replay_start_that_keeps_the_channel_alive_is_still_caught_after_start'],
+     ['#2691 the post-start bind guard did not fire',
+      '#2691 the replay-form post-start bind guard did not fire']),
+    # #2691 fix-r3 (review r3 MM boundary#3 / DS concurrency#2 / boundary#3):
+    # the fixed-host bind probe is skipped — a dual-stack `[::]:port` holder
+    # (the occupier the connect probe cannot see) no longer fails the
+    # preflight. The kill no longer leans on Linux-only semantics: on Linux
+    # the skipped probe falls through to the refused connect and the bound
+    # test's Ok branch proves the product-shaped bind still fails; on macOS
+    # the connect stalls on the holder for its whole bounded cap (the
+    # coordinator's measured baseline) and the test attributes the stall to
+    # the skipped probe with its own anchor. Both verdicts are KILLED;
+    # macOS re-verification steps are recorded in the fix-r3 RESULT.
+    ('sms-port-preflight-bind-probe-skipped', SMS / 'tests.rs',
+     'dual_stack_occupier_is_reported_by_the_fixed_host_bind_probe',
+     '#2691 the fixed-host bind probe did not fire'),
 ]
 GUARDED = [SMS / name for name in (
     'mod.rs', 'gateway.rs', 'mapper.rs', 'render.rs', 'elicitation.rs',

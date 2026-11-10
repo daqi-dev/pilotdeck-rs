@@ -7,23 +7,52 @@ coordinator commits:
 
     CARGO_TARGET_DIR=<caller-owned cargo target directory> \
     PDRS_BASELINE=/path/to/PilotDeck \
-      python3 src/pilotdeck-gateway/tests/fixtures/manager-gateway/negative_controls.py <out-dir>
+      python3 src/pilotdeck-gateway/tests/fixtures/manager-gateway/negative_controls.py \
+      <out-dir> [--only name,...] [name ...]
 
 `--audit` only checks every anchor against the current source; it does not
 mutate, compile, or require a commit.
+
+The entry follows the #1666 / #1734 self-run contract on the shared
+`negative_selection` helpers: the table is pinned to the static
+`EXPECTED_NAMES` roster (drift refuses to start, rc 2, no evidence directory
+claimed), an unknown or repeated selection name and an unusable or
+already-claimed output directory / target refuse the same way, and the verdict
+roster is re-checked *before* anything that reads as success is published: a
+run whose recorded verdicts do not match the roster writes
+`roster-mismatch.json` instead of `summary.json` and exits 1, so no green
+summary or green count line ever exists for a shrunken run (#1666, the
+memory-gateway / snapshot-projection r5/r6 ordering). The published summary
+records the run's selection (`selected`, the executed set in table order), so
+a subset run's green artifact is auditable for what ran and what did not. The
+loop is owned here, not delegated to `negative_suite.run_cases`, because that
+shared runner publishes its summary before control returns to the caller.
+The window is self-held for hours, so SIGTERM/SIGHUP/SIGQUIT unwind through
+the restore path instead of leaving a mutant in the tree, and every write to
+a shared product source is one atomic rename (never a truncating in-place
+write).
 """
 import json
 import os
 from pathlib import Path
+import signal
+import subprocess
 import sys
 
 root = Path(__file__).resolve().parents[5]
 fixtures = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
-# negative_suite owns mutating_sources/run_owned/wait_for_slot; no local
-# backup/restore or alternate baseline is permitted here.
-from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import Case, run_cases
+# negative_process/negative_suite own mutating_sources/run_owned/wait_for_slot
+# and the judging/publishing helpers; no local backup/restore or alternate
+# baseline is permitted here.
+import pending_reanchor as pending
+from negative_process import (defer_signal_exit, mutating_sources, run_owned,
+                              wait_for_slot, write_source_atomic)
+from negative_selection import (claim_dir, missing_target,
+                                 refuse_unusable_target, registered, select,
+                                 verdict_exit)
+from negative_suite import (Case, case_labels, classify, invalidate_completed,
+                            passed, _publish_json)
 from _negative_common import mutate
 
 catalog = root / 'src/pilotdeck-gateway/src/runtime/manager/catalog.rs'
@@ -319,17 +348,117 @@ cases = [
 }''', None,
      'metadata::tests::blank_title_full_scan_keeps_the_ts_trim_rule',
      '#970 a blank title outside both windows must not count as a summary'),
+    # #2309: a dispatch failure is `Error`, never a flattened response body
+    # (the snapshot-projection family's `error-mapped-to-response` row,
+    # mirrored).
+    ('error-mapped-to-response', projection,
+     '            Err(error) => ManagerDispatch::Error(error),\n',
+     '            Err(error) => ManagerDispatch::Response(error.as_json()),\n', None,
+     prefix + 'dispatch_routes_only_manager_methods',
+     '#2309 manager_sessions failure must dispatch as ManagerDispatch::Error'),
 ]
+
+# #2309 fix-r1/fix-r2 (MM boundary P1, DS boundary P2, then the two-family
+# concurrency P1): the denominator of this run is this static roster, not
+# `len(cases)`. A deleted or renamed row would silently shrink the run and
+# keep printing a green count (#1666). `main` refuses to start on drift and
+# re-checks the recorded verdicts after the run but *before* publishing
+# anything that reads as success, the same contract as the memory-gateway /
+# snapshot-projection families.
+EXPECTED_NAMES = (
+    'catalog-tail-partial-dropped',
+    'catalog-internal-filter-removed',
+    'catalog-cwd-removed',
+    'catalog-summary-trimmed',
+    'invalid-params-fallback',
+    'invalid-project-key-stringified',
+    'pagination-negative-end',
+    'browser-port-always-unavailable',
+    'error-code-projection',
+    'session-key-filter-removed',
+    'catalog-limit',
+    'dispatch-registration',
+    'unknown-project-lossy',
+    'mtime-node-rounding',
+    'same-mtime-name-order',
+    'surrogate-fast-title-lossy',
+    'surrogate-prompt-lossy',
+    'surrogate-fallback-lossy',
+    'metadata-title-escape-swallowed',
+    'metadata-createdat-escape-swallowed',
+    'projectkey-name-explained-by-object',
+    'projectkey-name-array-branch',
+    'projectkey-name-surrogate-lossy',
+    'internal-filter-after-read',
+    'deep-project-key-recursive-tostring',
+    'projectkey-description-throws-rewritten',
+    'shared-fast-title-trimmed',
+    'metadata-only-lite-field-order',
+    'shared-descriptor-session-model-lossy',
+    'shared-descriptor-skills-lossy',
+    'shared-descriptor-binding-lossy',
+    'shared-descriptor-manager-lossy',
+    'skills-throws-host-flag-dropped',
+    'metadata-full-title-untrimmed',
+    'shared-metadata-full-title-untrimmed',
+    'error-mapped-to-response',
+)
+
+def terminate_cleanly(signum, _frame):
+    """Unwind on SIGTERM/SIGHUP/SIGQUIT so the finally blocks restore the
+    sources; the default disposition would leave a mutant in the tree
+    (#2309 fix-r3, mirror of mode-routing's handler)."""
+    if defer_signal_exit(signum):
+        return
+    raise SystemExit(128 + signum)
+
+
+def install_terminate_handlers():
+    signal.signal(signal.SIGTERM, terminate_cleanly)
+    if hasattr(signal, 'SIGHUP'):
+        signal.signal(signal.SIGHUP, terminate_cleanly)
+    if hasattr(signal, 'SIGQUIT'):
+        signal.signal(signal.SIGQUIT, terminate_cleanly)
+
 
 def main():
     args = sys.argv[1:]
     only = None
     if '--only' in args:
         index = args.index('--only')
-        only = set(args[index + 1].split(','))
+        if index + 1 >= len(args):
+            print('--only needs a comma-separated mutation name list', file=sys.stderr)
+            return 2
+        only = args[index + 1].split(',')
         del args[index:index + 2]
-    selected = [case for case in cases if only is None or case[0] in only]
-    if '--audit' in args:
+    audit = '--audit' in args
+    args = [arg for arg in args if arg != '--audit']
+    if not args and not audit:
+        print('usage: negative_controls.py <output-dir> [--only name,...] [name ...]'
+              ' | --audit', file=sys.stderr)
+        return 2
+    requested = args[1:] + (only or [])
+    # #2309 fix-r1: a drifted roster is a "never started" (2) and refuses
+    # before the evidence directory is claimed, so a shrunken table leaves no
+    # out/ behind — never a quietly shorter green run (#1666).
+    try:
+        registered(cases, EXPECTED_NAMES)
+    except ValueError as error:
+        print(f'mutation roster drifted: {error}', file=sys.stderr)
+        return 2
+    # #2309 fix-r2 (DS concurrency/boundary P2a, MM concurrency P2): an
+    # unknown or repeated selection name is the same "never started" (2) as
+    # roster drift. The old inline set() filter folded both silently, so a
+    # mistyped `--only` name ran a shorter green scope over a claimed evidence
+    # directory (#1734). `select` is the one shared rule, and it runs before
+    # the directory is claimed.
+    try:
+        selected = select(cases, requested, always=())
+    except ValueError as error:
+        print(f'invalid mutation selection: {error}', file=sys.stderr)
+        return 2
+    selected_names = set(requested)
+    if audit:
         for name, path, old, new, scope, _test, _expected in selected:
             mutate(path.read_text(), scope, [(old, new)])
         print(json.dumps([
@@ -338,18 +467,207 @@ def main():
         ], indent=2))
         return 0
 
+    # The family contract, not a local copy: absent/empty/blank targets and
+    # the dot/root/src values are refused by the shared rule, and an already
+    # existing directory is a "never started" (2) rather than a bare traceback
+    # that reads as "it ran and did not come out green" (#1666 fix-r7/r9,
+    # #1734). A `SystemExit` carrying a *string* exits 1, so every refusal
+    # names the cause on stderr and returns an explicit int 2.
+    if missing_target():
+        print('CARGO_TARGET_DIR must be set by the caller', file=sys.stderr)
+        return 2
+    refuse_unusable_target()
+    if not (os.environ.get('PDRS_BASELINE') or '').strip():
+        print('PDRS_BASELINE must be set by the caller', file=sys.stderr)
+        return 2
+    # #2309 fix-r3 (MM concurrency P2): the shared registry's identity key is
+    # this entry's own path, never `sys.argv[0]` — a wrapper or symlink launch
+    # resolves argv[0] outside the fixtures tree and `for_script` raises
+    # `ValueError`. That call used to sit inside the guarded window, where the
+    # except arm published a 36-row all-INVALID summary that reads as "it ran
+    # and did not pass"; reading the registry is a startup precondition, so it
+    # runs before the evidence directory is claimed and a refusal is rc 2
+    # with no out/ behind (the http-store-park / negative_suite.matrix_main
+    # shape of an explicit `script=`).
+    try:
+        registrations = pending.for_script(root, Path(__file__).resolve())
+    except ValueError as error:
+        print(f'pending-reanchor registry is not usable: {error}', file=sys.stderr)
+        return 2
+    out = claim_dir(args[0])
+    # The guarded window below is self-held for hours; a termination signal
+    # must unwind through the restore path, not kill the process over a
+    # mutant source (#2309 fix-r3, the family's mode-routing precedent).
+    install_terminate_handlers()
     env = os.environ.copy()
-    if not env.get('CARGO_TARGET_DIR') or not env.get('PDRS_BASELINE'):
-        raise SystemExit('caller must set CARGO_TARGET_DIR and PDRS_BASELINE')
     env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only',
                CARGO_PROFILE_TEST_DEBUG='line-tables-only', CARGO_TERM_QUIET='false')
-    out = Path(args[0])
-    out.mkdir(parents=True, exist_ok=False)
-    return run_cases(
-        root,
-        [Case(name, path, old, new, test, expected, scope)
-         for name, path, old, new, scope, test, expected in selected],
-        out, env, mutate, timeout=900, baseline='HEAD')
+    selected_cases = [Case(name, path, old, new, test, expected, scope)
+                      for name, path, old, new, scope, test, expected in selected]
+    labels = case_labels(selected_cases)
+    command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
+               '-p', 'pilotdeck-gateway', '--lib']
+    results = []
+
+    def stem(case):
+        return labels[id(case)]
+
+    def run(label, test):
+        try:
+            slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
+            (out / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
+            # Exact binding still runs one test, including explicit TS/regeneration
+            # guards. No `--nocapture`: it interleaves test stdout with the
+            # `test <name> ... ok` status line (#938 r14). No `-q`: quiet mode
+            # drops the named per-test line the judge needs (#273, #818 fix-r3).
+            result = run_owned(command + [test, '--', '--exact', '--include-ignored'],
+                               cwd=root, env=env, timeout=900)
+            (out / f'{label}.log').write_text(result.stdout + result.stderr)
+            return result
+        except Exception as error:
+            raw = ''
+            if isinstance(error, subprocess.TimeoutExpired):
+                for value in (error.stdout, error.stderr):
+                    raw += value.decode(errors='replace') if isinstance(value, bytes) else value or ''
+            with (out / f'{label}.log').open('a') as log:
+                log.write(raw + f'\n{type(error).__name__}: {error}\n')
+            raise
+
+    def record(case, status, reason):
+        # Memory only: the summary is published after the guarded restore /
+        # re-verify window has closed *and* the roster check below has passed
+        # (#1076, fix-r2).
+        results.append({'mutation': case.mutation, 'test': case.test,
+                        'assertion': case.assertion, 'status': status, 'reason': reason})
+        print(f'{stem(case)}: {status}: {reason}', flush=True)
+
+    def publish_run_summary():
+        # #2309 fix-r3 (DS/MM boundary P2): the summary records this run's
+        # selection, so a subset run's green artifact is auditable for what
+        # ran and what did not -- `selected` is the executed set in table
+        # order, and a full run lists every roster name. The payload is the
+        # shared publish_summary shape plus that one key; negative_suite is
+        # M6-owned (#1099), so the enriched summary rides the same atomic
+        # `_publish_json` publication here instead of widening the shared
+        # helper.
+        _publish_json(out / 'summary.json',
+                      {'controls': results,
+                       'counts': pending.counts(results),
+                       'selected': [case.mutation for case in selected_cases]},
+                      overwrite=True)
+
+    # Where the guarded window raised, for the three-state exit contract:
+    # 'enter' is a refusal to run (HEAD/baseline mismatch, busy lock) and keeps
+    # the historical rc=1; 'restore'/'exit' are unverified restores and must
+    # exit 2; 'body' is an in-window precondition such as an expired anchor,
+    # also a refusal (#1076 fix-r1). ``body_error`` remembers the object the
+    # guarded body raised; a guard that raises while unwinding raises a
+    # *different* object even though ``phase`` still says 'body', which is an
+    # unverified restore and must exit 2 (#1076 fix-r2).
+    phase = 'enter'
+    body_error = None
+    try:
+        paths = list(dict.fromkeys(case.path for case in selected_cases))
+        if registrations:
+            paths.append(root / pending.FIXTURES / pending.REGISTRY)
+        with mutating_sources(root, paths, baseline='HEAD') as originals:
+            phase = 'body'
+            try:
+                for case in selected_cases:
+                    entry = pending.match(registrations, case.mutation)
+                    if entry is not None:
+                        record(case, pending.SKIPPED, entry.reason())
+                        continue
+                    status, reason, stage = 'INVALID', '', 'anchor'
+                    try:
+                        changed = mutate(originals[case.path].decode(), case.scope,
+                                         [(case.old, case.new)])
+                        stage = 'positive'
+                        if not passed(run(stem(case) + '-positive', case.test), case.test):
+                            reason = 'positive control did not pass the bound test'
+                        else:
+                            stage = 'negative'
+                            # One atomic rename, never a truncating in-place
+                            # write: a SIGKILL in the write-back window must
+                            # not leave a half-written source behind (#1903,
+                            # the mode-routing precedent).
+                            write_source_atomic(root, case.path, changed.encode())
+                            status, reason = classify(run(stem(case) + '-negative', case.test), case)
+                    except Exception as error:
+                        status, reason = 'INVALID', f'{stage}: {type(error).__name__}: {error}'
+                    finally:
+                        # Restore before every successor, also on timeout or bad
+                        # anchors. The enclosing guard independently restores
+                        # and verifies on exit. Atomic for the same #1903
+                        # reason as the mutant write above: the restore window
+                        # must not leave a truncated original behind either.
+                        phase = 'restore'
+                        write_source_atomic(root, case.path, originals[case.path])
+                        if case.path.read_bytes() != originals[case.path]:
+                            raise RuntimeError(f'byte restoration failed: {case.path}')
+                        phase = 'body'
+                    try:
+                        if not passed(run(stem(case) + '-restored', case.test), case.test):
+                            status, reason = 'INVALID', reason + '; restored bound test did not pass'
+                    except Exception as error:
+                        status, reason = 'INVALID', reason + f'; restored: {type(error).__name__}: {error}'
+                    record(case, status, reason)
+            except BaseException as error:
+                # Keep the refusal/cancellation object so the handler below
+                # can tell it apart from a failure raised by the guard exit.
+                body_error = error
+                raise
+            # The body is done; an exception from here on comes from the
+            # guard's own restore/re-verify on context exit.
+            phase = 'exit'
+    except BaseException as error:
+        # A baseline/lock/restoration failure — or a cancellation delivered by
+        # the guard's restore/re-verify window — makes every recorded row
+        # untrustworthy. Void them in memory, account for unrun cases, publish
+        # the all-INVALID summary, and exit per the #1076 contract. This is the
+        # only summary published on a failure path and it never reads as
+        # success; no final summary exists before this point, so an interrupt
+        # during the publish leaves no summary at all (missing is fail-closed).
+        reason = f'source guard: {type(error).__name__}: {error}'
+        invalidate_completed(results, reason)
+        for case in selected_cases[len(results):]:
+            record(case, 'INVALID', reason)
+        publish_run_summary()
+        # A raw SystemExit code must not decide the process status: 256/-256
+        # truncate to zero on POSIX and a string code exits 1. Re-raise the
+        # normalized code; a KeyboardInterrupt returns 2.
+        if isinstance(error, SystemExit):
+            raise SystemExit(2) from error
+        if (phase in ('restore', 'exit') or not isinstance(error, Exception)
+                or (body_error is not None and error is not body_error)):
+            return 2
+        return 1
+    # Reaching here means mutating_sources restored every source and verified
+    # it against the baseline. The roster check runs *before* anything that
+    # reads as success is published: a shrunken run used to leave an all-green
+    # summary.json and a green count line behind (run_cases published and
+    # printed them, then this entry unlinked after the fact), so a consumer
+    # that only reads the artifact never saw the mismatch (r5 concurrency P1,
+    # fix-r2). A mismatch publishes no summary.json at all — only a file whose
+    # name says what happened (r6 concurrency/boundary P1), atomically: the
+    # shared `_publish_json` temp name carries the pid and a serial, never a
+    # fixed `<name>.tmp` (#1579 r5).
+    expected = [name for name in EXPECTED_NAMES if not selected_names or name in selected_names]
+    recorded = [row['mutation'] for row in results]
+    if recorded != expected:
+        message = f'verdict roster mismatch: recorded={recorded} expected={expected}'
+        print(message, file=sys.stderr)
+        _publish_json(out / 'roster-mismatch.json',
+                      {'verdict': 'ROSTER_MISMATCH', 'expected': expected,
+                       'recorded': recorded, 'rows': results},
+                      overwrite=True)
+        return 1
+    publish_run_summary()
+    counts = pending.counts(results)
+    print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
+    # Every row must be KILLED and at least one row must exist: an empty run or
+    # a zero-kill run is never success (#818 fix-r3 P0).
+    return verdict_exit(results, key='status')
 
 
 if __name__ == '__main__':

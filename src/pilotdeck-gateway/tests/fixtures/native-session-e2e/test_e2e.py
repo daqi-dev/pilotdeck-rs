@@ -1219,16 +1219,15 @@ class NegativeRunnerTests(unittest.TestCase):
                 # classify probes the negative result internally through the
                 # module-global passed; that is not a stage of its own.
                 return real_passed(result)
-            # positive precedes the lease; restored is the first Python stage
-            # after a release -- a plain string without a lease, a timestamped
-            # tuple when the real lease protocol records the event.
+            # positive precedes the lease (or follows the previous case's
+            # release); restored now runs inside the lease, right after the
+            # negative control -- a plain string without a lease, a
+            # timestamped tuple when the real lease protocol records the event.
             last = events[-1] if events else None
-            stage = 'restored' if (last == 'release' or
-                                   (isinstance(last, tuple) and last[0] == 'release')) else 'positive'
+            stage = 'restored' if (last in ('cargo', 'negative') or
+                                   (isinstance(last, tuple) and last[0] == 'acquire')) else 'positive'
             events.append(stage)
             disks.append((stage, self.source.read_text()))
-            if stage == 'restored' and gap:
-                time.sleep(gap)
             return real_passed(result)
 
         def slot(_script, **kwargs):
@@ -1236,6 +1235,10 @@ class NegativeRunnerTests(unittest.TestCase):
                 raise slot_error
             events.append('slot')
             timeouts.append(('slot', kwargs.get('timeout')))
+            # The between-case gap a second host must win: slot runs outside
+            # the lease, between the previous release and the next acquire.
+            if gap:
+                time.sleep(gap)
             return ok
 
         rows = [('first', self.source, 'x = 0', 'x = 1', self.SYNTHETIC_TEST),
@@ -1258,7 +1261,7 @@ class NegativeRunnerTests(unittest.TestCase):
         marker = '#1402 each case takes and releases the parity lease exactly once'
         runner = self.load_runner()
         code, summary = self._drive(runner)
-        expected = ['positive', 'slot', 'acquire', 'cargo', 'negative', 'release', 'restored']
+        expected = ['positive', 'slot', 'acquire', 'cargo', 'negative', 'restored', 'release']
         self.assertTrue(code == 0 and self.events == expected * 2, marker)
         self.assertTrue(all(row['status'] == 'KILLED' and row['compiled'] for row in summary['controls']), marker)
         self.assertTrue(self.events.count('acquire') == 2 and self.events.count('release') == 2, marker)
@@ -1318,7 +1321,7 @@ class NegativeRunnerTests(unittest.TestCase):
     def test_negative_lease_bound_composition(self):
         marker = '#1402 the per-case lease bound is composed and below the stale-lease age'
         runner = self.load_runner()
-        self.assertTrue(runner.PER_CASE_LEASE_SECONDS == runner.BUILD_SECONDS + runner.BOUND_TEST_SECONDS
+        self.assertTrue(runner.PER_CASE_LEASE_SECONDS == runner.BUILD_SECONDS + 2 * runner.BOUND_TEST_SECONDS
                         and min(runner.BUILD_SECONDS, runner.BOUND_TEST_SECONDS, runner.SLOT_WAIT_SECONDS) > 0
                         and runner.PER_CASE_LEASE_SECONDS < c.common.MAX_AGE, marker)
         code, _summary = self._drive(runner)
@@ -1335,7 +1338,10 @@ class NegativeRunnerTests(unittest.TestCase):
             return subprocess.TimeoutExpired(['python'], 300) if stage == 'negative' else None
 
         code, summary = self._drive(runner, run_effect=effect)
-        expected = ['positive', 'slot', 'acquire', 'cargo', 'negative', 'release', 'restored']
+        # The negative stage timed out: the exception propagates out of the
+        # guarded window before the restored control, which stays inside the
+        # lease exactly like the other guarded runners.
+        expected = ['positive', 'slot', 'acquire', 'cargo', 'negative', 'release']
         self.assertTrue(code == 1 and self.events == expected * 2, marker)
         self.assertTrue(all(row['status'] == 'INVALID' for row in summary['controls'])
                         and all('timed out' in row['reason'] for row in summary['controls']), marker)

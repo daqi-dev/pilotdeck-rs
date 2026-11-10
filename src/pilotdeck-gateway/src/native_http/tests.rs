@@ -78,6 +78,29 @@ fn cell(id: &str) -> Cell {
     panic!("#1209 cell {id} is missing from the committed oracle");
 }
 
+/// #2153: the cells whose replay needs the `content-length: 0` exemption —
+/// exactly the bare parser-level 400s of A8.4-NATIVE-HTTP-001 item 3, the
+/// cells where TS writes no length and hyper adds `content-length: 0`
+/// (measured: `no-host` is chunked with an empty terminator on both sides
+/// and carries none). Like api-server's `parser_admission` cells the list is
+/// explicit, so a cell that grows a length line anywhere else replays red
+/// instead of normalizing away; the
+/// `content_length_zero_stays_scoped_to_the_registered_rejections` pin
+/// holds the raw bytes behind the mask in both directions.
+const PARSER_ADMISSION_CELLS: &[&str] = &[
+    "bad-method-foo",
+    "bad-method-get",
+    "bad-method-getx",
+    "non-ascii-path",
+    "non-ascii-query",
+    "garbage",
+    "pct-target",
+    "authority-form",
+    "abs-scheme-nonalpha",
+    "empty-request",
+    "connect-nonascii",
+];
+
 /// The two deterministic static roots of the fixture generator, contents never
 /// changing between runs.
 struct Fixture {
@@ -248,9 +271,10 @@ async fn replay(id: &str) {
     let fixture = roots();
     let (raw, closed) = exchange(&cell.server, &cell.request, &cell.id, &fixture).await;
     let expected = expected_response(&cell, &fixture);
+    let parser_admission = PARSER_ADMISSION_CELLS.contains(&cell.id.as_str());
     assert_eq!(
-        normalize(&raw),
-        normalize(&expected),
+        normalize(&raw, parser_admission),
+        normalize(&expected, parser_admission),
         "#1209 cell {} normalized response",
         cell.id
     );
@@ -623,13 +647,16 @@ fn llhttp_methods_match_the_oracle() {
 
 /// The bytes both sides are compared in: the Date value is masked, header
 /// names are case-folded (hyper renders Title-Case, TS's `content-type` is
-/// literal lowercase — the registered transport diff), the bare 400's
-/// `content-length: 0` line is dropped (registered transport diff), and
-/// chunk sizes are case-folded (hyper writes `B`, Node writes `b` —
-/// registered transport diff). Status lines are compared verbatim — both
-/// stacks write canonical `HTTP/1.1 200 OK` casing — and chunk bodies are
-/// never folded.
-fn normalize(raw: &str) -> String {
+/// literal lowercase — the registered transport diff), chunk sizes are
+/// case-folded (hyper writes `B`, Node writes `b` — registered transport
+/// diff), and — on the `parser_admission` cells only, the bare parser-level
+/// 400s registered as A8.4-NATIVE-HTTP-001 item 3 — hyper's
+/// `content-length: 0` is dropped. Every other length line compares
+/// verbatim, so an unregistered cell that grows one replays red (#2153,
+/// the same scoping api-server's #1683 fix gave its `actual_headers`).
+/// Status lines are compared verbatim — both stacks write canonical
+/// `HTTP/1.1 200 OK` casing — and chunk bodies are never folded.
+fn normalize(raw: &str, parser_admission: bool) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut rest = raw;
     'responses: while !rest.is_empty() {
@@ -664,8 +691,12 @@ fn normalize(raw: &str) -> String {
             };
             if name.eq_ignore_ascii_case("date") {
                 out.push_str("date: <masked>\r\n");
-            } else if name.eq_ignore_ascii_case("content-length") && value.trim() == "0" {
-                // hyper's implicit empty-body length on bare 400s.
+            } else if parser_admission
+                && name.eq_ignore_ascii_case("content-length")
+                && value.trim() == "0"
+            {
+                // hyper's implicit empty-body length on the registered bare
+                // 400s only.
             } else {
                 out.push_str(&name.to_ascii_lowercase());
                 out.push(':');
@@ -972,6 +1003,100 @@ async fn registered_transport_diffs_stay_pinned() {
     let _ = std::fs::remove_dir_all(&fixture.parent);
 }
 
+/// #2153: the `content-length: 0` exemption `normalize` grants is scoped to
+/// `PARSER_ADMISSION_CELLS` only, so the raw bytes have to be pinned in both
+/// directions or the mask could hide a drift: a registered rejection that
+/// stopped carrying the line (the rejection disappearing into a bare close)
+/// and an unregistered answer that grew one (the extra length line the
+/// replay must catch) both compare green through the mask alone. Every
+/// exchange uses the cell's own recorded request bytes, like the replay.
+#[tokio::test]
+async fn content_length_zero_stays_scoped_to_the_registered_rejections() {
+    let fixture = roots();
+    for id in PARSER_ADMISSION_CELLS {
+        let cell = cell(id);
+        let (bare, closed) = exchange(&cell.server, &cell.request, &cell.id, &fixture).await;
+        assert!(
+            bare.to_ascii_lowercase()
+                .contains("\r\ncontent-length: 0\r\n"),
+            "#2153 pin {id}: the registered bare 400 carries content-length: 0: {bare:?}"
+        );
+        assert!(
+            closed,
+            "#2153 pin {id}: the registered bare 400 closes the connection"
+        );
+    }
+    for id in ["health-get", "static-appjs", "root2-missing", "health-head"] {
+        let cell = cell(id);
+        let (raw, _) = exchange(&cell.server, &cell.request, &cell.id, &fixture).await;
+        assert!(
+            !raw.to_ascii_lowercase().contains("\r\ncontent-length:"),
+            "#2153 pin {id}: the unregistered response carries no content-length at all: {raw:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&fixture.parent);
+}
+
+/// #2153: the exemption `PARSER_ADMISSION_CELLS` grants is the only one left
+/// — an injected `content-length: 0` on the unregistered health cell must
+/// survive normalization (an extra hyper length line replays red), while
+/// the registered bare 400's line stays masked.
+#[test]
+fn only_the_registered_cells_mask_a_content_length_zero() {
+    let health = cell("health-get");
+    let injected = health
+        .response
+        .replacen("\r\n\r\n", "\r\ncontent-length: 0\r\n\r\n", 1);
+    assert_ne!(
+        normalize(&injected, false),
+        normalize(&health.response, false),
+        "#2153 an injected content-length: 0 on the unregistered health cell must not normalize away"
+    );
+    // The registered direction stays masked: hyper's line on the bare 400 is
+    // the one exemption left, so the TS-shaped bytes still compare equal.
+    let bare = cell("bad-method-foo");
+    let hyper_shaped = bare
+        .response
+        .replacen("\r\n\r\n", "\r\ncontent-length: 0\r\n\r\n", 1);
+    assert_eq!(
+        normalize(&hyper_shaped, true),
+        normalize(&bare.response, true),
+        "#2153 the registered bare-400 exemption still masks hyper's content-length: 0"
+    );
+}
+
+/// #2153 fix-r1 (review r1): the exemption list and the oracle describe the
+/// same cell set, so neither can drift alone — the list is exactly the
+/// oracle's bare parser-level 400s (`HTTP/1.1 400 Bad Request` + the
+/// `Connection: close` line and nothing else before the empty body; the
+/// missing-Host 400 carries its own `date` and chunked terminator, so it is
+/// naturally excluded). A cell that gains or loses the bare-400 shape fails
+/// here with its id instead of a generic replay red, and a stale list entry
+/// points at the cell to re-check.
+#[test]
+fn parser_admission_cells_cover_exactly_the_oracle_bare_400s() {
+    let recorded = oracle();
+    let mut oracle_bare: Vec<&str> = recorded["cells"]
+        .as_array()
+        .expect("#1209 oracle cells array")
+        .iter()
+        .filter(|cell| {
+            cell["response"]
+                .as_str()
+                .expect("#1209 oracle cell response")
+                .starts_with("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n")
+        })
+        .map(|cell| cell["id"].as_str().expect("#1209 oracle cell id"))
+        .collect();
+    oracle_bare.sort_unstable();
+    let mut listed = PARSER_ADMISSION_CELLS.to_vec();
+    listed.sort_unstable();
+    assert_eq!(
+        listed, oracle_bare,
+        "#2153 PARSER_ADMISSION_CELLS and the oracle's bare-400 cells are the same set"
+    );
+}
+
 /// #1209: raw-byte pins the replay normalization cannot swallow: the bare
 /// parser-level 400s (FOO, garbage) carry no Date (only the missing-Host 400
 /// does) and close the connection, and a HEAD response carries neither
@@ -1237,9 +1362,11 @@ async fn native_listener_delegates_plain_http_to_the_router() {
 
     let health = cell("health-get");
     let (raw, closed) = exchange_on(address, &health.request, &health.id).await;
+    // #2153: neither cell is a registered bare 400, so the length lines
+    // compare verbatim.
     assert_eq!(
-        normalize(&raw),
-        normalize(&health.response),
+        normalize(&raw, false),
+        normalize(&health.response, false),
         "#1209 native listener health cell matches TS"
     );
     assert!(!closed, "#1209 native listener keeps the health connection");
@@ -1247,8 +1374,8 @@ async fn native_listener_delegates_plain_http_to_the_router() {
     let appjs = cell("static-appjs");
     let (raw, closed) = exchange_on(address, &appjs.request, &appjs.id).await;
     assert_eq!(
-        normalize(&raw),
-        normalize(&appjs.response),
+        normalize(&raw, false),
+        normalize(&appjs.response, false),
         "#1209 native listener static cell matches TS"
     );
     assert!(!closed, "#1209 native listener keeps the static connection");

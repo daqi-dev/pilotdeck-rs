@@ -19,7 +19,10 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import CARGO_SLOTS_WAIT_SECONDS, mutating_sources, run_owned, wait_for_slot
+from negative_process import (
+    CARGO_SLOTS_WAIT_SECONDS, mutating_sources, new_output_directory, run_owned, wait_for_slot,
+    write_source_atomic,
+)
 from negative_suite import Case, classify, passed
 
 root = Path(__file__).resolve().parents[5]
@@ -132,8 +135,7 @@ def main():
                  if not args.selected or case['name'] in args.selected]
     if not selected or set(args.selected) - {case['name'] for case in cases}:
         parser.error('unknown or empty selection')
-    out = args.output.resolve()
-    out.mkdir(parents=True, exist_ok=False)
+    out = new_output_directory(args.output.resolve())
     env = dict(os.environ)
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
                '-p', 'pilotdeck-gateway', '--lib']
@@ -178,13 +180,24 @@ def main():
                 mutated = original
                 for _path, before, after in row['changes']:
                     mutated = mutated.replace(before, after, 1)
-                row['changes'][0][0].write_text(mutated)
+                write_source_atomic(root, row['changes'][0][0],
+                                    mutated.encode())
                 compiled = run(row['name'] + '-compile', ['--no-run'])
                 if compiled.returncode != 0:
                     raise RuntimeError('mutant failed to compile; not a runtime kill')
                 status, reason = classify(run(row['name'] + '-negative', arguments), suite)
-            if not passed(run(row['name'] + '-restored', arguments), row['test']):
-                status, reason = 'INVALID', 'restored control did not pass the bound test'
+                # Restore and re-run inside the source guard: the restored
+                # control compiles the tree, so it must never race another
+                # runner that takes the same .negative-source.lock (#1440).
+                # Restoring the primary path also undoes the paired edits of
+                # multi-file rows: every change rewrites the same file.
+                # #1908: one atomic rename; a truncating write_bytes here
+                # has the same SIGKILL half-write window as the mutation
+                # write itself.
+                write_source_atomic(root, row['changes'][0][0],
+                                    originals[row['changes'][0][0]])
+                if not passed(run(row['name'] + '-restored', arguments), row['test']):
+                    status, reason = 'INVALID', 'restored control did not pass the bound test'
         except SystemExit:
             raise
         except Exception as error:

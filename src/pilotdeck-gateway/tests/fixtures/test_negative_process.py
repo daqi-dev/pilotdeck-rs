@@ -1759,7 +1759,12 @@ class RestoreWindowSignals(unittest.TestCase):
             self.assertIs(signal.getsignal(signal.SIGTERM), signal.SIG_IGN,
                           "a handler installed inside the window must survive it")
         finally:
-            signal.signal(signal.SIGTERM, previous)
+            # getsignal returns None when a non-Python handler holds the
+            # signal; signal.signal refuses None, so map that back to the
+            # default disposition (same guard as the #2552 r9 legs in
+            # test_safety.py, DS r10 sibling#2).
+            signal.signal(signal.SIGTERM, previous if previous is not None
+                          else signal.SIG_DFL)
 
 
 TERMINATE_HANDLER_CHILD = r"""

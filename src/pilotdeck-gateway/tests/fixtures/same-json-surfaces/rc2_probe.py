@@ -70,7 +70,12 @@ def probe(label, memory, enter_error):
                     observation['exit'] = 'uncaught ' + repr(error)
         finally:
             for name, disposition in saved.items():
-                signal.signal(name, disposition)
+                # getsignal returns None when a non-Python handler holds
+                # the signal; signal.signal refuses None, so map that back
+                # to the default disposition (same guard as the #2552 r9
+                # legs in test_safety.py, DS r10 sibling#2).
+                signal.signal(name, disposition if disposition is not None
+                              else signal.SIG_DFL)
         observation['claimed_dir_exists'] = out.exists()
         observation['summary_json'] = (out / 'summary.json').exists()
         observation['stderr'] = stderr.getvalue().strip().splitlines()[:2]

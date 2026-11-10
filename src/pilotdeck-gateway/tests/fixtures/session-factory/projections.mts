@@ -55,8 +55,14 @@ export async function observations(base:string) {
  const {SessionRuntime}=await import(`${base}/src/session/events/SessionRuntime.ts`);
  const {createDefaultSessionProjectionRegistry}=await import(`${base}/src/session/projection/BuiltinSessionProjections.ts`);
  const {SessionProjectionDriver}=await import(`${base}/src/session/projection/SessionProjectionDriver.ts`);
- const storageErrors=[5,null,[null]].map(content=>{
-  const entry={type:'durable_message',sessionId:'session-745',turnId:'incomplete-turn',sequence:1,createdAt:'2026-10-28T00:00:00.000Z',entryId:'e1',parentEntryId:null,message:{role:'assistant',content}};
+ // #2058: fileArtifact reducer's `entry.artifacts.length` read
+ // (WebHistoryProjections.ts:85). Measured on real TS (Node v22.22.0):
+ // artifacts:null rejects with "Cannot read properties of null (reading
+ // 'length')", a missing artifacts key with "... of undefined ..."; an empty
+ // array restores fine and stays out of the oracle.
+ const storageEntries=[5,null,[null]].map(content=>({type:'durable_message',sessionId:'session-745',turnId:'incomplete-turn',sequence:1,createdAt:'2026-10-28T00:00:00.000Z',entryId:'e1',parentEntryId:null,message:{role:'assistant',content}}))
+  .concat([{type:'file_artifacts',sessionId:'session-745',turnId:'incomplete-turn',sequence:1,createdAt:'2026-10-28T00:00:00.000Z',entryId:'e1',parentEntryId:null,artifacts:null},{type:'file_artifacts',sessionId:'session-745',turnId:'incomplete-turn',sequence:1,createdAt:'2026-10-28T00:00:00.000Z',entryId:'e1',parentEntryId:null}]);
+ const storageErrors=storageEntries.map(entry=>{
   const runtime=new SessionRuntime();
   const projections=new SessionProjectionDriver({runtime,registry:createDefaultSessionProjectionRegistry()});
   runtime.restore([entry]);

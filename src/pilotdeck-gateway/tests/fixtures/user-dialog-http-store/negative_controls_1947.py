@@ -37,6 +37,7 @@ GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/user_dialog/http_store_test
     Path(__file__).with_name('generate.mts'), Path(__file__).with_name('README.md'),
     Path(__file__).with_name('negative_controls_1232.py'),
     Path(__file__).with_name('negative_controls_1277.py'),
+    Path(__file__).with_name('negative_controls_2152.py'),
 ]
 
 def main():

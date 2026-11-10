@@ -1747,6 +1747,16 @@ fn spread(value: &JsValue) -> JsObject {
 /// turns. Its `.some` walk short-circuits on the first tool result.
 fn validate_web_history(entries: &[JsValue]) -> RuntimeResult {
     for entry in entries {
+        // #2058: the same single-pass reducer (WebHistoryProjections.ts:78-89)
+        // also reads `entry.artifacts.length` on `file_artifacts` entries, so
+        // the first malformed entry of either kind rejects the restore in log
+        // order. Only the read is mirrored — the `> 0` comparison it feeds is
+        // #2056's ToPrimitive expansion, whose adapter twin is
+        // `transcript_adapter::file_artifact_supported`.
+        if is(field(entry, "type"), "file_artifacts") {
+            property(field(entry, "artifacts"), "length")?;
+            continue;
+        }
         if ![
             "assistant_message",
             "tool_result_message",

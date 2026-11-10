@@ -30,7 +30,7 @@ cd src && cargo test -p pilotdeck-gateway --lib api_web
 
 ## Rust 重放规则
 
-- 重放在 `src/api_web/tests.rs`：同一请求字节经真实 TCP 监听器打到 WS 数据面共用的生产入口 `native_http::serve_with_body`（#2354 把 `/api/web/` 分支装进该入口，重放以 `Config { api_web: Some(...) }` 挂载本组、`api_web::serve` 落在分支内），每个 cell 因此同时覆写 #1765 的准入闸与生产分派顺序；响应按 #1209 规则归一化（Date 掩码、头名小写、空 `content-length: 0` 删除、chunk 大小写小写）——归一化解析器是 #1766 抽出的共享模块 `tests/common/replay_normalize.rs`（api-web 侧的目录 size / 根路径掩码仍在调用点注入），`closed` 标志另比。
+- 重放在 `src/api_web/tests.rs`：同一请求字节经真实 TCP 监听器打到 WS 数据面共用的生产入口 `native_http::serve_with_body`（#2354 把 `/api/web/` 分支装进该入口，重放以 `Config { api_web: Some(...) }` 挂载本组、`api_web::serve` 落在分支内），每个 cell 因此同时覆写 #1765 的准入闸与生产分派顺序；响应按 #1209 规则归一化（Date 掩码、头名小写、空 `content-length: 0` 仅在 `parser_admission` 登记格删除、未登记格逐字比——#2153，chunk 大小写小写）——归一化解析器是 #1766 抽出的共享模块 `tests/common/replay_normalize.rs`（api-web 侧的目录 size / 根路径掩码仍在调用点注入），`closed` 标志另比。
 - `http10` 为字节 pin（hyper 写 `HTTP/1.0` 状态行，Node 写 `HTTP/1.1`，已登记在 `specs/gateway-parity/diffs/A8.4-API-WEB-001.md`），不进归一化比对；`replay_cells_cover_exactly_the_oracle` 断言重放列表 + pin 列表 = oracle cell 全集。
 - 不在金样里的一格：files 分支上 **项目 key** 的坏百分号（`decodeURIComponent` 在 try 外）。TS 侧是 unhandled rejection——零字节、连接保持打开，客户端只能等超时。Rust 不回零字节挂起，改为 500 `internal_error` "URI malformed"，差异登记在 A8.4-API-WEB-001.md 并用独立测试 pin 住。
 

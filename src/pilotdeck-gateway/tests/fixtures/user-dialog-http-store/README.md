@@ -15,8 +15,9 @@ PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
 ```
 
 输出父目录须已存在；每次运行在其下 `mkdtemp` 并以 `flag:'wx'` 写 `oracle.json`；两次运行逐字节一致才更新正本。
-提交时 `sha256(oracle.json) = a073008fa1e2d2a976e975178446711b9a85d01dc208c88ae076ab941a77a27d`。
-条数：clientRequests 30 · clientResponses 69 · clientBodyFailures 6 · handlerCases 111 · socketRequests 18 · flow 16 ·
+提交时 `sha256(oracle.json) = 18d4f9868e9ebe8a27dc535d9a069724c552ca6af0ba619dff7162f971de7da5`（#2152 之前为
+`a073008fa1e2d2a976e975178446711b9a85d01dc208c88ae076ab941a77a27d`）。
+条数：clientRequests 30 · clientResponses 69 · clientBodyFailures 6 · handlerCases 111 · socketRequests 20 · flow 16 ·
 constructors 29 · handlerConstruction 7。
 
 ## 各段
@@ -27,7 +28,7 @@ constructors 29 · handlerConstruction 7。
 | `clientResponses` | 直接替换 `fetch` 注入 69 种响应：非 2xx 文本/JSON/空体、版本与 result 校验、BOM、尾随垃圾、重复 key、已存 dialogs、lease/owner/answer 断言、abort、网络错误 |
 | `clientBodyFailures` | 真实 TS client 打真实原始 TCP server 的 6 个用例：`{200,500}` × 正文中途断开 / 超时中止 / 超过 V8 `MAX_STRING_LENGTH`（真实 512 MiB 传输）；验证 `.json().catch(() => undefined)` 后按状态码出 `returned an invalid response.` 或 `failed: HTTP n` |
 | `handlerCases` | 直接调用 TS handler 的 111 个请求：方法、坏 JSON、超大 body、未知/转义 operation、缺字段、重复 header、store 抛错；记录 status/content-type/body 与 store 调用参数 |
-| `socketRequests` | 原始 socket 打到真实 `http.createServer`：18 个 framing 用例（HEAD、重复 header、1 MB body、坏 UTF-8、query/trailing-slash 等） |
+| `socketRequests` | 原始 socket 打到真实 `http.createServer`：20 个 framing 用例（HEAD、重复 header、1 MB body、坏 UTF-8、query/trailing-slash、#2152 的两个解析层准入 cell：`FROB` 方法 token 与 `setHost: false` 的无 Host 请求） |
 | `flow` | 真实 client → 真实 server → 真实 FileStore 的 16 步顺序流程（claim/owner/answer/release/clear），固定时钟与 uuid |
 | `constructors` | 29 个构造输入：endpoint 归一化、非法 URL/scheme、token、timeout |
 | `handlerConstruction` | 7 个 handler 构造/请求分发输入：缺 store、缺 token、缺 method |
@@ -48,7 +49,10 @@ constructors 29 · handlerConstruction 7。
 - `handlerCases` 的重复 `authorization` 头经 Fetch `Headers` 合并为 `", "`；`socketRequests`
   的同名头按 Node 规则取第一个（第二个丢弃），服务端包装层单独处理，二者不矛盾。
 - 原始 socket 用例必须自带 `Host` 头（生成器 `rawHttp` 会补 `127.0.0.1:<port>`），否则 Node
-  在进入 handler 前就以 400 关闭连接。
+  在进入 handler 前就以 400 关闭连接。#2152 的 `missing-host` cell 正是用这一点：它记录
+  Node `http.request` 的 `setHost: false`，录制那个 400；Rust 回放对该 cell 走裸 socket
+  （`hyper` client 会自己加 Host），`socket_requests_pin_their_parser_admission_knobs` 钉住
+  两个 knob，防止 cell 退化成被准入的请求。
 - `huge-invalid-json` 的 1 MB body 在 Node 端会先写 400 再断连，读数可能伴随 ECONNRESET；
   生成器按记录的完整响应字节为准。
 
@@ -63,3 +67,16 @@ guard、连接级头预算、断掉的 forced-response 接线、提前停的读�
 字节校验，全量跑完汇总 KILLED / SURVIVED / INVALID，任一非 KILLED 即非零退出：
 `python3 negative_controls_1232.py <新输出目录> [变异名 ...]`；`--check-anchors` 校验
 锚点未过期。长套件交协调者提交后宿主执行。
+
+## 负控（#2152 fix-r2）
+
+`negative_controls_2152.py`（解析层拒绝的 keep-alive 收尾）：同一套
+`mutating_sources` / `run_owned` / `wait_for_slot` / `classify` / `passed` 约定。
+两个变异各把一处 fix-r2 收尾还原成修复前形态（拒绝不收尾——计时器停在
+`Request` 相位、`expired()` 恒 `None`、在途闩不清，写阻塞的 400 无任何计时器
+可关连接；以及只 `response_finished` 不复位 lifecycle——上一响应未 flush 的
+keep-alive 广告不被顶掉），绑 `parser_rejection_finishes_the_keepalive_lifecycle`
+的 `#2152` 断言。评审要求的完整「流水线 + 不读对端」复现是已登记的 P2 跟进，
+不在状态级变异范围：
+`CARGO_TARGET_DIR=... python3 negative_controls_2152.py <新输出目录> [变异名 ...]`；
+`--check-anchors` 校验锚点未过期。长套件交协调者提交后宿主执行。

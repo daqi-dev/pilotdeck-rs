@@ -66,6 +66,12 @@ TOOLS = ROOT / 'src/pilotdeck-gateway/src/native_process/tools.rs'
 # completeness rule cannot see those anchors (#2065 r3).
 LIVE_TESTS = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live_stream_tests.rs'
 REVIEW_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/review_tests.rs'
+# #2195: the cron methods' dispatch seam. The row below removes the
+# blocking-pool handoff (the management family's `memory-inline-sync` shape,
+# #1322) and binds the structural test that proves the handoff exists; CRON is
+# the mutated source, CRON_TESTS carries the bound assertion literal (#2065).
+CRON = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/cron.rs'
+CRON_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/cron/cron_tests.rs'
 CFG = 'native_process::methods::config::tests::'
 FT = 'runtime::session::factory::tests::'
 DIR = 'native_process::methods::session_dir::tests::'
@@ -427,6 +433,36 @@ mutations = [
      'if true {',
      'native_process::tests::review::acquiring_a_session_reports_the_skipped_mcp_ask_sync',
      '#2146 the second acquire reports nothing: one miss report per assembly'),
+    # ── #2195 (P2-跟进 #1509): the cron dispatch's blocking-pool handoff was
+    # pinned only by the structural positive control — no mutant proved that
+    # control could go red. This row inlines the dispatch onto the async
+    # worker (the management family's `memory-inline-sync` shape, #1322): on
+    # the single-threaded runtime the `join!` polls `create` to completion on
+    # its first poll, the sibling never runs in between, and `ran_before`
+    # stays false at the bound assertion. The `Ok::<_, JoinError>` pin keeps
+    # the value's type identical to the `spawn_blocking` form — plain `Ok(...)`
+    # leaves the error type uninferred (E0282, cb8 r1 compile log in
+    # _tmp/20261026-issue-2195/review-r1/); the issue's recipe said the bare
+    # form compiled, which the first host run disproved.
+    # Re-anchored after #2641 merged: the closure body is now
+    # `dispatch_under_management_gate(&cron, ...)` — same handoff. The
+    # mutant inlines the underlying `cron::dispatch`, not the gate wrapper:
+    # the wrapper's `enter_dispatch()` is a blocking-only API (`blocking_read`
+    # panics "Cannot block the current thread from within a runtime" when run
+    # on the async worker — cb8 r4 judged that shape INVALID as a wrong panic,
+    # `_tmp/20261026-issue-2195/review-r4/`), and a mutant is already-broken
+    # code whose only contract is failing the bound test at its bound
+    # assertion; the gate also has its own race test in `switch_tests.rs`, so
+    # bypassing it here leaves no dead code (turbofish kept for the same
+    # E0282 reason as above).
+    ('cron-inline-sync', CRON,
+     '            let dispatched = tokio::task::spawn_blocking(move || {\n'
+     '                dispatch_under_management_gate(&cron, &dispatch_method, &params)\n'
+     '            })\n'
+     '            .await;',
+     '            let dispatched = Ok::<_, tokio::task::JoinError>(cron::dispatch(cron.as_deref(), &dispatch_method, &params));',
+     'native_process::methods::cron::cron_tests::cron_request_dispatches_off_the_async_worker',
+     '#1509 cron dispatch must yield the async worker before answering'),
 ]
 
 
@@ -464,6 +500,8 @@ mutations = [
 # #2562 r0 + fix-r1: SERVICES / MANAGEMENT_TESTS joined the scanned files with
 # the rows above, so the counts moved to 50 rows / 40 literal-anchor entries;
 # the derived counts in the paragraph above describe the #2065 table as it was.
+# #2195: CRON / CRON_TESTS joined the scanned files with the row above, so
+# the counts moved to 51 rows / 41 literal-anchor entries.
 LITERAL_ANCHORS = [
     (CONFIG, '#1457 session_model_set accepts the fixture selection'),
     (CONFIG, '#1457 session_model_clear succeeds'),
@@ -508,6 +546,7 @@ LITERAL_ANCHORS = [
     (REVIEW_TESTS, '#1864 the stored mode reaches the host admission context'),
     (REVIEW_TESTS, '#1429 the acquire path restores the generated ask rule'),
     (REVIEW_TESTS, '#2146 the second acquire reports nothing: one miss report per assembly'),
+    (CRON_TESTS, '#1509 cron dispatch must yield the async worker before answering'),
 ]
 
 # Where an assertion can live: the mutated sources, the read-side files the
@@ -517,7 +556,7 @@ LITERAL_ANCHORS = [
 # scan does not read would be a guard with a blind spot.
 SOURCE_TEXTS = (CONFIG, SESSION_DIR, METHODS_MOD, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS,
                 REVIEW_TESTS, FACTORY, FACTORY_TESTS, PROJECT_SCOPE, SERVICES,
-                MANAGEMENT_TESTS)
+                MANAGEMENT_TESTS, CRON, CRON_TESTS)
 
 
 def _assertions(case):

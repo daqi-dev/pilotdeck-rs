@@ -115,6 +115,10 @@ cases = [
     ('queued-candidate', factory, 'release_all(std::mem::take(&mut self.releases)).await', 'std::mem::forget(self); Ok(())', None, prefix+'queued_candidate_cancellation_closes_storage', '#745 queued candidate lease cleanup'),
     ('session-started-seed', factory, 'if !self.finished\n            && self.started.load(Ordering::SeqCst)\n            &&', 'if', None, prefix+'session_started_cancellation_preserves_absent_seed', '#745 session-started cancellation seed'),
     ('hydrate-invalid-content', factory, 'validate_web_history(&read.entries)?;', 'let _ = &read.entries;', None, prefix+'storage_hydration_matches_ts_errors', '#745 hydrate must reject'),
+    # #2058: the fileArtifact read of validate_web_history. Removing only the
+    # artifacts.length read keeps the .some arm intact, so the kill comes from
+    # the two file_artifacts storageErrors rows (restore stops rejecting).
+    ('hydrate-artifact-read-missing', factory, 'property(field(entry, "artifacts"), "length")?;', 'let _ = field(entry, "artifacts");', None, prefix+'storage_hydration_matches_ts_errors', '#745 hydrate must reject'),
     ('reload-consistency', factory, 'if before.sequence == after.sequence && before.last_entry_id == after.last_entry_id {', 'if true {', None, prefix+'reload_retries_concurrent_append', '#745 reload version conclusion'),
     ('projection-null-usage', factory, 'let value = property(usage, name)?;', 'let value = field(usage, name);', None, prefix+'durable_projection_matches_ts', '#745 projection rejects malformed usage/metadata'),
     ('terminal-next-once', factory, 'if !self.finished\n                && (matches!', 'if true\n                && (matches!', None, prefix+'reload_file_state_matches_ts_timing', '#745 post-terminal seed oracle'),

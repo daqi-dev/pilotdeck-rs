@@ -1048,6 +1048,123 @@ fn manager_methods_stay_outside_default_dispatch() {
     );
 }
 
+/// #2309: a dispatch failure is `ManagerDispatch::Error`, never a successful
+/// response whose body happens to be an error object (the #1456
+/// `MemoryDispatch` / #2194 `SnapshotDispatch` shape). Both method kinds are
+/// pinned per arm: sessions resolves the project first, browsers forwards the
+/// raw input to the injected provider.
+#[test]
+fn dispatch_routes_only_manager_methods() {
+    let root = PathBuf::from("/project");
+    let sessions = ManagerGateway::from_parts(
+        Some(Arc::new(RecordingCatalog {
+            input: Mutex::new(None),
+            items: vec![js(r#"{"sessionId":"session-1"}"#)],
+        }) as Arc<dyn SessionCatalogPort>),
+        None,
+        ReplayResolver { root: root.clone() },
+        root.clone(),
+        root.clone(),
+    );
+    let outcome = sessions.dispatch("manager_sessions", &js(r#"{"projectKey":"/project"}"#));
+    let Some(ManagerDispatch::Response(response)) = outcome else {
+        panic!(
+            "#2309 manager_sessions success must dispatch as ManagerDispatch::Response, got {outcome:?}"
+        )
+    };
+    assert_eq!(
+        items(&response).len(),
+        1,
+        "#2309 manager_sessions dispatch must return the catalog items"
+    );
+    let outcome = sessions.dispatch("manager_sessions", &js(r#"{"projectKey":"/missing"}"#));
+    let Some(ManagerDispatch::Error(error)) = outcome else {
+        panic!(
+            "#2309 manager_sessions failure must dispatch as ManagerDispatch::Error, got {outcome:?}"
+        )
+    };
+    assert_eq!(
+        error.code(),
+        Some("PROJECT_NOT_FOUND"),
+        "#2309 manager_sessions dispatch error code"
+    );
+    let browsers = ManagerGateway::from_parts(
+        None,
+        Some(Arc::new(ReplayBrowsers::new(js(
+            r#"{"result":{"items":[{"browserId":"browser-1","state":"running"}]}}"#,
+        ))) as Arc<dyn ManagerBrowserPort>),
+        ReplayResolver { root: root.clone() },
+        root.clone(),
+        root.clone(),
+    );
+    let outcome = browsers.dispatch("manager_browsers", &js(r#"{"projectKey":"/project"}"#));
+    let Some(ManagerDispatch::Response(response)) = outcome else {
+        panic!(
+            "#2309 manager_browsers success must dispatch as ManagerDispatch::Response, got {outcome:?}"
+        )
+    };
+    assert_eq!(
+        items(&response).len(),
+        1,
+        "#2309 manager_browsers dispatch must return the provider items"
+    );
+    let failing = ManagerGateway::from_parts(
+        None,
+        Some(Arc::new(ReplayBrowsers::new(js(
+            r#"{"error":{"name":"DialogGatewayError","code":"BROWSER_PROVIDER_DOWN","message":"browser provider offline"}}"#,
+        ))) as Arc<dyn ManagerBrowserPort>),
+        ReplayResolver { root: root.clone() },
+        root.clone(),
+        root,
+    );
+    let outcome = failing.dispatch("manager_browsers", &js("{}"));
+    let Some(ManagerDispatch::Error(error)) = outcome else {
+        panic!(
+            "#2309 manager_browsers failure must dispatch as ManagerDispatch::Error, got {outcome:?}"
+        )
+    };
+    assert_eq!(
+        error.code(),
+        Some("BROWSER_PROVIDER_DOWN"),
+        "#2309 manager_browsers dispatch error code"
+    );
+    assert!(
+        sessions.dispatch("memory_list", &js("{}")).is_none(),
+        "#2309 non-manager methods stay forwardable"
+    );
+}
+
+/// #2309: the dispatch `Error` arm must also hold for a `code() == None`
+/// failure. `manager_sessions` reads `projectKey` before any provider call, so
+/// a nullish input throws a plain `TypeError` (no wire code, so it cannot
+/// assemble `{ok:false,error:{code,message}}`); dispatch must still surface it
+/// as `ManagerDispatch::Error`, never a flattened response body.
+#[test]
+fn dispatch_routes_codeless_errors_to_error() {
+    let root = PathBuf::from("/project");
+    let sessions = ManagerGateway::from_parts(
+        Some(Arc::new(RecordingCatalog {
+            input: Mutex::new(None),
+            items: vec![],
+        }) as Arc<dyn SessionCatalogPort>),
+        None,
+        ReplayResolver { root: root.clone() },
+        root.clone(),
+        root.clone(),
+    );
+    let outcome = sessions.dispatch("manager_sessions", &JsValue::Null);
+    let Some(ManagerDispatch::Error(error)) = outcome else {
+        panic!(
+            "#2309 a codeless TypeError must dispatch as ManagerDispatch::Error, got {outcome:?}"
+        )
+    };
+    assert_eq!(
+        error.code(),
+        None,
+        "#2309 a nullish input keeps its codeless TypeError at dispatch"
+    );
+}
+
 #[test]
 fn manager_projects_keeps_unknown_key_units() {
     let scratch = Scratch::new();

@@ -9,8 +9,11 @@ tests of the same apparatus (``scripts/cli-parity/test_cli_parity.py``). Run
 with no other writers in this worktree, after the apparatus change is
 committed (``mutating_sources`` refuses files that differ from HEAD by design;
 ``--baseline`` points it at a ``git stash create`` tree for a local rehearsal).
-Evidence goes in a new output folder. No cargo is involved, so no
-CARGO_TARGET_DIR is required. Run all mutants to completion; any non-KILLED
+Evidence goes in a new output folder. This entry's own source never reads
+CARGO_TARGET_DIR; the shared ``mutating_sources`` window it delegates to does
+(absent defaults to the shared tree target, blank/dot are refused there) and
+may cargo-build the workspace scanner on a cold host (#2552), so no usable
+caller target is required. Run all mutants to completion; any non-KILLED
 row is a nonzero exit (a stale anchor or a broken run is INVALID, never
 SURVIVED). Each bound run also holds the machine-wide cli-parity lease
 (``/tmp/pdrs-parity.lock``) that a real round already holds, so the pinned
