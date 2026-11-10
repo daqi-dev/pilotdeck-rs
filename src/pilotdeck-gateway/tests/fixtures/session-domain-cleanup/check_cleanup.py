@@ -938,6 +938,12 @@ NON_AGGREGATION_POINTS = {
         'test-only mutated fixture copy, not a batch summary',
     ('scripts/gateway-parity/test_safety.py', 'drifted_preexisting'):
         'test-only drifted fixture copy, not a batch summary',
+    # fix-r29: the class-4 mutation pin stands a fake observable verdict in
+    # for a sample the real verdict can never judge observable, so the
+    # mutation's own ``rows`` read can be pinned to _retirement_list_rows
+    # instead of raising TypeError out of the controls.
+    ('scripts/gateway-parity/test_safety.py', '_fake_observable_network_verdict'):
+        'test-only fake per-face verdict for an impossible observable corrupt sample; not a batch summary',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
      'batch_aggregation_control'):
         'test-only; calls the shared function to assert the order',
@@ -1248,7 +1254,7 @@ def _folded_string_fold(node, budget):
                     # the audit process and the audited run), so it
                     # stops as the sentinel too — constant, not runtime,
                     # never the fail-open None.
-                    if any(isinstance(part, _RUNTIME_TEST_NODES_STRICT)
+                    if any(isinstance(part, _RUNTIME_TEST_NODES)
                            for part in ast.walk(part.value)):
                         return None
                     lit = _literal_test_value(part.value, budget)
@@ -1395,11 +1401,12 @@ def _folded_string_fold(node, budget):
             string, count_node = ((left, node.right) if left is not None
                                   else (right, node.left))
             # fix-r28 (DS boundary#1 r27-d P0, probe-verified —
-            # probe-p0-subscript.out): the gate is the strict set — a
-            # Subscript/Slice-only count subtree is constant by
-            # semantics, and the literal fold below fail-closes it to
-            # the sentinel instead of the fail-open None.
-            if any(isinstance(part, _RUNTIME_TEST_NODES_STRICT)
+            # probe-p0-subscript.out): the gate is the state-dependent
+            # set (fix-r29: one set, no strict copy) — a count subtree
+            # without a state-dependent node is constant by semantics,
+            # and the literal fold below fail-closes it to the sentinel
+            # instead of the fail-open None.
+            if any(isinstance(part, _RUNTIME_TEST_NODES)
                    for part in ast.walk(count_node)):
                 return None
             count = _literal_test_value(count_node, budget)
@@ -1462,7 +1469,29 @@ def _folded_string_fold(node, budget):
         if len(arms) == 1:
             return _folded_string(arms[0], budget)
         return None if arms else _FOLD_STRING_UNRESOLVED
-    return None
+    # fix-r29 (DS r28-b boundary#1 P0 + sibling#2 P1, probe-verified —
+    # _tmp/20261110-1355-r26-harvest/probe-p1-foldtail.out): the r28
+    # rule — a subtree with no state-dependent node is constant by the
+    # interpreter's own semantics — must hold at this exit too. The
+    # grammar above does not fold a Subscript/Slice value operand
+    # (``'sta' + 'tus'[:3]`` is the exact ``'status'`` at runtime), and
+    # the fall-through used to be the fail-open None for every shape the
+    # grammar misses, so a constant-semantics operand escaped the
+    # spelling/status-key pipelines while its runtime value was the
+    # exact word. The exit applies the same gate now: a subtree carrying
+    # a state-dependent node keeps the plain None of the runtime
+    # contract; a constant subtree is handed to ``_literal_test_value``,
+    # whose grammar does not fold these shapes and fail-closes them to
+    # the r14 sentinel — and a constant the fold *does* resolve to a
+    # non-string (a tuple, a number) can never be a string operand (the
+    # runtime Add would raise), the r19 non-string reading, never the
+    # sentinel.
+    if any(isinstance(part, _RUNTIME_TEST_NODES) for part in ast.walk(node)):
+        return None
+    _literal = _literal_test_value(node, budget)
+    if _literal is _LITERAL_TEST_UNRESOLVED:
+        return _FOLD_STRING_UNRESOLVED
+    return _literal if isinstance(_literal, str) else None
 
 
 def _spelling_hit(node, words):
@@ -4955,39 +4984,46 @@ _LITERAL_TEST_UNRESOLVED = object()
 
 # #1652 fix-r4 (DS boundary P0): the runtime grammar of a test.  Anything
 # built without these nodes is constant by the interpreter's own semantics.
-_RUNTIME_TEST_NODES = (ast.Name, ast.Call, ast.Attribute, ast.Subscript,
-                       ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp,
-                       ast.GeneratorExp, ast.Await, ast.Yield, ast.YieldFrom,
-                       ast.Starred, ast.JoinedStr, ast.FormattedValue,
-                       ast.NamedExpr, ast.Slice)
-
-# #1652 fix-r28 (DS boundary#1 r27-d P0, probe-verified —
-# _tmp/20261110-1355-r26-harvest/probe-p0-subscript.out): Subscript/Slice
-# over constant containers have constant semantics (``(1, 1)[0] == 1``),
-# but _RUNTIME_TEST_NODES — rightly, for a test whose *value* depends on
-# runtime state — classes them as runtime, and the r27 Mult-count gate
-# and the r28 interpolation gate both ran BEFORE the literal fold, so a
-# constant count/interpolation of that shape took the fail-open None
-# while ``report['sta' + 'tus' * (1, 1)[0]]`` wrote the exact
-# ``'status'`` at runtime. The fold gates use this stricter set: a
-# subtree with no state-dependent node is handed to
-# ``_literal_test_value``, whose grammar does not fold the subscript
-# shapes and fail-closes them to ``_LITERAL_TEST_UNRESOLVED`` — the r14
-# sentinel through the Mult/interpolation contracts, never the
-# fail-open None. A genuinely state-dependent subscript (``d['k']``,
-# ``xs[i]``) still carries a Name and keeps the plain None.
-_RUNTIME_TEST_NODES_STRICT = tuple(
-    node for node in _RUNTIME_TEST_NODES
-    if node not in (ast.Subscript, ast.Slice))
+# fix-r28 (DS boundary#1 r27-d P0, probe-verified —
+# _tmp/20261110-1355-r26-harvest/probe-p0-subscript.out) started a strict
+# copy of this set without Subscript/Slice for the two fold gates: a
+# subscript over constant containers has constant semantics, and a
+# subtree with no state-dependent node must be handed to
+# ``_literal_test_value``, whose grammar does not fold the shape and
+# fail-closes it to ``_LITERAL_TEST_UNRESOLVED`` — the r14 sentinel
+# through the Mult/interpolation contracts, never the fail-open None.
+# fix-r29 (anthropic r28 boundary#1 P0 + DS r28-b sibling#1 P1,
+# probe-verified — probe-p0-strictset.out / probe-p1-foldtail.out): the
+# strict copy still kept JoinedStr/FormattedValue/Starred, so a
+# constant-semantics count/interpolation carrying one of them
+# (``'tus' * (f'' == '')``) re-opened the fail-open None at the gates,
+# and the condition classification (_test_is_runtime, feeding
+# _constant_ifexp / _exit_arms / _exit_uncertain) still used the loose
+# set, so a constant condition (``(1, 1)[0]``) kept its dead arm in
+# _exit_arms and the dead arm's fail-closed literal excused the live
+# status arm (_nested_slot_fail_closed exemption). There is exactly one
+# set now, and it carries only the state-dependent node types: an
+# f-string builds its value from its subtrees, a Starred only appears
+# inside a container, a Subscript/Slice reads its value from its base —
+# each is constant exactly when its subtree carries none of the nodes
+# below, and ``d['k']`` / ``xs[i]`` / ``f'{name}'`` keep the plain
+# runtime reading through the Name they contain.
+_RUNTIME_TEST_NODES = (ast.Name, ast.Call, ast.Attribute, ast.Lambda,
+                       ast.ListComp, ast.SetComp, ast.DictComp,
+                       ast.GeneratorExp, ast.Await, ast.Yield,
+                       ast.YieldFrom, ast.NamedExpr)
 
 
 def _test_is_runtime(node):
     """True when the expression's value can depend on runtime state.
 
-    Names, calls, attribute/subscript reads, lambdas, comprehensions and
-    f-string interpolation are the runtime grammar (#1652 fix-r4, DS
-    boundary P0); everything else is built from literals and operators the
-    interpreter evaluates deterministically.
+    The state-dependent grammar (#1652 fix-r4; collapsed to this one set by
+    fix-r28/fix-r29): names, calls, attribute reads, lambdas,
+    comprehensions and walruses. Everything else — operators, containers,
+    f-strings, constant-container subscripts — builds its value from its
+    subtrees, so a tree without these nodes is constant by the
+    interpreter's own semantics (possibly one the literal fold cannot
+    resolve, which every consumer fail-closes).
     """
     return any(isinstance(part, _RUNTIME_TEST_NODES) for part in ast.walk(node))
 
@@ -10388,6 +10424,11 @@ def _aggregation_audit_impl():
         ("f'{(114 + 1):c}tatus'", _FOLD_STRING_UNRESOLVED),
         ("f'{+115:c}tatus'", _FOLD_STRING_UNRESOLVED),
         ("f'{(114 + 1)}tatus'", '115tatus'),
+        # fix-r29 (DS r28-b sibling#4 P2): the scalar fold covers float
+        # too (str(3.5) == '3.5'), under no spec and under ``!s`` — the
+        # r28 change record claimed it, no pin held it.
+        ("f'{3.5}'", '3.5'),
+        ("f'{3.5!s}'", '3.5'),
     ]
     for _shape, _want in _fsr11_shapes:
         if _folded_string(ast.parse(_shape, mode='eval').body) != _want:
@@ -10447,9 +10488,11 @@ def _aggregation_audit_impl():
     # and ``ast.Subscript`` is runtime grammar there — so a constant-
     # semantics count (``'tus' * (1, 1)[0]``, ``[1][0]``) took the
     # fail-open None while the runtime key/value was the exact word.
-    # The gates use ``_RUNTIME_TEST_NODES_STRICT`` now; the literal fold
-    # fail-closes the subscript shapes it does not fold to the r14
-    # sentinel. Fold face first: both shapes must stop as the sentinel.
+    # The gates use the state-dependent set now (fix-r29 collapsed
+    # ``_RUNTIME_TEST_NODES_STRICT`` into ``_RUNTIME_TEST_NODES``); the
+    # literal fold fail-closes the subscript shapes it does not fold to
+    # the r14 sentinel. Fold face first: both shapes must stop as the
+    # sentinel.
     _fsr12_shapes = [
         "'sta' + 'tus' * (1, 1)[0]",
         "'sta' + 'tus' * [1][0]",
@@ -10489,6 +10532,112 @@ def _aggregation_audit_impl():
                             'subscript status write escaped enumeration '
                             f'(rogue{_i}) (#1652)')
             break
+    # #1652 fix-r29 (anthropic r28 boundary#1 P0 + DS r28-b boundary#1 P0
+    # / sibling#1 / sibling#2 P1, probe-verified —
+    # _tmp/20261110-1355-r26-harvest/probe-p0-strictset.out /
+    # probe-p1-foldtail.out, before/after): two faces of the same
+    # one-value-two-meanings gap. (a) ``_RUNTIME_TEST_NODES_STRICT`` still
+    # carried JoinedStr/FormattedValue/Starred — node types that build
+    # their value from their subtrees — so a constant-semantics
+    # count/interpolation carrying one (``'tus' * (f'' == '')``,
+    # ``(*(1,),)[0]``, an f-string inside the interpolation) re-opened
+    # the fail-open None at the gates. (b) the fold's own fall-through
+    # exit returned the plain None for every shape its grammar misses,
+    # so a constant-semantics Subscript *value operand*
+    # (``'sta' + 'tus'[:3]``) escaped the spelling/status-key pipelines.
+    # (c) the condition classification still used the loose set, so a
+    # constant condition (``(1, 1)[0]``) kept its dead arm in
+    # _exit_arms and the dead arm's fail-closed literal excused the
+    # live status arm. One state-dependent set, one gate at the
+    # fall-through, and the condition classifiers read the same set now.
+    # Fold face first: every shape below is constant by the
+    # interpreter's own semantics but outside the fold grammar, so it
+    # must stop as the r14 sentinel — never the fail-open None.
+    _fsr13_shapes = [
+        "'sta' + 'tus' * (f'' == '')",
+        "'sta' + 'tus' * (*(1,),)[0]",
+        "f'{(f\"\" == \"\") + 114:c}tatus'",
+        "'sta' + 'tus'[:3]",
+        "'PA' + 'SS'[:2]",
+        "('status', 'x')[0]",
+    ]
+    for _shape in _fsr13_shapes:
+        if _folded_string(ast.parse(_shape, mode='eval').body) \
+                is not _FOLD_STRING_UNRESOLVED:
+            failures.append('#892 aggregation-audit: a constant-semantics '
+                            'gate-node/subscript-operand shape must stop '
+                            f'the fold as the sentinel ({_shape!r}) '
+                            '(#1652)')
+            break
+    # Polarity face: the state-dependent nodes keep the plain None of
+    # the runtime contract — a Name inside the f-string count, a Name
+    # slice on the operand, a Name-based subscript count.
+    _fsr13_runtime = [
+        "'sta' + 'tus' * f'{n}'",
+        "'sta' + 'tus'[:i]",
+        "'sta' + 'tus' * d['k']",
+    ]
+    for _shape in _fsr13_runtime:
+        if _folded_string(ast.parse(_shape, mode='eval').body) is not None:
+            failures.append('#892 aggregation-audit: a state-dependent '
+                            'count/operand lost the None contract of the '
+                            f'runtime half ({_shape!r}) (#1652)')
+            break
+    # Condition face: a constant-but-unresolvable test certifies no arm
+    # (the r20 rule), so the dead arm's fail-closed literal can no
+    # longer excuse the live status arm; a runtime test keeps both arms
+    # and with them the r7 :214 one-notch allowance.
+    _fsr13_constant_slot = ast.parse(
+        "STATUS_WORD if (1, 1)[0] else 'FAIL'", mode='eval').body
+    _fsr13_runtime_slot = ast.parse(
+        "STATUS_WORD if d['k'] else 'FAIL'", mode='eval').body
+    if _exit_arms(_fsr13_constant_slot) != []:
+        failures.append('#892 aggregation-audit: a constant-semantics '
+                        'condition still collected both arms (#1652)')
+    if _nested_slot_fail_closed(_fsr13_constant_slot, {}):
+        failures.append('#892 aggregation-audit: a dead arm of a constant '
+                        'condition still excused the live status arm '
+                        '(#1652)')
+    if not _nested_slot_fail_closed(_fsr13_runtime_slot, {}):
+        failures.append('#892 aggregation-audit: a runtime condition lost '
+                        'the fail-closed arm allowance of the r7 :214 '
+                        'precedent (#1652)')
+    # End-to-end: every write below puts the exact status word in at
+    # runtime (rogue0/rogue1 by the key, rogue2 by the value), so each
+    # must be enumerated.
+    _fsr13_writes = [
+        "    report['sta' + 'tus'[:3]] = 'PASS'",
+        "    report['sta' + 'tus' * (f'' == '')] = 'PASS'",
+        "    report['status'] = 'PA' + 'SS'[:2]",
+    ]
+    _fsr13_lines = ['report = {}', '']
+    for _i, _write in enumerate(_fsr13_writes):
+        _fsr13_lines += [f'def rogue{_i}(rows):', _write, '    return 0', '']
+    _fsr13_found, _fsr13_dup = scan_aggregation_tree(
+        ast.parse('\n'.join(_fsr13_lines)), 'fix-r29-self-check.py')
+    for _i in range(len(_fsr13_writes)):
+        if ('fix-r29-self-check.py', f'rogue{_i}') not in _fsr13_found:
+            failures.append('#892 aggregation-audit: a constant-semantics '
+                            'gate-node/subscript-operand status write '
+                            f'escaped enumeration (rogue{_i}) (#1652)')
+            break
+    # And the condition face end-to-end: a nested status slot whose dead
+    # arm is a fail-closed literal but whose condition is a constant —
+    # the live arm is the only arm the interpreter can take, and it is a
+    # bare status literal that relays nothing, so the slot must flag.
+    _fsr13_nested = ast.parse(
+        'def _fsr13_nested(report, rows):\n'
+        '    status, code = common.aggregate_status(rows)\n'
+        "    return {'status': common.aggregate_status(rows)[0],\n"
+        "            'cleanupAudit': {'status': "
+        "'FAIL' if (1, 1)[0] else 'PASS'}}\n").body[0]
+    _fsr13_nested_slots = unshared_status_slots(
+        _fsr13_nested, ('fix-r29-self-check.py', '_fsr13_nested'))
+    if not any('nested status slot' in slot
+               for slot in _fsr13_nested_slots):
+        failures.append('#892 aggregation-audit: a dead fail-closed arm '
+                        'still excused the live arm of a constant '
+                        'condition in a nested status slot (#1652)')
     # fix-r26 (structural, review verdict): the polarity migration must
     # be verifiable by machine, not by re-review — this source may not
     # regain an any-arm ``_inevitably_shared`` exemption consumer (the

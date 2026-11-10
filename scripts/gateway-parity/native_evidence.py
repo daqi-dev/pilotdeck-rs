@@ -283,10 +283,17 @@ def checked_evidence(raw, contract, evidence):
     """
     replay = parse_trace(raw, contract)
     checked = copy.deepcopy(evidence)
-    exec_equal = (evidence['processes'] == replay['processes']
-                  and evidence['execWitness'] == replay['execWitness'])
-    network_equal = evidence['networkWitness'] == replay['networkWitness']
-    transcript_equal = evidence['transcriptWitness'] == replay['transcriptWitness']
+    # fix-r29 (DS r28-b sibling#3 P1, same channel as #2039/#1372): the
+    # three witness replays were bare ``==``, so a JSON boolean/number
+    # standing in for a pid (``True == 1``, ``1.0 == 1``) satisfied the
+    # comparison and promoted ``complete`` on a tampered capture. The
+    # same_json walk the cleanup comparison already uses compares by
+    # type there too; numbers keep comparing by value, the JSON
+    # semantics #1372 froze.
+    exec_equal = (same_json(evidence['processes'], replay['processes'])
+                  and same_json(evidence['execWitness'], replay['execWitness']))
+    network_equal = same_json(evidence['networkWitness'], replay['networkWitness'])
+    transcript_equal = same_json(evidence['transcriptWitness'], replay['transcriptWitness'])
     checked['execWitness']['complete'] = evidence['execWitness']['complete'] is True and exec_equal
     checked['networkWitness']['complete'] = evidence['networkWitness']['complete'] is True and network_equal
     checked['transcriptWitness']['complete'] = (evidence['transcriptWitness']['complete'] is True

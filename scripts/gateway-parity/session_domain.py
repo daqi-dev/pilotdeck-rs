@@ -1183,6 +1183,19 @@ def audit_native(evidence, contract):
             and len(set(actual_pids)) == len(actual_pids), 'PROCESS_WITNESS', 'invalid/duplicate PID')
     roles = Counter(p['role'] for p in processes)
     require(roles == Counter(contract['processRoles']), 'NATIVE_PROCESS', 'unexpected/missing process roles')
+    # fix-r29 (DS r28-b sibling#3 P1, probe-verified —
+    # _tmp/20261110-1355-r26-harvest/probe-p1-pidbool.out): the real-pid
+    # rule follows every pid-carrying field the witness compares, not
+    # only processes[*].pid. ``ppid``, the execWitness event ``pid``/
+    # ``ppid`` and the egress ``ownerPid`` were bare ``==``/``in``, and
+    # Python reads ``True == 1`` / ``1.0 == 1`` / ``True in {1: ...}``
+    # as equal, so a forged boolean or float pid passed the parent
+    # gate, the identity/order gates and the helper gate while the
+    # audited capture was corrupt. The contract's own launcherPid is
+    # gated once too (the same folder holds it), then every observed
+    # field is gated before its comparison.
+    require(_retirement_real_pid(contract['launcherPid']),
+            'PROCESS_WITNESS', 'contract launcher pid is not a real pid')
     for process in processes:
         allowed = contract['binaries'][process['role']]
         require(process['argv'] == allowed['argv'] and process['sha256'] == allowed['sha256']
@@ -1190,18 +1203,20 @@ def audit_native(evidence, contract):
                 and digest(Path(allowed['path'])) == allowed['sha256'],
                 'NATIVE_PROCESS', 'exec identity/argv/hash differs from pre-launch identity')
         expected_parent = contract['launcherPid'] if process['role'] == 'host' else next(p['pid'] for p in processes if p['role'] == 'host')
-        require(process['ppid'] == expected_parent, 'PROCESS_WITNESS', 'wrong parent PID')
+        require(_retirement_real_pid(process['ppid']) and process['ppid'] == expected_parent,
+                'PROCESS_WITNESS', 'wrong parent PID')
     live, started, exited = set(), set(), set()
     by_pid = {p['pid']: p for p in processes}
     for row in evidence['execWitness']['events']:
         pid = row['pid']
-        require(pid in by_pid and row['event'] in ('exec', 'exit'),
+        require(_retirement_real_pid(pid) and pid in by_pid and row['event'] in ('exec', 'exit'),
                 'PROCESS_WITNESS', 'unknown process/event, including short-lived children')
         if row['event'] == 'exec':
             require(pid not in started and all(row.get(k) == by_pid[pid][k]
                     for k in ('ppid', 'argv', 'executable', 'sha256')),
                     'PROCESS_WITNESS', 'exec identity disagrees with recorded launch identity')
-            require(row['ppid'] == contract['launcherPid'] or row['ppid'] in live,
+            require(_retirement_real_pid(row['ppid'])
+                    and (row['ppid'] == contract['launcherPid'] or row['ppid'] in live),
                     'PROCESS_WITNESS', 'child exec before parent or after parent exit')
             live.add(pid)
             started.add(pid)
@@ -1212,7 +1227,8 @@ def audit_native(evidence, contract):
     require(not live and started == exited == set(actual_pids), 'PROCESS_WITNESS', 'missing exec/exit records')
     require(evidence['networkWitness']['complete'] is True, 'NETWORK_WITNESS', 'egress observer incomplete')
     for call in evidence['networkWitness']['calls']:
-        require(call['target'] in contract['externalEndpoints'] and call['ownerPid'] in actual_pids,
+        require(call['target'] in contract['externalEndpoints'] and _retirement_real_pid(call['ownerPid'])
+                and call['ownerPid'] in actual_pids,
                 'HIDDEN_HELPER', 'undeclared helper/endpoint invocation')
     require(evidence['expectedCases'] == contract['cases'] and evidence['executedCases'] == contract['cases']
             and len(set(contract['cases'])) == len(contract['cases']) and contract['cases'],
@@ -2104,7 +2120,12 @@ def _retirement_wire_backing(frames):
     for row in _retirement_frame_rows(_retirement_list_rows(frames)):
         frame = row.get('frame')
         identifier = frame.get('id')
-        if not isinstance(identifier, (int, str)) or isinstance(identifier, bool):
+        # fix-r29 (anthropic r28 simplify#3 P2): the usable-id predicate is
+        # _retirement_usable_frame_id's, spelled once — the inline twin is
+        # the drift point fix-r10 closed for the frame-row predicate.
+        # Python resolves the call target at call time, so the definition
+        # further down the module is fine.
+        if not _retirement_usable_frame_id(identifier):
             continue
         if row.get('direction') == 'send':
             if frame.get('type') == 'request':
@@ -2586,7 +2607,13 @@ def _retirement_controls(round_row, expected, verdict=None):
         undeclared_before = {_retirement_hashable(peer)
                              for peer in original_network.get('undeclared') or []}
         mutated_connections = copy.deepcopy(connections)
-        mutated_connections['rows'] = (mutated_connections.get('rows') or []) + [
+        # fix-r29 (DS r28-b simplify#2 P2, read as P1 by the P2b rule): the
+        # truthy-non-list ``or []`` bypassed the normalization every other
+        # read point uses — a corrupt ``rows`` (e.g. ``5``) raised TypeError
+        # out of the controls instead of the control's own unavailable
+        # verdict. _retirement_list_rows keeps the one normalization.
+        mutated_connections['rows'] = _retirement_list_rows(
+            mutated_connections.get('rows')) + [
             {'peer': injected_peer, 'raw': 'controlled mutation'}]
         network_verdict = _retirement_network_verdict(mutated_connections)
         if not network_verdict.get('observable'):

@@ -1768,3 +1768,50 @@ Evidence `_tmp/20261110-1355-r26-harvest/` (probe-p1-fstring.out,
 probe-p1-fstring-after.out, probe-p0-subscript.out,
 probe-p0-subscript-after.out, mutneg-r28.out, agg-audit-r28*.out,
 test-safety-r28.out).
+fix-r29 (anthropic r28 boundary#1 P0 + DS r28-b boundary#1 P0, sibling#1/#2
+P1, simplify#2 P2-as-P1, sibling#4 P2 — all probe-verified before/after in
+`_tmp/20261110-1355-r26-harvest/`): the third face of the
+one-value-two-meanings family, plus the pid booleans on the witness side.
+(1) One set, no strict copy: the r28 gates kept `_RUNTIME_TEST_NODES_STRICT`
+as a private copy of the state-dependent set minus Subscript/Slice, so a node
+added to the main set (fix-r28's own `NamedExpr`-style growth) was missing
+from the gate copy and the new grammar landed in the fail-open None
+(`probe-p0-strictset.out`). The gates and `_test_is_runtime` now read the one
+`_RUNTIME_TEST_NODES` set. (2) The fold tail: JoinedStr/FormattedValue/
+Starred/Subscript/Slice values are decided by their subtree — when no
+state-dependent node appears anywhere in the expression the value is
+constant-semantics, so the fold's final gate hands it to
+`_literal_test_value` and fail-closes what it cannot fold to the r14
+sentinel (`'sta' + 'tus'[:3]` writes the exact `'status'`, `probe-p1-foldtail.out`);
+a subtree with a Name (or any state-dependent node) keeps the plain None of
+the runtime contract. (3) The conditional classification: a dead branch
+guarded by a constant-semantics condition (`'FAIL' if (1, 1)[0] else 'PASS'`)
+was exempted from the nested-slot fail-close because the walker saw the
+Subscript test as runtime grammar — `_nested_slot_fail_closed` now judges the
+arms with the folded condition, so the dead arm's `'FAIL'` is no longer
+creditable as the fail-closed verdict while the live arm writes. New `_fsr13`
+pins: six sentinel fold faces (`'sta' + 'tus' * (f'' == '')`, the Starred
+count, the f-string format-spec join, the subscripted slice, `'PA' +
+'SS'[:2]`, the tuple select), three runtime polarity faces (Name count /
+Name slice / Name-keyed dict — all plain None), the conditional faces
+(constant-subscript condition exempts nothing, Name condition keeps the
+exemption), and three e2e rogues plus the nested dead-branch e2e through
+`unshared_status_slots`. `f'{3.5}'` / `f'{3.5!s}'` join `_fsr11` (a float
+constant joins the fold as `str(value)`, '3.5' both ways). The revert
+mutants are killed (`mutneg-r29.out` M03 set-collapse, M04 fold tail, M05
+conditional classification; pin-bound, battery fires on the real-tree
+audit; fixture restored sha-verified). Real-tree aggregation-audit
+self-check PASS (`agg-audit-r29.out` — byte-identical to the r26 merged
+head before the r29 test pins; the final state with the two new
+test_safety pins re-ran green). Witness side: `audit_native` gates every
+pid-carrying field with `_retirement_real_pid` (process ppid, the exec
+event pid/ppid, the egress ownerPid, the contract's launcherPid) so a
+forged `True`/`1.0` no longer passes `== 1`, the class-4 control's mutated
+`rows` read goes through `_retirement_list_rows`, the frame-id read reuses
+`_retirement_usable_frame_id`, and `native_evidence.checked_evidence`
+compares the three witness groups with `same_json`. test_safety grows two
+pins (`test_audit_native_rejects_boolean_pids_on_every_witness_field`,
+`test_forwarding_control_normalizes_a_corrupt_rows_sample_before_injection`)
+for 164/164; this round touches three registered files, so gateway-parity
+`check_frozen --write` re-registers the hashes (event
+`frozen/20261108-1355-r1.md` fix-r29 section).

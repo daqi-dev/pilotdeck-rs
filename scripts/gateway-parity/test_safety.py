@@ -4956,6 +4956,114 @@ class RetirementScoring(unittest.TestCase):
         self.assertNotEqual(raised.exception.rule, 'PROCESS_WITNESS',
                             'the bottom of the pid domain is a legal witness shape')
 
+    def test_audit_native_rejects_boolean_pids_on_every_witness_field(self):
+        # fix-r29 (DS r28-b sibling#3 P1, probe-verified —
+        # _tmp/20261110-1355-r26-harvest/probe-p1-pidbool.out): Python reads
+        # ``True == 1`` / ``1.0 == 1`` / ``True in {1: ...}`` as equal, so a
+        # forged boolean or float pid passed the parent gate, the event
+        # identity/order gates and the egress helper gate while the audited
+        # capture was corrupt — the real-pid rule (``_retirement_real_pid``,
+        # fix-r8) covered only ``processes[*].pid``.  Every pid-carrying
+        # field the witness compares now follows the same rule, the
+        # contract's own ``launcherPid`` gated first of all; a legal integer
+        # pid passes every pid gate and fails only on the honest later
+        # mismatch, never on a real-pid rule again.
+        with tempfile.TemporaryDirectory(prefix='pdrs-1355-r29-') as folder:
+            binary = Path(folder) / 'bin'
+            binary.write_bytes(b'witness-probe-binary')
+            argv = ['probe']
+            sha = self.session.digest(binary)
+            base = {'evidence': {
+                'topology': 'native',
+                'processes': [{'pid': 1, 'ppid': 1, 'argv': argv, 'role': 'host',
+                              'sha256': sha, 'executable': str(binary)}],
+                'execWitness': {'complete': True, 'source': 'exec-monitor',
+                                'events': [{'pid': 1, 'event': 'exec', 'ppid': 1,
+                                            'argv': argv, 'executable': str(binary),
+                                            'sha256': sha},
+                                           {'pid': 1, 'event': 'exit'}]},
+                'networkWitness': {'complete': True,
+                                   'calls': [{'target': '127.0.0.1:29000',
+                                              'ownerPid': 1}]},
+                'expectedCases': ['c1'], 'executedCases': ['c1'],
+                'cleanup': {'allStopped': True},
+                'surfaces': {k: {'status': 'RECORDED',
+                                 'artifacts': [{'path': str(binary), 'sha256': sha}]}
+                             for k in ('output', 'disk', 'http')},
+                'observer': {'rows': []}},
+                'contract': {'host': 'rust', 'processRoles': ['host'],
+                             'binaries': {'host': {'path': str(binary), 'sha256': sha,
+                                                  'argv': argv}},
+                             'launcherPid': 1,
+                             'externalEndpoints': ['127.0.0.1:29000'],
+                             'connections': 1, 'cases': ['c1'],
+                             'bindingSource': 'observer-hello', 'binding': {}}}
+
+            def mutated(channel_path, value):
+                case = json.loads(json.dumps(base))
+                node = case[channel_path[0]]
+                for key in channel_path[1:-1]:
+                    node = node[key]
+                node[channel_path[-1]] = value
+                return case
+
+            channels = (
+                # (tag, path into base, forged value, gate rule, detail)
+                ('process ppid', ('evidence', 'processes', 0, 'ppid'), True,
+                 'PROCESS_WITNESS', 'wrong parent PID'),
+                ('process ppid float', ('evidence', 'processes', 0, 'ppid'), 1.0,
+                 'PROCESS_WITNESS', 'wrong parent PID'),
+                ('event pid', ('evidence', 'execWitness', 'events', 0, 'pid'), True,
+                 'PROCESS_WITNESS', 'unknown process'),
+                ('event ppid', ('evidence', 'execWitness', 'events', 0, 'ppid'), True,
+                 'PROCESS_WITNESS', 'child exec before parent'),
+                ('egress ownerPid', ('evidence', 'networkWitness', 'calls', 0, 'ownerPid'),
+                 True, 'HIDDEN_HELPER', 'undeclared helper'),
+                ('contract launcherPid', ('contract', 'launcherPid'), True,
+                 'PROCESS_WITNESS', 'contract launcher pid'),
+            )
+            for tag, channel_path, value, rule, detail in channels:
+                case = mutated(channel_path, value)
+                with self.assertRaises(self.session.EvidenceError) as raised:
+                    self.session.audit_native(case['evidence'], case['contract'])
+                self.assertEqual(raised.exception.rule, rule, f'fix-r29 {tag}: {raised.exception}')
+                self.assertIn(detail, str(raised.exception), f'fix-r29 {tag}')
+            # The all-legal shape passes every pid gate and fails only on the
+            # honest later mismatch — the empty independent observer.
+            case = json.loads(json.dumps(base))
+            with self.assertRaises(self.session.EvidenceError) as raised:
+                self.session.audit_native(case['evidence'], case['contract'])
+            self.assertEqual(raised.exception.rule, 'EMPTY_OBSERVER', raised.exception)
+
+    def test_forwarding_control_normalizes_a_corrupt_rows_sample_before_injection(self):
+        # fix-r29 (DS r28-b simplify#2 P2, read as P1 by the P2b rule — the
+        # shape can change a control's verdict from a judged record into an
+        # escaped TypeError): the class-4 mutation read ``rows or []``, so a
+        # truthy non-list ``rows`` (e.g. ``5``) bypassed the one
+        # normalization every other read point uses (``_retirement_list_rows``,
+        # fix-r4) and the ``+ [injected row]`` raised TypeError out of the
+        # controls.  The shape cannot pass the real observability verdict —
+        # a non-list ``rows`` is the empty sample, so the control is
+        # unavailable before the mutation line — so the pin holds the
+        # mutation's own read to the helper directly: a fake observable
+        # verdict stands in for the impossible observable corrupt sample.
+        expected = ['submit_turn', 'run_get']
+        row = self._stream_ok_round_row()
+        row['connections'] = {'commandStatus': 'ok', 'rows': 5, 'unparsed': []}
+        with patch.object(self.session, '_retirement_network_verdict',
+                          _fake_observable_network_verdict):
+            controls = self.session._retirement_controls(row, expected)
+        class4 = next(c for c in controls['classes'] if c['class'] == 'FORWARDING_MISLABELED')
+        self.assertEqual(class4['status'], 'PASS', f'fix-r29 corrupt rows: {class4}')
+        # Through the real verdict the same corrupt shape is the honest
+        # unobservable family: unavailable, and the whole walk raises nothing.
+        row = self._stream_ok_round_row()
+        row['connections'] = {'commandStatus': 'ok', 'rows': 5, 'unparsed': []}
+        controls = self.session._retirement_controls(row, expected)
+        class4 = next(c for c in controls['classes'] if c['class'] == 'FORWARDING_MISLABELED')
+        self.assertEqual(class4['status'], 'NOT_APPLICABLE', f'fix-r29 real verdict: {class4}')
+        self.assertIn('unobservable', class4['reason'])
+
     def _fake_baseline(self, root, break_route=False, drop_listener=False):
         """Synthetic baseline whose parse reproduces the real 13/4 entry set."""
         gateway = root / 'src/gateway/server/GatewayServer.ts'
@@ -5062,6 +5170,22 @@ class RetirementScoring(unittest.TestCase):
             self.assertEqual(unproven['gated'], [])
             self.assertIn('/feishu/webhook', unproven['unhit'])
             self.assertEqual(unproven['status'], 'BLOCKED')
+
+
+def _fake_observable_network_verdict(connections):
+    # fix-r29 test stand-in (registered in the fixture's NON_AGGREGATION_POINTS,
+    # not a batch summary): an observable verdict for a sample the real
+    # ``_retirement_network_verdict`` can never judge observable — a truthy
+    # non-list ``rows`` is the empty sample.  It stands in only so the
+    # class-4 mutation's own read can be pinned to ``_retirement_list_rows``
+    # instead of raising TypeError out of the controls; the status it returns
+    # is the fake's own, never a batch aggregation.
+    rows = connections.get('rows')
+    rows = rows if isinstance(rows, list) else []
+    undeclared = [row['peer'] for row in rows if isinstance(row, dict)]
+    return {'rule': 'NETWORK_FALLBACK', 'undeclared': undeclared,
+            'unparsed': [], 'observable': True,
+            'status': 'FAIL' if undeclared else 'PASS'}
 
 
 if __name__ == '__main__':
