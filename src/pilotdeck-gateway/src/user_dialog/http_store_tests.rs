@@ -1663,6 +1663,172 @@ async fn parser_rejection_with_unread_body_delivers_and_closes() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
+/// #2773 fix-r1 的**临时 Linux 探针**（测完即删，绝不留在终稿；本提交随后
+/// revert）。背景：R1 条目「Rust 每格 FIN」缺 1 MiB 格实测支撑，macOS 本机
+/// 实测又与声明矛盾（frob-1m / get-1m 均 RST），关闭类型受内核缓冲与时序
+/// 影响，必须在 Linux（CI runner）复测后才能重写 B2 表与钉子。
+///
+/// 逐格裸 socket 记录客户端 `write_all` 终态与服务端 `read_to_end` 终态
+/// （`Ok(Ok(_))`=clean-eof-FIN、`Ok(Err(e))`=err-<kind>（RST 家族）、
+/// `Err(_)`=timeout-still-open），与 Node 基线
+/// `_tmp/20261026-issue-2773/r1/artifacts/round/node-arbitration/probe-final.out`
+/// 同格对照；另覆盖 serve 侧早答（401/405/413）与无体关闭（431/405-close/
+/// HTTP/1.0/CR/1.1-close）格，供 `exchange_until_eof` 断言重写取数。
+///
+/// CI 的 nextest 只回放失败用例的输出，探针**故意以 panic 结束**把矩阵送进
+/// 日志；矩阵收割后本提交整体 revert。
+#[tokio::test]
+async fn probe_2773_fixr1_linux_close_kind_per_cell() {
+    let (store, directory) = file_store("probe-2773-fixr1");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let one_mib = vec![b'a'; UNREAD_BODY_BYTES];
+    let three_mib = vec![b'a'; 3 * UNREAD_BODY_BYTES];
+    let ten = b"0123456789".to_vec();
+    let path = format!("{STORE_PATH_PREFIX}list");
+    let authorized = format!("Bearer {TOKEN}");
+
+    // Node 基线同格（frob/get/header-no-colon 的 1 MiB 变体 + 小体 + 头部）。
+    let mut frob_1m = format!(
+        "FROB {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n",
+        one_mib.len()
+    )
+    .into_bytes();
+    frob_1m.extend_from_slice(&one_mib);
+    let mut frob_10b = format!(
+        "FROB {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n",
+        ten.len()
+    )
+    .into_bytes();
+    frob_10b.extend_from_slice(&ten);
+    let frob_head_1m = format!(
+        "FROB {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n",
+        one_mib.len()
+    )
+    .into_bytes();
+    let mut no_colon_1m = format!(
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Bad\r\nContent-Length: {}\r\n\r\n",
+        one_mib.len()
+    )
+    .into_bytes();
+    no_colon_1m.extend_from_slice(&one_mib);
+    let mut get_1m = format!(
+        "GET {path} HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+        one_mib.len()
+    )
+    .into_bytes();
+    get_1m.extend_from_slice(&one_mib);
+    let mut non_ascii = "GET /st\u{e9}re HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 10\r\n\r\n"
+        .to_string()
+        .into_bytes();
+    non_ascii.extend_from_slice(&ten);
+    let connect = b"CONNECT 127.0.0.1:80 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".to_vec();
+
+    // serve 侧早答（未读体 + `close_if_body_pending` 排空接线）。
+    let unread_401_1m = http_request("POST", &path, &[("Content-Type", "application/json")], &one_mib);
+    let unread_405_1m = http_request("GET", &path, &[], &one_mib);
+    let unread_413_cl = http_request(
+        "POST",
+        &path,
+        &[
+            ("Authorization", &authorized),
+            ("Content-Type", "application/json"),
+        ],
+        &three_mib,
+    );
+    let unread_413_chunked = chunked_request(
+        "POST",
+        &path,
+        &[
+            ("Authorization", &authorized),
+            ("Content-Type", "application/json"),
+        ],
+        &[&one_mib, &one_mib, &one_mib],
+    );
+
+    // 无体关闭与 handler 侧 `Connection: close`。
+    let handler_405_close = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n").into_bytes();
+    let http10_405 = "GET /x HTTP/1.0\r\nHost: h\r\nConnection: keep-alive\r\n\r\n"
+        .to_string()
+        .into_bytes();
+    let fixed = STORE_PATH_PREFIX.len() + "list".len() + "Host".len() + "h".len()
+        + "Connection".len()
+        + "close".len();
+    let budget_431 = format!(
+        "GET {path} HTTP/1.1\r\nHost: h\r\n{}Connection: close\r\n\r\n",
+        "a:\r\n".repeat(DEFAULT_MAX_HEADER_BYTES - fixed)
+    )
+    .into_bytes();
+    let cr_in_value =
+        format!("GET {path} HTTP/1.1\r\nHost: h\r\nX: \r  \nConnection: close\r\n\r\n").into_bytes();
+    let close_1_1_list = http_request(
+        "POST",
+        &path,
+        &[
+            ("Authorization", &authorized),
+            ("Content-Type", "application/json"),
+            ("Connection", "close"),
+        ],
+        &list_body(),
+    );
+
+    let cells: Vec<(&str, Vec<u8>)> = vec![
+        ("frob-body-1m", frob_1m),
+        ("frob-body-10b", frob_10b),
+        ("frob-head-1m", frob_head_1m),
+        ("header-no-colon-body-1m", no_colon_1m),
+        ("get-body-1m", get_1m),
+        ("non-ascii-target-body", non_ascii),
+        ("connect", connect),
+        ("unread-401-1m", unread_401_1m),
+        ("unread-405-1m", unread_405_1m),
+        ("unread-413-content-length", unread_413_cl),
+        ("unread-413-chunked", unread_413_chunked),
+        ("handler-405-close", handler_405_close),
+        ("http10-405", http10_405),
+        ("budget-431", budget_431),
+        ("cr-in-value-400", cr_in_value),
+        ("close-1.1-list-200", close_1_1_list),
+    ];
+
+    let mut report = String::new();
+    for (name, request) in cells {
+        let mut stream = match TcpStream::connect(("127.0.0.1", port)).await {
+            Ok(stream) => stream,
+            Err(error) => {
+                report.push_str(&format!("[{name}] connect=err {error}\n"));
+                continue;
+            }
+        };
+        let write = match tokio::time::timeout(Duration::from_secs(5), stream.write_all(&request))
+            .await
+        {
+            Ok(Ok(())) => "ok".to_string(),
+            Ok(Err(error)) => format!("err-{}", error.kind()),
+            Err(_) => "timeout".to_string(),
+        };
+        let mut response = Vec::new();
+        let close = match tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut response))
+            .await
+        {
+            Ok(Ok(_)) => "clean-eof-FIN".to_string(),
+            Ok(Err(error)) => format!("err-{}", error.kind()),
+            Err(_) => "timeout-still-open".to_string(),
+        };
+        let head: String = String::from_utf8_lossy(&response).chars().take(40).collect();
+        report.push_str(&format!(
+            "[{name}] write={write} close={close} bytes={} head={head:?}\n",
+            response.len()
+        ));
+    }
+
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+    panic!(
+        "#2773 fix-r1 Linux close-kind matrix (temporary probe; this commit is reverted after \
+         the matrix is harvested)\n{report}"
+    );
+}
+
 /// Node v22.22.0 answers HTTP/1.0 with `Connection: close` even when the
 /// request carries `Connection: keep-alive` (measured against the real TS
 /// server: `.../probe/node-real-server.out.txt`, plus a focused probe showing
