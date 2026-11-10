@@ -1570,12 +1570,16 @@ class EnvironmentControls(unittest.TestCase):
         # 在 CI 静默为空。逐模块跑一遍并核「Ran N」下限与无 skip/期望失败；
         # 下限取 r37 实测（_tmp/20261110-pr2136-revival/
         # r37-sibling-module-baselines.log：10/13/8/10/6，合计 47，约 15 s）。
+        # r41（合并 main c3100a2b7 带入 #2590 fix-r2）：-O 步新增第六模块
+        # issue-2495/test_negative_controls.py（r41 实测 Ran 30、约 4 s），
+        # 同钉进下限——不钉则该模块在 CI 掏空/整类 skip 无人看见。
         minimums = (
             ('test_negative_optimize_guards', 10),
             ('settings-gateway/test_negative_controls.py', 13),
             ('test_negative_run_guards', 8),
             ('network-timing/test_negative_controls.py', 10),
             ('test_negative_roster_guards', 6),
+            ('issue-2495/test_negative_controls.py', 30),
         )
         # r39（DS sibling#4 P2）：network-timing 的两条 EACCES 判杀用例按宿主
         # 能力条件跳过（`@unittest.skipUnless(EACCES_STAGEABLE, ...)`——root /
@@ -1657,11 +1661,15 @@ class EnvironmentControls(unittest.TestCase):
         # roster-guards），但删步、加 if、加 continue-on-error 或改错 cwd
         # 此前全仓无红。照 #994/#2133 的三件套补上；五形变异负控见
         # test_optimize_guards_self_test_ci_regressions_are_rejected。
+        # r41（合并 main）：#2590 fix-r2 给本步加了第六条命令
+        # （issue-2495/test_negative_controls.py），一并钉入 commands——
+        # 删掉它同样必须红。
         commands = ('python3 -B -m unittest -v test_negative_optimize_guards',
                     'python3 -B -m unittest -v settings-gateway/test_negative_controls.py',
                     'python3 -B -m unittest -v test_negative_run_guards',
                     'python3 -B -m unittest -v network-timing/test_negative_controls.py',
-                    'python3 -B -m unittest -v test_negative_roster_guards')
+                    'python3 -B -m unittest -v test_negative_roster_guards',
+                    'python3 -B -m unittest -v issue-2495/test_negative_controls.py')
         jobs = self.ci_jobs('#1666')
         steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#1666')
         matching = [step for step in steps
