@@ -37,7 +37,12 @@ mutation round below takes: a concurrent sibling with a mutant on disk used
 to be read back as a false stale (#2590 item 4, proven by the pre-fix run in
 this round's evidence directory), and a lock that stays busy past the wait —
 or a source read that fails — is itself that same refusal (fix-r2: never an
-uncaught TimeoutError / OSError traceback a host would read as rc 1). A
+uncaught TimeoutError / OSError traceback a host would read as rc 1). The
+guard's lock and the mutation round's lock are two acquisitions, not one
+critical section: a sibling landing in the window between them is stopped
+fail-closed by the mutation round's own pristine check (rc 1, nothing
+published as green) or, from fix-r3, by its lock timeout — the same "never
+started" rc 2 refusal the guard already produces. A
 bound assertion containing `{` / `}` is
 refused up front (#2590 item 3): the receipt protocol compares the runtime
 `format!` result byte-for-byte, so a template can never match and the row
@@ -190,7 +195,10 @@ def stale_names():
         if '{' in assertion or '}' in assertion:
             stale.append(f'{name} (bound assertion is a format! template)')
             continue
-        text = path.read_text()
+        # fix-r3 (MM r2 boundary#7 P3): the guarded sources carry non-ASCII
+        # (em-dashes in services_tests.rs), so decode explicitly instead of
+        # following the host locale (same read the shared matrix uses).
+        text = path.read_text(encoding='utf-8')
         body = test_body(test)
         if (text.count(old) != 1 or old == new or
                 not body or f'"{assertion}"' not in body):
@@ -228,7 +236,7 @@ def summary_line(counts, denominator, compile_only):
 
 def test_body(test, texts=None):
     if texts is None:
-        texts = {TESTS: TESTS.read_text()}
+        texts = {TESTS: TESTS.read_text(encoding='utf-8')}
     # Top-level test functions: a column-zero closing brace ends this
     # function, so a sibling's assertion cannot satisfy it.
     pattern = r'^(?:async )?fn ' + re.escape(test.rsplit('::', 1)[-1]) + r'\([^\n]*\).*?^}'
@@ -251,6 +259,12 @@ def main():
     parser.add_argument('output', nargs='?')
     parser.add_argument('selected', nargs='*')
     args = parser.parse_args()
+    # fix-r3 (MM r2 boundary#1 P2a): --check's argv contract (the usage line
+    # above: no output directory, no names) is machine-checked, not just
+    # documented -- a typo'd `--check some-name` used to return the same
+    # green "OK" line as the real roster check without ever reading it.
+    if args.check and (args.output or args.selected):
+        refuse('#2495 --check takes no output directory and no mutation names')
     # #2590 item 1 (handle-path-macos:148-157, sdk-mcp-session-tools:209-216):
     # the binding self-check runs before any mutation, so its failure is a
     # "never started" refusal (rc 2) — the pre-`mutating_sources` boundary
@@ -305,8 +319,13 @@ def main():
     # (every row is up to four cargo calls), and the guarded reads can fail
     # with OSError / UnicodeDecodeError, so the acquisition and the scan are
     # one refused block, not an uncaught exception a host reads as rc 1.
+    # fix-r3 (MM r2 boundary#3 P2a): the wait itself is bounded to 60 s, the
+    # parity window's bound — the scan is a milliseconds-long read, so a busy
+    # lock must surface as the rc 2 refusal well inside a CI step's budget
+    # instead of eating the full 900 s default; the mutation round below is
+    # the only acquisition that may legitimately need to queue that long.
     try:
-        with tree_lock(ROOT):
+        with tree_lock(ROOT, timeout=60):
             stale = stale_names()
     except (TimeoutError, OSError, UnicodeDecodeError) as error:
         refuse(f'#2495 tree lock or stale read failed: '
@@ -382,6 +401,26 @@ def main():
                     item.update(status='INVALID', reason=item['reason'] + f'; restored: {error}')
                 results.append(item)
                 print(f'{name}: {item["status"]}: {item["reason"]}', flush=True)
+    except TimeoutError as error:
+        # fix-r3 (MM r2 concurrency#1 P1 / DS r2 concurrency#1 / MM r2
+        # sibling#2, 两家同撞取高 P1): the mutation round takes the very
+        # same ROOT/.negative-source.lock the guard segment above already
+        # refuses on, so a sibling seizing it in the window between the two
+        # acquisitions must land on the same "never started" side — refuse()
+        # and rc 2, never verdict_exit's 1 over INVALID rows a host would
+        # read as a finished, not-green round. fix-r2's README/CI wording
+        # ("领锁超时本身也拒跑（rc 2，非 traceback）") carries no stage
+        # qualifier, and the issue-297 r7 precedent classifies this same
+        # TimeoutError as "source lock busy (never started)". The broad catch
+        # cannot misfile a started round: every per-row timeout (run_owned's
+        # 900 s, wait_for_slot's 600 s) is caught by the inner handler above,
+        # and the restore path raises OSError/RuntimeError shapes, never
+        # TimeoutError — so only the acquisition itself can land here. The
+        # claimed evidence directory stays but publishes no summary.json or
+        # roster-mismatch.json: rc 2 plus a verdictless directory is the
+        # "never started" signal (same as issue-297).
+        refuse(f'#2495 source lock busy (never started): '
+               f'{type(error).__name__}: {error}')
     except Exception as error:
         reason = f'source guard: {type(error).__name__}: {error}'
         invalidate_completed(results, reason)
@@ -406,11 +445,17 @@ def main():
         message = (f'#2495 verdict roster mismatch: missing={missing} '
                    f'recorded={recorded} expected={expected_roster}')
         print(message, file=sys.stderr)
-        (output / 'roster-mismatch.json').write_text(json.dumps(
+        # fix-r3 (DS r2 concurrency#4 P3): publish the mismatch the same
+        # atomic tmp+replace shape summary.json uses below, so a SIGKILL
+        # mid-write can never leave a truncated JSON standing in for the one
+        # file that explains the missing rows.
+        mismatch = output / 'roster-mismatch.json.tmp'
+        mismatch.write_text(json.dumps(
             {'verdict': 'ROSTER_MISMATCH', 'missing': missing,
              'expected': expected_roster, 'recorded': recorded,
              'rows': results, 'counts': counts,
              'guardedSha256': guarded_sha256}, indent=2) + '\n')
+        mismatch.replace(output / 'roster-mismatch.json')
         return 1
     temporary = output / 'summary.json.tmp'
     temporary.write_text(json.dumps(

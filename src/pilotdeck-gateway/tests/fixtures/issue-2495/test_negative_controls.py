@@ -10,9 +10,12 @@ bound assertion is a ``format!`` template instead of a static literal
 (#2590 item 3: the receipt compares byte-for-byte, so a template can only
 come out NO_RECEIPT and the drift must be a ``--check`` failure, not a host
 round), or when the tree lock stays busy past the guard's wait (fix-r2: a
-sibling mutation round can hold it far past the 900 s default, and that
+sibling mutation round can hold it for the length of a full round, and that
 timeout is the same "never started" refusal, never an uncaught traceback
-a host reads as rc 1). Instead of duplicating the guard logic here, each
+a host reads as rc 1; fix-r3 bounds the guard's wait to 60 s and extends the
+same rc 2 refusal to the mutation round's own lock acquisition, which also
+publishes no verdict). A stray positional argument next to ``--check`` is
+refused too (fix-r3). Instead of duplicating the guard logic here, each
 case execs the real
 script with one source-level edit injected -- the same shape an accidental
 edit would take -- and checks the refusal message, the exit code and that no
@@ -30,6 +33,7 @@ import io
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -42,27 +46,63 @@ FIXTURES = Path(__file__).resolve().parents[1]
 SCRIPT = FIXTURES / 'issue-2495' / 'negative_controls.py'
 sys.path.insert(0, str(FIXTURES))
 
+# fix-r3 (MM r2 concurrency#2 P2): every in-process case runs with the
+# guard's tree-lock wait shrunk from the 60 s production bound to 2 s --
+# identical while the lock is free (which it is in every case here), but a
+# sibling round holding the tree lock during a test run fails the case in
+# seconds instead of hanging on the full wait before refusing.
+GUARD_LOCK_FAST = ('        with tree_lock(ROOT, timeout=60):\n'
+                   '            stale = stale_names()',
+                   '        with tree_lock(ROOT, timeout=2):\n'
+                   '            stale = stale_names()')
+
+# fix-r3 (MM r2 concurrency#3 P2): the lock holder runs in its own session
+# with a bounded wait and a 30 s hold (an order of magnitude past what the
+# 2 s acquisition waits need), so cleanup can group-kill it and a SIGKILLed
+# test run cannot leave an orphan holding the repository tree lock for
+# minutes.
+LOCK_HOLDER_SOURCE = (
+    'import sys, time\n'
+    'from pathlib import Path\n'
+    'sys.path.insert(0, sys.argv[1])\n'
+    'from negative_process import tree_lock\n'
+    'with tree_lock(sys.argv[2], timeout=10):\n'
+    '    Path(sys.argv[3] + ".tmp").write_text("held")\n'
+    '    Path(sys.argv[3] + ".tmp").replace(sys.argv[3])\n'
+    '    time.sleep(30)\n'
+)
+
+_RUN_BASES = []
+
 
 def run(*argv, patch_source=None, environ=None, output_exists=False):
-    """Exec the control script in-process; return (exit code, stdout, stderr).
+    """Exec the control script in-process; return (code, stdout, stderr, out).
 
-    ``patch_source`` is one ``(before, after)`` edit applied to the real script
-    text. ``output_exists`` makes argv[1] point at a directory that already
-    exists. A leading ``'--check'`` replaces the positional output slot, which
-    is the fixture's own CLI shape.
+    ``patch_source`` is one ``(before, after)`` edit applied to the real
+    script text, or a sequence of such pairs applied in order after the
+    shared guard-lock bound (fix-r3: the mutation-lock case needs two).
+    ``output_exists`` makes argv[1] point at a directory that already
+    exists. A leading ``'--check'`` replaces the positional output slot,
+    which is the fixture's own CLI shape. Every ``base`` is registered for
+    ``tearDownModule`` so a case leaves no mkdtemp residue behind (fix-r3,
+    MM r2 concurrency#4: one CI run used to leak ~15 directories).
     """
     source = SCRIPT.read_text(encoding='utf-8')
+    edits = [GUARD_LOCK_FAST]
     if patch_source is not None:
-        before, after = patch_source
+        edits += (list(patch_source) if isinstance(patch_source[0], tuple)
+                  else [patch_source])
+    for before, after in edits:
         if source.count(before) != 1:
             raise AssertionError(f'test anchor occurs {source.count(before)} times: {before!r}')
         source = source.replace(before, after, 1)
     base = Path(tempfile.mkdtemp(prefix='issue-2495-2590-'))
+    _RUN_BASES.append(base)
     out = base / 'out'
     if output_exists:
         out.mkdir()
     if argv and argv[0] == '--check':
-        script_argv = [str(SCRIPT), '--check']
+        script_argv = [str(SCRIPT), '--check', *argv[1:]]
     else:
         script_argv = [str(SCRIPT), str(out), *argv]
     env = {key: value for key, value in os.environ.items()
@@ -172,6 +212,18 @@ class ExitCodeTaxonomy(unittest.TestCase):
         self.assertEqual(list(out.iterdir()), [])
 
 
+    def test_check_with_positional_args_is_refused(self):
+        # fix-r3 (MM r2 boundary#1 P2a): --check's argv contract (no output
+        # directory, no names) is machine-checked, not just documented in the
+        # usage line -- a typo'd `--check stray-name` used to return the same
+        # green "OK" line as the real roster check without ever reading it.
+        code, _stdout, stderr, out = run('--check', 'stray-output-dir')
+        self.assertEqual(code, 2)
+        self.assertIn('INVALID:', stderr)
+        self.assertIn('--check takes no output directory', stderr)
+        self.assertFalse(out.exists())
+
+
 class StaleAndTemplateGuards(unittest.TestCase):
     """A stale anchor or a template bound assertion is a refusal, not a traceback."""
 
@@ -276,10 +328,11 @@ class SharedExitContract(unittest.TestCase):
     """The exit contract stays the shared helpers, not a hand-rolled fold."""
 
     def test_unknown_name_is_refused_the_same_way_under_dash_o(self):
-        # `specs/negative-controls/README.md:139-143`: no guard may depend on
+        # `specs/negative-controls/README.md:149-153`: no guard may depend on
         # an ``assert`` that ``-O`` strips. The shared matrix
-        # (test_negative_optimize_guards.py) does not list this fixture, so
-        # this is the local pin of the same contract.
+        # (test_negative_optimize_guards.py) has listed this fixture since
+        # fix-r2; this case stays as the local pin of the same contract for
+        # the ``--check`` mode, which the matrix does not drive.
         for optimize in (False, True):
             with self.subTest(optimize=optimize):
                 out = Path(tempfile.mkdtemp(prefix='issue-2495-2590-o-')) / 'out'
@@ -295,76 +348,124 @@ class SharedExitContract(unittest.TestCase):
                 self.assertFalse(out.exists())
 
     def test_the_script_uses_verdict_exit_and_claim_dir(self):
+        # fix-r3 (DS r2 boundary#1/#2, MM r2 boundary#4 P2): the needles pin
+        # code shapes, not bare words -- 'roster-mismatch.json' alone was
+        # satisfiable by the module docstring, and neither the drift branch
+        # nor the summary call site had any machine check (both fix-r2
+        # regressions could return with this suite green).
         source = SCRIPT.read_text(encoding='utf-8')
         for needle in ('return verdict_exit(results, key=',
                        'output = claim_dir(args.output)',
-                       'roster-mismatch.json'):
+                       'if drift is not None:',
+                       "mismatch.replace(output / 'roster-mismatch.json')",
+                       'expected = [name for name in EXPECTED_NAMES',
+                       'summary_line(counts, len(expected), args.compile_only)'):
             self.assertIn(needle, source,
                           f'the startup/exit contract lost its shared shape: {needle!r}')
 
 
 class TreeLockBusy(unittest.TestCase):
-    """fix-r2: a busy tree lock is a refusal (rc 2), never a traceback (rc 1)."""
+    """A busy tree lock is a refusal (rc 2), never a traceback or a failed round."""
+
+    def hold_the_tree_lock(self, prefix):
+        """A real subprocess holds ROOT/.negative-source.lock; ready-file handshake."""
+        base = Path(tempfile.mkdtemp(prefix=prefix))
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        ready = base / 'held'
+        holder = subprocess.Popen(
+            [sys.executable, '-I', '-c', LOCK_HOLDER_SOURCE,
+             str(FIXTURES), str(FIXTURES.parents[3]), str(ready)],
+            start_new_session=True)
+        self.addCleanup(self._kill_holder, holder)
+        return holder, ready
+
+    @staticmethod
+    def _kill_holder(holder):
+        # Group kill, not a bare kill(): the holder runs in its own session,
+        # so a plain kill() only reaches the leader (fix-r3, MM r2
+        # concurrency#3 P2).
+        if holder.poll() is None:
+            os.killpg(os.getpgid(holder.pid), signal.SIGKILL)
+        holder.wait(timeout=30)
+
+    def wait_until_held(self, holder, ready):
+        # The ready file is published atomically (tmp + replace) before the
+        # script under test is allowed to run.
+        deadline = time.monotonic() + 30
+        while not ready.exists():
+            self.assertIsNone(
+                holder.poll(),
+                'the lock holder died before holding the tree lock')
+            self.assertLess(
+                time.monotonic(), deadline,
+                'the lock holder never published its ready file')
+            time.sleep(0.05)
 
     def test_busy_tree_lock_is_refused_not_a_traceback(self):
         # DS-boundary#1 / MM-concurrency#1 (取高 P1): a sibling mutation round
-        # holds the tree lock far past the 900 s default (every row is up to
-        # four cargo calls), so a --check guards run can queue behind it and
-        # time out. That timeout must be the same "never started" refusal
-        # every other startup guard produces: an uncaught TimeoutError exits
-        # 1 with a traceback and no evidence, which a host reads as a failed
-        # control. A real subprocess holds the flock (the same
-        # ROOT/.negative-source.lock the mutation round takes) and a patched
-        # --check keeps the case fast; the ready file is published atomically
-        # (tmp + replace) before the script under test is allowed to run.
-        base = Path(tempfile.mkdtemp(prefix='issue-2495-2590-lock-'))
-        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
-        ready = base / 'held'
-        holder = subprocess.Popen([
-            sys.executable, '-I', '-c',
-            'import sys, time\n'
-            'from pathlib import Path\n'
-            'sys.path.insert(0, sys.argv[1])\n'
-            'from negative_process import tree_lock\n'
-            'with tree_lock(sys.argv[2]):\n'
-            '    Path(sys.argv[3] + ".tmp").write_text("held")\n'
-            '    Path(sys.argv[3] + ".tmp").replace(sys.argv[3])\n'
-            '    time.sleep(600)\n',
-            str(FIXTURES), str(FIXTURES.parents[3]), str(ready)])
+        # holds the tree lock far past any wait (every row is up to four
+        # cargo calls), so a --check guards run can queue behind it and time
+        # out. That timeout must be the same "never started" refusal every
+        # other startup guard produces: an uncaught TimeoutError exits 1
+        # with a traceback and no evidence, which a host reads as a failed
+        # control. The shared GUARD_LOCK_FAST bound keeps the case fast.
+        holder, ready = self.hold_the_tree_lock('issue-2495-2590-lock-')
+        self.wait_until_held(holder, ready)
         try:
-            deadline = time.monotonic() + 30
-            while not ready.exists():
-                self.assertIsNone(
-                    holder.poll(),
-                    '#2590 fix-r2 the lock holder died before holding the tree lock')
-                self.assertLess(
-                    time.monotonic(), deadline,
-                    '#2590 fix-r2 the lock holder never published its ready file')
-                time.sleep(0.05)
-            try:
-                result = run(
-                    '--check',
-                    patch_source=(
-                        '        with tree_lock(ROOT):\n'
-                        '            stale = stale_names()',
-                        '        with tree_lock(ROOT, timeout=2):\n'
-                        '            stale = stale_names()'))
-            except TimeoutError as error:
-                self.fail(f'#2590 fix-r2 a busy tree lock must refuse (rc 2), '
-                          f'not raise out of the script: {error!r}')
-            code, stdout, stderr, out = result
-            self.assertEqual(
-                code, 2,
-                f'#2590 fix-r2 the busy-lock timeout must be a refusal, got '
-                f'{code}: stderr={stderr!r} stdout={stdout!r}')
-            self.assertIn('INVALID:', stderr)
-            self.assertIn('TimeoutError', stderr,
-                          '#2590 fix-r2 the refusal must name the lock timeout')
-            self.assertIn('source lock busy', stderr)
-            self.assertFalse(out.exists())
-        finally:
-            holder.kill()
-            holder.wait(timeout=30)
+            result = run('--check')
+        except TimeoutError as error:
+            self.fail(f'#2590 fix-r2 a busy tree lock must refuse (rc 2), '
+                      f'not raise out of the script: {error!r}')
+        code, stdout, stderr, out = result
+        self.assertEqual(
+            code, 2,
+            f'#2590 fix-r2 the busy-lock timeout must be a refusal, got '
+            f'{code}: stderr={stderr!r} stdout={stdout!r}')
+        self.assertIn('INVALID:', stderr)
+        self.assertIn('TimeoutError', stderr,
+                      '#2590 fix-r2 the refusal must name the lock timeout')
+        self.assertIn('source lock busy', stderr)
+        self.assertFalse(out.exists())
+
+    def test_mutation_lock_timeout_is_refused_not_a_failed_round(self):
+        # fix-r3 (MM r2 concurrency#1 P1 / DS r2 concurrency#1 / MM r2
+        # sibling#2, 两家同撞取高 P1): a sibling can seize the tree lock in
+        # the window between the guard scan and the mutation round's own
+        # acquisition -- the two are separate critical sections -- and that
+        # timeout must land on the same "never started" side as the guard's
+        # (rc 2, refuse), not exit 1 over INVALID rows a host would read as a
+        # finished, not-green round (fix-r2's README/CI wording carries no
+        # stage qualifier; issue-297 r7 is the precedent). The guard's lock
+        # is bypassed here because it already has the busy-lock case above
+        # and the lock is held from the start; the mutation round's own wait
+        # is shrunk to 2 s so the case stays fast. The evidence directory is
+        # claimed by then, so the "never started" signal is rc 2 plus a
+        # directory that publishes no verdict at all.
+        holder, ready = self.hold_the_tree_lock('issue-2495-2590-mlock-')
+        self.wait_until_held(holder, ready)
+        result = run(
+            environ={'CARGO_TARGET_DIR': '/nonexistent-cargo-target'},
+            patch_source=[
+                ('        with tree_lock(ROOT, timeout=2):\n'
+                 '            stale = stale_names()',
+                 '        stale = stale_names()'),
+                ('        with mutating_sources(ROOT, guarded) as originals:',
+                 '        with mutating_sources(ROOT, guarded, lock_timeout=2) as originals:'),
+            ])
+        code, stdout, stderr, out = result
+        self.assertEqual(
+            code, 2,
+            f'#2590 fix-r3 the mutation-round lock timeout must be a '
+            f'refusal, got {code}: stderr={stderr!r} stdout={stdout!r}')
+        self.assertIn('INVALID:', stderr)
+        self.assertIn('source lock busy', stderr)
+        self.assertIn('never started', stderr)
+        self.assertTrue(out.exists(),
+                        'the evidence directory is claimed before the '
+                        'mutation round starts')
+        self.assertFalse((out / 'summary.json').exists(),
+                         'a never-started round must publish no verdict')
+        self.assertFalse((out / 'roster-mismatch.json').exists())
 
 
 class SummaryWording(unittest.TestCase):
@@ -392,6 +493,13 @@ class SummaryWording(unittest.TestCase):
         self.assertTrue(line.startswith('summary: KILLED=7/7'),
                         f'#2590 fix-r2 the default run must keep KILLED, '
                         f'got {line!r}')
+
+
+def tearDownModule():
+    # fix-r3 (MM r2 concurrency#4 P2): every in-process case's mkdtemp base
+    # is registered by run(); one CI run used to leak ~15 directories.
+    for base in _RUN_BASES:
+        shutil.rmtree(base, ignore_errors=True)
 
 
 if __name__ == '__main__':

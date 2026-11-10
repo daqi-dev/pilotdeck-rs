@@ -135,7 +135,10 @@
 同批进三条拒跑矩阵），以及 `issue-2495`
 （#2590 fix-r1 起同形：启动四拒 + `EXPECTED_NAMES` 静态名册 + stale 扫描入树锁；
 fix-r2 起领锁超时本身也拒跑（rc 2，非 traceback）、`--compile-only` 汇总打
-`COMPILED=n/N`，并进 `test_negative_optimize_guards.py` 矩阵与 CI `--check`）。
+`COMPILED=n/N`，并进 `test_negative_optimize_guards.py` 矩阵与 CI `--check`；
+fix-r3 起变异段领锁超时同口径（rc 2 never-started，issue-297 先例，证据目录不发
+summary）、名册不符只发 `roster-mismatch.json`（原子写）并退出 1、`--check` 带位置
+参数即拒跑）。
 **其余同族入口尚未迁移**，
 由 #1666 按目录分批推进，名单是机器可检的：`tests/fixtures/test_negative_optimize_guards.py`
 的 `PENDING_BARE_ASSERTS` 登记每个仍含裸 `assert` 的 `*/negative_controls.py` 及理由，
@@ -220,7 +223,8 @@ target、无证据目录，实际可矩阵承载——纳入矩阵待登记表�
 `utf16-residual-sort`（#2131 起的 `started` 旗标 + `startup_refusal` 撤回空证据目录，
 覆盖 enter 两边；无 oracle 读取）已实现
 （`sdk-signals` 的相位路由 #1885 r8 与 `_negkit/contract.py` 的 `entered` 旗标也各自实现；
-#2590 fix-r2 起 `issue-2495` 的守卫段领锁超时同样以 2 拒跑、非 traceback；
+#2590 fix-r2 起 `issue-2495` 的守卫段领锁超时同样以 2 拒跑、非 traceback（fix-r3 起
+变异段领锁超时同口径）；
 本句枚举的是 `test_negative_optimize_guards.py` 登记面，非全集），
 其余脚本是未捕获异常 → 1，仍按「失败关闭」处理（不会假绿），登记在 #1666 的后续批次。
 宿主分诊时不要把这三种边当成已覆盖。
