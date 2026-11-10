@@ -1228,6 +1228,78 @@ class ReviewControls(unittest.TestCase):
             ('open-修复中台账异常',
              '| 1 | DS | P1：foo | 修复中台账异常 |\n', False),
         ]
+        # fix-r15 (DS r14 review, head 87871a970): the P0 left bound on the
+        # disposal run, the separator-family extensions, the English await
+        # and residual-gap fixes, and the Unicode-Nd single parse.
+        row_cases_r15 = [
+            # A. the disposal prefix gains its LEFT bound (DS boundary#1 P0,
+            #    measured live): a gate verb INSIDE the run between 已 and the
+            #    final verb is a new clause's work, not the disposal object.
+            ('open-已修复A但复检中断，需要继续',
+             '| 1 | DS | P1：foo | 已修复A但复检中断，需要继续 |\n', False),
+            # B. the separator families take the square-bracket / hyphen /
+            #    sentence-punctuation members (DS boundary#2 P1 / sibling#2
+            #    P1) — the same verdict as the round-bracket twins.
+            ('closed-已修复中断[回归通过]',
+             '| 1 | DS | P1：foo | 已修复中断[回归通过] |\n', True),
+            ('closed-已修复中断【回归通过】',
+             '| 1 | DS | P1：foo | 已修复中断【回归通过】 |\n', True),
+            ('open-accepted.risk noted',
+             '| 1 | DS | P1: foo | accepted.risk noted |\n', False),
+            ('open-accepted the remaining-risk',
+             '| 1 | DS | P1: foo | accepted the remaining-risk |\n', False),
+            ('open-accepted-risk',
+             '| 1 | DS | P1: foo | accepted-risk |\n', False),
+            # C. awaiting / waiting for join the explicit pending family (DS
+            #    sibling#1 P1) — the English mirror of 等待回归.
+            ('open-fixed, awaiting retest',
+             '| 1 | DS | P1: foo | fixed, awaiting retest |\n', False),
+            ('open-fixed, waiting for retest',
+             '| 1 | DS | P1: foo | fixed, waiting for retest |\n', False),
+            # D. the impact/affect left guards cover every non-exclusion
+            #    member and the participle inflections (DS sibling#3 P1 /
+            #    boundary#4 P2) — scope prose closes on both sides.
+            ('closed-fixed; impact on partial rollout',
+             '| 1 | DS | P1: foo | fixed; impact on partial rollout |\n', True),
+            ('closed-fixed; the change affected half of the users',
+             '| 1 | DS | P1: foo | fixed; the change affected half of the '
+             'users |\n', True),
+            ('closed-fixed, impacting partially rolled out clusters',
+             '| 1 | DS | P1: foo | fixed, impacting partially rolled out '
+             'clusters |\n', True),
+            # E. the await construction takes Latin and digits after an
+            #    optional space (DS sibling#4 P1).
+            ('open-已修复，等待 CI',
+             '| 1 | DS | P1：foo | 已修复，等待 CI |\n', False),
+            ('open-已修复，等待 3 天',
+             '| 1 | DS | P1：foo | 已修复，等待 3 天 |\n', False),
+            # F. the English digit→noun gap loses its {0,3} word cap (DS
+            #    sibling#5 P1 — the underlying constant the reviewer's own
+            #    example missed; the 4-word gap shape reopens).
+            ('open-fixed, 3 of these lingering critical issues remaining',
+             '| 1 | DS | P1: foo | fixed, 3 of these lingering critical '
+             'issues remaining |\n', False),
+            # G. 'passed' gains the for-now deferral branch (MM r13
+            #    boundary#6 P2, DS r14 boundary#6) — same shape as accepted.
+            ('open-passed for now',
+             '| 1 | DS | P1: foo | passed for now |\n', False),
+            ('open-accepted for now (re-attest)',
+             '| 1 | DS | P1: foo | accepted for now |\n', False),
+            # H. the domain residual nouns walk with behavior controls (DS
+            #    sibling#6 P2) — 场景 / 脚本 join the 用例 shapes of r14.
+            ('open-已修复，还有未覆盖场景',
+             '| 1 | DS | P1：foo | 已修复，还有未覆盖场景 |\n', False),
+            ('open-已修复，遗留脚本',
+             '| 1 | DS | P1：foo | 已修复，遗留脚本 |\n', False),
+            # I. Unicode Nd digits stay single-branch (DS boundary#3 P2,
+            #    measured): the Arabic-Indic percentage anchors like the
+            #    ASCII twin — partial value reopens, full value closes.
+            ('open-已完成 ٣٠% (unicode nd digits)',
+             '| 1 | DS | P1：foo | 已完成 ٣٠% |\n', False),
+            ('closed-已完成 ١٠٠% (unicode nd digits)',
+             '| 1 | DS | P1：foo | 已完成 ١٠٠% |\n', True),
+        ]
+        assert_rows('r15', row_cases_r15)
         assert_rows('r14', row_cases_r14)
         assert_rows('r13', row_cases_r13)
         assert_rows('r12', row_cases_r12)
@@ -1607,12 +1679,19 @@ class ReviewControls(unittest.TestCase):
         # own dict — the right-guard dict is appended after the word, where a
         # lookbehind can never see past the word it follows (the first r14
         # attempt placed them there and the guard silently matched nothing).
+        # r15 (DS r14 sibling#3 P1 / boundary#4 P2): the guard covers every
+        # non-exclusion member of the family with the full inflected
+        # impact/affect set (impacted / affected / impacts on join).
         self.assertEqual(check_ruler._EN_PARTIAL_LEFT_GUARDS,
-                         {'half': r'(?<!impact\son\s)(?<!impact\s)'
-                                  r'(?<!impacting\s)(?<!impacts\s)'
-                                  r'(?<!affecting\s)(?<!affects\s)'
-                                  r'(?<!affect\s)'},
-                         '#2245-r14 en-partial-left-guards-frozen')
+                         {word: (r'(?<!impact\son\s)(?<!impacts\son\s)'
+                                 r'(?<!impact\s)(?<!impacts\s)'
+                                 r'(?<!impacting\s)(?<!impacted\s)'
+                                 r'(?<!affect\s)(?<!affects\s)'
+                                 r'(?<!affecting\s)(?<!affected\s)')
+                          for word in ('partially', 'partial', 'partly',
+                                       'halfway', 'half', 'incomplete',
+                                       'unfinished')},
+                         '#2245-r15 en-partial-left-guards-frozen')
         self.assertEqual(check_ruler._CJK_COMPOUND_RULES,
                          ('断(?=分析|场景|的|$)', '心(?=化|$)', '文(?=档)',
                           '层(?=的|$)', '期(?=指标)', '端(?=节)', '部(?=审计)',
@@ -1660,21 +1739,32 @@ class ReviewControls(unittest.TestCase):
         # window became CLAUSE-SCOPE over the shared separator family — the
         # literal re-attests the whole shape (a shrunk window or a lost
         # separator member resurfaces here, not in a future review).
+        # r15 (DS r14 boundary#2 P1 / concurrency#3 P2): the family takes
+        # the ASCII sentence punctuation and the hyphen, and the separator
+        # runs are POSSESSIVE (the two adjacent separator consumers were a
+        # quadratic split tree — measured 9.1 s at 20000 commas).
         self.assertEqual(check_ruler._EN_CLOSURE_GUARDS['accepted'],
-                         r'(?![\s,;:，。、；：！？/()\[\]]*(?:'
-                         r'(?:[^\s,;:，。、；：！？/()\[\]]+'
-                         r'[\s,;:，。、；：！？/()\[\]]+)*'
-                         r'[\s,;:，。、；：！？/()\[\]]*risks?\b'
+                         r'(?![\s,;:，。、；：！？.!?/()\[\]-]*+(?:'
+                         r'(?:[^\s,;:，。、；：！？.!?/()\[\]-]+'
+                         r'[\s,;:，。、；：！？.!?/()\[\]-]++)*'
+                         r'[\s,;:，。、；：！？.!?/()\[\]-]*+risks?\b'
                          r'|for\s+now\b))',
-                         '#2245-r14 accepted-guard-window-frozen')
+                         '#2245-r15 accepted-guard-window-frozen')
+        # r15 (DS r14 sibling#1 P1, MM r13 boundary#6 P2): 'passed' gains the
+        # for-now deferral branch on the same possessive separator family.
+        self.assertEqual(check_ruler._EN_CLOSURE_GUARDS['passed'],
+                         r'(?![\s,;:，。、；：！？.!?/()\[\]-]*+'
+                         r'(?:(?:on(?:\s+to)?|onto|to)\b|for\s+now\b))',
+                         '#2245-r15 passed-guard-deferral-frozen')
         # r13: the disposal filter's clause-break family is a fixed literal
         # too — a widened set (a letter reaching it) would re-close the r11
         # pin 已修复中等待回归, and a dropped separator would re-pend the
         # b#4 disposal shapes. r14 (DS b#5 / MM b#3 P1): the family takes
-        # brackets, ASCII period and slash.
+        # brackets, ASCII period and slash. r15 (DS r14 boundary#2 P1): the
+        # square-bracket family joins (已修复中断[回归通过] was a false FAIL).
         self.assertEqual(check_ruler._CJK_CLAUSE_BREAKS,
-                         '，。、；：！？,;:!? \t.()（）/',
-                         '#2245-r14 clause-breaks-frozen')
+                         '，。、；：！？,;:!? \t.()（）/[]【】「」',
+                         '#2245-r15 clause-breaks-frozen')
         self.assertEqual(set(check_ruler._PARTIAL_LEFT_GUARDS),
                          {'部分', '局部', '过半', '一半', '阶段性', '未完全'},
                          '#2245-r14 partial-left-guard-keys-frozen')
@@ -1889,10 +1979,26 @@ class ReviewControls(unittest.TestCase):
         This control pins the LINEAR behavior with a hard wall-clock bound —
         a reintroduced overlap (a lost possessive or a fallback class that
         leaks digits) does not produce a wrong verdict, it hangs, so only a
-        timer catches it."""
+        timer catches it.
+        r15 (DS r14 boundary#3 P2 / boundary#5 P2 / concurrency#1+#2 P2):
+        the timer itself is load-robust — the SIGALRM handler is SAVED and
+        restored via addCleanup (a leaked handler poisons later tests), the
+        inputs are sized so the measured span sits at ~0.3-1.5 ms (the r14
+        0.1 ms spans rode the timing noise floor and the scaling ratio
+        could flip on scheduler jitter alone), each measurement is a MIN
+        of three runs, and the ratio denominator has a 0.2 ms floor. The
+        SIGALRM timer does interrupt the C-level backtracking loop (r15
+        probe, CPython 3.14.3: TimeoutError after 0.303 s mid-backtrack,
+        raw output in _tmp/20261110-issue-2245-closure/fix-r15/) so the
+        wall-clock bound fails the test instead of hanging it. The Unicode
+        Nd case pins the r15 single-branch fix (Arabic-Indic digits matched
+        BOTH \\d++ and the fallback class pre-r15: 0.004 s at L=28,
+        0.018 s at L=32, doubling per 4 chars — a different alphabet
+        replayed the r14 exponential)."""
         def _hang(signum, frame):
             raise TimeoutError('pct-gap hang: >5s')
-        signal.signal(signal.SIGALRM, _hang)
+        prev_handler = signal.signal(signal.SIGALRM, _hang)
+        self.addCleanup(signal.signal, signal.SIGALRM, prev_handler)
 
         def _timed(cell):
             signal.setitimer(signal.ITIMER_REAL, 5.0)
@@ -1903,24 +2009,99 @@ class ReviewControls(unittest.TestCase):
             finally:
                 signal.setitimer(signal.ITIMER_REAL, 0)
 
-        cell = 'fixed, verified ' + '0123456789abcdef' * 8
+        def _timed_min3(cell):
+            return min(_timed(cell) for _ in range(3))
+
+        cell = 'fixed, verified ' + '0123456789abcdef' * 32
         try:
-            elapsed = _timed(cell)
+            elapsed = _timed_min3(cell)
         except TimeoutError:
-            self.fail('#2245-r14 pct-gap-linear (hang: >5s)')
-        self.assertLess(elapsed, 1.0, '#2245-r14 pct-gap-linear')
-        # the linear claim is length-independent: twice the token, same
-        # order of magnitude. A quadratic or exponential regression fails
-        # the ratio even when both runs stay under the absolute bound.
-        cell2 = 'fixed, verified ' + '0123456789abcdef' * 16
+            self.fail('#2245-r15 pct-gap-linear (hang: >5s)')
+        self.assertLess(elapsed, 1.0, '#2245-r15 pct-gap-linear')
+        # the linear claim is length-independent: 4x the token, ~4x the
+        # time. A quadratic or exponential regression fails the ratio even
+        # when both runs stay under the absolute bound (floor: 0.2 ms, so
+        # a sub-noise denominator cannot flip the verdict on jitter).
+        cell2 = 'fixed, verified ' + '0123456789abcdef' * 128
         try:
-            elapsed2 = _timed(cell2)
+            elapsed2 = _timed_min3(cell2)
         except TimeoutError:
-            self.fail('#2245-r14 pct-gap-linear-long (hang: >5s)')
-        self.assertLess(elapsed2, 1.0, '#2245-r14 pct-gap-linear-long')
-        if elapsed > 1e-4:
-            self.assertLess(elapsed2 / elapsed, 8.0,
-                            '#2245-r14 pct-gap-scaling')
+            self.fail('#2245-r15 pct-gap-linear-long (hang: >5s)')
+        self.assertLess(elapsed2, 1.0, '#2245-r15 pct-gap-linear-long')
+        self.assertLess(elapsed2 / max(elapsed, 2e-4), 8.0,
+                        '#2245-r15 pct-gap-scaling')
+        # the Unicode Nd token rides the same wall clock — the r15 fix made
+        # every Nd position a single \\d++ parse, so the shape that measured
+        # exponential pre-r15 must stay under the same absolute bound.
+        cell3 = 'fixed, verified ' + '١a٢b٣c٤d' * 16
+        try:
+            elapsed3 = _timed_min3(cell3)
+        except TimeoutError:
+            self.fail('#2245-r15 pct-gap-unicode-nd (hang: >5s)')
+        self.assertLess(elapsed3, 1.0, '#2245-r15 pct-gap-unicode-nd')
+
+    def test_separator_runs_backtrack_linearly(self):
+        """#2245 r15 (DS r14 concurrency#3 P2 + sibling#5 P1 / boundary#2
+        P2, all measured live on 87871a970, raw output in
+        _tmp/20261110-issue-2245-closure/fix-r15/raw/probe-r15-timing.out):
+        three quadratic regressions hid behind long separator runs —
+        (1) the closure-guard separator runs were GREEDY, so the outer run
+        and the trailing run split one comma run through an empty word
+        group (measured: 1.07 s at 20k commas, 4.1 s at 40k, 9.2 s at 80k —
+        quadratic; possessive now, one parse); (2) the residual lookahead
+        carried TWO space consumers (\\s*[：:]?\\s* before a [^clause]* that
+        also matches spaces — measured: 379.6 s at 5k spaces, >25 s at 20k;
+        the leading run is possessive and the second \\s* is gone); (3) the
+        marker loop's forward scan re-scanned every later clause per clause
+        (measured: 7.5 s at 20k commas; one backward suffix pass now). No
+        verdict changes anywhere — only wall clock — so, like the pct
+        control above, only a timer catches a regression. The SIGALRM
+        interrupt of the C-level loop is verified (r15 probe: TimeoutError
+        after 0.303 s mid-backtrack)."""
+        def _hang(signum, frame):
+            raise TimeoutError('separator-run hang: >5s')
+        prev_handler = signal.signal(signal.SIGALRM, _hang)
+        self.addCleanup(signal.signal, signal.SIGALRM, prev_handler)
+
+        def _timed(fn, cell):
+            signal.setitimer(signal.ITIMER_REAL, 5.0)
+            try:
+                t0 = time.monotonic()
+                fn(cell)
+                return time.monotonic() - t0
+            finally:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+
+        # (1) closure-guard separators: _handling_closed on a 120k-comma
+        # cell took ~20 s greedy (quadratic extrapolation of the measured
+        # curve), 0.5 ms possessive.
+        try:
+            elapsed = _timed(check_ruler._handling_closed,
+                            check_ruler._normalized_handling(
+                                'accepted' + ',' * 120000))
+        except TimeoutError:
+            self.fail('#2245-r15 sep-run-linear-closure (hang: >5s)')
+        self.assertLess(elapsed, 1.0, '#2245-r15 sep-run-linear-closure')
+        # (2) the residual lookahead's leading space run: the double
+        # consumer measured 379.6 s at 5k spaces (a super-quadratic split
+        # tree), 15 ms single-parse.
+        try:
+            elapsed = _timed(check_ruler._handling_pending,
+                            check_ruler._normalized_handling(
+                                '已修复，还有' + ' ' * 20000 + 'x'))
+        except TimeoutError:
+            self.fail('#2245-r15 sep-run-linear-residual (hang: >5s)')
+        self.assertLess(elapsed, 1.0, '#2245-r15 sep-run-linear-residual')
+        # (3) the marker-loop forward scan: 7.5 s at 20k commas pre-fix,
+        # 37 ms with the one-pass suffix precompute (30k commas here for
+        # margin).
+        try:
+            elapsed = _timed(check_ruler._handling_pending,
+                            check_ruler._normalized_handling(
+                                'accepted' + ',' * 30000))
+        except TimeoutError:
+            self.fail('#2245-r15 sep-run-linear-forward (hang: >5s)')
+        self.assertLess(elapsed, 1.0, '#2245-r15 sep-run-linear-forward')
 
 
 if __name__ == '__main__':
