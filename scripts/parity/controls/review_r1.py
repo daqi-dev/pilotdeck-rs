@@ -35,6 +35,7 @@ import io
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import time
 import unittest
@@ -1139,6 +1140,95 @@ class ReviewControls(unittest.TestCase):
             ('open-已修复，遗留隐患',
              '| 1 | DS | P1：foo | 已修复，遗留隐患 |\n', False),
         ]
+        # fix-r14 (DS+MM r13 review, head bdbc50148): the structural round —
+        # every bounded window constant became clause-scope, the pct units
+        # are possessive and mutually exclusive (the backtracking P0 both
+        # lineages found independently), the disposal verb check derives
+        # from the gate-verb table, and 待 gains the await construction.
+        row_cases_r14 = [
+            # A. clause-scope replaces every length constant — a modifier run
+            #    one past any cap, a risk noun past the 4th word unit, one
+            #    glued to punctuation, a full-width separator and a 13-unit
+            #    pct tail all reopen (DS b#1/b#2/b#3, MM b#1/b#2/b#4, DS s#2).
+            ('open-已修复，还有大量未覆盖问题',
+             '| 1 | DS | P1：foo | 已修复，还有大量未覆盖问题 |\n', False),
+            ('open-已修复，还有极个别遗留的隐患',
+             '| 1 | DS | P1：foo | 已修复，还有极个别遗留的隐患 |\n', False),
+            ('open-已修复，还有少量未覆盖用例',
+             '| 1 | DS | P1：foo | 已修复，还有少量未覆盖用例 |\n', False),
+            ('open-已修复，还有未覆盖用例',
+             '| 1 | DS | P1：foo | 已修复，还有未覆盖用例 |\n', False),
+            ('open-accepted all of the remaining open risks',
+             '| 1 | DS | P1: foo | accepted all of the remaining open risks |\n', False),
+            ('open-accepted with the caveat that the risk remains',
+             '| 1 | DS | P1: foo | accepted with the caveat that the risk remains |\n', False),
+            ('open-accepted in spite of the remaining risks',
+             '| 1 | DS | P1: foo | accepted in spite of the remaining risks |\n', False),
+            ('open-accepted (risk noted)',
+             '| 1 | DS | P1: foo | accepted (risk noted) |\n', False),
+            ('open-accepted/risk noted',
+             '| 1 | DS | P1: foo | accepted/risk noted |\n', False),
+            ('open-accepted，risk noted (full-width)',
+             '| 1 | DS | P1: foo | accepted，risk noted |\n', False),
+            ('open-passed; to next round',
+             '| 1 | DS | P1: foo | passed; to next round |\n', False),
+            ('open-fixed, still a few issues remain',
+             '| 1 | DS | P1: foo | fixed, still a few issues remain |\n', False),
+            ('open-已完成 12 项中的 10 项的 50%',
+             '| 1 | DS | P1：foo | 已完成 12 项中的 10 项的 50% |\n', False),
+            ('open-fixed after retesting the sharded cluster 50%',
+             '| 1 | DS | P1: foo | fixed after retesting the sharded cluster '
+             'in the eu west region today 50% |\n', False),
+            # B. the 遗留 branch joins the quantifier window (DS s#1 P1) —
+            #    a modifier before the noun or the ：form reopens.
+            ('open-已修复，遗留少量问题',
+             '| 1 | DS | P1：foo | 已修复，遗留少量问题 |\n', False),
+            ('open-已修复，遗留较多未覆盖用例',
+             '| 1 | DS | P1：foo | 已修复，遗留较多未覆盖用例 |\n', False),
+            ('open-已修复，遗留：3 个',
+             '| 1 | DS | P1：foo | 已修复，遗留：3 个 |\n', False),
+            # C. the await construction pends without a gate verb (DS b#4 P0)
+            #    — 等待回归 / 待回归 name an outstanding action of their own.
+            ('open-已修复中断，等待回归',
+             '| 1 | DS | P1：foo | 已修复中断，等待回归 |\n', False),
+            ('open-已修复，待回归',
+             '| 1 | DS | P1：foo | 已修复，待回归 |\n', False),
+            ('open-已修复，期待人工验收 (r14 no-left-guard)',
+             '| 1 | DS | P1：foo | 已修复，期待人工验收 |\n', False),
+            # D. the disposal clause-break family takes brackets / period /
+            #    slash (DS b#5 P1, MM b#3 P1) — same shape, same verdict.
+            ('closed-已修复中断（回归通过）',
+             '| 1 | DS | P1：foo | 已修复中断（回归通过） |\n', True),
+            ('closed-已修复中断/回归通过',
+             '| 1 | DS | P1：foo | 已修复中断/回归通过 |\n', True),
+            ('closed-已修复中断.',
+             '| 1 | DS | P1：foo | 已修复中断. |\n', True),
+            # E. the disposal verb derives from the gate-verb table (DS b#7 /
+            #    MM s#5 / DS s#3 P2) — single-char verbs, 了 and an adverbial
+            #    between 已 and the verb are all dispositions now.
+            ('closed-已修中断，回归通过',
+             '| 1 | DS | P1：foo | 已修中断，回归通过 |\n', True),
+            ('closed-已修复了中断，回归通过',
+             '| 1 | DS | P1：foo | 已修复了中断，回归通过 |\n', True),
+            ('closed-已成功修复中断，回归通过',
+             '| 1 | DS | P1：foo | 已成功修复中断，回归通过 |\n', True),
+            # F. the partial family covers all six members (DS b#6 / MM s#3
+            #    P2) and the English half gains the impact/affect left guard
+            #    (DS s#4② P2) — scope prose closes on both sides.
+            ('closed-已修复，影响阶段性目标',
+             '| 1 | DS | P1：foo | 已修复，影响阶段性目标 |\n', True),
+            ('closed-已修复，影响未完全覆盖的用例',
+             '| 1 | DS | P1：foo | 已修复，影响未完全覆盖的用例 |\n', True),
+            ('closed-fixed; impact on half of the users',
+             '| 1 | DS | P1: foo | fixed; impact on half of the users |\n', True),
+            # G. bare single characters guard on their attested continuations
+            #    (DS s#5 P2) — 修复中心跳异常 / 修复中台账异常 reopen.
+            ('open-修复中心跳异常',
+             '| 1 | DS | P1：foo | 修复中心跳异常 |\n', False),
+            ('open-修复中台账异常',
+             '| 1 | DS | P1：foo | 修复中台账异常 |\n', False),
+        ]
+        assert_rows('r14', row_cases_r14)
         assert_rows('r13', row_cases_r13)
         assert_rows('r12', row_cases_r12)
         assert_rows('r11', row_cases_r11)
@@ -1431,6 +1521,17 @@ class ReviewControls(unittest.TestCase):
                       '已修改', '已维修', '已检修'):
             self.assertFalse(check_ruler._handling_pending(closed),
                              '#2245-r7 closed-family:' + closed)
+        # r14 (DS r13 boundary#4 P0): the AWAIT construction — 待 glued to the
+        # word behind it pends on its own, no gate verb needed. The X待 nouns
+        # get NO left guard (期待人工验收 is the same outstanding action as
+        # 待人工验收); the attested closed compounds (待办, via the r9 pin)
+        # ride the right guard.
+        for form in ('等待回归', '待回归', '已修复，等待复测',
+                     '已修复，期待人工验收'):
+            self.assertTrue(check_ruler._handling_pending(form),
+                            '#2245-r14 await-construction:' + form)
+        self.assertFalse(check_ruler._handling_pending('已修复待办事项'),
+                         '#2245-r14 await-guard:已修复待办事项')
         # observe-only verbs and explicit pending words never close a row
         # (r7 MM boundary#8: 待观察 joins its 保留观察/继续观察 family).
         for form in ('观察', '待观察', '继续观察'):
@@ -1502,12 +1603,23 @@ class ReviewControls(unittest.TestCase):
                          {'almost': r'(?!\s*no\b)', 'nearly': r'(?!\s*no\b)',
                           'half': r'(?!-open\b)'},
                          '#2245-r12 en-partial-guard-keys-frozen')
+        # r14 (DS r13 sibling#4②): the English partial LEFT guards are their
+        # own dict — the right-guard dict is appended after the word, where a
+        # lookbehind can never see past the word it follows (the first r14
+        # attempt placed them there and the guard silently matched nothing).
+        self.assertEqual(check_ruler._EN_PARTIAL_LEFT_GUARDS,
+                         {'half': r'(?<!impact\son\s)(?<!impact\s)'
+                                  r'(?<!impacting\s)(?<!impacts\s)'
+                                  r'(?<!affecting\s)(?<!affects\s)'
+                                  r'(?<!affect\s)'},
+                         '#2245-r14 en-partial-left-guards-frozen')
         self.assertEqual(check_ruler._CJK_COMPOUND_RULES,
-                         ('断(?=分析|场景|的|$)', '心', '文', '层(?=的|$)',
-                          '期(?=指标)', '端(?=节)', '部(?=审计)', '档', '国',
-                          '华', '台', '控(?=服务)', '南', '西',
+                         ('断(?=分析|场景|的|$)', '心(?=化|$)', '文(?=档)',
+                          '层(?=的|$)', '期(?=指标)', '端(?=节)', '部(?=审计)',
+                          '档(?=配置)', '国(?=区)', '华(?=分支)', '台(?=服务)',
+                          '控(?=服务)', '南(?=区)', '西(?=部)',
                           '间(?=件|层|态)', '等(?=[级严优])'),
-                         '#2245-r13 compound-rules-frozen')
+                         '#2245-r14 compound-rules-frozen')
         # r12: the residual count-word class is a fixed literal too — a
         # dropped numeral (两) is invisible to a live char-class walk.
         # r13 (DS b#3 P0): the quantifier tail 若干 joins the frozen class.
@@ -1518,8 +1630,8 @@ class ReviewControls(unittest.TestCase):
         # are the same self-source blindness — a dropped noun (缺陷) or a
         # dropped progress noun (完成度) never shows in a live walk.
         self.assertEqual(check_ruler._CJK_RESIDUAL_NOUNS,
-                         'P[012]|问题|风险|隐患|缺陷|事项',
-                         '#2245-r13 residual-nouns-frozen')
+                         'P[012]|问题|风险|隐患|缺陷|事项|用例|场景|脚本',
+                         '#2245-r14 residual-nouns-frozen')
         self.assertEqual(check_ruler._CJK_PCT_EXTRA,
                          ('进度', '完成度'),
                          '#2245-r13 pct-extra-frozen')
@@ -1534,32 +1646,38 @@ class ReviewControls(unittest.TestCase):
                          '#2245-r12 intent-words-frozen')
         self.assertEqual(check_ruler._MARKER_GUARDS,
                          {'需': r'(?<![无不])需(?!求)',
-                          '会': r'(?<!不)(?<![机社体])会(?!议|话)'},
-                         '#2245-r12 marker-guards-frozen')
+                          '会': r'(?<!不)(?<![机社体])会(?!议|话)',
+                          '待': r'待(?!办|遇)'},
+                         '#2245-r14 marker-guards-frozen')
         self.assertEqual(set(check_ruler._PENDING_GUARDS),
                          {'不通过', '待办', '保留意见'},
                          '#2245-r10 pending-guard-keys-frozen')
         self.assertEqual(set(check_ruler._EN_CLOSURE_GUARDS),
                          {'passed', 'accepted'},
                          '#2245-r10 en-closure-guard-keys-frozen')
-        # r13 (DS b#1 P0): the accepted guard's bounded token window is a
-        # fixed literal — a shrunk window (the r12 determiner enumeration)
-        # would only resurface in a future review, not in the walk above.
+        # r13 (DS b#1 P0): the accepted guard's bounded token window was a
+        # fixed literal. r14 (DS b#2 / MM b#1 P0, MM s#2 / DS s#2 P1): the
+        # window became CLAUSE-SCOPE over the shared separator family — the
+        # literal re-attests the whole shape (a shrunk window or a lost
+        # separator member resurfaces here, not in a future review).
         self.assertEqual(check_ruler._EN_CLOSURE_GUARDS['accepted'],
-                         r'(?![\s,;:]*(?:'
-                         r'(?:[^\s,;:]+[\s,;:]+){0,4}risks?\b'
+                         r'(?![\s,;:，。、；：！？/()\[\]]*(?:'
+                         r'(?:[^\s,;:，。、；：！？/()\[\]]+'
+                         r'[\s,;:，。、；：！？/()\[\]]+)*'
+                         r'[\s,;:，。、；：！？/()\[\]]*risks?\b'
                          r'|for\s+now\b))',
-                         '#2245-r13 accepted-guard-window-frozen')
+                         '#2245-r14 accepted-guard-window-frozen')
         # r13: the disposal filter's clause-break family is a fixed literal
         # too — a widened set (a letter reaching it) would re-close the r11
         # pin 已修复中等待回归, and a dropped separator would re-pend the
-        # b#4 disposal shapes.
+        # b#4 disposal shapes. r14 (DS b#5 / MM b#3 P1): the family takes
+        # brackets, ASCII period and slash.
         self.assertEqual(check_ruler._CJK_CLAUSE_BREAKS,
-                         '，。、；：！？,;:!? \t',
-                         '#2245-r13 clause-breaks-frozen')
+                         '，。、；：！？,;:!? \t.()（）/',
+                         '#2245-r14 clause-breaks-frozen')
         self.assertEqual(set(check_ruler._PARTIAL_LEFT_GUARDS),
-                         {'部分', '局部', '过半', '一半'},
-                         '#2245-r13 partial-left-guard-keys-frozen')
+                         {'部分', '局部', '过半', '一半', '阶段性', '未完全'},
+                         '#2245-r14 partial-left-guard-keys-frozen')
         self.assertEqual(set(check_ruler._PARTIAL_RIGHT_GUARDS), {'局部'},
                          '#2245-r11 partial-right-guard-keys-frozen')
         # r11 (DS boundary#1 + sibling#1 / MM boundary#1 + sibling#4+#5, both
@@ -1630,7 +1748,13 @@ class ReviewControls(unittest.TestCase):
                      '修复中/', '修复中发现新问题', '修复  中', '修复   中',
                      '修复中断，等待回归', '修复中部署新版本', '修复中控制变量',
                      '修复中端详日志', '修复中端掉旧服务', '修复中层叠缓存',
-                     '已修复中断回归通过'):
+                     '已修复中断回归通过',
+                     # r14: the eight previously bare single characters close
+                     # only on their attested continuations — anything else
+                     # after 中 reopens the row.
+                     '修复中心跳异常', '修复中台账异常', '修复中文化说明',
+                     '修复中档位排序', '修复中国产化脚本', '修复中华文化样式',
+                     '修复中南方向问题', '修复中西侧节点'):
             self.assertTrue(check_ruler._handling_pending(form),
                             '#2245-r11 compound-guarded:' + form)
         # every attested English partial word keeps the row open on its own.
@@ -1737,6 +1861,66 @@ class ReviewControls(unittest.TestCase):
         for form in ('accepted', 'accepted the change', 'passed the review'):
             self.assertTrue(check_ruler._handling_closed(form),
                             '#2245-r10 en-closure-bare-family:' + form)
+        # r14 (DS r13 concurrency#1 + MM r13 concurrency#1, both lineages
+        # independently, P0 hang): the closure-guard family — the shared
+        # separator run reaches a risk noun across the FULL clause (the
+        # attested-escape shapes r13 missed: past the 4th word unit, glued
+        # to punctuation, behind a full-width separator) and 'passed' rides
+        # the same family (MM sibling#1: passed; to next round read CLOSED
+        # while the accepted mirror did not).
+        for form in ('accepted all of the remaining open risks',
+                     'accepted with the caveat that the risk remains',
+                     'accepted in spite of the remaining risks',
+                     'accepted (risk noted)', 'accepted/risk noted',
+                     'accepted，risk noted', 'passed; to next round'):
+            self.assertFalse(check_ruler._handling_closed(form),
+                            '#2245-r14 en-closure-guard-family:' + form)
+
+    def test_pct_gap_backtracks_linearly(self):
+        """#2245 r14 (DS r13 concurrency#1 + MM r13 concurrency#1, both
+        lineages, the SAME finding, measured live): the r13 unit
+        alternation OVERLAPPED — the fallback branch also matched digits and
+        letters and a non-possessive \\d+ / [A-Za-z]+ can split one run into
+        several units, so a long alnum token with no % forced the engine
+        through every split tree (measured pre-r14: 0.07 s at L=16, 1.25 s
+        at L=24, 4.89 s at L=32, exponential — a pasted sha256 in a
+        handling cell hangs the ruler = P0). The units are now possessive
+        and mutually exclusive, so each position has exactly one parse.
+        This control pins the LINEAR behavior with a hard wall-clock bound —
+        a reintroduced overlap (a lost possessive or a fallback class that
+        leaks digits) does not produce a wrong verdict, it hangs, so only a
+        timer catches it."""
+        def _hang(signum, frame):
+            raise TimeoutError('pct-gap hang: >5s')
+        signal.signal(signal.SIGALRM, _hang)
+
+        def _timed(cell):
+            signal.setitimer(signal.ITIMER_REAL, 5.0)
+            try:
+                t0 = time.monotonic()
+                check_ruler._handling_pending(cell)
+                return time.monotonic() - t0
+            finally:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+
+        cell = 'fixed, verified ' + '0123456789abcdef' * 8
+        try:
+            elapsed = _timed(cell)
+        except TimeoutError:
+            self.fail('#2245-r14 pct-gap-linear (hang: >5s)')
+        self.assertLess(elapsed, 1.0, '#2245-r14 pct-gap-linear')
+        # the linear claim is length-independent: twice the token, same
+        # order of magnitude. A quadratic or exponential regression fails
+        # the ratio even when both runs stay under the absolute bound.
+        cell2 = 'fixed, verified ' + '0123456789abcdef' * 16
+        try:
+            elapsed2 = _timed(cell2)
+        except TimeoutError:
+            self.fail('#2245-r14 pct-gap-linear-long (hang: >5s)')
+        self.assertLess(elapsed2, 1.0, '#2245-r14 pct-gap-linear-long')
+        if elapsed > 1e-4:
+            self.assertLess(elapsed2 / elapsed, 8.0,
+                            '#2245-r14 pct-gap-scaling')
 
 
 if __name__ == '__main__':

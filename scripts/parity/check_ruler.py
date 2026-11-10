@@ -62,7 +62,7 @@ check_frozen = _load('check_frozen', _HERE / 'check_frozen.py').check
 
 # #2245 fix-r7 (r6 reviews, both families — structural redesign per the
 # 2026-11-10 coordinator ruling; round history: specs/parity/frozen/
-# 20261109-2245.md through 20261110-2245-r14.md). Five patch rounds proved
+# 20261109-2245.md through 20261110-2245-r15.md). Six patch rounds proved
 # lexical enumeration does not converge, so verdicts now derive structurally:
 #   1. every 处理/处置 cell is judged on its own copy, never concatenated —
 #      a row closes only when each cell names a closure and none is pending;
@@ -151,19 +151,29 @@ _CJK_CLOSURE_RE = re.compile('|'.join(
 # runs were STILL enumerated closed sets in a fixed order — every shape
 # outside the members escaped (accepted the remaining risks / all of the
 # risks / three risks / most risks / as a residual risk / accepted; risk
-# noted all read CLOSED). The guard is now a bounded TOKEN WINDOW: risk(s)
-# anywhere within four word units after accepted (separators are whitespace
-# plus clause-level , ; :) blocks the closure — enumerated prefixes are gone,
-# and the attested closures (bare accepted / accepted the change) carry no
-# risk inside the window and stay closed.
-_EN_CLOSURE_GUARDS = {'passed': r'(?![\s,]*(?:on(?:\s+to)?|onto|to)\b)',
-                      # r13: the guard is a bounded token window — up to 4
-                      # word units on optional separators reach a risk noun
-                      # and the row stays open (DS b#1 P0). The separator run
-                      # prefixes BOTH alternatives — hoisting `for now` out
-                      # of the separator's scope re-closes it (r10 pin).
-                      'accepted': r'(?![\s,;:]*(?:'
-                                  r'(?:[^\s,;:]+[\s,;:]+){0,4}risks?\b'
+# noted all read CLOSED). The guard became a bounded TOKEN WINDOW.
+# r14 (DS r13 boundary#2 P0 / MM r13 boundary#1 P0 + sibling#2 P2): a
+# bounded window only moved the hole — a risk noun past the 4th word unit
+# (accepted with the caveat that the risk remains), one glued to punctuation
+# (accepted (risk noted) / accepted/risk noted) and a full-width separator
+# (accepted，risk noted) all escaped again, every one a false PASS. The
+# window is now CLAUSE-SCOPE: any number of word units on the shared
+# separator family (ASCII + CJK clause punctuation, slash, brackets) reach
+# a risk noun and the row stays open — no length constant to step over. The
+# word and separator classes are complements, so the window backtracks
+# linearly (each position has exactly one parse). The separator run still
+# prefixes BOTH alternatives — hoisting `for now` out of it re-closes it
+# (r10 pin), and the attested closures (bare accepted / accepted the
+# change) carry no risk noun and stay closed.
+# r14 (MM r13 sibling#1 P1): 'passed' shares the separator family — its run
+# stayed ASCII-comma-only, so passed; to next round read CLOSED while the
+# same deferral after accepted did not.
+_EN_CLOSURE_GUARDS = {'passed': r'(?![\s,;:，。、；：！？/()\[\]]*'
+                                 r'(?:on(?:\s+to)?|onto|to)\b)',
+                      'accepted': r'(?![\s,;:，。、；：！？/()\[\]]*(?:'
+                                  r'(?:[^\s,;:，。、；：！？/()\[\]]+'
+                                  r'[\s,;:，。、；：！？/()\[\]]+)*'
+                                  r'[\s,;:，。、；：！？/()\[\]]*risks?\b'
                                   r'|for\s+now\b))'}
 _EN_CLOSURE_RE = re.compile(r'\b(?:' + '|'.join(
     word + _EN_CLOSURE_GUARDS.get(word, '') for word in _ENGLISH_VERBS)
@@ -221,9 +231,10 @@ _CJK_FAILING_RE = re.compile(
 # attested noun second (中端节点, 已升级中端节点) and 层 only before the
 # genitive / word end — the attested 中间层 / 中间件 / 中间态 compounds ride
 # the 间 guard and are untouched.
-_CJK_COMPOUND_RULES = ('断(?=分析|场景|的|$)', '心', '文', '层(?=的|$)',
-                       '期(?=指标)', '端(?=节)', '部(?=审计)', '档', '国',
-                       '华', '台', '控(?=服务)', '南', '西',
+_CJK_COMPOUND_RULES = ('断(?=分析|场景|的|$)', '心(?=化|$)', '文(?=档)',
+                       '层(?=的|$)', '期(?=指标)', '端(?=节)', '部(?=审计)',
+                       '档(?=配置)', '国(?=区)', '华(?=分支)', '台(?=服务)',
+                       '控(?=服务)', '南(?=区)', '西(?=部)',
                        '间(?=件|层|态)', '等(?=[级严优])')
 # r12 (DS boundary#8 P2): the left blank run before 中 was capped at two
 # ({0,2}) — a three-blank run read CLOSED. Whitespace quantity carries no
@@ -249,7 +260,26 @@ _CJK_GUARDED_SECONDS = tuple(rule[0] for rule in _CJK_COMPOUND_RULES
 # continuation (已修复中等待回归 — 等 keeps going with 待) is still the
 # in-progress marker the r11 pin holds open. Any character outside this
 # separator family reads as a continuation, fail-closed.
-_CJK_CLAUSE_BREAKS = '，。、；：！？,;:!? \t'
+# r14 (DS r13 boundary#5 P1 / MM r13 boundary#3 P1): the family was a
+# closed whitelist — an opening bracket, an ASCII period or a slash after
+# the guarded second (已修复中断（回归通过） / 已修复中断. / 已修复中断/回归
+# 通过) kept the hit alive and read pending (false FAIL). The bracket /
+# period / slash family joins (post-NFKC the full-width forms are already
+# folded, they ride along as defense).
+_CJK_CLAUSE_BREAKS = '，。、；：！？,;:!? \t.()（）/'
+# r14 (DS r13 boundary#7 P2 / MM sibling#5 P2 / DS sibling#3 P2, one code
+# site): the disposal verb check walked _CJK_LONG_VERBS with an IMMEDIATE
+# 已+verb adjacency — the single-char verbs (已修中断), a 了 after the verb
+# (已修复了中断) and an adverbial between 已 and the verb (已成功修复中断)
+# all read pending (false FAIL). The verb now comes from the full gate-verb
+# table via a clause-scope prefix: 已, then any break-free run, then a gate
+# verb with an optional 了, ending exactly at the hit start — the same
+# 已[^breaks]*verb$ derivation the quantifier windows took (no adjacency
+# constant), and the r11 pins (已修复中毒, 已修复中等待回归) ride the
+# successor/second checks, not this prefix.
+_DISPOSED_VERB_BEFORE = re.compile(
+    '已[^' + _CJK_CLAUSE_BREAKS + r']*(?:'
+    + '|'.join(_longest_first(_CJK_GATE_VERBS)) + r')了?$')
 
 
 def _cjk_in_progress(handling):
@@ -264,13 +294,9 @@ def _cjk_in_progress(handling):
                  else '')
         if (succ in _CJK_GUARDED_SECONDS
                 and (not after or after in _CJK_CLAUSE_BREAKS)):
-            for verb in _CJK_LONG_VERBS:
-                a = m.start() - len(verb) + 1
-                if a >= 1 and (handling[a:m.start() + 1] == verb
-                               and handling[a - 1] == '已'):
-                    break  # 已修复中断 — the match is the object, not a marker
-            else:
-                hits.append(m)
+            if _DISPOSED_VERB_BEFORE.search(handling[:m.start() + 1]):
+                continue  # 已修复中断 / 已修中断 / 已成功修复了中断 — object
+            hits.append(m)
         else:
             hits.append(m)
     return hits
@@ -310,8 +336,13 @@ _PARTIAL_WORDS = ('部分', '一半', '阶段性', '局部', '过半', '未完�
 # 影响过半用户 / 影响一半用户 are the same closed-scope prose but read pending
 # (false FAIL). The 影响-prefix left guard now covers every quantity member
 # of the family, not one member of it.
+# r14 (DS r13 boundary#6 P2 / MM r13 sibling#3 P2 — the r13 note claimed
+# "every member" while covering 4 of 6): the non-quantity members 阶段性 /
+# 未完全 join the family — 影响阶段性目标 / 影响未完全覆盖的用例 are the
+# same closed-scope prose and read pending (false FAIL).
 _PARTIAL_LEFT_GUARDS = {'部分': '(?<!全)(?<!影响)', '局部': '(?<!影响)',
-                        '过半': '(?<!影响)', '一半': '(?<!影响)'}
+                        '过半': '(?<!影响)', '一半': '(?<!影响)',
+                        '阶段性': '(?<!影响)', '未完全': '(?<!影响)'}
 _PARTIAL_RIGHT_GUARDS = {'局部': '(?!地区)'}
 _PARTIAL_RE = re.compile('|'.join(
     _PARTIAL_LEFT_GUARDS.get(word, '') + word + _PARTIAL_RIGHT_GUARDS.get(word, '')
@@ -324,12 +355,23 @@ _PARTIAL_RE = re.compile('|'.join(
 # every member carries a row control.
 # r12 (DS sibling#7 P1 / boundary#13 P3): nearly carries the same
 # no-exclusion as almost — nearly no impact is scope prose, not a partial.
+# r14 (DS r13 sibling#4② P2): the English side had no scope guard at all —
+# fixed; impact on half of the users read pending while the Chinese mirror
+# 影响一半用户 closed (r13). 'half' gains the attested impact/affect left
+# guards. They live in a LEFT-guard dict prepended before the word — the
+# right-guard dict is appended after it, where a lookbehind can never see
+# past the word it follows (the first attempt placed them there and the
+# guard silently matched nothing).
+_EN_PARTIAL_LEFT_GUARDS = {
+    'half': r'(?<!impact\son\s)(?<!impact\s)(?<!impacting\s)'
+            r'(?<!impacts\s)(?<!affecting\s)(?<!affects\s)(?<!affect\s)'}
 _EN_PARTIAL_GUARDS = {'almost': r'(?!\s*no\b)', 'nearly': r'(?!\s*no\b)',
                       'half': r'(?!-open\b)'}
 _EN_PARTIAL_WORDS = ('partially', 'partial', 'partly', 'almost', 'nearly',
                      'halfway', 'half', 'incomplete', 'unfinished')
 _EN_PARTIAL_RE = re.compile('|'.join(
-    r'\b' + re.escape(word) + _EN_PARTIAL_GUARDS.get(word, '') + r'\b'
+    _EN_PARTIAL_LEFT_GUARDS.get(word, '') + r'\b' + re.escape(word)
+    + _EN_PARTIAL_GUARDS.get(word, '') + r'\b'
     for word in _longest_first(_EN_PARTIAL_WORDS)),
     re.IGNORECASE)
 _EN_PENDING_RE = re.compile(r'\bin[ -]?progress\b|\bpending\b|\btodo\b|\btbd\b'
@@ -344,10 +386,24 @@ _EN_UNDONE_RE = re.compile(r'\bun[- _]?(?:' + '|'.join(_ENGLISH_VERBS) + r')\b',
 _NEGATION_WORDS = ('未', '没', '尚未', '暂不', '正在')
 _INTENT_WORDS = ('待', '计划', '拟', '暂缓', '暂时', '暂且', '无法', '不能',
                  '推迟', '延后', '后续', '稍后', '下周', '本周', '需', '会', '将')
+# r14 (DS r13 boundary#4 P0): the r5 rule "intention binds to gate verbs"
+# had no shape for the AWAIT construction — 等待回归 / 待回归 name an
+# outstanding action whose object is not a gate verb (回归 is not one), so
+# after the r13 disposal filter dropped the 中 hit, 已修复中断，等待回归 read
+# CLOSED (false PASS) while the same sentence without 已 pends on purpose
+# (r12 pin). 待 now ALSO binds to the word right behind it (any CJK word —
+# the await construction), with the attested closed compounds guarded on
+# the right (待办事项 via the r9 待办 pin, 待遇). No left guard: 期待人工验收
+# is the SAME outstanding action as 待人工验收 and must pend, and 期待/接待/
+#看待 + a CJK word reading pending is the conservative direction (no
+# attested closed shape carries them — verified against the row controls
+# and the real record).
 _MARKER_GUARDS = {
     '需': r'(?<![无不])需(?!求)',
     '会': r'(?<!不)(?<![机社体])会(?!议|话)',
+    '待': r'待(?!办|遇)',
 }
+_AWAITED_WORD = re.compile('[一-鿿]')
 _NEGATION_MARKER = re.compile('|'.join(_longest_first(_NEGATION_WORDS)))
 _INTENT_MARKER = re.compile('|'.join(
     _MARKER_GUARDS.get(word, word) for word in _longest_first(_INTENT_WORDS)))
@@ -475,14 +531,32 @@ _PCT_RE = re.compile(
     # r13 (DS r12 boundary#2 P0): the gap was a 12-CHARACTER cap shared by
     # both languages, so it coupled to digit count — completed 300 of 500
     # (60%) needed 13 characters and fixed after retesting 50% needed 17,
-    # both anchored nothing and read CLOSED (false PASS). The gap is now
+    # both anchored nothing and read CLOSED (false PASS). The gap became
     # unit-based: a whole digit RUN or a whole letter RUN counts as ONE unit
     # (any length), every other character (CJK, space, bracket) counts
-    # alone — the CJK side is unchanged at 12 single characters while the
-    # English side decouples from digit/word length. The exclusion lookahead
-    # still guards the START of every unit (rates / impacted / 率 / 影响).
+    # alone. The exclusion lookahead still guards the START of every unit
+    # (rates / impacted / 率 / 影响).
+    # r14 (DS r13 concurrency#1 + MM r13 concurrency#1, both lineages, the
+    # SAME finding; measured live): the unit alternation OVERLAPPED — the
+    # fallback branch also matched digits and letters, and a non-possessive
+    # \d+ / [A-Za-z]+ can split one run into several units, so a long alnum
+    # token with no % forced the engine through every split tree
+    # (measured: a 32-char hex token in a handling cell took 5.28 s in
+    # _handling_pending, exponential in run length — a full sha256 pasted
+    # into a cell hangs the ruler = P0 hang). The units are now POSSESSIVE
+    # (\d++ / [A-Za-z]++ — CPython 3.11+, already required by this file) and
+    # the fallback class is mutually exclusive with them, so each position
+    # has exactly one parse and the gap backtracks linearly. The bound
+    # {0,12} is GONE (MM r13 boundary#4 P1): the cap only moved the r12
+    # hole — a 13-unit tail (fixed after retesting the sharded cluster in
+    # the eu west region today 50%) anchored nothing and read CLOSED. The
+    # gap now runs to the next clause boundary — its class already refuses
+    # clause punctuation (、 joins the family, DS simplify#1: 、 is a clause
+    # separator everywhere else in this file), %, / and ／, so an unbounded
+    # run cannot leave the clause or slide into the number (the
+    # (?<![\d.]) tail anchor keeps whole-token capture, r11).
     r'(?:(?!\brates?\b|impact(?:s|ed|ing)?\b|率|影响)'
-    r'(?:\d+|[A-Za-z]+|[^，。；：！？,;:!?%/／])){0,12}'
+    r'(?:\d++|[A-Za-z]++|[^，。、；：！？,;:!?%/／0-9A-Za-z]))*'
     r'(?<![\d.])(\d{1,4}(?:\.\d+)?)\s*(?:%|percent\b|pct\b)', re.IGNORECASE)
 # r10 (MM boundary#3): a residual-quantity phrase keeps the row open even
 # inside an otherwise closed cell — 已修复不通过的用例，还有 3 个 still has
@@ -538,15 +612,33 @@ _PCT_RE = re.compile(
 # noun + remain without a number or still (fixed, issues remain) reads
 # closed — the count anchor stays the divider, same as the r12 boundary.
 _CJK_COUNT_WORDS = '1-9一二三四五六七八九十百千万两几多数待若干'
-_CJK_RESIDUAL_NOUNS = 'P[012]|问题|风险|隐患|缺陷|事项'
+# r14 (MM r13 boundary#2 P0): the noun set was a closed enumeration of
+# finding words — 用例 / 场景 / 脚本 (the project's most common residual
+# objects) were absent, so 已修复，还有少量未覆盖用例 read CLOSED (false
+# PASS). The domain residual objects join the frozen set.
+_CJK_RESIDUAL_NOUNS = 'P[012]|问题|风险|隐患|缺陷|事项|用例|场景|脚本'
+# r14 (DS r13 boundary#1 P0 / sibling#1 P1 / boundary#2 P0, MM sibling#2):
+# the r13 windows were bounded constants again — a modifier run one char
+# past the cap (还有大量未覆盖问题), a quantifier noun outside the set
+# (还有少量未覆盖用例) and the 遗留 branch still on the hard anchor
+# (遗留少量问题 / 遗留：3 个) all read CLOSED. The quantifier family AND the
+# 遗留 branch now anchor across the whole CLAUSE: any count word or residual
+# noun between the quantifier and the next clause punctuation anchors (no
+# length constant; the one optional ：/: right after the quantifier stays).
+# Bare 还有别的说明 / 遗留说明 keep the closed known boundary — the count
+# anchor is still the divider. r14 (DS r13 boundary#3 P0): the still-verb
+# window was capped at 2 words — still a few issues remain read CLOSED; the
+# window now runs over any number of words (spaces only, \w and \s are
+# disjoint so it backtracks linearly).
 _RESIDUAL_RE = re.compile(
-    '(?<!没有)(?<!无)(?<!没)遗留(?=\\s*(?:[' + _CJK_COUNT_WORDS + ']|' + _CJK_RESIDUAL_NOUNS + '))'
-    '|(?:还有|还剩|仍有|另有)(?=\\s*[：:]?\\s*[^，。、；：！？,;:!?]{0,4}'
+    '(?<!没有)(?<!无)(?<!没)遗留(?=\\s*[：:]?\\s*[^，。、；：！？,;:!?]*'
+    '(?:[' + _CJK_COUNT_WORDS + ']|' + _CJK_RESIDUAL_NOUNS + '))'
+    '|(?:还有|还剩|仍有|另有)(?=\\s*[：:]?\\s*[^，。、；：！？,;:!?]*'
     '(?:[' + _CJK_COUNT_WORDS + ']|' + _CJK_RESIDUAL_NOUNS + '))'
     '|(?:剩余|尚余|余下)(?=\\s*[' + _CJK_COUNT_WORDS + '])'
     '|\\b[1-9]\\d*(?:\\s+\\w+){0,3}\\s+(?:remaining|remains?|outstanding|left\\s+over|left|open)\\b'
     '|\\bstill\\s+[1-9]\\d*\\b'
-    '|\\bstill\\s+(?!\\d)(?:\\w+\\s+){0,2}remains?\\b'
+    '|\\bstill\\s+(?!\\d)(?:\\w+\\s+)*remains?\\b'
     '|\\b(?:remaining|outstanding)\\s+[1-9]\\d*\\b', re.IGNORECASE)
 
 
@@ -618,6 +710,12 @@ def _handling_pending(handling):
         for marker in _INTENT_MARKER.finditer(clause):
             if _GATE_VERB.search(clause, marker.start()) or forward:
                 return True  # 计划…修复 / 需人工验收 / 待人工验证
+            # r14 (DS r13 boundary#4 P0): the await construction — 待 glued
+            # to the word behind it (等待回归 / 待回归) is an outstanding
+            # action even when that word is no gate verb.
+            if (marker.group(0) == '待'
+                    and _AWAITED_WORD.match(clause, marker.end())):
+                return True  # 等待回归 / 待回归 / 等待复测
         for marker in _EN_INTENT.finditer(clause):
             if _GATE_VERB.search(clause, marker.start()) or forward:
                 return True  # will be fixed / to be fixed / deferred, merged later
