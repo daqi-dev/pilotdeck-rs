@@ -312,51 +312,78 @@ async fn cron_error_envelope_matches_the_ws_connection_arms() {
 /// touches the cron store. Running that inline parks a whole tokio thread for
 /// the scan.
 ///
-/// The property pinned here is structural, not a timing measurement: work
-/// handed to the blocking pool is never ready on the future's first poll, so a
-/// sibling task joined with it must be polled in between. On the
-/// single-threaded runtime below, an inline dispatch answers on that first
-/// poll and `ran_before` stays false.
+/// The property pinned here is the dispatch thread, an observable identity —
+/// not a scheduling side effect. `CronManagerOptions::now` runs inside
+/// `create_task` (`runtime/cron/manager.rs`'s `create_task_at`), i.e. on
+/// whatever thread the dispatch body runs on, so the test injects a clock
+/// that records `std::thread::current().id()` and asserts the recorded id
+/// differs from the async worker's (the single-threaded runtime below makes
+/// that worker the test's own thread).
+///
+/// Why the thread and not the interleave (#2682): tokio promises nothing
+/// about a `spawn_blocking` `JoinHandle` being pending on its first poll, so
+/// the pre-#2682 shape — a sibling joined with `create` and asserted to run
+/// first — could fail on its own when the blocking thread won the race
+/// (fail-closed false red). And why no await anywhere can fake a pass
+/// (#2744): a suspension inserted on the route→dispatch path leaves the
+/// dispatch thread what it is, so the fail-open direction (an inline
+/// dispatch hidden behind an unrelated pending point) still dies here — the
+/// `cron-inline-sync-yield-now` mutant in `tests/fixtures/native-config`
+/// pins exactly that shape.
 #[tokio::test(flavor = "current_thread")]
 async fn cron_request_dispatches_off_the_async_worker() {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
 
     let (scratch, mut requests) =
         std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#1326 fixture setup");
-    requests.cron = Some(configured_manager(&requests.options.home));
-
-    let sibling_ran = Arc::new(AtomicBool::new(false));
-    let sibling_flag = Arc::clone(&sibling_ran);
-    let create = async {
-        let result = route(
-            &requests,
-            "cron_create",
-            &json(
-                r#"{"projectKey": "/proj",
-                    "message": "m1",
-                    "sessionKey": "origin-session",
-                    "channelKey": "origin-channel",
-                    "mode": "default",
-                    "schedule": {"type": "cron", "expression": "5 * * * *", "timezone": "UTC"}}"#,
-            ),
-        )
-        .await;
-        (result, sibling_ran.load(Ordering::SeqCst))
+    let dispatch_thread = Arc::new(Mutex::new(None::<std::thread::ThreadId>));
+    let recorder = Arc::clone(&dispatch_thread);
+    let now = move || {
+        *recorder.lock().expect("#2682 dispatch-thread recorder") =
+            Some(std::thread::current().id());
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|since| since.as_millis() as f64)
+            .expect("#2682 the wall clock predates the unix epoch")
     };
-    let sibling = async move {
-        sibling_flag.store(true, Ordering::SeqCst);
-    };
-    let ((created, ran_before), ()) = tokio::join!(create, sibling);
+    requests.cron = Some(
+        CronManager::new(CronManagerOptions {
+            config: CronManagerConfig::default(),
+            pilot_home: requests.options.home.to_string_lossy().into_owned(),
+            session_overrides: None,
+            now: Some(Arc::new(now)),
+            uuid: None,
+            logger: None,
+            scheduler_idle_poll_ms: None,
+        })
+        .expect("#1326 fixture cron manager"),
+    );
 
-    let created = created.expect("#1509 cron_create still answers through the blocking pool");
+    let created = route(
+        &requests,
+        "cron_create",
+        &json(
+            r#"{"projectKey": "/proj",
+                "message": "m1",
+                "sessionKey": "origin-session",
+                "channelKey": "origin-channel",
+                "mode": "default",
+                "schedule": {"type": "cron", "expression": "5 * * * *", "timezone": "UTC"}}"#,
+        ),
+    )
+    .await
+    .expect("#1509 cron_create still answers through the blocking pool");
     negative_assert!(
         created.get("task").is_some(),
         "#1509 the dispatched create returns its task record"
     );
+    let observed = *dispatch_thread
+        .lock()
+        .expect("#2682 dispatch-thread readback");
     negative_assert!(
-        ran_before,
-        "#1509 cron dispatch must yield the async worker before answering"
+        observed.is_some_and(|thread| thread != std::thread::current().id()),
+        "#1509 cron dispatch must run off the async worker thread"
     );
 
     requests

@@ -7,6 +7,7 @@
 //! hand-written.
 
 use super::*;
+use crate::negative_assert;
 use crate::user_dialog::StoreOptions;
 use serde_json::Value;
 use std::sync::{
@@ -4537,6 +4538,139 @@ async fn concurrent_blocking_puts_do_not_stall_the_accept_loop() {
     assert_eq!(status(&first.await.unwrap().unwrap()), 200);
     assert_eq!(status(&second.await.unwrap().unwrap()), 200);
     server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+struct ThreadRecordingStore {
+    inner: FileGatewayUserDialogStore,
+    put_thread: Mutex<Option<std::thread::ThreadId>>,
+}
+
+impl UserDialogStore for ThreadRecordingStore {
+    fn put(&self, key: &StoreKey, dialog: &StoredDialog) -> Result<()> {
+        *self.put_thread.lock().expect("#2745 put-thread recorder") =
+            Some(std::thread::current().id());
+        self.inner.put(key, dialog)
+    }
+    fn remove(&self, key: &StoreKey, request_id: &JsString) -> Result<()> {
+        self.inner.remove(key, request_id)
+    }
+}
+
+impl LiveGatewayUserDialogStore for ThreadRecordingStore {
+    fn list(&self, key: &StoreKey) -> Result<Vec<StoredDialog>> {
+        self.inner.list(key)
+    }
+    fn clear(&self, key: &StoreKey) -> Result<()> {
+        self.inner.clear(key)
+    }
+    fn list_live(&self, key: &StoreKey) -> Result<Vec<StoredDialog>> {
+        self.inner.list_live(key)
+    }
+    fn claim_live(
+        &self,
+        key: &StoreKey,
+        request_id: &JsString,
+        ttl_ms: f64,
+        lease_id: Option<&JsString>,
+    ) -> Result<LeaseClaim> {
+        self.inner.claim_live(key, request_id, ttl_ms, lease_id)
+    }
+    fn release_live(
+        &self,
+        key: &StoreKey,
+        request_id: &JsString,
+        lease_id: &JsString,
+    ) -> Result<bool> {
+        self.inner.release_live(key, request_id, lease_id)
+    }
+    fn submit_live_answer(
+        &self,
+        key: &StoreKey,
+        request_id: &JsString,
+        lease_id: Option<&JsString>,
+        result: &DialogAnswer,
+    ) -> Result<bool> {
+        self.inner
+            .submit_live_answer(key, request_id, lease_id, result)
+    }
+    fn take_live_answer(
+        &self,
+        key: &StoreKey,
+        request_id: &JsString,
+    ) -> Result<Option<StoredAnswer>> {
+        self.inner.take_live_answer(key, request_id)
+    }
+    fn claim_live_owner(
+        &self,
+        key: &StoreKey,
+        request_id: &JsString,
+        owner_id: &JsString,
+        ttl_ms: f64,
+    ) -> Result<OwnerClaim> {
+        self.inner
+            .claim_live_owner(key, request_id, owner_id, ttl_ms)
+    }
+    fn renew_live_owner(
+        &self,
+        key: &StoreKey,
+        request_id: &JsString,
+        owner_id: &JsString,
+        ttl_ms: f64,
+    ) -> Result<bool> {
+        self.inner
+            .renew_live_owner(key, request_id, owner_id, ttl_ms)
+    }
+    fn release_live_owner(
+        &self,
+        key: &StoreKey,
+        request_id: &JsString,
+        owner_id: &JsString,
+    ) -> Result<bool> {
+        self.inner.release_live_owner(key, request_id, owner_id)
+    }
+}
+
+/// #2745: the HTTP store's dispatch must run on the blocking pool, not on an
+/// async worker — `serve` hands `dispatch_request` to `spawn_blocking`
+/// because `FileGatewayUserDialogStore` is synchronous by contract and may
+/// sleep on its 5 s lock retry. The pinned property is the dispatch thread,
+/// an observable identity: the recording store above writes
+/// `std::thread::current().id()` from inside `put`, and the assertion
+/// compares it with the test's own thread (the single-threaded runtime's
+/// only worker). No scheduling assumption can flip it in either direction,
+/// and — unlike the accept-loop control above — an inline regression dies at
+/// the assertion instead of deadlocking the runtime thread (the parked
+/// `BlockingStore` would freeze the one worker forever), so the bound mutant
+/// (`http-store-inline-sync`, tests/fixtures/native-config) fails within
+/// the runner's budget instead of timing out as an INVALID.
+#[tokio::test(flavor = "current_thread")]
+async fn store_dispatch_runs_off_the_async_worker() {
+    let directory = temp_dir("dispatch-thread");
+    let store = Arc::new(ThreadRecordingStore {
+        inner: FileGatewayUserDialogStore::new(StoreOptions::new(directory.clone()))
+            .expect("#2745 fixture store"),
+        put_thread: Mutex::new(None),
+    });
+    let (server, port) = start_limited(
+        Arc::clone(&store) as Arc<dyn LiveGatewayUserDialogStore>,
+        ServeLimits::default(),
+    )
+    .await;
+    let response = exchange(port, &http_put(&put_body()))
+        .await
+        .expect("#2745 the put exchange answers");
+    server.close().await;
+    assert_eq!(
+        status(&response),
+        200,
+        "#2745 the dispatched put answers through the recording store"
+    );
+    let observed = *store.put_thread.lock().expect("#2745 put-thread readback");
+    negative_assert!(
+        observed.is_some_and(|thread| thread != std::thread::current().id()),
+        "#2745 the store call must run off the async worker thread"
+    );
     let _ = std::fs::remove_dir_all(directory);
 }
 
