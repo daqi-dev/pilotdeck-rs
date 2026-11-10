@@ -55,7 +55,7 @@ mutations = [
     ('busy-copy', source, '"Compaction is unavailable because this session has an active turn or queued work."',
      '"changed."'),
     ('taskbudget-copy', source, '"Gateway task-budget accounting is unavailable."', '"changed."'),
-    ('timeout-reason', source, '"timeout:".encode_utf16().collect()', '"timeout-x:".encode_utf16().collect()'),
+    ('timeout-reason', source, 'let reason = super::timeout_reason(&run);', 'let reason = JsString::from_utf16("timeout-x:".encode_utf16().chain(run.units().iter().copied()).collect());'),
     ('compact-prefix', source, 'js_whitespace(trimmed[8])', 'js_whitespace(trimmed[7])'),
     ('plan-prefix', source, 'if !starts_with16(trimmed, "/plan") {', 'if !starts_with16(trimmed, "/planx") {'),
     ('sdk-copy', source, '"sdk_session_config is unavailable."', '"changed."'),

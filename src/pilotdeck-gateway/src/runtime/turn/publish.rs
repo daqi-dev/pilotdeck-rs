@@ -291,6 +291,9 @@ struct State {
     /// must end delivery without waiting for writes whose appends have not
     /// settled (#2498). `finish` sets `closed` alone, after its drain.
     hard_closed: bool,
+    causal_pending: bool,
+    causal_start_write: u64,
+    causal_queue: VecDeque<JsValue>,
 }
 struct Publication {
     state: Mutex<State>,
@@ -320,15 +323,22 @@ impl PublicationWrite {
         match result {
             Ok(()) => {
                 if visible {
-                    state.queue.push_back(event);
+                    if state.causal_pending && write >= state.causal_start_write {
+                        state.causal_queue.push_back(event);
+                    } else {
+                        state.queue.push_back(event);
+                    }
                 }
             }
             Err(_) if !state.failure_published => {
                 state.failure_published = true;
                 if visible {
-                    state
-                        .queue
-                        .push_back(persistence_failure(&publication.run.run_id, false));
+                    let failure = persistence_failure(&publication.run.run_id, false);
+                    if state.causal_pending && write >= state.causal_start_write {
+                        state.causal_queue.push_back(failure);
+                    } else {
+                        state.queue.push_back(failure);
+                    }
                 }
             }
             Err(_) => {}
@@ -447,6 +457,55 @@ impl Publication {
             }
             notified.await;
         }
+    }
+}
+
+/// Owns a native timeout close decision. Cancellation/panic denies delivery;
+/// no pending gate can outlive its owner and strand the consumer.
+pub(super) struct CausalCloseGuard {
+    publication: Arc<Publication>,
+    resolved: bool,
+}
+impl CausalCloseGuard {
+    pub(super) fn request_close(&self) {
+        let mut state = lock(&self.publication.state);
+        state.closing_writes = state.pending.clone();
+        state.closed = true;
+        state.hard_closed = true;
+        drop(state);
+        self.publication.changed.notify_waiters();
+    }
+    pub(super) fn allow(mut self) {
+        let mut state = lock(&self.publication.state);
+        if state
+            .close_deadline
+            .is_some_and(|deadline| tokio::time::Instant::now() >= deadline)
+        {
+            drop(state);
+            return;
+        }
+        state.causal_pending = false;
+        let held = std::mem::take(&mut state.causal_queue);
+        state.queue.extend(held);
+        self.resolved = true;
+        drop(state);
+        self.publication.changed.notify_waiters();
+    }
+}
+impl Drop for CausalCloseGuard {
+    fn drop(&mut self) {
+        if self.resolved {
+            return;
+        }
+        let mut state = lock(&self.publication.state);
+        state.causal_pending = false;
+        state.causal_queue.clear();
+        state.closing_writes.clear();
+        state.closed = true;
+        state.hard_closed = true;
+        state.close_expired = true;
+        drop(state);
+        self.publication.changed.notify_waiters();
     }
 }
 
@@ -601,6 +660,26 @@ impl TurnPublisher {
         }
         Ok(())
     }
+    /// Freeze only newly admitted durability writes. Prefix already queued or
+    /// admitted before takeover stays live. No-registry publication is TS-synchronous.
+    pub(super) fn begin_causal_close(
+        &self,
+        deadline: tokio::time::Instant,
+    ) -> Option<CausalCloseGuard> {
+        self.publication.registry.as_ref()?;
+        let _pump = lock(&self.pump);
+        let mut state = lock(&self.publication.state);
+        if state.closed || state.causal_pending {
+            return None;
+        }
+        state.causal_pending = true;
+        state.causal_start_write = state.next_write;
+        state.close_deadline = Some(deadline);
+        Some(CausalCloseGuard {
+            publication: self.publication.clone(),
+            resolved: false,
+        })
+    }
     /// TS timeout calls queue.close() immediately after enqueueing its error.
     /// Already-started durable appends still settle; events completing after
     /// close cannot re-open live delivery. The owned pump drains separately.
@@ -659,7 +738,7 @@ impl TurnPublisher {
                 if let Some(event) = state.queue.pop_front() {
                     return Some(event);
                 }
-                if state.closed {
+                if state.closed && !state.causal_pending {
                     let writes = if state.reliable_budget.is_some() {
                         state.closing_writes.clone()
                     } else {

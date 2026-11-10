@@ -1514,3 +1514,6 @@ async fn late_old_publisher_cannot_corrupt_reused_run_or_detach_successor() {
             .terminal
     );
 }
+
+#[path = "causal_close_tests.rs"]
+mod causal_close_tests;

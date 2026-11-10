@@ -2308,7 +2308,7 @@ mod tests {
         teardown(&r).await;
     }
 
-    struct SeedSdkProbe(std::sync::Mutex<Vec<JsValue>>);
+    struct SeedSdkProbe(std::sync::Mutex<Vec<JsValue>>, bool);
     impl crate::native_process::session_overrides::SdkOutputStylePort for SeedSdkProbe {
         fn get<'a>(
             &'a self,
@@ -2354,14 +2354,14 @@ mod tests {
                     ));
                 }
                 self.0.lock().unwrap().push(config.clone());
-                Ok(true)
+                Ok(self.1)
             })
         }
     }
     #[tokio::test]
     async fn seed_sdk_validates_after_busy_and_keeps_committed_config_on_seed_failure() {
         let (_scratch, r) = setup_fixture();
-        let probe = Arc::new(SeedSdkProbe(std::sync::Mutex::new(Vec::new())));
+        let probe = Arc::new(SeedSdkProbe(std::sync::Mutex::new(Vec::new()), true));
         let port: Arc<dyn crate::native_process::session_overrides::SdkOutputStylePort> =
             probe.clone();
         r.session_overrides.bind_sdk_styles(Arc::downgrade(&port));
@@ -2401,6 +2401,165 @@ mod tests {
         assert_eq!(error.code, "file_not_found");
         assert_eq!(&*probe.0.lock().unwrap(), &[good]);
         teardown(&r).await;
+    }
+
+    struct GatedSeedSdkProbe {
+        probe: SeedSdkProbe,
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+    }
+    impl crate::native_process::session_overrides::SdkOutputStylePort for GatedSeedSdkProbe {
+        fn get<'a>(
+            &'a self,
+            key: &'a JsString,
+        ) -> crate::native_process::session_overrides::SdkStyleFuture<'a, Option<JsString>>
+        {
+            crate::native_process::session_overrides::SdkOutputStylePort::get(&self.probe, key)
+        }
+        fn plugins<'a>(
+            &'a self,
+            key: &'a JsString,
+        ) -> crate::native_process::session_overrides::SdkStyleFuture<
+            'a,
+            Vec<Arc<crate::runtime::plugins::LoadedPlugin>>,
+        > {
+            crate::native_process::session_overrides::SdkOutputStylePort::plugins(&self.probe, key)
+        }
+        fn set<'a>(
+            &'a self,
+            session: &'a JsString,
+            project: &'a JsString,
+            style: Option<JsString>,
+        ) -> crate::native_process::session_overrides::SdkStyleFuture<'a, ()> {
+            crate::native_process::session_overrides::SdkOutputStylePort::set(
+                &self.probe,
+                session,
+                project,
+                style,
+            )
+        }
+        fn seed_config<'a>(
+            &'a self,
+            session: &'a JsString,
+            config: &'a JsValue,
+            project: Option<&'a JsString>,
+        ) -> crate::runtime::turn::submit::SubmitFuture<
+            'a,
+            Result<bool, crate::runtime::turn::submit::SubmitError>,
+        > {
+            Box::pin(async move {
+                self.entered.notify_one();
+                self.release.notified().await;
+                crate::native_process::session_overrides::SdkOutputStylePort::seed_config(
+                    &self.probe,
+                    session,
+                    config,
+                    project,
+                )
+                .await
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn seed_sdk_maintenance_excludes_turns_and_releases_on_unpolled_continuation_drop() {
+        let (_scratch, r) = setup_fixture();
+        let probe = Arc::new(GatedSeedSdkProbe {
+            probe: SeedSdkProbe(std::sync::Mutex::new(Vec::new()), true),
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        });
+        let port: Arc<dyn crate::native_process::session_overrides::SdkOutputStylePort> =
+            probe.clone();
+        r.session_overrides.bind_sdk_styles(Arc::downgrade(&port));
+        let session: JsString = "sdk-gated".into();
+        let params = object([
+            ("sessionKey", JsValue::String(session.clone())),
+            ("path", "missing.txt".into()),
+            ("mtime", JsValue::Number(0.0)),
+            (
+                "sdkSessionConfig",
+                object([("systemPrompt", "gated".into())]),
+            ),
+        ]);
+        let mut seed = Box::pin(r.session_config_request("seed_read_state".into(), params.clone()));
+        tokio::select! {
+            biased;
+            _ = seed.as_mut() => panic!("seed must wait for SDK port"),
+            _ = std::future::ready(()) => {}
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(1), probe.entered.notified())
+            .await
+            .unwrap();
+        assert!(r.owner.begin_turn(&session, &"excluded".into()).is_none());
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            r.session_config_request("seed_read_state".into(), params),
+        )
+        .await
+        .expect("second seed must reject without entering the gated SDK port")
+        .unwrap_err();
+        // No turn is active here: this is the existing session-control
+        // reservation error. The active-turn SESSION_BUSY contract is tested
+        // separately; this case verifies exclusion across the SDK await.
+        assert_eq!(error.code, "gateway_request_failed");
+        assert_eq!(
+            error.message,
+            "Cannot seed file read state while a turn or session control is active.".into()
+        );
+        assert!(probe.probe.0.lock().unwrap().is_empty());
+        drop(seed);
+        let run: JsString = "after-drop".into();
+        let reservation = r
+            .owner
+            .begin_turn(&session, &run)
+            .expect("dropping pending seed releases maintenance");
+        r.owner.end_turn(&session, Some(&run), Some(&reservation));
+        teardown(&r).await;
+    }
+
+    #[tokio::test]
+    async fn seed_sdk_changed_recreates_cached_session_and_unchanged_preserves_it() {
+        for changed in [false, true] {
+            let (_scratch, r) = setup_fixture();
+            let probe = Arc::new(SeedSdkProbe(std::sync::Mutex::new(Vec::new()), changed));
+            let port: Arc<dyn crate::native_process::session_overrides::SdkOutputStylePort> =
+                probe.clone();
+            r.session_overrides.bind_sdk_styles(Arc::downgrade(&port));
+            let session: JsString = "sdk-cached".into();
+            let context = SessionContext {
+                session_key: session.clone(),
+                project_key: Some(r.options.project.to_string_lossy().into_owned().into()),
+                channel_key: "api_server".into(),
+                allowed_tools: None,
+                disallowed_tools: None,
+            };
+            let before = r.owner.get_or_create(context.clone()).await.unwrap();
+            let error = r
+                .session_config_request(
+                    "seed_read_state".into(),
+                    object([
+                        ("sessionKey", JsValue::String(session)),
+                        ("path", "missing.txt".into()),
+                        ("mtime", JsValue::Number(0.0)),
+                        (
+                            "sdkSessionConfig",
+                            object([("systemPrompt", "cached-config".into())]),
+                        ),
+                    ]),
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "file_not_found");
+            let after = r.owner.get_or_create(context).await.unwrap();
+            assert_eq!(
+                before.same_identity(&after),
+                !changed,
+                "SDK changed={changed} controls cached-session replacement"
+            );
+            assert_eq!(probe.0.lock().unwrap().len(), 1);
+            teardown(&r).await;
+        }
     }
 
     // ─────────────────────────────────────────────── seed_read_state
@@ -2556,7 +2715,7 @@ mod tests {
                 "sessionKey is required.",
             ),
             (
-                "sdkSessionConfig stays unavailable",
+                "unbound SDK port rejects sdkSessionConfig",
                 object([
                     ("sessionKey", "cfg-seed-4".into()),
                     ("path", "seeded.txt".into()),

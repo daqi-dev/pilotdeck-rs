@@ -305,18 +305,21 @@ enum Message {
 }
 #[derive(Clone, Copy, Default)]
 struct SubmissionBudgets {
+    native_causal_close: bool,
     publication_closing_budget: Option<Duration>,
     completion_wait_budget: Option<Duration>,
 }
 impl SubmissionBudgets {
     fn native_connection(budget: Duration) -> Self {
         Self {
+            native_causal_close: true,
             publication_closing_budget: Some(budget),
             completion_wait_budget: None,
         }
     }
     fn reliable_consumer(budget: Duration) -> Self {
         Self {
+            native_causal_close: false,
             publication_closing_budget: Some(budget),
             completion_wait_budget: Some(budget),
         }
@@ -416,24 +419,14 @@ impl TurnSubmitter {
         budgets: SubmissionBudgets,
         channel_origin: Option<ChannelAttachmentOrigin>,
     ) -> TurnSubmission {
-        let SubmissionBudgets {
-            publication_closing_budget,
-            completion_wait_budget,
-        } = budgets;
+        let completion_wait_budget = budgets.completion_wait_budget;
         let (send, receiver) = mpsc::unbounded_channel();
         let (consumed, barrier) = oneshot::channel();
         let (result, completion) = oneshot::channel();
         let submitter = self.clone();
         tokio::spawn(async move {
             let outcome = submitter
-                .run(
-                    input,
-                    &send,
-                    barrier,
-                    admitted,
-                    publication_closing_budget,
-                    channel_origin,
-                )
+                .run(input, &send, barrier, admitted, budgets, channel_origin)
                 .await;
             let _ = send.send(Message::End);
             let _ = result.send(outcome);
@@ -452,7 +445,7 @@ impl TurnSubmitter {
         send: &mpsc::UnboundedSender<Message>,
         barrier: oneshot::Receiver<()>,
         admitted: impl FnOnce(&RunRef) + Send,
-        publication_closing_budget: Option<Duration>,
+        budgets: SubmissionBudgets,
         channel_origin: Option<ChannelAttachmentOrigin>,
     ) -> Result<(), SubmitError> {
         // Gateway normalization precedes validation and durable acceptance.
@@ -482,10 +475,10 @@ impl TurnSubmitter {
                 workspace_admissions: self.workspace_admissions.clone(),
             });
             return scoped
-                .run_bound(input, send, barrier, admitted, publication_closing_budget)
+                .run_bound(input, send, barrier, admitted, budgets)
                 .await;
         }
-        self.run_bound(input, send, barrier, admitted, publication_closing_budget)
+        self.run_bound(input, send, barrier, admitted, budgets)
             .await
     }
 
@@ -495,8 +488,13 @@ impl TurnSubmitter {
         send: &mpsc::UnboundedSender<Message>,
         barrier: oneshot::Receiver<()>,
         admitted: impl FnOnce(&RunRef) + Send,
-        publication_closing_budget: Option<Duration>,
+        budgets: SubmissionBudgets,
     ) -> Result<(), SubmitError> {
+        let SubmissionBudgets {
+            publication_closing_budget,
+            native_causal_close,
+            ..
+        } = budgets;
         let routed = self.host.route_input(&mut input).await?;
         if !routed.is_empty() {
             emit_all(send, routed);
@@ -747,6 +745,7 @@ impl TurnSubmitter {
         let (ready, timer_ready) = oneshot::channel();
         let (timeout_settled, timeout_settlement) = oneshot::channel();
         let (worker_flushed, flush_wait) = oneshot::channel();
+        let (pump_exited, mut pump_exit_wait) = oneshot::channel();
         // The worker owns all dependencies: after a hard timeout it may finish
         // a misbehaving host future without holding admission or the fence.
         let submitter = self.clone();
@@ -774,6 +773,15 @@ impl TurnSubmitter {
                     recorder,
                 })
                 .await;
+            // This is a real pump return, before finish_pump and the timeout
+            // settlement dependency. A panic drops the sender without success.
+            if native_causal_close {
+                pilotdeck_transport::loop_stimulus::witness_fence(
+                    "pump_exited",
+                    &display(&worker_run.run_id),
+                );
+            }
+            let _ = pump_exited.send(());
             if let Err(error) = outcome {
                 {
                     let mut progress = worker_progress.lock().unwrap();
@@ -876,6 +884,11 @@ impl TurnSubmitter {
                     // close delivery after the settlement below.
                     timed_out.store(true, Ordering::SeqCst);
                     let owns_terminal = terminal.claim();
+                    let abort_deadline = tokio::time::Instant::now() + self.abort_budget();
+                    let causal_close = if owns_terminal && native_causal_close {
+                        publisher.begin_causal_close(abort_deadline)
+                    } else { None };
+                    let causal_gate_started = causal_close.is_some();
                     let ms = timeout.expect("timer only fires with a timeout");
                     let message = format!("Turn exceeded the {}ms timeout.", crate::js_value::number_string(ms));
                     let hint = "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.";
@@ -898,8 +911,7 @@ impl TurnSubmitter {
                         // abort budget, and whatever has not settled by the
                         // budget is abandoned to the close below — a record
                         // that settles later never enqueues its frames.
-                        let budget = self.abort_budget();
-                        let _ = tokio::time::timeout(budget, async {
+                        let _ = tokio::time::timeout_at(abort_deadline, async {
                             if self.host.record_failure(&run, &record).await.is_ok() {
                                 publisher.gateway_event(with_run(failure, &run));
                             }
@@ -909,11 +921,25 @@ impl TurnSubmitter {
                         })
                         .await;
                     }
+                    if let Some(gate) = causal_close {
+                        gate.request_close();
+                        // The live gate is already sealed; this receipt observes
+                        // a real close request, never a plan/case-driven branch.
+                        pilotdeck_transport::loop_stimulus::witness_fence("close_requested", &display(&run.run_id));
+                        if matches!(tokio::time::timeout_at(abort_deadline, &mut pump_exit_wait).await, Ok(Ok(()))) {
+                            gate.allow();
+                        }
+                        // Err/timeout/panic drops the guard and hard-closes the
+                        // held delivery while accepted disk writers stay owned.
+                    }
                     // The settlement lets a worker that observed the timeout
                     // drain and finish (which closes delivery itself).
                     let _ = timeout_settled.send(());
                     if owns_terminal {
                         publisher.close_live();
+                        if native_causal_close && !causal_gate_started {
+                            pilotdeck_transport::loop_stimulus::witness_fence("close_requested", &display(&run.run_id));
+                        }
                     } else {
                         // The pump owns the terminal this tick, so closing here
                         // would drop the frame it already queued and leave the

@@ -2045,61 +2045,61 @@
   ],
   "executeDescriptions": [
     {
-      "id": "no-sandbox",
+      "id": "no-sandbox:search-off",
       "mode": null,
       "webSearch": false,
       "description": "Run a local Python 3 script that can call a small allow-list of PilotDeck tools via `import pilotdeck_tools`. The script runs from the workspace cwd and inherits the same runtime environment as normal tools such as bash, including configured API, proxy, PATH, virtualenv, and conda variables; do not print secrets or dump the full environment. Only the script's final stdout/stderr summary is returned to the model; intermediate tool results stay inside the script. Available helper functions: web_fetch, read_file, write_file, edit_file, grep, glob, bash. Use normal Python control flow to orchestrate tools: loops for batch work, conditionals for branching, data structures for aggregation, and try/except around individual helper calls when one failure should not abort the whole script. Helper failures raise RuntimeError. You can chain helper results, e.g. grep -> read_file -> edit_file. Print only the concise final result needed by the agent. Before modifying an existing file, call read_file first so PilotDeck can verify freshness. Prefer edit_file for targeted changes and write_file for new files or complete rewrites. Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available."
     },
     {
-      "id": "danger-full-access",
+      "id": "danger-full-access:search-off",
       "mode": "danger-full-access",
       "webSearch": false,
       "description": "Run a local Python 3 script that can call a small allow-list of PilotDeck tools via `import pilotdeck_tools`. The script runs from the workspace cwd and inherits the same runtime environment as normal tools such as bash, including configured API, proxy, PATH, virtualenv, and conda variables; do not print secrets or dump the full environment. Only the script's final stdout/stderr summary is returned to the model; intermediate tool results stay inside the script. Available helper functions: web_fetch, read_file, write_file, edit_file, grep, glob, bash. Use normal Python control flow to orchestrate tools: loops for batch work, conditionals for branching, data structures for aggregation, and try/except around individual helper calls when one failure should not abort the whole script. Helper failures raise RuntimeError. You can chain helper results, e.g. grep -> read_file -> edit_file. Print only the concise final result needed by the agent. Before modifying an existing file, call read_file first so PilotDeck can verify freshness. Prefer edit_file for targeted changes and write_file for new files or complete rewrites. Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available."
     },
     {
-      "id": "read-only",
+      "id": "read-only:search-off",
       "mode": "read-only",
       "webSearch": false,
       "description": "Run a local Python 3 script that can call a small allow-list of PilotDeck tools via `import pilotdeck_tools`. The script runs from the workspace cwd with the host read-only file-effect policy. It inherits the same runtime environment as normal tools such as bash, including configured API, proxy, PATH, virtualenv, and conda variables; do not print secrets or dump the full environment. Only the script's final stdout/stderr summary is returned to the model; intermediate tool results stay inside the script. Available helper functions: web_fetch, read_file, write_file, edit_file, grep, glob, bash. Use normal Python control flow to orchestrate tools: loops for batch work, conditionals for branching, data structures for aggregation, and try/except around individual helper calls when one failure should not abort the whole script. Helper failures raise RuntimeError. You can chain helper results, e.g. grep -> read_file -> edit_file. Print only the concise final result needed by the agent. Before modifying an existing file, call read_file first so PilotDeck can verify freshness. Prefer edit_file for targeted changes and write_file for new files or complete rewrites. Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available."
     },
     {
-      "id": "workspace-write",
+      "id": "workspace-write:search-off",
       "mode": "workspace-write",
       "webSearch": false,
       "description": "Run a local Python 3 script that can call a small allow-list of PilotDeck tools via `import pilotdeck_tools`. The script runs from the workspace cwd with the host workspace-write file-effect policy. It inherits the same runtime environment as normal tools such as bash, including configured API, proxy, PATH, virtualenv, and conda variables; do not print secrets or dump the full environment. Only the script's final stdout/stderr summary is returned to the model; intermediate tool results stay inside the script. Available helper functions: web_fetch, read_file, write_file, edit_file, grep, glob, bash. Use normal Python control flow to orchestrate tools: loops for batch work, conditionals for branching, data structures for aggregation, and try/except around individual helper calls when one failure should not abort the whole script. Helper failures raise RuntimeError. You can chain helper results, e.g. grep -> read_file -> edit_file. Print only the concise final result needed by the agent. Before modifying an existing file, call read_file first so PilotDeck can verify freshness. Prefer edit_file for targeted changes and write_file for new files or complete rewrites. Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available."
     },
     {
-      "id": "mode-omitted",
+      "id": "mode-omitted:search-off",
       "tsOnly": true,
       "webSearch": false,
       "description": "Run a local Python 3 script that can call a small allow-list of PilotDeck tools via `import pilotdeck_tools`. The script runs through a host-selected sandbox whose environment visibility is provider-defined; do not assume provider credentials or arbitrary host variables are available, and do not print secrets or dump the full environment. Only the script's final stdout/stderr summary is returned to the model; intermediate tool results stay inside the script. Available helper functions: web_fetch, read_file, write_file, edit_file, grep, glob, bash. Use normal Python control flow to orchestrate tools: loops for batch work, conditionals for branching, data structures for aggregation, and try/except around individual helper calls when one failure should not abort the whole script. Helper failures raise RuntimeError. You can chain helper results, e.g. grep -> read_file -> edit_file. Print only the concise final result needed by the agent. Before modifying an existing file, call read_file first so PilotDeck can verify freshness. Prefer edit_file for targeted changes and write_file for new files or complete rewrites. Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available."
     },
     {
-      "id": "no-sandbox",
+      "id": "no-sandbox:search-on",
       "mode": null,
       "webSearch": true,
       "description": "Run a local Python 3 script that can call a small allow-list of PilotDeck tools via `import pilotdeck_tools`. The script runs from the workspace cwd and inherits the same runtime environment as normal tools such as bash, including configured API, proxy, PATH, virtualenv, and conda variables; do not print secrets or dump the full environment. Only the script's final stdout/stderr summary is returned to the model; intermediate tool results stay inside the script. Available helper functions: web_search, web_fetch, read_file, write_file, edit_file, grep, glob, bash. Use normal Python control flow to orchestrate tools: loops for batch work, conditionals for branching, data structures for aggregation, and try/except around individual helper calls when one failure should not abort the whole script. Helper failures raise RuntimeError. You can chain helper results, e.g. grep -> read_file -> edit_file. Print only the concise final result needed by the agent. Before modifying an existing file, call read_file first so PilotDeck can verify freshness. Prefer edit_file for targeted changes and write_file for new files or complete rewrites. Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available."
     },
     {
-      "id": "danger-full-access",
+      "id": "danger-full-access:search-on",
       "mode": "danger-full-access",
       "webSearch": true,
       "description": "Run a local Python 3 script that can call a small allow-list of PilotDeck tools via `import pilotdeck_tools`. The script runs from the workspace cwd and inherits the same runtime environment as normal tools such as bash, including configured API, proxy, PATH, virtualenv, and conda variables; do not print secrets or dump the full environment. Only the script's final stdout/stderr summary is returned to the model; intermediate tool results stay inside the script. Available helper functions: web_search, web_fetch, read_file, write_file, edit_file, grep, glob, bash. Use normal Python control flow to orchestrate tools: loops for batch work, conditionals for branching, data structures for aggregation, and try/except around individual helper calls when one failure should not abort the whole script. Helper failures raise RuntimeError. You can chain helper results, e.g. grep -> read_file -> edit_file. Print only the concise final result needed by the agent. Before modifying an existing file, call read_file first so PilotDeck can verify freshness. Prefer edit_file for targeted changes and write_file for new files or complete rewrites. Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available."
     },
     {
-      "id": "read-only",
+      "id": "read-only:search-on",
       "mode": "read-only",
       "webSearch": true,
       "description": "Run a local Python 3 script that can call a small allow-list of PilotDeck tools via `import pilotdeck_tools`. The script runs from the workspace cwd with the host read-only file-effect policy. It inherits the same runtime environment as normal tools such as bash, including configured API, proxy, PATH, virtualenv, and conda variables; do not print secrets or dump the full environment. Only the script's final stdout/stderr summary is returned to the model; intermediate tool results stay inside the script. Available helper functions: web_search, web_fetch, read_file, write_file, edit_file, grep, glob, bash. Use normal Python control flow to orchestrate tools: loops for batch work, conditionals for branching, data structures for aggregation, and try/except around individual helper calls when one failure should not abort the whole script. Helper failures raise RuntimeError. You can chain helper results, e.g. grep -> read_file -> edit_file. Print only the concise final result needed by the agent. Before modifying an existing file, call read_file first so PilotDeck can verify freshness. Prefer edit_file for targeted changes and write_file for new files or complete rewrites. Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available."
     },
     {
-      "id": "workspace-write",
+      "id": "workspace-write:search-on",
       "mode": "workspace-write",
       "webSearch": true,
       "description": "Run a local Python 3 script that can call a small allow-list of PilotDeck tools via `import pilotdeck_tools`. The script runs from the workspace cwd with the host workspace-write file-effect policy. It inherits the same runtime environment as normal tools such as bash, including configured API, proxy, PATH, virtualenv, and conda variables; do not print secrets or dump the full environment. Only the script's final stdout/stderr summary is returned to the model; intermediate tool results stay inside the script. Available helper functions: web_search, web_fetch, read_file, write_file, edit_file, grep, glob, bash. Use normal Python control flow to orchestrate tools: loops for batch work, conditionals for branching, data structures for aggregation, and try/except around individual helper calls when one failure should not abort the whole script. Helper failures raise RuntimeError. You can chain helper results, e.g. grep -> read_file -> edit_file. Print only the concise final result needed by the agent. Before modifying an existing file, call read_file first so PilotDeck can verify freshness. Prefer edit_file for targeted changes and write_file for new files or complete rewrites. Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available."
     },
     {
-      "id": "mode-omitted",
+      "id": "mode-omitted:search-on",
       "tsOnly": true,
       "webSearch": true,
       "description": "Run a local Python 3 script that can call a small allow-list of PilotDeck tools via `import pilotdeck_tools`. The script runs through a host-selected sandbox whose environment visibility is provider-defined; do not assume provider credentials or arbitrary host variables are available, and do not print secrets or dump the full environment. Only the script's final stdout/stderr summary is returned to the model; intermediate tool results stay inside the script. Available helper functions: web_search, web_fetch, read_file, write_file, edit_file, grep, glob, bash. Use normal Python control flow to orchestrate tools: loops for batch work, conditionals for branching, data structures for aggregation, and try/except around individual helper calls when one failure should not abort the whole script. Helper failures raise RuntimeError. You can chain helper results, e.g. grep -> read_file -> edit_file. Print only the concise final result needed by the agent. Before modifying an existing file, call read_file first so PilotDeck can verify freshness. Prefer edit_file for targeted changes and write_file for new files or complete rewrites. Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available."

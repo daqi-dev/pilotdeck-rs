@@ -5542,3 +5542,8 @@ r55完整Gateway/CLI回归已结束：7845运行、7841通过、4失败、771跳
 ### 2026-11-10 · r61 真实提交全回归与消费者差异接续（未收口）
 
 共同候选已逐块接 main 至 cc85b315f，本批固定该 main；Draft #2786 已推 cdc7aa735，最新本地 2b9d016be 的 r61 输入清单 9f1412a1 与 5169 个提交文件逐项相同。r60 严格检查/四 bin、199 定向及7 context、2 skills通过；r61 严格检查/四 bin、59 定向及7 context通过，各批不相加为完整成绩。mbp2 checks-r24 原源码、未知文件与完整 Git 已归档逐项校验，旧 main 原封保留，新分支真实检出2b9并启动 Gateway+CLI完整回归；probe继续修复，未新建树/未迁规范目录。本轮20个formal候选原函数8PASS/12FAIL/52NOT_RUN，但fast producer实证在final后才释放，8项不可认正式fast通过；4项registry late/pending实发S/E违反冻结合同，正修生产causal close，未改评分。2项真实ModelPort采集的provider见证通过而事件判据仍失败，原件保留；cb8不可达故Linux见证BLOCKED。真实SDK seed四格通过；文件rewind真实写入后无checkpoint已定位native工具未接FileHistoryStore，正补消费者。cwd会影响工具授权根的候选暂不收。本机无Rust构建，CLI/app/GPUI/file_edit及旧快照未动。下一步同源P2保护回归、真实关闭时序与rewind闭环修复、双谱系复核；完整host/session/retirement和最终实效仍未完成。证据主仓 _tmp/20261110-gateway-integration/。
+
+
+### 2026-11-10 · r65 会话消费者与并行缺口修复（未收口）
+
+整合树仍由根协调者独占，HEAD910abe7c6，Draft2786仍cdc7aa735；main批次固定cc85b315f。r65清单cbafc4a2通过mbp2格式/严格clippy/四bin，582定向在跑；真实S6文件写入→重启→冲突检查/回退及MCP会话插件→状态/隔离/拒覆盖→模型审批→stdio工具结果两条闭环通过，未计正式suite。真实clean2b9的7923 Gateway+CLI全回归仍在跑，不预填通过。三协作子代理外已完成6路Codex专项审计、SMS/微信Cron两路修复候选和网络/安装三路候选；根逐SHA真合并，未另开树。已收upload同门清理/取消/迟到写入修复及8确定性用例、SMS/微信trait后台投递、SOP跨三次进程恢复/receipt幂等fixture，待r66。S6安全复核补备份上级pin与native目标路径权限，项目外单次历史审批无可信授权凭据的限制明确保留在决策卡，不改冻结尺子、不宣称等价。第三方GLM/DeepSeek正式新评审仍实际401，Codex额度可用且持续并行，二者不混同；cb8原生见证仍阻塞，最终双谱系/host/session/retirement与人工签字未闭合。所有Rust构建在mbp2，本机只源码/静态/提交；原CLI/app/GPUI/file_edit树和快照未动。下一步收r65回归、r66安全与上传/渠道定向、真实WS附件和停机网络，并以同一头继续正式证据。

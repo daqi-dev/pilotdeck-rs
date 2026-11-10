@@ -396,20 +396,30 @@ async fn configured_search_controls_python_exports_and_rpc_dispatch() {
 
 #[test]
 fn model_description_matches_actual_ts_for_sandbox_and_search_settings() {
-    let oracle: serde_json::Value = serde_json::from_str(include_str!(concat!(
+    let raw = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/agent-model-fields/oracle.json"
-    )))
-    .unwrap();
+    ));
+    // Shared provenance checks run even without an optional baseline checkout.
+    let _provenance = crate::test_baseline::oracle(raw);
+    let oracle: serde_json::Value = serde_json::from_str(raw).unwrap();
     let cases = oracle["executeDescriptions"].as_array().unwrap();
     let mut covered = std::collections::BTreeSet::new();
     let mut ts_only = 0;
+    let mut ids = std::collections::BTreeSet::new();
     for case in cases {
+        assert!(
+            ids.insert(case["id"].as_str().unwrap()),
+            "duplicate oracle id"
+        );
         let enabled = case["webSearch"]
             .as_bool()
             .expect("explicit search configuration");
         if case["tsOnly"] == true {
-            assert_eq!(case["id"], "mode-omitted");
+            assert_eq!(
+                case["id"],
+                format!("mode-omitted:search-{}", if enabled { "on" } else { "off" })
+            );
             assert!(
                 case.get("mode").is_none(),
                 "TS-only omitted mode has no Rust state"

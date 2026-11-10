@@ -50,7 +50,7 @@ const executeDescriptions=[];
 for(const webSearch of [false,true])for(const mode of [null,'danger-full-access','read-only','workspace-write',undefined]){
  const options=mode===null?{webSearch}:{webSearch,sandbox:{mode,port:neverPrepare,resolvePolicy:()=>{throw Error('not executing')}}};
  executeDescriptions.push({
-  id:mode===null?'no-sandbox':mode===undefined?'mode-omitted':mode,
+  id:`${mode===null?'no-sandbox':mode===undefined?'mode-omitted':mode}:search-${webSearch?'on':'off'}`,
   ...(mode===undefined?{tsOnly:true}:{mode}),
   webSearch,description:createExecuteCodeTool(options).description,
  });

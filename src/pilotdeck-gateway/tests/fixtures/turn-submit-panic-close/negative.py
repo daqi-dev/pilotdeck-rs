@@ -203,8 +203,7 @@ mutations = [
      '                        self.publication.wait_for(&writes).await;',
      STUCK_TEST),
     ('timer-record-unbounded', 'submit.rs',
-     '                        let budget = self.abort_budget();\n'
-     '                        let _ = tokio::time::timeout(budget, async {\n'
+     '                        let _ = tokio::time::timeout_at(abort_deadline, async {\n'
      '                            if self.host.record_failure(&run, &record).await.is_ok() {\n'
      '                                publisher.gateway_event(with_run(failure, &run));\n'
      '                            }\n'
