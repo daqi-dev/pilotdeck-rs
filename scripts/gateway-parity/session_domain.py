@@ -253,7 +253,7 @@ def hashes():
     # params edit can no longer slip past APPARATUS_CHANGED.
     paths = [SCRIPT / name for name in ('fixtures/session-calibration.json',
                                         'fixtures/session-expectations.json',
-                                        'fixtures/retirement-methods.json')]
+                                        'fixtures/retirement-methods.json', 'fixtures/retirement-entry-inventory.json')]
     paths += [ROOT / 'scripts/a5-19' / name for name in FIXTURE_NAMES]
     return {**apparatus_hashes(), **{p.relative_to(ROOT).as_posix(): digest(p) for p in paths}}
 
@@ -2646,7 +2646,7 @@ def _retirement_ports_available(ports):
         return False
 
 
-def _retirement_round(index, output, baseline, ports, timeout):
+def _retirement_round(index, output, baseline, ports, timeout, *, native=None, scenarios=(), live_profile=False, mock_script=None, history_script=None):
     """One real TS-side gateway round: mock model + baseline CLI + driver.
 
     Production always drives the frozen 101-entry fixture
@@ -2710,17 +2710,21 @@ webui:
                PILOTDECK_GATEWAY_TOKEN_PATH=str(token_path),
                GP_POLL_WATCH='1', PILOTDECK_SKIP_BROWSER_OPEN='1', GP_MOCK_PORT=str(mock_port),
                GP_MOCK_URL=f'http://127.0.0.1:{mock_port}', GP_MODEL_LOG=str(folder / 'model.jsonl'))
+    if live_profile:
+        module = _load('retirement_native', SCRIPT / 'retirement_native.py')
+        module.configure_loopback_mock(sys.modules[__name__], folder, home, mock_port, env,
+                                       capture_peer=native is not None)
     processes = []
     row = {'label': f'round-{index:02d}', 'status': 'RUNNING',
            'ports': {'mock': mock_port, 'gateway': gateway_port},
            'runtime': {'pilotHome': str(home), 'cwd': str(project)}, 'driverExitCode': None}
     start_time = time.monotonic()
 
-    def launch(name, argv, port):
+    def launch(name, argv, port, *, child_env=None):
         log = (folder / f'{name}.log').open('w')
         entry = {'name': name, 'port': port, 'argv': [str(item) for item in argv]}
         proc = run_round_module.start_owned(processes, log, entry, entry['argv'], cwd=project,
-                                            env=env, stdout=log, stderr=subprocess.STDOUT)
+                                            env=env if child_env is None else child_env, stdout=log, stderr=subprocess.STDOUT)
         save(folder / 'processes.json', [item[2] for item in processes])
         return proc
 
@@ -2743,28 +2747,37 @@ webui:
     try:
         try:
             deadline = start_time + timeout
-            mock = launch('mock', ['node', SCRIPT / 'mock.mjs'], mock_port)
+            mock = launch('mock', ['node', mock_script or SCRIPT / 'mock.mjs'], mock_port)
             ready(mock_port, mock, min(deadline, time.monotonic() + RETIREMENT_READINESS_TIMEOUT_S))
-            gateway = launch('gateway', ['node', '--import', SCRIPT / 'watcher.mjs',
-                                         baseline / 'dist/src/cli/pilotdeck.js', 'server'], gateway_port)
-            ready(gateway_port, gateway, min(deadline, time.monotonic() + RETIREMENT_READINESS_TIMEOUT_S))
         except (RuntimeError, TimeoutError, OSError) as error:
-            # A4 (#1355 fix-r2): convert the launch failure into a retryable
-            # signal so _retirement_report can move to the alternate port set.
             raise RetirementLaunchError(f'{type(error).__name__}: {error}') from error
-        listener_probe = subprocess.run(['lsof', '-nP', '-a', '-p', str(gateway.pid), '-iTCP', '-sTCP:LISTEN', '-Fn'],
-                                         capture_output=True, text=True, timeout=5)
-        addresses = [line[1:] for line in listener_probe.stdout.splitlines() if line.startswith('n')]
-        row['listeners'] = {'pid': gateway.pid, 'addresses': addresses,
-                            'loopbackOnly': addresses == [f'127.0.0.1:{gateway_port}']}
-        driver = launch('driver-retirement', ['node', '--import', baseline / 'node_modules/tsx/dist/loader.mjs',
-                                              RETIREMENT_DRIVER, '--url', f'ws://127.0.0.1:{gateway_port}/ws',
-                                              '--token', run_round_module.TOKEN, '--methods', RETIREMENT_METHODS_FIXTURE,
-                                              '--out', folder / 'driver'], None)
-        row['driverExitCode'] = run_round_module.wait_owned(
-            driver, max(.1, deadline - time.monotonic()))
-        row['census'] = _retirement_census(gateway.pid, baseline)
-        row['connections'] = _retirement_connections(gateway.pid)
+        if native is not None:
+            native.exercise(folder, row, baseline, env, deadline, launch, scenarios, history_script)
+        else:
+            try:
+                gateway = launch('gateway', ['node', '--import', SCRIPT / 'watcher.mjs',
+                                             baseline / 'dist/src/cli/pilotdeck.js', 'server'], gateway_port)
+                ready(gateway_port, gateway, min(deadline, time.monotonic() + RETIREMENT_READINESS_TIMEOUT_S))
+            except (RuntimeError, TimeoutError, OSError) as error:
+                # A4 (#1355 fix-r2): retry on the alternate port set.
+                raise RetirementLaunchError(f'{type(error).__name__}: {error}') from error
+            listener_probe = subprocess.run(['lsof', '-nP', '-a', '-p', str(gateway.pid), '-iTCP', '-sTCP:LISTEN', '-Fn'],
+                                             capture_output=True, text=True, timeout=5)
+            addresses = [line[1:] for line in listener_probe.stdout.splitlines() if line.startswith('n')]
+            row['listeners'] = {'pid': gateway.pid, 'addresses': addresses,
+                                'loopbackOnly': addresses == [f'127.0.0.1:{gateway_port}']}
+            driver = launch('driver-retirement', ['node', '--import', baseline / 'node_modules/tsx/dist/loader.mjs',
+                                                  RETIREMENT_DRIVER, '--url', f'ws://127.0.0.1:{gateway_port}/ws',
+                                                  '--token', run_round_module.TOKEN, '--methods', RETIREMENT_METHODS_FIXTURE,
+                                                  '--out', folder / 'driver'], None)
+            row['driverExitCode'] = run_round_module.wait_owned(
+                driver, max(.1, deadline - time.monotonic()))
+            row['census'] = _retirement_census(gateway.pid, baseline)
+            row['connections'] = _retirement_connections(gateway.pid)
+            if scenarios:
+                session_runtime = _load('retirement_native', SCRIPT / 'retirement_native.py')
+                row['scenarios'] = session_runtime.exercise_session_scenarios(
+                    sys.modules[__name__], folder, baseline, env, deadline, launch, scenarios, history_script)
         require((folder / 'driver' / 'methods.json').is_file(), 'ROUND_EVIDENCE', 'driver methods.json missing')
         require((folder / 'driver' / 'frames.jsonl').is_file(), 'ROUND_EVIDENCE', 'driver frames.jsonl missing')
         require((folder / 'driver' / 'http.json').is_file(), 'ROUND_EVIDENCE', 'driver http.json missing')
@@ -2782,7 +2795,7 @@ webui:
             save(folder / 'round.json', {key: row[key] for key in
                                          ('label', 'status', 'ports', 'runtime', 'driverExitCode',
                                           'listeners', 'census', 'connections', 'processes',
-                                          'audit', 'elapsedSeconds')
+                                          'audit', 'elapsedSeconds', 'nativeConfig', 'nativeWitness', 'scenarios')
                                          if key in row})
     require(_cleanup_stopped(row['audit']), 'CLEANUP',
             f"round {index}: owned process-group cleanup unverified: {row['audit']}")
@@ -2992,7 +3005,7 @@ def retirement_report(output, baseline):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--suite', choices=('calibrate', 'deadline', 'retirement', 'host'), required=True)
+    parser.add_argument('--suite', choices=('calibrate', 'deadline', 'retirement', 'host', 'session'), required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--baseline', type=Path, default=BASELINE)
     parser.add_argument('--native-capture', type=Path,
@@ -3000,7 +3013,25 @@ def main():
                              'audits it and scores its rust-host/rust-sidecar cell against '
                              'the registered A19-HOST expectations')
     parser.add_argument('--host-manifest', type=Path, help='#1314 exact four-cell capture manifest; host suite only')
+    parser.add_argument('--native-cli', type=Path)
+    parser.add_argument('--native-sidecar', type=Path)
+    parser.add_argument('--native-bin-manifest', type=Path)
+    parser.add_argument('--native-source-manifest', type=Path)
+    parser.add_argument('--retirement-cold-capture', type=Path, help='same-build original #1356 cold-cut capture')
+    parser.add_argument('--retirement-production-capture', type=Path, help='same-build production HTTP/trigger capture')
     args = parser.parse_args()
+    native_inputs = (args.native_cli, args.native_sidecar, args.native_bin_manifest,
+                     args.native_source_manifest)
+    if ((any(native_inputs) and (not all(native_inputs) or args.suite not in ('retirement', 'session')))
+            or (args.suite == 'session' and not all(native_inputs))):
+        print(json.dumps({'suite': args.suite, 'status': 'BLOCKED', 'error':
+                          'live native retirement/session requires the complete CLI/sidecar/build/source manifest set'}))
+        return 2
+    if (args.retirement_cold_capture or args.retirement_production_capture) and (
+            args.suite != 'retirement' or not all(native_inputs)):
+        print(json.dumps({'suite': args.suite, 'status': 'BLOCKED', 'error':
+                          'retirement captures require the live native retirement suite'}))
+        return 2
     takeovers = []
     # Preconditions are checked before any output directory exists (#187); they
     # stay above install_shutdown so the #166 lease/shutdown anchors in the
@@ -3024,7 +3055,7 @@ def main():
     install_shutdown()
     try:
         with parity_lock(timeout=30, takeovers=takeovers):
-            if args.suite == 'retirement':
+            if args.suite in ('retirement', 'session'):
                 # Preconditions before any output directory exists (#187).
                 missing = [str(path) for path in (RETIREMENT_METHODS_FIXTURE, RETIREMENT_DRIVER)
                            if not path.is_file()]
@@ -3047,7 +3078,7 @@ def main():
             # bytes of tsx/ws (and their declared dependencies) so a swapped loader or
             # ws cannot certify a calibration (#85 85.1).
             dependencies = None
-            if args.suite in ('calibrate', 'retirement'):
+            if args.suite in ('calibrate', 'retirement', 'session'):
                 try:
                     dependencies = baseline_dependency_hashes(args.baseline.resolve())
                 except ValueError as error:
@@ -3058,7 +3089,8 @@ def main():
             # A8 (#1355 fix-r2): the retirement suite reports its own scope
             # instead of inheriting the calibrate slice's A5.3 label.
             report = {'suite': args.suite,
-                      'scope': 'A8.6 draft apparatus' if args.suite == 'retirement' else 'A5.3 draft apparatus',
+                      'scope': {'retirement': 'A8.6 draft apparatus', 'session': 'A7 draft apparatus'}.get(
+                          args.suite, 'A5.3 draft apparatus'),
                       'status': 'RUNNING',
                       'acceptanceStatus': 'NOT_RUN', 'apparatusSha256': hashes(), 'frozen': frozen_check()}
             if dependencies is not None:
@@ -3077,10 +3109,27 @@ def main():
                     host_suite = _load('host_suite', SCRIPT / 'host_suite.py')
                     _verify_cli_imports()
                     try:
-                        report.update(host_suite.report(args.host_manifest.resolve(), session=sys.modules[__name__], output=output))
+                        host_result = host_suite.report(args.host_manifest.resolve(), session=sys.modules[__name__], output=output)
                     except (host_suite.HostError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
                         raise EvidenceError(getattr(error, 'rule', 'HOST_EVIDENCE'), str(error)) from error
-                    _, code = common.aggregate_status(report['status'] if report['status'] in common.BATCH_STATUS_ORDER else 'BLOCKED')
+                    report['sourceHead'] = host_result['sourceHead']
+                    report['executionStatus'] = host_result['executionStatus']
+                    report['cells'] = host_result['cells']
+                    report['controls'] = host_result['controls']
+                    report['status'], code = common.aggregate_status(host_result['status'])
+                elif all(native_inputs):
+                    report['lockTakeovers'] = takeovers
+                    module = _load('retirement_native', SCRIPT / 'retirement_native.py')
+                    _verify_cli_imports()  # New executable bytes must pass the real guarded entry.
+                    native = module.NativeRetirement(sys.modules[__name__], *native_inputs)
+                    native_report = module.run_suite(sys.modules[__name__], native, args.suite, output,
+                                                     args.baseline.resolve(), cold_capture=args.retirement_cold_capture,
+                                                     product_capture=args.retirement_production_capture)
+                    report['nativeSuite'] = native_report
+                    report['expected'] = native_report['expected']
+                    report['executed'] = native_report['executed']
+                    report['status'], code = common.aggregate_status(native_report['status'])
+                    report['executionStatus'] = report['status']
                 elif args.suite == 'retirement':
                     # TS calibration slice (#1355): the frozen re-registration is the
                     # coordinator receive step, so measurements are recorded and the

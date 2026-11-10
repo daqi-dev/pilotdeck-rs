@@ -114,15 +114,49 @@ pub(crate) fn production_loader_mounts() -> ChannelLoaderMounts {
         super::channel_interaction::NativeInteractionResponder::default(),
     ))
 }
+// Explicit acceptance-fixture transport seam. This never accepts DNS names or
+// non-loopback addresses and cannot silently fall back to real services.
+fn parse_test_channel_loopback_origin(value: &str) -> Result<String, &'static str> {
+    let uri: hyper::Uri = value.parse().map_err(|_| "invalid URI")?;
+    if uri.scheme_str() != Some("http") || uri.path_and_query().is_some_and(|p| p.as_str() != "/") {
+        return Err("expected an HTTP origin without path or query");
+    }
+    let authority = uri.authority().ok_or("missing authority")?.as_str();
+    let address: std::net::SocketAddrV4 = authority
+        .parse()
+        .map_err(|_| "expected IPv4 loopback and port")?;
+    if *address.ip() != std::net::Ipv4Addr::LOCALHOST || address.port() == 0 {
+        return Err("expected 127.0.0.1 and a nonzero port");
+    }
+    Ok(format!("http://{address}"))
+}
+
+fn test_channel_loopback_origin() -> Option<String> {
+    match std::env::var("PDRS_TEST_CHANNEL_LOOPBACK_ORIGIN") {
+        Ok(value) => Some(
+            parse_test_channel_loopback_origin(&value).unwrap_or_else(|reason| {
+                panic!("invalid PDRS_TEST_CHANNEL_LOOPBACK_ORIGIN: {reason}")
+            }),
+        ),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            panic!("invalid PDRS_TEST_CHANNEL_LOOPBACK_ORIGIN: non-UTF-8")
+        }
+    }
+}
+
 fn production_loader_mounts_with_interactions(
     responder: &Arc<super::channel_interaction::NativeInteractionResponder>,
 ) -> ChannelLoaderMounts {
     let mut mounts = ChannelLoaderMounts::default();
-    crate::channel::sms::register_native(
-        &mut mounts,
-        responder.clone(),
-        crate::channel::sms::sender::native_twilio_factory(),
-    );
+    let test_origin = test_channel_loopback_origin();
+    let sms_factory = match test_origin.as_ref() {
+        Some(origin) => {
+            crate::channel::sms::sender::native_twilio_factory_with_base(origin.clone())
+        }
+        None => crate::channel::sms::sender::native_twilio_factory(),
+    };
+    crate::channel::sms::register_native(&mut mounts, responder.clone(), sms_factory);
     crate::channel::telegram::register_with_interaction(&mut mounts, responder.port());
     crate::channel::matrix::register_with_interaction(&mut mounts, responder.port());
     crate::channel::signal::register_with_interaction(&mut mounts, responder.port());
@@ -176,7 +210,17 @@ fn production_loader_mounts_with_interactions(
     crate::channel::webhook::register(&mut mounts);
     mounts.register(
         "wecomCallback",
-        crate::channel::wecom_callback::WeComCallbackChannel::constructor(responder.port()),
+        match test_origin {
+            Some(origin) => {
+                crate::channel::wecom_callback::WeComCallbackChannel::constructor_with_base(
+                    responder.port(),
+                    format!("{origin}/cgi-bin"),
+                )
+            }
+            None => {
+                crate::channel::wecom_callback::WeComCallbackChannel::constructor(responder.port())
+            }
+        },
     );
     mounts
 }
@@ -962,5 +1006,35 @@ impl crate::channel::protocol::ChannelUpdatePort for UnboundChannelSystem {
         Result<crate::channel::protocol::ChannelUpdateResult, ChannelError>,
     > {
         Box::pin(async { Err(ChannelError::error("Host update port is not configured")) })
+    }
+}
+
+#[cfg(test)]
+mod loopback_fixture_origin_tests {
+    use super::parse_test_channel_loopback_origin;
+    #[test]
+    fn only_plain_ipv4_loopback_origins_with_explicit_port_are_allowed() {
+        assert_eq!(
+            parse_test_channel_loopback_origin("http://127.0.0.1:4321/").unwrap(),
+            "http://127.0.0.1:4321"
+        );
+        for input in [
+            "https://127.0.0.1:4321",
+            "http://localhost:4321",
+            "http://127.0.0.2:4321",
+            "http://0.0.0.0:4321",
+            "http://192.0.2.1:4321",
+            "http://127.0.0.1",
+            "http://127.0.0.1:0",
+            "http://user@127.0.0.1:4321",
+            "http://127.0.0.1:4321/x",
+            "http://127.0.0.1:4321/?x=1",
+            "not a URL",
+        ] {
+            assert!(
+                parse_test_channel_loopback_origin(input).is_err(),
+                "accepted {input}"
+            );
+        }
     }
 }

@@ -878,8 +878,7 @@ impl WeComCallbackChannel {
     pub fn constructor(interaction: Arc<dyn InteractionPort>) -> ChannelAdapterConstructor {
         Self::constructor_inner(interaction, DEFAULT_QYAPI.to_owned())
     }
-    #[cfg(test)]
-    pub fn constructor_with_base(
+    pub(crate) fn constructor_with_base(
         interaction: Arc<dyn InteractionPort>,
         qyapi: String,
     ) -> ChannelAdapterConstructor {

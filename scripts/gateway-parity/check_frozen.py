@@ -253,7 +253,10 @@ def manifest_inventory(root):
               # R2 (#1355 fix-r2): the retirement fixture drives the E1
               # retirement rounds; without a hash row an in-flight params
               # edit is invisible to the frozen check.
-              'scripts/gateway-parity/fixtures/retirement-methods.json']
+              'scripts/gateway-parity/fixtures/retirement-methods.json',
+              'scripts/gateway-parity/fixtures/retirement-entry-inventory.json',
+              'src/pilotdeck-gateway/tests/fixtures/retirement-production-entries/probe.py',
+              'src/pilotdeck-gateway/tests/fixtures/retirement-production-entries/cron.mts']
     paths += [f'scripts/a5-19/{name}' for name in
               ('observation_rules.mjs', 'run.py', 'six_cells.mts', 'append-observer.mjs', 'cleanup-observer.mjs',
                'host-sidecar-adapter.mjs', 'host-sidecar-source-loader.mjs',

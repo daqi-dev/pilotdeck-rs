@@ -39,8 +39,7 @@ pub type TwilioFactory =
 pub fn native_twilio_factory() -> TwilioFactory {
     native_factory("https://api.twilio.com".into())
 }
-#[cfg(test)]
-pub fn native_twilio_factory_with_base(base: String) -> TwilioFactory {
+pub(crate) fn native_twilio_factory_with_base(base: String) -> TwilioFactory {
     native_factory(base)
 }
 fn native_factory(base: String) -> TwilioFactory {

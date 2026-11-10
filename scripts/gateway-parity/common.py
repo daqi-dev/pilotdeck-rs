@@ -8,6 +8,7 @@ import math
 import marshal
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -81,6 +82,52 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def verify_native_runtime_libraries(source, binary_manifest):
+    """Bind the native image runtime to the same authenticated build receipt."""
+    needed = any(row.get('path') == 'src/pilotdeck-image-native/Cargo.toml'
+                 for row in source.get('files', []))
+    reference = source.get('runtimeLibraries')
+    if reference is None and not needed:
+        return []  # Historical source-only receipts predate native images.
+    def need(value, message):
+        if not value:
+            raise ValueError('NATIVE_RUNTIME_LIBRARIES: ' + message)
+    need(isinstance(reference, dict) and set(reference) == {'path', 'sha256'}, 'missing manifest binding')
+    root = Path(binary_manifest).parent
+    manifest = Path(reference['path'])
+    need(manifest == root / 'libraries.json' and manifest.is_file() and
+         manifest.resolve() == manifest and digest(manifest) == reference['sha256'], 'manifest identity')
+    rows = read(manifest)
+    need(isinstance(rows, list) and 0 < len(rows) <= 64, 'empty or oversized inventory')
+    names, profiles = set(), set()
+    for row in rows:
+        need(isinstance(row, dict) and set(row) == {'path', 'sha256', 'bytes'}, 'entry shape')
+        path = Path(row['path'])
+        need(len(path.parts) == 2 and re.fullmatch(r'pilotdeck-libs-[0-9a-f]{64}', path.parts[0])
+             and re.fullmatch(r'lib[A-Za-z0-9._+-]+', path.name) and
+             ('.so' in path.name or path.name.endswith('.dylib')), 'library path')
+        need(path not in names, 'duplicate entry')
+        names.add(path)
+        profiles.add(path.parts[0])
+        actual = root / path
+        need(actual.is_file() and actual.resolve() == actual and type(row['bytes']) is int and
+             row['bytes'] > 0 and actual.stat().st_size == row['bytes'] and
+             digest(actual) == row['sha256'], 'library bytes: ' + str(path))
+    need(len(profiles) == 1, 'mixed runtime profiles')
+    profile = next(iter(profiles))
+    actual_names = {p.relative_to(root) for p in (root / profile).iterdir()}
+    need(actual_names == names, 'unregistered runtime files')
+    for program in ('pilotdeck', 'pilotdeck-control', 'pilotdeck-gateway'):
+        found, tail = set(), b''
+        with (root / program).open('rb') as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b''):
+                data = tail + block
+                found.update(re.findall(rb'pilotdeck-libs-[0-9a-f]{64}', data))
+                tail = data[-79:]
+        need(found == {profile.encode()}, 'binary runtime profile: ' + program)
+    return rows
+
+
 # Executable script suffixes the shared probe table exercises.  The scan itself
 # no longer keys on suffixes: registration is by exact path (see
 # ``apparatus_whitelist``).  Keeping the tuple makes every one of these shapes
@@ -106,7 +153,7 @@ SITE_SUFFIXES = ('.pth',)
 A2_SCRIPTS = (
     '_guard.py', 'build_proxy.py', 'check_frozen.py', 'check_ruler.py', 'common.py', 'compare.py',
     'controls/run_all.py', 'controls/prerequisites.py', 'driver.mts', 'mock.mjs',
-    'observer.py', 'retirement_driver.mts', 'run_round.py', 'test_safety.py', 'watcher.mjs',
+    'observer.py', 'retirement_driver.mts', 'retirement_cold.py', 'retirement_entries.py', 'retirement_native.py', 'run_round.py', 'session_history_driver.mts', 'test_safety.py', 'watcher.mjs',
     'session_domain.py', 'native_evidence.py', 'session_observations.mjs', 'controls/session_domain.py',
     'linux_group_cleanup.py', 'host_suite.py',
 )
@@ -121,6 +168,7 @@ DATA_FILES = (
     'fixtures/gateway-protocol.fixtures.json',  # A3/A4 protocol fixtures
     'fixtures/session-calibration.json',        # A5.3 E1 fixture; FROZEN hash row
     'fixtures/session-expectations.json',       # A5.4 A19-HOST expectations; FROZEN hash row
+    'fixtures/retirement-entry-inventory.json',
     'fixtures/retirement-methods.json',        # E1 retirement 101-method fixture; FROZEN hash row
     'package.json',                             # npm manifest for A3 tooling
     'package-lock.json',                        # pinned A3 dependency graph

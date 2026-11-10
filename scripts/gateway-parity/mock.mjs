@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 const port = Number(process.env.GP_MOCK_PORT);
 if (!Number.isInteger(port) || port < 28000 || port > 28999) throw new Error('28xxx port required');
 http.createServer(async (req, res) => {
@@ -14,6 +14,20 @@ http.createServer(async (req, res) => {
   try {
     const parts = []; for await (const part of req) parts.push(part);
     const body = JSON.parse(Buffer.concat(parts).toString());
+    if (process.env.GP_RETIREMENT_WEIXIN_LOG && req.method === 'POST' && req.url === '/ilink/bot/getupdates') {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      appendFileSync(process.env.GP_RETIREMENT_WEIXIN_LOG, JSON.stringify({ path: req.url, method: req.method }) + '\n');
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ret: 0, msgs: [], get_updates_buf: 'retirement-fixture' }));
+      return;
+    }
+    const ready = process.env.GP_RETIREMENT_MODEL_READY;
+    const release = process.env.GP_RETIREMENT_MODEL_RELEASE;
+    if (ready && release && !existsSync(ready) && JSON.stringify(body.messages).includes('RETIREMENT_CALIB')) {
+      writeFileSync(ready, 'live model request\n', { flag: 'wx' });
+      const deadline = Date.now() + 5000;
+      while (!existsSync(release) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+    }
     const text = JSON.stringify(body.messages);
     const toolDone = body.messages.some((item) => item.role === 'tool');
     const question = text.includes('GP_QUESTION') && !toolDone;

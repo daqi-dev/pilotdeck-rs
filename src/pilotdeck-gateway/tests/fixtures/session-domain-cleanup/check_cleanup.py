@@ -1050,6 +1050,10 @@ def status_controls(md):
 # each registered point's every return path must route its status/exit
 # computation through the shared function (``unshared_status_slots``).
 AGGREGATION_POINTS = {
+    ('scripts/gateway-parity/retirement_native.py', 'run_suite'): 'native-retirement-session',
+    ('scripts/gateway-parity/retirement_native.py', 'session_injections'): 'session-domain-injections',
+    ('scripts/gateway-parity/retirement_cold.py', 'verify_cold'): 'retirement-cold-evidence',
+    ('scripts/gateway-parity/retirement_entries.py', 'report_entries'): 'retirement-150-entries',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py','kernel_control_report'): 'kernel-controls-report',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_linux.py', 'summarize_controls'): 'linux-controls-summary',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_linux.py', 'main'): 'linux-controls-main',
@@ -1058,6 +1062,7 @@ AGGREGATION_POINTS = {
     ('scripts/gateway-parity/controls/session_domain.py', 'run_all'): 'controls-run-all',
     ('scripts/gateway-parity/controls/session_domain.py', 'main'): 'controls-main',
     ('scripts/gateway-parity/session_domain.py', 'main'): 'calibrate-main',
+    ('scripts/gateway-parity/host_suite.py', 'report'): 'four-host-report',
     ('scripts/gateway-parity/session_domain.py', '_deadline_report'): 'deadline-report',
     ('scripts/gateway-parity/session_domain.py', '_retirement_report'): 'retirement-report',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',

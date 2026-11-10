@@ -972,7 +972,8 @@ class ImportIsolation(unittest.TestCase):
         contract = json.loads(fixture.read_text())
         entries = {name for name in common.A2_SCRIPTS if name.endswith('.py')
                    and name not in ('common.py', '_guard.py', 'test_safety.py',
-                                    'controls/prerequisites.py', 'linux_group_cleanup.py', 'host_suite.py')}
+                                    'controls/prerequisites.py', 'linux_group_cleanup.py', 'host_suite.py',
+                                    'retirement_native.py', 'retirement_cold.py', 'retirement_entries.py')}
         self.assertEqual(set(contract['errors']),
                          {'ordinary', 'interrupt', 'timeout', 'permission', 'subprocess_timeout',
                           'apparatus', 'rule_only', 'system_exit'}, message + ': required exception classes')
@@ -1937,7 +1938,8 @@ class ApparatusInputs(unittest.TestCase):
             'build_proxy.py', 'check_frozen.py', 'check_ruler.py', 'compare.py',
             'native_evidence.py', 'observer.py', 'run_round.py', 'session_domain.py', 'test_safety.py',
             'controls/run_all.py', 'controls/prerequisites.py',
-            'controls/session_domain.py']), '#1140 complete standard bootstrap entry set')
+            'controls/session_domain.py', 'host_suite.py', 'retirement_native.py',
+            'retirement_cold.py', 'retirement_entries.py']), '#1140 complete standard bootstrap entry set')
         self.assertEqual(len(set(blocks.values())), 1,
                          '#1140 apparatus bootstrap differs between entries')
         block = next(iter(blocks.values()))
@@ -1974,7 +1976,8 @@ class ApparatusInputs(unittest.TestCase):
         folder = Path(__file__).resolve().parent
         entries = [name for name in common.A2_SCRIPTS if name.endswith('.py')
                    and name not in ('common.py', '_guard.py', 'test_safety.py',
-                                    'controls/prerequisites.py', 'linux_group_cleanup.py', 'host_suite.py')]
+                                    'controls/prerequisites.py', 'linux_group_cleanup.py', 'host_suite.py',
+                                    'retirement_native.py', 'retirement_cold.py', 'retirement_entries.py')]
         for name in entries:
             with self.subTest(entry=name):
                 text = (folder / name).read_text(encoding='utf-8')
@@ -2014,20 +2017,72 @@ class ApparatusInputs(unittest.TestCase):
         self.assertIs(_load, _guard.load, '#991 test runner must alias guard load')
         self.assertIs(run_entry, _guard.run_entry, '#991 test runner must alias guard dispatch')
 
-    def test_host_suite_is_an_authenticated_library_not_an_unmeasured_cli(self):
+    def test_suite_libraries_are_authenticated_and_have_no_unmeasured_cli(self):
         import ast
-        path = Path(__file__).resolve().parent / 'host_suite.py'
-        tree = ast.parse(path.read_text(encoding='utf-8'))
-        self.assertIn('host_suite.py', common.A2_SCRIPTS)
-        self.assertFalse(any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                             and node.name == 'main' for node in tree.body),
-                         '#1314 host library must not introduce an unmeasured CLI contract')
-        self.assertFalse(any(isinstance(node, ast.If) and '__name__' in ast.unparse(node.test)
-                             for node in ast.walk(tree)),
-                         '#1314 host library must have no independent dispatch')
-        entry = _load('guard_shape_host_suite', path)
-        self.assertEqual(Path(entry.__file__).resolve(), path.resolve(),
-                         '#1314 library must be loaded through authenticated explicit path')
+        for name in ('host_suite.py', 'retirement_native.py', 'retirement_cold.py', 'retirement_entries.py'):
+            with self.subTest(library=name):
+                path = Path(__file__).resolve().parent / name
+                tree = ast.parse(path.read_text(encoding='utf-8'))
+                self.assertIn(name, common.A2_SCRIPTS)
+                self.assertFalse(any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                                     and node.name == 'main' for node in tree.body),
+                                 '#1314 suite library must not introduce an unmeasured CLI contract')
+                self.assertFalse(any(isinstance(node, ast.If) and '__name__' in ast.unparse(node.test)
+                                     for node in ast.walk(tree)),
+                                 '#1314 suite library must have no independent dispatch')
+                entry = _load('guard_shape_' + path.stem, path)
+                self.assertEqual(Path(entry.__file__).resolve(), path.resolve(),
+                                 '#1314 library must be loaded through authenticated explicit path')
+
+    def test_native_runtime_receipt_rejects_library_substitution(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-native-runtime-') as folder:
+            root = Path(folder).resolve()
+            profile = 'pilotdeck-libs-' + 'a' * 64
+            library = root / profile / 'libvips.so.42'
+            library.parent.mkdir()
+            library.write_bytes(b'original native library')
+            for program in ('pilotdeck', 'pilotdeck-control', 'pilotdeck-gateway'):
+                (root / program).write_bytes(b'executable runtime path: ' + profile.encode())
+            rows = [{'path': str(library.relative_to(root)), 'sha256': common.digest(library),
+                     'bytes': library.stat().st_size}]
+            manifest = root / 'libraries.json'
+            common.save(manifest, rows)
+            source = {'files': [{'path': 'src/pilotdeck-image-native/Cargo.toml'}],
+                      'runtimeLibraries': {'path': str(manifest), 'sha256': common.digest(manifest)}}
+            check = lambda: common.verify_native_runtime_libraries(source, root / 'manifest.json')
+            self.assertEqual(check(), rows)
+            original = library.read_bytes()
+            library.write_bytes(b'changed native library!')
+            with self.assertRaisesRegex(ValueError, 'library bytes'):
+                check()
+            library.write_bytes(original)
+            extra = library.parent / 'libextra.so'
+            extra.write_bytes(b'extra')
+            with self.assertRaisesRegex(ValueError, 'unregistered runtime files'):
+                check()
+            extra.unlink()
+            (root / 'pilotdeck').write_bytes(b'wrong profile pilotdeck-libs-' + b'b' * 64)
+            with self.assertRaisesRegex(ValueError, 'binary runtime profile'):
+                check()
+            (root / 'pilotdeck').write_bytes(profile.encode())
+            outside = root / 'replacement'
+            outside.write_bytes(original)
+            library.unlink()
+            library.symlink_to(outside)
+            with self.assertRaisesRegex(ValueError, 'library bytes'):
+                check()
+            library.unlink()
+            library.write_bytes(original)
+            common.save(manifest, rows + rows)
+            source['runtimeLibraries']['sha256'] = common.digest(manifest)
+            with self.assertRaisesRegex(ValueError, 'duplicate entry'):
+                check()
+            common.save(manifest, rows)
+            source['runtimeLibraries']['sha256'] = common.digest(manifest)
+            self.assertEqual(check(), rows)
+            del source['runtimeLibraries']
+            with self.assertRaisesRegex(ValueError, 'missing manifest binding'):
+                check()
 
     def test_a2_entries_never_resolve_apparatus_through_sys_path(self):
         # Covers entries that do not mention ``common`` but still import a

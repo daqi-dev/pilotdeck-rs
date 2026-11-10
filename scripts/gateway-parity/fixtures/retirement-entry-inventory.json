@@ -1,0 +1,919 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sources": {
+    "src/adapters/channel/api-server/ApiServerChannel.ts": "b24f2fcdab8c34c5d3382f72df3842f4eb4b55f26600c73c691e39d2bb0231a0",
+    "src/adapters/channel/loadEnabledChannels.ts": "e07a6a2241194d4683f0d015c98947dfe8d896d63cdae1be075be7b0f5002158",
+    "src/adapters/channel/sms/SmsChannel.ts": "2d49f86c8ea86a61db0d24d4d33e7190b48184754bf02db5a551f8d37d7210e0",
+    "src/adapters/channel/webhook/WebhookChannel.ts": "4fcfea01f431ecb5bc7a10580630f4871894cf4f81ab6ef33198d809dfc1e1e8",
+    "src/adapters/channel/wecom-callback/WeComCallbackChannel.ts": "cdecd2574212afa6caf9f9c5d31058ae0c3318b637eef0c79888d8d92dec5ca0",
+    "src/adapters/web/httpRouter.ts": "f9fc0f180559a557fe704573392b5f4602a670dfb7df704de4caa0e288349d0d",
+    "src/cli/ChannelAdapterBundle.ts": "029caf6b5087ed014efcf8ae92bef7d38b83acdb323a7ec4a3c2ee9f03fcc139",
+    "src/cli/ProjectAutomationBundle.ts": "55a265c0594aa2c4a4fdd99ad4ceeeb224cb3cb253de22c7b8c1630924fc839f",
+    "src/composition/publicApprovalHttpTransport.ts": "a2b2ffb88de8fbbcdb19662fb3cc6f14c20ec95ff82219c97cee2d525318a688",
+    "src/composition/publicHostHttpTransport.ts": "52b45af0e3536cdafa932142fe9facec74bba2efa44d232a673b748f9e74c622",
+    "src/gateway/protocol/frames.ts": "872d94f1c8908cd34adf807cb80caa94577d6bca8c6c05bd453ccc7d3b46e870",
+    "src/gateway/server/GatewayServer.ts": "c3c3aa1b2fff8d302e00210618f74487b168a93dc6366458ff138683f99da653"
+  },
+  "entries": [
+    {
+      "id": "gateway.background:always-on",
+      "sources": [
+        "src/cli/ProjectAutomationBundle.ts:329"
+      ]
+    },
+    {
+      "id": "gateway.background:cron",
+      "sources": [
+        "src/cli/ProjectAutomationBundle.ts:330"
+      ]
+    },
+    {
+      "id": "gateway.channel-http:api-server:/health",
+      "sources": [
+        "src/adapters/channel/api-server/ApiServerChannel.ts:150"
+      ]
+    },
+    {
+      "id": "gateway.channel-http:api-server:/v1/chat/completions",
+      "sources": [
+        "src/adapters/channel/api-server/ApiServerChannel.ts:170"
+      ]
+    },
+    {
+      "id": "gateway.channel-http:api-server:/v1/models",
+      "sources": [
+        "src/adapters/channel/api-server/ApiServerChannel.ts:155"
+      ]
+    },
+    {
+      "id": "gateway.channel-http:api-server:listener-and-method-dispatch",
+      "sources": [
+        "src/adapters/channel/api-server/ApiServerChannel.ts:62"
+      ]
+    },
+    {
+      "id": "gateway.channel-http:api-server:OPTIONS *",
+      "sources": [
+        "src/adapters/channel/api-server/ApiServerChannel.ts:141"
+      ]
+    },
+    {
+      "id": "gateway.channel-http:sms:listener-and-method-dispatch",
+      "sources": [
+        "src/adapters/channel/sms/SmsChannel.ts:89"
+      ]
+    },
+    {
+      "id": "gateway.channel-http:sms:POST <webhookPath; default=/sms/incoming>",
+      "sources": [
+        "src/adapters/channel/sms/SmsChannel.ts:129"
+      ]
+    },
+    {
+      "id": "gateway.channel-http:webhook:/health",
+      "sources": [
+        "src/adapters/channel/webhook/WebhookChannel.ts:122"
+      ]
+    },
+    {
+      "id": "gateway.channel-http:webhook:listener-and-method-dispatch",
+      "sources": [
+        "src/adapters/channel/webhook/WebhookChannel.ts:84"
+      ]
+    },
+    {
+      "id": "gateway.channel-http:webhook:POST /webhooks/:name",
+      "sources": [
+        "src/adapters/channel/webhook/WebhookChannel.ts:127"
+      ]
+    },
+    {
+      "id": "gateway.channel-http:wecom-callback:GET *",
+      "sources": [
+        "src/adapters/channel/wecom-callback/WeComCallbackChannel.ts:156"
+      ]
+    },
+    {
+      "id": "gateway.channel-http:wecom-callback:listener-and-method-dispatch",
+      "sources": [
+        "src/adapters/channel/wecom-callback/WeComCallbackChannel.ts:123"
+      ]
+    },
+    {
+      "id": "gateway.channel-http:wecom-callback:POST *",
+      "sources": [
+        "src/adapters/channel/wecom-callback/WeComCallbackChannel.ts:175"
+      ]
+    },
+    {
+      "id": "gateway.channel:apiServer",
+      "sources": [
+        "src/adapters/channel/loadEnabledChannels.ts:101"
+      ]
+    },
+    {
+      "id": "gateway.channel:bluebubbles",
+      "sources": [
+        "src/adapters/channel/loadEnabledChannels.ts:61"
+      ]
+    },
+    {
+      "id": "gateway.channel:dingtalk",
+      "sources": [
+        "src/adapters/channel/loadEnabledChannels.ts:68"
+      ]
+    },
+    {
+      "id": "gateway.channel:discord",
+      "sources": [
+        "src/adapters/channel/loadEnabledChannels.ts:19"
+      ]
+    },
+    {
+      "id": "gateway.channel:email",
+      "sources": [
+        "src/adapters/channel/loadEnabledChannels.ts:86"
+      ]
+    },
+    {
+      "id": "gateway.channel:feishu",
+      "sources": [
+        "src/cli/ChannelAdapterBundle.ts:40"
+      ]
+    },
+    {
+      "id": "gateway.channel:homeassistant",
+      "sources": [
+        "src/adapters/channel/loadEnabledChannels.ts:94"
+      ]
+    },
+    {
+      "id": "gateway.channel:matrix",
+      "sources": [
+        "src/adapters/channel/loadEnabledChannels.ts:30"
+      ]
+    },
+    {
+      "id": "gateway.channel:mattermost",
+      "sources": [
+        "src/adapters/channel/loadEnabledChannels.ts:39"
+      ]
+    },
+    {
+      "id": "gateway.channel:qq",
+      "sources": [
+        "src/cli/ChannelAdapterBundle.ts:42"
+      ]
+    },
+    {
+      "id": "gateway.channel:signal",
+      "sources": [
+        "src/adapters/channel/loadEnabledChannels.ts:47"
+      ]
+    },
+    {
+      "id": "gateway.channel:slack",
+      "sources": [
+        "src/adapters/channel/loadEnabledChannels.ts:23"
+      ]
+    },
+    {
+      "id": "gateway.channel:sms",
+      "sources": [
+        "src/adapters/channel/loadEnabledChannels.ts:90"
+      ]
+    },
+    {
+      "id": "gateway.channel:telegram",
+      "sources": [
+        "src/adapters/channel/loadEnabledChannels.ts:12"
+      ]
+    },
+    {
+      "id": "gateway.channel:webhook",
+      "sources": [
+        "src/adapters/channel/loadEnabledChannels.ts:108"
+      ]
+    },
+    {
+      "id": "gateway.channel:wecom",
+      "sources": [
+        "src/cli/ChannelAdapterBundle.ts:60"
+      ]
+    },
+    {
+      "id": "gateway.channel:wecomCallback",
+      "sources": [
+        "src/adapters/channel/loadEnabledChannels.ts:75"
+      ]
+    },
+    {
+      "id": "gateway.channel:weixin",
+      "sources": [
+        "src/cli/ChannelAdapterBundle.ts:41"
+      ]
+    },
+    {
+      "id": "gateway.channel:whatsapp",
+      "sources": [
+        "src/adapters/channel/loadEnabledChannels.ts:54"
+      ]
+    },
+    {
+      "id": "gateway.http:<unmatched-404>",
+      "sources": [
+        "src/gateway/server/GatewayServer.ts:106"
+      ]
+    },
+    {
+      "id": "gateway.http:ANY /auth/local-token",
+      "sources": [
+        "src/gateway/server/GatewayServer.ts:103"
+      ]
+    },
+    {
+      "id": "gateway.http:ANY /feishu/webhook",
+      "sources": [
+        "src/gateway/server/GatewayServer.ts:113"
+      ]
+    },
+    {
+      "id": "gateway.http:ANY /health",
+      "sources": [
+        "src/gateway/server/GatewayServer.ts:98"
+      ]
+    },
+    {
+      "id": "gateway.http:GET /api/web/projects",
+      "sources": [
+        "src/adapters/web/httpRouter.ts:39"
+      ]
+    },
+    {
+      "id": "gateway.http:GET /api/web/projects/:projectKey",
+      "sources": [
+        "src/adapters/web/httpRouter.ts:38"
+      ]
+    },
+    {
+      "id": "gateway.http:GET /api/web/projects/:projectKey/files/read",
+      "sources": [
+        "src/adapters/web/httpRouter.ts:74"
+      ]
+    },
+    {
+      "id": "gateway.http:GET /api/web/projects/:projectKey/files/tree",
+      "sources": [
+        "src/adapters/web/httpRouter.ts:67"
+      ]
+    },
+    {
+      "id": "gateway.http:POST /api/module-host/approvals/resume",
+      "sources": [
+        "src/composition/publicApprovalHttpTransport.ts:7"
+      ]
+    },
+    {
+      "id": "gateway.http:POST /api/module-host/approvals/status",
+      "sources": [
+        "src/composition/publicApprovalHttpTransport.ts:7"
+      ]
+    },
+    {
+      "id": "gateway.http:POST /api/module-host/call",
+      "sources": [
+        "src/composition/publicHostHttpTransport.ts:12"
+      ]
+    },
+    {
+      "id": "gateway.http:POST /api/module-host/describe",
+      "sources": [
+        "src/composition/publicHostHttpTransport.ts:12"
+      ]
+    },
+    {
+      "id": "gateway.http:POST /api/web/projects/:projectKey/files/write",
+      "sources": [
+        "src/adapters/web/httpRouter.ts:85"
+      ]
+    },
+    {
+      "id": "gateway.http:static-fallback",
+      "sources": [
+        "src/gateway/server/GatewayServer.ts:130"
+      ]
+    },
+    {
+      "id": "gateway.method:abort_turn",
+      "sources": [
+        "src/gateway/protocol/frames.ts:44"
+      ]
+    },
+    {
+      "id": "gateway.method:active_turn_snapshot",
+      "sources": [
+        "src/gateway/protocol/frames.ts:65"
+      ]
+    },
+    {
+      "id": "gateway.method:always_on_abort",
+      "sources": [
+        "src/gateway/protocol/frames.ts:121"
+      ]
+    },
+    {
+      "id": "gateway.method:always_on_apply",
+      "sources": [
+        "src/gateway/protocol/frames.ts:120"
+      ]
+    },
+    {
+      "id": "gateway.method:always_on_rerun_plan",
+      "sources": [
+        "src/gateway/protocol/frames.ts:122"
+      ]
+    },
+    {
+      "id": "gateway.method:apply_flag_settings",
+      "sources": [
+        "src/gateway/protocol/frames.ts:73"
+      ]
+    },
+    {
+      "id": "gateway.method:background_task_stop",
+      "sources": [
+        "src/gateway/protocol/frames.ts:83"
+      ]
+    },
+    {
+      "id": "gateway.method:background_tasks",
+      "sources": [
+        "src/gateway/protocol/frames.ts:84"
+      ]
+    },
+    {
+      "id": "gateway.method:cancel_steer",
+      "sources": [
+        "src/gateway/protocol/frames.ts:43"
+      ]
+    },
+    {
+      "id": "gateway.method:close_project_sessions",
+      "sources": [
+        "src/gateway/protocol/frames.ts:56"
+      ]
+    },
+    {
+      "id": "gateway.method:close_session",
+      "sources": [
+        "src/gateway/protocol/frames.ts:50"
+      ]
+    },
+    {
+      "id": "gateway.method:commands_list",
+      "sources": [
+        "src/gateway/protocol/frames.ts:60"
+      ]
+    },
+    {
+      "id": "gateway.method:cron_create",
+      "sources": [
+        "src/gateway/protocol/frames.ts:89"
+      ]
+    },
+    {
+      "id": "gateway.method:cron_delete",
+      "sources": [
+        "src/gateway/protocol/frames.ts:92"
+      ]
+    },
+    {
+      "id": "gateway.method:cron_list",
+      "sources": [
+        "src/gateway/protocol/frames.ts:90"
+      ]
+    },
+    {
+      "id": "gateway.method:cron_run_now",
+      "sources": [
+        "src/gateway/protocol/frames.ts:94"
+      ]
+    },
+    {
+      "id": "gateway.method:cron_stop",
+      "sources": [
+        "src/gateway/protocol/frames.ts:93"
+      ]
+    },
+    {
+      "id": "gateway.method:cron_update",
+      "sources": [
+        "src/gateway/protocol/frames.ts:91"
+      ]
+    },
+    {
+      "id": "gateway.method:delete_session",
+      "sources": [
+        "src/gateway/protocol/frames.ts:51"
+      ]
+    },
+    {
+      "id": "gateway.method:describe_project",
+      "sources": [
+        "src/gateway/protocol/frames.ts:108"
+      ]
+    },
+    {
+      "id": "gateway.method:describe_server",
+      "sources": [
+        "src/gateway/protocol/frames.ts:58"
+      ]
+    },
+    {
+      "id": "gateway.method:elicitation_respond",
+      "sources": [
+        "src/gateway/protocol/frames.ts:95"
+      ]
+    },
+    {
+      "id": "gateway.method:export_session_transcript",
+      "sources": [
+        "src/gateway/protocol/frames.ts:52"
+      ]
+    },
+    {
+      "id": "gateway.method:finalize_last_turn_replacement",
+      "sources": [
+        "src/gateway/protocol/frames.ts:106"
+      ]
+    },
+    {
+      "id": "gateway.method:fork_session",
+      "sources": [
+        "src/gateway/protocol/frames.ts:104"
+      ]
+    },
+    {
+      "id": "gateway.method:grant_session_permission",
+      "sources": [
+        "src/gateway/protocol/frames.ts:101"
+      ]
+    },
+    {
+      "id": "gateway.method:hook_async_result",
+      "sources": [
+        "src/gateway/protocol/frames.ts:85"
+      ]
+    },
+    {
+      "id": "gateway.method:list_projects",
+      "sources": [
+        "src/gateway/protocol/frames.ts:107"
+      ]
+    },
+    {
+      "id": "gateway.method:list_sessions",
+      "sources": [
+        "src/gateway/protocol/frames.ts:45"
+      ]
+    },
+    {
+      "id": "gateway.method:manager_browsers",
+      "sources": [
+        "src/gateway/protocol/frames.ts:38"
+      ]
+    },
+    {
+      "id": "gateway.method:manager_sessions",
+      "sources": [
+        "src/gateway/protocol/frames.ts:37"
+      ]
+    },
+    {
+      "id": "gateway.method:mcp_server_reconnect",
+      "sources": [
+        "src/gateway/protocol/frames.ts:69"
+      ]
+    },
+    {
+      "id": "gateway.method:mcp_server_status",
+      "sources": [
+        "src/gateway/protocol/frames.ts:66"
+      ]
+    },
+    {
+      "id": "gateway.method:mcp_server_toggle",
+      "sources": [
+        "src/gateway/protocol/frames.ts:70"
+      ]
+    },
+    {
+      "id": "gateway.method:memory_list",
+      "sources": [
+        "src/gateway/protocol/frames.ts:32"
+      ]
+    },
+    {
+      "id": "gateway.method:memory_wipe",
+      "sources": [
+        "src/gateway/protocol/frames.ts:33"
+      ]
+    },
+    {
+      "id": "gateway.method:model_catalog_list",
+      "sources": [
+        "src/gateway/protocol/frames.ts:61"
+      ]
+    },
+    {
+      "id": "gateway.method:model_usage_snapshot",
+      "sources": [
+        "src/gateway/protocol/frames.ts:81"
+      ]
+    },
+    {
+      "id": "gateway.method:native_archive_artifact",
+      "sources": [
+        "src/gateway/protocol/frames.ts:41"
+      ]
+    },
+    {
+      "id": "gateway.method:native_archive_entries",
+      "sources": [
+        "src/gateway/protocol/frames.ts:40"
+      ]
+    },
+    {
+      "id": "gateway.method:native_archive_manifest",
+      "sources": [
+        "src/gateway/protocol/frames.ts:39"
+      ]
+    },
+    {
+      "id": "gateway.method:new_session",
+      "sources": [
+        "src/gateway/protocol/frames.ts:49"
+      ]
+    },
+    {
+      "id": "gateway.method:output_styles_list",
+      "sources": [
+        "src/gateway/protocol/frames.ts:77"
+      ]
+    },
+    {
+      "id": "gateway.method:permission_decide",
+      "sources": [
+        "src/gateway/protocol/frames.ts:100"
+      ]
+    },
+    {
+      "id": "gateway.method:permission_list",
+      "sources": [
+        "src/gateway/protocol/frames.ts:31"
+      ]
+    },
+    {
+      "id": "gateway.method:prepare_weixin_login",
+      "sources": [
+        "src/gateway/protocol/frames.ts:110"
+      ]
+    },
+    {
+      "id": "gateway.method:project_file_read",
+      "sources": [
+        "src/gateway/protocol/frames.ts:67"
+      ]
+    },
+    {
+      "id": "gateway.method:project_files_list",
+      "sources": [
+        "src/gateway/protocol/frames.ts:59"
+      ]
+    },
+    {
+      "id": "gateway.method:read_session_messages",
+      "sources": [
+        "src/gateway/protocol/frames.ts:102"
+      ]
+    },
+    {
+      "id": "gateway.method:read_subagent_messages",
+      "sources": [
+        "src/gateway/protocol/frames.ts:103"
+      ]
+    },
+    {
+      "id": "gateway.method:reconnect_interaction",
+      "sources": [
+        "src/gateway/protocol/frames.ts:88"
+      ]
+    },
+    {
+      "id": "gateway.method:record_agent_status_message",
+      "sources": [
+        "src/gateway/protocol/frames.ts:57"
+      ]
+    },
+    {
+      "id": "gateway.method:reload_config",
+      "sources": [
+        "src/gateway/protocol/frames.ts:109"
+      ]
+    },
+    {
+      "id": "gateway.method:reload_extensions",
+      "sources": [
+        "src/gateway/protocol/frames.ts:111"
+      ]
+    },
+    {
+      "id": "gateway.method:reload_output_styles",
+      "sources": [
+        "src/gateway/protocol/frames.ts:79"
+      ]
+    },
+    {
+      "id": "gateway.method:rename_session",
+      "sources": [
+        "src/gateway/protocol/frames.ts:54"
+      ]
+    },
+    {
+      "id": "gateway.method:replace_last_turn",
+      "sources": [
+        "src/gateway/protocol/frames.ts:105"
+      ]
+    },
+    {
+      "id": "gateway.method:resolve_settings",
+      "sources": [
+        "src/gateway/protocol/frames.ts:75"
+      ]
+    },
+    {
+      "id": "gateway.method:restore_session_transcript",
+      "sources": [
+        "src/gateway/protocol/frames.ts:53"
+      ]
+    },
+    {
+      "id": "gateway.method:resume_session",
+      "sources": [
+        "src/gateway/protocol/frames.ts:46"
+      ]
+    },
+    {
+      "id": "gateway.method:rewind_files",
+      "sources": [
+        "src/gateway/protocol/frames.ts:82"
+      ]
+    },
+    {
+      "id": "gateway.method:run_events",
+      "sources": [
+        "src/gateway/protocol/frames.ts:29"
+      ]
+    },
+    {
+      "id": "gateway.method:run_get",
+      "sources": [
+        "src/gateway/protocol/frames.ts:28"
+      ]
+    },
+    {
+      "id": "gateway.method:run_reattach",
+      "sources": [
+        "src/gateway/protocol/frames.ts:30"
+      ]
+    },
+    {
+      "id": "gateway.method:seed_read_state",
+      "sources": [
+        "src/gateway/protocol/frames.ts:86"
+      ]
+    },
+    {
+      "id": "gateway.method:session_model_clear",
+      "sources": [
+        "src/gateway/protocol/frames.ts:64"
+      ]
+    },
+    {
+      "id": "gateway.method:session_model_get",
+      "sources": [
+        "src/gateway/protocol/frames.ts:62"
+      ]
+    },
+    {
+      "id": "gateway.method:session_model_set",
+      "sources": [
+        "src/gateway/protocol/frames.ts:63"
+      ]
+    },
+    {
+      "id": "gateway.method:set_mcp_permission_mode_override",
+      "sources": [
+        "src/gateway/protocol/frames.ts:71"
+      ]
+    },
+    {
+      "id": "gateway.method:set_mcp_servers",
+      "sources": [
+        "src/gateway/protocol/frames.ts:68"
+      ]
+    },
+    {
+      "id": "gateway.method:set_output_style",
+      "sources": [
+        "src/gateway/protocol/frames.ts:78"
+      ]
+    },
+    {
+      "id": "gateway.method:set_permission_mode",
+      "sources": [
+        "src/gateway/protocol/frames.ts:72"
+      ]
+    },
+    {
+      "id": "gateway.method:set_session_thinking",
+      "sources": [
+        "src/gateway/protocol/frames.ts:76"
+      ]
+    },
+    {
+      "id": "gateway.method:skill_create",
+      "sources": [
+        "src/gateway/protocol/frames.ts:115"
+      ]
+    },
+    {
+      "id": "gateway.method:skill_delete",
+      "sources": [
+        "src/gateway/protocol/frames.ts:116"
+      ]
+    },
+    {
+      "id": "gateway.method:skill_import",
+      "sources": [
+        "src/gateway/protocol/frames.ts:117"
+      ]
+    },
+    {
+      "id": "gateway.method:skill_list",
+      "sources": [
+        "src/gateway/protocol/frames.ts:112"
+      ]
+    },
+    {
+      "id": "gateway.method:skill_read",
+      "sources": [
+        "src/gateway/protocol/frames.ts:113"
+      ]
+    },
+    {
+      "id": "gateway.method:skill_scan",
+      "sources": [
+        "src/gateway/protocol/frames.ts:119"
+      ]
+    },
+    {
+      "id": "gateway.method:skill_validate",
+      "sources": [
+        "src/gateway/protocol/frames.ts:118"
+      ]
+    },
+    {
+      "id": "gateway.method:skill_write",
+      "sources": [
+        "src/gateway/protocol/frames.ts:114"
+      ]
+    },
+    {
+      "id": "gateway.method:snapshot_get",
+      "sources": [
+        "src/gateway/protocol/frames.ts:35"
+      ]
+    },
+    {
+      "id": "gateway.method:snapshot_list",
+      "sources": [
+        "src/gateway/protocol/frames.ts:34"
+      ]
+    },
+    {
+      "id": "gateway.method:snapshot_restore",
+      "sources": [
+        "src/gateway/protocol/frames.ts:36"
+      ]
+    },
+    {
+      "id": "gateway.method:sop_resume",
+      "sources": [
+        "src/gateway/protocol/frames.ts:48"
+      ]
+    },
+    {
+      "id": "gateway.method:sop_status",
+      "sources": [
+        "src/gateway/protocol/frames.ts:47"
+      ]
+    },
+    {
+      "id": "gateway.method:steer_turn",
+      "sources": [
+        "src/gateway/protocol/frames.ts:42"
+      ]
+    },
+    {
+      "id": "gateway.method:submit_turn",
+      "sources": [
+        "src/gateway/protocol/frames.ts:22"
+      ]
+    },
+    {
+      "id": "gateway.method:supported_agents",
+      "sources": [
+        "src/gateway/protocol/frames.ts:87"
+      ]
+    },
+    {
+      "id": "gateway.method:tag_session",
+      "sources": [
+        "src/gateway/protocol/frames.ts:55"
+      ]
+    },
+    {
+      "id": "gateway.method:update_settings",
+      "sources": [
+        "src/gateway/protocol/frames.ts:74"
+      ]
+    },
+    {
+      "id": "gateway.method:upload_cancel",
+      "sources": [
+        "src/gateway/protocol/frames.ts:27"
+      ]
+    },
+    {
+      "id": "gateway.method:upload_complete",
+      "sources": [
+        "src/gateway/protocol/frames.ts:26"
+      ]
+    },
+    {
+      "id": "gateway.method:upload_create",
+      "sources": [
+        "src/gateway/protocol/frames.ts:23"
+      ]
+    },
+    {
+      "id": "gateway.method:upload_get",
+      "sources": [
+        "src/gateway/protocol/frames.ts:24"
+      ]
+    },
+    {
+      "id": "gateway.method:upload_part",
+      "sources": [
+        "src/gateway/protocol/frames.ts:25"
+      ]
+    },
+    {
+      "id": "gateway.method:usage_snapshot",
+      "sources": [
+        "src/gateway/protocol/frames.ts:80"
+      ]
+    },
+    {
+      "id": "gateway.method:user_dialog_claim",
+      "sources": [
+        "src/gateway/protocol/frames.ts:97"
+      ]
+    },
+    {
+      "id": "gateway.method:user_dialog_list",
+      "sources": [
+        "src/gateway/protocol/frames.ts:96"
+      ]
+    },
+    {
+      "id": "gateway.method:user_dialog_release",
+      "sources": [
+        "src/gateway/protocol/frames.ts:98"
+      ]
+    },
+    {
+      "id": "gateway.method:user_dialog_respond",
+      "sources": [
+        "src/gateway/protocol/frames.ts:99"
+      ]
+    },
+    {
+      "id": "gateway.ws:/ws",
+      "sources": [
+        "src/gateway/server/GatewayServer.ts:145"
+      ]
+    }
+  ]
+}

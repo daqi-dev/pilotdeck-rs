@@ -3,6 +3,77 @@
 Only the authenticated original TS or native capture artifacts are accepted.
 The frozen caller supplies its existing parsers, projection, and score functions.
 """
+# >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)
+# -I keeps PYTHONPATH, user site and the script directory out of module
+# resolution.  It must run before every other standard-library import: a
+# shadowed argparse/pathlib would otherwise execute before this check.  ``sys``
+# is builtin; os is imported only after the frozen-module preflight below.
+import sys
+
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+
+if sys.version_info < (3, 11) or 'os' not in sys.modules:
+    raise SystemExit('os must be preloaded from CPython 3.11+ frozen modules')
+import os
+
+_boot_dir = os.path.dirname(os.path.realpath(__file__))
+_boot_dir = os.path.dirname(_boot_dir) if os.path.basename(_boot_dir) == 'controls' else _boot_dir
+# Identity, not spelling: a case-insensitive alias, a symlinked spelling or a
+# mixed ``//`` form names this very directory while the string differs
+# (#1033). Nonexistent sys.path entries skip; an empty entry means cwd.
+if any(
+        os.path.isdir(entry or os.curdir)
+        and any(os.path.isdir(root)
+                and os.path.samefile(entry or os.curdir, root)
+                for root in (_boot_dir, os.path.join(_boot_dir, 'controls')))
+        for entry in sys.path):
+    raise SystemExit('apparatus directory on sys.path; run the entry file directly with -I')
+
+import importlib.util
+from pathlib import Path
+import tempfile
+
+# -B only stops cache writes, so redirect the bytecode prefix too (fix-r5).
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
+sys.dont_write_bytecode = True
+# CPython has already compiled the CLI entry before it can acquire a lease.
+# Capture that executing object, not a later read of the restored entry file.
+_apparatus_code = sys._getframe().f_code
+
+# Load the one guard by explicit path, never sys.path: a same-named package or
+# extension module beside the source would win before the scan (fix-r6 P1).
+# Inline on purpose: importing the guard is what this block defends.
+_here = Path(__file__).resolve().parent
+_apparatus = _here.parent if _here.name == 'controls' else _here
+_guard_path = _apparatus / '_guard.py'
+_guard = sys.modules.get('_guard')
+if not (getattr(_guard, '__file__', None)
+        and Path(_guard.__file__).resolve() == _guard_path
+        and isinstance(getattr(_guard, '_apparatus_source', None), bytes)):
+    _spec = importlib.util.spec_from_file_location('_guard', _guard_path)
+    _guard = importlib.util.module_from_spec(_spec)
+    sys.modules['_guard'] = _guard
+    _guard_source = _guard_path.read_bytes()
+    try:
+        exec(compile(_guard_source, str(_guard_path), 'exec'), _guard.__dict__)
+    except BaseException:
+        sys.modules.pop('_guard', None)
+        raise
+    _guard._apparatus_source = _guard_source
+if Path(_guard.__file__).resolve() != _guard_path:
+    raise RuntimeError(f'_guard: loaded {_guard.__file__}, expected {_guard_path}')
+
+_load = _guard.load
+_has_git_checkout = _guard._has_git_checkout
+_verify_cli_imports = _guard.verify_cli_imports
+run_entry = _guard.run_entry
+common = _load('common', _apparatus / 'common.py')
+# <<< apparatus bootstrap
+import atexit
+import shutil
+
+atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
 import copy
 import hashlib
 import json
@@ -76,6 +147,7 @@ def source_binding(manifest, root):
     need(len(binaries) == len(PROGRAMS) and {row['path'] for row in binaries} == PROGRAMS, 'IDENTITY', 'all four programs required')
     for row in binaries:
         need(sha(binary_file.parent / row['path']) == row['sha256'], 'IDENTITY', row['path'])
+    common.verify_native_runtime_libraries(source, binary_file)
     node = artifact(manifest['node'])
     versions = json.loads(subprocess.check_output([str(node), '-p', 'JSON.stringify(process.versions)'], timeout=5))
     need([versions.get(key) for key in ('node', 'icu', 'uv')] == ['22.22.0', '78.2', '1.52.1'], 'IDENTITY', 'fixed Node/ICU/libuv')
@@ -295,7 +367,8 @@ def report(manifest_path, *, session, output):
                          'ROUND_IDENTITY', f'invalid/duplicate measurement {key!r}')
                     if verdict is None:
                         surfaces = session._expectation_diff_surfaces(session.project_observation(actual), targets[case][cell[0]])
-                        verdict = {'case': case, 'status': 'FAIL' if surfaces else 'PASS', 'surfaces': surfaces}
+                        verdict_status, _ = session.common.aggregate_status('FAIL' if surfaces else 'PASS')
+                        verdict = {'case': case, 'status': verdict_status, 'surfaces': surfaces}
                     rows[key] = dict(verdict, repetition=repetition, capture=str(folder))
                     if control_seed is None and actual is not None and all(
                         not session._expectation_diff_surfaces(session.project_observation(actual), targets[case][host]) for host in ('ts', 'rust')):
@@ -311,15 +384,16 @@ def report(manifest_path, *, session, output):
         cases = []
         for case in expected:
             measurements = [rows.get((case, k), {'case': case, 'repetition': k, 'status': 'NOT_RUN', 'rule': 'COVERAGE'}) for k in range(1, K+1)]
-            status = 'FAIL' if any(row['status'] == 'FAIL' for row in measurements) else 'PASS' if all(row['status'] == 'PASS' for row in measurements) else 'NOT_RUN'
-            cases.append({'case': case, 'status': status, 'measurements': measurements})
+            case_status, _ = session.common.aggregate_status(*(row['status'] for row in measurements))
+            cases.append({'case': case, 'status': case_status, 'measurements': measurements})
         complete = all(row['status'] != 'NOT_RUN' for row in cases)
         if not complete:
             errors.append({'rule': 'COVERAGE', 'detail': 'original 72 × k5 is incomplete'})
-        status = 'PASS' if not errors and all(row['status'] == 'PASS' for row in cases) else 'FAIL'
-        cells.append({'host': cell[0], 'sidecar': cell[1], 'status': status, 'repeats': K, 'cases': cases,
+        cell_status, _ = session.common.aggregate_status(
+            *(row['status'] for row in cases), 'FAIL' if errors else 'PASS')
+        cells.append({'host': cell[0], 'sidecar': cell[1], 'status': cell_status, 'repeats': K, 'cases': cases,
                       'captures': witnesses, 'errors': errors, 'expectedCases': expected, 'originalTsOracle': original_oracle,
-                      'executionStatus': status if complete else 'NOT_RUN'})
+                      'executionStatus': cell_status if complete else 'NOT_RUN'})
     controls = []
     if control_seed:
         case, actual = control_seed
@@ -338,8 +412,9 @@ def report(manifest_path, *, session, output):
                 hit = error.rule
             controls.append({'name': name, 'expectedRule': rule, 'hitRule': hit})
     controls_pass = len(controls) == 3 and all(row['expectedRule'] == row['hitRule'] for row in controls)
-    status = 'PASS' if all(cell['status'] == 'PASS' for cell in cells) else 'FAIL'
-    if status == 'PASS' and not controls_pass:
-        status = 'FAIL'
+    controls_status, _ = session.common.aggregate_status(
+        'PASS' if controls_pass else 'FAIL' if len(controls) == 3 else 'NOT_RUN')
+    status, _ = session.common.aggregate_status(
+        *(cell['status'] for cell in cells), 'PASS' if controls_pass else 'FAIL')
     return {'suite': 'host', 'sourceHead': head, 'status': status, 'executionStatus': status if all(cell['executionStatus'] != 'NOT_RUN' for cell in cells) else 'NOT_RUN', 'acceptanceStatus': 'NOT_RUN',
-            'cells': cells, 'controls': {'status': 'PASS' if controls_pass else 'FAIL' if len(controls) == 3 else 'NOT_RUN', 'results': controls}}
+            'cells': cells, 'controls': {'status': controls_status, 'results': controls}}

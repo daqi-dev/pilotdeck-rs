@@ -127,16 +127,16 @@ pub fn compress(
         if let Ok(bytes) = encode(&data, first_kind, Some(first_side), 80, true) {
             data = bytes;
             kind = first_kind.into();
-            if data.len() as f64 > max {
-                if let Ok(bytes) = encode(&data, "image/jpeg", Some(1200.0), 55, false) {
+            if data.len() as f64 > max
+                && let Ok(bytes) = encode(&data, "image/jpeg", Some(1200.0), 55, false)
+            {
+                data = bytes;
+                kind = "image/jpeg".into();
+                if data.len() as f64 > max
+                    && let Ok(bytes) = encode(&data, "image/jpeg", Some(800.0), 40, false)
+                {
                     data = bytes;
                     kind = "image/jpeg".into();
-                    if data.len() as f64 > max {
-                        if let Ok(bytes) = encode(&data, "image/jpeg", Some(800.0), 40, false) {
-                            data = bytes;
-                            kind = "image/jpeg".into();
-                        }
-                    }
                 }
             }
         }
