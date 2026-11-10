@@ -1427,9 +1427,17 @@ def _conditional_arm_chains(scope):
     An ``if`` without an ``else`` also carries the "no arm runs" choice
     (``-1``), a ``match`` the no-case-matched one; a ``BoolOp`` operand
     at index *i* runs when the chain got that far (choice ``>= i``),
-    operand 0 always runs.  ``Try`` arms keep the registered
-    conservative read (all handlers replayed); match *patterns* cannot
-    hold calls or deletes, so only guards sit inside an arm.
+    operand 0 always runs.  Match *patterns* cannot hold calls or
+    deletes, so only guards sit inside an arm -- and a guard whose case
+    *fails* falls through: guard *i* also runs on every path that takes
+    case *j > i* (r47), so it rides its own fall-through fork keyed
+    apart from the body fork.  A ``Try`` body and ``finally`` always run
+    while at most one handler -- or the ``else`` block, on the no-arm
+    choice -- joins them (r47; the old all-arms-together read let an
+    unexecuted handler cancel the executed body's move).  A chained
+    comparison short-circuits like a ``BoolOp`` (comparator *i* runs for
+    choice ``>= i``) and an ``assert`` message only runs when the test
+    fails (r47), so both fork their tails too.
     """
     chains = {id(scope): ()}
     forks = {}
@@ -1461,14 +1469,66 @@ def _conditional_arm_chains(scope):
             continue
         if isinstance(node, ast.Match):
             forks[id(node)] = ('match', None)
+            forks[('guardfall', id(node))] = ('guardfall', None)
             _push(node.subject, chain)
             for index, case in enumerate(node.cases):
                 arm = chain + ((id(node), index),)
                 _push(case.pattern, arm)
                 if case.guard is not None:
-                    _push(case.guard, arm)
+                    # #1953 fix-r1 round 47 (anthropic r46 boundary#3,
+                    # probe p5-guard): a case whose guard fails falls
+                    # through to the next case, so guard *i* runs on
+                    # every path that takes case *j > i* (and on the
+                    # no-case path when its pattern matched).  The guard
+                    # rides its own fall-through fork, keyed apart from
+                    # the body fork so the two enumerations stay in
+                    # lockstep.
+                    _push(case.guard,
+                          chain + ((('guardfall', id(node)), index),))
                 for child in case.body:
                     _push(child, arm)
+            continue
+        if isinstance(node, (ast.Try, ast.TryStar)):
+            # #1953 fix-r1 round 47 (anthropic r46 boundary#2, probe
+            # p4-try): the body always runs, ``finally`` always runs,
+            # and at most ONE handler joins them -- the ``else`` block
+            # only when none did (the no-arm choice ``-1``).  Handlers
+            # are exclusive arms of a match-style fork; the registered
+            # all-arms-together read let an unexecuted handler's pop
+            # cancel the executed body's append (a false PASS).
+            forks[id(node)] = ('match', None)
+            for child in node.body:
+                _push(child, chain)
+            for index, handler in enumerate(node.handlers):
+                arm = chain + ((id(node), index),)
+                _push(handler, arm)
+            for child in node.orelse:
+                _push(child, chain + ((id(node), -1),))
+            for child in node.finalbody:
+                _push(child, chain)
+            continue
+        if isinstance(node, ast.Compare) and len(node.ops) > 1:
+            # #1953 fix-r1 round 47 (anthropic r46 boundary#4, probe
+            # p6a-compare): a chained comparison short-circuits -- the
+            # *i*-th comparator evaluates only when every comparison
+            # before it held -- so comparators after the first ride a
+            # BoolOp-style fork (operand *i* runs for choice ``>= i``).
+            forks[id(node)] = ('boolop', None)
+            _push(node.left, chain)
+            for index, comp in enumerate(node.comparators):
+                _push(comp, chain if index == 0
+                      else chain + ((id(node), index),))
+            continue
+        if isinstance(node, ast.Assert):
+            # #1953 fix-r1 round 47 (anthropic r46 boundary#4, probe
+            # p6b-assert): the assert *message* evaluates only when the
+            # test fails -- it rides the arm of a no-else branch fork
+            # (choice ``0`` the failed-test path, ``-1`` the passing
+            # one).
+            forks[id(node)] = ('branch', False)
+            _push(node.test, chain)
+            if node.msg is not None:
+                _push(node.msg, chain + ((id(node), 0),))
             continue
         if isinstance(node, ast.BoolOp):
             forks[id(node)] = ('boolop', None)
@@ -2693,7 +2753,14 @@ def _import_value_capable(value, kinds, factory=None, seen=frozenset(),
                     # probe c-new-match): a class-body ``match`` binds
                     # ``__new__`` through its capture -- the spelling
                     # ``_local_bound_names`` has no branch for.
-                    if '__new__' in _match_capture_names(node):
+                    # #1953 fix-r1 round 47 (anthropic r46 sibling#2):
+                    # only *top-level* captures bind the whole subject
+                    # (``_toplevel_match_captures``, the same reading
+                    # ``_name_alias_closure`` took in r46) -- an element
+                    # capture ``case [__new__]:`` binds one element and
+                    # is not a builder spelling.
+                    if any('__new__' in _toplevel_match_captures(
+                            case.pattern) for case in node.cases):
                         return True
                 if '__new__' in _local_bound_names(node)[0]:
                     return True
@@ -3765,9 +3832,20 @@ _MUTATING_DISPLAY_ATTRS = frozenset((
     'setdefault', 'add', 'discard', '__setitem__', '__delitem__',
 ))
 
+# #1953 fix-r1 round 47 (anthropic r46 boundary#2/#3/#4, probes p4/p6a/p6b +
+# bare-append/insert/store-subscript/for-target/augassign, 2026-11-10): the
+# store paths that *add* an element -- the only ones that can put a handle
+# into a container whose binding held none.  The rest of
+# ``_MUTATING_DISPLAY_ATTRS`` only removes or rearranges what is already
+# there, so they never grow a clean container into a handle container.
+_ELEMENT_STORE_ATTRS = frozenset((
+    'append', 'appendleft', 'extend', 'extendleft', 'insert', 'add',
+    'update', 'setdefault', '__setitem__',
+))
+
 
 def _display_mutated_between(scope, name, binding_pos, use_pos,
-                             binding_value=None, slices=()):
+                             binding_value=None, slices=(), use=None):
     """True when a statement between the display binding and the use mutates it.
 
     #1953 fix-r1 round 41 (codex r40 C-P0-8, probe 2026-11-09): a constant
@@ -4031,7 +4109,7 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
                     if (isinstance(bound, ast.Lambda)
                             and _body_mutates(bound)):
                         mutators.add(name)
-            elif isinstance(statement, ast.For):
+            elif isinstance(statement, (ast.For, ast.AsyncFor)):
                 # #1953 fix-r1 round 46 (GLM r45 boundary#1, probe
                 # a-for-lambda): a ``for`` target over a literal tuple of
                 # mutating lambdas binds one each iteration -- the bound
@@ -4105,23 +4183,55 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
                     getattr(statement, 'col_offset', 0))
         if not binding_pos < position < use_pos:
             continue
-        for order, node in enumerate(_eval_order_nodes(statement)):
+        ordered = list(_eval_order_nodes(statement))
+        # #1953 fix-r1 round 47 (probes p1b-reverse/p1c): source position
+        # is not execution order inside one statement -- a keyword
+        # argument written before a starred argument still evaluates
+        # after it, and an Assign target evaluates after its value.  When
+        # the use itself lives in this statement the cut compares
+        # eval-order indices; across statements source order still rules.
+        use_order = None
+        if use is not None:
+            for index, candidate in enumerate(ordered):
+                if candidate is use:
+                    use_order = index
+                    break
+        for order, node in enumerate(ordered):
             node_position = (position, order)
             own_position = (getattr(node, 'lineno', 0),
                             getattr(node, 'col_offset', 0))
-            after_use = (own_position != (0, 0)
-                         and own_position >= use_pos)
+            after_use = ((order >= use_order) if use_order is not None
+                         else (own_position != (0, 0)
+                               and own_position >= use_pos))
             if isinstance(node, ast.Call):
+                # #1953 fix-r1 round 47 (GLM r46 concurrency#2, probe
+                # p7-direct): the after-use cut gates the direct
+                # convictions too -- a mutator call (or an unpricable
+                # mutation) that runs after the use cannot move what the
+                # use reads.  ``repeated`` stays first inside every
+                # mutation path: a loop re-runs events before the *next*
+                # iteration's use.  A call that mutates nothing falls
+                # through untouched -- the round-46 clean twin (a
+                # for-target bound to a clean reader lambda, called in
+                # the loop) stays clean.
                 callee = _callee_expr(node)
-                if (isinstance(callee, ast.Name) and callee.id in mutators):
-                    return True
-                if (isinstance(callee, ast.Attribute)
-                        and callee.attr in mutators):
+                if ((isinstance(callee, ast.Name)
+                        and callee.id in mutators)
+                        or (isinstance(callee, ast.Attribute)
+                            and callee.attr in mutators)):
+                    if id(node) in repeated:
+                        return True
+                    if after_use:
+                        continue
                     return True
                 event = mutates_display(callee, node)
                 if event is None:
                     continue
                 if event is True:
+                    if id(node) in repeated:
+                        return True
+                    if after_use:
+                        continue
                     return True
                 if id(node) in repeated:
                     return True
@@ -4136,16 +4246,36 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
                 # GLM r41 boundary P0#1: a For *target* is a subscript write
                 # class of its own -- ``for _items[0] in ...`` rebinds the
                 # selected element every iteration.
-                for sub in ast.walk(node.target):
-                    if not isinstance(sub, ast.Subscript):
-                        continue
-                    base = sub.value
-                    while isinstance(base, ast.Subscript):
-                        base = base.value
-                    if isinstance(base, ast.Name) and base.id in names:
-                        return True
+                if _target_hits_display(node.target):
+                    return True
             if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign,
                                  ast.Delete)):
+                if isinstance(node, ast.AugAssign):
+                    # #1953 fix-r1 round 47 (probe augassign-dirty):
+                    # ``items += [z]`` grows the display in place -- each
+                    # literal element is one tail insertion, the same
+                    # priced event an ``append`` of it would be.  A
+                    # non-literal value (``items += other``) is not
+                    # statically priceable and stays a mutation.
+                    if (isinstance(node.target, ast.Name)
+                            and node.target.id in names
+                            and not display_is_dict):
+                        if id(node) in repeated:
+                            return True
+                        if after_use:
+                            continue
+                        if (isinstance(node.value, (ast.Tuple, ast.List,
+                                                   ast.Set))
+                                and priceable
+                                and id(node) not in priced):
+                            priced.add(id(node))
+                            for _element in node.value.elts:
+                                events.append((node_position,
+                                               ('insertion', None),
+                                               chains.get(id(node), ())))
+                        else:
+                            return True
+                        continue
                 targets = (node.targets if isinstance(
                     node, (ast.Assign, ast.Delete)) else [node.target])
                 for target in targets:
@@ -4172,24 +4302,24 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
                             # r45, so a ``del`` nested in a compound
                             # statement entered the replay twice and a
                             # clean single removal read as a composite.
+                            # #1953 fix-r1 round 47 (GLM r46
+                            # concurrency#1, probe p3-del-multi): the
+                            # dedup keys on the *target*, not the Delete
+                            # statement -- one ``del a[1], a[1]`` holds two
+                            # removal targets in one statement node, and
+                            # the statement key swallowed the second.
                             if after_use:
                                 continue
-                            if id(node) not in priced:
-                                priced.add(id(node))
+                            if id(target) not in priced:
+                                priced.add(id(target))
                                 events.append((node_position,
                                                ('removal', index),
                                                chains.get(id(node), ())))
                             continue
                         if index is not None and id(node) in repeated:
                             return True
-                    for sub in ast.walk(target):
-                        if not isinstance(sub, ast.Subscript):
-                            continue
-                        base = sub.value
-                        while isinstance(base, ast.Subscript):
-                            base = base.value
-                        if isinstance(base, ast.Name) and base.id in names:
-                            return True
+                    if _target_hits_display(target):
+                        return True
     if not events:
         return False
     if not priceable:
@@ -4209,7 +4339,10 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
     # no-arm choice of an else-less ``if``), a ``match`` fork the matched
     # case's index (``-1`` no case), a ``BoolOp`` fork the index of the
     # operand the chain stopped at (operand *i* runs for every choice
-    # ``>= i``).  More than 16 combinations refuses the composite.
+    # ``>= i``).  A ``guardfall`` fork (r47) runs guard *i* for every
+    # choice ``>= i`` *and* on the no-case choice ``-1``, because a
+    # failed guard falls through.  More than 16 combinations refuses the
+    # composite.
     fork_arms = {}
     for _position, _event, chain in events:
         for fork_id, arm in chain:
@@ -4272,6 +4405,10 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
                 choice = choice_map[fork_id]
                 if active_kind[fork_id] == 'boolop':
                     if choice < arm:
+                        runs = False
+                        break
+                elif active_kind[fork_id] == 'guardfall':
+                    if choice != -1 and choice < arm:
                         runs = False
                         break
                 elif choice != arm:
@@ -7044,6 +7181,198 @@ def _receiver_attribute_writes(tree, receivers, shared):
             return None
         return value
 
+    # #1953 fix-r1 round 47 (anthropic r46 boundary#2/#3/#4, probes
+    # p4-try/p5-guard/p6a-compare/p6b-assert + the bare-append / insert /
+    # store-subscript / for-target / augappend family, 2026-11-10): the
+    # container fixpoint below registered a name as a handle container only
+    # from the *value it was bound to*, so a container whose binding held
+    # no handle -- ``items = [L, L, L]`` -- stayed unregistered forever
+    # even after ``items.append(z)`` put one in (``z = hs[0]``), and every
+    # later ``items[-1](...)`` read clean while the run time called the
+    # handle: a false PASS the fork model underneath could never repair,
+    # because the whole-display fallback it hands the declined selection
+    # to was empty.  An element *store* now registers the receiver the same
+    # way a binding value does.
+    def _carried_handle_roots(value, scope):
+        """Roots *value* hands on as a handle carrier, or ``[]`` (r47).
+
+        The exact chain the fixpoint's Assign arm read inline since round
+        16 -- a comprehension container, a tracked callee, a tracked alias
+        name, a relay comprehension, and the display-element merge --
+        factored out so the element-store registrations below ask the
+        stored value the same question an assignment value gets.
+        """
+        carried = _container_handle_roots(value, kinds, simple)
+        if not carried:
+            called = _container_callee(value, _wrapper_fresh(scope))
+            if called is not None:
+                for level in _chain(scope):
+                    if (level, called) in handle_containers:
+                        carried = handle_containers[(level, called)]
+                        break
+        if not carried and isinstance(value, ast.Name):
+            # ``other = hs`` hands the *container* over whole, and
+            # ``other[0]('common', <stub>)`` takes the same handle out of
+            # the second name; the fixpoint used to follow only a
+            # subscript/call wrapper, so the alias lost the roots
+            # (codex r1b P0).
+            for level in _chain(scope):
+                if (level, value.id) in handle_containers:
+                    carried = handle_containers[(level, value.id)]
+                    break
+        if not carried and isinstance(value, (ast.ListComp, ast.SetComp,
+                                              ast.DictComp,
+                                              ast.GeneratorExp)):
+            # #1953 fix-r1 round 8 (codex r4 P0-5 / GLM sibling r4 P1-2):
+            # ``g = [h for h in hs]`` relays exactly the handles ``hs``
+            # holds.  Only the *call* position decoded the relay, so
+            # ``for f in g: f(...)`` and ``g[0].common = <stub>`` stayed
+            # invisible; registering the relay here feeds all three.
+            carried = _relay_handle_roots(value, scope)
+        if isinstance(value, (ast.Tuple, ast.List, ast.Set, ast.Dict)):
+            # #1953 fix-r1 round 39 (macmini r36b table survivor): a
+            # display whose elements take handles out of containers the
+            # alias table knows (``items = (hs[0],)`` / ``items = (hs,)``)
+            # hands those handles on just like the comprehension relay
+            # does.
+            # #1953 fix-r1 round 40 (codex r39 C-P0-2 / C-P0-3 / C-P0-4 /
+            # C-P1-1 + GLM boundary r39 P1, probe 2026-11-09): the r39
+            # cut read one level of elements, skipped the display when
+            # an earlier branch had already answered (a comprehension
+            # element in the same tuple), and read the *history* table
+            # blind -- a stale container kept poisoning clean files
+            # (false report) while nested displays and dict keys lost
+            # real writes.  The display answer now merges with (not
+            # replaces) the other branches, recurses through nested
+            # displays and dict keys+values, and is position-aware via
+            # :func:`_carries_at` at each element.
+            display_roots = _display_taken_roots(value, scope)
+            if display_roots:
+                merged = list(carried) if carried else []
+                merged.extend(root for root in display_roots
+                              if root not in merged)
+                carried = merged
+        return list(carried) if carried else []
+
+    def _store_base_names(target):
+        """Base names a (possibly nested) subscript store writes through."""
+        found = []
+        for sub in ast.walk(target):
+            if not isinstance(sub, ast.Subscript):
+                continue
+            base = sub.value
+            while isinstance(base, ast.Subscript):
+                base = base.value
+            if (isinstance(base, ast.Name) and base.id not in found):
+                found.append(base.id)
+        return found
+
+    _store_name_classes = {}
+
+    def _store_receiver_names(scope, receiver):
+        """Names denoting the same container object as *receiver* (r47).
+
+        ``_name_alias_closure`` follows value hops forward only -- the
+        display-name direction: a mutation through ``_a`` after
+        ``_a = items`` counts against ``items``, but the seed ``_a`` never
+        reaches ``items``.  A *store through* the alias names the receiver
+        ``_a``, and the container to register is ``items`` -- the other
+        direction.  The binding pairs computed above answer it both ways: a
+        binding whose value is a bare name makes the target and the value
+        spellings denote one object, so the union of the two directions is
+        the receiver's name class.
+        """
+        components = _store_name_classes.get(scope)
+        if components is None:
+            components = {}
+
+            def root(name):
+                while components.get(name, name) != name:
+                    name = components[name]
+                return name
+
+            for pair_scope, name, value, _value_scope in pairs:
+                if (pair_scope is scope
+                        and isinstance(value, ast.Name)):
+                    left, right = root(name), root(value.id)
+                    if left != right:
+                        components[left] = right
+            _store_name_classes[scope] = components
+
+        def find(name):
+            while components.get(name, name) != name:
+                name = components[name]
+            return name
+
+        wanted = find(receiver)
+        names = {receiver}
+        for name in list(components) + list(components.values()):
+            if find(name) == wanted:
+                names.add(name)
+        return names
+
+    def _register_container_names(scope, receivers, carried):
+        """Register *carried* into every container *receivers* touch."""
+        if not carried or not receivers:
+            return False
+        grown = False
+        for receiver in receivers:
+            for name in _store_receiver_names(scope, receiver):
+                # A store through an alias (``_a = items; _a.append(h)``)
+                # grows the container the alias names, so the whole name
+                # class of the receiver registers together with it -- the
+                # same read the mutation window's alias set gives a
+                # display name.
+                for alias in _name_alias_closure(scope, {name}):
+                    if _carry(scope, alias, carried):
+                        grown = True
+        return grown
+
+    def _register_element_stores(scope, node):
+        """Element stores that carry handles into a container (r47).
+
+        A call ``items.append(z)`` / ``items.insert(1, z)`` /
+        ``mapping.update({...z...})``, its unbound spelling
+        ``list.append(items, z)`` and a For-target write
+        ``for items[k] in hs:`` store the value's handles into the
+        receiver; each registers the receiver (and its aliases) the way a
+        binding of the same value would.  The subscript-store and the
+        augmented spellings live in the fixpoint's Assign arm, which already
+        holds the value.
+        """
+        if isinstance(node, ast.Call):
+            callee = _callee_expr(node)
+            if not (isinstance(callee, ast.Attribute)
+                    and callee.attr in _ELEMENT_STORE_ATTRS):
+                return False
+            args = list(node.args)
+            if (isinstance(callee.value, ast.Name)
+                    and callee.value.id in ('list', 'dict', 'set',
+                                            'frozenset')):
+                # The unbound spelling hands the receiver in as the first
+                # argument: ``list.append(items, z)``.
+                if not args:
+                    return False
+                receiver = args[0]
+                args = args[1:]
+            else:
+                receiver = callee.value
+            if not isinstance(receiver, ast.Name):
+                return False
+            carried = []
+            for argument in args:
+                carried.extend(root for root in
+                               _carried_handle_roots(argument, scope)
+                               if root not in carried)
+            return _register_container_names(scope, [receiver.id], carried)
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            # ``for items[k] in hs:`` writes the iterated values into the
+            # container -- the subscript target is a store, not a read.
+            return _register_container_names(
+                scope, _store_base_names(node.target),
+                _carried_handle_roots(node.iter, scope))
+        return False
+
     def _display_selection_roots(callee, scope, use):
         """Roots a constant-path subscript of a display picks (r40), or ``None``.
 
@@ -7090,7 +7419,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
         if not _certain_before(slots, parents, last[0], use):
             return None
         if _display_mutated_between(scope, node.id, latest, limit,
-                                    last[0], slices):
+                                    last[0], slices, use):
             return None
         element = _select_display_path(last[0], slices)
         if element is None:
@@ -7107,63 +7436,39 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 targets, value = node.targets, node.value
             elif isinstance(node, ast.AnnAssign) and node.value is not None:
                 targets, value = [node.target], node.value
+            elif isinstance(node, ast.AugAssign):
+                # #1953 fix-r1 round 47 (probe augassign-dirty):
+                # ``items += [z]`` grows the bound container in place, so
+                # the name carries what the value carries exactly like a
+                # rebinding does.
+                targets, value = [node.target], node.value
             else:
+                # #1953 fix-r1 round 47 (probes p4/p6a/p6b +
+                # bare-append/insert/for-target): element stores register
+                # the container they write into, not only its binding.
+                if _register_element_stores(scope, node):
+                    grown = True
                 continue
-            carried = _container_handle_roots(value, kinds, simple)
-            if not carried:
-                called = _container_callee(value, _wrapper_fresh(scope))
-                if called is not None:
-                    for level in _chain(scope):
-                        if (level, called) in handle_containers:
-                            carried = handle_containers[(level, called)]
-                            break
-            if not carried and isinstance(value, ast.Name):
-                # ``other = hs`` hands the *container* over whole, and
-                # ``other[0]('common', <stub>)`` takes the same handle out of
-                # the second name; the fixpoint used to follow only a
-                # subscript/call wrapper, so the alias lost the roots
-                # (codex r1b P0).
-                for level in _chain(scope):
-                    if (level, value.id) in handle_containers:
-                        carried = handle_containers[(level, value.id)]
-                        break
-            if not carried and isinstance(value, (ast.ListComp, ast.SetComp,
-                                                  ast.DictComp, ast.GeneratorExp)):
-                # #1953 fix-r1 round 8 (codex r4 P0-5 / GLM sibling r4 P1-2):
-                # ``g = [h for h in hs]`` relays exactly the handles ``hs``
-                # holds.  Only the *call* position decoded the relay, so
-                # ``for f in g: f(...)`` and ``g[0].common = <stub>`` stayed
-                # invisible; registering the relay here feeds all three.
-                carried = _relay_handle_roots(value, scope)
-            if isinstance(value, (ast.Tuple, ast.List, ast.Set, ast.Dict)):
-                # #1953 fix-r1 round 39 (macmini r36b table survivor): a
-                # display whose elements take handles out of containers the
-                # alias table knows (``items = (hs[0],)`` / ``items = (hs,)``)
-                # hands those handles on just like the comprehension relay
-                # does.
-                # #1953 fix-r1 round 40 (codex r39 C-P0-2 / C-P0-3 / C-P0-4 /
-                # C-P1-1 + GLM boundary r39 P1, probe 2026-11-09): the r39
-                # cut read one level of elements, skipped the display when
-                # an earlier branch had already answered (a comprehension
-                # element in the same tuple), and read the *history* table
-                # blind -- a stale container kept poisoning clean files
-                # (false report) while nested displays and dict keys lost
-                # real writes.  The display answer now merges with (not
-                # replaces) the other branches, recurses through nested
-                # displays and dict keys+values, and is position-aware via
-                # :func:`_carries_at` at each element.
-                display_roots = _display_taken_roots(value, scope)
-                if display_roots:
-                    merged = list(carried) if carried else []
-                    merged.extend(root for root in display_roots
-                                  if root not in merged)
-                    carried = merged
+            # #1953 fix-r1 round 47: the inline chain below became the
+            # shared :func:`_carried_handle_roots` so the element stores
+            # ask the stored value the same question (comprehension
+            # container, tracked callee, tracked alias, relay
+            # comprehension, display-element merge).
+            carried = _carried_handle_roots(value, scope)
             if not carried:
                 continue
             for target in _leaf_targets(targets):
                 if (isinstance(target, ast.Name)
                         and _carry(scope, target.id, carried)):
                     grown = True
+                elif isinstance(target, ast.Subscript):
+                    # #1953 fix-r1 round 47 (probe store-subscript-dirty):
+                    # ``items[k] = z`` stores *z* into the container --
+                    # the base name gains what the value carries, the same
+                    # registration an element-method call gets.
+                    if _register_container_names(
+                            scope, _store_base_names(target), carried):
+                        grown = True
         if not grown:
             break
     for scope, node in _walk_scoped(tree):
@@ -8509,8 +8814,15 @@ def _repeated_between(scope, binding_pos):
             # single iteration keeps the linear per-iteration read (probe
             # b-for-order); an empty or longer / non-literal iterable is
             # unknown, so it takes the conservative ``inner`` flag.
-            target_inner = not (isinstance(node.iter, (ast.Tuple, ast.List))
-                                and len(node.iter.elts) == 1)
+            # #1953 fix-r1 round 47 (GLM boundary#2 + anthropic
+            # boundary#5, probe p2-starred): a one-element tuple whose
+            # only element is ``Starred`` unpacks an unknown count --
+            # ``(*_src,)`` / ``[*_src]`` -- so it is NOT a one-iteration
+            # literal and takes ``inner`` like any non-literal.
+            target_inner = not (
+                isinstance(node.iter, (ast.Tuple, ast.List))
+                and len(node.iter.elts) == 1
+                and not isinstance(node.iter.elts[0], ast.Starred))
             stack.append((node.target,
                           inner if target_inner else carried))
             for child in node.body:
@@ -8546,8 +8858,19 @@ def _repeated_between(scope, binding_pos):
             else:
                 stack.append((node.elt, True))
             continue
+        if isinstance(node, ast.ClassDef):
+            # #1953 fix-r1 round 47 (GLM r46 sibling#1, probe
+            # p8-class-loop): a class body executes at its statement, so
+            # inside a loop it re-runs every iteration -- its events are
+            # repeated exactly like the loop body's, the same rule
+            # ``_window_statements`` and ``_eval_order_nodes`` already
+            # carry.  Headers re-run too, so the whole child set rides
+            # ``carried``.
+            for child in ast.iter_child_nodes(node):
+                stack.append((child, carried))
+            continue
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
-                            ast.Lambda, ast.ClassDef)):
+                            ast.Lambda)):
             # the nested scope's body runs on its own terms; its header
             # expressions (defaults, decorators) re-run per enclosing
             # iteration.  (The definition node itself is never added to
@@ -9409,8 +9732,18 @@ def _module_call_positions(tree, direct=None):
     stack = [(child, ()) for child in reversed(tree.body)]
     while stack:
         node, loops = stack.pop()
+        if isinstance(node, ast.ClassDef):
+            # #1953 fix-r1 round 47 (GLM r46 sibling#2, probe
+            # u-class-site): a class body executes at its statement --
+            # its calls are module-scope sites just like the header's
+            # defaults, not nested-scope bodies that run on their own
+            # terms.
+            header = _definition_header(node)
+            stack.extend((item, loops) for item in reversed(header))
+            stack.extend((item, loops) for item in reversed(node.body))
+            continue
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
-                             ast.ClassDef, ast.Lambda)):
+                             ast.Lambda)):
             header = _definition_header(node)
             stack.extend((item, loops) for item in reversed(header))
             continue
@@ -9440,7 +9773,11 @@ def _module_call_positions(tree, direct=None):
                 stack.append((child, loops))
             for child in reversed(node.body):
                 stack.append((child, inner))
-            stack.append((node.target, loops))
+            # #1953 fix-r1 round 47 (GLM r46 sibling#3, probe
+            # u-fortarget-loops): the *target* re-evaluates on every
+            # back edge like the body -- ``for _d[_f()] in xs:`` rebinds
+            # through a call that sees what the body wrote after it.
+            stack.append((node.target, inner))
             stack.append((node.iter, loops))
             continue
         if isinstance(node, ast.While):
@@ -10567,8 +10904,17 @@ def _module_open_calls(tree):
     stack = [(child, ()) for child in reversed(tree.body)]
     while stack:
         node, loops = stack.pop()
+        if isinstance(node, ast.ClassDef):
+            # #1953 fix-r1 round 47 (GLM r46 sibling#2, probe
+            # u-class-site): a class body executes at its statement, so
+            # its open-call / carrier spellings are module-scope sites
+            # the same way the header defaults are.
+            stack.extend((item, loops)
+                         for item in reversed(_definition_header(node)))
+            stack.extend((item, loops) for item in reversed(node.body))
+            continue
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
-                             ast.ClassDef, ast.Lambda)):
+                             ast.Lambda)):
             stack.extend((item, loops)
                          for item in reversed(_definition_header(node)))
             continue
@@ -10648,7 +10994,11 @@ def _module_open_calls(tree):
         if isinstance(node, (ast.For, ast.AsyncFor)):
             inner = loops + (id(node),)
             stack.append((node.iter, loops))
-            stack.append((node.target, loops))
+            # #1953 fix-r1 round 47 (GLM r46 sibling#3, probe
+            # u-fortarget-loops): the *target* re-evaluates on every
+            # back edge like the body (same rule the twin call table
+            # got this round).
+            stack.append((node.target, inner))
             for child in reversed(node.body):
                 stack.append((child, inner))
             for child in reversed(node.orelse):
@@ -19513,6 +19863,235 @@ def aggregation_audit():
         failures.append('#1953 aggregation-audit: detector self-test '
                         'withdrew dict keys behind a walrus callee '
                         '(round 46)')
+    # #1953 fix-r1 round 47 (anthropic r46 boundary#2/#3/#4 + GLM r46
+    # boundary#1/#2 + concurrency#1, probes p1b/p1c/p2/p3/p4/p5/p6a/p6b/p7
+    # + the element-store family, 2026-11-10): a store of a handle-carrying
+    # value into a container -- an append (bound, aliased or unbound), an
+    # insert, a subscript store, a for-target write, an augmented append, an
+    # extend -- registers the container the way a binding of that value
+    # does, so a selection that later declines on a window mutation falls
+    # back to a real whole-display root instead of an empty one (a false
+    # PASS under every spelling).  The fork model replays Try handlers,
+    # chained-comparison tails, assert messages and match-guard
+    # fall-throughs on their own arms, so an unexecuted cancelling event no
+    # longer launders the executed one; the after-use cut reads evaluation
+    # order inside one statement, so a keyword arg written before a starred
+    # arg still counts as running after it.
+    for _m47_kind, _m47_src in (
+            ("an append of a bound handle into a clean container",
+             "    _items = [lambda *a: None, lambda *a: None,"
+             " lambda *a: None]\n"
+             "    _z = _hs[0]\n"
+             "    _items.append(_z)\n"
+             "    _items[-1]('common', object())\n"),
+            ("an append through an alias of the container",
+             "    _items = [lambda *a: None, lambda *a: None,"
+             " lambda *a: None]\n"
+             "    _a = _items\n"
+             "    _a.append(_hs[0])\n"
+             "    _items[-1]('common', object())\n"),
+            ("an unbound list.append store",
+             "    _items = [lambda *a: None, lambda *a: None,"
+             " lambda *a: None]\n"
+             "    _z = _hs[0]\n"
+             "    list.append(_items, _z)\n"
+             "    _items[-1]('common', object())\n"),
+            ("an insert of a handle into a clean container",
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _items.insert(1, _hs[0])\n"
+             "    _items[1]('common', object())\n"),
+            ("a subscript store of a handle into a clean container",
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _items[1] = _hs[0]\n"
+             "    _items[1]('common', object())\n"),
+            ("a for-target write of a handle into a clean container",
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    for _items[1] in _hs:\n"
+             "        pass\n"
+             "    _items[1]('common', object())\n"),
+            ("an augmented append of a handle into a clean container",
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _items += [_hs[0]]\n"
+             "    _items[-1]('common', object())\n"),
+            ("an extend of a tracked container into a clean container",
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _items.extend(_hs)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a try body append cancelled by an unexecuted handler pop",
+             "    _items = [lambda *a: None, lambda *a: None,"
+             " lambda *a: None]\n"
+             "    _z = _hs[0]\n"
+             "    try:\n"
+             "        _items.append(_z)\n"
+             "    except Exception:\n"
+             "        _items.pop()\n"
+             "    _items[-1]('common', object())\n"),
+            ("a comparison tail pop that short-circuits away",
+             "    _items = [lambda *a: None, lambda *a: None,"
+             " lambda *a: None]\n"
+             "    _z = _hs[0]\n"
+             "    _items.append(_z)\n"
+             "    _x = 1 > 2 < _items.pop()\n"
+             "    _items[-1]('common', object())\n"),
+            ("an assert message pop that never runs",
+             "    _items = [lambda *a: None, lambda *a: None,"
+             " lambda *a: None]\n"
+             "    _z = _hs[0]\n"
+             "    _items.append(_z)\n"
+             "    assert _items, _items.pop()\n"
+             "    _items[-1]('common', object())\n"),
+            ("a match guard fall-through composite",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    match 0:\n"
+             "        case _ if _items.pop(1) is None:\n"
+             "            pass\n"
+             "        case _:\n"
+             "            _items.pop(1)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a starred one-element for-iterable double pop",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _src = (0, 0)\n"
+             "    _d = {}\n"
+             "    for _d[_items.pop(1)] in (*_src,):\n"
+             "        pass\n"
+             "    _items[-1]('common', object())\n"),
+            ("a del statement's second same-index target",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    del _items[1], _items[1]\n"
+             "    _items[-1]('common', object())\n"),
+            ("a class body re-run inside a loop",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    for _ in (0, 1):\n"
+             "        class _C:\n"
+             "            _items.pop(1)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a keyword-then-starred evaluation-order pair",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    def _f2(*a, **k):\n"
+             "        return None\n"
+             "    _f2(k=_items[-1]('common', object()),"
+             " *[_items.insert(3, _hs[0])])\n")):
+        _m47_display = ast.parse(
+            "def _m47a(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m47_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' not in _withdrawn_receivers(_m47_display):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost a receiver behind ' + _m47_kind
+                            + ' (round 47)')
+    for _m47_kind, _m47_src in (
+            ("an append of a clean lambda",
+             "    _items = [lambda *a: None, lambda *a: None,"
+             " lambda *a: None]\n"
+             "    _items.append(lambda *a: None)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a handle append narrowed to a clean leading element",
+             "    _items = [lambda *a: None, lambda *a: None,"
+             " lambda *a: None]\n"
+             "    _items.append(_hs[0])\n"
+             "    _items[0]('common', object())\n"),
+            ("an insert of a clean lambda",
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _items.insert(1, lambda *a: None)\n"
+             "    _items[1]('common', object())\n"),
+            ("a subscript store of a clean lambda",
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _items[1] = lambda *a: None\n"
+             "    _items[1]('common', object())\n"),
+            ("a for-target write over a clean literal",
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    for _items[1] in (0, 0):\n"
+             "        pass\n"
+             "    _items[1]('common', object())\n"),
+            ("an augmented append of a clean lambda",
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _items += [lambda *a: None]\n"
+             "    _items[-1]('common', object())\n"),
+            ("try arms each pricing safe alone",
+             "    _items = [lambda *a: None, lambda *a: None,"
+             " lambda *a: None]\n"
+             "    try:\n"
+             "        _items.pop(0)\n"
+             "    except Exception:\n"
+             "        _items.pop(0)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a comparison tail pop after a safe insert",
+             "    _items = [lambda *a: None, lambda *a: None,"
+             " lambda *a: None]\n"
+             "    _items.insert(0, 0)\n"
+             "    _x = 1 > 2 < _items.pop(0)\n"
+             "    _items[-1]('common', object())\n"),
+            ("an assert message pop after a safe insert",
+             "    _items = [lambda *a: None, lambda *a: None,"
+             " lambda *a: None]\n"
+             "    _items.insert(0, 0)\n"
+             "    assert _items, _items.pop(0)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a match guard with two head pops",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    match 0:\n"
+             "        case _ if _items.pop(0) is None:\n"
+             "            pass\n"
+             "        case _:\n"
+             "            _items.pop(0)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a del statement's second head-index target",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    del _items[0], _items[0]\n"
+             "    _items[-1]('common', object())\n"),
+            ("a class body outside any loop",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    class _C:\n"
+             "        _items.pop(1)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a mirror value-side use after a target-side insert",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    _d = {}\n"
+             "    _d[_items.insert(3, _hs[0])] = _items[-1]('common',"
+             " object())\n"),
+            ("a mutator call after the use inside its arm",
+             "    _items = [_hs[0], lambda *a: None, lambda *a: None]\n"
+             "    def _mut():\n"
+             "        _items.pop(0)\n"
+             "    _flag = True\n"
+             "    if _flag:\n"
+             "        _items.insert(1, _items.pop(0))\n"
+             "        _items[-1]('common', object())\n"
+             "        _mut()\n")):
+        _m47_clean = ast.parse(
+            "def _m47b(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m47_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' in _withdrawn_receivers(_m47_clean):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'withdrew a clean receiver behind ' + _m47_kind
+                            + ' (round 47)')
+    # #1953 fix-r1 round 47 (GLM r46 sibling#2/#3, unit probes u-class-site/
+    # u-fortarget-loops): the module call tables record a class-body call at
+    # its class statement and carry the loop id on a for-target call.
+    _m47_class_sites = _module_call_positions(ast.parse(
+        "held = globals\n"
+        "class _C:\n"
+        "    held(report)\n"
+        "def _g(_x=held(report)):\n"
+        "    pass\n"
+        "held(report)\n"))
+    if not any(_position == (3, 4) and not _loops
+               for _position, _loops in _m47_class_sites.get('held', ())):
+        failures.append('#1953 aggregation-audit: detector self-test '
+                        'dropped the class-body call site from the '
+                        'position table (round 47)')
+    _m47_for_sites = _module_call_positions(ast.parse(
+        "def _f():\n"
+        "    pass\n"
+        "for _d[_f()] in (0, 0):\n"
+        "    _f()\n"))
+    if not all(_loops for _position, _loops in _m47_for_sites.get('_f', ())):
+        failures.append('#1953 aggregation-audit: detector self-test '
+                        'dropped the loop id from a for-target call site '
+                        '(round 47)')
     for _label, _source, _want in (
             ("a handle certainly overwritten in a finally block",
              "def _w42_use():\n"
