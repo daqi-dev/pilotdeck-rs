@@ -223,3 +223,10 @@ The `api-server-parser-admission` row replaces the whole
 the Host-less request then fall through to the `/health` route and answer `200`,
 so the recorded `400` cells go red. That is the #1683 defect itself, which is
 why the negative control mutates the wiring rather than a mutant switch.
+
+#1947：`negative_controls_1947.py`（开关式，1 个开关）钉 boundary id 表的
+fail-closed：`api-server-oracle-boundary-unregistered` 卸掉「未声明 id 且
+body 达到 1 MiB cap 即报错」的分支，`recorded_boundary_body_length_
+rejects_unregistered_cell` 在变异下转绿而失败于锚。开关式文件与本车道旧的
+`negative_controls.py` 并存（旧表要 `mutating_sources` 的 HEAD-pristine 树，
+预提交批次给不出，形态先例是 http_store 的 `negative_controls_1947.py`）。

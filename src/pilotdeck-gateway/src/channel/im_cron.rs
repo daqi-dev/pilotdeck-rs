@@ -82,10 +82,12 @@ where
     // TS: `if (delivery.originChannelKey && delivery.originChannelKey !== channelKey)`.
     // `""` is falsy in JS, so an empty origin channel means "not set" and the
     // delivery proceeds; only a non-empty foreign channel aborts it.
-    let origin_set = delivery
-        .origin_channel_key
-        .as_ref()
-        .filter(|origin| !origin.as_js().is_empty());
+    // #1699: the mutant counts the empty string as a set foreign channel —
+    // the cron `originChannelKey: ''` oracle cell records a delivered `true`
+    // there, so it goes red instead of relying on the direct unit test alone.
+    let origin_set = delivery.origin_channel_key.as_ref().filter(|origin| {
+        crate::mutants::on("webhook-cron-origin-empty") || !origin.as_js().is_empty()
+    });
     let chat_id = if origin_set.is_some_and(|origin| origin != channel_key) {
         None
     } else {

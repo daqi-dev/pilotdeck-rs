@@ -1,30 +1,13 @@
 //! `renderApiServerEvent` and the visible-failure predicates it depends on.
 //! Text fragments are UTF-16 so a reply keeps lone surrogates the way JS
 //! string concatenation does.
-use crate::{js_value::to_string_units, runtime::memory::js_trim_units};
+use crate::{
+    channel::agent_status::{
+        is_visible_failure_agent_status_event, is_visible_failure_status_detail, status_message,
+    },
+    js_value::to_string_units,
+};
 use pilotdeck_protocol::{JsString, JsValue};
-
-/// `VISIBLE_FAILURE_STATUS_EVENTS` in `api-server-render.ts` (baseline
-/// cc7c4e6). These are `agent_status.event` names, not gateway event types.
-const VISIBLE_FAILURE_STATUS_EVENTS: [&str; 17] = [
-    "model_empty_response_exhausted",
-    "max_turns_reached",
-    "max_output_recovery_exhausted",
-    "model_request_failed",
-    "tool_call_recovery_exhausted",
-    "tool_error_loop",
-    "lifecycle_blocked",
-    "turn_failed",
-    "turn_timeout",
-    "gateway_submit_failed",
-    "session_busy",
-    "gateway_bridge_error",
-    "gateway_stream_ended_without_completion",
-    "channel_submit_failed",
-    "subagent_failed",
-    "content_filter_stop",
-    "unknown_finish_reason",
-];
 
 pub fn event_type(event: &JsValue) -> Option<String> {
     event
@@ -54,51 +37,15 @@ fn is_nullish(value: Option<&JsValue>) -> bool {
     matches!(value, None | Some(JsValue::Undefined) | Some(JsValue::Null))
 }
 
-/// `isVisibleFailureStatusDetail`: only an explicit `visible: false` hides.
-pub fn is_visible_failure_status_detail(detail: Option<&JsValue>) -> bool {
-    let Some(detail) = detail else { return false };
-    if matches!(detail.get("visible"), Some(JsValue::Bool(false))) {
-        return false;
-    }
-    matches!(
-        detail.get("severity").and_then(JsValue::as_string),
-        Some(severity) if severity.equals_str("error")
-    )
-}
-
 /// `isVisibleFailureGatewayEvent`.
 pub fn is_visible_failure_gateway_event(event: &JsValue) -> bool {
     event_type(event).as_deref() == Some("agent_status")
         && is_visible_failure_status_detail(event.get("detail"))
 }
 
-/// `isVisibleFailureAgentStatusEvent`.
-fn is_visible_failure_agent_status_event(event: &JsValue) -> bool {
-    if matches!(
-        event.get("detail").and_then(|detail| detail.get("visible")),
-        Some(JsValue::Bool(false))
-    ) {
-        return false;
-    }
-    let name = event
-        .get("event")
-        .and_then(JsValue::as_string)
-        .and_then(|value| value.to_utf8().ok())
-        .unwrap_or_default();
-    VISIBLE_FAILURE_STATUS_EVENTS.contains(&name.as_str())
-        || is_visible_failure_status_detail(event.get("detail"))
-}
-
 /// `visibleStatusMessage`: a non-blank string message wins, else the fallback.
 fn visible_status_message(detail: Option<&JsValue>, fallback: &str) -> JsString {
-    if let Some(message) = detail
-        .and_then(|detail| detail.get("message"))
-        .and_then(JsValue::as_string)
-        && !js_trim_units(message.units()).is_empty()
-    {
-        return message.clone();
-    }
-    JsString::from(fallback)
+    status_message(detail).unwrap_or_else(|| JsString::from(fallback))
 }
 
 fn wrap_error(message: &JsString) -> JsString {

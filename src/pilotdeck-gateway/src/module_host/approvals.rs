@@ -50,7 +50,9 @@ use std::{future::Future, io, pin::Pin, sync::Arc, time::SystemTime};
 /// strictly more than 64 KiB total is over-budget, exactly 64 KiB is
 /// served. The over-budget verdict never reaches the wire in TS as the
 /// transport's 413 frame (see the `ReadError::OverBudget` branch).
-const INPUT_BUDGET: usize = 64 * 1024;
+/// `pub(super)`: the shared budget guard (`budget_guard.rs`, #1914) reads
+/// it as the approvals lane's ceiling.
+pub(super) const INPUT_BUDGET: usize = 64 * 1024;
 
 /// The top-level input keys the transport's field allowlist accepts, TS
 /// `allowed` (`publicApprovalHttpTransport.ts:27-28`): the four shared fields

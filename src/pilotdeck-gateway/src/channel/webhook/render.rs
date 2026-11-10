@@ -1,29 +1,7 @@
 //! `src/adapters/channel/webhook/webhook-render.ts` (baseline cc7c4e6).
 use pilotdeck_protocol::JsValue;
 
-use super::status::{is_visible_failure_status_detail, visible_status_message};
-
-/// `VISIBLE_FAILURE_STATUS_EVENTS`, the event names that render a visible
-/// failure even without a detail record.
-const VISIBLE_FAILURE_STATUS_EVENTS: [&str; 17] = [
-    "model_empty_response_exhausted",
-    "max_turns_reached",
-    "max_output_recovery_exhausted",
-    "model_request_failed",
-    "tool_call_recovery_exhausted",
-    "tool_error_loop",
-    "lifecycle_blocked",
-    "turn_failed",
-    "turn_timeout",
-    "gateway_submit_failed",
-    "session_busy",
-    "gateway_bridge_error",
-    "gateway_stream_ended_without_completion",
-    "channel_submit_failed",
-    "subagent_failed",
-    "content_filter_stop",
-    "unknown_finish_reason",
-];
+use super::status::{is_visible_failure_agent_status_event, visible_status_message};
 
 const VISIBLE_FAILURE_FALLBACK: &str =
     "Agent execution stopped before producing a complete response.";
@@ -64,7 +42,7 @@ pub(super) fn render_webhook_event(event: &JsValue) -> Option<String> {
             ))
         }
         "agent_status" => {
-            if is_visible_failure_agent_status(event) {
+            if is_visible_failure_agent_status_event(event) {
                 Some(format!(
                     "\n⚠️ {}\n",
                     visible_status_message(event.get("detail"), VISIBLE_FAILURE_FALLBACK)
@@ -81,20 +59,6 @@ pub(super) fn render_webhook_event(event: &JsValue) -> Option<String> {
         )),
         _ => None,
     }
-}
-
-/// `isVisibleFailureAgentStatus`: `detail?.visible !== false` and (the event
-/// name is in the set or the detail is a visible failure status).
-fn is_visible_failure_agent_status(event: &JsValue) -> bool {
-    let visible = event.get("detail").and_then(|detail| detail.get("visible"));
-    let visible = visible.is_none_or(|value| *value != JsValue::Bool(false));
-    let name = event
-        .get("event")
-        .and_then(JsValue::as_string)
-        .map(|name| String::from_utf16_lossy(name.units()));
-    visible
-        && (name.is_some_and(|name| VISIBLE_FAILURE_STATUS_EVENTS.contains(&name.as_str()))
-            || is_visible_failure_status_detail(event.get("detail")))
 }
 
 /// The truthiness the renderer's `event.ok` needs (any JS truthy value).

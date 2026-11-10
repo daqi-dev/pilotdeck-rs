@@ -198,9 +198,14 @@ function rawExchange(
     };
     const timer = setTimeout(() => {
       // mode "none" expects silence; the bounded probe records whatever
-      // arrived (the null-body cell never gets a response).
+      // arrived (the null-body cell never gets a response). #1690: the same
+      // 5000 ms as every other mode — a shorter recording window than the
+      // replay's would call a late answer "no response" here while the
+      // replay still sees it (a wrong oracle); a longer one would record a
+      // response the replay then misses (a false red). Equal windows, one
+      // constant.
       finish(buffer === '' && raws.length === 0 ? { noResponse: true, raws: [] } : { raws: raws.concat(buffer ? [buffer] : []) });
-    }, mode === 'none' ? 400 : 5000);
+    }, 5000);
     socket = net.createConnection({ port, host: '127.0.0.1' }, () => {
       socket!.write(bytes);
     });
@@ -381,13 +386,21 @@ scenario(
     post('empty-object', 'd1', '{}'),
     post('short-json', 'd2', '"ab"'),
     post('not-json', 'd3', 'not json at all'),
+    // #1621: a bare string body falls to `extractText`'s last arm —
+    // `JSON.stringify(body)`, so the units are the stringify'd ones and the
+    // gate is `str.length > 5` (with `"{}"` excluded). The golden only had
+    // 4-unit ("ab", this cell above) and 10-unit samples on the same side of
+    // the gate. The 5/6-unit cells straddle it — 5 stays ignored and 6 turns
+    // into text — so `>=` instead of `>` turns the five-unit cell red.
+    post('five-units', 'd6', '"abc"'),
+    post('six-units', 'd7', '"abcd"'),
     // #1681: `extractText` returns the empty string for a string `text` field,
     // and the call site's `if (!text)` treats it as no text. The cell pins the
     // ignored reply, no deliveryInfo and no gateway call.
     post('empty-text', 'd5', json({ text: '' })),
     post('null-body', 'd4', 'null', { mode: 'none' }),
   ],
-  [[]],
+  [[], []],
 );
 
 // 9. extract-github
@@ -490,6 +503,10 @@ scenario(
     post('seed', 'd1', json({ message: 'hi' })),
     { op: 'cron', sessionKey: 'webhook:chat=webhook:main:d1:general', text: 'cron reply' },
     { op: 'cron', sessionKey: 'webhook:chat=webhook:main:d1:general', originChannelKey: 'telegram', text: 'nope' },
+    // #1699: an empty `originChannelKey` is falsy in TS, so it means "not set"
+    // and the delivery runs — only a non-empty foreign channel gates it. The
+    // cell records the delivered `true` next to the gated `false` above.
+    { op: 'cron', sessionKey: 'webhook:chat=webhook:main:d1:general', originChannelKey: '', text: 'empty origin reply' },
     { op: 'cron', sessionKey: 'unparseable', originSessionKey: 'webhook:chat=orig:general', text: 'origin reply' },
     { op: 'cron', sessionKey: 'webhook:unparseable' },
   ],
@@ -570,7 +587,57 @@ scenario(
   [[], []],
 );
 
-const EXPECTED_CASE_COUNT = 21;
+// 20. fallback-delivery-id (#1621): neither request carries a delivery-id
+// header, so the id falls back to `${routeName}-${Date.now()/1000}`. The
+// scenario records `frozenNow` (milliseconds) and the generator shims
+// `Date.now` to it for the scenario's whole lifetime, so the fallback id is
+// the literal `main-1700000000` — pinned in the accepted reply, the
+// duplicate reply and the gateway session key — and the second request,
+// frozen to the same instant, deduplicates against the first: the same-key
+// dedup of fallback ids a real clock only gives by landing inside one
+// millisecond.
+scenario(
+  'fallback-delivery-id',
+  { port: 0, routes: { main: { secret: '__INSECURE_NO_AUTH__' } }, frozenNow: 1_700_000_000_000 },
+  [
+    { op: 'request', label: 'no-id-first', method: 'POST', target: '/webhooks/main', body: json({ message: 'hi' }), mode: 'close' },
+    { op: 'request', label: 'no-id-repeat', method: 'POST', target: '/webhooks/main', body: json({ message: 'hi' }), mode: 'close' },
+  ],
+  [[{ type: 'assistant_text_delta', text: 'first reply' }]],
+);
+
+// 21. order-combos (#1621): precedence pairs the single-check cells cannot
+// express. Route lookup runs before the size cap, so an oversize body to an
+// unknown route answers 404 instead of the zero-byte close of the too-large
+// cell. The rate window runs before the signature check and a rejected
+// signature still consumes quota, so three wrong-signed in-limit requests
+// answer 401, 401, then 429 (the signed bodies are exactly maxBodyBytes —
+// any larger and the size close would mask the signature arm).
+scenario(
+  'order-combos',
+  { port: 0, routes: { main: { secret: 'topsecret' } }, rateLimit: 2, maxBodyBytes: 10 },
+  [
+    post('unknown-route-oversize', 'd1', 'x'.repeat(20), { target: '/webhooks/nope' }),
+    signed('oversign-1', 'd2', '"01234567"', 'topsecret', 'wrong'),
+    signed('oversign-2', 'd3', '"01234567"', 'topsecret', 'wrong'),
+    signed('oversign-3', 'd4', '"01234567"', 'topsecret', 'wrong'),
+  ],
+);
+
+// 22. utf8-body (#1690): a non-ASCII body rides the request as real UTF-8
+// bytes — the generator's `socket.write(string)` uses Node's default utf8
+// encoding, not the socket's latin1 *read* encoding — and the rendered reply
+// comes back through the same channel. Pins the whole non-ASCII decode
+// round-trip; invalid-sequence lossy replacement is a registered remaining
+// gap (README), not covered here.
+scenario(
+  'utf8-body',
+  { port: 0, routes: { main: { secret: '__INSECURE_NO_AUTH__' } } },
+  [post('utf8-message', 'd1', json({ message: '你好 webhook' }))],
+  [[{ type: 'assistant_text_delta', text: '你好回复' }]],
+);
+
+const EXPECTED_CASE_COUNT = 24;
 assert.equal(cases.length, EXPECTED_CASE_COUNT, '#1334 generator case count');
 
 // The null-body cell rejects the voided handleRequest promise; keep the
@@ -578,6 +645,7 @@ assert.equal(cases.length, EXPECTED_CASE_COUNT, '#1334 generator case count');
 process.on('unhandledRejection', () => {});
 
 const unhandledBefore = process.listenerCount('unhandledRejection');
+const realDateNow = Date.now;
 const oracle: any[] = [];
 for (const definition of cases) {
   const state = {
@@ -602,6 +670,14 @@ for (const definition of cases) {
     options.mapper = new WebhookSessionMapper({ activeByChatId: {} }, () => FIXED_UUID);
   }
   const channel = new WebhookChannel(options);
+  // #1621: a scenario recorded with `frozenNow` shims `Date.now` for the
+  // channel's whole lifetime — start through stop — so the fallback
+  // delivery id (and the rate/dedup windows keyed on the same clock) record
+  // literal, replayable values. `frozenNow` itself is never passed to the TS
+  // constructor; it is recorded in `options` for the Rust replay's `now`
+  // seam, like `mapperFixedUuid`.
+  const frozenNow = definition.options.frozenNow;
+  if (frozenNow !== undefined) Date.now = () => frozenNow;
   const deps: any = { logger };
   if (definition.name !== 'gateway-missing') deps.gateway = makeGateway(state);
   const serversBefore = seenServers.length;
@@ -665,6 +741,7 @@ for (const definition of cases) {
   // Stop after the capture: the stopping log line is intentionally not part
   // of the oracle, and closing the listener lets the process exit.
   await handle.stop();
+  if (frozenNow !== undefined) Date.now = realDateNow;
 }
 assert.equal(process.listenerCount('unhandledRejection'), unhandledBefore, '#1334 no stray handlers');
 

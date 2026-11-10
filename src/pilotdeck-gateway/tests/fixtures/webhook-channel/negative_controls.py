@@ -71,6 +71,30 @@ switches = [
     ('webhook-empty-text-accepted', SOURCE_WEBHOOK,
      ['no_text', 'empty_text_request_is_not_a_delivery'],
      ['#1334 webhook oracle case no-text', '#1681 the empty string is ignored']),
+    # #1699: the second assertion of the #1681 direct test, bound on its own —
+    # the ignored reply must not leave a deliveryInfo entry behind, and the
+    # accepting mutant above could mask a leak of exactly that kind.
+    ('webhook-empty-text-delivery-info', SOURCE_WEBHOOK, 'empty_text_request_is_not_a_delivery',
+     '#1681 the empty string writes no delivery info'),
+    # #1744: the admission fusion — restoring the check-then-act split lets
+    # two concurrent webhooks for one chat both pass their check and
+    # double-dispatch (the sms lane's `sms-active-insert-split` sibling).
+    ('webhook-active-insert-split', SOURCE_WEBHOOK, 'webhook_active_insert_split',
+     '#1744 concurrent same-chat webhooks dispatch exactly one turn'),
+    # #1689.1: a failed `dup(2)` for the FIN probe must degrade to a probeless
+    # serve, not drop the accepted connection (TS owns one fd per connection
+    # and never loses one). The low-RLIMIT_NOFILE reexec child stages exactly
+    # that budget; the mutant restores the drop and the client sees EOF.
+    ('webhook-dup-failure-drops', SOURCE_WEBHOOK, 'dup_failure_serves_without_the_fin_probe',
+     '#1689 the EMFILE-failing dup degrades to a probeless serve instead of dropping the connection'),
+    # #1689.2: the accept-error backoff ladder and the one-log-per-streak
+    # counter. The mutant restores the pre-fix fixed 100 ms pause: the ladder
+    # unit test's persistent values turn red, and the low-fd child's error log
+    # shows up at ~0.3 s instead of past one second of doubling.
+    ('webhook-accept-backoff-off', SOURCE_WEBHOOK,
+     ['accept_error_backoff_ladder_is_bounded', 'dup_failure_serves_without_the_fin_probe'],
+     ['#1689 persistent accept failure 0 backs off by 200ms',
+      '#1689 the accept backoff delays the first error log past one second']),
     # #1682: `this.routes[routeName]` walks the prototype chain, so an
     # `Object.prototype` own property name (`constructor`, `__proto__`, ...)
     # resolves to a truthy value with no `secret`/`deliver`: TS authenticates
@@ -83,6 +107,10 @@ switches = [
     # An `s_` 36-hex session suffix is a cron chat id; without the suffix a
     # cron delivery to the new-session chat resolves no target.
     ('webhook-cron-suffix', SOURCE_CRON, 'cron_delivery_resolves_session_suffix_chat_ids', '#1334 an s_ session key is a cron target'),
+    # #1699: an empty `originChannelKey` is falsy in TS, so it means "not set"
+    # and the cron delivery runs; counting '' as a set foreign channel flips
+    # the cell's recorded `true` for the empty-origin step.
+    ('webhook-cron-origin-empty', SOURCE_CRON, 'cron_delivery', '#1334 webhook oracle case cron-delivery'),
     # #1729: recording type drift must fail before replay can use defaults.
     ('webhook-oracle-recorded-method', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'recorded_method_rejects_wrong_type',
      '#1334 #1729 rejects method type drift'),
@@ -120,6 +148,11 @@ switches = [
      '#1334 #1729 rejects options.secret type drift'),
     ('webhook-oracle-recorded-rate-limit', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'recorded_rate_limit_rejects_wrong_type',
      '#1334 #1729 rejects options.rateLimit type drift'),
+    # #1621: the frozen clock the fallback-delivery-id cell depends on. A
+    # fail-open read silently drops the injection and the literal fallback id
+    # goes back to clock luck.
+    ('webhook-oracle-recorded-now', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'recorded_now_rejects_wrong_type',
+     '#1334 #1729 rejects options.frozenNow type drift'),
     ('webhook-oracle-recorded-max-body', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'recorded_max_body_rejects_wrong_type',
      '#1334 #1729 rejects options.maxBodyBytes type drift'),
     ('webhook-oracle-recorded-mapper-uuid', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'recorded_mapper_uuid_rejects_wrong_type',
@@ -157,7 +190,7 @@ GUARDED = [SOURCE_WEBHOOK, SOURCE_HMAC, SOURCE_CRON,
     ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/channel/webhook/mapper.rs',
     ROOT / 'src/pilotdeck-gateway/src/channel/webhook/render.rs',
-    ROOT / 'src/pilotdeck-gateway/src/channel/webhook/status.rs',
+    ROOT / 'src/pilotdeck-gateway/src/channel/agent_status.rs',
     ROOT / 'src/pilotdeck-gateway/src/channel/mod.rs',
     ROOT / 'src/pilotdeck-gateway/src/channel/protocol.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_http.rs',

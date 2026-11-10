@@ -112,30 +112,58 @@ fn assert_replay_budget_covers_the_cap() {
 /// an oracle edited to `<15 bytes>` — or a generator that recorded the wrong
 /// count — would leave every one of them green while proving nothing. Each
 /// boundary cell must therefore replay the length it claims to test.
-fn assert_boundary_body_len(id: &str, case: &Value) {
+/// #1947: the id table is fail-closed too (the sms lane's #1984 shape) — a
+/// request body that reaches the cap is a boundary cell even when its id was
+/// never declared, so a renamed or newly added cell fails the replay instead
+/// of replaying with no length pin at all (the old `_ => return` silent pass).
+fn assert_boundary_body_len_checked(id: &str, case: &Value) -> Result<(), String> {
     // #1759 E: before the drift comparison, so a raised product cap is reported
     // as a raised cap instead of being misattributed to a broken fixture.
     assert_replay_budget_covers_the_cap();
     let expected = match id {
         "body-limit-exact" => MAX_REQUEST_BYTES,
         _ if id.starts_with("oversized-") => MAX_REQUEST_BYTES + 1,
-        _ => return,
+        other => {
+            // #1947 fail-closed: the switch exists so the negative control can
+            // prove the guard rejects an undeclared boundary cell.
+            let reaches_cap = case["requests"].as_array().is_some_and(|requests| {
+                requests.iter().any(|request| {
+                    request["body"]
+                        .as_str()
+                        .is_some_and(|text| recorded_body(text).len() >= MAX_REQUEST_BYTES)
+                })
+            });
+            if reaches_cap && !crate::mutants::on("api-server-oracle-boundary-unregistered") {
+                return Err(format!(
+                    "#1333 {other}: records a request body that reaches the {MAX_REQUEST_BYTES}-byte \
+                     body cap but is not declared in `assert_boundary_body_len`; declare it with \
+                     its expected length"
+                ));
+            }
+            return Ok(());
+        }
     };
     let requests = case["requests"].as_array().expect("#1333 requests");
-    assert_eq!(
-        requests.len(),
-        1,
-        "#1333 {id}: a boundary cell replays exactly one request"
-    );
-    let text = requests[0]["body"]
-        .as_str()
-        .unwrap_or_else(|| panic!("#1333 {id}: a boundary cell must record a body"));
+    if requests.len() != 1 {
+        return Err(format!(
+            "#1333 {id}: a boundary cell replays exactly one request"
+        ));
+    }
+    let Some(text) = requests[0]["body"].as_str() else {
+        return Err(format!("#1333 {id}: a boundary cell must record a body"));
+    };
     let len = recorded_body(text).len();
-    assert_eq!(
-        len, expected,
-        "#1333 {id}: boundary cell must replay {expected} bytes (the product cap), not {len}; \
-         the fixture and `MAX_REQUEST_BYTES` have drifted apart"
-    );
+    if len != expected {
+        return Err(format!(
+            "#1333 {id}: boundary cell must replay {expected} bytes (the product cap), not {len}; \
+             the fixture and `MAX_REQUEST_BYTES` have drifted apart"
+        ));
+    }
+    Ok(())
+}
+
+fn assert_boundary_body_len(id: &str, case: &Value) {
+    assert_boundary_body_len_checked(id, case).unwrap_or_else(|error| panic!("{error}"));
 }
 
 /// #1683: pin the knobs of the two parser-admission cells, not just their
@@ -219,6 +247,33 @@ fn product_cap_is_pinned_to_the_oversized_body_literal() {
         REPLAY_BODY_BUDGET,
         "#1759 `MAX_REQUEST_BYTES` moved away from the literal the oversized test and the \
          oracle were recorded against; re-record the fixture and update both ends together"
+    );
+}
+
+/// #1947: the fail-closed id table — an undeclared boundary id whose recorded
+/// body reaches the cap must be rejected, not skipped. The negative control
+/// `api-server-oracle-boundary-unregistered` disarms exactly this branch, so
+/// the old `_ => return` silent pass would let this assertion turn green under
+/// mutation.
+#[test]
+fn recorded_boundary_body_length_rejects_unregistered_cell() {
+    crate::negative_assert!(
+        assert_boundary_body_len_checked(
+            "body-limit-exact-renamed",
+            &json!({"requests": [{"body": format!("<{MAX_REQUEST_BYTES} bytes>")}]})
+        )
+        .is_err(),
+        "#1333 #1947 rejects an undeclared boundary cell"
+    );
+    // Non-boundary cells are not this guard's business: a small body under an
+    // unknown id stays a pass.
+    crate::negative_assert!(
+        assert_boundary_body_len_checked(
+            "body-limit-exact-renamed",
+            &json!({"requests": [{"body": "{}"}]})
+        )
+        .is_ok(),
+        "#1333 #1947 a body below the cap is not a boundary cell"
     );
 }
 
