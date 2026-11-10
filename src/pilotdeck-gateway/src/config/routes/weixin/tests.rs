@@ -91,6 +91,68 @@ async fn mock(mode: &'static str) -> Mock {
     }
 }
 struct Home(PathBuf);
+struct Manual {
+    url: String,
+    scanned: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+    task: tokio::task::JoinHandle<()>,
+}
+impl Drop for Manual {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+async fn manual(mode: &'static str) -> Manual {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let base = url.clone();
+    let scanned = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let scanned_in = scanned.clone();
+    let release_in = release.clone();
+    let task = tokio::spawn(async move {
+        let qr_count = Arc::new(AtomicUsize::new(0));
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let base = base.clone();
+            let scanned = scanned_in.clone();
+            let release = release_in.clone();
+            let qr_count = qr_count.clone();
+            tokio::spawn(async move {
+                let mut buf = vec![0; 8192];
+                let n = socket.read(&mut buf).await.unwrap();
+                let request = String::from_utf8_lossy(&buf[..n]);
+                let path = request.split_whitespace().nth(1).unwrap().to_owned();
+                let body = if path.contains("get_bot_qrcode") {
+                    json!({"qrcode":"manual","qrcode_img_content":"https://mock.invalid/qr"})
+                } else if path.contains("get_qrcode_status") {
+                    let poll = qr_count.fetch_add(1, Ordering::SeqCst);
+                    if poll == 0 {
+                        // Hold the QR completion until the stale record is on disk.
+                        scanned.notify_one();
+                        release.notified().await;
+                    }
+                    json!({"status":"confirmed","baseurl":base,"bot_token":"isolated-mock-only","ilink_bot_id":"mock-account"})
+                } else if mode == "session-expired" {
+                    json!({"errcode":-14})
+                } else {
+                    json!({"ret":0,"get_updates_buf":"after-login","msgs":[]})
+                };
+                let body = body.to_string();
+                let _ = socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await;
+            });
+        }
+    });
+    Manual { url, scanned, release, task }
+}
 impl Home {
     fn new() -> Self {
         let p = std::env::temp_dir().join(format!("config-weixin-{}", uuid::Uuid::new_v4()));
@@ -449,8 +511,10 @@ async fn stale_poll_after_credential_update(replace_account: bool) {
     // Wait for the request to be in flight before replacing the login file.
     request.await.unwrap();
     if replace_account {
-        // Deliberate external change before response, not an atomic-writer claim.
-        std::fs::write(&path, b.to_string()).unwrap();
+        // A real new login lands before the old response returns.
+        storage::Storage::new(home.0.clone())
+            .save_login(b.clone())
+            .unwrap();
     } else {
         let owner = storage::Storage::new(home.0.clone());
         assert_eq!(owner.advance_cursor(&a, "a2").unwrap().unwrap(), b);
@@ -459,12 +523,14 @@ async fn stale_poll_after_credential_update(replace_account: bool) {
     wait(&home, "expired").await;
     host.close().await.unwrap();
     serving.await.unwrap();
+    let storage = storage::Storage::new(home.0.clone());
+    // TS WeixinChannel.ts:389 saveCursor() reloads the current record, so the
+    // retired generation can neither replace the account nor rewind its cursor.
     assert_eq!(
         serde_json::from_slice::<Value>(&std::fs::read(path).unwrap()).unwrap(),
         b
     );
-    let storage = storage::Storage::new(home.0.clone());
-    assert_eq!(storage.save_login(a).unwrap(), b);
+    assert_eq!(storage.credentials().unwrap().unwrap(), b);
     assert!(
         WeixinInbox::new(home.0.clone())
             .pending()
@@ -472,6 +538,38 @@ async fn stale_poll_after_credential_update(replace_account: bool) {
             .is_empty(),
         "stale HTTP responses must be discarded before message handoff"
     );
+}
+
+#[tokio::test]
+async fn qr_login_confirmation_overwrites_existing_disk_credentials() {
+    let home = Home::new();
+    let server = manual("ok").await;
+    // No credentials at start: the channel really runs run_qr_login.
+    let host = WeixinChannelHost::new(Arc::new(
+        NativeWeixinFactory::new(home.0.clone(), Some(server.url.clone())).unwrap(),
+    ));
+    host.hot_start().await.unwrap();
+    // A stale login lands while QR sits on the "scaned" status.
+    server.scanned.notified().await;
+    let old = json!({
+        "baseUrl": server.url,
+        "botToken": "old-token",
+        "accountId": "old-account",
+        "cursor": "old-cursor"
+    });
+    std::fs::write(home.0.join("weixin-credentials.json"), old.to_string()).unwrap();
+    server.release.notify_one();
+    wait(&home, "connected").await;
+    host.close().await.unwrap();
+    let saved: Value =
+        serde_json::from_slice(&std::fs::read(home.0.join("weixin-credentials.json")).unwrap())
+            .unwrap();
+    // TS WeixinChannel.ts:321 confirms the new login after isStaleGeneration,
+    // then :990-998 overwrites the older record instead of keeping it.
+    assert_eq!(saved["accountId"], "mock-account");
+    assert_eq!(saved["botToken"], "isolated-mock-only");
+    // The new login drops the retired record's cursor; polling may then write its own.
+    assert_ne!(saved.get("cursor"), Some(&json!("old-cursor")));
 }
 
 #[test]

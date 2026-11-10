@@ -88,10 +88,9 @@ impl Storage {
     pub fn save_login(&self, value: Value) -> Result<Value> {
         let owner = self.credential_owner();
         let _guard = owner.lock().unwrap();
-        // A login already saved on disk takes precedence over stale in-flight results or QR completion races.
-        if let Some(current) = self.credentials()? {
-            return Ok(current);
-        }
+        // TS WeixinChannel.ts:321 -> :990-998: a confirmed QR login calls
+        // saveCredentials unconditionally, so a newer login replaces the older
+        // record even when one is already on disk.
         self.save_credentials_locked(&value)?;
         Ok(value)
     }
@@ -515,37 +514,44 @@ mod tests {
     }
 
     #[test]
-    fn test_save_login_preserves_existing_disk_credentials_against_stale_completion() {
+    fn test_save_login_overwrites_existing_credentials() {
         let home = TestHome::new();
         let store = Storage::new(home.0.clone());
-        let disk_creds = json!({
-            "baseUrl": "https://disk.example.com",
-            "botToken": "disk-token-123",
-            "accountId": "disk-acc-456",
-            "cursor": "disk-cur-789"
+        let old_creds = json!({
+            "baseUrl": "https://old.example.com",
+            "botToken": "old-token-123",
+            "accountId": "old-acc-456",
+            "cursor": "old-cur-789"
         });
-        store.save_credentials(&disk_creds).unwrap();
+        store.save_credentials(&old_creds).unwrap();
 
-        // Stale in-flight login or poll result arriving after disk credentials exist
-        // must not overwrite disk credentials; it returns the current disk credentials.
-        let stale_login = json!({
-            "baseUrl": "https://stale.example.com",
-            "botToken": "stale-token-abc",
-            "accountId": "stale-acc-def"
+        // TS WeixinChannel.ts:321 -> :990-998: QR confirmation persists the new
+        // credentials unconditionally, replacing whatever was on disk.
+        let new_login = json!({
+            "baseUrl": "https://new.example.com",
+            "botToken": "new-token-abc",
+            "accountId": "new-acc-def"
         });
-        let result = store.save_login(stale_login).unwrap();
-        assert_eq!(result["baseUrl"], "https://disk.example.com");
-        assert_eq!(result["botToken"], "disk-token-123");
-        assert_eq!(result["accountId"], "disk-acc-456");
+        let result = store.save_login(new_login).unwrap();
+        assert_eq!(result["baseUrl"], "https://new.example.com");
+        assert_eq!(result["botToken"], "new-token-abc");
+        assert_eq!(result["accountId"], "new-acc-def");
 
-        let reloaded = store.credentials().unwrap().expect("disk creds must be retained");
-        assert_eq!(reloaded["baseUrl"], "https://disk.example.com");
-        assert_eq!(reloaded["botToken"], "disk-token-123");
-        assert_eq!(reloaded["accountId"], "disk-acc-456");
-        assert_eq!(reloaded["cursor"], "disk-cur-789");
+        let reloaded = store.credentials().unwrap().expect("new creds must exist");
+        assert_eq!(reloaded["baseUrl"], "https://new.example.com");
+        assert_eq!(reloaded["botToken"], "new-token-abc");
+        assert_eq!(reloaded["accountId"], "new-acc-def");
+        // A fresh QR login carries no cursor, so the retired account's cursor is gone.
+        assert!(reloaded.get("cursor").is_none());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let meta = fs::metadata(home.0.join("weixin-credentials.json")).unwrap();
+            assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        }
     }
 
-    #[test]
     fn test_save_cursor_empty_does_not_modify_disk_and_does_not_lock() {
         // Aligns with TS WeixinChannel.ts:1000-1007 (ts-align item 48):
         // Empty buf / empty cursor directly returns without writing to disk or locking.
