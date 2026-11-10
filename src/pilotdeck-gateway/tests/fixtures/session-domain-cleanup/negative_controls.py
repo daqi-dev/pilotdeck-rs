@@ -54,7 +54,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (KILL_TIMEOUT, defer_signal_exit, mutating_sources,
                              restore_critical, run_owned, take_deferred_signal,
-                             wait_for_slot)
+                             wait_for_slot, write_source_atomic)
 from negative_process import committed_status_contract
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -7768,7 +7768,12 @@ def main():
                         changed = contents[source].replace(old, new, 1)
                         compile(changed, str(source), 'exec')
                         (output / f'{name}-compile.log').write_text('Python compile: PASS\n')
-                        source.write_text(changed)
+                        # One rename, never a truncating in-place write: a
+                        # SIGKILL in the write window must not leave a
+                        # half-written frozen source behind (#1903; the same
+                        # hardening same-json-surfaces pinned as #2425 and
+                        # manager-gateway as #2309 fix-r3).
+                        write_source_atomic(ROOT, source, changed.encode())
                         try:
                             run = run_check(case, mode)
                             returncode = run.returncode
@@ -7781,7 +7786,11 @@ def main():
                     except Exception as error:
                         verdict, detail = 'INVALID', f'{type(error).__name__}: {error}'
                     finally:
-                        source.write_bytes(originals[source])
+                        # Atomic per-case restore, same #1903 shape as the
+                        # publish above; mutating_sources' own exit side is
+                        # only the backstop, it cannot undo a half-written
+                        # file a SIGKILL already left.
+                        write_source_atomic(ROOT, source, originals[source])
                         require_restored(source, digests[source])
                     entry = {'mutation': name, 'mode': mode, 'verdict': verdict,
                              'detail': detail, 'returncode': returncode,
@@ -7793,8 +7802,11 @@ def main():
                         survived.append(entry)
                     print(f'{name}: {verdict} {detail}'.rstrip(), flush=True)
             finally:
+                # The backstop restore rewrites every guarded source once
+                # more after the loop; one rename each, never truncating
+                # (#1903, mirror of the per-case restore above).
                 for source in sources:
-                    source.write_bytes(originals[source])
+                    write_source_atomic(ROOT, source, originals[source])
             restored_case = output / 'restored-positive'  # must not pre-exist
             restored_error = None
             try:
