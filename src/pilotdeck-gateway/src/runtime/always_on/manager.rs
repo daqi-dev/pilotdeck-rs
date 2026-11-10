@@ -257,7 +257,10 @@ struct RuntimeShared {
     /// send always records — a `watch` send with zero receivers fails
     /// without storing, which left a completed drain's settlement
     /// invisible to a later sequential stop (and to the re-run of an
-    /// abandoned drain).
+    /// abandoned drain). Holding a receiver is the field's whole job, so
+    /// it is intentionally never read (fire.rs 的 `started_at_ms` 同款
+    /// `#[allow(dead_code)]` 口径).
+    #[allow(dead_code)]
     stop_finished_hold: tokio::sync::watch::Receiver<bool>,
     active_control_runs: Mutex<HashMap<String, ActiveControlRun>>,
 }
