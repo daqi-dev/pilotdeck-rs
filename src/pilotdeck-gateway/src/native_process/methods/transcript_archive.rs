@@ -141,54 +141,88 @@ enum Pretty {
     /// `JSON.stringify(undefined)` returns undefined; the surrounding template
     /// literal then coerces it to `"undefined"`.
     Undefined,
-    /// Past the shared 2000-container bound (#1550 family): V8's stringify
-    /// throws here, and the TS helper's catch falls back to `String(value)`
-    /// for the whole input — which throws the same RangeError one level
-    /// deeper. The caller performs that fallback so both halves share the
-    /// bound.
-    TooDeep,
+    /// Past the shared 2000-container bound (#1550 family) or past V8's
+    /// string length: V8's stringify throws a RangeError for either, and
+    /// the TS helper's catch falls back to `String(value)` for the whole
+    /// input. The caller performs that fallback so both halves share the
+    /// bounds.
+    Fallback,
 }
 
-fn stringify_pretty(value: &JsValue, depth: usize) -> Pretty {
+/// V8's `String::kMaxLength` (64-bit): the pretty render stops here and
+/// falls back, matching the same TS catch route as the depth bound. In
+/// bytes, so a non-ASCII render stops slightly earlier than V8 (which
+/// counts UTF-16 units); both routes end in the same fallback.
+const MAX_PRETTY_OUTPUT_BYTES: usize = (1 << 29) - 24;
+
+/// One unit of remaining work in the explicit-stack pretty render. Deep
+/// inputs (up to the shared 2000-container bound) must not spend a native
+/// stack frame per level: the recursive form aborted the process
+/// (`fatal runtime error: stack overflow`, exit 134 — measured on the cb8
+/// host at depth 2000 × 50k flat elements, where V8 throws a catchable
+/// RangeError). Array frames borrow the item slice from the input tree;
+/// object frames move their filtered entry `Vec` along (no per-step clone).
+enum Step<'a> {
+    ArrayItem {
+        items: &'a [JsValue],
+        index: usize,
+        depth: usize,
+    },
+    ObjectEntry {
+        entries: Vec<(&'a JsString, &'a JsValue)>,
+        index: usize,
+        depth: usize,
+    },
+    Close {
+        depth: usize,
+        bracket: char,
+    },
+}
+
+/// Emit `value` (a container's child at `depth`) into `out`, pushing
+/// continuation frames for containers. Returns `false` past the shared
+/// bounds — the whole render aborts and the caller falls back.
+fn open_value<'a>(
+    stack: &mut Vec<Step<'a>>,
+    out: &mut String,
+    value: &'a JsValue,
+    depth: usize,
+) -> bool {
     match value {
-        JsValue::Undefined => Pretty::Undefined,
-        JsValue::Null => Pretty::Text("null".into()),
-        JsValue::Bool(flag) => Pretty::Text(flag.to_string()),
-        JsValue::Number(number) => Pretty::Text(if number.is_finite() {
+        // Only array elements reach here with undefined (object entries
+        // filter it): JSON.stringify array elements coerce to null.
+        JsValue::Undefined => out.push_str("null"),
+        JsValue::Null => out.push_str("null"),
+        JsValue::Bool(flag) => out.push_str(if *flag { "true" } else { "false" }),
+        JsValue::Number(number) => out.push_str(&if number.is_finite() {
             js_value::number_string(*number)
         } else {
             // JSON.stringify maps NaN/Infinity to null.
-            "null".into()
+            "null".to_string()
         }),
-        JsValue::String(text) => Pretty::Text(quote_json_string(text)),
+        JsValue::String(text) => out.push_str(&quote_json_string(text)),
         JsValue::Array(items) => {
             if depth >= js_value::MAX_ARRAY_DEPTH {
-                return Pretty::TooDeep;
+                return false;
             }
             if items.is_empty() {
-                return Pretty::Text("[]".into());
+                out.push_str("[]");
+            } else {
+                out.push_str("[\n");
+                stack.push(Step::Close {
+                    depth,
+                    bracket: ']',
+                });
+                stack.push(Step::ArrayItem {
+                    items,
+                    index: 0,
+                    depth,
+                });
             }
-            let mut out = String::from("[\n");
-            for (index, item) in items.iter().enumerate() {
-                if index > 0 {
-                    out.push_str(",\n");
-                }
-                indent(&mut out, depth + 1);
-                match stringify_pretty(item, depth + 1) {
-                    Pretty::Text(text) => out.push_str(&text),
-                    // Array elements stringify undefined as null.
-                    Pretty::Undefined => out.push_str("null"),
-                    Pretty::TooDeep => return Pretty::TooDeep,
-                }
-            }
-            out.push('\n');
-            indent(&mut out, depth);
-            out.push(']');
-            Pretty::Text(out)
         }
         JsValue::Object(object) => {
             if depth >= js_value::MAX_ARRAY_DEPTH {
-                return Pretty::TooDeep;
+                return false;
             }
             // JSON.stringify drops undefined values, keeps null ones.
             let entries = object
@@ -197,31 +231,98 @@ fn stringify_pretty(value: &JsValue, depth: usize) -> Pretty {
                 .filter(|(_, item)| !item.is_undefined())
                 .collect::<Vec<_>>();
             if entries.is_empty() {
-                return Pretty::Text("{}".into());
+                out.push_str("{}");
+            } else {
+                out.push_str("{\n");
+                stack.push(Step::Close {
+                    depth,
+                    bracket: '}',
+                });
+                stack.push(Step::ObjectEntry {
+                    entries,
+                    index: 0,
+                    depth,
+                });
             }
-            let mut out = String::from("{\n");
-            for (index, (key, item)) in entries.iter().enumerate() {
+        }
+    }
+    true
+}
+
+fn stringify_pretty(value: &JsValue) -> Pretty {
+    // JSON.stringify(undefined) returns undefined; the surrounding template
+    // literal then coerces it to "undefined".
+    if matches!(value, JsValue::Undefined) {
+        return Pretty::Undefined;
+    }
+    let mut out = String::new();
+    let mut stack: Vec<Step<'_>> = Vec::new();
+    if !open_value(&mut stack, &mut out, value, 0) {
+        return Pretty::Fallback;
+    }
+    while let Some(step) = stack.pop() {
+        match step {
+            Step::ArrayItem {
+                items,
+                index,
+                depth,
+            } => {
+                if index >= items.len() {
+                    continue;
+                }
+                if index > 0 {
+                    out.push_str(",\n");
+                }
+                indent(&mut out, depth + 1);
+                stack.push(Step::ArrayItem {
+                    items,
+                    index: index + 1,
+                    depth,
+                });
+                if !open_value(&mut stack, &mut out, &items[index], depth + 1) {
+                    return Pretty::Fallback;
+                }
+            }
+            Step::ObjectEntry {
+                entries,
+                index,
+                depth,
+            } => {
+                if index >= entries.len() {
+                    continue;
+                }
+                let (key, item) = entries[index];
+                stack.push(Step::ObjectEntry {
+                    entries,
+                    index: index + 1,
+                    depth,
+                });
                 if index > 0 {
                     out.push_str(",\n");
                 }
                 indent(&mut out, depth + 1);
                 out.push_str(&quote_json_string(key));
                 out.push_str(": ");
-                match stringify_pretty(item, depth + 1) {
-                    Pretty::Text(text) => out.push_str(&text),
-                    // Unreachable past the undefined filter above; array
-                    // elements coerce to null, so keep that shape here too
-                    // rather than a panic on untrusted data.
-                    Pretty::Undefined => out.push_str("null"),
-                    Pretty::TooDeep => return Pretty::TooDeep,
+                if !open_value(&mut stack, &mut out, item, depth + 1) {
+                    return Pretty::Fallback;
                 }
             }
-            out.push('\n');
-            indent(&mut out, depth);
-            out.push('}');
-            Pretty::Text(out)
+            Step::Close { depth, bracket } => {
+                out.push('\n');
+                indent(&mut out, depth);
+                out.push(bracket);
+            }
+        }
+        // A single scalar or container header can append a whole string in
+        // one go; re-check the shared length bound every frame.
+        if out.len() > MAX_PRETTY_OUTPUT_BYTES {
+            return Pretty::Fallback;
         }
     }
+    if out.len() > MAX_PRETTY_OUTPUT_BYTES {
+        return Pretty::Fallback;
+    }
+    Pretty::Text(out)
 }
 
 fn indent(out: &mut String, depth: usize) {
@@ -237,10 +338,10 @@ fn stringify_portable_value(value: &JsValue) -> Result<Vec<u16>, RequestError> {
     if let JsValue::String(text) = value {
         return Ok(text.units().to_vec());
     }
-    match stringify_pretty(value, 0) {
+    match stringify_pretty(value) {
         Pretty::Text(text) => Ok(text.encode_utf16().collect()),
         Pretty::Undefined => Ok("undefined".encode_utf16().collect()),
-        Pretty::TooDeep => to_units(value),
+        Pretty::Fallback => to_units(value),
     }
 }
 
@@ -1779,5 +1880,48 @@ mod tests {
             "#2622 the conflicted restore removed its key"
         );
         teardown(&requests).await;
+    }
+
+    /// #2622 fix-r1 (boundary P1, arbitration probe on cb8): a 2000-container
+    /// chain sits exactly at the shared bound and pretty-renders without
+    /// spending a native frame per level — the recursive form aborted the
+    /// process (`fatal runtime error: stack overflow`, exit 134) where V8
+    /// throws a catchable RangeError.
+    #[test]
+    fn deep_tool_input_renders_within_the_shared_container_bound() {
+        let mut value = JsValue::Array(vec![JsValue::Number(1.0)]);
+        for _ in 0..1_999 {
+            value = JsValue::Array(vec![value]);
+        }
+        let units = stringify_portable_value(&value)
+            .expect("#2622 the 2000-deep chain is inside the shared bound");
+        // Two-space indentation at 2000 levels renders ~8 MiB of layout.
+        assert!(
+            units.len() > 100_000,
+            "pretty layout rendered {} units",
+            units.len()
+        );
+        assert_eq!(units.last(), Some(&u16::from(b']')));
+    }
+
+    /// #2622 fix-r1: a wide payload at that depth pushes the pretty render
+    /// past V8's string length — the render stops at
+    /// `MAX_PRETTY_OUTPUT_BYTES` and falls back to `String(value)`, the
+    /// same route the TS helper's catch takes for the RangeError.
+    #[test]
+    fn wide_deep_tool_input_falls_back_past_the_pretty_output_bound() {
+        let mut value = JsValue::Array(vec![JsValue::Number(1.0); 140_000]);
+        for _ in 0..1_999 {
+            value = JsValue::Array(vec![value]);
+        }
+        let units = stringify_portable_value(&value)
+            .expect("#2622 the fallback keeps this inside the shared bound");
+        // String(value) joins the flat elements with commas; a pretty render
+        // would be ≥ 140_000 × 4_000 units.
+        assert!(
+            units.len() < 1_000_000,
+            "#2622 the fallback keeps this inside the shared bound (joined {} units)",
+            units.len()
+        );
     }
 }

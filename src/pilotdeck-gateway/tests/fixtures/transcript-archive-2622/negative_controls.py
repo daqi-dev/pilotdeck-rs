@@ -59,6 +59,14 @@ mutations = [
     ('export-title-ceiling-dropped', ARCHIVE,
      'if !text.is_empty() && text.len_utf16() <= MAX_PORTABLE_SESSION_ARCHIVE_TITLE_LENGTH {',
      'if !text.is_empty() {', EXPORT_ROWS, '#2622 export.long-title'),
+    # The pretty render's V8 string-length budget: without it a wide deep
+    # payload renders the full multi-hundred-MB layout instead of taking the
+    # TS helper's catch fallback.
+    ('export-pretty-budget-omitted', ARCHIVE,
+     'const MAX_PRETTY_OUTPUT_BYTES: usize = (1 << 29) - 24;',
+     'const MAX_PRETTY_OUTPUT_BYTES: usize = (1 << 40);',
+     'native_process::methods::transcript_archive::tests::wide_deep_tool_input_falls_back_past_the_pretty_output_bound',
+     '#2622 the fallback keeps this inside the shared bound'),
     # --- restore delegate ----------------------------------------------------
     # `hasActiveTurn || hasSession` ahead of the restore conflict.
     ('restore-busy-guard-omitted', ARCHIVE,
@@ -116,7 +124,7 @@ mutations = [
 # #1538: the table is its own denominator — pin the row count and the roster
 # (order and repeats included) so a dropped, renamed or duplicated mutation is
 # refused before anything runs or compiles.
-EXPECTED_TOTAL = 16
+EXPECTED_TOTAL = 17
 EXPECTED_NAMES = (
     'export-busy-guard-omitted',
     'export-missing-defaulted',
@@ -124,6 +132,7 @@ EXPECTED_NAMES = (
     'export-synthetic-filter-omitted',
     'export-message-count-omitted',
     'export-title-ceiling-dropped',
+    'export-pretty-budget-omitted',
     'restore-busy-guard-omitted',
     'restore-set-membership-ignored',
     'restore-exists-check-omitted',
