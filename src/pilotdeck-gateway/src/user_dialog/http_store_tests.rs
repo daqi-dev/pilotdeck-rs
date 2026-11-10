@@ -1724,7 +1724,12 @@ async fn probe_2773_fixr1_linux_close_kind_per_cell() {
     let connect = b"CONNECT 127.0.0.1:80 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".to_vec();
 
     // serve 侧早答（未读体 + `close_if_body_pending` 排空接线）。
-    let unread_401_1m = http_request("POST", &path, &[("Content-Type", "application/json")], &one_mib);
+    let unread_401_1m = http_request(
+        "POST",
+        &path,
+        &[("Content-Type", "application/json")],
+        &one_mib,
+    );
     let unread_405_1m = http_request("GET", &path, &[], &one_mib);
     let unread_413_cl = http_request(
         "POST",
@@ -1746,11 +1751,15 @@ async fn probe_2773_fixr1_linux_close_kind_per_cell() {
     );
 
     // 无体关闭与 handler 侧 `Connection: close`。
-    let handler_405_close = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n").into_bytes();
+    let handler_405_close =
+        format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n").into_bytes();
     let http10_405 = "GET /x HTTP/1.0\r\nHost: h\r\nConnection: keep-alive\r\n\r\n"
         .to_string()
         .into_bytes();
-    let fixed = STORE_PATH_PREFIX.len() + "list".len() + "Host".len() + "h".len()
+    let fixed = STORE_PATH_PREFIX.len()
+        + "list".len()
+        + "Host".len()
+        + "h".len()
         + "Connection".len()
         + "close".len();
     let budget_431 = format!(
@@ -1759,7 +1768,8 @@ async fn probe_2773_fixr1_linux_close_kind_per_cell() {
     )
     .into_bytes();
     let cr_in_value =
-        format!("GET {path} HTTP/1.1\r\nHost: h\r\nX: \r  \nConnection: close\r\n\r\n").into_bytes();
+        format!("GET {path} HTTP/1.1\r\nHost: h\r\nX: \r  \nConnection: close\r\n\r\n")
+            .into_bytes();
     let close_1_1_list = http_request(
         "POST",
         &path,
@@ -1799,22 +1809,25 @@ async fn probe_2773_fixr1_linux_close_kind_per_cell() {
                 continue;
             }
         };
-        let write = match tokio::time::timeout(Duration::from_secs(5), stream.write_all(&request))
-            .await
-        {
-            Ok(Ok(())) => "ok".to_string(),
-            Ok(Err(error)) => format!("err-{}", error.kind()),
-            Err(_) => "timeout".to_string(),
-        };
+        let write =
+            match tokio::time::timeout(Duration::from_secs(5), stream.write_all(&request)).await {
+                Ok(Ok(())) => "ok".to_string(),
+                Ok(Err(error)) => format!("err-{}", error.kind()),
+                Err(_) => "timeout".to_string(),
+            };
         let mut response = Vec::new();
-        let close = match tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut response))
-            .await
-        {
-            Ok(Ok(_)) => "clean-eof-FIN".to_string(),
-            Ok(Err(error)) => format!("err-{}", error.kind()),
-            Err(_) => "timeout-still-open".to_string(),
-        };
-        let head: String = String::from_utf8_lossy(&response).chars().take(40).collect();
+        let close =
+            match tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut response))
+                .await
+            {
+                Ok(Ok(_)) => "clean-eof-FIN".to_string(),
+                Ok(Err(error)) => format!("err-{}", error.kind()),
+                Err(_) => "timeout-still-open".to_string(),
+            };
+        let head: String = String::from_utf8_lossy(&response)
+            .chars()
+            .take(40)
+            .collect();
         report.push_str(&format!(
             "[{name}] write={write} close={close} bytes={} head={head:?}\n",
             response.len()
