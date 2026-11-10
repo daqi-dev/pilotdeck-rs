@@ -254,8 +254,13 @@ MUTATIONS = [
     ('session-cli-errors-escape', GUARD,
      "    except (Exception, KeyboardInterrupt) as error:\n        print(json.dumps({'status': 'BLOCKED', 'error': str(error)}, ensure_ascii=False))",
      "    except RuntimeError as error:\n        print(json.dumps({'status': 'BLOCKED', 'error': str(error)}, ensure_ascii=False))"),
+    # fix-r18 (MM r17 sibling#1 P2): the original anchor was the pre-r15
+    # single-line except tuple; the controls source gained MemoryError and
+    # split across two lines, so the anchor stopped matching (count=0 ->
+    # INVALID) and the mutant went unrun.  Resynced to the current literal;
+    # the mutant target is unchanged.
     ('session-lock-errors-escape', ROOT / 'scripts/gateway-parity/session_domain.py',
-     '    except (TimeoutError, KeyboardInterrupt, ValueError, OSError, subprocess.SubprocessError) as error:', '    except (TimeoutError, KeyboardInterrupt) as error:'),
+     '    except (TimeoutError, KeyboardInterrupt, ValueError, OSError, MemoryError,\n            subprocess.SubprocessError) as error:', '    except (TimeoutError, KeyboardInterrupt) as error:'),
     ('deadline-lease-bypassed', ROOT / 'scripts/gateway-parity/session_domain.py',
      '        with parity_lock(timeout=30, takeovers=takeovers):', "        with __import__('contextlib').nullcontext():"),
     ('check-ruler-late-verification-removed', ROOT / 'scripts/gateway-parity/check_ruler.py',

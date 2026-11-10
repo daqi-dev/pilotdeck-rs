@@ -78,6 +78,7 @@ common = _load('common', _apparatus / 'common.py')
 # <<< apparatus bootstrap
 import argparse
 from collections import Counter
+import copy
 import ctypes
 import ctypes.util
 import json
@@ -230,8 +231,18 @@ class RetirementLaunchError(EvidenceError):
 # FAIL — subprocess.TimeoutExpired is a SubprocessError subclass (main's except
 # tuple catches it), but it is not a TimeoutError, so the old BLOCKED
 # classification tuple let it fall through to status=FAIL.
+# fix-r30 (DS r29 concurrency#1, arbitrated P2b「假 FAIL→P1」): MemoryError
+# joins — fix-r29 added it to the suite inner handler's catch tuple, which
+# turned an apparatus-side memory exhaustion into a scored product FAIL
+# (status=FAIL, rule='EVIDENCE', exit 1) while main's outer handler and
+# retirement_report's own catch (:3403, fix-r6) both report the same exception
+# BLOCKED. An in-process MemoryError is by construction apparatus-side: a
+# product OOM surfaces as the product's recorded exit, never as this
+# process's exception. RecursionError joins for the same reason — it is the
+# other resource-exhaustion class retirement_report already BLOCKS.
 BLOCKED_APPARATUS_ERRORS = (ApparatusVerificationError, PermissionError, TimeoutError,
-                            KeyboardInterrupt, subprocess.TimeoutExpired)
+                            KeyboardInterrupt, subprocess.TimeoutExpired,
+                            MemoryError, RecursionError)
 
 
 def require(condition, rule, detail):
@@ -956,7 +967,13 @@ def _expectation_structure(row):
                 return side + ' registry result'
         else:
             return side + ' registry applicable'
-    if row['ts']['registry']['applicable'] != row['rust']['registry']['applicable']:
+    # fix-r31 (r31 structural round, DS sibling#1/#3 + anthropic sibling#1
+    # family): every witness/evidence numeric or equality comparison now
+    # goes through ``native_evidence.same_json`` (type-strict on booleans,
+    # #1372 semantics on numbers) or a real-int gate — a bare ``==`` lets
+    # ``True == 1`` / ``1.0 == 1`` collapse a drifted document into a pass.
+    if not native_evidence.same_json(row['ts']['registry']['applicable'],
+                                     row['rust']['registry']['applicable']):
         return 'registry applicability'
     return None
 
@@ -998,7 +1015,7 @@ def validate_expectations(registration, observations):
     require(isinstance(document, dict)
             and isinstance(document.get('cases'), list)
             and document.get('baselineCommit') == BASELINE_COMMIT
-            and document.get('repeats') == REPEATS
+            and type(document.get('repeats')) is int and document.get('repeats') == REPEATS
             and document.get('phases') == ['model', 'tool'],
             'EXPECTATION_STRUCTURE', 'expectation document header')
     rows = document['cases']
@@ -1020,14 +1037,18 @@ def validate_expectations(registration, observations):
         case = '/'.join(observation['id'].split('/')[:3])
         projection = project_observation(observation)
         if case in measured:
-            require(measured[case] == projection, 'EXPECTATION_TS_DRIFT',
+            # fix-r32 (DS sibling#5 P3): both sides are projections of
+            # external observation documents — a ``True``/``1`` drift between
+            # repetitions of the same case folded through ``==``.
+            require(native_evidence.same_json(measured[case], projection),
+                    'EXPECTATION_TS_DRIFT',
                     case + ': repetitions disagree with each other')
         else:
             measured[case] = projection
     require(set(measured) == set(registered), 'EXPECTATION_COVERAGE',
             'measured cases must equal the registered expectation cases')
     for case, row in registered.items():
-        require(row['ts'] == measured[case], 'EXPECTATION_TS_DRIFT',
+        require(native_evidence.same_json(row['ts'], measured[case]), 'EXPECTATION_TS_DRIFT',
                 case + ': ts expectation drifted from the calibrate measurement')
         surfaces = _expectation_diff_surfaces(row['ts'], row['rust'])
         require(all(surface in A19_ALLOWED_SURFACES[row['a19Class']] for surface in surfaces),
@@ -1035,7 +1056,7 @@ def validate_expectations(registration, observations):
                 case + ': rust differs from ts outside the A19-HOST listed surfaces: '
                 + ','.join(surfaces))
         if row['a19Class'] == 'ts-equal':
-            require(row['rust'] == row['ts'], 'EXPECTATION_RUST_DERIVATION',
+            require(native_evidence.same_json(row['rust'], row['ts']), 'EXPECTATION_RUST_DERIVATION',
                     case + ': non-timeout-first ordering must match TS exactly')
             continue
         canonical = A19_CANONICAL_RUST[row['a19Class']]
@@ -1046,7 +1067,13 @@ def validate_expectations(registration, observations):
                 case + ': rust durable statuses differ from the D4-B canonical output')
         registry = row['rust']['registry']
         if canonical['eventLabels'] is None:
-            require(registry == {'applicable': False}, 'EXPECTATION_RUST_DERIVATION',
+            # fix-r33 (DS sibling#1/#4, probe-r33/folds.py): the dict
+            # ``==`` folded ``{'applicable': 0}`` onto ``{'applicable':
+            # False}``; same_json is type-strict on booleans.  fix-r34 (DS
+            # r33b boundary#1, P0): the r33 spelling carried a stray
+            # ``not`` (honest raised, folded passed) — pinned by the unit.
+            require(native_evidence.same_json(registry, {'applicable': False}),
+                    'EXPECTATION_RUST_DERIVATION',
                     case + ': rust registry must be inapplicable without a run registry')
         else:
             first = int(row['ts']['registry']['events'][0].split(':', 1)[0])
@@ -1070,15 +1097,22 @@ def calibration_coverage(registration, manifest):
             'COVERAGE', 'all six preregistered cells required')
     require(all(c.get('registry') is c['name'].startswith('registry-') for c in registration['cells']),
             'CAPABILITY', 'registry configuration must match the fixed six-cell topology')
-    require(registration['phases'] == ['model', 'tool'] and registration['repeats'] == REPEATS,
+    # fix-r33 (DS sibling#5, probe-r33/folds.py): repeats is an external
+    # document int — ``5.0`` folded onto ``5`` through the bare ``==``;
+    # the real-int gate (type() excludes bool and float) precedes all
+    # three repeats comparisons (header 1018, registration, manifest).
+    require(registration['phases'] == ['model', 'tool']
+            and type(registration['repeats']) is int and registration['repeats'] == REPEATS,
             'COVERAGE', 'model/tool x five repetitions required')
     expected = [f"{cell['name']}/{variant['name']}/{phase}"
                 for cell in registration['cells'] for variant in cell['variants'] for phase in registration['phases']]
-    require(expected == contract['cases'] and all(c['variants'] for c in registration['cells']),
+    require(native_evidence.same_json(expected, contract['cases'])
+            and all(c['variants'] for c in registration['cells']),
             'COVERAGE', 'preregistration must match independent E1 case manifest; no denominator shrink')
     require(len(expected) == len(set(expected)) and expected,
             'COVERAGE', 'nonempty unique cases required')
-    require(manifest['expectedCases'] == expected and manifest['executedCases'] == expected,
+    require(native_evidence.same_json(manifest['expectedCases'], expected)
+            and native_evidence.same_json(manifest['executedCases'], expected),
             'COVERAGE', 'missing/duplicate/extra cases')
     return expected
 
@@ -1087,7 +1121,8 @@ def validate_calibration(folder, output, baseline):
     raw = folder / 'raw'
     registration, manifest = read(raw / 'preregistration.json'), read(raw / 'manifest.json')
     expected = calibration_coverage(registration, manifest)
-    require(manifest['baselineCommit'] == BASELINE_COMMIT and manifest['repeats'] == REPEATS,
+    require(manifest['baselineCommit'] == BASELINE_COMMIT
+            and type(manifest['repeats']) is int and manifest['repeats'] == REPEATS,
             'IDENTITY', 'wrong baseline or repetition count')
     fixture_hashes = {f'scripts/a5-19/{name}': digest(ROOT / 'scripts/a5-19' / name) for name in FIXTURE_NAMES}
     require({row['path']: row['sha256'] for row in manifest['fixtureFiles']} == fixture_hashes,
@@ -1122,7 +1157,12 @@ def validate_calibration(folder, output, baseline):
         observations.extend(rows)
         groups.append({'id': cell['name'], 'status': 'OBSERVED', 'measurements': len(rows),
                        'path': str(raw / (cell['name'] + '.json'))})
-    require(manifest['totalMeasurements'] == len(observations), 'COVERAGE', 'total measurement mismatch')
+    # fix-r31 (r31 structural round): the manifest's declared count is an
+    # external document read compared against a number — it goes through a
+    # real-int gate first (``True == 1`` / ``1.0 == 1`` must not pass it).
+    require(type(manifest['totalMeasurements']) is int
+            and manifest['totalMeasurements'] == len(observations),
+            'COVERAGE', 'total measurement mismatch')
     rounds = [{'repetition': i, 'status': 'OBSERVED',
                'observations': [o['id'] for o in observations if o['repetition'] == i]}
               for i in range(1, REPEATS + 1)]
@@ -1134,9 +1174,13 @@ def validate_calibration(folder, output, baseline):
     require(len(controls) == 9 and len({c['name'] for c in controls}) == 9
             and all(c['detected'] is True and c['hitRule'] == c['expectedRule'] for c in controls),
             'CONTROLS', 'A5.2a original observation controls missing/failed')
-    require(oracle['controls'] == controls, 'CONTROLS', 'recorded controls differ from independently rerun original controls')
+    require(native_evidence.same_json(oracle['controls'], controls), 'CONTROLS',
+            'recorded controls differ from independently rerun original controls')
     launch = read(folder / 'launch.json')
-    require(launch.get('exitCode') == 0 and launch.get('childReaped') is True,
+    # fix-r31 (r31 structural round): the launch exit code is an external
+    # document read — a real-int gate precedes the ``== 0``.
+    require(type(launch.get('exitCode')) is int and launch.get('exitCode') == 0
+            and launch.get('childReaped') is True,
             'CLEANUP', 'A5.2a did not finish/reap its child')
     return {'groups': groups, 'expectedCases': expected, 'executedCases': manifest['executedCases'],
             'repeats': REPEATS, 'measurements': len(observations), 'oracle': oracle,
@@ -1175,29 +1219,61 @@ def audit_native(evidence, contract):
     require(evidence['execWitness']['complete'] is True and evidence['execWitness']['source'] == 'exec-monitor',
             'PROCESS_WITNESS', 'complete exec/exit witness required, not sampled ps')
     actual_pids = [p['pid'] for p in processes]
-    require(all(type(pid) is int and pid > 0 for pid in actual_pids)
+    # fix-r9 (DS sibling r8 P2): the witness gate follows the census's real-pid
+    # rule (fix-r8, ``_retirement_real_pid``) — an oversized int beyond any OS
+    # pid space is a corrupt artifact, not a witnessed process.
+    require(all(_retirement_real_pid(pid) for pid in actual_pids)
             and len(set(actual_pids)) == len(actual_pids), 'PROCESS_WITNESS', 'invalid/duplicate PID')
     roles = Counter(p['role'] for p in processes)
     require(roles == Counter(contract['processRoles']), 'NATIVE_PROCESS', 'unexpected/missing process roles')
+    # fix-r29 (DS r28-b sibling#3 P1, probe-verified —
+    # _tmp/20261110-1355-r26-harvest/probe-p1-pidbool.out): the real-pid
+    # rule follows every pid-carrying field the witness compares, not
+    # only processes[*].pid. ``ppid``, the execWitness event ``pid``/
+    # ``ppid`` and the egress ``ownerPid`` were bare ``==``/``in``, and
+    # Python reads ``True == 1`` / ``1.0 == 1`` / ``True in {1: ...}``
+    # as equal, so a forged boolean or float pid passed the parent
+    # gate, the identity/order gates and the helper gate while the
+    # audited capture was corrupt. The contract's own launcherPid is
+    # gated once too (the same folder holds it), then every observed
+    # field is gated before its comparison.
+    require(_retirement_real_pid(contract['launcherPid']),
+            'PROCESS_WITNESS', 'contract launcher pid is not a real pid')
     for process in processes:
         allowed = contract['binaries'][process['role']]
-        require(process['argv'] == allowed['argv'] and process['sha256'] == allowed['sha256']
-                and process['executable'] == allowed['path']
+        # fix-r32 (anthropic sibling#1 P2): every operand here is an
+        # external document read (the observed witness and the contract
+        # itself), so ``process['sha256'] = True`` folded onto a doctored
+        # ``allowed['sha256'] = True`` through ``==`` and the identity
+        # check passed.  The argv side already had a str-element gate; the
+        # sha256/executable sides now carry their own str gates, and the
+        # three identity equalities go through same_json (type-strict —
+        # same_json(True, True) still folds, which is exactly why the
+        # explicit str gates precede).
+        require(isinstance(allowed['sha256'], str) and isinstance(allowed['path'], str)
+                and isinstance(process['sha256'], str) and isinstance(process['executable'], str)
+                and native_evidence.same_json(process['argv'], allowed['argv'])
+                and native_evidence.same_json(process['sha256'], allowed['sha256'])
+                and native_evidence.same_json(process['executable'], allowed['path'])
                 and digest(Path(allowed['path'])) == allowed['sha256'],
                 'NATIVE_PROCESS', 'exec identity/argv/hash differs from pre-launch identity')
         expected_parent = contract['launcherPid'] if process['role'] == 'host' else next(p['pid'] for p in processes if p['role'] == 'host')
-        require(process['ppid'] == expected_parent, 'PROCESS_WITNESS', 'wrong parent PID')
+        require(_retirement_real_pid(process['ppid']) and process['ppid'] == expected_parent,
+                'PROCESS_WITNESS', 'wrong parent PID')
     live, started, exited = set(), set(), set()
     by_pid = {p['pid']: p for p in processes}
     for row in evidence['execWitness']['events']:
         pid = row['pid']
-        require(pid in by_pid and row['event'] in ('exec', 'exit'),
+        require(_retirement_real_pid(pid) and pid in by_pid and row['event'] in ('exec', 'exit'),
                 'PROCESS_WITNESS', 'unknown process/event, including short-lived children')
         if row['event'] == 'exec':
-            require(pid not in started and all(row.get(k) == by_pid[pid][k]
-                    for k in ('ppid', 'argv', 'executable', 'sha256')),
+            require(pid not in started
+                    and all(native_evidence.same_json(row.get(k), by_pid[pid][k])
+                            for k in ('ppid', 'argv', 'executable', 'sha256')),
                     'PROCESS_WITNESS', 'exec identity disagrees with recorded launch identity')
-            require(row['ppid'] == contract['launcherPid'] or row['ppid'] in live,
+            require(_retirement_real_pid(row['ppid'])
+                    and (native_evidence.same_json(row['ppid'], contract['launcherPid'])
+                         or row['ppid'] in live),
                     'PROCESS_WITNESS', 'child exec before parent or after parent exit')
             live.add(pid)
             started.add(pid)
@@ -1208,9 +1284,11 @@ def audit_native(evidence, contract):
     require(not live and started == exited == set(actual_pids), 'PROCESS_WITNESS', 'missing exec/exit records')
     require(evidence['networkWitness']['complete'] is True, 'NETWORK_WITNESS', 'egress observer incomplete')
     for call in evidence['networkWitness']['calls']:
-        require(call['target'] in contract['externalEndpoints'] and call['ownerPid'] in actual_pids,
+        require(call['target'] in contract['externalEndpoints'] and _retirement_real_pid(call['ownerPid'])
+                and call['ownerPid'] in actual_pids,
                 'HIDDEN_HELPER', 'undeclared helper/endpoint invocation')
-    require(evidence['expectedCases'] == contract['cases'] and evidence['executedCases'] == contract['cases']
+    require(native_evidence.same_json(evidence['expectedCases'], contract['cases'])
+            and native_evidence.same_json(evidence['executedCases'], contract['cases'])
             and len(set(contract['cases'])) == len(contract['cases']) and contract['cases'],
             'COVERAGE', 'missing/duplicate/extra native groups')
     # #1140 fix-r2: no capabilities equality here -- load_native_capture
@@ -1225,7 +1303,14 @@ def audit_native(evidence, contract):
             require(digest(Path(artifact['path'])) == artifact['sha256'], 'SURFACES', name + ' artifact changed')
     observer = evidence['observer']
     require(bool(observer['rows']), 'EMPTY_OBSERVER', 'empty independent observer')
-    require(observer['connections'] == len({r['connection'] for r in observer['rows']})
+    # fix-r30 (DS r29 sibling#1 P1, same family as the fix-r29 pid gates):
+    # ``isinstance(x, int)`` accepts True and ``True == 1`` passes the count
+    # comparison, so a corrupt ``{"connections": true}`` observer document (or
+    # contract) audited through the boolean collapse channel.  Both sides of
+    # every comparison follow the real-count rule before ``==`` sees them.
+    require(_retirement_real_count(observer['connections'])
+            and _retirement_real_count(contract['connections'])
+            and observer['connections'] == len({r['connection'] for r in observer['rows']})
             and observer['connections'] == contract['connections'], 'CONNECTIONS', 'connection count mismatch')
     # #1140 fix-r2: no evidence/contract binding equality here -- load_native_
     # capture fills the audited binding from the same contract, so this
@@ -1254,9 +1339,11 @@ def audit_native(evidence, contract):
         binding = frame.get('interactionBinding', {})
         require(frame.get('protocolVersion') == '1.2' and type(binding.get('generation')) is int
                 and binding['generation'] >= 1 and isinstance(binding.get('connectionId'), str)
-                and bool(binding['connectionId']) and binding == contract['binding'],
+                and bool(binding['connectionId'])
+                and native_evidence.same_json(binding, contract['binding']),
                 'BINDING', 'actual server hello has invalid/wrong/old binding')
-    if contract['cases'] == read(SCRIPT / 'fixtures/session-calibration.json')['cases']:
+    if native_evidence.same_json(contract['cases'],
+                                 read(SCRIPT / 'fixtures/session-calibration.json')['cases']):
         try:
             native_evidence.session_profile(contract, contract['cases'])
             native_evidence.session_windows(evidence, contract['cases'], evidence['transcriptPaths'])
@@ -1281,7 +1368,9 @@ def _audit_observer_rows(rows):
         decoder = Decoder(decoded.append, row['direction'])
         decoder.feed(b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n' + bytes.fromhex(row['wireHex']))
         require(len(decoded) == 1
-                and decoded[0].get('raw' if row['direction'] == 'send' else 'frame') == row['frame'],
+                and native_evidence.same_json(
+                    decoded[0].get('raw' if row['direction'] == 'send' else 'frame'),
+                    row['frame']),
                 'OBSERVER_WIRE', 'wire observation disagrees with recorder')
 
 
@@ -1336,8 +1425,12 @@ def _load_native_artifacts(folder):
         require(key not in launch and key not in prelaunch, 'BINDING',
                 'runtime binding/observer records must not be pre-registered before launch')
     observer = read(folder / 'session-domain/observer.json')
+    # fix-r30 (DS r29 sibling#1 P1): ``isinstance(True, int)`` is True, so the
+    # malformed-document gate let a boolean connections count through to the
+    # audit comparison; the loader follows the same real-count rule.
     require(isinstance(observer, dict) and isinstance(observer.get('rows'), list)
-            and isinstance(observer.get('connections'), int), 'EMPTY_OBSERVER', 'observer document malformed')
+            and _retirement_real_count(observer.get('connections')),
+            'EMPTY_OBSERVER', 'observer document malformed')
     require(bool(observer['rows']), 'EMPTY_OBSERVER', 'empty independent observer')
     contract = dict(launch, binding=_observer_binding(observer['rows']),
                     observerRows=observer['rows'], bindingSource='observer-hello')
@@ -1346,11 +1439,12 @@ def _load_native_artifacts(folder):
     # not an adversarial writer rewriting driver, observer and receipt together.
     # The driver record is a consistency copy, not an independently signed anchor.
     driver = read(folder / 'session-domain/driver.json')
-    require(isinstance(driver, dict) and driver.get('binding') == contract['binding'], 'BINDING',
+    require(isinstance(driver, dict)
+            and native_evidence.same_json(driver.get('binding'), contract['binding']), 'BINDING',
             'driver-recorded hello binding disagrees with the observer hello record')
     cases_document, provider = read(folder / 'session-domain/cases.json'), read(folder / 'session-domain/provider.json')
     expected = read(SCRIPT / 'fixtures/session-calibration.json')['cases']
-    require(contract.get('cases') == expected, 'COVERAGE',
+    require(native_evidence.same_json(contract.get('cases'), expected), 'COVERAGE',
             'the native capture must declare the full E1 case manifest; no denominator shrink')
     rows = cases_document.get('cases') if isinstance(cases_document, dict) else None
     require(isinstance(rows, list) and rows, 'OBSERVATION_STRUCTURE', 'case rows malformed')
@@ -1715,6 +1809,118 @@ def _retirement_census(gateway_pid, baseline):
             'declaredAlive': declared_alive, 'pattern': pattern}
 
 
+def _retirement_census_pid(row):
+    """The pid a census row names, or None when the row names none (#1588 r1 §1).
+
+    A row that is not a dict, or carries no pid, cannot prove its process was
+    declared — it is read as an undeclared observation, never as a KeyError
+    out of the report path.
+    """
+    return row.get('pid') if isinstance(row, dict) else None
+
+
+def _retirement_real_pid(value):
+    """True when *value* can be a pid at all (#1355 r1 fix-r7, DS sibling r6 P1).
+
+    fix-r6 closed the *declared* side (null/bool/float/str entries make the
+    declared set untrustworthy), but a corrupt row pid still matched a declared
+    int under ``==`` — ``{'rows': [{'pid': true}], 'declared': [1]}`` and
+    ``7.0``/``7`` both read as a fully established census and PASS.  An
+    observation that is not a real pid (a bool is an int under ``==``, a
+    float compares equal to its int) is an *undeclared* observation, exactly
+    like a row that names no pid.
+
+    fix-r8 (DS boundary r7 P0, probe-verified — fix-r8-audit/probe-r8-mm-
+    before.out P0/P0b): ``0``/negative pids are not real either —
+    ``{'rows': [{'pid': 0}], 'declared': [0]}`` read as a fully established
+    census and PASS, and no pid producer (``ps -axo pid=`` rows, listener
+    pids) can ever emit one, so the only source is a corrupt artifact —
+    exactly the threat model this face fail-closes on.  Same for an
+    oversized int beyond any OS pid space (Linux pid_max <= 2**22, macOS
+    pids fit int32), so the bound is the int32 ceiling.
+    """
+    return (isinstance(value, int) and not isinstance(value, bool)
+            and 0 < value <= 2 ** 31 - 1)
+
+
+def _retirement_real_count(value):
+    """True when *value* can be a recorded count at all (fix-r30, DS r29
+    sibling#1 P1).
+
+    The count twin of the pid/port realness rules: an observer or contract
+    connections count is produced by len() on the observed set, which can
+    only emit a plain non-negative int — a bool (``isinstance(True, int)``
+    is True, ``True == 1``) or a float (``1.0 == 1``) is a corrupt artifact
+    walking the same boolean/float collapse channel the fix-r29 pid gates
+    closed, so it never reaches the count comparison.
+    """
+    return type(value) is int and value >= 0
+
+
+def _retirement_real_port(value):
+    """True when *value* can be a TCP port at all (#1355 r1 fix-r9, DS boundary r8 P0).
+
+    The pid twin of fix-r8, on the port side: the listener face only judged
+    ``isinstance(gateway_port, int)``, so a corrupt artifact recording
+    ``ports.gateway = 0`` (or ``true``, or ``70000``) together with a matching
+    ``listeners.addresses`` read as the loopback-only binding and PASSed — but
+    no port producer (lsof ``-Fn`` addresses, the ``RETIREMENT_PORT_SETS``
+    allocation) can ever emit one: 0 is the *bind-time* wildcard spelling
+    that never appears in a sampled address, a bool is not a port, and a
+    TCP port tops out at 65535.  The only source is a corrupt artifact —
+    exactly the threat model this face fail-closes on.
+    """
+    return (isinstance(value, int) and not isinstance(value, bool)
+            and 0 < value <= 65535)
+
+
+def _retirement_hashable(value):
+    """Set-safe projection of an observation value (#1588 r1 fix-r3, DS concurrency).
+
+    Pids and peers come straight from observation rows; an unhashable one
+    (list/dict) is an unusable observation already read as fail-closed by its
+    own verdict.  Project it to its repr so the control attributions' set
+    arithmetic cannot raise (which would collapse the whole 16-face report
+    into a ROUND_EVIDENCE stub) while distinct unhashable shapes stay distinct.
+
+    fix-r8 (MM boundary r7 P2, probe-verified — probe-r8-mm-before.out M3):
+    a bool walked the int branch, and ``hash(True) == hash(1)`` with
+    ``True == 1`` collapsed ``{True} | {1}`` in the control attributions —
+    the projection must keep the corrupt bool observation distinct from the
+    integer it equals, so a bool walks the repr path with the other corrupt
+    shapes.
+    """
+    if isinstance(value, (int, str)) and not isinstance(value, bool):
+        return value
+    return repr(value)
+
+
+def _retirement_list_rows(value):
+    """The observation rows of *value* — a non-list is not a row set.
+
+    fix-r4 (DS sibling P1): the census side already buckets a truthy
+    non-list container (``"outcomes": 5``, ``"frames": 7``) into the empty
+    observation set; the scorer, wire, controls and entry-inventory read
+    points had only ``or []``, so a JSON-legal but wrongly-typed artifact
+    raised TypeError at the first ``for`` and the report wrapper collapsed
+    every measured round into the ROUND_EVIDENCE stub (``rounds == []``).
+    """
+    return value if isinstance(value, list) else []
+
+
+def _retirement_frame_rows(frames):
+    """The frame-bearing rows of *frames* — the one predicate on a row.
+
+    fix-r10 (DS simplify r9 advisory, in-round): the row-carries-a-frame
+    predicate (a dict row whose ``'frame'`` slot is a dict) was spelled out
+    twice — in the wire-backing loop and the /ws inventory hit — so the two
+    readings could drift apart again exactly the way the fix-r9 boundary P1
+    had them disagreeing before ``[{}]``.  One helper, both readers.
+    """
+    return [row for row in frames
+            if isinstance(row, dict) and isinstance(row.get('frame'), dict)]
+
+
 def _retirement_census_verdict(census):
     """R3 (#1355 fix-r2): an unobservable census is not an empty host set.
 
@@ -1722,19 +1928,73 @@ def _retirement_census_verdict(census):
     sampling time) before "no undeclared rows" can mean PASS; an empty sample
     or a dead declared pid is a non-PASS observation, mirroring the
     process_tree rule that an inaccessible census is not an empty tree.
+    #1588 r1 §4: ``declaredAlive`` must be *proven* alive — a missing or null
+    proof is the same "not proven alive" as an explicit False, never a pass.
     """
-    rows, declared = census['rows'], census.get('declared', [])
-    undeclared = [row for row in rows if row['pid'] not in declared]
-    missing_declared = [pid for pid in declared if pid not in {row['pid'] for row in rows}]
+    # #1588 r1 §1 (fix-r2, DS boundary P0): the sample lists are normalised to
+    # their declared shapes — a truthy non-list (an int, a string) is an
+    # unusable observation, not a TypeError out of the census face; and a
+    # census that recorded no rows or no declared owned pids has not
+    # established anything, so it is a non-PASS observation (the fake PASS on
+    # ``{'rows': [], 'declaredAlive': True}`` is exactly the hole this closes).
+    rows = census.get('rows')
+    rows = _retirement_list_rows(rows)
+    declared = census.get('declared')
+    declared = _retirement_list_rows(declared)
+    # fix-r6 (DS boundary P0 + MiniMax boundary P0, both families,
+    # probe-verified — ``fix-r6-audit/probe-before.out`` A1/A2): ``None``
+    # cannot double as "this row names no pid" and as a declared entry —
+    # membership by ``==`` let a corrupt ``declared: [null]`` with pid-less
+    # rows (``{'rows': [{'pid': null}], 'declared': [null],
+    # 'declaredAlive': True}``) read as a fully established census and
+    # PASS, contradicting this face's own rule that a pid-less row is an
+    # undeclared observation.  A row naming no pid now always counts as
+    # undeclared, and a declared entry that is not a real pid (null, bool,
+    # float, string) makes the declared set untrustworthy outright.
+    undeclared = [row for row in rows
+                  if not _retirement_real_pid(_retirement_census_pid(row))
+                  or _retirement_census_pid(row) not in declared]
+    # fix-r2 (anthropic boundary P2): membership by equality, not by a set —
+    # a corrupt row carrying an unhashable pid must not turn the census face
+    # into a TypeError out of the report path.  fix-r7 (DS sibling r6 P1):
+    # a declared pid is only *present* when a row with a real pid names it —
+    # a bool/float row observation equals the int under ``==`` but proves
+    # nothing about the declared host set.
+    missing_declared = [pid for pid in declared
+                        if not any(_retirement_real_pid(_retirement_census_pid(row))
+                                   and _retirement_census_pid(row) == pid
+                                   for row in rows)]
+    # fix-r7 (DS boundary r6 P1 + MM boundary r6 P1 + MM sibling r6 P2, all
+    # three families): the set/sort ran on unprojected declared entries, so an
+    # unhashable entry ([[1]]) raised at the set comprehension and two
+    # different non-int types ([None, '1']) raised at sorted() — the TypeError
+    # escaped the census face and the report wrapper collapsed every measured
+    # round into the ROUND_EVIDENCE stub.  Same projection as the control
+    # attributions (fix-r3), and a repr sort key so bool/str mixes stay
+    # orderable: the face reads FAIL, it never collapses.
+    # fix-r8 (DS boundary r7 P0): the untrustworthy predicate now delegates
+    # to ``_retirement_real_pid`` wholesale, so a declared 0 / -1 / 2**63 —
+    # an int that is not a pid at all — is untrustworthy exactly like a
+    # bool or a string entry instead of reading as an established set.
+    untrustworthy_declared = sorted(
+        {_retirement_hashable(pid) for pid in declared
+         if not _retirement_real_pid(pid)}, key=repr)
     problems = []
     if undeclared:
         problems.append(f'{len(undeclared)} undeclared TS host rows: '
-                        + ', '.join(str(row['pid']) for row in undeclared))
+                        + ', '.join(str(_retirement_census_pid(row)) for row in undeclared))
     if missing_declared:
         problems.append(f'declared pids absent from the census rows: {missing_declared} '
                         f'(rows sampled: {len(rows)})')
-    if census.get('declaredAlive') is False:
-        problems.append('declared gateway pid was not alive at census time')
+    if untrustworthy_declared:
+        problems.append(f'declared pid entries are not real pids: {untrustworthy_declared}; '
+                        'a corrupt declared set cannot prove a clean host audit')
+    if not declared or not rows:
+        problems.append('the census recorded no sampled rows or no declared owned pids; '
+                        'an unestablished census is not a clean host audit')
+    if census.get('declaredAlive') is not True:
+        problems.append(f'declared gateway pid was not proven alive at census time '
+                        f'(declaredAlive={census.get("declaredAlive")!r})')
     return {'status': 'FAIL' if problems else 'PASS', 'rule': 'HOST_CENSUS',
             'undeclared': undeclared, 'problems': problems}
 
@@ -1751,7 +2011,20 @@ def _retirement_report_census(round_row):
     one, so it blocks instead of passing.
     """
     census = round_row.get('census')
-    if not isinstance(census, dict) or not isinstance(census.get('rows'), list):
+    # fix-r2 (DS boundary P0): the report face goes one notch further than the
+    # verdict — a census that recorded no rows or no declared owned pids never
+    # observed the host set, so the face reads BLOCKED (unobserved) instead of
+    # scoring the verdict's FAIL.  The controls class-2 path keeps calling the
+    # verdict directly and still sees its FAIL, so removing the gateway pid
+    # from a one-pid declared set keeps its expected attribution.
+    if (not isinstance(census, dict) or not isinstance(census.get('rows'), list)
+            or not (census.get('rows') or [])
+            or not isinstance(census.get('declared'), list)
+            or not (census.get('declared') or [])):
+        # fix-r4 (DS sibling P2): a truthy non-list ``declared`` (5, "12") is
+        # the same unobserved shape as non-list rows — the gate reads BLOCKED,
+        # not the verdict's "no declared pids" FAIL, so both spellings of a
+        # wrongly-typed census land in the same status.
         return {'status': 'BLOCKED', 'rule': 'HOST_CENSUS', 'undeclared': [],
                 'problems': ['the round recorded no process census; an unobserved census is '
                              'not an empty host set']}
@@ -1781,51 +2054,73 @@ def _retirement_connections(pid):
     return {'rows': rows, 'unparsed': unparsed, 'commandStatus': 'ok'}
 
 
+def _retirement_peer_is_undeclared(peer):
+    """True when a parsed peer address is not a proven loopback endpoint (#1588 r1 §1).
+
+    A peer that is not a string cannot be proven loopback either — it counts as
+    undeclared, never as a pass.
+    """
+    return peer is not None and (not isinstance(peer, str)
+                                 or not (peer.startswith('127.0.0.1:') or peer.startswith('localhost:')
+                                         or peer.startswith('::1:') or peer.startswith('[::1]:')))
+
+
 def _retirement_network_verdict(connections):
     """Every established peer must be loopback; anything else is a fallback.
 
     R3 (#1355 fix-r2): the verdict takes the whole connections observation.
     An empty sample, a failed lsof, or unparsed peer lines cannot prove
     loopback-only, so they block instead of passing.
+    #1588 r1 §4: the verdict is the single source of truth for whether the
+    round's sample was observable at all — the class-4 control and the report
+    face read the ``observable`` field instead of re-deriving the shape from
+    the raw observation.  A missing ``commandStatus`` is a probe that never
+    reported success: BLOCKED, not a sample that passes merely because it
+    forgot to say it failed.  fix-r6 (MiniMax boundary P2, in-round, comment
+    corrected): that BLOCKED branch is deliberately judged *before* the
+    undeclared-peer FAIL — unobservable is neither clean nor a peer judgment
+    — so "a probe that never reported success" never surfaces as FAIL and a
+    non-loopback peer FAIL requires a successfully probed sample below.
     """
-    rows = connections.get('rows', [])
-    undeclared = [row['peer'] for row in rows if row.get('peer') is not None
-                  and not (row['peer'].startswith('127.0.0.1:') or row['peer'].startswith('localhost:')
-                           or row['peer'].startswith('::1:') or row['peer'].startswith('[::1]:'))]
-    unparsed = [row for row in rows if row.get('peer') is None] + connections.get('unparsed', [])
-    if connections.get('commandStatus') == 'failed':
-        return {'status': 'BLOCKED', 'rule': 'NETWORK_FALLBACK', 'undeclared': undeclared,
-                'unparsed': unparsed, 'reason': connections.get('reason')}
+    connections = connections if isinstance(connections, dict) else {}
+    rows = connections.get('rows')
+    rows = _retirement_list_rows(rows)
+    unparsed = [row for row in rows if not isinstance(row, dict) or row.get('peer') is None]
+    # fix-r2 (DS concurrency P2) kept the tally type-safe; fix-r3 (DS r2
+    # boundary P0, both the boundary and concurrency roles) closes the
+    # direction it opened: a truthy non-list ``unparsed`` is a broken
+    # observation, not an empty one — degrading it to [] read "all peers
+    # loopback, probe clean" (observable=True → PASS) out of a corrupt
+    # artifact.  It counts as one unparsed row so the round blocks; a falsy
+    # value (None/0/'') stays "no unparsed lines" and does not disturb a
+    # legal shape.
+    raw_unparsed = connections.get('unparsed')
+    if isinstance(raw_unparsed, list):
+        unparsed += raw_unparsed
+    elif raw_unparsed:
+        unparsed.append({'peer': None, 'raw': repr(raw_unparsed)})
+    undeclared = [row.get('peer') for row in rows
+                  if isinstance(row, dict) and _retirement_peer_is_undeclared(row.get('peer'))]
+    # Observability is the shape of the observation (#1355 fix-r4f): a
+    # successful probe, at least one parsed row, no unparsed lines, and no
+    # row without a parsed peer.
+    observable = (bool(rows) and not unparsed
+                  and connections.get('commandStatus') == 'ok'
+                  and all(isinstance(row, dict) and row.get('peer') for row in rows))
+    verdict = {'rule': 'NETWORK_FALLBACK', 'undeclared': undeclared, 'unparsed': unparsed,
+               'observable': observable}
+    if connections.get('commandStatus') != 'ok':
+        return {**verdict, 'status': 'BLOCKED',
+                'reason': connections.get('reason') or (
+                    f"the network probe's commandStatus is {connections.get('commandStatus')!r}, "
+                    "not 'ok'; a probe that never reported success is not a connection set")}
     if undeclared:
-        return {'status': 'FAIL', 'rule': 'NETWORK_FALLBACK', 'undeclared': undeclared, 'unparsed': unparsed}
-    if unparsed or not rows:
-        return {'status': 'BLOCKED', 'rule': 'NETWORK_FALLBACK', 'undeclared': [],
-                'unparsed': unparsed,
+        return {**verdict, 'status': 'FAIL'}
+    if not observable:
+        return {**verdict, 'status': 'BLOCKED',
                 'reason': 'no parseable established-peer sample; an empty or unparsed sample is '
                           'not proof of loopback-only'}
-    return {'status': 'PASS', 'rule': 'NETWORK_FALLBACK', 'undeclared': [], 'unparsed': []}
-
-
-def _retirement_network_observable(connections):
-    """Whether the round recorded a network sample a control can be judged on.
-
-    P1 (#1355 fix-r4f, anthropic sibling #1): the control used to ask the
-    *verdict* whether the round's sample was BLOCKED, but
-    `_retirement_network_verdict` returns FAIL on `undeclared` before it
-    reaches the `unparsed or not rows` check — a round with a pre-existing
-    undeclared peer (the real r2 round's provider egress, #1478) *and* an
-    unparsed line read as observable, and the injected peer was credited
-    against it.  Observability is the shape of the observation: a successful
-    probe, at least one parsed row, no unparsed lines, and no row without a
-    parsed peer.
-    """
-    if not isinstance(connections, dict):
-        return False
-    rows = connections.get('rows')
-    if (connections.get('commandStatus') != 'ok' or not isinstance(rows, list) or not rows
-            or connections.get('unparsed')):
-        return False
-    return all(isinstance(row, dict) and row.get('peer') for row in rows)
+    return {**verdict, 'status': 'PASS'}
 
 
 def _retirement_listener_verdict(listeners, gateway_port):
@@ -1837,6 +2132,14 @@ def _retirement_listener_verdict(listeners, gateway_port):
     """
     listeners = listeners if isinstance(listeners, dict) else {}
     addresses = listeners.get('addresses')
+    # fix-r9 (DS boundary r8 P0): the port is judged too, not only the
+    # addresses — a self-consistent corrupt round (``ports.gateway = 0``
+    # plus ``addresses = ['127.0.0.1:0']``) must not read as the binding.
+    if not _retirement_real_port(gateway_port):
+        return {'status': 'FAIL', 'rule': 'LISTENER_EXPOSURE', 'addresses': addresses,
+                'expected': None, 'loopbackOnly': listeners.get('loopbackOnly'),
+                'detail': f'gateway port {gateway_port!r} is not a real port, so the '
+                          'loopback-only listener binding cannot be judged'}
     expected = [f'127.0.0.1:{gateway_port}']
     if listeners.get('loopbackOnly') is not True or addresses != expected:
         return {'status': 'FAIL', 'rule': 'LISTENER_EXPOSURE', 'addresses': addresses,
@@ -1860,6 +2163,17 @@ def _retirement_gateway_pid(round_row):
     return listeners.get('pid') if isinstance(listeners, dict) else None
 
 
+def _retirement_round_ports(round_row):
+    """The round's recorded port map, or an empty map when it recorded none.
+
+    #1588 r1 §1: the report faces read ``ports`` as an observation — a
+    missing, null or non-dict value is "no ports recorded" (the listener face
+    FAILs, the topology face records None), never a KeyError/TypeError.
+    """
+    ports = round_row.get('ports')
+    return ports if isinstance(ports, dict) else {}
+
+
 def _retirement_evidence_pairs(verdict):
     """The (method, problem) pairs a scoring verdict reports as EVIDENCE_BACKING."""
     pairs = set()
@@ -1875,17 +2189,55 @@ def _retirement_evidence_pairs(verdict):
     return pairs
 
 
+def _retirement_usable_frame_id(identifier):
+    """True when *identifier* can serve as a strip-set member (fix-r4, DS
+    sibling P1).
+
+    An unhashable id (list/dict) or a bool dies at the set arithmetic below;
+    a frame whose id cannot be named cannot be proven to belong to *method*,
+    so it is never added and never matched — the mutation leaves it in place
+    and the scorer's own guards (not the strip) judge it fail-closed.
+
+    fix-r30 (anthropic r29 simplify#1 P2): the definition sits ahead of
+    ``_retirement_wire_backing`` like every other helper this family shares
+    (``_retirement_frame_rows`` / ``_retirement_list_rows``) — fix-r29's
+    forward reference worked but broke the file's definition-order
+    convention.
+    """
+    return isinstance(identifier, (int, str)) and not isinstance(identifier, bool)
+
+
 def _retirement_wire_backing(frames):
-    """Map methods to their request ids and the responses/events that answered."""
+    """Map methods to their request ids and the responses/events that answered.
+
+    fix-r4 (DS sibling P1): a frame whose id or method is unusable as a key
+    (a list/dict — any unhashable JSON value; a bool is not an id either) is
+    skipped as an observation, the same fail-closed skip as a non-dict row:
+    the outcome's wire-backing rule then fails instead of the TypeError
+    collapsing every measured round into the wrapper's ROUND_EVIDENCE stub.
+    """
     sends, responses, events, final_events = {}, {}, {}, set()
-    for row in frames:
+    # #1588 r1 §1 (fix-r4) / DS boundary r8 P1 (fix-r9): a row that is not
+    # a dict, or a dict row whose 'frame' is not a dict, carries no frame at
+    # all; the outcomes above then fail their wire-backing rule fail-closed
+    # instead of an AttributeError escaping the scorer.  fix-r10: the
+    # predicate itself lives in _retirement_frame_rows, shared with the /ws
+    # inventory hit so the two readings cannot drift apart again.
+    for row in _retirement_frame_rows(_retirement_list_rows(frames)):
         frame = row.get('frame')
-        if not isinstance(frame, dict):
-            continue
         identifier = frame.get('id')
+        # fix-r29 (anthropic r28 simplify#3 P2): the usable-id predicate is
+        # _retirement_usable_frame_id's, spelled once — the inline twin is
+        # the drift point fix-r10 closed for the frame-row predicate.
+        # Python resolves the call target at call time, so the definition
+        # further down the module is fine.
+        if not _retirement_usable_frame_id(identifier):
+            continue
         if row.get('direction') == 'send':
             if frame.get('type') == 'request':
-                sends[frame.get('method')] = identifier
+                method = frame.get('method')
+                if isinstance(method, str):
+                    sends[method] = identifier
             continue
         kind = frame.get('type')
         if kind == 'response':
@@ -1912,8 +2264,8 @@ def score_retirement_round(row, expected):
     MISSING_GROUP / MISSING_FIELD / ZERO_TESTS / UNKNOWN_SKIP (structure),
     ROUND_EXECUTION (driver exit).
     """
-    verdict = {'round': row['label'], 'status': 'FAIL', 'rules': [], 'executed': [],
-               'methodVerdicts': {}, 'driverExitCode': row['driverExitCode']}
+    verdict = {'round': row.get('label'), 'status': 'FAIL', 'rules': [], 'executed': [],
+               'methodVerdicts': {}, 'driverExitCode': row.get('driverExitCode')}
     problems = []
     for group in ('outcomes', 'frames', 'http', 'processes'):
         if not row.get(group):
@@ -1921,19 +2273,43 @@ def score_retirement_round(row, expected):
     if problems:
         verdict['rules'] = problems
         return verdict
-    if row['driverExitCode'] != 0:
-        problems.append({'rule': 'ROUND_EXECUTION', 'detail': f"driver exited {row['driverExitCode']}"})
-    outcomes = row['outcomes']
+    # fix-r3 (DS r2 boundary): a JSON ``false`` is not the exit code 0 it
+    # compares equal to — only a true non-bool int zero counts as a clean
+    # driver exit, the same shape guard the probe status side already has.
+    driver_exit = row.get('driverExitCode')
+    if not (isinstance(driver_exit, int) and not isinstance(driver_exit, bool)
+            and driver_exit == 0):
+        problems.append({'rule': 'ROUND_EXECUTION',
+                         'detail': f"driver exited {driver_exit!r}"})
+    # fix-r4 (DS sibling P1): a truthy non-list outcomes container is not an
+    # observation set — the same isinstance bucket the census side uses, so
+    # the round scores its ZERO_TESTS fail instead of the TypeError below
+    # collapsing the whole report into ROUND_EVIDENCE.
+    outcomes = _retirement_list_rows(row.get('outcomes'))
     if not outcomes:
         problems.append({'rule': 'ZERO_TESTS', 'detail': 'no method outcome rows'})
         verdict['rules'] = problems
         return verdict
     executed, unknown, missing_fields = [], [], []
     for outcome_row in outcomes:
+        if not isinstance(outcome_row, dict):
+            # #1588 r1 §1 (fix-r2, DS sibling P1): a non-dict row carries no
+            # fields at all — record it as the missing-field shape and let the
+            # existing MISSING_FIELD rule fail the round fail-closed.
+            missing_fields.append({'field': 'row', 'row': outcome_row})
+            continue
         for field in ('method', 'outcome', 'shape'):
             if field not in outcome_row:
                 missing_fields.append({'field': field, 'row': outcome_row})
         method, status = outcome_row.get('method'), outcome_row.get('outcome')
+        # fix-r3 (DS r2 boundary): a non-str method value is the same unusable
+        # observation as a missing one — None mixed into executed made
+        # ``sorted(executed_set)`` raise (and an unhashable one died at the
+        # set()), which the report wrapper collapsed into a full-face BLOCKED
+        # with ``rounds == []``, dropping every measured round.
+        if not isinstance(method, str):
+            missing_fields.append({'field': 'method', 'row': outcome_row})
+            continue
         if status not in RETIREMENT_OUTCOME_STATUSES:
             unknown.append(method)
             continue
@@ -1961,16 +2337,30 @@ def score_retirement_round(row, expected):
         problems.append({'rule': 'COVERAGE', 'detail': {'missing': missing}})
     if extra:
         problems.append({'rule': 'COVERAGE', 'detail': {'unexpected': extra}})
-    if outcomes and all(outcome_row.get('outcome') == 'error'
+    if outcomes and all(isinstance(outcome_row, dict)
+                        and outcome_row.get('outcome') == 'error'
                         and outcome_row.get('errorCode') == 'CAPABILITY_UNAVAILABLE'
                         for outcome_row in outcomes):
         problems.append({'rule': 'UNIFORM_UNAVAILABLE',
                          'detail': 'every executed method answered CAPABILITY_UNAVAILABLE'})
-    sends, responses, events, final_events = _retirement_wire_backing(row['frames'])
+    sends, responses, events, final_events = _retirement_wire_backing(
+        _retirement_list_rows(row.get('frames')))
     violations = []
     for outcome_row in outcomes:
+        if not isinstance(outcome_row, dict):
+            # fix-r2 (DS sibling P1): already recorded by MISSING_FIELD above;
+            # the wire-backing pass only walks rows that can name a method.
+            continue
         method = outcome_row.get('method')
         status = outcome_row.get('outcome')
+        if not isinstance(method, str):
+            # fix-r4 (DS sibling P1) / fix-r5 (DS boundary P1, guard moved
+            # ahead of the timeout branch): an unhashable method dies at the
+            # dict membership below and at `_retirement_evidence_pairs`'s
+            # `pairs.add((method, problem))` even on the timeout path —
+            # MISSING_FIELD above already fails the round, so the wire pass
+            # skips what it cannot look up or hash.
+            continue
         if status == 'timeout':
             # F1 (#1355 fix-r1): a gateway that takes requests and never answers
             # produces exactly this outcome with zero wire backing.
@@ -2016,30 +2406,45 @@ def score_retirement_round(row, expected):
 def _retirement_strip_wire(mutated, method):
     """Remove every wire frame of *method* while keeping its outcome row."""
     identifiers = set()
-    for row in mutated['frames']:
+    for row in _retirement_list_rows(mutated.get('frames')):
+        if not isinstance(row, dict):
+            # #1588 r1 §1 (fix-r2, DS sibling P1): a non-dict row carries no
+            # frame to strip; the outcome's wire-backing rule fails closed.
+            continue
         frame = row.get('frame')
         if row.get('direction') == 'send' and isinstance(frame, dict) and frame.get('method') == method:
-            identifiers.add(frame.get('id'))
-    mutated['frames'] = [row for row in mutated['frames']
-                         if not (isinstance(row.get('frame'), dict) and row['frame'].get('id') in identifiers)]
+            identifier = frame.get('id')
+            if _retirement_usable_frame_id(identifier):
+                identifiers.add(identifier)
+    mutated['frames'] = [row for row in _retirement_list_rows(mutated.get('frames'))
+                         if not (isinstance(row, dict)
+                                 and isinstance(row.get('frame'), dict)
+                                 and _retirement_usable_frame_id(row['frame'].get('id'))
+                                 and row['frame'].get('id') in identifiers)]
     return mutated
 
 
 def _retirement_strip_receive(mutated, method):
     """Remove every receive frame of *method*, keeping its send frame (R1)."""
     identifiers = set()
-    for row in mutated['frames']:
+    for row in _retirement_list_rows(mutated.get('frames')):
+        if not isinstance(row, dict):
+            continue
         frame = row.get('frame')
         if row.get('direction') == 'send' and isinstance(frame, dict) and frame.get('method') == method:
-            identifiers.add(frame.get('id'))
-    mutated['frames'] = [row for row in mutated['frames']
-                         if not (row.get('direction') == 'receive'
+            identifier = frame.get('id')
+            if _retirement_usable_frame_id(identifier):
+                identifiers.add(identifier)
+    mutated['frames'] = [row for row in _retirement_list_rows(mutated.get('frames'))
+                         if not (isinstance(row, dict)
+                                 and row.get('direction') == 'receive'
                                  and isinstance(row.get('frame'), dict)
+                                 and _retirement_usable_frame_id(row['frame'].get('id'))
                                  and row['frame'].get('id') in identifiers)]
     return mutated
 
 
-def _retirement_controls(round_row, expected):
+def _retirement_controls(round_row, expected, verdict=None):
     """Six mutation classes over the real round evidence; each must FAIL.
 
     The controls only prove the scorer catches injected fakes; they are never
@@ -2065,10 +2470,15 @@ def _retirement_controls(round_row, expected):
     control success.  Frame classes attribute to their (method, problem) pair,
     the census class to the gateway pid inside the mutated declared set, the
     network class to the injected peer.
+    #1588 r1 §3: the caller (_retirement_report) has already scored this
+    round; its verdict arrives as *verdict* instead of being recomputed through
+    a json roundtrip here, and the mutation copies below use ``copy.deepcopy``
+    (the native_evidence.py spelling) on the row directly.
     """
     controls = []
-    original_evidence = _retirement_evidence_pairs(
-        score_retirement_round(json.loads(json.dumps(round_row)), expected))
+    if verdict is None:
+        verdict = score_retirement_round(round_row, expected)
+    original_evidence = _retirement_evidence_pairs(verdict)
 
     def record(name, injection, expected_rule, verdict, detail, require_pair=None, caused=None):
         if require_pair is not None and require_pair in original_evidence:
@@ -2102,9 +2512,10 @@ def _retirement_controls(round_row, expected):
                          'rule': expected_rule, 'status': 'NOT_APPLICABLE', 'reason': reason})
 
     # 1. 故意偷偷回退 TS / 假 local 实透传: an executed method with no wire frame.
-    mutated = json.loads(json.dumps(round_row))
-    victim = next((row.get('method') for row in mutated['outcomes']
-                   if row.get('outcome') == 'ok' and row.get('method')), None)
+    mutated = copy.deepcopy(round_row)
+    victim = next((row.get('method') for row in _retirement_list_rows(mutated.get('outcomes'))
+                   if isinstance(row, dict) and row.get('outcome') == 'ok'
+                   and isinstance(row.get('method'), str) and row.get('method')), None)
     injection = 'executed method with every wire frame stripped while its ok outcome is kept'
     if victim is None:
         # P1 (#1355 fix-r4): same unestablishable-control rule as class 6 — a
@@ -2115,7 +2526,7 @@ def _retirement_controls(round_row, expected):
                     'no ok outcome carrying a method name in the control round: every method '
                     'errored or timed out, so the wire-frame mutation cannot be established')
     else:
-        before = len(mutated['frames'])
+        before = len(_retirement_list_rows(mutated.get('frames')))
         mutated = _retirement_strip_wire(mutated, victim)
         if len(mutated['frames']) == before:
             # P1 (#1355 fix-r4b, both families): the victim has no send frame
@@ -2134,10 +2545,31 @@ def _retirement_controls(round_row, expected):
                                     if p['rule'] == 'EVIDENCE_BACKING'), None)},
                    require_pair=(victim, 'send frame missing'))
     # 2. 隐藏 TS 宿主: the census still shows the gateway pid, but it is undeclared.
-    census = round_row.get('census') or {}
-    census_rows = census.get('rows') or []
+    # fix-r2 (DS sibling P2): same shape guard as _retirement_report_census —
+    # a truthy non-dict census is an unusable observation, and the class
+    # reports unestablished instead of raising AttributeError.
+    census = round_row.get('census')
+    census = census if isinstance(census, dict) else {}
+    # fix-r3 (DS r2 concurrency): a truthy non-list rows sample is an unusable
+    # observation — normalise to [] instead of raising TypeError out of the
+    # controls (which run before every audit face and would drop all of them).
+    census_rows = census.get('rows')
+    census_rows = _retirement_list_rows(census_rows)
     gateway_pid = _retirement_gateway_pid(round_row)
-    if gateway_pid is None or not any(row.get('pid') == gateway_pid for row in census_rows):
+    # fix-r8 (MM sibling r7 P1, probe-verified — fix-r8-audit/probe-r8-mm-
+    # before.out C2): the row-side pid read here was a bare ``==``, the one
+    # place fix-r7's "row side always goes through ``_retirement_real_pid``"
+    # rule did not reach.  ``{'rows': [{'pid': true}]}`` against a gateway
+    # pid of 1 matched under ``==`` (and ``{True} | {1}`` collapsed in the
+    # attribution), so the class-2 control credited a corrupt row with the
+    # mutation's FAIL that pre-existed it (false PASS), or broke the
+    # attribution the other way (false FAIL).  The gateway pid itself must
+    # be a real pid too — a corrupt listener pid proves nothing about the
+    # declared set, so the class reads unestablished.
+    if not _retirement_real_pid(gateway_pid) or not any(
+            _retirement_real_pid(_retirement_census_pid(row))
+            and _retirement_census_pid(row) == gateway_pid
+            for row in census_rows):
         # P2a (#1355 fix-r4c, anthropic sibling #2): the injection is "the
         # gateway pid stays in the census but leaves the declared set".  With
         # the pid absent from the census the mutation proves nothing — it
@@ -2154,8 +2586,13 @@ def _retirement_controls(round_row, expected):
         # already had (a failed launch attempt's process) would fail the class
         # on its own.  Remove only the gateway pid from the declared set and
         # attribute the verdict to that pid.
-        declared_original = census.get('declared') or []
-        if gateway_pid not in declared_original:
+        declared_original = census.get('declared')
+        declared_original = _retirement_list_rows(declared_original)
+        # fix-r8 (MM sibling r7 P1): same real-pid predicate on the declared
+        # side — a declared ``True`` is not a declaration of pid 1, so the
+        # "the round never declared this pid" gate must not read it as one.
+        if not any(_retirement_real_pid(pid) and pid == gateway_pid
+                   for pid in declared_original):
             unavailable('TS_HOST', 'gateway pid present in the census but removed from the declared owned set',
                         'HOST_CENSUS',
                         f'gateway pid {gateway_pid} is not in the round\'s declared owned set '
@@ -2166,7 +2603,8 @@ def _retirement_controls(round_row, expected):
             original_census = _retirement_census_verdict(
                 {'rows': census_rows, 'declared': declared_original,
                  'declaredAlive': census.get('declaredAlive')})
-            undeclared_before = {row.get('pid') for row in original_census['undeclared']}
+            undeclared_before = {_retirement_hashable(_retirement_census_pid(row))
+                                 for row in original_census.get('undeclared') or []}
             census_verdict = _retirement_census_verdict(
                 {'rows': census_rows, 'declared': declared,
                  'declaredAlive': census.get('declaredAlive')})
@@ -2175,21 +2613,30 @@ def _retirement_controls(round_row, expected):
                    # Attribution is the declared-set delta: exactly the gateway
                    # pid becomes undeclared.  A leftover row the round already
                    # had is in undeclared_before and cannot carry the class.
+                   # fix-r3 (DS r2 concurrency): both sides go through the
+                   # hashable projection — an unhashable pid in the round's
+                   # own rows must not raise out of the attribution.
                    caused=lambda verdict: (
-                       {row.get('pid') for row in verdict.get('undeclared') or []}
-                       == undeclared_before | {gateway_pid}))
+                       {_retirement_hashable(_retirement_census_pid(row))
+                        for row in verdict.get('undeclared') or []}
+                       == undeclared_before | {_retirement_hashable(gateway_pid)}))
     # 3. 全走 unavailable: every outcome becomes CAPABILITY_UNAVAILABLE, wire kept consistent.
-    mutated = json.loads(json.dumps(round_row))
-    for outcome_row in mutated['outcomes']:
+    mutated = copy.deepcopy(round_row)
+    for outcome_row in _retirement_list_rows(mutated.get('outcomes')):
+        if not isinstance(outcome_row, dict):
+            continue
         outcome_row['outcome'] = 'error'
         outcome_row['errorCode'] = 'CAPABILITY_UNAVAILABLE'
-    for row in mutated['frames']:
+    for row in _retirement_list_rows(mutated.get('frames')):
+        if not isinstance(row, dict):
+            continue
         frame = row.get('frame')
         if isinstance(frame, dict) and frame.get('type') == 'response' and frame.get('ok') is True:
             frame['ok'] = False
             frame.pop('result', None)
             frame['error'] = {'code': 'CAPABILITY_UNAVAILABLE', 'message': 'controlled mutation'}
-    if not round_row['outcomes']:
+    outcomes = _retirement_list_rows(round_row.get('outcomes'))
+    if not outcomes:
         # P1 (#1355 fix-r4d, minimax boundary #2): a legal degraded round may
         # record zero method outcomes.  The scorer then stops at ZERO_TESTS and
         # UNIFORM_UNAVAILABLE can never fire, so scoring the mutation reported
@@ -2200,7 +2647,7 @@ def _retirement_controls(round_row, expected):
                     'UNIFORM_UNAVAILABLE',
                     'the control round recorded no method outcome, so the uniform-unavailable '
                     'rewrite changes nothing and the injection cannot be established')
-    elif mutated['outcomes'] == round_row['outcomes']:
+    elif mutated.get('outcomes') == outcomes:
         # P1 (#1355 fix-r4c, anthropic sibling #1; narrowed in fix-r4d by
         # minimax boundary #1/#2): landing is judged on the injected dimension
         # — the outcomes — not on the whole round.  A contradictory round
@@ -2220,55 +2667,65 @@ def _retirement_controls(round_row, expected):
     injected_peer = '203.0.113.7:443'
     injection = 'undeclared non-loopback established peer added to the gateway connections'
     connections = round_row.get('connections')
-    # P1 (#1355 fix-r4e, anthropic sibling #1 = minimax boundary #1):
-    # observability is a property of the round's *own* sample, not of the
-    # mutated one.  Judging the mutated verdict let an empty or unparsed
-    # sample count as landing — `_retirement_network_verdict` checks
-    # `undeclared` before `unparsed or not rows`, so the injected row turned
-    # the round's BLOCKED network face into FAIL and the class recorded PASS.
-    # P1 (#1355 fix-r4f, anthropic sibling #1): asking the *verdict* about the
-    # round's own sample has the same masking — a round with a pre-existing
-    # undeclared peer (the real r2 round's provider egress, #1478) *and* an
-    # unparsed line reads FAIL, not BLOCKED, and was credited as establishable.
-    # So observability is the shape of the observation, never a verdict status.
-    # A round that already reports the injected peer itself cannot attribute
-    # the injection either (P1 #1355 fix-r4f, anthropic boundary #1): the set
-    # delta would be empty and the injection would change nothing.
-    original_network = (_retirement_network_verdict(connections)
-                        if _retirement_network_observable(connections) else None)
+    # Observability is a property of the round's *own* sample, never of the
+    # mutated one (P1 #1355 fix-r4e, anthropic sibling #1 = minimax boundary
+    # #1), and never a verdict *status*: a round with a pre-existing undeclared
+    # peer (the real r2 round's provider egress, #1478) *and* an unparsed line
+    # reads FAIL, not BLOCKED, and was credited as establishable (P1 #1355
+    # fix-r4f, anthropic sibling #1).  #1588 r1 §4 makes the verdict itself
+    # the one source of truth: the ``observable`` field is the shape of the
+    # observation (successful probe, at least one parsed row, no unparsed
+    # line, no row without a parsed peer), and this control reads that field
+    # instead of re-deriving it.  A round that already reports the injected
+    # peer itself cannot attribute the injection either (P1 #1355 fix-r4f,
+    # anthropic boundary #1): the set delta would be empty and the injection
+    # would change nothing.
+    original_network = _retirement_network_verdict(connections)
     if not isinstance(connections, dict):
         unavailable('FORWARDING_MISLABELED', injection, 'NETWORK_FALLBACK',
                     'the control round recorded no network observation, so adding a non-loopback '
                     'peer cannot be established')
-    elif original_network is None:
+    elif not original_network.get('observable'):
         unavailable('FORWARDING_MISLABELED', injection, 'NETWORK_FALLBACK',
-                    "the control round's network observation is unobservable (failed lsof or an "
-                    'empty / partly unparsed sample), so adding a non-loopback peer cannot be '
-                    'established')
+                    "the control round's network observation is unobservable (failed or missing "
+                    'lsof status, an empty / partly unparsed sample, or a row without a parsed '
+                    'peer), so adding a non-loopback peer cannot be established')
     elif injected_peer in (original_network.get('undeclared') or []):
         unavailable('FORWARDING_MISLABELED', injection, 'NETWORK_FALLBACK',
                     f'the control round already reports {injected_peer!r} as an undeclared peer, '
                     'so the injected peer cannot be told apart from the pre-existing one')
     else:
-        undeclared_before = set(original_network.get('undeclared') or [])
-        mutated_connections = json.loads(json.dumps(connections))
-        mutated_connections['rows'] = (mutated_connections.get('rows') or []) + [
+        # fix-r3 (DS r2 concurrency): a corrupt row can carry a non-str (even
+        # unhashable) peer — project both sides so the attribution's set
+        # arithmetic cannot raise out of the controls.
+        undeclared_before = {_retirement_hashable(peer)
+                             for peer in original_network.get('undeclared') or []}
+        mutated_connections = copy.deepcopy(connections)
+        # fix-r29 (DS r28-b simplify#2 P2, read as P1 by the P2b rule): the
+        # truthy-non-list ``or []`` bypassed the normalization every other
+        # read point uses — a corrupt ``rows`` (e.g. ``5``) raised TypeError
+        # out of the controls instead of the control's own unavailable
+        # verdict. _retirement_list_rows keeps the one normalization.
+        mutated_connections['rows'] = _retirement_list_rows(
+            mutated_connections.get('rows')) + [
             {'peer': injected_peer, 'raw': 'controlled mutation'}]
         network_verdict = _retirement_network_verdict(mutated_connections)
-        if network_verdict.get('status') == 'BLOCKED':
+        if not network_verdict.get('observable'):
             unavailable('FORWARDING_MISLABELED', injection, 'NETWORK_FALLBACK',
                         f"the mutated sample is unobservable ({network_verdict.get('reason')}), "
                         'so adding a non-loopback peer cannot be established')
         else:
             record('FORWARDING_MISLABELED', injection, 'NETWORK_FALLBACK', network_verdict, {},
-                   caused=lambda verdict: (set(verdict.get('undeclared') or [])
-                                           == undeclared_before | {injected_peer}))
+                   caused=lambda verdict: (
+                       {_retirement_hashable(peer) for peer in verdict.get('undeclared') or []}
+                       == undeclared_before | {_retirement_hashable(injected_peer)}))
     # 5. R1 (#1355 fix-r2): a stream method recorded as an error outcome with
     # every receive frame stripped (send kept) must still fail EVIDENCE_BACKING
     # — the pre-fix scorer passed exactly this shape.
-    mutated = json.loads(json.dumps(round_row))
-    stream_row = next((row for row in mutated['outcomes']
-                       if row.get('shape') == 'stream' and row.get('method')), None)
+    mutated = copy.deepcopy(round_row)
+    stream_row = next((row for row in _retirement_list_rows(mutated.get('outcomes'))
+                       if isinstance(row, dict) and row.get('shape') == 'stream'
+                       and isinstance(row.get('method'), str) and row.get('method')), None)
     injection = ('stream method rewritten to error with every receive frame stripped while '
                  'keeping its send frame')
     if stream_row is None:
@@ -2280,7 +2737,7 @@ def _retirement_controls(round_row, expected):
         stream_method = stream_row['method']
         stream_row['outcome'] = 'error'
         stream_row.pop('errorCode', None)
-        before = len(mutated['frames'])
+        before = len(_retirement_list_rows(mutated.get('frames')))
         mutated = _retirement_strip_receive(mutated, stream_method)
         if len(mutated['frames']) == before:
             # P1 (#1355 fix-r4b, both families): with no send frame (or no
@@ -2300,10 +2757,11 @@ def _retirement_controls(round_row, expected):
     # 6. ① (#1355 fix-r3): a stream ok outcome whose terminal event frame was
     # downgraded to final:false (the stream merely ended) must still fail
     # EVIDENCE_BACKING — the pre-fix scorer passed exactly this shape.
-    mutated = json.loads(json.dumps(round_row))
-    stream_ok = next((row for row in mutated['outcomes']
-                      if row.get('shape') == 'stream' and row.get('outcome') == 'ok'
-                      and row.get('method')), None)
+    mutated = copy.deepcopy(round_row)
+    stream_ok = next((row for row in _retirement_list_rows(mutated.get('outcomes'))
+                      if isinstance(row, dict) and row.get('shape') == 'stream'
+                      and row.get('outcome') == 'ok'
+                      and isinstance(row.get('method'), str) and row.get('method')), None)
     injection = 'stream ok outcome whose terminal event frame is downgraded to final:false'
     if stream_ok is None:
         # P1 (#1355 fix-r4): a legal degraded round (the only stream method
@@ -2315,7 +2773,7 @@ def _retirement_controls(round_row, expected):
                     'timed out, so the terminal-frame mutation cannot be established')
     else:
         stream_method = stream_ok['method']
-        sends, _responses, _events, _finals = _retirement_wire_backing(mutated['frames'])
+        sends, _responses, _events, _finals = _retirement_wire_backing(_retirement_list_rows(mutated.get('frames')))
         identifier = sends.get(stream_method)
         if identifier is None:
             # Same P1: without the send frame there is no id to locate the
@@ -2326,7 +2784,9 @@ def _retirement_controls(round_row, expected):
                         'so its terminal event frame cannot be located')
         else:
             flipped = 0
-            for frame_row in mutated['frames']:
+            for frame_row in _retirement_list_rows(mutated.get('frames')):
+                if not isinstance(frame_row, dict):
+                    continue
                 frame = frame_row.get('frame')
                 if (isinstance(frame, dict) and frame.get('type') == 'event'
                         and frame.get('final') is True and frame.get('id') == identifier):
@@ -2438,8 +2898,15 @@ def _retirement_gate_evidence(gate, route, round_row):
     """
     if route['source'] != gate['source'] or gate['gate'] not in route['line']:
         return False
+    runtime = round_row.get('runtime')
+    pilot_home = runtime.get('pilotHome') if isinstance(runtime, dict) else None
+    if not isinstance(pilot_home, str):
+        # #1588 r1 §1: without the round's runtime record the gate cannot be
+        # proven; the entry falls back to the ordinary HIT/NO_HIT evaluation
+        # (fail-closed) instead of a TypeError out of the report path.
+        return False
     try:
-        config = Path(round_row['runtime']['pilotHome'], 'pilotdeck.yaml').read_text()
+        config = Path(pilot_home, 'pilotdeck.yaml').read_text()
     except OSError:
         return False
     return gate['roundConfigKey'] not in config
@@ -2456,9 +2923,29 @@ def _retirement_entry_inventory(baseline, round_row):
     unreachable; GATED entries still keep the face non-PASS (BLOCKED), never a
     silent pass.
     """
-    http_probes = round_row['http']
-    executed = {row['method'] for row in round_row['outcomes']
-                if row.get('outcome') in ('ok', 'error')}
+    # #1588 r1 §1: http/outcomes/frames are observations — a missing or null
+    # group is an unusable observation (rows dropped from the probe list, the
+    # /ws hit reading empty), never a KeyError out of the inventory face.
+    # Each probe is normalized to its (path, status) pair up front: a probe row
+    # that is not a dict, or whose path is not a string, is an unusable probe
+    # (an empty path matches no route), never an AttributeError.
+    # fix-r2 (DS boundary P2): the status side of the pair gets the same shape
+    # guard the path side already had — only a true int (never a bool, never a
+    # JSON string "404") is a usable probe status; anything else is an
+    # unusable probe (None → NO_HIT), not a HIT.
+    # fix-r9 (DS boundary r8 P0 + DS sibling r8 P1, probe-verified —
+    # fix-r9-audit/probe-r9-ds-before.out S1): an out-of-domain int is the
+    # same unusable shape — the producer (retirement_driver.mts) only ever
+    # records a real HTTP status (100-599) or null, so a 0/-1/999 can only
+    # come from a corrupt artifact, and pre-fix it read as a HIT.
+    probe_rows = [(probe.get('path') if isinstance(probe.get('path'), str) else '',
+                   probe.get('status') if isinstance(probe.get('status'), int)
+                   and not isinstance(probe.get('status'), bool)
+                   and 100 <= probe.get('status') <= 599 else None)
+                  for probe in _retirement_list_rows(round_row.get('http')) if isinstance(probe, dict)]
+    executed = {row.get('method') for row in _retirement_list_rows(round_row.get('outcomes'))
+                if isinstance(row, dict) and row.get('outcome') in ('ok', 'error')
+                and isinstance(row.get('method'), str)}
     # R6: the completeness floor is re-asserted at the consumer, so a parser
     # that silently returns less than the registered entry set (or a stubbed
     # one) cannot shrink the inventory's denominator.
@@ -2478,12 +2965,12 @@ def _retirement_entry_inventory(baseline, round_row):
         if name == '/ws':
             return []
         if kind == 'prefix':
-            return [p for p in http_probes if p['path'] == name or p['path'].startswith(name.rstrip('/') + '/')]
+            return [p for p in probe_rows if p[0] == name or p[0].startswith(name.rstrip('/') + '/')]
         if kind == 'subpath':
             # subPath routes parsed from httpRouter.ts ('/files/tree', ...) live
             # under /api/web/projects/<key>; match by tail.
-            return [p for p in http_probes if p['path'].split('?')[0].endswith(name)]
-        return [p for p in http_probes if p['path'].split('?')[0] == name]
+            return [p for p in probe_rows if p[0].split('?')[0].endswith(name)]
+        return [p for p in probe_rows if p[0].split('?')[0] == name]
 
     entries, gated = [], []
     for route in _retirement_http_routes(baseline):
@@ -2493,19 +2980,38 @@ def _retirement_entry_inventory(baseline, round_row):
         if gate is not None and name != '/ws' and _retirement_gate_evidence(gate, route, round_row):
             gated.append(name)
             entries.append({'entry': name, 'kind': 'http', 'source': route['source'],
-                            'probes': [{'path': p['path'], 'status': p['status']} for p in matched],
+                            'probes': [{'path': p[0], 'status': p[1]} for p in matched],
                             'status': 'GATED',
                             'reason': f"config/credential-gated ({gate['gate']}) and 404 inside this round; "
                                       f"{gate['reason']}"})
             continue
         if name == '/ws':
             # The whole driver session is one live upgrade; wire frames prove it.
-            hit, reason = bool(round_row['frames']), (None if round_row['frames'] else 'no websocket frames recorded')
+            # fix-r3 (DS r2 boundary/sibling): a truthy non-list (or an
+            # all-non-dict list) frames observation is not proof of a live
+            # upgrade — the wire pass already treats non-dict rows as carrying
+            # no frame (#1588 r1 §1), so the hit reading agrees instead of
+            # passing on any truthy value.
+            # fix-r9 (DS boundary r8 P1, probe-verified — fix-r9-audit/
+            # probe-r9-ds-before.out S3): a dict row whose 'frame' is not a
+            # dict carries no frame either — ``_retirement_wire_backing``
+            # only counts rows with a dict 'frame', so ``[{}]`` or
+            # ``[{'frame': None}]`` must not HIT here either.
+            frames = round_row.get('frames')
+            # fix-r10: same _retirement_frame_rows predicate as the wire
+            # backing above (DS simplify r9 advisory; fix-r11 wording, DS
+            # r10 sibling): the hit reading shares the frame-bearing
+            # predicate — the wire pass additionally requires a usable
+            # frame id, so every row it counts is a hit, but a hit row
+            # without one backs no wire outcome (the outcomes side stays
+            # fail-closed on it).
+            hit = bool(_retirement_frame_rows(_retirement_list_rows(frames)))
+            reason = None if hit else 'no websocket frames recorded'
         else:
-            hit = any(p['status'] not in (None, 404) for p in matched)
+            hit = any(p[1] not in (None, 404) for p in matched)
             reason = None if hit else 'route answered 404 or was unreachable'
         entries.append({'entry': name, 'kind': 'http', 'source': route['source'],
-                        'probes': [{'path': p['path'], 'status': p['status']} for p in matched],
+                        'probes': [{'path': p[0], 'status': p[1]} for p in matched],
                         'status': 'HIT' if hit else 'NO_HIT', 'reason': reason})
     for listener in _retirement_channel_listeners(baseline):
         entries.append({'entry': listener['file'], 'kind': 'channel-listener', 'source': listener['file'],
@@ -2734,8 +3240,12 @@ webui:
                                           'listeners', 'census', 'connections', 'processes',
                                           'audit', 'elapsedSeconds')
                                          if key in row})
-    require(row['audit']['allStopped'], 'CLEANUP', f"round {index}: owned process-group cleanup unverified: "
-                                                  f"{row['audit']}")
+    # #1588 r1 §2: the cleanup audit is an observation — a missing or
+    # non-dict audit is the same "cleanup unverified" refusal, never a
+    # KeyError/TypeError that would escape as an unscored crash.
+    audit = row.get('audit')
+    require(isinstance(audit, dict) and audit.get('allStopped') is True, 'CLEANUP',
+            f'round {index}: owned process-group cleanup unverified: {audit}')
     return row
 
 
@@ -2792,8 +3302,9 @@ def _retirement_report(output, baseline):
     verdicts = [score_retirement_round(row, expected) for row in rounds]
     coverage_status = common.aggregate_status(*(verdict['status'] for verdict in verdicts))[0]
     # controls read rounds[0] by design (data mutation controls; the
-    # arbitration keeps this rounds[0] use exempt from ④).
-    controls = _retirement_controls(rounds[0], expected)
+    # arbitration keeps this rounds[0] use exempt from ④).  #1588 r1 §3: its
+    # verdict is already computed — pass it instead of re-scoring the row.
+    controls = _retirement_controls(rounds[0], expected, verdicts[0])
     # P1 (#1355 fix-r4): a control a legal degraded round cannot establish is
     # reported NOT_APPLICABLE and aggregates to BLOCKED (never PASS), so the
     # controls face and the total verdict stay fail-closed.  The batch status
@@ -2809,13 +3320,18 @@ def _retirement_report(output, baseline):
     # ④ (#1355 fix-r3): the inventory face reads every round, not round 1 —
     # an entry that answered in round 1 but 404'd in round 2 is NO_HIT.
     inventory = _retirement_entry_inventory_aggregate(
-        [(row['label'], _retirement_entry_inventory(baseline, row)) for row in rounds])
+        [(row.get('label'), _retirement_entry_inventory(baseline, row)) for row in rounds])
     census_verdicts = [_retirement_report_census(row) for row in rounds]
     # R5 (#1355 fix-r2): the network face reads as what it is — one
     # post-driver sample of the gateway pid's own established peers (provider
     # egress included); it does not cover other TS hosts.  The rule itself is
-    # deliberately not relaxed: a non-loopback peer still FAILs, and the
-    # structural provider-egress FAIL is registered as a known boundary (#1478).
+    # deliberately not relaxed: a non-loopback peer in a successfully probed
+    # sample still FAILs, and the structural provider-egress FAIL is
+    # registered as a known boundary (#1478).  fix-r6 (MiniMax boundary P2,
+    # in-round, comment corrected): a probe that never reported success
+    # ('commandStatus != ok') BLOCKS the face before the peer judgment —
+    # unobservable is not clean — but it is also not a peer FAIL; the
+    # judgment order is that of ``_retirement_network_verdict``.
     network_verdicts = []
     for row in rounds:
         connections = row.get('connections')
@@ -2826,14 +3342,46 @@ def _retirement_report(output, baseline):
                                          '(provider egress included); other TS hosts are not covered '
                                          'by this sample'})
         network_verdicts.append(verdict)
-    listener_verdicts = [_retirement_listener_verdict(row.get('listeners'), row['ports']['gateway'])
-                         for row in rounds]
+    listener_verdicts = []
+    for row in rounds:
+        # #1588 r1 §1: a round that recorded no gateway port cannot have its
+        # listener binding judged — the face FAILs on the missing observation,
+        # never a KeyError out of the report path.
+        # fix-r9 (DS boundary r8 P0): the gate judges a *real* port, not
+        # just an int — bool/0/70000 are the same missing observation.
+        gateway_port = _retirement_round_ports(row).get('gateway')
+        listener_verdicts.append(
+            _retirement_listener_verdict(row.get('listeners'), gateway_port)
+            if _retirement_real_port(gateway_port) else
+            {'status': 'FAIL', 'rule': 'LISTENER_EXPOSURE',
+             'reason': 'the round recorded no real gateway port, so the loopback-only '
+                       'listener binding cannot be judged'})
     host_status = common.aggregate_status(*(verdict['status'] for verdict in
                                             census_verdicts + network_verdicts + listener_verdicts))[0]
     cold_restart = {'status': 'BLOCKED', 'rule': 'COLD_RESTART_PENDING',
                     'reason': 'pending #1354; explicit placeholder, never a silent skip'}
     overall = common.aggregate_status(coverage_status, inventory['status'], host_status,
                                       controls['status'], cold_restart['status'])[0]
+    # fix-r5 (DS boundary P2): a non-str round label (a corrupted driver
+    # artifact) is normalized to the positional fallback instead of
+    # crashing the dict-key construction and collapsing the report.
+    # fix-r7 (DS boundary r6 P2 + MM boundary r6 P2, both families): a
+    # duplicate label — or a real label shaped like another round's
+    # positional fallback (`round-01`) — silently overwrote the earlier
+    # round's executed evidence, one key short with no failure signal.
+    # Keys are now collision-free: the label when it is still free, otherwise
+    # the label with a `#2`-style positional suffix, so the number of executed
+    # entries always equals the number of rounds.
+    executed = {}
+    for index, verdict in enumerate(verdicts):
+        label = verdict.get('round')
+        base = label if isinstance(label, str) and label else f'round-{index + 1:02d}'
+        key, suffix = base, 2
+        while key in executed:
+            key = f'{base}#{suffix}'
+            suffix += 1
+        executed[key] = {'count': len(verdict.get('executed') or []),
+                         'methods': verdict.get('executed') or []}
     return {
         'status': overall,
         'reason': 'E1 retirement TS calibration slice (#1355): expected/executed collected from real '
@@ -2841,12 +3389,14 @@ def _retirement_report(output, baseline):
                   'hash re-registration is the coordinator receive step',
         'baseline': {'path': str(baseline), 'revision': revision},
         'expected': {'methods': expected, 'count': len(expected), 'provenance': provenance},
-        'executed': {verdict['round']: {'count': len(verdict['executed']), 'methods': verdict['executed']}
-                     for verdict in verdicts},
-        'rounds': [{'round': verdict['round'], 'status': verdict['status'], 'rules': verdict['rules'],
-                    'driverExitCode': verdict['driverExitCode'], 'executedCount': len(verdict['executed']),
+        'executed': executed,
+        'rounds': [{'round': verdict.get('round'), 'status': verdict.get('status'),
+                    'rules': verdict.get('rules') or [],
+                    'driverExitCode': verdict.get('driverExitCode'),
+                    'executedCount': len(verdict.get('executed') or []),
                     'audit': row.get('audit'), 'listeners': row.get('listeners'),
-                    'folder': (output / row['label']).as_posix()} for verdict, row in zip(verdicts, rounds)],
+                    'folder': (output / str(row.get('label') or 'unlabeled-round')).as_posix()}
+                   for verdict, row in zip(verdicts, rounds)],
         'methodCoverage': {'status': coverage_status, 'k': RETIREMENT_ROUNDS, 'rounds': verdicts},
         'entryInventory': inventory,
         'hostAudit': {'status': host_status, 'processCensus': census_verdicts, 'network': network_verdicts,
@@ -2860,11 +3410,20 @@ def _retirement_report(output, baseline):
         'topology': {'host': 'ts-reference', 'sidecar': 'ts-mock-model', 'entry': 'official GatewayWsClient driver',
                      # DS P2-13 (#1355 fix-r1): each round's actual ports, not
                      # round 1's set silently standing in for all of them.
-                     'ports': [{'round': row['label'], 'mock': row['ports']['mock'],
-                                'gateway': row['ports']['gateway']} for row in rounds]},
+                     # #1588 r1 §1: a round without a recorded port map reads as
+                     # None here, never as a KeyError.
+                     'ports': [{'round': row.get('label'),
+                                'mock': _retirement_round_ports(row).get('mock'),
+                                'gateway': _retirement_round_ports(row).get('gateway')}
+                               for row in rounds]},
         'portAudit': port_attempts,
-        'processAudit': [row['audit'] for row in rounds],
-        'cleanupAudit': {'status': 'PASS' if all(row['audit']['allStopped'] for row in rounds) else 'FAIL'},
+        'processAudit': [row.get('audit') for row in rounds],
+        # #1588 r1 §1: each round's cleanup audit is read as an observation —
+        # a missing or non-dict audit is an unverified cleanup (FAIL), never a
+        # KeyError/TypeError out of the report path.
+        'cleanupAudit': {'status': 'PASS' if all(
+            isinstance(row.get('audit'), dict) and row['audit'].get('allStopped') is True
+            for row in rounds) else 'FAIL'},
         # R9 (#1355 fix-r2): executionStatus is the overall verdict; the
         # coverage face lives in methodCoverage.status.  A BLOCKED report must
         # never read as an executed PASS.
@@ -2873,18 +3432,26 @@ def _retirement_report(output, baseline):
     }
 
 
-def _retirement_budget_blocked(baseline, error):
+def _retirement_budget_blocked(baseline, error, rule='ROUND_BUDGET'):
     """② (#1355 fix-r3): a round that exceeded the declared budget reports
     BLOCKED with every scoring face present (the A8.6 consumer list:
     methodCoverage/entryInventory/hostAudit/controls/coldRestartRollback/
     executionStatus/expected/executed/rounds/topology/…), so a consumer never
     KeyErrors on a budget-blocked report.  Faces carry no measurements — they
-    are BLOCKED/NOT_RUN, never an optimistic read."""
+    are BLOCKED/NOT_RUN, never an optimistic read.
+    #1588 r1 §2: the collection-phase refusals (a failed ps census, a missing
+    driver artifact, an unverified cleanup) report the same full face set with
+    the refusal's own *rule* — the 5-key stub they used to collapse to was the
+    same scoring-face drop this function removed for the budget path."""
+    if rule == 'ROUND_BUDGET':
+        reason = ('retirement TS calibration exceeded its declared round budget before a '
+                  'certifiable result')
+    else:
+        reason = f'retirement TS calibration could not collect round evidence ({rule})'
     return {
         'status': 'BLOCKED',
-        'reason': 'retirement TS calibration exceeded its declared round budget before a '
-                  'certifiable result; the faces below carry no measurements',
-        'failure': {'rule': 'ROUND_BUDGET', 'detail': f'{type(error).__name__}: {error}'},
+        'reason': reason + '; the faces below carry no measurements',
+        'failure': {'rule': rule, 'detail': f'{type(error).__name__}: {error}'},
         'baseline': {'path': str(baseline), 'revision': None},
         'expected': {'methods': [], 'count': 0, 'provenance': []},
         'executed': {},
@@ -2914,16 +3481,36 @@ def retirement_report(output, baseline):
     """BLOCKED wrapper: a structural refusal is never a scored FAIL."""
     try:
         return _retirement_report(output, baseline)
-    except EvidenceError as error:
-        return {'status': 'BLOCKED', 'failure': {'rule': error.rule, 'detail': str(error)},
-                'executionStatus': 'NOT_RUN', 'acceptanceStatus': 'NOT_RUN',
-                'reason': 'retirement TS calibration could not produce a certifiable result'}
     except (subprocess.TimeoutExpired, TimeoutError) as error:
         # ② (#1355 fix-r3): a TimeoutExpired from the round driver (wait_owned,
         # census/connections probes) escaped to main and left a 9-key report
         # whose scoring faces are all missing; it is a budget-bound signal and
         # reports BLOCKED with the full face set instead.
         return _retirement_budget_blocked(baseline, error)
+    except EvidenceError as error:
+        # #1588 r1 §2: a collection-phase refusal (failed ps census, missing
+        # driver artifact, unverified cleanup, port conflict) reports the same
+        # full BLOCKED face set with its own rule — the 5-key stub it used to
+        # collapse to dropped all 16 scoring faces, the exact shape this
+        # wrapper's budget branch was fixed to remove.
+        return _retirement_budget_blocked(baseline, error, rule=error.rule)
+    except (KeyError, TypeError, AttributeError, ValueError, OSError,
+            RecursionError, MemoryError) as error:
+        # fix-r2 (DS concurrency P2 / boundary P2): a corrupted or truncated
+        # driver artifact (a half-written methods.json, a frames.jsonl line
+        # that is valid JSON but not an object) raised before any source
+        # guard and escaped to main's fallback, which wrote a FAIL skeleton
+        # with every scoring face missing — the exact collapse this PR removes.
+        # Any residual shape defect now reports the same full 16-face BLOCKED
+        # under ROUND_EVIDENCE; EvidenceError (a ValueError) is caught by the
+        # clause above and keeps its own rule.  fix-r5 (DS concurrency P1):
+        # RecursionError joins — copy.deepcopy on a deeply nested artifact
+        # (600-deep, measured) overflows before json.loads ever would (the
+        # C scanner handles 50000-deep) and used to reach main's stub here.
+        # fix-r6 (DS concurrency P2, in-round): MemoryError joins — a
+        # corrupted artifact sized past the host's memory would otherwise
+        # crash the report path itself instead of reporting BLOCKED.
+        return _retirement_budget_blocked(baseline, error, rule='ROUND_EVIDENCE')
 
 
 def main():
@@ -3067,18 +3654,28 @@ def main():
                     report['freezeStatus'] = 'BLOCKED'
                     report['failure'] = {'rule': 'FROZEN', 'detail': 'measurements completed; see frozen check output; no acceptance PASS'}
             except (EvidenceError, OSError, ValueError, KeyError, TypeError, AttributeError, IndexError, StopIteration,
-                    subprocess.SubprocessError, TimeoutError, RuntimeError, KeyboardInterrupt) as error:
+                    subprocess.SubprocessError, TimeoutError, RuntimeError, MemoryError,
+                    KeyboardInterrupt) as error:
                 report['status'] = 'BLOCKED' if isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'
                 if args.suite == 'deadline':
                     report.pop('cells', None)  # No consumable partial score after failed final verification.
                     report['executionStatus'] = 'NOT_RUN'
-                report['failure'] = {'rule': getattr(error, 'rule', 'EVIDENCE'), 'detail': str(error)}
+                # fix-r30 (DS r29 concurrency#1, arbitrated up by the P2b
+                # 「假 FAIL→P1」 rule): apparatus resource exhaustion is the
+                # apparatus' own BLOCKED, never the product-side EVIDENCE
+                # failure spelling -- the pre-fix tuple let a MemoryError land
+                # as a judged-product FAIL with failure.rule='EVIDENCE'.
+                report['failure'] = {
+                    'rule': ('APPARATUS_RESOURCES' if isinstance(error, (MemoryError, RecursionError))
+                             else getattr(error, 'rule', 'EVIDENCE')),
+                    'detail': str(error)}
                 code = common.aggregate_status(report['status'])[1]
             save(output / 'report.json', report)
             print(json.dumps({'status': report['status'], 'suite': args.suite, 'report': str(output / 'report.json'),
                               'failure': report.get('failure'), 'acceptanceStatus': report['acceptanceStatus']}, ensure_ascii=False))
             return code
-    except (TimeoutError, KeyboardInterrupt, ValueError, OSError, subprocess.SubprocessError) as error:
+    except (TimeoutError, KeyboardInterrupt, ValueError, OSError, MemoryError,
+            subprocess.SubprocessError) as error:
         print(json.dumps({'suite': args.suite, 'status': 'BLOCKED', 'error': str(error)}, ensure_ascii=False))
         return 2
 

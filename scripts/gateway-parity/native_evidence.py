@@ -283,10 +283,17 @@ def checked_evidence(raw, contract, evidence):
     """
     replay = parse_trace(raw, contract)
     checked = copy.deepcopy(evidence)
-    exec_equal = (evidence['processes'] == replay['processes']
-                  and evidence['execWitness'] == replay['execWitness'])
-    network_equal = evidence['networkWitness'] == replay['networkWitness']
-    transcript_equal = evidence['transcriptWitness'] == replay['transcriptWitness']
+    # fix-r29 (DS r28-b sibling#3 P1, same channel as #2039/#1372): the
+    # three witness replays were bare ``==``, so a JSON boolean/number
+    # standing in for a pid (``True == 1``, ``1.0 == 1``) satisfied the
+    # comparison and promoted ``complete`` on a tampered capture. The
+    # same_json walk the cleanup comparison already uses compares by
+    # type there too; numbers keep comparing by value, the JSON
+    # semantics #1372 froze.
+    exec_equal = (same_json(evidence['processes'], replay['processes'])
+                  and same_json(evidence['execWitness'], replay['execWitness']))
+    network_equal = same_json(evidence['networkWitness'], replay['networkWitness'])
+    transcript_equal = same_json(evidence['transcriptWitness'], replay['transcriptWitness'])
     checked['execWitness']['complete'] = evidence['execWitness']['complete'] is True and exec_equal
     checked['networkWitness']['complete'] = evidence['networkWitness']['complete'] is True and network_equal
     checked['transcriptWitness']['complete'] = (evidence['transcriptWitness']['complete'] is True
@@ -358,7 +365,11 @@ def ws_profile(direction, wire):
 
 def session_profile(contract, cases):
     """Independent frozen profile; a submitted contract cannot widen it."""
-    need(contract.get('cases') == cases, 'session profile full manifest')
+    # fix-r31 (r31 structural round, DS sibling#1 P1 + anthropic sibling#1
+    # P2 — the same finding from both lineages): the manifest comparison is
+    # a deep structural equality on two decoded documents — same_json, not
+    # a bare ``==`` (``[1] == [True]`` must not audit as the manifest).
+    need(same_json(contract.get('cases'), cases), 'session profile full manifest')
     need(Counter(contract.get('processRoles', [])) == Counter(['host'] + ['sidecar'] * len(cases))
          and set(contract.get('binaries', {})) == {'host', 'sidecar'}, 'session profile roles')
     # #2039: the launch contract is a JSON original on the live audit path;
@@ -386,13 +397,34 @@ def session_windows(evidence, cases, paths):
     need(isinstance(witness, dict) and witness.get('complete') is True
          and witness.get('source') == 'strace-openat' and isinstance(witness.get('opens'), list),
          'session capture must carry the complete transcript-open witness')
-    host = next(p['pid'] for p in processes if p['role'] == 'host')
+    # fix-r32 (DS boundary#7 P3, defensive): the role census above already
+    # guarantees exactly one host, so the bare ``next()`` could not raise —
+    # but a None default plus the plain-int need below keeps any future
+    # census regression on the fail-closed path instead of a StopIteration.
+    host = next((p['pid'] for p in processes if p['role'] == 'host'), None)
+    # fix-r31 (r31 structural round, DS sibling#1 P1 + anthropic sibling#1
+    # P2 — the same finding from both lineages, probe-verified —
+    # _tmp/20261110-1355-r26-harvest/probe-r31-hostpid.out): fix-r30 gated
+    # only the entry side of the host-owned comparison — a host record with
+    # ``pid: True`` folded onto an entry ``pid: 1`` through ``True == 1``
+    # and the host-owned gate passed.  The host side now carries the same
+    # type gate before any ``==`` sees it.
+    need(type(host) is int and host > 0,
+         'session capture must record a plain-integer host pid')
     need(len(paths) == len(cases) and len(set(paths)) == len(paths), 'session transcript path coverage')
     first = {}
     for entry in witness['opens']:
         path = entry.get('path') if isinstance(entry, dict) else None
         key = transcript_key(path)
-        need(key is not None and entry.get('pid') == host
+        # fix-r30 (DS r29 sibling#2 P2 + anthropic sibling#3 P2, both
+        # families): the host-owned gate was a bare ``==`` — ``True == 1``
+        # (host pid 1) and ``1.0 == 1`` passed it, the same boolean/float
+        # collapse channel the fix-r29 pid gates closed. checked_evidence's
+        # same_json replay usually refuses the drifted capture first, but a
+        # producer or test that builds checked evidence directly has no such
+        # screen, so the type gate stands here too (the afterExecs twin
+        # already spelled it this way).
+        need(key is not None and type(entry.get('pid')) is int and entry.get('pid') == host
              and type(entry.get('afterExecs')) is int and 0 <= entry['afterExecs'] <= len(processes),
              'transcript opens must be host-owned session transcripts')
         canonical_path(path)
@@ -432,8 +464,11 @@ def disk_observation(source, identity, home):
         raise Incomplete('#1140 registry JSON malformed') from error
     need(isinstance(runs, dict), 'registry original malformed')
     key = f'{project}\0{session}\0{run}'
+    # fix-r34 (DS r33b sibling#1): the tuple display comparison let a
+    # ``True``/``1`` key fold through ``==`` and match the identity;
+    # same_json is type-strict on booleans (#1372 semantics on numbers).
     records = [record for record in runs.get('records', [])
-               if (record.get('projectKey'), record.get('sessionKey'), record.get('runId')) == (project, session, run)]
+               if same_json([record.get('projectKey'), record.get('sessionKey'), record.get('runId')], [project, session, run])]
     need(len(records) <= 1, 'duplicate full run key')
     events = runs.get('events', {}).get(key, [])
     record = records[0] if records else {}

@@ -7,6 +7,13 @@ import os
 from collections import Counter
 from pathlib import Path
 import re
+
+# #1718 (fix-r2, DS sibling P2): the function body is sliced by ast line
+# numbers, so the source must split the way the tokenizer counts lines —
+# ``str.splitlines`` also breaks on \f, \v, \x1c-\x1e, \x85 and U+2028/2029,
+# and one such character above the target shifts every index after it.
+# Same regex as scripts/check-frozen-delivery.py's ``_LINE_BREAK``.
+_LINE_BREAK = re.compile(r'\r\n|\r|\n')
 import shutil
 import stat
 import subprocess
@@ -3538,8 +3545,28 @@ self_check_controls_run | return | return problems
         """`write_source_atomic` 的函数体源码（#1692 §9 / #1903）。"""
         for node in ast.walk(ast.parse(source)):
             if isinstance(node, ast.FunctionDef) and node.name == 'write_source_atomic':
-                return '\n'.join(source.splitlines()[node.lineno - 1:node.end_lineno])
+                return '\n'.join(_LINE_BREAK.split(source)[node.lineno - 1:node.end_lineno])
         self.fail('#1692 §9 the module must define write_source_atomic()')
+
+    def test_write_source_atomic_body_splits_only_ast_line_breaks(self):
+        """#1718 配对负控（fix-r3，DS sibling#2）：正文切片按 ast 行界。
+
+        函数上方的换页符 ``\\f`` 不终止 Python 逻辑行，但 ``str.splitlines``
+        在它处断行——旧实现的切片整体挪位（恰好删错正文）；``_LINE_BREAK``
+        只认 ast 的逻辑行界，换页留在行内，切片逐字节不变。与其余三处
+        ``without_preflight`` 配对负控同款（cli-parity / ui-server-parity /
+        parity-lock-release）。
+        """
+        marker = ('#1355-r1 #1718: write_source_atomic_body must slice the '
+                  'function body even when the source holds a form feed')
+        source = ('def write_source_atomic():\n'
+                  '    return 1\n'
+                  'def other():\n'
+                  '    return 2\n')
+        with_feed = 'x = 1\f\n' + source
+        expected_body = 'def write_source_atomic():\n    return 1'
+        self.assertEqual(self.write_source_atomic_body(source), expected_body, marker)
+        self.assertEqual(self.write_source_atomic_body(with_feed), expected_body, marker)
 
     @staticmethod
     def bound_names(source):

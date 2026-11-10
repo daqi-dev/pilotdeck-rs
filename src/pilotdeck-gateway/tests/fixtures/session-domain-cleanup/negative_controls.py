@@ -511,6 +511,29 @@ def calibrate_status_update(rows):
                   'passed=False')
 
 
+def calibrate_status_write_is_literal_bypass(rows):
+    """#1652 fix-r6 (DS boundary P1): ``report['status'] = 'PASS' if 1.0 is
+    1.0 else 'FAIL'`` is not a branch the audit can fold — the interpreter
+    may share one object between equal constants in the same code object
+    (``1.0 is 1.0`` is True at runtime, measured), so the write takes the
+    clean arm and the presence scan must treat the unresolvable test as
+    cannot-rule-out."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', 'main',
+        "inline status/exit assignment 'PASS' if 1.0 is 1.0 else 'FAIL'",
+        'calibrate-main')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: identity-literal status write flagged, '
+                  'passed=False')
+
+
 def calibrate_shared_excuse(rows):
     """#892 r4: a zero branch is still inline when the other branch is shared
     (DeepSeek boundary P0-1 / concurrency P1-1)."""
@@ -758,6 +781,30 @@ def calibrate_exit_conditional(rows):
     return _controls_main_needle(
         rows, 'inline exit code 0 if',
         'aggregation-audit: conditional exit argument flagged, passed=False')
+
+
+def calibrate_exit_is_literal_bypass(rows):
+    """#1652 fix-r6 (DS boundary P1): ``sys.exit(0 if 1.0 is 1.0 else 1)``
+    takes the zero arm at runtime (equal constants in one code object share
+    an object, measured) — the identity test is unresolvable for the fold,
+    so the exit scan must treat "no certified arm" as cannot-rule-out
+    instead of walking past the call."""
+    return _controls_main_needle(
+        rows, 'inline exit code 0 if 1.0 is 1.0 else 1',
+        'aggregation-audit: identity-literal exit argument flagged, '
+        'passed=False')
+
+
+def calibrate_exit_name_is_literal_bypass(rows):
+    """#1652 fix-r7 (DS sibling r6 P2 + MM sibling r6 P1, both families,
+    probe-verified — probe-before B2): ``code = 0 if 1.0 is 1.0 else 1``
+    followed by ``sys.exit(code)`` is the same zero-arm-at-runtime exit
+    behind a name relay — the fifth ``_exit_arms`` consumer must treat "no
+    certified arm" as cannot-rule-out instead of walking past the name."""
+    return _controls_main_needle(
+        rows, 'inline exit code code at line',
+        'aggregation-audit: identity-literal exit relay flagged, '
+        'passed=False')
 
 
 def calibrate_return_exit_call(rows):
@@ -1803,6 +1850,200 @@ def retirement_duplicate_status_key(rows):
                   'passed=False')
 
 
+def nested_status_slot_bypass(rows):
+    """#1652: a status slot nested inside a face of a returned summary (the
+    cleanupAudit slot hard-written to PASS) is invisible to the top-level slot
+    scan; the recursive layer must flag it as ``nested status slot 'PASS'``."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', '_retirement_report',
+        "nested status slot 'PASS'", 'retirement-report')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: nested status slot bypass flagged, '
+                  'passed=False')
+
+
+def nested_constant_conditional_bypass(rows):
+    """#1652 fix-r2 (anthropic boundary P0): the cleanupAudit face written as
+    ``'PASS' if True else 'FAIL'`` is an unconditional clean status — the dead
+    fail-closed arm never runs, so the recursive layer must flag the slot."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', '_retirement_report',
+        "nested status slot 'PASS' if True else 'FAIL'", 'retirement-report')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: nested constant-conditional bypass '
+                  'flagged, passed=False')
+
+
+def nested_boolop_value_bypass(rows):
+    """#1652 fix-r5 (DS boundary P0): the cleanupAudit face written as
+    ``'PASS' or 'FAIL'`` is an unconditional clean status by short-circuit
+    semantics — the dead fail-closed operand never runs, so the recursive
+    layer must flag the slot."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', '_retirement_report',
+        "nested status slot 'PASS' or 'FAIL'", 'retirement-report')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: nested BoolOp-value bypass flagged, '
+                  'passed=False')
+
+
+def nested_is_literal_bypass(rows):
+    """#1652 fix-r5 (DS boundary P1): the cleanupAudit face written as
+    ``'PASS' if 1.0 is 1.0 else 'FAIL'`` takes the clean arm at runtime —
+    CPython shares one object between equal constants in the same code object
+    (measured: ``1.0 is 1.0`` is True), so folding identity off the parsed AST
+    nodes must fail closed instead of claiming the fail-closed arm."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', '_retirement_report',
+        "nested status slot 'PASS' if 1.0 is 1.0 else 'FAIL'", 'retirement-report')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: nested identity-literal bypass flagged, '
+                  'passed=False')
+
+
+def nested_not_false_conditional_bypass(rows):
+    """#1652 fix-r4 (DS boundary P0): the cleanupAudit face written as
+    ``'PASS' if not False else 'FAIL'`` is constant-by-semantics —
+    ``ast.literal_eval`` rejects the test, but the fold must cover the whole
+    literal grammar or the dead fail-closed arm excuses the live clean one."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', '_retirement_report',
+        "nested status slot 'PASS' if not False else 'FAIL'", 'retirement-report')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: nested not-False conditional bypass '
+                  'flagged, passed=False')
+
+
+def nested_shared_call_boolop_bypass(rows):
+    """#1652 fix-r6 (MiniMax boundary P0): the cleanupAudit face written as
+    ``'PASS' or common.aggregate_status('PASS')`` is an unconditional clean
+    status by short-circuit semantics — the shared call in the dead operand
+    never runs, so its spelling may not exempt the nested slot the way a
+    live relay does."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', '_retirement_report',
+        "nested status slot 'PASS' or common.aggregate_status('PASS')",
+        'retirement-report')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: nested shared-call BoolOp bypass '
+                  'flagged, passed=False')
+
+
+def summary_status_shared_call_bypass(rows):
+    """#1652 fix-r7 (DS sibling r6 P1, probe-verified — probe-before A1/A6):
+    the top-level status slot written as ``'PASS' or
+    common.aggregate_status(overall)`` is an unconditional clean status by
+    short-circuit semantics — the shared call in the dead operand never
+    runs, so its spelling may not exempt the slot the way a live relay
+    does.  fix-r6 closed this shape for the nested layer only; the
+    top-level slot scan kept the full-tree exemption."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', '_retirement_report',
+        "status slot 'PASS' or common.aggregate_status(overall)",
+        'retirement-report')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: top-level shared-call BoolOp bypass '
+                  'flagged, passed=False')
+
+
+def summary_unpack_shared_call_bypass(rows):
+    """#1652 fix-r7 (DS sibling r6 P1, probe-verified — probe-before A2): a
+    ``**`` unpack merges the operand's own entries into the summary, so
+    ``{**{'status': 'PASS' or common.aggregate_status(overall)}}`` *is* the
+    top-level status slot of the merged dict — the dead shared call inside
+    the unpacked dict may not exempt the merged entry, and an arm-based
+    judgement of the dict-as-a-whole would not see its slots at all."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', '_retirement_report',
+        "status slot 'PASS' or common.aggregate_status(overall)",
+        'retirement-report')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: unpack shared-call BoolOp bypass '
+                  'flagged, passed=False')
+
+
+def summary_name_relay_shared_call_bypass(rows):
+    """#1652 fix-r8 (MM sibling r7 P1, probe-verified — fix-r8-audit/probe-r8-
+    mm-before.out M1): the dead-arm shared call behind a *name* relay —
+    ``status = 'PASS' or common.aggregate_status(overall)`` followed by
+    ``{'status': status}`` is the same unconditional clean status the direct
+    spelling wrote (pinned by ``summary-status-shared-call-bypass``), but the
+    slot value is now an ``ast.Name`` and the relay family's full-tree
+    exemption used to mark the binding shared-derived.  The relay exemption is
+    judged on the exit arms like every other shared-call exemption."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    # The slot here is the local variable ``status`` (an ``ast.Name``), which
+    # unparses without quotes.
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', '_retirement_report',
+        'status slot status at line', 'retirement-report')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: name-relay shared-call BoolOp bypass '
+                  'flagged, passed=False')
+
+
 def controls_nested_same_name(rows):
     """#892 r3: a nested ``def main`` must not shadow or duplicate the
     registered point name (MiniMax/DeepSeek boundary P2)."""
@@ -2037,9 +2278,82 @@ MUTATIONS = [
     ('calibrate-status-update', SOURCE,
      "                report['status'] = 'BLOCKED' if isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'\n",
      "                report.update({'status': 'PASS'})\n"),
+    # #1652 fix-r6 (DS boundary P1): the write-side identity spelling — the
+    # unresolvable test takes the clean arm at runtime, so an empty certified
+    # arm set fails closed instead of certifying "no clean write".
+    ('calibrate-status-write-is-literal-bypass', SOURCE,
+     "                report['status'] = 'BLOCKED' if isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'\n",
+     "                report['status'] = 'PASS' if 1.0 is 1.0 else 'FAIL'\n"),
     ('retirement-duplicate-status-key', SOURCE,
      "        'status': overall,\n",
      "        'status': 'BLOCKED', 'status': 'PASS',\n"),
+    ('nested-status-slot-bypass', SOURCE,
+     "        'cleanupAudit': {'status': 'PASS' if all(\n"
+     "            isinstance(row.get('audit'), dict) and row['audit'].get('allStopped') is True\n"
+     "            for row in rounds) else 'FAIL'},\n",
+     "        'cleanupAudit': {'status': 'PASS'},\n"),
+    # #1652 fix-r2 (anthropic boundary P0): a constant condition is not a
+    # branch — the dead 'FAIL' arm must not excuse the live clean one.
+    ('nested-constant-conditional-bypass', SOURCE,
+     "        'cleanupAudit': {'status': 'PASS' if all(\n"
+     "            isinstance(row.get('audit'), dict) and row['audit'].get('allStopped') is True\n"
+     "            for row in rounds) else 'FAIL'},\n",
+     "        'cleanupAudit': {'status': 'PASS' if True else 'FAIL'},\n"),
+    # #1652 fix-r4 (DS boundary P0): a constant-by-semantics test outside
+    # ``ast.literal_eval`` — ``not False`` can only ever take the clean arm,
+    # so the dead fail-closed arm must not excuse it.
+    ('nested-not-false-conditional-bypass', SOURCE,
+     "        'cleanupAudit': {'status': 'PASS' if all(\n"
+     "            isinstance(row.get('audit'), dict) and row['audit'].get('allStopped') is True\n"
+     "            for row in rounds) else 'FAIL'},\n",
+     "        'cleanupAudit': {'status': 'PASS' if not False else 'FAIL'},\n"),
+    # #1652 fix-r5 (DS boundary P0): a BoolOp *value* follows short-circuit
+    # semantics — ``'PASS' or 'FAIL'`` can only ever produce the clean operand,
+    # so the dead fail-closed operand must not excuse it.
+    ('nested-boolop-value-bypass', SOURCE,
+     "        'cleanupAudit': {'status': 'PASS' if all(\n"
+     "            isinstance(row.get('audit'), dict) and row['audit'].get('allStopped') is True\n"
+     "            for row in rounds) else 'FAIL'},\n",
+     "        'cleanupAudit': {'status': 'PASS' or 'FAIL'},\n"),
+    # #1652 fix-r5 (DS boundary P1): identity of two parsed literal nodes is
+    # not foldable — at runtime CPython dedups equal constants in the same
+    # code object, ``1.0 is 1.0`` is True and the clean arm is the live one.
+    ('nested-is-literal-bypass', SOURCE,
+     "        'cleanupAudit': {'status': 'PASS' if all(\n"
+     "            isinstance(row.get('audit'), dict) and row['audit'].get('allStopped') is True\n"
+     "            for row in rounds) else 'FAIL'},\n",
+     "        'cleanupAudit': {'status': 'PASS' if 1.0 is 1.0 else 'FAIL'},\n"),
+    # #1652 fix-r6 (MiniMax boundary P0): the shared-call exemption follows
+    # short-circuit reachability — a ``common.aggregate_status`` operand the
+    # interpreter can never reach may not exempt the nested slot.
+    ('nested-shared-call-boolop-bypass', SOURCE,
+     "        'cleanupAudit': {'status': 'PASS' if all(\n"
+     "            isinstance(row.get('audit'), dict) and row['audit'].get('allStopped') is True\n"
+     "            for row in rounds) else 'FAIL'},\n",
+     "        'cleanupAudit': {'status': 'PASS' or common.aggregate_status('PASS')},\n"),
+    # #1652 fix-r7 (DS sibling r6 P1, probe-verified — probe-before A1/A6):
+    # the same short-circuit reachability rule for the *top-level* summary
+    # slot: a shared-call operand the interpreter can never reach may not
+    # exempt the slot fix-r6 only closed at the nested layer.
+    ('summary-status-shared-call-bypass', SOURCE,
+     "        'status': overall,\n",
+     "        'status': 'PASS' or common.aggregate_status(overall),\n"),
+    # #1652 fix-r7 (DS sibling r6 P1, probe-verified — probe-before A2): a
+    # ``**`` unpack merges the operand's entries into the summary, so the
+    # unpacked dict's own status slot is judged as the top-level slot it
+    # becomes — a dead shared call inside it may not exempt the merged entry.
+    ('summary-unpack-shared-call-bypass', SOURCE,
+     "        'status': overall,\n",
+     "        **{'status': 'PASS' or common.aggregate_status(overall)},\n"),
+    # #1652 fix-r8 (MM sibling r7 P1, probe-verified — fix-r8-audit/probe-r8-
+    # mm-before.out M1): the same dead-arm shared call behind a *name* relay —
+    # the relay family's exemption is judged on the exit arms, so a binding
+    # whose only call sits in the dead operand may not mark the name
+    # shared-derived and exempt the slot it relays into.
+    ('summary-name-relay-shared-call-bypass', SOURCE,
+     "    return {\n        'status': overall,\n",
+     "    status = 'PASS' or common.aggregate_status(overall)\n"
+     "    return {\n        'status': status,\n"),
     ('controls-nested-same-name', CONTROLS_SOURCE,
      "    report['cleanup'] = cleanup\n",
      "    def main():\n"
@@ -2150,6 +2464,21 @@ MUTATIONS = [
      CT_EXIT,
      "        if report.get('special'):\n"
      "            sys.exit(0 if report.get('cells') else 1)\n" + CT_EXIT),
+    # #1652 fix-r6 (DS boundary P1): the exit-side identity spelling — the
+    # unresolvable test takes the zero arm at runtime, so an empty certified
+    # arm set fails closed instead of walking past the call.
+    ('calibrate-exit-is-literal-bypass', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            sys.exit(0 if 1.0 is 1.0 else 1)\n" + CT_EXIT),
+    # #1652 fix-r7 (DS sibling r6 P2 + MM sibling r6 P1, both families): the
+    # same identity spelling behind a name relay — the fifth ``_exit_arms``
+    # consumer must fail closed on the empty certified-arm set.
+    ('calibrate-exit-name-is-literal-bypass', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            code = 0 if 1.0 is 1.0 else 1\n"
+     "            sys.exit(code)\n" + CT_EXIT),
     ('calibrate-return-exit-call', CONTROLS_SOURCE,
      CT_EXIT,
      "        if report.get('special'):\n"
@@ -3723,6 +4052,58 @@ MUTATIONS = [
      "                        bi50 = bi49\n"
      "                        bi50['setattr'](report, 'status', 'PASS')\n"
      "                    report['status'] = overall\n"),
+    # #1652 fix-r31 (anthropic r31 boundary#1/#2 P1, probe-verified —
+    # _tmp/20261110-1355-r26-harvest/probe-r31-fold-budget.out and
+    # probe-r31-render.out): reversion controls for the r31 fold-ledger
+    # battery — with either charge reverted, a shape the battery must
+    # resolve fail-closed folds instead.
+    # fix-r33 (mutneg-r33-unthreaded.out): the budget argument of
+    # ``_folded_size`` became required in fix-r32, so the bare revert
+    # spelled a TypeError that the fold-level error rule swallowed into
+    # the UNRESOLVED sentinel — the mutation survived its own judge.
+    # The reverted side now re-states the r30 per-call mint verbatim.
+    ('mult-fold-budget-unthreaded', CHECK,
+     "                        content = _folded_size(sequence, budget)",
+     "                        content = _folded_size(sequence, [_FOLD_SIZE_WORK_CAP])"),
+    ('mod-render-bound-reverted', CHECK,
+     "            elif isinstance(right, (list, tuple, set, frozenset, dict)):\n"
+     "                try:\n"
+     "                    payload = _render_bound(right, budget)\n"
+     "                except _FoldedSizeOverflow:\n"
+     "                    return _LITERAL_TEST_UNRESOLVED\n",
+     # fix-r32: the anchor now spans only the container arm — the scalar
+     # arm has its own revert mutant below — and the reverted charge
+     # keeps threading the shared budget, so the kill isolates the
+     # render-bound semantics, not a budget-less TypeError.
+     "            elif isinstance(right, (list, tuple)):\n"
+     "                payload = _folded_size(right, budget)\n"
+     "                if payload is None:\n"
+     "                    return _LITERAL_TEST_UNRESOLVED\n"
+     "                payload += 2 * len(right)\n"),
+    # #1652 fix-r32 (DS boundary#2 P1, probe-verified —
+    # _tmp/20261110-1355-r26-harvest/probe-r32-scalar-repr.out): the scalar
+    # arm of the same charge — with the spec-aware render bound reverted to
+    # the raw length, the ``%r``/``%a`` str and the bytes scalar probes fold
+    # past the cap the battery must resolve fail-closed.  fix-r33: the
+    # anchor follows the bytes-left repr arm (DS r33 boundary#3) — under
+    # the revert the bytes-left probes join the same fold-past-cap kill.
+    ('scalar-repr-reverted', CHECK,
+     "                if isinstance(right, bytes):\n"
+     "                    payload = (len(right) * 4 + 3\n"
+     "                               if isinstance(left, str)\n"
+     "                               or any(spec and spec[-1] in ('r', 'a')\n"
+     "                                      for spec in specs)\n"
+     "                               else len(right))\n"
+     "                else:\n"
+     "                    payload = (len(right) * 10 + 2\n"
+     "                               if isinstance(left, (str, bytes))\n"
+     "                               and any(spec and spec[-1] in ('r', 'a')\n"
+     "                                       for spec in specs)\n"
+     "                               else len(right))",
+     "                if isinstance(right, bytes):\n"
+     "                    payload = len(right)\n"
+     "                else:\n"
+     "                    payload = len(right)"),
 ]
 
 def calibrate_dict_namespace_update(rows):
@@ -4244,6 +4625,60 @@ def calibrate_builtins_chain_four(rows):
     """#892 fix-r33: builtins chain four."""
     return _unrouted_status(rows, 'calibrate-builtins-chain-four')
 
+def mult_budget_unthreaded(rows):
+    """#1652 fix-r31: the Mult content walk must draw from the shared
+    audit-pass cell — with the per-call mint reverted, the ``* 1``-chain
+    pin folds inside a cell it never touched."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any('minted its own traversal allowance' in failure
+               for failure in failures):
+        return False, (f'failures={failures!r}, '
+                       'want the r31 Mult-budget battery failure')
+    return True, ('aggregation-audit: the Mult budget mint reverted, '
+                  'battery flagged, passed=False')
+
+def mod_render_reverted(rows):
+    """#1652 fix-r31: the Mod container payload must charge the render
+    bound — with the charge reverted to the folded content, the render
+    pins fold past the cap."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any('charged the folded content, not the render' in failure
+               for failure in failures):
+        return False, (f'failures={failures!r}, '
+                       'want the r31 Mod-render battery failure')
+    return True, ('aggregation-audit: the Mod render bound reverted, '
+                  'battery flagged, passed=False')
+
+def scalar_repr_reverted(rows):
+    """#1652 fix-r32: the Mod scalar payload must charge the spec-aware
+    render bound — with the charge reverted to the raw length, the scalar
+    repr-str and bytes probes fold past the cap."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any('payload charged the raw length' in failure
+               for failure in failures):
+        return False, (f'failures={failures!r}, '
+                       'want the r32 scalar-repr battery failure')
+    return True, ('aggregation-audit: the Mod scalar render bound reverted, '
+                  'battery flagged, passed=False')
+
 JUDGES = {
     'empty-group-probe-removed': (
         'clean',
@@ -4407,8 +4842,28 @@ JUDGES = {
         'aggregation-audit', controls_aggregate_lookalike, False, ()),
     'calibrate-status-update': (
         'aggregation-audit', calibrate_status_update, False, ()),
+    'calibrate-status-write-is-literal-bypass': (
+        'aggregation-audit', calibrate_status_write_is_literal_bypass, False, ()),
     'retirement-duplicate-status-key': (
         'aggregation-audit', retirement_duplicate_status_key, False, ()),
+    'nested-status-slot-bypass': (
+        'aggregation-audit', nested_status_slot_bypass, False, ()),
+    'nested-constant-conditional-bypass': (
+        'aggregation-audit', nested_constant_conditional_bypass, False, ()),
+    'nested-not-false-conditional-bypass': (
+        'aggregation-audit', nested_not_false_conditional_bypass, False, ()),
+    'nested-boolop-value-bypass': (
+        'aggregation-audit', nested_boolop_value_bypass, False, ()),
+    'nested-is-literal-bypass': (
+        'aggregation-audit', nested_is_literal_bypass, False, ()),
+    'nested-shared-call-boolop-bypass': (
+        'aggregation-audit', nested_shared_call_boolop_bypass, False, ()),
+    'summary-status-shared-call-bypass': (
+        'aggregation-audit', summary_status_shared_call_bypass, False, ()),
+    'summary-unpack-shared-call-bypass': (
+        'aggregation-audit', summary_unpack_shared_call_bypass, False, ()),
+    'summary-name-relay-shared-call-bypass': (
+        'aggregation-audit', summary_name_relay_shared_call_bypass, False, ()),
     'controls-nested-same-name': (
         'aggregation-audit', controls_nested_same_name, False, ()),
     'calibrate-shared-excuse': (
@@ -4453,6 +4908,10 @@ JUDGES = {
         'aggregation-audit', calibrate_update_expansion, False, ()),
     'calibrate-exit-conditional': (
         'aggregation-audit', calibrate_exit_conditional, False, ()),
+    'calibrate-exit-is-literal-bypass': (
+        'aggregation-audit', calibrate_exit_is_literal_bypass, False, ()),
+    'calibrate-exit-name-is-literal-bypass': (
+        'aggregation-audit', calibrate_exit_name_is_literal_bypass, False, ()),
     'calibrate-return-exit-call': (
         'aggregation-audit', calibrate_return_exit_call, False, ()),
     'calibrate-ann-rebuilt': (
@@ -4798,6 +5257,12 @@ JUDGES = {
         'aggregation-audit', calibrate_partial_setdefault_prebound, False, ()),
     'calibrate-builtins-chain-fiftyone': (
         'aggregation-audit', calibrate_builtins_chain_fiftyone, False, ()),
+    'mult-fold-budget-unthreaded': (
+        'aggregation-audit', mult_budget_unthreaded, False, ()),
+    'mod-render-bound-reverted': (
+        'aggregation-audit', mod_render_reverted, False, ()),
+    'scalar-repr-reverted': (
+        'aggregation-audit', scalar_repr_reverted, False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')

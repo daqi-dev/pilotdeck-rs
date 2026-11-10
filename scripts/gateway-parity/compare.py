@@ -71,6 +71,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import sqlite3
@@ -226,6 +227,23 @@ def load(path, expected=dict):
     return value
 
 
+def _stream_elapsed_real(value):
+    """fix-r33 (MM boundary#1 P1, two lineages — DS sibling#6/boundary#2 —
+    probe-verified, probe-r33/folds.py): ``math.isfinite`` converts its
+    argument through ``float()`` first, so a legal-JSON huge integer
+    (``json.loads`` accepts ``{"elapsedMs": <400 digits>}`` as an
+    arbitrary-precision int) raised OverflowError straight out of
+    validate() — a crash instead of a verdict, and the r32 except tuples
+    do not catch ArithmeticError children.  An int outside +-2**53 cannot
+    be a millisecond anchor any recording produces; the gate reads it as
+    not-a-real anchor and the oracle fails closed, firing where the pre-r32
+    <300 window would otherwise have stayed quiet (huge last, negative first).
+    """
+    if type(value) is int:
+        return -2**53 <= value <= 2**53
+    return type(value) is float and math.isfinite(value)
+
+
 def wire_frame(row):
     data = bytes.fromhex(row['wireHex'])
     if len(data) < 2:
@@ -244,11 +262,23 @@ def wire_frame(row):
     if len(data) < offset:
         raise ValueError('truncated mask')
     payload = data[offset:]
-    if len(payload) != size or opcode != row['wire']['opcode']:
+    # fix-r32 (DS sibling#3 P2, probe-r32-family): the decoded opcode is a
+    # plain int but ``row['wire']['opcode']`` is an external document read —
+    # ``1 != True`` is False, so a folded boolean opcode folded onto the
+    # decoded int.  The same_json metadata check below subsumes the value,
+    # but an independent real-int gate makes this compare hold on its own.
+    if len(payload) != size or type(row['wire']['opcode']) is not int \
+            or opcode != row['wire']['opcode']:
         raise ValueError('wire bytes/header disagree')
     metadata = {'opcode': opcode, 'fin': bool(data[0] & 128), 'rsv': data[0] & 0x70,
                 'masked': masked, 'lengthCode': length_code, 'payloadLength': size}
-    if metadata != row['wire']:
+    # fix-r31 (r31 structural round, DS sibling#4 P2 read as the same
+    # family; #2424 :251): the decoded metadata carries ints and bools —
+    # a recorded ``fin: 1`` folded onto a decoded ``fin: True`` through
+    # ``1 == True`` and the wire cross-check passed.  Every decoded-vs-
+    # recorded equality below goes through same_json (type-strict on
+    # booleans, #1372 semantics on numbers).
+    if not native_evidence.same_json(metadata, row['wire']):
         raise ValueError('wire FIN/RSV/mask/length metadata disagree')
     if masked:
         payload = bytes(byte ^ mask[i % 4] for i, byte in enumerate(payload))
@@ -258,7 +288,7 @@ def wire_frame(row):
     elif row['direction'] == 'receive' and opcode == 8:
         value = {'code': int.from_bytes(payload[:2], 'big') if len(payload) >= 2 else 1005,
                  'reason': payload[2:].decode('utf8', errors='replace')}
-    if value != row.get('frame'):
+    if not native_evidence.same_json(value, row.get('frame')):
         raise ValueError('wire bytes/decoded frame disagree')
     return data[:offset].hex()
 
@@ -287,7 +317,13 @@ def validate(path, local_methods=()):
                 result, complete = load(folder / 'result.json'), load(folder / 'complete.json')
                 if result.get('scenario') != name or complete.get('scenario') != name:
                     fail('G1.coverage', f'{name}: wrong scenario identity')
-                if result.get('status') != 'PASS' or run.get('scenarios', {}).get(name, {}).get('exitCode') != 0:
+                # fix-r31 (r31 structural round, DS sibling#4 P2 read as
+                # the same family; #2424 :290): the run document's exit
+                # code is an external read compared against a number — a
+                # real-int gate precedes the ``!= 0`` (``True != 0`` is
+                # False in Python, so a boolean exitCode audited clean).
+                exit_code = run.get('scenarios', {}).get(name, {}).get('exitCode')
+                if result.get('status') != 'PASS' or type(exit_code) is not int or exit_code != 0:
                     fail('G3.oracle', f'{name}: driver failed its independent expectations')
                 rows = []
                 if name != 'http':
@@ -299,10 +335,21 @@ def validate(path, local_methods=()):
                         raise ValueError('recorder rows must be objects')
                     if not rows:
                         fail('G2.recording', f'{name}: empty log')
-                if complete.get('complete') is not True or complete.get('records') != len(rows):
+                # fix-r31 (r31 structural round, DS sibling#4 P2 read as
+                # the same family; #2424 :302/:305): the footer's counts
+                # are external reads compared against numbers — real-int
+                # gates precede both ``==`` uses, so a boolean or float
+                # footer cannot fold onto the true count (``True == 1``).
+                records = complete.get('records')
+                connection_count = complete.get('connections', 0)
+                if (complete.get('complete') is not True
+                        or type(records) is not int or records != len(rows)):
                     fail('G2.recording', f'{name}: count/footer mismatch')
                 connections = {row.get('connection') for row in rows}
-                if name != 'http' and connections != set(range(1, complete.get('connections', 0) + 1)):
+                if (name != 'http'
+                        and (type(connection_count) is not int or connection_count < 0
+                             or connection_count > len(rows)
+                             or connections != set(range(1, connection_count + 1)))):
                     fail('G2.recording', f'{name}: connection count/identity mismatch')
                 pending = {}
                 for number, row in enumerate(rows, 1):
@@ -315,7 +362,7 @@ def validate(path, local_methods=()):
                             parsed = json.loads(row['raw'])
                         except ValueError:
                             parsed = row['raw']  # auth deliberately sends invalid JSON.
-                        if parsed != row.get('frame'):
+                        if not native_evidence.same_json(parsed, row.get('frame')):
                             fail('G2.recording', f'{name}: raw/parsed disagreement at {number}')
                     if 'wire' in row:
                         wire_frame(row)
@@ -367,7 +414,11 @@ def validate(path, local_methods=()):
             return [row['frame'] for row in frames.get(name, []) if row.get('direction') == 'receive' and isinstance(row.get('frame'), dict)]
 
         auth = [row['close']['code'] for row in frames.get('auth', []) if 'close' in row]
-        if auth != [4001, 4001, 4003, 4002, 1000]:
+        # fix-r33 (DS sibling#1, probe-r33/folds.py): the close codes are
+        # external document ints — ``4001.0`` folded onto ``4001`` through
+        # the list ``==`` and the auth oracle passed; every code is now
+        # held to a real int first (bool is not int under type()).
+        if any(type(code) is not int for code in auth) or auth != [4001, 4001, 4003, 4002, 1000]:
             fail('G3.oracle', 'auth close codes / valid hello missing')
         for name in ('turn', 'permission'):
             events = [frame for frame in received(name) if frame.get('type') == 'event']
@@ -416,7 +467,13 @@ def validate(path, local_methods=()):
         if response_map('permission').get('permission_decide', {}).get('delivered') is not True:
             fail('G3.oracle', 'permission decision must reach its pending owner')
         writes = response_map('writes')
-        if not writes.get('cron_create', {}).get('task', {}).get('taskId') or not all(
+        # fix-r34 (DS r33b sibling#3): the same native-archive statement's
+        # remaining truthy operands accepted ``true``/``1``/non-empty dict
+        # (``1.0`` folds through truthiness) — taskId is a real string,
+        # agents/items/entries/projects are real lists, all held to type
+        # first, matching the entryCount real-int gate in the same oracle.
+        if type(writes.get('cron_create', {}).get('task', {}).get('taskId')) is not str \
+                or not writes.get('cron_create', {}).get('task', {}).get('taskId') or not all(
                 writes.get(method, {}).get('ok') is True for method in ('skill_create', 'skill_write')):
             fail('G3.oracle', 'cron/skill writes must succeed')
         read_results = response_map('readonly')
@@ -427,11 +484,19 @@ def validate(path, local_methods=()):
         artifact = read_results.get('native_archive_artifact', {})
         if artifact.get('content') != base64.b64encode(b'gateway parity fixture artifact\n').decode() or artifact.get('encoding') != 'base64' or artifact.get('truncated') is not False:
             fail('G3.oracle', 'native artifact must succeed with the complete fixture bytes')
-        if not read_results.get('supported_agents', {}).get('agents') or not read_results.get('model_catalog_list', {}).get('items'):
+        if not (type(read_results.get('supported_agents', {}).get('agents')) is list and read_results.get('supported_agents', {}).get('agents')) \
+                or not (type(read_results.get('model_catalog_list', {}).get('items')) is list and read_results.get('model_catalog_list', {}).get('items')):
             fail('G3.oracle', 'agent / model catalog cannot be empty')
         if read_results.get('session_model_get', {}).get('effective', {}).get('model') != 'deterministic':
             fail('G3.oracle', 'session model must resolve the configured model')
-        if not read_results.get('native_archive_entries', {}).get('entries') or read_results.get('native_archive_manifest', {}).get('entryCount', 0) < 1:
+        # fix-r33 (DS sibling#3 + MM sibling#3, two lineages, probe-r33/
+        # folds.py): entryCount is an external document int — ``true``
+        # (``True < 1`` is False), ``1.0`` and ``NaN`` all folded through
+        # the bare ``< 1`` and the native-archive oracle read clean; the
+        # real-int gate (type() excludes bool and float) precedes it.
+        entry_count = read_results.get('native_archive_manifest', {}).get('entryCount', 0)
+        if not (type(read_results.get('native_archive_entries', {}).get('entries')) is list and read_results.get('native_archive_entries', {}).get('entries')) \
+                or type(entry_count) is not int or entry_count < 1:
             fail('G3.oracle', 'native archive must contain the completed text turn')
         # Independent disk oracles prevent both-sides-the-same failed execution.
         if (path / 'project/note.txt').read_text() != 'gateway parity fixture\n' or (path / 'project/written.txt').read_text() != 'HTTP written fixture\n':
@@ -447,19 +512,46 @@ def validate(path, local_methods=()):
             fail('G3.oracle', 'cron task must persist')
         http = load(path / 'scenarios/http/http.json', list)
         expected = [200, 200, 200, 200, 200, 401, 200, 200]
-        if [row.get('status') for row in http] != expected:
+        # fix-r33 (DS sibling#1/#2, probe-r33/folds.py): the statuses are
+        # external document ints — a ``200.0`` folded onto ``200`` through
+        # the list ``==``; every status is held to a real int first, and
+        # the comprehension operand now reads as a document read for the
+        # ledger (family sweep sees ListComp elt walks).
+        if any(type(row.get('status')) is not int for row in http) \
+                or [row.get('status') for row in http] != expected:
             fail('G3.oracle', 'HTTP status or endpoint coverage incorrect')
         for row in http:
             body = b''.join(base64.b64decode(chunk['base64'], validate=True) for chunk in row['chunks']).decode('utf8')
             if body != row['body']:
                 fail('G2.recording', 'HTTP raw chunk bytes / body disagree')
-        if json.loads(http[0]['body']) != {'ok': True} or json.loads(http[1]['body']).get('token') != (path / 'home/server-token').read_text().strip():
+        # fix-r32 (DS sibling#2 P1, probe-r32-scalar-repr family): ``{'ok': 1}``
+        # folded onto ``{'ok': True}`` through ``==`` and the health oracle
+        # passed; same_json is type-strict (#1372 semantics on numbers).
+        if not native_evidence.same_json(json.loads(http[0]['body']), {'ok': True}) \
+                or json.loads(http[1]['body']).get('token') != (path / 'home/server-token').read_text().strip():
             fail('G3.oracle', 'health / local token body incorrect')
-        if not json.loads(http[2]['body']).get('projects') or json.loads(http[3]['body']).get('content') != 'gateway parity fixture\n':
+        if not (type(json.loads(http[2]['body']).get('projects')) is list and json.loads(http[2]['body']).get('projects')) or json.loads(http[3]['body']).get('content') != 'gateway parity fixture\n':
             fail('G3.oracle', 'HTTP projects / file read fixture missing')
         for row in http[-2:]:
             chunks = row['chunks']
-            if len(chunks) < 2 or chunks[-1]['elapsedMs'] - chunks[0]['elapsedMs'] < 300 or 'first' not in row['body'] or 'last' not in row['body']:
+            # fix-r31 (r31 structural round): the elapsed timestamps are
+            # external document reads entering arithmetic — ``True - True``
+            # is 0 and passed the 300 ms bound.  A real-number gate
+            # (type() excludes bool) precedes the subtraction.
+            # fix-r32 (DS boundary P0 + MM boundary P1, probe-r32-infnan):
+            # the type gate alone let ``NaN``/``Infinity`` through —
+            # ``json.loads`` accepts both, and ``inf - 0 < 300`` /
+            # ``nan - nan < 300`` are False, so a doctored http.json could
+            # clear the streamed-window oracle without ever streaming.  The
+            # gate now demands a finite real number on both anchor chunks.
+            # fix-r33 (MM boundary#1 P1, probe-r33/folds.py): the finite
+            # check runs through _stream_elapsed_real — math.isfinite on a
+            # huge int anchor raised OverflowError out of validate().
+            if (len(chunks) < 2
+                    or any(not _stream_elapsed_real(chunk.get('elapsedMs'))
+                           for chunk in (chunks[0], chunks[-1]))
+                    or chunks[-1]['elapsedMs'] - chunks[0]['elapsedMs'] < 300
+                    or 'first' not in row['body'] or 'last' not in row['body']):
                 fail('G3.oracle', 'stream buffered/truncated')
         quirks = load(path / 'scenarios/quirks/result.json').get('results', [])
         if [row.get('kind') for row in quirks] != ['rsv', 'continuation', 'client-close', 'unmasked'] or not all(row.get('ok') is True for row in quirks):
@@ -487,9 +579,18 @@ def validate(path, local_methods=()):
                 fail('G2.observer', 'required passthrough requests missing from independently recorded upstream')
             if set(local_methods) & upstream_methods:
                 fail('G7.no-forward', 'declared local method was forwarded to TS upstream')
-            if any(row.get('seq') != index for index, row in enumerate(upstream, 1)):
+            # fix-r33 (MM sibling#1, probe-r33/folds.py): the frames.jsonl
+            # twin of this check has had its real-int gate since r31
+            # (``type(row.get('seq')) is not int`` precedes) — the
+            # upstream.jsonl site was missed, and ``"seq": true`` folded
+            # through ``True != 1``; same spelling as the gated twin.
+            if any(type(row.get('seq')) is not int or row.get('seq') != index
+                   for index, row in enumerate(upstream, 1)):
                 fail('G2.observer', 'upstream recorder seq must be contiguous')
-    except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError) as error:
+    except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError, OverflowError) as error:
+        # fix-r33 (MM boundary#1 P1): OverflowError is an ArithmeticError
+        # child that none of the value errors cover — belt and braces so
+        # any future overflow reads as a failed round, not a crash.
         fail('G0.round', str(error))
     return frames, errors
 
@@ -601,13 +702,21 @@ def compare(left, right, local_methods=()):
             pass
     if len(runs) == 2:
         for field in ('runtime', 'ports', 'baseline', 'baselineSourceSha256', 'baselineDistSha256'):
-            if runs['left'].get(field) != runs['right'].get(field):
+            # fix-r31 (r31 structural round, #2424 :604): both sides are
+            # external run documents — the path-alignment diff must not
+            # fold a boolean/float onto a number (``True == 1`` reading as
+            # "no difference" would hide a post-hoc path alignment).
+            if not native_evidence.same_json(runs['left'].get(field), runs['right'].get(field)):
                 failures.append({'rule': 'G0.paths', 'detail': f'{field} differs; no post-hoc path alignment allowed'})
     if not failures:
         try:
             a, b = projection(left, recording['left']), projection(right, recording['right'])
             for surface, rule in [('frames', 'G4.frames'), ('http', 'G5.http'), ('disk', 'G6.disk')]:
-                if a[surface] != b[surface]:
+                # fix-r32 (DS sibling#1 P1): both sides are external
+                # document projections — ``{'final': True}`` folded onto
+                # ``{'final': 1}`` through ``!=`` and the surface diff read
+                # as "no difference".  Same_json is type-strict.
+                if not native_evidence.same_json(a[surface], b[surface]):
                     failures.append({'rule': rule, 'left': a[surface], 'right': b[surface]})
         except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError, sqlite3.Error) as error:
             failures.append({'rule': 'G2.recording', 'detail': str(error)})

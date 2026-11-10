@@ -370,6 +370,31 @@ def isolated_file_options(options):
     return isolated, True
 
 
+# #1718: ``ast`` line numbers follow the tokenizer -- only \n, \r\n and \r
+# end a line.  ``str.splitlines`` also breaks on \f (and \v, \x85, U+2028,
+# ...), so one form feed above the preflight shifts the slice and the paired
+# control below deletes the wrong lines while the preflight survives.  Same
+# regex as ``scripts/check-frozen-delivery.py``.
+_LINE_BREAK = re.compile(r'\r\n|\r|\n')
+
+
+def without_preflight(source):
+    """The same entry bytes with the os-preload preflight removed.
+
+    If a mutant already disabled or removed the block, the source is
+    returned unchanged: its next ``import os`` must still reach forge.
+    """
+    tree = ast.parse(source)
+    node = next((statement for statement in tree.body
+                 if isinstance(statement, ast.If)
+                 and 'version_info' in ast.unparse(statement.test)), None)
+    if node is None:
+        return source
+    lines = _LINE_BREAK.split(source)
+    del lines[node.lineno - 1:node.end_lineno]
+    return '\n'.join(lines)
+
+
 class BootstrapTests(unittest.TestCase):
     """#701 item 3: entries reject same-directory imposters before loading one."""
 
@@ -497,22 +522,6 @@ print(json.dumps({'prefixes': prefixes, 'dontWrite': sys.dont_write_bytecode,
                          'sys.path.insert(0, forge)\n'
                          'exec(code, {"__file__": entry, "__name__": "__main__"})\n')
 
-        def without_preflight(source):
-            """The same entry bytes with the os-preload preflight removed.
-
-            If a mutant already disabled or removed the block, the source is
-            returned unchanged: its next ``import os`` must still reach forge.
-            """
-            tree = ast.parse(source)
-            node = next((statement for statement in tree.body
-                         if isinstance(statement, ast.If)
-                         and 'version_info' in ast.unparse(statement.test)), None)
-            if node is None:
-                return source
-            lines = source.splitlines(keepends=True)
-            del lines[node.lineno - 1:node.end_lineno]
-            return ''.join(lines)
-
         with tempfile.TemporaryDirectory(prefix='d0-osguard-') as temp:
             holder = Path(temp)
             for name in ENTRY_FILES:
@@ -566,6 +575,26 @@ print(json.dumps({'prefixes': prefixes, 'dontWrite': sys.dont_write_bytecode,
                             'forged os module executed', control_output,
                             marker + f' [{name}/{label}] control: the forged module must '
                             'be the failure: ' + control_output[-300:])
+
+    def test_without_preflight_splits_only_ast_line_breaks(self):
+        """#1718 paired control: the helper slices lines the way ast counts them.
+
+        ``str.splitlines`` also breaks on \f, so a form feed above the
+        preflight shifted the old slice: the control then deleted the wrong
+        lines and the preflight survived.  ``_LINE_BREAK`` keeps the form
+        feed inside its line, so the deleted span is still the preflight.
+        """
+        marker = ('#1355-r1 #1718: without_preflight must delete exactly the '
+                  'preflight lines even when the source holds a form feed')
+        source = ('import sys\n'
+                  'if sys.version_info < (3, 11):\n'
+                  "    raise SystemExit('os must be preloaded')\n"
+                  'import os\n')
+        with_feed = source.replace('import sys\n', 'import sys\f\n', 1)
+        self.assertEqual(without_preflight(source),
+                         'import sys\nimport os\n', marker)
+        self.assertEqual(without_preflight(with_feed),
+                         'import sys\f\nimport os\n', marker)
 
     def test_entries_reject_a_mixed_spelling_reinsertion(self):
         """#701 fix-r2: the same directory under another spelling is still that directory."""

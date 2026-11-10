@@ -198,6 +198,161 @@ class ChainTests(unittest.TestCase):
         except Exception as error:
             self.fail(marker + ': ' + repr(error))
 
+    def test_compare_http_elapsed_gate_nonfinite(self):
+        marker = '#1355 r32 the elapsed anchors must be finite real numbers'
+        # fix-r32 (DS boundary P0 + MM boundary P1, probe-verified —
+        # _tmp/20261110-1355-r26-harvest/probe-r32-infnan.out): the r31 type
+        # gate alone let ``NaN``/``Infinity`` anchors through (json.loads
+        # accepts both, and ``500 - nan < 300`` is False), so a doctored
+        # http recording cleared the streamed-window oracle.  The gate now
+        # demands a finite real number on both anchors; the tree below
+        # reaches the gate with two valid chunks whose only defect is the
+        # non-finite anchor, so the oracle fires on the finiteness arm.
+        import base64
+        compare = s._load('compare', s.SCRIPT / 'compare.py')
+        folder = Path(self.temp.name) / 'elapsed-gate'
+        c.save(folder / 'run.json', {'status': 'DONE', 'audit': {'allStopped': True},
+                                     'scenarios': {'auth': {'exitCode': 0}}})
+        (folder / 'scenarios/auth').mkdir(parents=True)
+        c.save(folder / 'scenarios/auth/result.json', {'scenario': 'auth', 'status': 'PASS'})
+        c.save(folder / 'scenarios/auth/complete.json', {'scenario': 'auth', 'complete': True,
+                                                         'records': 1, 'connections': 1})
+        row = {'seq': 1, 'connection': 1, 'direction': 'receive', 'transportEnd': True,
+               'frame': {'type': 'hello_ok', 'text': 'x'}}
+        (folder / 'scenarios/auth/frames.jsonl').write_text(json.dumps(row) + '\n')
+        (folder / 'project').mkdir(parents=True)
+        (folder / 'project/note.txt').write_text('gateway parity fixture\n')
+        (folder / 'project/written.txt').write_text('HTTP written fixture\n')
+        c.save(folder / 'scenarios/quirks/result.json', {'results': []})
+
+        def chunk(text, elapsed):
+            return {'base64': base64.b64encode(text.encode()).decode(),
+                    'elapsedMs': elapsed}
+
+        plain = [{'status': 200, 'body': '{}',
+                  'chunks': [chunk('{}', 0)]}] * 6
+        # fix-r33 (MM boundary#1 P1 + DS sibling#6/boundary#2, probe-verified —
+        # probe-r33/folds.py): json.loads accepts arbitrary-precision ints, and
+        # the r32 isfinite spelling converted its argument through float(),
+        # so a huge-int anchor raised OverflowError out of validate(); the
+        # int itself is out of the ±2**53 millisecond anchor range and must
+        # trip the same oracle as NaN, not crash the walk.  The huge ints sit
+        # at the *last* anchor so the window subtraction stays ≥ 300 — the
+        # oracle that fires under a type-only revert is the gate itself.
+        # fix-r34 (DS r33b boundary#5): the pair always places the anchor
+        # value in the *last* chunk — the NaN entry was mislabelled 'first'.
+        bad_anchors = [(float('nan'), 'last', 0), (10**400, 'last', 500),
+                       (2**53 + 1, 'last', 500)]
+        for anchor_value, anchor_slot, other_value in bad_anchors:
+            elapsed_pair = [other_value, anchor_value]
+            streamed = [{'status': 200, 'body': 'first-last',
+                         'chunks': [chunk('first', elapsed_pair[0]),
+                                    chunk('-last', elapsed_pair[1])]}] * 2
+            c.save(folder / 'scenarios/http/http.json', plain + streamed)
+            try:
+                with patch.object(compare, 'SCENARIOS', ['auth']):
+                    _, errors = compare.validate(folder)
+                self.assertTrue('stream buffered/truncated' in [error['detail'] for error in errors],
+                                marker + f' (anchor {anchor_value!r} at {anchor_slot}): ' + repr(errors))
+            except Exception as error:
+                self.fail(marker + f' (anchor {anchor_value!r} at {anchor_slot}): ' + repr(error))
+
+    def test_compare_health_body_refuses_int_folds_of_booleans(self):
+        marker = '#1355 r33 the health oracle body is identity-compared'
+        # fix-r33 (DS sibling#7 P2, paired negative for the r32 health
+        # same_json fix): ``{"ok": 1}`` folded onto ``{"ok": true}``
+        # through ``==`` and the health oracle read clean when the site was
+        # a bare ``!=``; the pin doctors http[0]'s recorded body (chunks
+        # decoded to match, so the raw-bytes oracle stays quiet) and the
+        # health rule must fire on the identity comparison alone.
+        import base64
+        compare = s._load('compare', s.SCRIPT / 'compare.py')
+        folder = Path(self.temp.name) / 'health-body'
+        c.save(folder / 'run.json', {'status': 'DONE', 'audit': {'allStopped': True},
+                                     'scenarios': {'auth': {'exitCode': 0}}})
+        (folder / 'scenarios/auth').mkdir(parents=True)
+        c.save(folder / 'scenarios/auth/result.json', {'scenario': 'auth', 'status': 'PASS'})
+        c.save(folder / 'scenarios/auth/complete.json', {'scenario': 'auth', 'complete': True,
+                                                         'records': 1, 'connections': 1})
+        (folder / 'scenarios/auth/frames.jsonl').write_text(json.dumps(
+            {'seq': 1, 'connection': 1, 'direction': 'receive', 'transportEnd': True,
+             'frame': {'type': 'hello_ok', 'text': 'x'}}) + '\n')
+        (folder / 'project').mkdir()
+        (folder / 'project/note.txt').write_text('gateway parity fixture\n')
+        (folder / 'project/written.txt').write_text('HTTP written fixture\n')
+        (folder / 'home').mkdir()
+        (folder / 'home/server-token').write_text('r33-token\n')
+        c.save(folder / 'scenarios/quirks/result.json', {'results': []})
+
+        def chunk(text, elapsed):
+            return {'base64': base64.b64encode(text.encode()).decode(),
+                    'elapsedMs': elapsed}
+
+        def http_rows(first_body):
+            return ([{'status': 200, 'body': first_body, 'chunks': [chunk(first_body, 0)]},
+                     {'status': 200, 'body': '{"token": "r33-token"}',
+                      'chunks': [chunk('{"token": "r33-token"}', 0)]}]
+                    + [{'status': 200, 'body': '{}', 'chunks': [chunk('{}', 0)]}] * 4)
+
+        for body, expect in (('{\"ok\": 1}', True), ('{\"ok\": true}', False)):
+            c.save(folder / 'scenarios/http/http.json', http_rows(body))
+            try:
+                with patch.object(compare, 'SCENARIOS', ['auth']):
+                    _, errors = compare.validate(folder)
+                details = [error['detail'] for error in errors]
+                if expect:
+                    self.assertTrue('health / local token body incorrect' in details,
+                                    marker + ': ' + repr(errors))
+                else:
+                    self.assertTrue('health / local token body incorrect' not in details,
+                                    marker + ': ' + repr(errors))
+            except Exception as error:
+                self.fail(marker + ': ' + repr(error))
+
+    def test_compare_surface_diff_refuses_int_folds_of_booleans(self):
+        marker = '#1355 r33 the three-surface diff is identity-compared'
+        # fix-r33 (DS sibling#7 P2, paired negative for the r32 surface
+        # same_json fix): ``{'final': True}`` folded onto ``{'final': 1}``
+        # through a bare ``!=`` and the frames surface read as "no
+        # difference".  The pin builds two minimal recording trees whose
+        # validate walk is pinned honest (patched to return the recordings
+        # directly), so the only difference the compare() walk can see is
+        # the boolean-vs-int fold in the projected frame.
+        compare = s._load('compare', s.SCRIPT / 'compare.py')
+        base = Path(self.temp.name) / 'surface-diff'
+
+        def tree(side, final):
+            folder = base / side
+            (folder / 'home').mkdir(parents=True)
+            (folder / 'home/server-token').write_text('r33-token\n')
+            (folder / 'project').mkdir()
+            (folder / 'project/note.txt').write_text('gateway parity fixture\n')
+            (folder / 'scenarios/auth').mkdir(parents=True)
+            c.save(folder / 'run.json', {'status': 'DONE', 'audit': {'allStopped': True},
+                                        'scenarios': {'auth': {'exitCode': 0}}})
+            c.save(folder / 'scenarios/http/http.json',
+                   [{'status': 200, 'path': '/health', 'headers': {}, 'body': '{}',
+                     'chunks': [{'base64': 'e30=', 'elapsedMs': 0}]}])
+            row = {'seq': 1, 'connection': 1, 'direction': 'send',
+                   'frame': {'type': 'hello_ok', 'final': final}}
+            return folder, {'auth': [row]}
+
+        left, left_frames = tree('left', True)
+        right, right_frames = tree('right', 1)
+
+        def fake_validate(path, local_methods=()):
+            return (left_frames if path == left else right_frames), []
+
+        try:
+            with patch.object(compare, 'SCENARIOS', ['auth']), \
+                    patch.object(compare, 'validate', fake_validate):
+                result = compare.compare(left, right)
+            self.assertTrue(result['status'] == 'FAIL'
+                            and 'G4.frames' in {row['rule'] for row in result['failures']},
+                            marker + ': ' + repr(result))
+        except Exception as error:
+            self.fail(marker + ': ' + repr(error))
+
     def test_receipt_schema_is_shared(self):
         marker = '#1140 r10 receipt producers and consumers use one schema'
         # Sentinel addition exercises derivation, not today's literal key count.

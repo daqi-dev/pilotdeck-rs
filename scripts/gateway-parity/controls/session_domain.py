@@ -1575,7 +1575,17 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     try:
         check_case(args.case, args.output.resolve(), args.source)
-    except (ValueError, OSError, KeyError, TypeError, StopIteration, subprocess.SubprocessError) as error:
+    # fix-r15 (anthropic sibling#1 r14 P2): MemoryError joins the recorded-
+    # FAIL family — a memory blow-up inside a control case must land in
+    # verdict.json as a FAIL, not crash the harness with a raw traceback
+    # (same rationale as session_domain.py fix-r6).
+    # fix-r16 (DS sibling#1 = concurrency#1 r15 P2, two roles, family
+    # completion): RecursionError joins the same family — the reference
+    # wrapper (session_domain.py fix-r5, fix-r6) carries both, and
+    # check_case deep-copies external --source artifacts, so a deeply
+    # nested one overflows into the traceback policy the same way.
+    except (ValueError, OSError, KeyError, TypeError, StopIteration,
+            subprocess.SubprocessError, MemoryError, RecursionError) as error:
         result = {'status': 'FAIL', 'rule': getattr(error, 'rule', 'CONTROL_EXECUTION'), 'detail': str(error)}
     else:
         result = {'status': 'PASS', 'rule': None}

@@ -1258,6 +1258,62 @@ class ImportIsolation(unittest.TestCase):
                                      'EVIDENCE' if stage == 'work' else 'APPARATUS_IMPORTS', message + ': rule')
                     self.assertFalse(held, message + ': released')
 
+    def test_suite_resource_exhaustion_is_blocked_not_a_product_fail(self):
+        # fix-r30 (DS r29 concurrency#1, arbitrated up by the P2b 「假 FAIL→
+        # P1」 rule): MemoryError/RecursionError raised inside the suite body
+        # are the apparatus' own resource exhaustion — BLOCKED/2 with a rule
+        # of its own, never a judged-product FAIL/1 carrying
+        # failure.rule='EVIDENCE'.  The pre-fix BLOCKED_APPARATUS_ERRORS let
+        # exactly that land (the outer handler and retirement_report already
+        # classified the same exception as BLOCKED, so the inner handler
+        # contradicted the suite's own failure grading).
+        from contextlib import ExitStack, contextmanager, redirect_stdout
+        import io
+        message = 'fix-r30 suite resource exhaustion is BLOCKED/2/APPARATUS_RESOURCES, not FAIL/1/EVIDENCE'
+        entry = _load('resource_error_entry', common.SCRIPT / 'session_domain.py')
+        for error_type in (MemoryError, RecursionError):
+            with self.subTest(error=error_type.__name__), ExitStack() as stack:
+                held = False
+                def refuse(*args, **kwargs):
+                    self.assertTrue(held, message + ': error injection holds lease')
+                    raise error_type('controlled resource exhaustion')
+                @contextmanager
+                def recorded_lock(*args, **kwargs):
+                    nonlocal held
+                    held = True
+                    try:
+                        yield
+                    finally:
+                        held = False
+                controls = SimpleNamespace(run_all=refuse)
+                stack.enter_context(patch.object(entry, 'parity_lock', recorded_lock))
+                stack.enter_context(patch.object(entry, '_load', return_value=controls))
+                # No-op the HEAD-bytes verifier like the late-error template
+                # above: this pin injects at the work stage, and the real
+                # check would (correctly) refuse the uncommitted probe bytes.
+                stack.enter_context(patch.object(entry, '_verify_cli_imports', side_effect=None))
+                for attr, value in [('E1_SOURCES', ()), ('hashes', lambda: {}),
+                                    ('baseline_dependency_hashes', lambda *a: {}),
+                                    ('frozen_check', lambda: {'exitCode': 0}),
+                                    ('run_fixture', lambda *a: {'exitCode': 0, 'launcherAndFixtureReaped': True}),
+                                    ('validate_calibration', lambda *a: {})]:
+                    stack.enter_context(patch.object(entry, attr, value))
+                path = self.folder / ('resource' + error_type.__name__)
+                stack.enter_context(patch.object(sys, 'argv',
+                                                 ['session_domain', '--suite', 'calibrate', '--output', str(path)]))
+                output = stack.enter_context(redirect_stdout(io.StringIO()))
+                try:
+                    code = entry.main()
+                    report = json.loads((path / 'report.json').read_text())
+                    summary = json.loads(output.getvalue())
+                except (Exception, KeyboardInterrupt) as error:
+                    self.fail(message + ': escaped ' + repr(error))
+                self.assertEqual((report.get('status'), code), ('BLOCKED', 2),
+                                message + f': {report.get("failure")} / {output.getvalue()}')
+                self.assertEqual(summary.get('status'), 'BLOCKED', message + ': JSON')
+                self.assertEqual(report.get('failure', {}).get('rule'), 'APPARATUS_RESOURCES', message + ': rule')
+                self.assertFalse(held, message + ': released')
+
     def test_ruler_late_validation_errors_are_distinct_from_evidence_failures(self):
         from contextlib import ExitStack, contextmanager, redirect_stdout, redirect_stderr
         import ast
@@ -1965,6 +2021,108 @@ class ApparatusInputs(unittest.TestCase):
             self.assertLess(checks[0].lineno, min(later),
                             '#991 -I check must precede every other import: ' + name)
 
+    def test_control_single_case_handler_records_memory_error(self):
+        # fix-r15 (anthropic sibling#1 r14 P2): a MemoryError raised inside a
+        # control case must land in verdict.json as a recorded FAIL, not fall
+        # through to run_entry's traceback policy (which writes no verdict).
+        # #166 blocks executing a mutated copy of this registered file, so the
+        # revert mutant is killed by this source-reading pin instead — the
+        # healthy-path behaviour is covered by the standalone case run in the
+        # fix-r15 battery.
+        import ast
+        text = (common.SCRIPT / 'controls' / 'session_domain.py').read_text(
+            encoding='utf-8')
+        mains = [node for node in ast.parse(text).body
+                 if isinstance(node, ast.FunctionDef) and node.name == 'main']
+        self.assertEqual(len(mains), 1, '#166 exactly one main in the control entry')
+        guarded = None
+        for stmt in ast.walk(mains[0]):
+            if isinstance(stmt, ast.Try) and any(
+                    isinstance(item, ast.Expr)
+                    and isinstance(item.value, ast.Call)
+                    and getattr(item.value.func, 'id', None) == 'check_case'
+                    for item in stmt.body):
+                guarded = stmt
+                break
+        self.assertIsNotNone(guarded,
+                             'fix-r15: main must run check_case under its handler')
+        recorded = set()
+        for exc in guarded.handlers:
+            members = (exc.type.elts if isinstance(exc.type, ast.Tuple)
+                       else [exc.type])
+            recorded.update(member.id for member in members
+                            if isinstance(member, ast.Name))
+        self.assertIn('MemoryError', recorded,
+                      'fix-r15: a control-case MemoryError must be recorded as '
+                      'a FAIL verdict, not the traceback policy')
+        # fix-r16 (DS sibling#1 = concurrency#1 r15 P2, two roles): the
+        # reference wrapper (session_domain.py fix-r5/fix-r6) carries both
+        # resource-exhaustion members, so the control handler's revert mutant
+        # (dropping either one) goes red on this source-reading pin.
+        self.assertIn('RecursionError', recorded,
+                      'fix-r16: a control-case RecursionError must be recorded '
+                      'as a FAIL verdict, not the traceback policy')
+
+    def test_fixture_runner_catch_sets_match_controls(self):
+        # fix-r17 (DS sibling#2 r16 P2): the two single-control fixture
+        # runners describe their handler as "the controls CLI's own catch
+        # set" — a copy of the controls entry's except tuple — but r15
+        # (MemoryError) and r16 (RecursionError) extended the controls side
+        # without the copies, so a resource exhaustion inside a runner's
+        # check_case fell through to the traceback policy (exit 3, no
+        # verdict) while the controls CLI recorded a FAIL.  The drift
+        # happened twice; this source-reading pin over all three files
+        # keeps them in lockstep so the next extension cannot skip the
+        # copies (unregistered fixtures, so a revert mutant is killed by
+        # this pin alone).
+        # fix-r18 (DS r17 boundary#2 + sibling#2 + concurrency#1 +
+        # simplify#1; MM r17 boundary#2 + concurrency#2 + simplify#1 — the
+        # same finding from both families): the r17 pin asserted only
+        # MemoryError/RecursionError membership, so a third extension of
+        # the controls tuple, or a dropped non-resource member, kept it
+        # green — the lockstep claim was not enforced.  The pin now
+        # compares the full recorded sets, with Attribute members read by
+        # ast.unparse so subprocess.SubprocessError counts.
+        import ast
+
+        def _catch_set(text):
+            guarded = [stmt for stmt in ast.walk(ast.parse(text))
+                       if isinstance(stmt, ast.Try) and any(
+                           isinstance(item, ast.Expr)
+                           and isinstance(item.value, ast.Call)
+                           and (getattr(item.value.func, 'id', None)
+                                == 'check_case'
+                                or getattr(item.value.func, 'attr', None)
+                                == 'check_case')
+                           for item in stmt.body)]
+            self.assertEqual(len(guarded), 1,
+                             'fix-r17: exactly one check_case call under '
+                             'a handler')
+            recorded = set()
+            for exc in guarded[0].handlers:
+                members = (exc.type.elts if isinstance(exc.type, ast.Tuple)
+                           else [exc.type])
+                recorded.update(ast.unparse(member) for member in members)
+            return recorded
+
+        entries = {
+            'controls': (common.SCRIPT / 'controls' / 'session_domain.py'),
+            'expectations': (common.ROOT / 'src/pilotdeck-gateway/'
+                             'tests/fixtures/session-domain-expectations/'
+                             'run_control.py'),
+            'native': (common.ROOT / 'src/pilotdeck-gateway/'
+                       'tests/fixtures/session-domain-native/'
+                       'run_control.py'),
+        }
+        recorded = {name: _catch_set(path.read_text(encoding='utf-8'))
+                    for name, path in entries.items()}
+        for name in ('expectations', 'native'):
+            with self.subTest(runner=name):
+                self.assertEqual(recorded[name], recorded['controls'],
+                                 'fix-r18: the fixture runner catch set '
+                                 f'({name}) must be the controls entry\'s '
+                                 'verbatim member set')
+
     def test_cli_main_is_only_the_one_guard_call(self):
         # The guard's single implementation is only useful if no entry keeps a
         # private bootstrap/classifier.  Each product CLI __main__ is exactly
@@ -2502,12 +2660,77 @@ class SameJsonSurfaces(unittest.TestCase):
     common.py, the spent-budget branch has a committed regression pin, and
     the terminate handler body is pinned functionally, not just by the
     call-site count.
+
+    fix-r30 (DS r29 sibling#3 + anthropic sibling#2, two lineages hit the
+    same gap): the four witness replay comparisons fix-r29 moved to
+    same_json carry their own drift pins here (processes, execWitness,
+    networkWitness, transcriptWitness), each with an equal-type control, so
+    a revert to bare ``==`` turns the bound negative-control case red.
     """
 
     @classmethod
     def setUpClass(cls):
         cls.native = _load('native_evidence', common.SCRIPT / 'native_evidence.py')
         cls.session = _load('session_domain', common.SCRIPT / 'session_domain.py')
+
+    def _expectations_document(self, rust_registry):
+        """Minimal one-case A5.4 input reaching the no-registry require.
+
+        fix-r34 (DS r33b boundary#1, P0): the r33 registry-inapplicability
+        fix carried a stray ``not`` — the honest ``{'applicable': False}``
+        raised EXPECTATION_RUST_DERIVATION while a folded value passed, and
+        no runnable guard existed on this branch (the expectations negative
+        control needs a fresh A5.2a calibration source).  This pin drives
+        validate_expectations directly with a crafted document so the same
+        spelling mistake can never pass quietly again: the honest case must
+        validate clean, and the r33 inverted spelling goes red here.
+        """
+        session = self.session
+        canonical = session.A19_CANONICAL_RUST['no-registry-timeout-final']
+        observation = {'id': 'no-registry/final/model/1',
+                       'frames': [{'type': 'agent_status', 'event': 'turn_timeout'},
+                                  {'type': 'error', 'event': 'turn_timeout'}],
+                       'durableStatus': {'entries': [{'event': 'turn_timeout'}]},
+                       'registry': {'applicable': False}}
+        row = {'case': 'no-registry/final/model', 'a19Class': 'no-registry-timeout-final',
+               'ts': session.project_observation(observation),
+               'rust': {'frames': list(canonical['frames']),
+                        'durableStatus': list(canonical['durableStatus']),
+                        'registry': rust_registry}}
+        document = {'cases': [row], 'baselineCommit': session.BASELINE_COMMIT,
+                    'repeats': session.REPEATS, 'phases': ['model', 'tool']}
+        registration = {'cells': [{'name': 'no-registry', 'variants': [{'name': 'final'}]}]}
+        return document, registration, [observation]
+
+    def test_validate_expectations_accepts_the_honest_inapplicable_registry(self):
+        document, registration, observations = \
+            self._expectations_document(rust_registry={'applicable': False})
+
+        def fake_read(path):
+            return {'cases': ['no-registry/final/model']} \
+                if path.name == 'session-calibration.json' else document
+
+        with patch.object(self.session, 'read', side_effect=fake_read):
+            # The r33 inverted spelling (``not same_json``) raised
+            # EXPECTATION_RUST_DERIVATION on exactly this honest input.
+            self.session.validate_expectations(registration, observations)
+
+    def test_validate_expectations_rejects_a_folded_registry_applicability(self):
+        document, registration, observations = \
+            self._expectations_document(rust_registry={'applicable': 0})
+
+        def fake_read(path):
+            return {'cases': ['no-registry/final/model']} \
+                if path.name == 'session-calibration.json' else document
+
+        with patch.object(self.session, 'read', side_effect=fake_read):
+            # Defense in depth, and the rejection point is the earlier
+            # structure gate (``isinstance(..., bool)``), not the fixed
+            # require: a folded ``{'applicable': 0}`` never reaches it.
+            # The require's own bite — the honest-input false FAIL — is
+            # covered by the accepting test above (DS r34 boundary#1).
+            with self.assertRaises(self.session.EvidenceError):
+                self.session.validate_expectations(registration, observations)
 
     @staticmethod
     def _expectation(frames=('turn_completed:stop',), durable=('turn_timeout',),
@@ -2585,6 +2808,73 @@ class SameJsonSurfaces(unittest.TestCase):
             checked = self.native.checked_evidence('raw', {}, dict(ledger, cleanup={'allStopped': True}))
         self.assertTrue(checked['cleanup']['allStopped'] is True,
                         '#2039 cleanup allStopped stays True on equal type')
+
+    # fix-r30 (DS r29 sibling#3 + anthropic sibling#2, two lineages hit the
+    # same gap): the four witness replay comparisons fix-r29 moved to
+    # same_json had no regression pin -- reverting any one of them to bare
+    # ``==`` kept this class green.  Each pin drifts one JSON value into the
+    # boolean/number coercion channel (``True == 1``) in exactly the replay
+    # that comparison owns, and carries its own equal-type control so a red
+    # pin can only mean the strict walk was lost, never that healthy equal
+    # data stopped certifying.  parse_trace is patched for the same reason
+    # as the cleanup pin above.
+    def _witness_base(self):
+        return {'processes': [], 'execWitness': {'complete': True},
+                'networkWitness': {'complete': True},
+                'transcriptWitness': {'complete': True},
+                'cleanup': {'allStopped': True}}
+
+    def test_processes_replay_drift_is_not_coerced(self):
+        base = self._witness_base()
+        ledger = dict(base, processes=[{'pid': 1}])
+        drift = dict(base, processes=[{'pid': True}])
+        with patch.object(self.native, 'parse_trace', return_value=drift):
+            checked = self.native.checked_evidence('raw', {}, ledger)
+        self.assertTrue(checked['execWitness']['complete'] is False,
+                        'fix-r30 processes pid boolean drift must not coerce the exec replay')
+        with patch.object(self.native, 'parse_trace', return_value=dict(base, processes=[{'pid': 1}])):
+            checked = self.native.checked_evidence('raw', {}, ledger)
+        self.assertTrue(checked['execWitness']['complete'] is True,
+                        'fix-r30 equal-type processes replay keeps exec complete True')
+
+    def test_exec_witness_replay_drift_is_not_coerced(self):
+        base = self._witness_base()
+        ledger = dict(base, execWitness={'complete': True, 'events': [1]})
+        drift = dict(base, execWitness={'complete': True, 'events': [True]})
+        with patch.object(self.native, 'parse_trace', return_value=drift):
+            checked = self.native.checked_evidence('raw', {}, ledger)
+        self.assertTrue(checked['execWitness']['complete'] is False,
+                        'fix-r30 exec witness boolean drift must not coerce complete')
+        with patch.object(self.native, 'parse_trace', return_value=dict(base, execWitness={'complete': True, 'events': [1]})):
+            checked = self.native.checked_evidence('raw', {}, ledger)
+        self.assertTrue(checked['execWitness']['complete'] is True,
+                        'fix-r30 equal-type exec witness replay keeps complete True')
+
+    def test_network_witness_replay_drift_is_not_coerced(self):
+        base = self._witness_base()
+        ledger = dict(base, networkWitness={'complete': True, 'calls': [1]})
+        drift = dict(base, networkWitness={'complete': True, 'calls': [True]})
+        with patch.object(self.native, 'parse_trace', return_value=drift):
+            checked = self.native.checked_evidence('raw', {}, ledger)
+        self.assertTrue(checked['networkWitness']['complete'] is False,
+                        'fix-r30 network witness boolean drift must not coerce complete')
+        with patch.object(self.native, 'parse_trace', return_value=dict(base, networkWitness={'complete': True, 'calls': [1]})):
+            checked = self.native.checked_evidence('raw', {}, ledger)
+        self.assertTrue(checked['networkWitness']['complete'] is True,
+                        'fix-r30 equal-type network witness replay keeps complete True')
+
+    def test_transcript_witness_replay_drift_is_not_coerced(self):
+        base = self._witness_base()
+        ledger = dict(base, transcriptWitness={'complete': True, 'opens': [1]})
+        drift = dict(base, transcriptWitness={'complete': True, 'opens': [True]})
+        with patch.object(self.native, 'parse_trace', return_value=drift):
+            checked = self.native.checked_evidence('raw', {}, ledger)
+        self.assertTrue(checked['transcriptWitness']['complete'] is False,
+                        'fix-r30 transcript witness boolean drift must not coerce complete')
+        with patch.object(self.native, 'parse_trace', return_value=dict(base, transcriptWitness={'complete': True, 'opens': [1]})):
+            checked = self.native.checked_evidence('raw', {}, ledger)
+        self.assertTrue(checked['transcriptWitness']['complete'] is True,
+                        'fix-r30 equal-type transcript witness replay keeps complete True')
 
     def test_prelaunch_drift_is_not_coerced(self):
         # ``load_capture`` re-checks the launch contract against the prelaunch
@@ -3245,6 +3535,7 @@ class RetirementScoring(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.session = _load('session_domain', common.SCRIPT / 'session_domain.py')
+        cls.native = _load('native_evidence', common.SCRIPT / 'native_evidence.py')
 
     @staticmethod
     def _frames(send_only=False, final=False):
@@ -3377,6 +3668,26 @@ class RetirementScoring(unittest.TestCase):
                              ('coldRestartRollback', 'NOT_RUN')):
             self.assertTrue(report[face]['status'] == status,
                             f'#16 budget-blocked face {face}: {report[face]["status"]} != {status}')
+
+    def test_collection_refusal_keeps_the_full_face_set(self):
+        # #1588 r1 §2: the collection-phase refusals (ps census failure,
+        # missing driver artifacts, unverified owned-process cleanup) raise
+        # EvidenceError from inside _retirement_report; the pre-fix wrapper
+        # only caught the budget timeout, so they escaped and main's fallback
+        # wrote the 5-key BLOCKED stub with every scoring face missing.  They
+        # must classify BLOCKED with the full 16-face report and the refusal's
+        # own rule in failure.
+        for rule in ('HOST_CENSUS', 'ROUND_EVIDENCE', 'CLEANUP'):
+            with patch.object(self.session, '_retirement_report',
+                              side_effect=self.session.EvidenceError(rule, 'probe failed')):
+                report = self.session.retirement_report(Path('out'), Path('baseline'))
+            self.assertEqual(report['status'], 'BLOCKED', f'#44 {rule} status: {report["status"]}')
+            self.assertEqual(report['executionStatus'], 'BLOCKED', f'#44 {rule} executionStatus')
+            self.assertEqual(report['failure']['rule'], rule, f'#44 {rule} failure: {report["failure"]}')
+            self.assertIn('could not collect round evidence', report['reason'])
+            for face in self.REPORT_FACES:
+                self.assertIn(face, report, f'#44 {rule} lacks face {face}')
+            self.assertIn('failure', report, f'#44 {rule} lacks face failure')
 
     def test_entry_inventory_reads_every_round(self):
         # ④ (#1355 fix-r3): an entry that answered in round 1 but 404'd in
@@ -3886,27 +4197,533 @@ class RetirementScoring(unittest.TestCase):
         # (diffs/A8.6-RETIREMENT-001.md) promises the full report for these
         # shapes, and the missing observation must read as unobserved
         # (BLOCKED), never as a clean empty sample (PASS).
+        # #1588 r1 §1: every remaining observation key gets the same treatment
+        # — a round that recorded no outcome/frame/http group, no processes,
+        # no driver exit code, no label, no runtime, no port map or no cleanup
+        # audit must keep the full 16-face report, and its inner-null shapes
+        # (a null rows list, a null addresses list, a null port value) are the
+        # same family: never a KeyError/TypeError out of the report path, never
+        # a PASS read.
         expected = ['submit_turn', 'run_get']
-        faces = {
-            'census': ('processCensus', 'BLOCKED'),
-            'connections': ('network', 'BLOCKED'),
-            'listeners': ('listeners', 'FAIL'),
-        }
-        for key, (face, status) in faces.items():
-            for tag, value in (('missing', KeyError), ('null', None)):
-                row = self._stream_ok_round_row()
-                if value is KeyError:
-                    del row[key]
-                else:
-                    row[key] = value
-                report = self._report_for(row, expected)
-                for name in self.REPORT_FACES:
-                    self.assertIn(name, report, f'#43 {tag} {key} lacks face {name}')
-                self.assertNotEqual(report['executionStatus'], 'NOT_RUN', f'#43 {tag} {key}')
-                self.assertEqual(report['hostAudit'][face][0]['status'], status,
-                                 f'#43 {tag} {key}: {report["hostAudit"][face]}')
-                self.assertNotEqual(report['hostAudit']['status'], 'PASS', f'#43 {tag} {key}')
 
+        # (tag, key, value) → the face that must carry the non-PASS read, with
+        # the path naming where the read lives.  KeyError means "delete the
+        # key"; a (…, None) target only asserts the round is named unobserved
+        # rather than crashed.
+        cases = (
+            ('census', 'census', KeyError, ('hostAudit', 'processCensus', 0, 'status'), 'BLOCKED'),
+            ('census null', 'census', None, ('hostAudit', 'processCensus', 0, 'status'), 'BLOCKED'),
+            ('census null rows', 'census',
+             {'rows': None, 'declared': [7], 'declaredAlive': True},
+             ('hostAudit', 'processCensus', 0, 'status'), 'BLOCKED'),
+            ('census non-dict row', 'census',
+             {'rows': ['not-a-dict'], 'declared': [7], 'declaredAlive': True},
+             ('hostAudit', 'processCensus', 0, 'status'), 'FAIL'),
+            ('census unproven alive', 'census',
+             {'rows': [{'pid': 7}], 'declared': [7]},
+             ('hostAudit', 'processCensus', 0, 'status'), 'FAIL'),
+            # fix-r2 (DS boundary P0): a census that recorded no rows or no
+            # declared owned pids never observed the host set — never a PASS.
+            ('census empty rows', 'census',
+             {'rows': [], 'declaredAlive': True},
+             ('hostAudit', 'processCensus', 0, 'status'), 'BLOCKED'),
+            ('census empty rows and declared', 'census',
+             {'rows': [], 'declared': [], 'declaredAlive': True},
+             ('hostAudit', 'processCensus', 0, 'status'), 'BLOCKED'),
+            ('census declared missing with rows', 'census',
+             {'rows': [{'pid': 7}], 'declaredAlive': True},
+             ('hostAudit', 'processCensus', 0, 'status'), 'BLOCKED'),
+            ('census truthy non-dict', 'census', ['x'],
+             ('hostAudit', 'processCensus', 0, 'status'), 'BLOCKED'),
+            ('connections', 'connections', KeyError, ('hostAudit', 'network', 0, 'status'), 'BLOCKED'),
+            ('connections null', 'connections', None, ('hostAudit', 'network', 0, 'status'), 'BLOCKED'),
+            ('connections null rows', 'connections',
+             {'rows': None, 'commandStatus': 'ok'},
+             ('hostAudit', 'network', 0, 'status'), 'BLOCKED'),
+            # fix-r2 (DS concurrency P2): a truthy non-list unparsed tally is
+            # an unusable observation, not a TypeError out of the face.
+            ('connections unparsed non-list', 'connections',
+             {'rows': [{'peer': '180.101.242.203:443', 'raw': 'x'}], 'unparsed': 5,
+              'commandStatus': 'ok'},
+             ('hostAudit', 'network', 0, 'status'), 'FAIL'),
+            # fix-r3 (DS r2 boundary P0): the discriminating loopback-only
+            # variant — the row above fails on its undeclared peer, so only
+            # this one proves a broken unparsed tally itself cannot read as a
+            # clean loopback sample (pre-fix-r3 it degraded to [] and PASSed).
+            ('connections unparsed non-list loopback-only', 'connections',
+             {'rows': [{'peer': '127.0.0.1:49153', 'raw': 'x'}], 'unparsed': 5,
+              'commandStatus': 'ok'},
+             ('hostAudit', 'network', 0, 'status'), 'BLOCKED'),
+            # fix-r3 (DS r2 concurrency): a corrupt peer value is unusable, and
+            # must not raise out of the class-4 control's set arithmetic.
+            ('connections peer non-str', 'connections',
+             {'rows': [{'peer': {'a': 1}, 'raw': 'x'}], 'commandStatus': 'ok'},
+             ('hostAudit', 'network', 0, 'status'), 'FAIL'),
+            # fix-r3 (DS r2 concurrency): a truthy non-list census rows sample
+            # is an unusable observation — never a TypeError out of the
+            # controls that drops every measured face.
+            ('census truthy non-list rows', 'census',
+             {'rows': 5, 'declared': [7], 'declaredAlive': True},
+             ('hostAudit', 'processCensus', 0, 'status'), 'BLOCKED'),
+            # fix-r4 (DS r3 sibling P2): a truthy non-list declared sample is
+            # the same unobserved shape as non-list rows — the gate reads
+            # BLOCKED, not the verdict's "no declared pids" FAIL, so both
+            # spellings of a wrongly-typed census land in one status.
+            ('census declared truthy non-list', 'census',
+             {'rows': [{'pid': 7}], 'declared': 5, 'declaredAlive': True},
+             ('hostAudit', 'processCensus', 0, 'status'), 'BLOCKED'),
+            # fix-r3 (DS r2 concurrency): an unhashable pid is an unusable
+            # observation read as undeclared (FAIL), never a TypeError out of
+            # the control attribution.
+            ('census unhashable pid', 'census',
+             {'rows': [{'pid': ['x']}, {'pid': 7}], 'declared': [7], 'declaredAlive': True},
+             ('hostAudit', 'processCensus', 0, 'status'), 'FAIL'),
+            ('listeners', 'listeners', KeyError, ('hostAudit', 'listeners', 0, 'status'), 'FAIL'),
+            ('listeners null', 'listeners', None, ('hostAudit', 'listeners', 0, 'status'), 'FAIL'),
+            ('listeners null addresses', 'listeners',
+             {'pid': 7, 'addresses': None, 'loopbackOnly': None},
+             ('hostAudit', 'listeners', 0, 'status'), 'FAIL'),
+            ('ports', 'ports', KeyError, ('hostAudit', 'listeners', 0, 'status'), 'FAIL'),
+            ('ports null', 'ports', None, ('hostAudit', 'listeners', 0, 'status'), 'FAIL'),
+            ('ports null gateway', 'ports', {'mock': 28761, 'gateway': None},
+             ('hostAudit', 'listeners', 0, 'status'), 'FAIL'),
+            ('audit', 'audit', KeyError, ('cleanupAudit', 'status'), 'FAIL'),
+            ('audit null', 'audit', None, ('cleanupAudit', 'status'), 'FAIL'),
+            ('audit not stopped', 'audit', {'allStopped': False},
+             ('cleanupAudit', 'status'), 'FAIL'),
+            ('outcomes', 'outcomes', KeyError, ('rounds', 0, 'status'), 'FAIL'),
+            ('outcomes null', 'outcomes', None, ('rounds', 0, 'status'), 'FAIL'),
+            # fix-r2 (DS sibling P1): a non-dict inner row is the same unusable
+            # observation — MISSING_FIELD fails the round, never an exception
+            # out of the scorer or the controls.
+            ('outcomes non-dict row', 'outcomes', [None],
+             ('rounds', 0, 'status'), 'FAIL'),
+            # fix-r3 (DS r2 boundary): a non-str method value is a missing
+            # method — MISSING_FIELD fails the round, never a TypeError out of
+            # the scorer's set/sorted arithmetic that would drop all rounds.
+            # fix-r4 (DS r3 boundary): the pair is what discriminates — a lone
+            # None survives ``sorted`` as a single-element set (the row passed
+            # pre-fix too); None beside a real method is the shape that raised
+            # (``None < 'run_get'`` TypeError), and the unhashable spelling
+            # below died at the ``set()`` itself.
+            ('outcomes method non-str', 'outcomes',
+             [{'method': None, 'outcome': 'ok', 'shape': 'request'},
+              {'method': 'run_get', 'outcome': 'ok', 'shape': 'request'}],
+             ('rounds', 0, 'status'), 'FAIL'),
+            ('outcomes method unhashable', 'outcomes',
+             [{'method': ['x'], 'outcome': 'ok', 'shape': 'request'}],
+             ('rounds', 0, 'status'), 'FAIL'),
+            # fix-r5 (DS r4 boundary/sibling P1): the timeout branch met the
+            # unhashable method before its guard — one corrupted timeout row
+            # used to die at `_retirement_evidence_pairs`'s ``pairs.add`` and
+            # collapse every measured round into the ROUND_EVIDENCE stub.
+            ('outcomes timeout method unhashable', 'outcomes',
+             [{'method': ['x'], 'outcome': 'timeout', 'shape': 'request'}],
+             ('rounds', 0, 'status'), 'FAIL'),
+            # fix-r5 (DS r4 sibling P1): the class 6 selector (and 1/5) only
+            # accepts a str method — an unhashable ok stream method must fail
+            # its own round, never ride the truthiness check into a hash.
+            ('outcomes stream ok method unhashable', 'outcomes',
+             [{'method': ['x'], 'outcome': 'ok', 'shape': 'stream'}],
+             ('rounds', 0, 'status'), 'FAIL'),
+            ('frames', 'frames', KeyError, ('rounds', 0, 'status'), 'FAIL'),
+            ('frames null', 'frames', None, ('rounds', 0, 'status'), 'FAIL'),
+            ('frames non-dict rows', 'frames', [None, 123, 'x'],
+             ('rounds', 0, 'status'), 'FAIL'),
+            # fix-r3 (DS r2 boundary/sibling): a truthy non-list frames value
+            # is not proof of a live websocket upgrade — /ws reads NO_HIT (the
+            # discriminating /ws assertions live in
+            # test_entry_inventory_ws_hit_requires_list_frames; here the row
+            # documents that the scorer itself still fails fail-closed without
+            # raising on the corrupt shape).
+            ('frames truthy non-list', 'frames', {'a': 1},
+             ('rounds', 0, 'status'), 'FAIL'),
+            # fix-r4 (DS r3 sibling P1): the non-iterable spelling of the same
+            # shape — a dict row only proved the dict branch; 5 is what dies
+            # at the first ``for``, pre-fix collapsing every measured round
+            # into the wrapper's ROUND_EVIDENCE stub.
+            ('frames truthy non-list int', 'frames', 5,
+             ('rounds', 0, 'status'), 'FAIL'),
+            ('outcomes truthy non-list', 'outcomes', 5,
+             ('rounds', 0, 'status'), 'FAIL'),
+            # fix-r4 (DS r3 sibling P1): an unhashable frame id or method is
+            # an unusable observation, skipped fail-closed — the outcome's
+            # wire-backing rule fails instead of the TypeError at the dict
+            # key / set member.
+            ('frames unhashable frame id', 'frames',
+             [{'direction': 'send',
+               'frame': {'type': 'request', 'method': 'submit_turn', 'id': []}}],
+             ('rounds', 0, 'status'), 'FAIL'),
+            # fix-r12 (DS sibling#1 r11 P2): the id *missing entirely* is the
+            # same unusable-id shape — the frame row still /ws-HITs (the hit
+            # reading is wider than the wire count; pinned in
+            # test_entry_inventory_ws_hit_requires_list_frames) but backs no
+            # wire outcome, so the round fails closed here too.
+            ('frames dict row without a usable id', 'frames',
+             [{'direction': 'send',
+               'frame': {'type': 'request', 'method': 'submit_turn'}}],
+             ('rounds', 0, 'status'), 'FAIL'),
+            ('frames unhashable frame method', 'frames',
+             [{'direction': 'send',
+               'frame': {'type': 'request', 'method': ['x'], 'id': 1}}],
+             ('rounds', 0, 'status'), 'FAIL'),
+            ('http', 'http', KeyError, ('rounds', 0, 'status'), 'FAIL'),
+            ('http null', 'http', None, ('rounds', 0, 'status'), 'FAIL'),
+            ('processes', 'processes', KeyError, ('rounds', 0, 'status'), 'FAIL'),
+            ('driverExitCode', 'driverExitCode', KeyError, ('rounds', 0, 'status'), 'FAIL'),
+            ('driverExitCode null', 'driverExitCode', None, ('rounds', 0, 'status'), 'FAIL'),
+            # fix-r3 (DS r2 boundary): a JSON false is not the exit code 0 it
+            # compares equal to — the round fails ROUND_EXECUTION instead of
+            # passing on a corrupt artifact.
+            ('driverExitCode false', 'driverExitCode', False, ('rounds', 0, 'status'), 'FAIL'),
+            ('label', 'label', KeyError, ('rounds', 0, 'round'), None),
+            ('runtime', 'runtime', KeyError, None, None),
+        )
+        for tag, key, value, face, status in cases:
+            row = self._stream_ok_round_row()
+            if value is KeyError:
+                del row[key]
+            else:
+                row[key] = value
+            report = self._report_for(row, expected)
+            for name in self.REPORT_FACES:
+                self.assertIn(name, report, f'#43 {tag} {key} lacks face {name}')
+            self.assertNotEqual(report['executionStatus'], 'NOT_RUN', f'#43 {tag} {key}')
+            if face is None:
+                continue
+            observed = report
+            for part in face:
+                observed = observed[part]
+            if status is None:
+                self.assertIsNone(observed, f'#43 {tag} {key}: {observed!r}')
+            else:
+                self.assertEqual(observed, status, f'#43 {tag} {key}: {observed!r}')
+                if face[0] == 'hostAudit':
+                    self.assertNotEqual(report['hostAudit']['status'], 'PASS',
+                                        f'#43 {tag} {key}')
+
+    def test_executed_face_keys_fall_back_to_the_round_index(self):
+        # fix-r2 (DS boundary P2): a round that recorded no label must not
+        # collapse the executed face — five label-less rounds used to merge
+        # into a single ``None`` key (each overwriting the last); every round
+        # keeps its own index-keyed entry instead.
+        expected = ['submit_turn', 'run_get']
+        row = self._stream_ok_round_row()
+        del row['label']
+        report = self._report_for(row, expected)
+        self.assertEqual(sorted(report['executed']),
+                         [f'round-{index:02d}' for index in range(1, 6)],
+                         f'#45 executed face keys: {sorted(report["executed"])!r}')
+
+    def test_executed_face_keys_normalize_a_non_str_label(self):
+        # fix-r5 (DS r4 boundary P2): a corrupted non-str round label (a list
+        # in a hand-edited artifact) used to die at the executed face's dict-key
+        # construction and collapse the report into the ROUND_EVIDENCE stub —
+        # the positional fallback keys the entry instead.
+        expected = ['submit_turn', 'run_get']
+        row = self._stream_ok_round_row()
+        row['label'] = ['x']
+        report = self._report_for(row, expected)
+        self.assertEqual(sorted(report['executed']),
+                         [f'round-{index:02d}' for index in range(1, 6)],
+                         f'#45 executed face keys: {sorted(report["executed"])!r}')
+        # The labeled round itself stays healthy — only the face key was
+        # corrupted, and the normalization must not fail the round.
+        self.assertEqual(report['rounds'][0]['status'], 'PASS',
+                         f'#45 round status: {report["rounds"][0]!r}')
+
+    def test_executed_face_keys_survive_duplicate_labels(self):
+        # fix-r7 (DS r6 boundary P2 + MM r6 boundary P2, both families): a
+        # duplicated round label — and a real label shaped like another
+        # round's positional fallback (`round-01`) — used to overwrite the
+        # earlier round's executed entry: five measured rounds collapsed
+        # into one key with no failure signal.  Keys are collision-free
+        # now, so the executed face always carries one entry per round.
+        expected = ['submit_turn', 'run_get']
+        row = self._stream_ok_round_row()
+        report = self._report_for(row, expected)
+        self.assertEqual(len(report['executed']), 5,
+                         f'#47 duplicate-label executed keys: {sorted(report["executed"])!r}')
+        self.assertEqual(len(set(report['executed'])), 5)
+        self.assertTrue(all(key.startswith('round-01') for key in report['executed']),
+                        f'#47 duplicate-label executed keys: {sorted(report["executed"])!r}')
+        # A real label colliding with another round's positional fallback
+        # key is the same overwrite from the other side: round 1 unlabeled
+        # (fallback `round-01`) and round 2 carrying the literal label
+        # `round-01`.
+        unlabeled = self._stream_ok_round_row()
+        del unlabeled['label']
+        round_rows = iter([unlabeled, row, row, row, row])
+
+        def fake_round(*args, **kwargs):
+            return next(round_rows)
+
+        with patch.object(self.session, '_retirement_expected', return_value=(expected, [])), \
+                patch.object(self.session, '_retirement_baseline_revision', return_value='deadbeef'), \
+                patch.object(self.session, '_retirement_ports_available', return_value=True), \
+                patch.object(self.session, '_retirement_round', side_effect=fake_round), \
+                patch.object(self.session, '_retirement_entry_inventory',
+                             return_value={'status': 'PASS', 'unhit': [], 'gated': [], 'entries': []}), \
+                patch.object(self.session, '_retirement_entry_inventory_aggregate',
+                             return_value={'status': 'PASS', 'unhit': [], 'gated': [], 'entries': []}), \
+                patch.object(self.session, '_retirement_js_host_census',
+                             return_value={'status': 'PASS'}):
+            report = self.session.retirement_report(Path('out'), Path('baseline'))
+        self.assertEqual(len(report['executed']), 5,
+                         f'#47 fallback-collision executed keys: {sorted(report["executed"])!r}')
+        self.assertEqual(len(set(report['executed'])), 5)
+
+    def test_controls_skip_an_unhashable_victim_method(self):
+        # fix-r5 (DS r4 sibling P1): the class 1/5/6 selectors require a str
+        # method.  An ok outcome carrying an unhashable method with its
+        # matching frame used to ride the truthiness check: the strip matched
+        # (``['x'] == ['x']``) and ``require_pair in original_evidence`` hashed
+        # the tuple, collapsing the whole 16-face report into the stub.
+        expected = ['submit_turn', 'run_get']
+        row = self._stream_ok_round_row()
+        row['outcomes'][0]['method'] = ['x']
+        row['frames'][0]['frame']['method'] = ['x']
+        controls = self.session._retirement_controls(row, expected)
+        ts_fallback = next(entry for entry in controls['classes']
+                           if entry['class'] == 'TS_FALLBACK')
+        # The selector skipped the unhashable row and established the control
+        # on the remaining str-method ok outcome — pre-fix this raised
+        # TypeError at ``require_pair in original_evidence`` instead.
+        self.assertEqual(ts_fallback['status'], 'PASS',
+                         f'TS_FALLBACK control: {ts_fallback!r}')
+        self.assertIn("strip all wire frames of executed method 'run_get'",
+                      ts_fallback['injection'])
+        # The full report still assembles with every face present.
+        report = self._report_for(row, expected)
+        for face in self.REPORT_FACES:
+            self.assertIn(face, report, f'#45 unhashable victim lacks face {face}')
+        self.assertEqual(report['rounds'][0]['status'], 'FAIL',
+                         f'#45 round status: {report["rounds"][0]!r}')
+
+    def test_deeply_nested_round_value_blocks_with_the_full_face_set(self):
+        # fix-r5 (DS r4 concurrency P1): copy.deepcopy overflows on a deeply
+        # nested artifact (600-deep raises RecursionError at the default
+        # limit, measured) while json.loads' C scanner accepts 50000-deep —
+        # the controls' deepcopy is a collection refusal the wrapper must
+        # report as the full 16-face BLOCKED, never main's 5-key FAIL
+        # skeleton.  The nesting rides an inert key so the deepcopy in
+        # _retirement_controls is the only code that recurses.
+        expected = ['submit_turn', 'run_get']
+        row = self._stream_ok_round_row()
+        deep = {}
+        node = deep
+        for _ in range(600):
+            node['child'] = {}
+            node = node['child']
+        row['probeExtra'] = deep
+        report = self._report_for(row, expected)
+        self.assertEqual(report['status'], 'BLOCKED',
+                         f'#45 deep nesting status: {report["status"]}')
+        self.assertEqual(report['executionStatus'], 'BLOCKED',
+                         f'#45 deep nesting executionStatus')
+        self.assertEqual(report['failure']['rule'], 'ROUND_EVIDENCE',
+                         f'#45 deep nesting failure: {report["failure"]}')
+        self.assertIn('could not collect round evidence', report['reason'],
+                      f'#45 deep nesting reason: {report["reason"]}')
+        for face in self.REPORT_FACES:
+            self.assertIn(face, report, f'#45 deep nesting lacks face {face}')
+        self.assertEqual(report['rounds'], [],
+                         f'#45 deep nesting rounds: {report["rounds"]}')
+        self.assertEqual(report['executed'], {},
+                         f'#45 deep nesting executed: {report["executed"]}')
+
+    def test_shape_errors_keep_the_full_face_set(self):
+        # fix-r2 (DS concurrency P2 / boundary P2): a corrupted or truncated
+        # driver artifact (a half-written methods.json, a frames.jsonl line
+        # that is valid JSON but not an object) raised JSONDecodeError /
+        # KeyError / TypeError out of _retirement_report; the wrapper only
+        # caught timeouts and EvidenceError, so main's fallback wrote a FAIL
+        # skeleton with every scoring face missing — the exact collapse this
+        # PR exists to remove.  Any residual shape defect is a collection
+        # refusal: the full face set reports BLOCKED under ROUND_EVIDENCE.
+        # json comes through the session module: test_safety.py must not grow
+        # an import of its own — the #1140 verbatim bootstrap pins the import
+        # prefix, and an apparatus file that diverges from the shared block is
+        # itself the defect (caught live by test_a2 during fix-r2).
+        errors = (KeyError('methods'),
+                  TypeError("'NoneType' object is not subscriptable"),
+                  AttributeError("'str' object has no attribute 'get'"),
+                  self.session.json.JSONDecodeError('Expecting value', '{', 0),
+                  ValueError('corrupt artifact'),
+                  OSError('read failed'),
+                  # fix-r5 (DS r4 concurrency P1): copy.deepcopy on a deeply
+                  # nested artifact (600-deep, measured) overflows before
+                  # json.loads ever would — the same full-face refusal.
+                  RecursionError('maximum recursion depth exceeded'),
+                  # fix-r6 (DS r5 concurrency P2): a corrupted artifact
+                  # sized past the host's memory must report the same
+                  # full-face BLOCKED instead of crashing the report path.
+                  MemoryError())
+        for error in errors:
+            with patch.object(self.session, '_retirement_report', side_effect=error):
+                report = self.session.retirement_report(Path('out'), Path('baseline'))
+            self.assertEqual(report['status'], 'BLOCKED',
+                             f'#46 {type(error).__name__} status: {report["status"]}')
+            self.assertEqual(report['executionStatus'], 'BLOCKED',
+                             f'#46 {type(error).__name__} executionStatus')
+            self.assertEqual(report['failure']['rule'], 'ROUND_EVIDENCE',
+                            f'#46 {type(error).__name__} failure: {report["failure"]}')
+            self.assertIn('could not collect round evidence', report['reason'],
+                          f'#46 {type(error).__name__} reason: {report["reason"]}')
+            for face in self.REPORT_FACES:
+                self.assertIn(face, report, f'#46 {type(error).__name__} lacks face {face}')
+            # fix-r4 (DS r3 concurrency, pinning the A8.6-R1 correction): the
+            # refusal stub keeps every face but carries no measurements —
+            # rounds/executed read empty and the raw evidence stays in
+            # output/round-NN/driver/. The correction file must not claim
+            # measurements are preserved again.
+            self.assertEqual(report['rounds'], [],
+                             f'#46 {type(error).__name__} rounds: {report["rounds"]}')
+            self.assertEqual(report['executed'], {},
+                             f'#46 {type(error).__name__} executed: {report["executed"]}')
+
+    def test_entry_inventory_treats_a_non_int_status_as_unusable(self):
+        # fix-r2 (DS boundary P2): only a true int is a usable probe status —
+        # a JSON string ``"404"`` (or a boolean) is an unusable probe and must
+        # never be read as a HIT by the ``not in (None, 404)`` check.
+        # fix-r9 (DS boundary r8 P0 + DS sibling r8 P1, probe-verified —
+        # fix-r9-audit/probe-r9-ds-before.out S1): an out-of-domain int is the
+        # same unusable shape — the producer only ever records a real HTTP
+        # status (100-599) or null, so 0/-1/999 can only come from a corrupt
+        # artifact, and pre-fix each read as a HIT.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            baseline = self._fake_baseline(root)
+            home = root / 'home'
+            home.mkdir()
+            (home / 'pilotdeck.yaml').write_text('schemaVersion: 1\n')
+
+            def round_row(label, health_status):
+                return {'label': label, 'http': [{'path': '/health', 'status': health_status}],
+                        'frames': self._frames(final=True),
+                        'outcomes': [{'method': 'submit_turn', 'outcome': 'ok', 'shape': 'stream'}],
+                        'runtime': {'pilotHome': str(home)}}
+
+            # fix-r13 (anthropic r12 boundary#1, P2b read as P1): 600 is the
+            # first value past the domain top — the mutant ``<= 600`` used to
+            # survive the whole suite and read a corrupt status=600 artifact
+            # as a HIT on /health (the port matrix gained 65536 in fix-r10
+            # and the pid matrix 2**31 in fix-r11; this is the same family).
+            # fix-r14 (DS sibling#1 r13 P1, probe-verified —
+            # fix-r14-audit/probe-r14-p0.out): 99 is the mirror at the
+            # domain floor — the mutant ``100 <=`` → ``99 <=`` survived the
+            # same suite the same way (the top was pinned, the floor was
+            # not).
+            for tag, bad_status in (('json string', '404'), ('boolean', True),
+                                    ('zero', 0), ('negative', -1),
+                                    ('below-floor', 99), ('oversized', 999),
+                                    ('domain-top', 600)):
+                inventory = self.session._retirement_entry_inventory(
+                    baseline, round_row('round-01', bad_status))
+                health = next(entry for entry in inventory['entries']
+                              if entry['entry'] == '/health')
+                self.assertTrue(health['status'] == 'NO_HIT',
+                                f'#47 {tag} status is an unusable probe: {health}')
+                self.assertIn('/health', inventory['unhit'])
+            # The in-domain statuses still HIT (the guard must not over-fold).
+            for good_status in (100, 200, 404, 599):
+                inventory = self.session._retirement_entry_inventory(
+                    baseline, round_row('round-02', good_status))
+                health = next(entry for entry in inventory['entries']
+                              if entry['entry'] == '/health')
+                expected = 'NO_HIT' if good_status == 404 else 'HIT'
+                self.assertEqual(health['status'], expected,
+                                 f'#47 status {good_status} must read {expected}: {health}')
+
+    def test_entry_inventory_ws_hit_requires_list_frames(self):
+        # fix-r3 (DS r2 boundary/sibling): the /ws hit is proven by wire
+        # frames — a truthy non-list (or an all-non-dict list) frames value
+        # is not proof of a live upgrade, so /ws reads NO_HIT and lands in
+        # ``unhit`` instead of HITting on any truthy value (pre-fix-r3 the
+        # face could PASS on a corrupt artifact while the wire pass had
+        # already treated those rows as carrying no frame).
+        # fix-r9 (DS boundary r8 P1, probe-verified — fix-r9-audit/
+        # probe-r9-ds-before.out S3): a dict row whose 'frame' is not a dict
+        # carries no frame either (``_retirement_wire_backing`` only counts
+        # dict 'frame' rows), so ``[{}]`` / ``[{'frame': None}]`` must read
+        # NO_HIT too, not HIT.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            baseline = self._fake_baseline(root)
+            home = root / 'home'
+            home.mkdir()
+            (home / 'pilotdeck.yaml').write_text('schemaVersion: 1\n')
+
+            def round_row(label, frames):
+                return {'label': label, 'http': [{'path': '/health', 'status': 200}],
+                        'frames': frames,
+                        'outcomes': [{'method': 'submit_turn', 'outcome': 'ok', 'shape': 'stream'}],
+                        'runtime': {'pilotHome': str(home)}}
+
+            for tag, bad_frames in (('truthy non-list', {'a': 1}),
+                                    ('all non-dict rows', [None, 123, 'x']),
+                                    ('frameless dict row', [{}]),
+                                    ('null frame row', [{'frame': None}])):
+                inventory = self.session._retirement_entry_inventory(
+                    baseline, round_row('round-01', bad_frames))
+                ws = next(entry for entry in inventory['entries']
+                          if entry['entry'] == '/ws')
+                self.assertEqual(ws['status'], 'NO_HIT',
+                                 f'#48 {tag} is not proof of a live upgrade: {ws}')
+                self.assertIn('/ws', inventory['unhit'])
+            inventory = self.session._retirement_entry_inventory(
+                baseline, round_row('round-02', self._frames(final=True)))
+            ws = next(entry for entry in inventory['entries'] if entry['entry'] == '/ws')
+            self.assertEqual(ws['status'], 'HIT', f'#48 legal frames must still HIT: {ws}')
+
+            # fix-r12 (DS sibling#1 r11 P2): the hit reading is deliberately
+            # wider than the wire count (session_domain.py:2882-2886) — a
+            # frame dict without a *usable id* still proves the live upgrade
+            # (the frame-bearing predicate counts it), while the wire pass
+            # additionally requires a usable id, so that row backs no wire
+            # outcome and the round fails EVIDENCE_BACKING (the paired
+            # round-status pin for this exact shape lives in
+            # test_report_keeps_full_faces...: "frames dict row without a
+            # usable id").  Tightening the hit predicate onto the wire
+            # reading would flip this HIT to NO_HIT and keep every other
+            # case green.
+            no_id_frames = [{'direction': 'send',
+                             'frame': {'type': 'request', 'method': 'submit_turn'}}]
+            inventory = self.session._retirement_entry_inventory(
+                baseline, round_row('round-02b', no_id_frames))
+            ws = next(entry for entry in inventory['entries'] if entry['entry'] == '/ws')
+            self.assertEqual(ws['status'], 'HIT',
+                             f'#48 a frame dict without a usable id still HITs '
+                             f'(the hit reading is wider than the wire count): {ws}')
+
+            # fix-r4 (DS r3 sibling P1): a truthy non-list http/outcomes
+            # observation is an unobserved set here too — never the TypeError
+            # at the first ``for`` that collapsed the whole 16-face report
+            # into the ROUND_EVIDENCE stub.  http=5 reads no probes at all;
+            # outcomes=5 reads no executed method (a valid row with cron_sync
+            # HITs, so the NO_HIT below is the discriminating read).
+            corrupted_http = round_row('round-03', self._frames(final=True))
+            corrupted_http['http'] = 5
+            inventory = self.session._retirement_entry_inventory(baseline, corrupted_http)
+            health = next(entry for entry in inventory['entries']
+                          if entry['entry'] == '/health')
+            self.assertEqual(health['status'], 'NO_HIT',
+                             f'#48 truthy non-list http is not a probe set: {health}')
+            valid_cron = round_row('round-04', self._frames(final=True))
+            valid_cron['outcomes'] = [{'method': 'cron_sync', 'outcome': 'ok',
+                                       'shape': 'request'}]
+            inventory = self.session._retirement_entry_inventory(baseline, valid_cron)
+            cron = next(entry for entry in inventory['entries']
+                        if entry['entry'] == 'cron')
+            self.assertEqual(cron['status'], 'HIT',
+                             f'#48 a valid cron outcome must still HIT: {cron}')
+            corrupted_outcomes = round_row('round-05', self._frames(final=True))
+            corrupted_outcomes['outcomes'] = 5
+            inventory = self.session._retirement_entry_inventory(baseline, corrupted_outcomes)
+            cron = next(entry for entry in inventory['entries']
+                        if entry['entry'] == 'cron')
+            self.assertEqual(cron['status'], 'NO_HIT',
+                             f'#48 truthy non-list outcomes is not a method set: {cron}')
 
     def test_control_attribution_requires_the_injected_object(self):
         # P1 (#1355 fix-r4d): a control PASS must be attributed to the object
@@ -4009,17 +4826,209 @@ class RetirementScoring(unittest.TestCase):
             {'rows': [{'pid': 7, 'argvText': 'node pilotdeck.js server'}], 'declared': [8]})
         self.assertEqual(verdict['status'], 'FAIL')
 
+    def test_host_census_fails_closed_on_pidless_rows_and_null_declared(self):
+        # fix-r6 (DS boundary P0 + MiniMax boundary P0, both families,
+        # probe-verified): ``None`` cannot double as "this row names no pid"
+        # and as a declared entry — membership by ``==`` let a corrupt
+        # ``{'rows': [{'pid': null}], 'declared': [null], 'declaredAlive':
+        # True}`` read as a fully established census and PASS, contradicting
+        # the face's own rule that a pid-less row is an undeclared
+        # observation.  The declared side is also untrustworthy when an
+        # entry is not a real pid (null, bool, string), while the healthy
+        # int-pid shape and the real producer shape stay stable.
+        for census in ({'rows': [{'pid': None}], 'declared': [None], 'declaredAlive': True},
+                       {'rows': [{'argvText': 'node pilotdeck.js server'}],
+                        'declared': [None], 'declaredAlive': True},
+                       {'rows': [{'pid': None}, {'pid': 7}], 'declared': [None, 7],
+                        'declaredAlive': True},
+                       {'rows': [{'pid': 7}], 'declared': [None, 7], 'declaredAlive': True},
+                       {'rows': [{'pid': 7}], 'declared': [True], 'declaredAlive': True},
+                       {'rows': [{'pid': 7}], 'declared': ['7'], 'declaredAlive': True}):
+            verdict = self.session._retirement_census_verdict(census)
+            self.assertEqual(verdict['status'], 'FAIL', census)
+            self.assertTrue(any('not real pids' in problem or 'undeclared' in problem
+                                for problem in verdict['problems']), verdict)
+        # A pid-less row alongside an honest declared int is still an
+        # undeclared observation, and the absent declared pid is reported
+        # as missing — neither PASSes.
+        verdict = self.session._retirement_census_verdict(
+            {'rows': [{'pid': None}], 'declared': [4242], 'declaredAlive': True})
+        self.assertEqual(verdict['status'], 'FAIL')
+        self.assertEqual(len(verdict['undeclared']), 1)
+        # The healthy shape is unchanged.
+        verdict = self.session._retirement_census_verdict(
+            {'rows': [{'pid': 4242, 'argvText': 'node pilotdeck.js server'}],
+             'declared': [4242], 'declaredAlive': True})
+        self.assertEqual(verdict['status'], 'PASS')
+        self.assertEqual(verdict['undeclared'], [])
+
+    def test_host_census_fails_closed_on_corrupt_row_pids(self):
+        # fix-r7 (DS sibling r6 P1, probe-verified — probe-before C1/C2):
+        # fix-r6 closed the *declared* side only — a corrupt row pid still
+        # matched a declared int under ``==`` (``True == 1``, ``7.0 == 7``),
+        # so a corrupted census read as fully established and PASS.  A row
+        # observation that is not a real pid is an undeclared observation,
+        # and a declared pid is only present when a real-pid row names it.
+        for census in ({'rows': [{'pid': True}], 'declared': [1], 'declaredAlive': True},
+                       {'rows': [{'pid': 7.0}], 'declared': [7], 'declaredAlive': True},
+                       {'rows': [{'pid': '4242'}], 'declared': [4242],
+                        'declaredAlive': True}):
+            verdict = self.session._retirement_census_verdict(census)
+            self.assertEqual(verdict['status'], 'FAIL', census)
+            self.assertEqual(len(verdict['undeclared']), 1, census)
+        # The healthy int shape stays a PASS (probe C3) and an honest
+        # undeclared int still fails (probe C4).
+        self.assertEqual(self.session._retirement_census_verdict(
+            {'rows': [{'pid': 4242}], 'declared': [4242], 'declaredAlive': True})['status'],
+            'PASS')
+        self.assertEqual(self.session._retirement_census_verdict(
+            {'rows': [{'pid': 99}], 'declared': [4242], 'declaredAlive': True})['status'],
+            'FAIL')
+
+    def test_host_census_declared_corrupt_elements_fail_closed(self):
+        # fix-r7 (DS boundary r6 P1 + MM boundary r6 P1 + MM sibling r6 P2,
+        # all three families, probe-verified — probe-before D1/D2): the
+        # untrustworthy-declared set ran on unprojected entries, so an
+        # unhashable element raised at the set comprehension and a mixed
+        # non-int pair raised at sorted() — the TypeError escaped the census
+        # face and the report wrapper collapsed every measured round into
+        # the ROUND_EVIDENCE stub.  Every corrupt shape now reads as the
+        # face's own FAIL, never as a crash.
+        for declared in ([None, '1'], [[1]], [None, True], ['7', 7.5], [True, 'x']):
+            verdict = self.session._retirement_census_verdict(
+                {'rows': [{'pid': 1}], 'declared': declared, 'declaredAlive': True})
+            self.assertEqual(verdict['status'], 'FAIL', declared)
+            self.assertTrue(any('not real pids' in problem
+                                for problem in verdict['problems']), verdict)
+
+    def test_host_census_fails_closed_on_nonpositive_or_oversized_pids(self):
+        # fix-r8 (DS boundary r7 P0, probe-verified — fix-r8-audit/probe-r8-mm-
+        # before.out P0/P0b): ``0``/negative/oversized pids are not real pids
+        # either — ``{'rows': [{'pid': 0}], 'declared': [0]}`` read as a fully
+        # established census and PASS, and no pid producer (ps rows, listener
+        # pids) can emit one, so the only source is a corrupt artifact, exactly
+        # the threat model this face fail-closes on.  The int32 ceiling covers
+        # every OS pid space (Linux pid_max <= 2**22).
+        # fix-r11 (DS sibling r10 P2): the pid domain's own boundary, the
+        # twin of the port matrix's 65536/65535 pair — 2**31 is the first
+        # value past the int32 ceiling and 2**31 - 1 the domain's last
+        # legal value; 2**63 was only a far-away value.
+        for census in ({'rows': [{'pid': 0}], 'declared': [0], 'declaredAlive': True},
+                       {'rows': [{'pid': -1}], 'declared': [-1], 'declaredAlive': True},
+                       {'rows': [{'pid': 2 ** 31}], 'declared': [2 ** 31],
+                        'declaredAlive': True},
+                       {'rows': [{'pid': 2 ** 63}], 'declared': [2 ** 63],
+                        'declaredAlive': True}):
+            verdict = self.session._retirement_census_verdict(census)
+            self.assertEqual(verdict['status'], 'FAIL', census)
+            self.assertEqual(len(verdict['undeclared']), 1, census)
+        # The healthy small-int shape stays a PASS, and a declared 0 beside a
+        # real row pid is an untrustworthy declared entry, not a match.
+        self.assertEqual(self.session._retirement_census_verdict(
+            {'rows': [{'pid': 7}], 'declared': [7], 'declaredAlive': True})['status'],
+            'PASS')
+        self.assertEqual(self.session._retirement_census_verdict(
+            {'rows': [{'pid': 2 ** 31 - 1}], 'declared': [2 ** 31 - 1],
+             'declaredAlive': True})['status'], 'PASS',
+            'the top of the pid domain still judges PASS')
+        # fix-r12 (DS boundary#1 r11 P2): the pid domain's first legal value
+        # too — the port matrix got its bottom pin in the same round; here
+        # an off-by-one tightening (``1 < pid``) would otherwise keep every
+        # case green while rejecting pid 1.
+        self.assertEqual(self.session._retirement_census_verdict(
+            {'rows': [{'pid': 1}], 'declared': [1],
+             'declaredAlive': True})['status'], 'PASS',
+            'the bottom of the pid domain still judges PASS')
+        verdict = self.session._retirement_census_verdict(
+            {'rows': [{'pid': 7}], 'declared': [7, 0], 'declaredAlive': True})
+        self.assertEqual(verdict['status'], 'FAIL')
+        self.assertTrue(any('not real pids' in problem
+                            for problem in verdict['problems']), verdict)
+
+    def test_host_census_control_fails_closed_on_corrupt_row_or_gateway_pids(self):
+        # fix-r8 (MM sibling r7 P1, probe-verified — fix-r8-audit/probe-r8-mm-
+        # before.out C2): the class-2 row-side pid read was a bare ``==``,
+        # the one place fix-r7's "row side always goes through
+        # ``_retirement_real_pid``" rule did not reach — ``{'pid': true}``
+        # matched a gateway pid of 1 under ``==`` and the control credited
+        # the corrupt row with the mutation's FAIL that pre-existed it (a
+        # false PASS of the negative control).  A corrupt gateway listener
+        # pid proves nothing about the declared set either, so both shapes
+        # read unestablished.
+        expected = ['submit_turn', 'run_get']
+        for tag, rows, listener in (
+                ('bool row pid', [{'pid': True}], 1),
+                ('float row pid', [{'pid': 7.0}], 7),
+                ('nonpositive row pid', [{'pid': 0}], 0)):
+            row = self._stream_ok_round_row()
+            row['census'] = {'rows': rows, 'declared': [listener],
+                            'declaredAlive': True}
+            row['listeners'] = {'pid': listener, 'addresses': ['127.0.0.1:28762'],
+                                'loopbackOnly': True}
+            controls = self.session._retirement_controls(row, expected)
+            class2 = next(c for c in controls['classes'] if c['class'] == 'TS_HOST')
+            self.assertEqual(class2['status'], 'NOT_APPLICABLE', f'{tag}: {class2}')
+            self.assertIn('absent from the census rows', class2['reason'])
+        # A corrupt gateway listener pid against a healthy census.
+        row = self._stream_ok_round_row()
+        row['listeners'] = {'pid': True, 'addresses': ['127.0.0.1:28762'],
+                            'loopbackOnly': True}
+        controls = self.session._retirement_controls(row, expected)
+        class2 = next(c for c in controls['classes'] if c['class'] == 'TS_HOST')
+        self.assertEqual(class2['status'], 'NOT_APPLICABLE', class2)
+        self.assertIn('absent from the census rows', class2['reason'])
+        # fix-r8 (MM boundary r7 P2, probe-verified — M3): a bool observation
+        # must not collapse with the integer it equals in the attribution
+        # projection.
+        self.assertNotEqual(self.session._retirement_hashable(True), 1)
+        self.assertEqual(self.session._retirement_hashable(True), 'True')
+        self.assertEqual(self.session._retirement_hashable(1), 1)
+
     def test_network_verdict_fails_closed_on_empty_unparsed_or_failed_samples(self):
         # R3: an empty, unparsed or failed lsof sample cannot prove loopback.
-        for connections, expected_status in (
-                ({'rows': []}, 'BLOCKED'),
-                ({'rows': [{'peer': None, 'raw': 'unparsed lsof line'}]}, 'BLOCKED'),
-                ({'rows': [], 'commandStatus': 'failed', 'reason': 'lsof exited 1'}, 'BLOCKED'),
-                ({'rows': [{'peer': '203.0.113.7:443', 'raw': 'x'}]}, 'FAIL'),
-                ({'rows': [{'peer': '127.0.0.1:49153', 'raw': 'x'}]}, 'PASS')):
+        # #1588 r1 §4: the verdict is the single source of truth for whether
+        # the sample was observable — a missing commandStatus is a probe that
+        # never reported success (BLOCKED, not a sample that passes because it
+        # forgot to say it failed), and the observable field the class-4
+        # control reads is judged here, once, for all of these shapes.
+        for connections, expected_status, expected_observable in (
+                ({'rows': []}, 'BLOCKED', False),
+                ({'rows': [{'peer': None, 'raw': 'unparsed lsof line'}]}, 'BLOCKED', False),
+                ({'rows': [], 'commandStatus': 'failed', 'reason': 'lsof exited 1'}, 'BLOCKED', False),
+                ({'rows': [{'peer': '203.0.113.7:443', 'raw': 'x'}]}, 'BLOCKED', False),
+                ({'rows': [{'peer': '203.0.113.7:443', 'raw': 'x'}], 'commandStatus': 'ok'},
+                 'FAIL', True),
+                ({'rows': [{'peer': '127.0.0.1:49153', 'raw': 'x'}], 'commandStatus': 'ok'},
+                 'PASS', True)):
             verdict = self.session._retirement_network_verdict(connections)
             self.assertEqual(verdict['status'], expected_status, connections)
             self.assertEqual(verdict['rule'], 'NETWORK_FALLBACK')
+            self.assertIs(verdict['observable'], expected_observable, connections)
+
+    def test_forwarding_control_unavailable_when_a_row_lacks_a_parsed_peer(self):
+        # #1588 r1 §5: the paired negative control for the class-4 "no
+        # missing-peer row" observability guard.  A sample whose rows carry a
+        # ``peer: None`` row while the *unparsed* list stays empty is exactly
+        # the shape a verdict status cannot distinguish from a usable sample,
+        # and the recorded mutation (`return True` on the observability guard)
+        # survived #41 because none of its samples had a missing-peer row
+        # without unparsed lines.  The verdict must report the sample as
+        # unobservable, the class-4 control must stay NOT_APPLICABLE, never a
+        # PASS, and the report keeps its full faces.
+        expected = ['submit_turn', 'run_get']
+        observation = {'rows': [{'peer': '127.0.0.1:49153', 'raw': 'x'},
+                                {'peer': None, 'raw': 'lsof line without a parseable peer'}],
+                       'unparsed': [], 'commandStatus': 'ok'}
+        verdict = self.session._retirement_network_verdict(observation)
+        self.assertIs(verdict['observable'], False, verdict)
+        self.assertNotEqual(verdict['status'], 'PASS', verdict)
+        row = self._stream_ok_round_row()
+        row['connections'] = observation
+        controls = self.session._retirement_controls(row, expected)
+        class4 = next(c for c in controls['classes'] if c['class'] == 'FORWARDING_MISLABELED')
+        self.assertEqual(class4['status'], 'NOT_APPLICABLE', f'#41 missing-peer row: {class4}')
+        self.assertIn('unobservable', class4['reason'])
+        self._assert_full_faces(self._report_for(row, expected), '#41 missing-peer row')
 
     def test_lsof_failure_is_not_an_empty_connection_set(self):
         dead = subprocess.Popen(['true'])
@@ -4041,6 +5050,576 @@ class RetirementScoring(unittest.TestCase):
             verdict = self.session._retirement_listener_verdict(listeners, 28762)
             self.assertEqual(verdict['status'], 'FAIL', listeners)
             self.assertEqual(verdict['rule'], 'LISTENER_EXPOSURE')
+
+    def test_listener_gate_rejects_out_of_domain_gateway_ports(self):
+        # fix-r9 (DS boundary r8 P0, probe-verified — fix-r9-audit/
+        # probe-r9-ds-before.out S2): only a real port (a true int, non-bool,
+        # 0 < p <= 65535) can be the judged loopback binding — a corrupt
+        # *self-consistent* artifact (``ports.gateway`` = 0/true/70000 plus
+        # matching addresses) read as the PASS binding pre-fix, but no port
+        # producer (lsof ``-Fn`` addresses, the port-set allocation) can
+        # ever emit one.
+        # fix-r10 (anthropic boundary r9 P2): 65536 is the first value past
+        # the domain — the boundary itself, not just a far-away 70000.
+        # fix-r11 (DS sibling#2 + boundary#3 r10 P2, both roles): the
+        # in-domain top 65535 is pinned on both read paths too — only the
+        # out-of-domain side was pinned, so an off-by-one tightening
+        # (``<= 65534``) kept every case green while rejecting the domain's
+        # last legal port.  fix-r11 (DS simplify r10 P3): the two loops
+        # share one ``cases`` table so the verdict path and the report
+        # path cannot drift apart on the next domain value.
+        # fix-r12 (DS boundary#1 + sibling#4 r11 P2+P3): the domain's
+        # *first* legal port is pinned too — only the top had a PASS pin,
+        # so an off-by-one tightening at the bottom (``1 < p``) kept every
+        # case green while rejecting port 1 — and both domain ends now
+        # live in the same table with an ``expect`` column, so the PASS
+        # side shares the no-drift guarantee instead of repeating the
+        # listeners/ports shape as literals at each read path.
+        cases = (('zero', 0, ['127.0.0.1:0'], 'FAIL'),
+                 ('boolean', True, ['127.0.0.1:True'], 'FAIL'),
+                 ('boundary', 65536, ['127.0.0.1:65536'], 'FAIL'),
+                 ('oversized', 70000, ['127.0.0.1:70000'], 'FAIL'),
+                 ('bottom', 1, ['127.0.0.1:1'], 'PASS'),
+                 ('top', 65535, ['127.0.0.1:65535'], 'PASS'))
+        for tag, port, addresses, expect in cases:
+            verdict = self.session._retirement_listener_verdict(
+                {'pid': 7, 'addresses': addresses, 'loopbackOnly': True}, port)
+            self.assertEqual(verdict['status'], expect, f'#49 {tag}: {verdict}')
+            if expect == 'FAIL':
+                self.assertEqual(verdict['rule'], 'LISTENER_EXPOSURE', f'#49 {tag}')
+                self.assertIn('not a real port', verdict['detail'], f'#49 {tag}')
+        # The report gate reads the same shapes as a missing observation.
+        expected = ['submit_turn', 'run_get']
+        for tag, port, addresses, expect in cases:
+            row = self._stream_ok_round_row()
+            row['ports'] = {'mock': 28761, 'gateway': port}
+            row['listeners'] = {'pid': 7, 'addresses': addresses, 'loopbackOnly': True}
+            report = self._report_for(row, expected)
+            face = report['hostAudit']['listeners'][0]
+            self.assertEqual(face['status'], expect, f'#49 report {tag}: {face}')
+        row = self._stream_ok_round_row()
+        report = self._report_for(row, expected)
+        self.assertEqual(report['hostAudit']['listeners'][0]['status'], 'PASS',
+                         '#49 the healthy port still judges PASS')
+
+    def test_audit_native_rejects_oversized_witness_pids(self):
+        # fix-r9 (DS sibling r8 P2, probe-verified — fix-r9-audit/
+        # probe-r9-ds-before.out S4): the witness gate follows the census's
+        # real-pid rule — an int past the int32 pid ceiling is a corrupt
+        # artifact, not a witnessed process, so the capture FAILs at
+        # PROCESS_WITNESS instead of comparing the forged pid downstream.
+        evidence = {'topology': 'native',
+                    'processes': [{'pid': 2 ** 63, 'argv': ['pilotdeck'], 'role': 'host'}],
+                    'execWitness': {'complete': True, 'source': 'exec-monitor'}}
+        with self.assertRaises(self.session.EvidenceError) as raised:
+            self.session.audit_native(evidence, {'host': 'rust'})
+        self.assertEqual(raised.exception.rule, 'PROCESS_WITNESS')
+        self.assertIn('invalid/duplicate PID', str(raised.exception))
+        # The in-domain pid survives the gate and fails later on the honest
+        # contract mismatch instead (the rule differs — never PROCESS_WITNESS
+        # again for a legal pid shape).
+        evidence['processes'] = [{'pid': 4242, 'argv': ['pilotdeck'], 'role': 'host'}]
+        with self.assertRaises(self.session.EvidenceError) as raised:
+            self.session.audit_native(evidence, {'host': 'rust', 'processRoles': []})
+        self.assertNotEqual(raised.exception.rule, 'PROCESS_WITNESS')
+        # fix-r11 (DS sibling r10 P2): the int32 boundary itself — 2**31 is
+        # the first pid past the ceiling while 2**31 - 1 is the domain's last
+        # legal value and fails only on the honest contract mismatch.
+        evidence['processes'] = [{'pid': 2 ** 31, 'argv': ['pilotdeck'], 'role': 'host'}]
+        with self.assertRaises(self.session.EvidenceError) as raised:
+            self.session.audit_native(evidence, {'host': 'rust'})
+        self.assertEqual(raised.exception.rule, 'PROCESS_WITNESS')
+        evidence['processes'] = [{'pid': 2 ** 31 - 1, 'argv': ['pilotdeck'],
+                                  'role': 'host'}]
+        with self.assertRaises(self.session.EvidenceError) as raised:
+            self.session.audit_native(evidence, {'host': 'rust', 'processRoles': []})
+        self.assertNotEqual(raised.exception.rule, 'PROCESS_WITNESS',
+                            'the top of the pid domain is a legal witness shape')
+        # fix-r12 (DS boundary#1 r11 P2): the witness gate's domain bottom —
+        # pid 1 fails only on the honest contract mismatch, never on the
+        # real-pid rule itself, the twin of the census pin above.
+        evidence['processes'] = [{'pid': 1, 'argv': ['pilotdeck'],
+                                  'role': 'host'}]
+        with self.assertRaises(self.session.EvidenceError) as raised:
+            self.session.audit_native(evidence, {'host': 'rust', 'processRoles': []})
+        self.assertNotEqual(raised.exception.rule, 'PROCESS_WITNESS',
+                            'the bottom of the pid domain is a legal witness shape')
+
+    def test_audit_native_rejects_boolean_pids_on_every_witness_field(self):
+        # fix-r29 (DS r28-b sibling#3 P1, probe-verified —
+        # _tmp/20261110-1355-r26-harvest/probe-p1-pidbool.out): Python reads
+        # ``True == 1`` / ``1.0 == 1`` / ``True in {1: ...}`` as equal, so a
+        # forged boolean or float pid passed the parent gate, the event
+        # identity/order gates and the egress helper gate while the audited
+        # capture was corrupt — the real-pid rule (``_retirement_real_pid``,
+        # fix-r8) covered only ``processes[*].pid``.  Every pid-carrying
+        # field the witness compares now follows the same rule, the
+        # contract's own ``launcherPid`` gated first of all; a legal integer
+        # pid passes every pid gate and fails only on the honest later
+        # mismatch, never on a real-pid rule again.
+        with tempfile.TemporaryDirectory(prefix='pdrs-1355-r29-') as folder:
+            binary = Path(folder) / 'bin'
+            binary.write_bytes(b'witness-probe-binary')
+            argv = ['probe']
+            sha = self.session.digest(binary)
+            base = {'evidence': {
+                'topology': 'native',
+                'processes': [{'pid': 1, 'ppid': 1, 'argv': argv, 'role': 'host',
+                              'sha256': sha, 'executable': str(binary)}],
+                'execWitness': {'complete': True, 'source': 'exec-monitor',
+                                'events': [{'pid': 1, 'event': 'exec', 'ppid': 1,
+                                            'argv': argv, 'executable': str(binary),
+                                            'sha256': sha},
+                                           {'pid': 1, 'event': 'exit'}]},
+                'networkWitness': {'complete': True,
+                                   'calls': [{'target': '127.0.0.1:29000',
+                                              'ownerPid': 1}]},
+                'expectedCases': ['c1'], 'executedCases': ['c1'],
+                'cleanup': {'allStopped': True},
+                'surfaces': {k: {'status': 'RECORDED',
+                                 'artifacts': [{'path': str(binary), 'sha256': sha}]}
+                             for k in ('output', 'disk', 'http')},
+                'observer': {'rows': []}},
+                'contract': {'host': 'rust', 'processRoles': ['host'],
+                             'binaries': {'host': {'path': str(binary), 'sha256': sha,
+                                                  'argv': argv}},
+                             'launcherPid': 1,
+                             'externalEndpoints': ['127.0.0.1:29000'],
+                             'connections': 1, 'cases': ['c1'],
+                             'bindingSource': 'observer-hello', 'binding': {}}}
+
+            def mutated(channel_path, value):
+                case = json.loads(json.dumps(base))
+                node = case[channel_path[0]]
+                for key in channel_path[1:-1]:
+                    node = node[key]
+                node[channel_path[-1]] = value
+                return case
+
+            channels = (
+                # (tag, path into base, forged value, gate rule, detail)
+                ('process ppid', ('evidence', 'processes', 0, 'ppid'), True,
+                 'PROCESS_WITNESS', 'wrong parent PID'),
+                ('process ppid float', ('evidence', 'processes', 0, 'ppid'), 1.0,
+                 'PROCESS_WITNESS', 'wrong parent PID'),
+                ('process ppid zero', ('evidence', 'processes', 0, 'ppid'), 0,
+                 'PROCESS_WITNESS', 'wrong parent PID'),
+                ('process ppid oversized', ('evidence', 'processes', 0, 'ppid'), 2 ** 31,
+                 'PROCESS_WITNESS', 'wrong parent PID'),
+                ('event pid', ('evidence', 'execWitness', 'events', 0, 'pid'), True,
+                 'PROCESS_WITNESS', 'unknown process'),
+                ('event pid float', ('evidence', 'execWitness', 'events', 0, 'pid'), 1.0,
+                 'PROCESS_WITNESS', 'unknown process'),
+                # fix-r31: the exec-identity comparison itself went
+                # same_json, so a boolean event ppid is caught one gate
+                # earlier — at the identity mismatch, not the parent gate.
+                ('event ppid', ('evidence', 'execWitness', 'events', 0, 'ppid'), True,
+                 'PROCESS_WITNESS', 'exec identity disagrees with recorded launch identity'),
+                ('egress ownerPid', ('evidence', 'networkWitness', 'calls', 0, 'ownerPid'),
+                 True, 'HIDDEN_HELPER', 'undeclared helper'),
+                ('contract launcherPid', ('contract', 'launcherPid'), True,
+                 'PROCESS_WITNESS', 'contract launcher pid'),
+                ('contract launcherPid float', ('contract', 'launcherPid'), 1.0,
+                 'PROCESS_WITNESS', 'contract launcher pid'),
+                # fix-r32 (anthropic sibling#1 P2): the exec-identity
+                # operands are external reads on both sides — a doctored
+                # contract folded onto a doctored witness.  Each single-side
+                # channel below proves one side; the both-sides fold follows.
+                ('process sha256 boolean', ('evidence', 'processes', 0, 'sha256'), True,
+                 'NATIVE_PROCESS', 'exec identity/argv/hash differs from pre-launch identity'),
+                ('process executable boolean', ('evidence', 'processes', 0, 'executable'), True,
+                 'NATIVE_PROCESS', 'exec identity/argv/hash differs from pre-launch identity'),
+                ('contract binary sha256 boolean', ('contract', 'binaries', 'host', 'sha256'),
+                 True, 'NATIVE_PROCESS',
+                 'exec identity/argv/hash differs from pre-launch identity'),
+                ('contract binary path boolean', ('contract', 'binaries', 'host', 'path'),
+                 True, 'NATIVE_PROCESS',
+                 'exec identity/argv/hash differs from pre-launch identity'),
+            )
+            for tag, channel_path, value, rule, detail in channels:
+                case = mutated(channel_path, value)
+                with self.assertRaises(self.session.EvidenceError) as raised:
+                    self.session.audit_native(case['evidence'], case['contract'])
+                self.assertEqual(raised.exception.rule, rule, f'fix-r29 {tag}: {raised.exception}')
+                self.assertIn(detail, str(raised.exception), f'fix-r29 {tag}')
+            # fix-r32 (anthropic sibling#1 P2): the identity fold itself —
+            # both sides doctored to the same boolean pass a bare ``==``
+            # and even same_json(True, True) folds, so only the explicit
+            # str gates kill it.  (``Path(True)`` would raise TypeError;
+            # the gates short-circuit before the digest, so the corruption
+            # is reported, not escaped.)
+            for witness_side, contract_side in (
+                    (('evidence', 'processes', 0, 'sha256'), ('contract', 'binaries', 'host', 'sha256')),
+                    (('evidence', 'processes', 0, 'executable'), ('contract', 'binaries', 'host', 'path'))):
+                case = mutated(witness_side, True)
+                node = case[contract_side[0]]
+                for key in contract_side[1:-1]:
+                    node = node[key]
+                node[contract_side[-1]] = True
+                with self.assertRaises(self.session.EvidenceError) as raised:
+                    self.session.audit_native(case['evidence'], case['contract'])
+                self.assertEqual(raised.exception.rule, 'NATIVE_PROCESS',
+                                 f'fix-r32 identity fold {witness_side[-1]}: {raised.exception}')
+                self.assertIn('exec identity/argv/hash differs', str(raised.exception),
+                              f'fix-r32 identity fold {witness_side[-1]}')
+            # The all-legal shape passes every pid gate and fails only on the
+            # honest later mismatch — the empty independent observer.
+            case = json.loads(json.dumps(base))
+            with self.assertRaises(self.session.EvidenceError) as raised:
+                self.session.audit_native(case['evidence'], case['contract'])
+            self.assertEqual(raised.exception.rule, 'EMPTY_OBSERVER', raised.exception)
+
+            # fix-r30 (DS r29 sibling#1 P1 — the same boolean/float collapse
+            # channel the pid gates above close, on the count they missed):
+            # ``isinstance(True, int)`` and ``True == 1`` let a corrupt
+            # ``{"connections": true}``/``1.0`` observer document or contract
+            # pass CONNECTIONS by value.  The gate sits behind EMPTY_OBSERVER,
+            # so these channels run on a witnessed variant — one synthetic
+            # observer row shaped only as far as CONNECTIONS needs.  The
+            # equal-type control gets past CONNECTIONS and stops honestly on
+            # the later OBSERVER_WIRE gate the minimal row does not satisfy.
+            witnessed = json.loads(json.dumps(base))
+            witnessed['evidence']['observer']['rows'] = [
+                {'connection': 1, 'direction': 'send', 'frame': 'text'}]
+            witnessed['evidence']['observer']['connections'] = 1
+            for tag, channel_path, value in (
+                    ('observer connections boolean', ('evidence', 'observer', 'connections'), True),
+                    ('observer connections float', ('evidence', 'observer', 'connections'), 1.0),
+                    ('contract connections boolean', ('contract', 'connections'), True),
+                    ('contract connections float', ('contract', 'connections'), 1.0),
+                    ('contract connections negative', ('contract', 'connections'), -1)):
+                case = json.loads(json.dumps(witnessed))
+                node = case[channel_path[0]]
+                for key in channel_path[1:-1]:
+                    node = node[key]
+                node[channel_path[-1]] = value
+                with self.assertRaises(self.session.EvidenceError) as raised:
+                    self.session.audit_native(case['evidence'], case['contract'])
+                self.assertEqual(raised.exception.rule, 'CONNECTIONS',
+                                 f'fix-r30 {tag}: {raised.exception}')
+                self.assertIn('connection count mismatch', str(raised.exception),
+                              f'fix-r30 {tag}')
+            with self.assertRaises(self.session.EvidenceError) as raised:
+                self.session.audit_native(json.loads(json.dumps(witnessed['evidence'])),
+                                          dict(witnessed['contract']))
+            self.assertNotEqual(raised.exception.rule, 'CONNECTIONS',
+                                'fix-r30 equal-type connections pass the CONNECTIONS gate, '
+                                f'not {raised.exception}')
+
+    def test_session_windows_rejects_a_folded_host_pid(self):
+        # fix-r31 (r31 structural round, DS sibling#1 P1 + anthropic
+        # sibling#1 P2 — the same finding from both lineages, probe-verified
+        # — _tmp/20261110-1355-r26-harvest/probe-r31-hostpid.out): fix-r30
+        # type-gated only the entry side of the host-owned comparison, so a
+        # host record with ``pid: True`` folded onto an entry ``pid: 1``
+        # through ``True == 1`` and the host-owned gate passed.  The host
+        # side now carries the same type gate before any ``==`` sees it.
+        witness = {'complete': True, 'source': 'strace-openat',
+                   'opens': [{'path': '/x/chats/a.b.jsonl', 'pid': 1, 'afterExecs': 0,
+                              'flags': 'r', 'result': '3'}]}
+        evidence = {'processes': [{'role': 'host', 'pid': 1},
+                                   {'role': 'sidecar', 'pid': 2}],
+                    'transcriptWitness': witness}
+        cases, paths = ['a/b'], ['/x/chats/a.b.jsonl']
+        for bad in (True, False, 0, 1.0):
+            corrupt = json.loads(json.dumps(evidence))
+            corrupt['processes'][0]['pid'] = bad
+            with self.assertRaises(self.native.Incomplete) as raised:
+                self.native.session_windows(corrupt, cases, paths)
+            self.assertIn('plain-integer host pid', str(raised.exception),
+                          f'fix-r31 host pid {bad!r}')
+        # The equal-type control passes the whole window audit.
+        self.native.session_windows(json.loads(json.dumps(evidence)), cases, paths)
+        # The entry side keeps its fix-r30 gate (the channel must stay
+        # closed on both sides independently).
+        flipped = json.loads(json.dumps(evidence))
+        flipped['transcriptWitness']['opens'][0]['pid'] = True
+        with self.assertRaises(self.native.Incomplete) as raised:
+            self.native.session_windows(flipped, cases, paths)
+        self.assertIn('host-owned session transcripts', str(raised.exception))
+
+    def test_audit_native_rejects_a_folded_contract_binding_generation(self):
+        # fix-r31 (r31 structural round, DS sibling#3 P1): the hello binding
+        # gate compared the frame binding and the contract binding with a
+        # bare dict ``==`` — the frame side was type-gated but the contract
+        # side was not, so ``{"generation": true}`` folded onto a witnessed
+        # ``{"generation": 1}`` and the binding gate passed.  The comparison
+        # is same_json now (#2039 semantics: booleans are type-strict; an
+        # int/float numeric pair like ``1.0`` vs ``1`` is the same JSON
+        # number by the frozen value rule, so the boolean channel is the
+        # fold this pin kills — the float spelling is not a difference).
+        # The rows below are wire-complete: the observer row is a real
+        # receive text frame carrying the hello, so it clears
+        # _audit_observer_rows (wire metadata + independent decoder replay).
+        with tempfile.TemporaryDirectory(prefix='pdrs-1355-r31-') as folder:
+            binary = Path(folder) / 'bin'
+            binary.write_bytes(b'witness-probe-binary')
+            argv = ['probe']
+            sha = self.session.digest(binary)
+            hello = {'type': 'hello_ok', 'protocolVersion': '1.2',
+                     'interactionBinding': {'generation': 1, 'connectionId': 'c1'}}
+            payload = json.dumps(hello).encode()
+            self.assertLess(len(payload), 126, 'single-byte length code required here')
+            row = {'connection': 1, 'direction': 'receive',
+                   'wireHex': (bytes([0x81, len(payload)]) + payload).hex(),
+                   'frame': hello,
+                   'wire': {'opcode': 1, 'fin': True, 'rsv': 0, 'masked': False,
+                            'lengthCode': len(payload), 'payloadLength': len(payload)}}
+            base = {'evidence': {
+                'topology': 'native',
+                'processes': [{'pid': 1, 'ppid': 1, 'argv': argv, 'role': 'host',
+                               'sha256': sha, 'executable': str(binary)}],
+                'execWitness': {'complete': True, 'source': 'exec-monitor',
+                                'events': [{'pid': 1, 'event': 'exec', 'ppid': 1,
+                                            'argv': argv, 'executable': str(binary),
+                                            'sha256': sha},
+                                           {'pid': 1, 'event': 'exit'}]},
+                'networkWitness': {'complete': True,
+                                   'calls': [{'target': '127.0.0.1:29000',
+                                              'ownerPid': 1}]},
+                'expectedCases': ['c1'], 'executedCases': ['c1'],
+                'cleanup': {'allStopped': True},
+                'surfaces': {k: {'status': 'RECORDED',
+                                 'artifacts': [{'path': str(binary), 'sha256': sha}]}
+                             for k in ('output', 'disk', 'http')},
+                'observer': {'rows': [row], 'connections': 1}},
+                'contract': {'host': 'rust', 'processRoles': ['host'],
+                             'binaries': {'host': {'path': str(binary), 'sha256': sha,
+                                                  'argv': argv}},
+                             'launcherPid': 1,
+                             'externalEndpoints': ['127.0.0.1:29000'],
+                             'connections': 1, 'cases': ['c1'],
+                             'bindingSource': 'observer-hello',
+                             'binding': {'generation': 1, 'connectionId': 'c1'}}}
+            for tag, binding in (
+                    ('boolean generation', {'generation': True, 'connectionId': 'c1'}),
+                    ('honest value mismatch', {'generation': 2, 'connectionId': 'c1'})):
+                case = json.loads(json.dumps(base))
+                case['contract']['binding'] = binding
+                with self.assertRaises(self.session.EvidenceError) as raised:
+                    self.session.audit_native(case['evidence'], case['contract'])
+                self.assertEqual(raised.exception.rule, 'BINDING', f'fix-r31 {tag}')
+                self.assertIn('invalid/wrong/old binding', str(raised.exception),
+                              f'fix-r31 {tag}')
+            # The equal-type control (the binding the witness actually
+            # recorded) passes the whole native audit.
+            self.session.audit_native(json.loads(json.dumps(base['evidence'])),
+                                      json.loads(json.dumps(base['contract'])))
+
+    def test_compare_validate_footer_counts_refuse_boolean_folds(self):
+        # fix-r31 (r31 structural round, DS sibling#4 P2 read as the same
+        # family; #2424 :290/:302/:305): the complete.json footer's counts
+        # are external document reads compared against numbers — a boolean
+        # or float count folded onto the true count through ``True == 1`` /
+        # ``1.0 == 1`` and passed the footer gates.  Real-int gates now
+        # precede both ``==`` uses.  The tree below is the minimal manifest
+        # tree that reaches the footer gates; every later failure it hits
+        # is an honest unrelated oracle, never the footer rules.
+        with tempfile.TemporaryDirectory(prefix='pdrs-1355-r31-footer-') as folder:
+            root = Path(folder)
+            run_doc = {'status': 'DONE', 'audit': {'allStopped': True},
+                       'scenarios': {name: {'exitCode': 0} for name in common.SCENARIOS}}
+            (root / 'run.json').write_text(json.dumps(run_doc))
+            for name in common.SCENARIOS:
+                scenario = root / 'scenarios' / name
+                scenario.mkdir(parents=True)
+                (scenario / 'result.json').write_text(
+                    json.dumps({'scenario': name, 'status': 'PASS'}))
+                (scenario / 'complete.json').write_text(json.dumps(
+                    {'scenario': name, 'complete': True,
+                     'records': 0 if name == 'http' else 1, 'connections': 1}))
+                if name != 'http':
+                    (scenario / 'frames.jsonl').write_text(json.dumps(
+                        {'seq': 1, 'connection': 1, 'direction': 'send', 'frame': 'x'}) + '\n')
+            target = root / 'scenarios' / 'auth'
+
+            def footer_errors(records, connections):
+                complete = json.loads((target / 'complete.json').read_text())
+                complete['records'], complete['connections'] = records, connections
+                (target / 'complete.json').write_text(json.dumps(complete))
+                _, errors = compare_module.validate(root)
+                return [error['detail'] for error in errors]
+
+            for records, connections, marker in (
+                    (True, 1, 'count/footer mismatch'),
+                    (1.0, 1, 'count/footer mismatch'),
+                    (1, True, 'connection count/identity mismatch'),
+                    (1, 1.0, 'connection count/identity mismatch')):
+                details = footer_errors(records, connections)
+                self.assertIn(f'auth: {marker}', details,
+                              f'fix-r31 footer fold records={records!r} connections={connections!r}')
+            # The equal-type control: the honest counts pass both footer
+            # gates; whatever else fails is a later, unrelated oracle.
+            honest = footer_errors(1, 1)
+            self.assertNotIn('auth: count/footer mismatch', honest)
+            self.assertNotIn('auth: connection count/identity mismatch', honest)
+
+            # fix-r32 (r32 structural round, DS sibling#4 follow-up): the run
+            # document's exitCode is the same footer-family external read —
+            # ``True != 0`` is False, ``1.0 != 0`` is False, so a folded
+            # exitCode audited clean even with the r31 gate in place only on
+            # the counts.  The gate now covers the exitCode read itself.
+            for exit_code in (True, 1.0):
+                run_doc = json.loads((root / 'run.json').read_text())
+                run_doc['scenarios']['auth']['exitCode'] = exit_code
+                (root / 'run.json').write_text(json.dumps(run_doc))
+                _, errors = compare_module.validate(root)
+                self.assertIn('auth: driver failed its independent expectations',
+                              [error['detail'] for error in errors],
+                              f'fix-r32 exitCode fold {exit_code!r}')
+            run_doc = json.loads((root / 'run.json').read_text())
+            run_doc['scenarios']['auth']['exitCode'] = 0
+            (root / 'run.json').write_text(json.dumps(run_doc))
+
+            # fix-r32 (r32 structural round): the connection count also
+            # bounds the set materialisation — a huge but well-typed count
+            # fails fast on ``connection_count > len(rows)`` instead of
+            # building ``set(range(1, count + 1))`` (the oversized value is
+            # a corrupt footer, not a DoS vector for the auditor).
+            for bound in (2, 10 ** 12):
+                details = footer_errors(1, bound)
+                self.assertIn('auth: connection count/identity mismatch', details,
+                              f'fix-r32 connection-count bound {bound!r}')
+
+    def test_compare_validate_http_elapsed_gate_refuses_nonfinite_and_boolean_folds(self):
+        # fix-r32 (DS boundary P0 + MM boundary P1, probe-verified —
+        # _tmp/20261110-1355-r26-harvest/probe-r32-infnan.out): the streamed-
+        # window oracle reads the anchor chunks' elapsedMs from the recorded
+        # http.json.  The r31 type gate alone let ``NaN``/``Infinity``
+        # through (json.loads accepts both, and ``inf - 0 < 300`` /
+        # ``nan - nan < 300`` are False), so a doctored recording cleared
+        # the streaming oracle without ever streaming.  The gate now demands
+        # a finite real number on both anchors.  The tree below is the
+        # minimal walk that reaches the gate: every earlier oracle failure
+        # is appended and skipped past (``fail`` does not stop the walk),
+        # and the durable-read and http prerequisites exist so the walk
+        # survives to the streamed-window gate at all.
+        import base64
+        with tempfile.TemporaryDirectory(prefix='pdrs-1355-r32-http-') as folder:
+            root = Path(folder)
+            run_doc = {'status': 'DONE', 'audit': {'allStopped': True},
+                       'scenarios': {name: {'exitCode': 0} for name in common.SCENARIOS}}
+            (root / 'run.json').write_text(json.dumps(run_doc))
+            for name in common.SCENARIOS:
+                (root / 'scenarios' / name).mkdir(parents=True)
+            (root / 'scenarios/quirks/result.json').write_text('{}')
+            (root / 'project').mkdir(parents=True)
+            (root / 'project/note.txt').write_text('gateway parity fixture\n')
+            (root / 'project/written.txt').write_text('HTTP written fixture\n')
+            (root / 'home').mkdir(parents=True)
+            (root / 'home/cron').mkdir(parents=True)
+            (root / 'home/server-token').write_text('r32-token\n')
+
+            def chunk(text, elapsed):
+                return {'base64': base64.b64encode(text.encode()).decode(),
+                        'elapsedMs': elapsed}
+
+            def split_chunks(body, first, last):
+                half = len(body) // 2
+                return [chunk(body[:half], first), chunk(body[half:], last)]
+
+            # Rows 0/1 only need to survive the reads before the gate; the
+            # gate's http[-2:] picks rows 2/3, so both carry two anchors and
+            # first/last markers.
+            http = [
+                {'status': 200, 'body': '{"ok": true}', 'chunks': [chunk('{"ok": true}', 0)]},
+                {'status': 200, 'body': '{"token": "r32-token"}',
+                 'chunks': [chunk('{"token": "r32-token"}', 0)]},
+                {'status': 200, 'body': '{"projects": [{"name": "first-last"}]}',
+                 'chunks': split_chunks('{"projects": [{"name": "first-last"}]}', 0, 500)},
+                {'status': 200, 'body': '{"content": "gateway first to last"}',
+                 'chunks': split_chunks('{"content": "gateway first to last"}', 0, 500)},
+            ]
+            base_http = json.dumps(http)
+
+            def elapsed_errors(value, anchor):
+                doc = json.loads(base_http)
+                doc[3]['chunks'][anchor]['elapsedMs'] = value
+                (root / 'scenarios/http/http.json').write_text(json.dumps(doc))
+                _, errors = compare_module.validate(root)
+                return [error['detail'] for error in errors]
+
+            for value, anchor in ((True, 0), (True, -1), (False, -1),
+                                  (float('nan'), 0), (float('inf'), 0),
+                                  (float('-inf'), -1),
+                                  # fix-r33 (MM boundary#1 P1 + DS
+                                  # sibling#6/boundary#2, probe-r33/folds.py):
+                                  # json.loads accepts arbitrary-precision
+                                  # ints, and the old isfinite spelling
+                                  # converted them through float() — a huge
+                                  # int anchor raised OverflowError out of
+                                  # validate(); the out-of-range int itself
+                                  # is not a plausible millisecond anchor
+                                  # and must resolve like any non-finite
+                                  # fold.  The anchors sit where the
+                                  # subtraction stays ≥ 300 (huge last, or
+                                  # hugely negative first), so the oracle
+                                  # that fires is the gate, not the
+                                  # pre-existing window value check.
+                                  (10**400, -1), (2**53 + 1, -1),
+                                  (-(2**53) - 1, 0)):
+                details = elapsed_errors(value, anchor)
+                self.assertIn('stream buffered/truncated', details,
+                              f'fix-r32/r33 elapsed fold {value!r} at anchor {anchor}')
+            # The honest anchors and the equal-type float spelling pass the
+            # gate (floats are legal timestamps); the too-fast honest window
+            # still fires the pre-existing value oracle, proving reach.
+            # fix-r33: the inclusive ±2**53 boundary is the largest int the
+            # gate still accepts — an honest anchor at it stays legal while
+            # the window subtraction stays ≥ 300.
+            self.assertNotIn('stream buffered/truncated', elapsed_errors(0, 0))
+            self.assertNotIn('stream buffered/truncated', elapsed_errors(0.0, 0))
+            self.assertNotIn('stream buffered/truncated', elapsed_errors(2**53, -1))
+            self.assertNotIn('stream buffered/truncated', elapsed_errors(-(2**53), 0))
+            self.assertIn('stream buffered/truncated', elapsed_errors(100, -1))
+
+    def test_wire_metadata_cross_check_refuses_int_folds_of_booleans(self):
+        # fix-r31 (r31 structural round; #2424 :251): the decoded wire
+        # metadata carries bools and ints — a recorded ``fin: 1`` or
+        # ``masked: 0`` folded onto a decoded ``fin: True`` / ``masked:
+        # False`` through ``1 == True`` and the wire cross-check passed.
+        # The metadata comparison is same_json now (type-strict on
+        # booleans, #1372 semantics on numbers).
+        payload = b'{}'
+        row = {'direction': 'receive', 'wireHex': (bytes([0x81, len(payload)]) + payload).hex(),
+               'frame': {},
+               'wire': {'opcode': 1, 'fin': True, 'rsv': 0, 'masked': False,
+                        'lengthCode': len(payload), 'payloadLength': len(payload)}}
+        self.assertEqual(wire_frame(row), bytes([0x81, len(payload)]).hex())
+        for field, folded in (('fin', 1), ('masked', 0)):
+            corrupt = json.loads(json.dumps(row))
+            corrupt['wire'][field] = folded
+            with self.assertRaises(ValueError):
+                wire_frame(corrupt)
+
+    def test_forwarding_control_normalizes_a_corrupt_rows_sample_before_injection(self):
+        # fix-r29 (DS r28-b simplify#2 P2, read as P1 by the P2b rule — the
+        # shape can change a control's verdict from a judged record into an
+        # escaped TypeError): the class-4 mutation read ``rows or []``, so a
+        # truthy non-list ``rows`` (e.g. ``5``) bypassed the one
+        # normalization every other read point uses (``_retirement_list_rows``,
+        # fix-r4) and the ``+ [injected row]`` raised TypeError out of the
+        # controls.  The shape cannot pass the real observability verdict —
+        # a non-list ``rows`` is the empty sample, so the control is
+        # unavailable before the mutation line — so the pin holds the
+        # mutation's own read to the helper directly: a fake observable
+        # verdict stands in for the impossible observable corrupt sample.
+        expected = ['submit_turn', 'run_get']
+        row = self._stream_ok_round_row()
+        row['connections'] = {'commandStatus': 'ok', 'rows': 5, 'unparsed': []}
+        with patch.object(self.session, '_retirement_network_verdict',
+                          _fake_observable_network_verdict):
+            controls = self.session._retirement_controls(row, expected)
+        class4 = next(c for c in controls['classes'] if c['class'] == 'FORWARDING_MISLABELED')
+        self.assertEqual(class4['status'], 'PASS', f'fix-r29 corrupt rows: {class4}')
+        # Through the real verdict the same corrupt shape is the honest
+        # unobservable family: unavailable, and the whole walk raises nothing.
+        row = self._stream_ok_round_row()
+        row['connections'] = {'commandStatus': 'ok', 'rows': 5, 'unparsed': []}
+        controls = self.session._retirement_controls(row, expected)
+        class4 = next(c for c in controls['classes'] if c['class'] == 'FORWARDING_MISLABELED')
+        self.assertEqual(class4['status'], 'NOT_APPLICABLE', f'fix-r29 real verdict: {class4}')
+        self.assertIn('unobservable', class4['reason'])
 
     def _fake_baseline(self, root, break_route=False, drop_listener=False):
         """Synthetic baseline whose parse reproduces the real 13/4 entry set."""
@@ -4140,6 +5719,577 @@ class RetirementScoring(unittest.TestCase):
             self.assertEqual(ungated['gated'], [])
             self.assertIn('/feishu/webhook', ungated['unhit'])
             self.assertEqual(ungated['status'], 'BLOCKED')
+            # #1588 r1 §1: a round that recorded no runtime shape cannot prove
+            # the credential gate either — that reads as "gate does not hold",
+            # never as a TypeError out of the inventory path.
+            no_runtime = {key: value for key, value in row.items() if key != 'runtime'}
+            unproven = self.session._retirement_entry_inventory(baseline, no_runtime)
+            self.assertEqual(unproven['gated'], [])
+            self.assertIn('/feishu/webhook', unproven['unhit'])
+            self.assertEqual(unproven['status'], 'BLOCKED')
+
+
+def _fake_observable_network_verdict(connections):
+    # fix-r29 test stand-in (registered in the fixture's NON_AGGREGATION_POINTS,
+    # not a batch summary): an observable verdict for a sample the real
+    # ``_retirement_network_verdict`` can never judge observable — a truthy
+    # non-list ``rows`` is the empty sample.  It stands in only so the
+    # class-4 mutation's own read can be pinned to ``_retirement_list_rows``
+    # instead of raising TypeError out of the controls; the status it returns
+    # is the fake's own, never a batch aggregation.
+    # fix-r31 (DS simplify#1 P2): the stand-in reads through the one real
+    # normalization instead of an inline twin, so the pinned read cannot
+    # drift from ``_retirement_list_rows``.
+    rows = connections.get('rows')
+    rows = _load('session_domain', common.SCRIPT / 'session_domain.py')._retirement_list_rows(rows)
+    undeclared = [row['peer'] for row in rows if isinstance(row, dict)]
+    return {'rule': 'NETWORK_FALLBACK', 'undeclared': undeclared,
+            'unparsed': [], 'observable': True,
+            'status': 'FAIL' if undeclared else 'PASS'}
+
+
+# fix-r31 (r31 structural round — the coordinator's fallback order ②: one
+# structural round closes the comparison-semantics collapse channel as a
+# family instead of hole-by-hole): every numeric/boolean-fold-capable
+# comparison site in the three frozen gateway-parity documents is either
+# behind a real-type gate (same_json / ``type(x) is int`` / a realness rule)
+# or is registered below with the reason its domain cannot carry the fold.
+# The AST sweep (``_comparison_family_sites``) and the registry must agree
+# exactly in both directions:
+#   * a NEW site appears when someone reintroduces a bare ``==``/``<`` on a
+#     document read (or reverts a same_json gate back to ``==``) — the test
+#     goes red until the site is either gated or registered with a reason;
+#   * a STALE entry appears when a registered site moves, is renamed or is
+#     itself gated — the test goes red until the ledger is updated on
+#     purpose.  The ledger is the guarantee-scope boundary the PR body
+#     states: comparisons outside this family definition (string domains,
+#     apparatus-internal constructions the sweep already excludes) are the
+#     "enumerated face" the r31 scope-narrowing order declares.
+_COMPARISON_POINT_DOCUMENTS = ('session_domain.py', 'native_evidence.py', 'compare.py')
+
+# The family definition is the guarantee boundary.  DOC_NAMES names every
+# variable that may hold an external document (witness JSON, footer, manifest,
+# launch doc); the one-level assignment tracker adds names assigned directly
+# from a loader call or a display literal construction.  A comparison site
+# is in the family when one operand reads such a name and the other operand
+# is a document read, a document construction or a numeric expression.
+_COMPARISON_DOC_NAMES = {
+    'evidence', 'contract', 'observer', 'complete', 'run', 'witness', 'launch',
+    'processes', 'row', 'rows', 'frame', 'binding', 'case', 'cases', 'controls',
+    'oracle', 'capture', 'launch_doc', 'evidence_doc', 'checked', 'replay',
+    'ledger', 'drift', 'profile', 'capsule', 'report', 'result', 'results',
+    'entry', 'opens', 'events', 'calls', 'connections', 'census', 'census_rows',
+    'declared', 'round_row', 'mutated', 'folder', 'rel', 'value', 'key',
+    'http', 'quirks', 'chunks', 'measured', 'manifest', 'registration',
+    'observations', 'rounds', 'outcomes', 'sources', 'driver', 'expectation',
+    'expectations', 'submitted', 'received', 'finals', 'sends', 'responses',
+    'final_events', 'actual_pids', 'by_pid', 'live', 'started', 'exited',
+    # fix-r32 (anthropic sibling#2): the audit_native identity walk reads
+    # through these locals — without them the contract-identity compares
+    # were invisible to the family sweep.
+    'process', 'allowed', 'expected_parent', 'p',
+    # fix-r33 (DS sibling#3/#4): read_results is a helper-returned
+    # document view (response_map walks frames) and registry is a
+    # subscripted document field — neither a loader call nor a display
+    # literal, so the assignment tracker could not see them and their
+    # comparisons stayed outside the family.
+    'read_results', 'registry',
+    # fix-r35 (DS r34 sibling#1/#2): `record` is a comprehension loop
+    # variable over runs.get('records') (native_evidence) and `writes` is
+    # the same response_map view as read_results (compare) — helper
+    # returns and comprehension targets stay invisible to the tracker.
+    'record', 'writes',
+    # fix-r36 (DS r35 sibling#2): `reconnect` is the same response_map
+    # view as read_results/writes (compare.py:458) — its only compare is
+    # an `is not True/False` gate today, but the name rides along with
+    # the same class of helper return.
+    'reconnect',
+}
+_COMPARISON_DOC_LOADERS = {'load', 'read', 'json_loads'}
+
+
+def _comparison_doc_construction(node):
+    import ast
+
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name) and (
+                node.func.id in _COMPARISON_DOC_LOADERS or node.func.id == 'load'):
+            return True
+        if isinstance(node.func, ast.Attribute) and node.func.attr == 'loads':
+            return True
+        # fix-r32 (MM boundary#2 + concurrency#1, two lineages, probe-verified
+        # — probe-r32-family.out): a ``.get()`` chain reads out of a
+        # container, so the local it feeds carries (possibly) document
+        # data — ``exit_code = run.get(...).get('exitCode')`` stayed
+        # untracked and its ``!= 0`` compare was invisible to the ledger.
+        if isinstance(node.func, ast.Attribute) and node.func.attr == 'get':
+            return True
+    # fix-r34 (DS sibling#2): a tuple display carries document data just as
+    # a list display does — ``(record.get('projectKey'), ...) == identity``
+    # stayed outside the family because no walker recognised the shape.
+    return isinstance(node, (ast.Dict, ast.List, ast.Set, ast.Tuple,
+                             ast.ListComp, ast.SetComp, ast.DictComp,
+                             ast.GeneratorExp))
+
+
+def _comparison_doc_read(node, constructed):
+    import ast
+
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+            and node.func.attr == 'get':
+        return _comparison_doc_read(node.func.value, constructed) \
+            or _comparison_doc_base(node.func.value, constructed)
+    if isinstance(node, ast.Subscript):
+        return _comparison_doc_read(node.value, constructed) \
+            or _comparison_doc_base(node.value, constructed)
+    if isinstance(node, ast.Attribute):
+        return _comparison_doc_read(node.value, constructed) \
+            or _comparison_doc_base(node.value, constructed)
+    # fix-r32 (MM boundary#2 + concurrency#1, two lineages, probe-verified
+    # — probe-r32-family.out): arithmetic and negation over document
+    # reads are still document reads — the elapsedMs subtraction
+    # ``chunks[-1]['elapsedMs'] - chunks[0]['elapsedMs'] < 300`` fell out
+    # of the family because a BinOp left the reader's reach, and its
+    # gate with it.  A ``type(...)`` call over a document read counts as
+    # the gate's document side (fix-r32 MM boundary#3: deleting a type
+    # gate removes its site and the ledger reports it stale).
+    if isinstance(node, ast.BinOp):
+        return _comparison_doc_read(node.left, constructed) \
+            or _comparison_doc_read(node.right, constructed)
+    if isinstance(node, ast.UnaryOp):
+        return _comparison_doc_read(node.operand, constructed)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+            and node.func.id == 'type':
+        return any(_comparison_doc_read(argument, constructed)
+                  for argument in node.args)
+    # fix-r33 (DS sibling#2, probe-r33/folds.py): a comprehension reads
+    # the document through its generators and carries document data out
+    # through its element — ``[row.get('status') for row in http] !=
+    # expected`` fell out of the family because a ListComp is neither a
+    # tracked name nor a shape the reader walked, and its gate with it.
+    if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+        return (_comparison_doc_read(node.elt, constructed)
+                or any(_comparison_doc_read(generator.iter, constructed)
+                       or any(_comparison_doc_read(test, constructed)
+                              for test in generator.ifs)
+                       for generator in node.generators))
+    if isinstance(node, ast.DictComp):
+        return (_comparison_doc_read(node.key, constructed)
+                or _comparison_doc_read(node.value, constructed)
+                or any(_comparison_doc_read(generator.iter, constructed)
+                       or any(_comparison_doc_read(test, constructed)
+                              for test in generator.ifs)
+                       for generator in node.generators))
+    # fix-r34 (DS sibling#2): a tuple display reads the document through
+    # its elements — the pair judgment could not see either side of a
+    # ``(a.get('x'), b.get('y')) == (...)`` equality, fold or not.
+    # fix-r35 (DS r34 sibling#1): the same holds for list/dict/set
+    # displays — the r34 tuple branch alone left the *referenced*
+    # native_evidence site (a list display over `record`) outside the
+    # family while the bite probe used a DOC_NAMES spelling (`row`).
+    if isinstance(node, (ast.Tuple, ast.List, ast.Dict, ast.Set)):
+        elements = list(node.elts) if not isinstance(node, ast.Dict) \
+            else list(node.keys) + list(node.values)
+        # fix-r36 (DS r35 boundary#1): ``*``-unpacked elements read the
+        # document through their inner value — Dict ``**`` lands in
+        # ``values`` and was already covered; list/tuple/set ``*`` was not.
+        return any(_comparison_doc_read(
+                       element.value if isinstance(element, ast.Starred) else element,
+                       constructed)
+                   for element in elements if element is not None)
+    # fix-r35 (DS r34 sibling#2): ``json.loads(<doc read>)`` (and the
+    # Name loaders) *produces* an external document — reading through it
+    # is a document read, not only a construction on the literal side.
+    if isinstance(node, ast.Call) and (
+            (isinstance(node.func, ast.Attribute) and node.func.attr == 'loads')
+            or (isinstance(node.func, ast.Name)
+                and node.func.id in _COMPARISON_DOC_LOADERS)):
+        return True
+    return _comparison_doc_base(node, constructed)
+
+
+def _comparison_doc_base(node, constructed):
+    import ast
+
+    return isinstance(node, ast.Name) and (
+        node.id in _COMPARISON_DOC_NAMES or node.id in constructed)
+
+
+def _comparison_numeric_expr(node):
+    import ast
+
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) \
+            and not isinstance(node.value, bool):
+        return True
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name) and node.func.id == 'len':
+            return True
+        if isinstance(node.func, ast.Attribute) \
+                and node.func.attr in ('bit_length', 'count'):
+            return True
+        return any(_comparison_numeric_expr(argument) for argument in node.args)
+    if isinstance(node, ast.BinOp):
+        return _comparison_numeric_expr(node.left) or _comparison_numeric_expr(node.right)
+    if isinstance(node, ast.UnaryOp):
+        return _comparison_numeric_expr(node.operand)
+    return False
+
+
+def _comparison_family_sites():
+    """Every fold-capable Compare site in the three frozen documents."""
+    import ast
+
+    sites = set()
+    for name in _COMPARISON_POINT_DOCUMENTS:
+        src = (common.SCRIPT / name).read_text()
+        tree = ast.parse(src)
+        parents, constructed = {}, set()
+        stack = [(tree, [])]
+        while stack:
+            node, chain = stack.pop()
+            parents[node] = chain
+            for child in ast.iter_child_nodes(node):
+                stack.append((child, chain + [node]))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) \
+                            and _comparison_doc_construction(node.value):
+                        constructed.add(target.id)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Compare):
+                continue
+            ops = {ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE}
+            has_value_op = any(isinstance(op, tuple(ops)) for op in node.ops)
+            # fix-r32 (MM boundary#3, probe-verified — probe-r32-family.out):
+            # an is/is-not comparison whose operand is ``type(<document
+            # read>)`` is a type gate, and a gate is a site in its own
+            # right — deleting the gate (leaving the == value compare in
+            # place) removes this site and the ledger reports it stale,
+            # so the registered "a real-int gate precedes" reasons become
+            # machine-checked for the type-gate spelling.
+            gate_only = all(isinstance(op, (ast.Is, ast.IsNot))
+                            for op in node.ops)
+            if not has_value_op and not gate_only:
+                continue
+            operands = [node.left] + node.comparators
+            doc_sides = [_comparison_doc_read(operand, constructed)
+                         for operand in operands]
+            if not any(doc_sides):
+                continue
+            if gate_only and not has_value_op:
+                if not any(isinstance(operand, ast.Call)
+                           and isinstance(operand.func, ast.Name)
+                           and operand.func.id == 'type'
+                           and any(_comparison_doc_read(argument, constructed)
+                                   for argument in operand.args)
+                           for operand in operands):
+                    continue
+            # fix-r33 (DS sibling#1, probe-r33/folds.py): the family
+            # definition says "the other operand is a document read, a
+            # document construction or a numeric expression" — but the
+            # pair judgment only ever asked read/numeric, so a literal
+            # construction operand (``registry == {'applicable': False}``)
+            # kept the site out of the family and the "closed" ledger
+            # stayed green over the hole.
+            elif not any(doc_sides[i] and (doc_sides[j]
+                                           or _comparison_numeric_expr(operands[j])
+                                           or _comparison_doc_construction(operands[j]))
+                         for i in range(len(operands)) for j in range(len(operands)) if i != j):
+                continue
+            snippet = ast.get_source_segment(src, node) or '?'
+            snippet = ' '.join(snippet.split())
+            if len(snippet) > 140:
+                snippet = snippet[:137] + '...'
+            function = '<module>'
+            for ancestor in reversed(parents[node]):
+                if isinstance(ancestor, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    function = ancestor.name
+                    break
+            sites.add((name, function, node.lineno, snippet))
+    return sites
+
+
+# (document, function, line, snippet, kind, reason) — kind is 'GATE' (a
+# real-type gate guards the comparison) or 'EXEMPT' (the domain cannot
+# carry a boolean/float fold; the reason says why).  Line and snippet both
+# anchor each entry: a moved site or a same-line drift turns the ledger red.
+_COMPARISON_POINT_REGISTRY = (
+    ('session_domain.py', 'validate_calibration', 1141, "data['cell'] == cell['name']",
+     'EXEMPT', 'string domain: cell names are identity strings on both sides'),
+    ('session_domain.py', 'validate_calibration', 1145, "type(observation.get('repetition')) is int",
+     'GATE', 'fix-r32: this IS the gate body — deleting it reopens the bool/float repetition fold'),
+    ('session_domain.py', 'validate_calibration', 1163, "type(manifest['totalMeasurements']) is int",
+     'GATE', 'fix-r32: this IS the gate body for the totalMeasurements =='),
+    ('session_domain.py', 'validate_calibration', 1164,
+     "manifest['totalMeasurements'] == len(observations)",
+     'GATE', 'fix-r31: a real-int gate (type is int) precedes the =='),
+    ('session_domain.py', 'validate_calibration', 1182, "launch.get('exitCode') == 0",
+     'GATE', 'fix-r31: a real-int gate precedes the =='),
+    ('session_domain.py', 'validate_calibration', 1182, "type(launch.get('exitCode')) is int",
+     'GATE', 'fix-r32: this IS the gate body for the launch exitCode =='),
+    ('session_domain.py', 'audit_native', 1261, "process['ppid'] == expected_parent",
+     'GATE', '_retirement_real_pid precedes on both sides (fix-r8/r31)'),
+    ('session_domain.py', 'audit_native', 1284, 'started == exited == set(actual_pids)',
+     'GATE', 'operands gated upstream: fix-r8 real-pid census + fix-r29 event-pid type gates'),
+    ('session_domain.py', 'audit_native', 1313,
+     "observer['connections'] == len({r['connection'] for r in observer['rows']})",
+     'GATE', 'fix-r30: _retirement_real_count precedes on both sides'),
+    ('session_domain.py', 'audit_native', 1314,
+     "observer['connections'] == contract['connections']",
+     'GATE', 'fix-r30: _retirement_real_count precedes on both sides'),
+    ('session_domain.py', 'audit_native', 1340, "type(binding.get('generation')) is int",
+     'GATE', 'fix-r32: this IS the gate body for the binding generation >='),
+    ('session_domain.py', 'audit_native', 1341, "binding['generation'] >= 1",
+     'GATE', 'type is int precedes inside the same condition'),
+    ('session_domain.py', '_load_native_artifacts', 1455, 'named == expected',
+     'GATE', 'isinstance str gate precedes'),
+    ('session_domain.py', '_retirement_census', 1780, 'result.returncode == 0',
+     'EXEMPT', 'subprocess returncode is always a plain int'),
+    ('session_domain.py', '_retirement_real_pid', 1843, '0 < value <= 2 ** 31 - 1',
+     'GATE', 'this IS the realness gate body (bool excluded before the comparison)'),
+    ('session_domain.py', '_retirement_real_count', 1857, 'type(value) is int',
+     'GATE', 'fix-r32: this IS the gate body — deleting it reopens the count fold'),
+    ('session_domain.py', '_retirement_real_count', 1857, 'value >= 0',
+     'GATE', 'this IS the realness gate body (type is int precedes)'),
+    ('session_domain.py', '_retirement_real_port', 1874, '0 < value <= 65535',
+     'GATE', 'this IS the realness gate body (bool excluded before the comparison)'),
+    ('session_domain.py', '_retirement_connections', 2041, 'result.returncode != 0',
+     'EXEMPT', 'subprocess returncode is always a plain int'),
+    ('session_domain.py', '_retirement_listener_verdict', 2144, 'addresses != expected',
+     'EXEMPT', 'string domain: only string addresses can equal the constructed endpoint list'),
+    ('session_domain.py', 'score_retirement_round', 2281, 'driver_exit == 0',
+     'GATE', 'fix-r3 shape guard precedes in the same condition (isinstance int, bool excluded)'),
+    ('session_domain.py', 'score_retirement_round', 2387, 'events.get(identifier, 0) < 1',
+     'EXEMPT', "events is the scorer's own int-valued counter over wire frames"),
+    ('session_domain.py', '_retirement_strip_wire', 2415, "frame.get('method') == method",
+     'EXEMPT', 'string domain: the method parameter is an internally built string'),
+    ('session_domain.py', '_retirement_strip_receive', 2434, "frame.get('method') == method",
+     'EXEMPT', 'string domain: the method parameter is an internally built string'),
+    ('session_domain.py', '_retirement_controls', 2650, "mutated.get('outcomes') == outcomes",
+     'EXEMPT', 'apparatus-compared own constructions; a fold only fails the control harder'),
+    ('session_domain.py', '_retirement_controls', 2792, "frame.get('id') == identifier",
+     'EXEMPT', 'string domain: identifier is an internally built string (fix-r4 usable-frame-id gate precedes)'),
+    ('session_domain.py', '_retirement_entry_inventory', 2944, "100 <= probe.get('status') <= 599",
+     'GATE', 'isinstance int non-bool gate precedes in the same ternary (fix-r9)'),
+    ('session_domain.py', 'ready', 3193, 'response.status == 200',
+     'EXEMPT', 'urllib HTTPResponse.status is always a plain int (stdlib, not a document)'),
+    ('session_domain.py', '_retirement_baseline_revision', 3265, 'result.returncode == 0',
+     'EXEMPT', 'subprocess returncode is always a plain int'),
+    ('session_domain.py', 'main', 3588, "report['frozen']['exitCode'] != 0",
+     'EXEMPT', 'apparatus-produced report field (frozen-check exit code)'),
+    ('session_domain.py', 'main', 3604, "audit['exitCode'] == 0",
+     'EXEMPT', 'apparatus-produced audit field (launcher exit code)'),
+    ('session_domain.py', 'main', 3652, "report['frozen']['exitCode'] != 0",
+     'EXEMPT', 'apparatus-produced report field (frozen-check exit code)'),
+    ('native_evidence.py', 'session_windows', 427, "type(entry.get('pid')) is int",
+     'GATE', 'fix-r32: this IS the gate body for the pid reads (fix-r30 family)'),
+    ('native_evidence.py', 'session_windows', 428,
+     "0 <= entry['afterExecs'] <= len(processes)",
+     'GATE', 'type is int precedes inside the same condition (fix-r30)'),
+    ('native_evidence.py', 'session_windows', 428, "type(entry.get('afterExecs')) is int",
+     'GATE', 'fix-r32: this IS the gate body for the afterExecs bound'),
+    ('native_evidence.py', 'session_windows', 440, 'windows == [0] + [1] * len(cases)',
+     'EXEMPT', 'windows is sum()-built over role tests, always plain ints'),
+    ('native_evidence.py', 'session_chain', 647, "type(frame.get('seq')) is int",
+     'GATE', 'fix-r32: this IS the gate body for the frame seq =='),
+    ('native_evidence.py', 'session_chain', 648, "frame['seq'] == len(received[request_id])",
+     'GATE', 'type is int precedes inside the same condition'),
+    ('native_evidence.py', 'session_chain', 648, "type(frame.get('final')) is bool",
+     'GATE', 'fix-r32: this IS the gate body for the final flag'),
+    ('compare.py', 'wire_frame', 270, "type(row['wire']['opcode']) is not int",
+     'GATE', 'fix-r32 (DS sibling#3): the independent real-int gate; the same_json metadata check subsumes the value'),
+    ('compare.py', 'validate', 326, 'exit_code != 0',
+     'GATE', 'fix-r31: a real-int gate precedes the !='),
+    ('compare.py', 'validate', 326, 'type(exit_code) is not int',
+     'GATE', 'fix-r32: this IS the gate body for the exitCode != 0'),
+    ('compare.py', 'validate', 346, 'records != len(rows)',
+     'GATE', 'fix-r31: a real-int gate precedes the !='),
+    ('compare.py', 'validate', 346, 'type(records) is not int',
+     'GATE', 'fix-r32: this IS the gate body for the records !='),
+    ('compare.py', 'validate', 350, 'connection_count < 0',
+     'GATE', 'fix-r31: a real-int gate precedes in the same condition'),
+    ('compare.py', 'validate', 350, 'type(connection_count) is not int',
+     'GATE', 'fix-r32: this IS the gate body for the connection count reads'),
+    ('compare.py', 'validate', 351, 'connection_count > len(rows)',
+     'GATE', 'fix-r32: the real-int gate precedes; every connection owns at least one row, so an oversized count is an immediate G2 mismatch (and bounds the set(range) materialisation)'),
+    ('compare.py', 'validate', 352, 'connections != set(range(1, connection_count + 1))',
+     'GATE', 'fix-r31: a real-int gate precedes the comparison'),
+    ('compare.py', 'validate', 356, "type(row.get('seq')) is not int",
+     'GATE', 'fix-r32: this IS the gate body for the recorder seq'),
+    ('compare.py', 'validate', 358, "type(row.get('connection')) is not int",
+     'GATE', 'fix-r32: this IS the row gate body for the connection field'),
+    ('compare.py', 'validate', 358, "row['connection'] < 1",
+     'GATE', 'fix-r31 row gate: type is int precedes in the same condition'),
+    ('compare.py', 'validate', 372, "row['connection'] != 4",
+     'GATE', 'fix-r31 row gate precedes the auth special case'),
+    ('compare.py', 'validate', 380, "binding['generation'] < 1",
+     'GATE', 'type is int precedes inside the same condition'),
+    ('compare.py', 'validate', 380, "type(binding.get('generation')) is not int",
+     'GATE', 'fix-r32: this IS the gate body for the hello binding'),
+    ('compare.py', 'validate', 392, "type(frame.get('final')) is not bool",
+     'GATE', 'fix-r32: this IS the gate body for the stream final flag'),
+    ('compare.py', 'validate', 406, "frame['seq'] != expected",
+     'GATE', 'type is int precedes inside the same condition'),
+    ('compare.py', 'validate', 406, "type(frame.get('seq')) is not int",
+     'GATE', 'fix-r32: this IS the gate body for the event seq'),
+    ('compare.py', 'validate', 525, "body != row['body']",
+     'EXEMPT', 'string domain: decoded UTF-8 chunk text vs recorded body'),
+    ('compare.py', 'validate', 553, "chunks[-1]['elapsedMs'] - chunks[0]['elapsedMs'] < 300",
+     'GATE', 'fix-r31 real-number gate + fix-r32 isfinite gate precede in the same condition'),
+    ('compare.py', 'validate', 563, "row['connection'] == 4",
+     'GATE', 'quirks rows already passed the fix-r31 row gate above'),
+    # fix-r33 (r33 structural closure - DS sibling#1/#2, probe-r33/folds.py):
+    # the pair judgment now accepts a document-construction operand and the
+    # reader walks comprehensions, so the sites below entered the family.
+    ('compare.py', '_stream_elapsed_real', 242, 'type(value) is int',
+     'GATE', 'fix-r33: this IS the real-int arm of the finiteness gate body'),
+    ('compare.py', '_stream_elapsed_real', 243, '-2**53 <= value <= 2**53',
+     'GATE', 'fix-r33: magnitude arm - a legal-JSON int outside +-2**53 is not a millisecond anchor (math.isfinite would OverflowError)'),
+    ('compare.py', '_stream_elapsed_real', 244, 'type(value) is float',
+     'GATE', 'fix-r33: float arm of the gate body - bool is excluded, isfinite applies here only'),
+    ('compare.py', 'validate', 421, 'auth != [4001, 4001, 4003, 4002, 1000]',
+     'GATE', 'fix-r33: the any(type is int) real-int gate precedes in the same condition'),
+    ('compare.py', 'validate', 463, "item.get('requestId') == value",
+     'EXEMPT', 'string domain: elicitation request ids are identity strings'),
+    ('compare.py', 'validate', 499, 'type(entry_count) is not int',
+     'GATE', 'fix-r33: this IS the gate body for the manifest entryCount'),
+    ('compare.py', 'validate', 499, 'entry_count < 1',
+     'GATE', 'fix-r33: the real-int gate precedes in the same condition'),
+    ('compare.py', 'validate', 520, "type(row.get('status')) is not int",
+     'GATE', 'fix-r33: this IS the gate body for the http status list'),
+    ('compare.py', 'validate', 521, "[row.get('status') for row in http] != expected",
+     'GATE', 'fix-r33: the real-int gate precedes in the same condition'),
+    ('compare.py', 'validate', 557, "[row.get('kind') for row in quirks] != ['rsv', 'continuation', 'client-close', 'unmasked']",
+     'EXEMPT', 'string domain: quirk kinds are identity strings'),
+    ('compare.py', 'validate', 587, "type(row.get('seq')) is not int",
+     'GATE', 'fix-r33: the upstream.jsonl seq gate - the frames.jsonl twin is registered at 356'),
+    ('native_evidence.py', 'session_profile', 385, "contract.get('externalEndpoints') == [endpoint]",
+     'EXEMPT', 'string domain: endpoint urls'),
+    ('native_evidence.py', 'session_profile', 386, "contract.get('capabilities') == {'provider': 'loopback-mock', 'tools': []}",
+     'EXEMPT', 'string domain: provider name and tool list'),
+    ('native_evidence.py', 'project_envelopes', 603, "envelope.get('id') == request_id",
+     'EXEMPT', 'string domain: request ids'),
+    ('native_evidence.py', 'session_chain', 621, "[row.get('case') for row in rows] == cases",
+     'EXEMPT', 'string domain: case names'),
+    ('session_domain.py', 'validate_expectations', 1019, "document.get('phases') == ['model', 'tool']",
+     'EXEMPT', 'string domain: phase names'),
+    ('session_domain.py', 'validate_expectations', 1022, "[row.get('case') if isinstance(row, dict) else None for row in rows] == contract['cases']",
+     'EXEMPT', 'string domain: case names and None'),
+    ('session_domain.py', 'validate_expectations', 1082, "registry['events'] == expected_events",
+     'EXEMPT', 'string domain: registry event labels'),
+    ('session_domain.py', 'calibration_coverage', 1104, "registration['phases'] == ['model', 'tool']",
+     'EXEMPT', 'string domain: phase names'),
+    ('session_domain.py', 'calibration_coverage', 1105, "type(registration['repeats']) is int",
+     'GATE', 'fix-r33: this IS the gate body for the registration repeats =='),
+    ('session_domain.py', 'validate_calibration', 1125, "type(manifest['repeats']) is int",
+     'GATE', 'fix-r33: this IS the gate body for the manifest repeats =='),
+    ('session_domain.py', 'validate_calibration', 1128, "{row['path']: row['sha256'] for row in manifest['fixtureFiles']} == fixture_hashes",
+     'EXEMPT', 'string domain: paths and sha256 hex digests'),
+    ('session_domain.py', 'validate_calibration', 1142, "[o['id'] for o in rows] == expected_ids",
+     'EXEMPT', 'string domain: observation ids'),
+    ('compare.py', 'validate', 487, "type(read_results.get('supported_agents', {}).get('agents')) is list",
+     'GATE', 'fix-r34 DS r33b sibling#3: catalog agents is a real list — '
+     'true/1/dict folded through the truthiness operand of the same oracle'),
+    ('compare.py', 'validate', 488, "type(read_results.get('model_catalog_list', {}).get('items')) is list",
+     'GATE', 'fix-r34 DS r33b sibling#3: catalog items is a real list — same truthiness fold'),
+    ('compare.py', 'validate', 498, "type(read_results.get('native_archive_entries', {}).get('entries')) is list",
+     'GATE', 'fix-r34 DS r33b sibling#3: native archive entries is a real list on '
+     'the same statement as the entryCount real-int gate'),
+    ('session_domain.py', 'validate_expectations', 1018, "type(document.get('repeats')) is int",
+     'GATE', 'fix-r34 DS r33b sibling#1: the third repeats comparison (header) — '
+     '5.0/True folded through the bare =='),
+    ('session_domain.py', 'process_tree', 293, 'children <= owned',
+     'GATE', 'fix-r34 DS r33b sibling#2: set of pids from int() parsing of '
+     '/proc text — a folded pid cannot survive the int() cast'),
+    ('session_domain.py', '_retirement_controls', 2620, "{_retirement_hashable(_retirement_census_pid(row)) for row in verdict.get('undeclared') or []} == undeclared_before | {_retirement_hashab...",
+     'GATE', 'fix-r34 DS r33b sibling#2: both sides pass the '
+     '_retirement_hashable projection — bool/float walk the repr path '
+     '(fix-r8 probe-verified), so set equality cannot fold types'),
+    ('session_domain.py', '_retirement_controls', 2720, "{_retirement_hashable(peer) for peer in verdict.get('undeclared') or []} == undeclared_before | {_retirement_hashable(injected_peer)}",
+     'GATE', 'fix-r34 DS r33b sibling#2: both sides pass the '
+     '_retirement_hashable projection (bool/float walk the repr path), '
+     'so set equality cannot fold types'),
+    ('compare.py', 'validate', 475, "type(writes.get('cron_create', {}).get('task', {}).get('taskId')) is not str",
+     'GATE', 'fix-r35 DS r34 sibling#2: the cron taskId gate — writes is '
+     'the same response_map view as read_results; true/1 folded through '
+     'the truthiness operand of the same oracle'),
+    ('compare.py', 'validate', 533, "type(json.loads(http[2]['body']).get('projects')) is list",
+     'GATE', 'fix-r35 DS r34 sibling#2: the projects gate — json.loads '
+     'produces a document, so its reads count (not only constructions)'),
+    ('session_domain.py', '_retirement_round', 3215, "addresses == [f'127.0.0.1:{gateway_port}']",
+     'EXEMPT', 'string domain: listen addresses'),
+)
+
+
+class ComparisonPointLedger(unittest.TestCase):
+    """fix-r31: the comparison-point ledger matches the family AST sweep."""
+
+    def test_registered_comparison_points_match_the_ast_family_sweep(self):
+        # fix-r32 (MM concurrency#2): the sweep reads the live frozen
+        # sources, and the negative-control batches rewrite those exact
+        # files in place (write_source_atomic) inside this same parity
+        # lease — an unlocked read can see mutant bytes mid-batch and
+        # either red on them or bless them.  The sweep holds the lease.
+        # fix-r33 (DS concurrency#2/boundary#4 + MM concurrency#1/#2 +
+        # MM boundary#2, four role hits across two lineages): the lock's
+        # 600s default wait is below every batch's legal lease hold.
+        # fix-r34 (DS r33b concurrency#1): the wait bound is the protocol
+        # bound itself, not any one fixture's budget.  Budgeted holders
+        # sit under it by construction, measured from their own
+        # acquisition (session-domain-cleanup 900s; same-json-surfaces
+        # 1800s incl. its reserve tail ≈2380s).  fix-r36 (DS r35
+        # concurrency#1, correcting the r35 wording against the
+        # implementation): a gateway-lineage holder is never taken over
+        # regardless of age — it publishes cleanupPending at acquisition
+        # and the #209 protection is age-independent (README:169
+        # 「预置标记的可用性代价」： MAX_AGE does not override it), so an
+        # unbudgeted
+        # holder (the native-witness batches) that outlives this waiter's
+        # deadline surfaces as TimeoutError for human-coordinated
+        # recovery, not a takeover.  fix-r36 (DS r35 concurrency#2): the
+        # residual false-red windows any fixed wait bound accepts are
+        # (a) a live cleanupPending holder past MAX_AGE and (b) a legal
+        # holder acquired after this waiter started whose remaining
+        # lease crosses this waiter's deadline (start skew) — the same
+        # residual every other waiter in the repo accepts.
+        with common.parity_lock(timeout=common.MAX_AGE):
+            sites = _comparison_family_sites()
+        keys = {(entry[0], entry[1], entry[2], entry[3])
+                for entry in _COMPARISON_POINT_REGISTRY}
+        self.assertEqual(len(keys), len(_COMPARISON_POINT_REGISTRY),
+                         'duplicate ledger entries')
+        self.assertEqual(
+            sorted(sites - keys), [],
+            'unregistered comparison sites in the frozen documents '
+            '(gate them or register them with a reason)')
+        self.assertEqual(
+            sorted(keys - sites), [],
+            'stale ledger entries (a registered site moved, was renamed '
+            'or was gated — update the ledger on purpose)')
+        self.assertTrue(all(entry[4] in ('GATE', 'EXEMPT')
+                            and entry[5] for entry in _COMPARISON_POINT_REGISTRY),
+                        'every ledger entry carries a kind and a reason')
+
+    def test_comparison_doc_read_walker_shapes(self):
+        # fix-r36 (DS r35 sibling#1): the display / loader walker teeth are
+        # committed tests, not only external _tmp probes — reverting the
+        # display branch, the Starred descent or the loader read branch
+        # turns this red even though no registered site depends on them
+        # today (the registered sites cover `writes` and `json.loads` via
+        # the sweep; these shapes are the defense-in-depth remainder).
+        import ast
+
+        def read_of(source):
+            return _comparison_doc_read(
+                ast.parse(source, mode='eval').body, set())
+
+        for source in ("[record.get('a'), record.get('b')]",
+                       "[*record]", "(*http,)", "{'k': record.get('a')}",
+                       "{*results}", "json.loads(http[2]['body'])"):
+            self.assertTrue(read_of(source), 'walker must read: ' + source)
+        for source in ('[a, b]', '(*plain,)', "{'k': plain}"):
+            self.assertFalse(read_of(source), 'walker must not read: ' + source)
 
 
 if __name__ == '__main__':
