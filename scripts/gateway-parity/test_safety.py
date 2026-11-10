@@ -5799,6 +5799,11 @@ _COMPARISON_DOC_NAMES = {
     # the same response_map view as read_results (compare) — helper
     # returns and comprehension targets stay invisible to the tracker.
     'record', 'writes',
+    # fix-r36 (DS r35 sibling#2): `reconnect` is the same response_map
+    # view as read_results/writes (compare.py:458) — its only compare is
+    # an `is not True/False` gate today, but the name rides along with
+    # the same class of helper return.
+    'reconnect',
 }
 _COMPARISON_DOC_LOADERS = {'load', 'read', 'json_loads'}
 
@@ -5885,8 +5890,13 @@ def _comparison_doc_read(node, constructed):
     if isinstance(node, (ast.Tuple, ast.List, ast.Dict, ast.Set)):
         elements = list(node.elts) if not isinstance(node, ast.Dict) \
             else list(node.keys) + list(node.values)
-        return any(_comparison_doc_read(element, constructed)
-                  for element in elements if element is not None)
+        # fix-r36 (DS r35 boundary#1): ``*``-unpacked elements read the
+        # document through their inner value — Dict ``**`` lands in
+        # ``values`` and was already covered; list/tuple/set ``*`` was not.
+        return any(_comparison_doc_read(
+                       element.value if isinstance(element, ast.Starred) else element,
+                       constructed)
+                   for element in elements if element is not None)
     # fix-r35 (DS r34 sibling#2): ``json.loads(<doc read>)`` (and the
     # Name loaders) *produces* an external document — reading through it
     # is a document read, not only a construction on the literal side.
@@ -6226,13 +6236,23 @@ class ComparisonPointLedger(unittest.TestCase):
         # 600s default wait is below every batch's legal lease hold.
         # fix-r34 (DS r33b concurrency#1): the wait bound is the protocol
         # bound itself, not any one fixture's budget.  Budgeted holders
-        # sit under it by construction (session-domain-cleanup 900s;
-        # same-json-surfaces 1800s incl. its reserve tail ≈2380s).  An
-        # unbudgeted holder (the native-witness batches) that crosses
-        # MAX_AGE is 'expired' under the protocol itself and this waiter
-        # takes it over rather than erroring; the only residual false-red
-        # window is a *live cleanupPending* holder past MAX_AGE, which is
-        # the same residual every other waiter in the repo accepts.
+        # sit under it by construction, measured from their own
+        # acquisition (session-domain-cleanup 900s; same-json-surfaces
+        # 1800s incl. its reserve tail ≈2380s).  fix-r36 (DS r35
+        # concurrency#1, correcting the r35 wording against the
+        # implementation): a gateway-lineage holder is never taken over
+        # regardless of age — it publishes cleanupPending at acquisition
+        # and the #209 protection is age-independent (README:169
+        # 「预置标记的可用性代价」： MAX_AGE does not override it), so an
+        # unbudgeted
+        # holder (the native-witness batches) that outlives this waiter's
+        # deadline surfaces as TimeoutError for human-coordinated
+        # recovery, not a takeover.  fix-r36 (DS r35 concurrency#2): the
+        # residual false-red windows any fixed wait bound accepts are
+        # (a) a live cleanupPending holder past MAX_AGE and (b) a legal
+        # holder acquired after this waiter started whose remaining
+        # lease crosses this waiter's deadline (start skew) — the same
+        # residual every other waiter in the repo accepts.
         with common.parity_lock(timeout=common.MAX_AGE):
             sites = _comparison_family_sites()
         keys = {(entry[0], entry[1], entry[2], entry[3])
@@ -6250,6 +6270,26 @@ class ComparisonPointLedger(unittest.TestCase):
         self.assertTrue(all(entry[4] in ('GATE', 'EXEMPT')
                             and entry[5] for entry in _COMPARISON_POINT_REGISTRY),
                         'every ledger entry carries a kind and a reason')
+
+    def test_comparison_doc_read_walker_shapes(self):
+        # fix-r36 (DS r35 sibling#1): the display / loader walker teeth are
+        # committed tests, not only external _tmp probes — reverting the
+        # display branch, the Starred descent or the loader read branch
+        # turns this red even though no registered site depends on them
+        # today (the registered sites cover `writes` and `json.loads` via
+        # the sweep; these shapes are the defense-in-depth remainder).
+        import ast
+
+        def read_of(source):
+            return _comparison_doc_read(
+                ast.parse(source, mode='eval').body, set())
+
+        for source in ("[record.get('a'), record.get('b')]",
+                       "[*record]", "(*http,)", "{'k': record.get('a')}",
+                       "{*results}", "json.loads(http[2]['body'])"):
+            self.assertTrue(read_of(source), 'walker must read: ' + source)
+        for source in ('[a, b]', '(*plain,)', "{'k': plain}"):
+            self.assertFalse(read_of(source), 'walker must not read: ' + source)
 
 
 if __name__ == '__main__':
