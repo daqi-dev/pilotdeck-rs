@@ -317,6 +317,13 @@ def main():
     # guards for the same reason.
     if '--check' in sys.argv[1:]:
         refuse('#1437 --check takes no arguments')
+    # #2572 fix-r3 (DS r3 boundary P2): the argv parsing is hand-rolled, so
+    # a mistyped first token that merely starts with a dash (`--chec`,
+    # `--check=1`) must refuse as an unrecognized flag instead of becoming
+    # the OUT directory of a full run. (The argparse siblings abbreviate
+    # `--chec` to `--check` by prefix, which is a legitimate `--check`.)
+    if sys.argv[1:] and sys.argv[1].startswith('-'):
+        refuse('#1437 unrecognized flag: ' + sys.argv[1])
     if len(sys.argv) < 2:
         raise SystemExit('usage: negative_controls.py --check | OUT [mutation ...]')
     selected_names = sys.argv[2:]

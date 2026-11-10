@@ -364,8 +364,20 @@ class TripleFixtureRosterGuard(unittest.TestCase):
         stubs = [patch.object(module, name, execution_reached)
                  for name in ('mutating_sources', 'run_owned', 'run_cases')
                  if hasattr(module, name)]
+        # #2572 fix-r3 (DS r3 P1): `patch.dict(..., clear=False)` (the default)
+        # only updates, so with a host shell that already exports
+        # CARGO_TARGET_DIR a `target=False` drive did not actually remove it
+        # and the order test could pass green for the wrong reason. The
+        # snapshot above is complete, so replacing the environment wholesale
+        # is the honest semantics. The stub list is also asserted: a fixture
+        # that renames all three execution entries would silently stop
+        # guarding the execution layer at all.
+        if not stubs:
+            raise AssertionError(
+                f'{module.__name__}: no execution entry (mutating_sources/'
+                f'run_owned/run_cases) found to stub; the guard went inert')
         with contextlib.ExitStack() as stack:
-            for entered in [patch.dict(os.environ, environment),
+            for entered in [patch.dict(os.environ, environment, clear=True),
                             patch.object(module, 'EXPECTED_NAMES', names),
                             *stubs,
                             patch('sys.argv',
@@ -466,6 +478,59 @@ class TripleFixtureRosterGuard(unittest.TestCase):
                 self.assertTrue(not out.exists(),
                                 f'{tag} a refusal must not claim the '
                                 'evidence directory')
+            # #2572 fix-r3 (DS r3 P2): the three-way disjunct above only pins
+            # `--check OUT`; a roster name or `--compile-only` after --check is
+            # the same swallowed-misuse shape and must refuse identically.
+            with self.subTest(directory=directory, extra='a roster name'):
+                module = load_named_entry(directory)
+                out = self.base / 'out'
+                code, out, _stdout, stderr = self.drive(
+                    module, ['--check', module.EXPECTED_NAMES[0]])
+                self.assertTrue(code == 2,
+                                f'{tag} --check with a mutation name must '
+                                f'refuse to start (2), got {code}')
+                self.assertTrue('--check' in stderr,
+                                f'{tag} the refusal must name the misuse: '
+                                f'{stderr!r}')
+                self.assertTrue(not out.exists(),
+                                f'{tag} a refusal must not claim the '
+                                'evidence directory')
+            with self.subTest(directory=directory, extra='--compile-only'):
+                module = load_named_entry(directory)
+                out = self.base / 'out'
+                code, out, _stdout, stderr = self.drive(
+                    module, ['--check', '--compile-only'])
+                self.assertTrue(code == 2,
+                                f'{tag} --check with --compile-only must '
+                                f'refuse to start (2), got {code}')
+                self.assertTrue('--check' in stderr,
+                                f'{tag} the refusal must name the misuse: '
+                                f'{stderr!r}')
+                self.assertTrue(not out.exists(),
+                                f'{tag} a refusal must not claim the '
+                                'evidence directory')
+            # #2572 fix-r3 (DS r3 boundary P2): issue-1437 parses argv by
+            # hand, so a mistyped first token that merely *starts* with a
+            # dash (`--chec`) used to fall into the run path and became an
+            # output directory; it must refuse as an unrecognized flag. The
+            # two argparse siblings abbreviate `--chec` to `--check`, which
+            # is a legitimate green `--check` (argparse prefix matching), so
+            # only issue-1437 is driven with the mistyped flag.
+            if directory == 'issue-1437-methods':
+                with self.subTest(directory=directory, extra='--chec'):
+                    module = load_named_entry(directory)
+                    out = self.base / 'out'
+                    code, out, _stdout, stderr = self.drive(
+                        module, ['--chec', str(out)])
+                    self.assertTrue(code == 2,
+                                    f'{tag} a mistyped flag must refuse to '
+                                    f'start (2), got {code}')
+                    self.assertTrue('--chec' in stderr,
+                                    f'{tag} the refusal must name the '
+                                    f'mistyped flag: {stderr!r}')
+                    self.assertTrue(not out.exists(),
+                                    f'{tag} a refusal must not claim the '
+                                    'evidence directory')
 
     def test_a_bad_name_refuses_before_the_source_guards(self):
         # #2572 fix-r2 (both review families): with every binding body
