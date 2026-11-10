@@ -3174,8 +3174,24 @@ over-approximation, honest spellings pinned by the clean twins); the
 keeps its pre-r49 target read and the dunder spellings
 (`operator.__setitem__` / `operator.__ior__`) stay outside the
 target-first decode of the mapping decoder (registered, kept for the
-audit-identical guarantee); `_dict_binding_keys`' origin union is
-file-wide by design (over-approximation consistent with the walk);
+audit-identical guarantee); the round-50 arbitration probes
+(`probe-r50c.log`, run after the round-50 commit) pinned the same
+residual on the `sys.modules` consumer side -- the dunder
+`operator.__ior__(sys.modules, ...)` / `operator.__setitem__(
+sys.modules, ...)` spellings drop the write entirely (the
+`_expr_is_sys_modules` gate fails on the `operator`-module target the
+pre-r49 read names, before anything records) and a starred
+`operator.ior(*_pair)` records nothing, both riding the registered
+statements above; the star-imported bare `ior(sys.modules, ...)`
+spelling joins them (the module-level star binds the name, the
+write-side decode misses it); and the file-wide union below holds only
+when the walk root is the module tree -- a consumer handing the
+enclosing function node as the tree (`_receiver_attribute_writes` into
+`_iterable_dict_keys`) misses the module layer's imports, which is the
+root cause the star-side false PASS rides -- all folded into the
+follow-up family; `_dict_binding_keys`' origin union is
+file-wide by design when the walk root is the module tree
+(over-approximation consistent with the walk);
 an outer display relaying a `+=`-grown container through a name alias
 misses the handle (pre-existing, probe-r49c).
 
