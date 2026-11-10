@@ -5562,3 +5562,8 @@ r55完整Gateway/CLI回归已结束：7845运行、7841通过、4失败、771跳
 ### 20261110-161550 UTC · Gateway 交接后继续（未收口）
 
 整合正本仍为 _build/wt-gateway-integration，HEAD231efbccb；root独占源码，3子代理在mbp2各自_tmp交付。r72 Windows内置第33技能/preview路径/Weixin fixture已通过fmt、strict clippy、4bin与153定向；格式回执待导入。上传9项真实负控在clean231全部KILLED且源码还原。clean2b9全回归7921PASS/2FAIL/773skipped，两个fixture已修但不外推新头总成绩。cb8 Linux clean231真实采集WITNESS_CAPTURED，尚未判正式suite。源码安装两代release与32技能真实消费在旧2b9通过，新的参数化fixture待复验。两轮写同文件已复现TS/Rust都覆盖v1备份的丢数据，native独占新版本候选已交待收；source-open安全缺口仍独立未关闭。MiniMax429、DS/GLM401、Anthropic无key的正式异谱系评审未通过，不等同Codex额度；两子代理403已恢复。下一步历史版本修复/真实重启回退、r72默认33模型与read_skill、Linux编译边界、安装fixture，再接FunASR原生消费者与正式验收。冻结判据不变；无本机构建，无迁移，无删旧树。前端另一车道保留cdc7候选与原统一树，接续信息见_tmp/20261110-frontend-cdc7-integration/gateway-handoff.md。 快照：`_tmp/20261110-gateway-integration/handoff-20261110-161550/`。
+
+
+### 2026-11-11 02:03 CST · 用户询问进度的现场核验（继续）
+
+r76 fmt/strict clippy/四bin及35历史定向通过；已落盘r72四生产宿主/sidecar组合的两组真实消费者对照均PASS，限定事件/工具/终态投影与冷读，非正式suite。r76两轮历史真实重启回退内容正确，采集provenance遗留TS启动文本须追加更正，原件保留。FunASR核心/装配与历史per-call consolidated候选均已落mbp2，尚未收编译。当前本地1a65aa4ad、Draft2786仍cdc7、固定main cc85，最新origin/main3378的配置/预约/关闭修复待批合；下一步稳定批提交与Draft同步、两个产品缺口和同头正式验收。完整说明见主仓 `_tmp/20261111-gateway-progress/progress.md`。

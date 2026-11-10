@@ -718,14 +718,28 @@ impl FileHistoryStore {
             return Ok(());
         }
         let clock = || self.now();
-        let result = create_backup(
-            &self.options.backup_dir,
-            self.secure_backup.as_ref(),
-            &abs_path,
-            1,
-            self.max_file_bytes(),
-            &clock,
-        )?;
+        let result = if let Some(secure) = &self.secure_backup {
+            let highest = state
+                .snapshots
+                .iter()
+                .filter_map(|snapshot| snapshot.backup(&abs_path))
+                .map(|backup| backup.version)
+                .max()
+                .unwrap_or(0);
+            let version = highest.checked_add(1).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "file-history version exhausted")
+            })?;
+            create_native_backup(secure, &abs_path, version, self.max_file_bytes(), &clock)?
+        } else {
+            create_backup(
+                &self.options.backup_dir,
+                None,
+                &abs_path,
+                1,
+                self.max_file_bytes(),
+                &clock,
+            )?
+        };
         if result.oversize {
             self.warn(format!(
                 "file-history: skipping backup for {abs_path} (size > {} bytes)",
@@ -798,14 +812,29 @@ impl FileHistoryStore {
                 continue;
             }
             let clock = || self.now();
-            let result = create_backup(
-                &self.options.backup_dir,
-                self.secure_backup.as_ref(),
-                &abs_path,
-                previous_version + 1,
-                self.max_file_bytes(),
-                &clock,
-            )?;
+            let result = if let Some(secure) = &self.secure_backup {
+                let highest = state
+                    .snapshots
+                    .iter()
+                    .filter_map(|item| item.backup(&abs_path))
+                    .map(|backup| backup.version)
+                    .max()
+                    .unwrap_or(0)
+                    .max(previous_version);
+                let version = highest.checked_add(1).ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "file-history version exhausted")
+                })?;
+                create_native_backup(secure, &abs_path, version, self.max_file_bytes(), &clock)?
+            } else {
+                create_backup(
+                    &self.options.backup_dir,
+                    None,
+                    &abs_path,
+                    previous_version + 1,
+                    self.max_file_bytes(),
+                    &clock,
+                )?
+            };
             if result.oversize {
                 self.warn(format!(
                     "file-history: skipping backup for {abs_path} (size > {} bytes)",
@@ -1232,6 +1261,114 @@ fn private_backup_error(path: &Path) -> FileHistoryError {
         ),
     )
     .into()
+}
+
+/// Reserve a distinct native backup without ever truncating a referenced or
+/// orphaned name. Existing transcript formats and generic TS-facing behavior
+/// remain unchanged.
+#[cfg(unix)]
+fn create_native_backup(
+    secure: &SecureBackup,
+    file_path: &str,
+    mut version: u64,
+    max_file_bytes: u64,
+    now: &dyn Fn() -> i64,
+) -> FileHistoryResult<BackupResult> {
+    use rustix::fs::{AtFlags, Mode, OFlags, fstat, openat, statat, unlinkat};
+    let metadata = match fs::metadata(file_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(null_backup(version, now(), false));
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if !metadata.is_file() {
+        return Ok(null_backup(version, now(), false));
+    }
+    if metadata.len() > max_file_bytes {
+        return Ok(null_backup(version, now(), true));
+    }
+    let mut source = fs::File::open(file_path)?;
+    let dir = secure.directory(true)?;
+    // Bound malicious/corrupt directories rather than iterating forever.
+    for _ in 0..10_000 {
+        let name = get_backup_file_name(file_path, version);
+        let fd = match openat(
+            &dir,
+            name.as_str(),
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o600),
+        ) {
+            Ok(fd) => fd,
+            Err(rustix::io::Errno::EXIST) => {
+                version = version.checked_add(1).ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "file-history version exhausted")
+                })?;
+                continue;
+            }
+            Err(error) => return Err(io::Error::from(error).into()),
+        };
+        let mut backup = fs::File::from(fd);
+        let identity = fstat(&backup).map_err(io::Error::from)?;
+        let result = (|| -> io::Result<u64> {
+            let copied = io::copy(
+                &mut (&mut source).take(max_file_bytes.saturating_add(1)),
+                &mut backup,
+            )?;
+            if copied > max_file_bytes {
+                return Ok(copied);
+            }
+            use std::os::unix::fs::PermissionsExt;
+            backup.set_permissions(fs::Permissions::from_mode(metadata_mode(&metadata) & 0o777))?;
+            Ok(copied)
+        })();
+        match result {
+            Ok(copied) if copied <= max_file_bytes => {
+                return Ok(BackupResult {
+                    backup: FileHistoryBackup {
+                        backup_file_name: BackupFileName::Named(name),
+                        version,
+                        backup_time_ms: now(),
+                        mode: Some(metadata_mode(&metadata)),
+                    },
+                    oversize: false,
+                });
+            }
+            other => {
+                // A same-UID replacement after this comparison remains part
+                // of the project descriptor threat-model boundary.
+                if let Ok(named) = statat(&dir, name.as_str(), AtFlags::SYMLINK_NOFOLLOW)
+                    && named.st_dev == identity.st_dev
+                    && named.st_ino == identity.st_ino
+                {
+                    let _ = unlinkat(&dir, name.as_str(), AtFlags::empty());
+                }
+                return match other {
+                    Ok(_) => Ok(null_backup(version, now(), true)),
+                    Err(error) => Err(error.into()),
+                };
+            }
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "file-history could not reserve a unique backup name",
+    )
+    .into())
+}
+#[cfg(not(unix))]
+fn create_native_backup(
+    _: &SecureBackup,
+    _: &str,
+    _: u64,
+    _: u64,
+    _: &dyn Fn() -> i64,
+) -> FileHistoryResult<BackupResult> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "secure file history is unavailable",
+    )
+    .into())
 }
 
 fn create_backup(
@@ -2156,6 +2293,94 @@ mod secure_backup_tests {
                 0o640
             );
         }
+    }
+
+    #[test]
+    fn native_versions_preserve_two_turns_across_replay_and_rewind() {
+        let temp = TempDir::new();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        let source = root.join("file");
+        fs::write(&source, b"original").unwrap();
+        let history = root.join("history");
+        let make_store = || {
+            FileHistoryStore::new(FileHistoryOptions::new(&history))
+                .with_trusted_root(fs::File::open(&root).unwrap(), PathBuf::from("history"))
+        };
+        let store = make_store();
+        let path = source.to_str().unwrap();
+        store.track_edit(path, "one").unwrap();
+        fs::write(&source, b"first").unwrap();
+        store.mark_edit_committed(path, "one").unwrap();
+        store.track_edit(path, "two").unwrap();
+        fs::write(&source, b"second").unwrap();
+        store.mark_edit_committed(path, "two").unwrap();
+        let before = store.state();
+        assert_eq!(before.snapshots.len(), 2);
+        assert_eq!(before.snapshots[0].tracked_file_backups[0].1.version, 1);
+        assert_eq!(before.snapshots[1].tracked_file_backups[0].1.version, 2);
+        let entries: Vec<_> = before
+            .snapshots
+            .iter()
+            .map(|snap| SnapshotRecordedEntry {
+                message_id: snap.message_id.clone(),
+                tracked_file_backups: snap
+                    .tracked_file_backups
+                    .iter()
+                    .map(|(path, backup)| {
+                        (
+                            path.clone(),
+                            RecordedBackup {
+                                backup_file_name: backup.backup_file_name.clone(),
+                                version: backup.version,
+                                backup_time_ms: backup.backup_time_ms,
+                                mode: backup.mode,
+                            },
+                        )
+                    })
+                    .collect(),
+                expected_file_states: snap.expected_file_states.clone(),
+                timestamp_ms: Some(snap.timestamp_ms),
+            })
+            .collect();
+        drop(store);
+        let resumed = make_store();
+        resumed.replay_from_transcript(&entries);
+        assert!(resumed.rewind("two").unwrap().conflicts.is_empty());
+        assert_eq!(fs::read(&source).unwrap(), b"first");
+        assert!(resumed.rewind("one").unwrap().conflicts.is_empty());
+        assert_eq!(fs::read(&source).unwrap(), b"original");
+    }
+
+    #[test]
+    fn native_versions_skip_orphans_and_keep_retained_backups_on_eviction() {
+        let temp = TempDir::new();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        let source = root.join("file");
+        let history = root.join("history");
+        fs::create_dir(&history).unwrap();
+        fs::write(&source, b"original").unwrap();
+        let mut options = FileHistoryOptions::new(&history);
+        options.max_snapshots = Some(2);
+        let store = FileHistoryStore::new(options)
+            .with_trusted_root(fs::File::open(&root).unwrap(), PathBuf::from("history"));
+        let path = source.to_str().unwrap();
+        store.track_edit(path, "one").unwrap();
+        fs::write(&source, b"first").unwrap();
+        store.track_edit(path, "two").unwrap();
+        fs::write(&source, b"second").unwrap();
+        let orphan = history.join(get_backup_file_name(path, 3));
+        fs::write(&orphan, b"do-not-replace").unwrap();
+        store.track_edit(path, "three").unwrap();
+        // Eviction belongs to explicit snapshot finalization, not track_edit.
+        store.make_snapshot("three").unwrap();
+        let state = store.state();
+        assert_eq!(state.snapshots.len(), 2);
+        assert_eq!(state.snapshots[0].message_id.as_deref(), Some("two"));
+        assert_eq!(state.snapshots[0].tracked_file_backups[0].1.version, 2);
+        assert_eq!(state.snapshots[1].tracked_file_backups[0].1.version, 4);
+        assert_eq!(fs::read(orphan).unwrap(), b"do-not-replace");
+        let retained = history.join(get_backup_file_name(path, 2));
+        assert_eq!(fs::read(retained).unwrap(), b"first");
     }
 
     #[test]
