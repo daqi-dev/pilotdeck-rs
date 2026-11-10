@@ -234,14 +234,15 @@ export async function httpProbe(port, pathName, { method, headers, timeoutMs = 3
  * 行尾空白、多值列表）。close 优先（RFC 7230 §6.1：close 出现即收尾不持久，
  * 即使同列表还有 keep-alive）。头缺失的语义不在本函数——由调用方结合
  * 「完整 HTTP/1.1 响应头」按 RFC 7230 §6.3 判隐式 keep-alive。
- * #2756 自 p16 内联收敛入 common（原 #2662 fix-r2/r3 形状逐字保留）。 */
-export function keepAliveToken(v) {
+ * #2756 自 p16 内联收敛入 common（原 #2662 fix-r2/r3 形状逐字保留）；
+ * fix-r1 起 p16 裸层改经 keepAlivePremise 共用，本函数外部用法归零、收回 private。 */
+function keepAliveToken(v) {
   const tokens = v.toLowerCase().split(",").map((t) => t.trim());
   return !tokens.includes("close") && tokens.includes("keep-alive");
 }
 
 /** keep-alive 入池前提判定（#2756，#2662 p16 fix-r2 三态形状的推广）：
- * 输入 keepAliveProbe.once 的返回值，输出 { premise, premiseReason }。
+ * 输入 keepAliveProbe.once 的返回值（或等价形状），输出 { premise, premiseReason }。
  * - 请求失败（ok !== true）→ premise:false, reason:"request-failed"（与连接头失败分立可辨）；
  * - 成功且 Connection 含 keep-alive token（close 优先）→ premise:true, reason:"connection-keep-alive"；
  * - 成功、缺 Connection 头、HTTP/1.1 响应 → premise:true, reason:"implicit-keep-alive-http/1.1"
@@ -249,8 +250,12 @@ export function keepAliveToken(v) {
  * - 成功、缺头但非 HTTP/1.1（如 1.0 缺省 close）→ premise:false, reason:"no-header-non-http/1.1"；
  * - 成功且 Connection 显式非 keep-alive（close 等）→ premise:false, reason:"connection-not-keep-alive"。
  * 前提不成立 = agent 池内不会有该 socket 的 idle 复用，后续同 agent 请求是
- * 新连接——「复用已关连接 / 既有 keep-alive 被拆」类结论失据，调用方须降级。 */
-function keepAlivePremise(r) {
+ * 新连接——「复用已关连接 / 既有 keep-alive 被拆」类结论失据，调用方须降级。
+ * #2756 fix-r1（simplify P2）：p16 裸层 rawPremise 同用本件（隐式规则单源），
+ * 口径差异对拍登记：非 1.1 响应带显式 `Connection: keep-alive` 时旧内联判 false
+ * （http11 一票否决）、本件判 true（显式 token ⇒ 持久，RFC 7230 §6.1）——真实
+ * 基线恒 1.1，该分支不可达，语义本件更准；原值照旧由调用方入记录。 */
+export function keepAlivePremise(r) {
   if (r?.ok !== true) {
     return { premise: false, premiseReason: "request-failed" };
   }
@@ -269,10 +274,17 @@ function keepAlivePremise(r) {
  * #2756：once 返回值带前提判定（premise/premiseReason，见 keepAlivePremise）——
  * 首次请求 ok 且响应可保持连接（Connection: keep-alive，或完整 HTTP/1.1 缺头
  * 按隐式）才会入池；后续「复用」结论以该前提成立为前提。错误路径带 code/message
- * 分立字段（connect 相位判定用）。 */
+ * 分立字段（connect 相位判定用）。
+ * fix-r1（boundary P1 仲裁）：once 返回加 reusedSocket（本请求是否复用池内
+ * socket，req.reusedSocket）——「复用已关连接」证据须以它区分新旧连接；
+ * 另暴露 freeSocketCount()（agent.freeSockets 占用数）供调用方在 close/SIGTERM
+ * 前最后一刻复检池占用——服务端空闲超时会收掉池内 idle socket（实测 ~5.5–6s，
+ * keepAliveTimeout 5000 + 余量），且 server.close() 本身 ~11ms 内即 FIN 掉池内
+ * socket（close 后池必空，复检必须在 close 前）。 */
 export async function keepAliveProbe(port) {
   const http = await import("node:http");
   const agent = new http.Agent({ keepAlive: true, keepAliveMsecs: 1000 });
+  const freeSocketCount = () => Object.keys(agent.freeSockets || {}).length;
   const once = (pathName) =>
     new Promise((res) => {
       const req = http.request(
@@ -280,17 +292,17 @@ export async function keepAliveProbe(port) {
         (r) => {
           let body = "";
           r.on("data", (c) => (body += c));
-          r.on("end", () => res({ ok: true, status: r.statusCode, httpVersion: r.httpVersion, connection: r.headers.connection, body: body.slice(0, 120) }));
+          r.on("end", () => res({ ok: true, status: r.statusCode, httpVersion: r.httpVersion, connection: r.headers.connection, body: body.slice(0, 120), reusedSocket: req.reusedSocket }));
         },
       );
       req.on("timeout", () => {
         req.destroy();
-        res({ ok: false, error: "timeout" });
+        res({ ok: false, error: "timeout", reusedSocket: req.reusedSocket });
       });
-      req.on("error", (e) => res({ ok: false, code: e.code, message: e.message, error: `${e.code ?? e.name}: ${e.message}` }));
+      req.on("error", (e) => res({ ok: false, code: e.code, message: e.message, error: `${e.code ?? e.name}: ${e.message}`, reusedSocket: req.reusedSocket }));
       req.end();
     }).then((r) => ({ ...r, ...keepAlivePremise(r) }));
-  return { once, destroy: () => agent.destroy() };
+  return { once, freeSocketCount, destroy: () => agent.destroy() };
 }
 
 /** 新 TCP 是否被拒（连接层）。 */
