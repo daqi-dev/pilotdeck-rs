@@ -647,15 +647,22 @@ impl ChannelHandle for WebhookHandle {
 /// #1534: duplicate the accepted socket so the literal-`null` branch can read
 /// the client's FIN itself — hyper 1.7.0's `mid_message_detect_eof` returns
 /// `Pending` while its `read_buf` holds pipelined bytes. The duplicate is
-/// `dup(2)`, which shares the nonblocking open file description, so both
-/// halves stay usable by tokio.
+/// `F_DUPFD_CLOEXEC`, which shares the nonblocking open file description, so
+/// both halves stay usable by tokio.
 ///
 /// #1689: the duplicate is taken from the **borrowed** descriptor, so a
 /// failed `dup(2)` (EMFILE under a low descriptor limit) leaves the accepted
 /// socket with its caller — the caller then serves without the probe instead
 /// of dropping a connection TS would serve.
+///
+/// The duplicate keeps close-on-exec like the pre-#1689 `try_clone`
+/// (`F_DUPFD_CLOEXEC`) did: the probe lives for the connection's whole
+/// lifetime, and this process spawns children (module hosts, tool runners),
+/// so a plain-`dup(2)` fd without `FD_CLOEXEC` would leak the inbound client
+/// socket into them — the child then holds the open file description and the
+/// server's close never delivers the FIN, and the child can read the socket.
 fn duplicate_socket(socket: &TcpStream) -> io::Result<TcpStream> {
-    let probe = std::net::TcpStream::from(rustix::io::dup(rustix::fd::AsFd::as_fd(socket))?);
+    let probe = std::net::TcpStream::from(std::os::fd::AsFd::as_fd(socket).try_clone_to_owned()?);
     TcpStream::from_std(probe)
 }
 

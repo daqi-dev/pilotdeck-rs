@@ -30,6 +30,10 @@ switches = [
 ]
 GUARDED = [SERVER_DIR / 'tests.rs', SERVER_DIR / 'mod.rs', SERVER_DIR / 'server.rs',
     SERVER_DIR / 'render.rs', SERVER_DIR / 'error_body.rs',
+    # #1615: the visible-failure event table lives in the shared agentStatus
+    # port (the old table mutates this file as `visible-failure-name`), so its
+    # pristine guard covers it here too (Grok r1 sibling#2).
+    ROOT / 'src/pilotdeck-gateway/src/channel/agent_status.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',

@@ -1391,14 +1391,16 @@ fn recorded_request_modes_and_bytes_stay_legal() {
             .starts_with("GET /health HTTP/1.0\r\n"),
         "#1684 a recorded version lands on the request line"
     );
-    // #1690: the head stays latin1 (an é header byte is 0xE9) while the body
-    // rides as real UTF-8, the same split the generator's `socket.write`
-    // produces — a latin1 body map would panic here and, worse, silently
-    // shrink the golden's coverage to ASCII bodies.
+    // #1690 (fix, Grok r1 boundary#2): the generator writes the request
+    // string with Node's default utf8 socket-write encoding — the socket's
+    // `setEncoding('latin1')` governs reads only — so the whole request,
+    // head included, rides as real UTF-8 (an é anywhere is 0xC3 0xA9). A
+    // latin1 body map would panic here and, worse, silently shrink the
+    // golden's coverage to ASCII bodies.
     assert_eq!(
         wire_bytes("X-H: é\r\n\r\n你"),
-        b"X-H: \xe9\r\n\r\n\xe4\xbd\xa0".to_vec(),
-        "#1690 the request head is latin1 and the body UTF-8 on the wire"
+        b"X-H: \xc3\xa9\r\n\r\n\xe4\xbd\xa0".to_vec(),
+        "#1690 the whole request rides UTF-8 on the wire, like the generator's socket.write"
     );
 }
 
@@ -1425,23 +1427,15 @@ fn latin1_bytes(text: &str) -> Vec<u8> {
         .collect()
 }
 
-/// The recorder's request transport (#1690): Node writes the request string
-/// with the socket's default **utf8** encoding — `setEncoding('latin1')`
-/// only governs reads — so the body reaches the listener as real UTF-8
-/// bytes, while the recorded head is ASCII either way. Mirror that split
-/// here instead of the whole-request latin1 map, which would panic on a
-/// non-ASCII body cell and quietly leave the golden covering ASCII only.
+/// The recorder's request transport (#1690, fixed in the Grok r1 review):
+/// Node writes the request string with the socket's default **utf8**
+/// encoding — `setEncoding('latin1')` only governs reads — so the whole
+/// request, head included, reaches the listener as real UTF-8 bytes. The
+/// old split (latin1 head / utf8 body) was identical only while every
+/// recorded head was ASCII and would diverge from the recorder on the first
+/// non-ASCII header.
 fn wire_bytes(request: &str) -> Vec<u8> {
-    let mut wire = Vec::with_capacity(request.len());
-    match request.split_once("\r\n\r\n") {
-        Some((head, body)) => {
-            wire.extend(latin1_bytes(head));
-            wire.extend_from_slice(b"\r\n\r\n");
-            wire.extend_from_slice(body.as_bytes());
-        }
-        None => wire.extend(latin1_bytes(request)),
-    }
-    wire
+    request.as_bytes().to_vec()
 }
 
 /// Index just past a complete response in `buffer`, like the recorder's
