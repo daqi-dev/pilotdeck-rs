@@ -22052,9 +22052,15 @@ def negative_restored_replays(output):
     sources = {nc.COMMON_SOURCE, *(Path(row[1]) for row in nc.MUTATIONS)}
     real_write_text = Path.write_text
     real_write_bytes = Path.write_bytes
-    real_write_atomic = nc.write_source_atomic
     atomic_calls = []
     unguarded = []
+    # Single per-case snapshot (DS r3 concurrency #1/#2): the originals the
+    # window yields are also the baseline the publish-role check compares
+    # against. A second, unsynchronized disk read in the polluted pre-try
+    # window could raise past the finally-restore below, and an external
+    # mutation window flipping a source between two reads would let a plain
+    # restore impersonate the mutant publish.
+    window_originals = {}
 
     def guarded_write_text(path, data, *args, **kwargs):
         if path in sources:
@@ -22081,7 +22087,10 @@ def negative_restored_replays(output):
 
     @contextlib.contextmanager
     def fake_mutating(*_args, **_kwargs):
-        yield {source: source.read_bytes() for source in sources}
+        window_originals.clear()
+        window_originals.update(
+            {source: source.read_bytes() for source in sources})
+        yield dict(window_originals)
 
     cases = (
         ('pass', 'darwin', 'PASS', 0, 'KILLED', True, ('PASS', 0)),
@@ -22112,10 +22121,9 @@ def negative_restored_replays(output):
         nc.write_source_atomic = guarded_write_atomic
         nc.sys.argv = ['negative_controls.py', '--output', str(case), '--only', name]
         nc.sys.platform = platform
-        intercepted = len(atomic_calls)
-        unguarded_before = len(unguarded)
-        pristine = {source: source.read_bytes() for source in sources}
         try:
+            intercepted = len(atomic_calls)
+            unguarded_before = len(unguarded)
             with patch.object(Path, 'write_text', guarded_write_text), \
                     patch.object(Path, 'write_bytes', guarded_write_bytes):
                 code = nc.main()
@@ -22132,7 +22140,7 @@ def negative_restored_replays(output):
                 failures.append(
                     f'#2743 negative-restored {tag}: the replay never reached '
                     'write_source_atomic -- the in-memory write guard is dead')
-            elif not any(data != pristine.get(path)
+            elif not any(data != window_originals.get(path)
                          for path, data in case_calls):
                 # The mutant publish must resolve through the guarded global
                 # too: a publish that escapes it writes real bytes while the
