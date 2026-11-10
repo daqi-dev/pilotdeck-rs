@@ -9811,15 +9811,37 @@ class AggregationAudit(unittest.TestCase):
             restored = SimpleNamespace(returncode=0, stdout='', stderr='')
             summary = {'status': 'PASS', 'results': [
                 {'mode': 'wiring', 'passed': True, 'status': 'PASS_WITH_CLEANUP_UNVERIFIED'}]}
+            # #2743: the fixture publishes and restores its guarded sources
+            # through negative_process.write_source_atomic now, so the
+            # Path.write_text canary above no longer intercepts the real
+            # source-write path. Record the atomic writer's calls instead and
+            # prove the #166 invariant on them directly: an invalid mutant
+            # must never put mutated bytes on a source path -- only the
+            # per-case and backstop restores may write, and they must carry
+            # the pristine snapshot bytes.
+            atomic_writes = []
+
+            def recording_atomic(root, path, data, *, mode=None):
+                atomic_writes.append((Path(path), bytes(data)))
+
             with patch.object(module, 'mutating_sources', guard), \
                     patch.object(module, 'pgrep_launcher', return_value=''), \
                     patch.object(module, 'run_check', return_value=restored) as check, \
                     patch.object(module, 'read_summary', return_value=(summary, None)), \
+                    patch.object(module, 'write_source_atomic', recording_atomic), \
                     patch.object(module.sys, 'argv', ['negative_controls.py', '--output', str(output)]), \
                     patch.object(module.sys, 'platform', 'darwin'), \
                     patch.object(Path, 'write_text', evidence_only), \
                     patch.object(Path, 'write_bytes', lambda path, value: len(value)):
                 code = module.main()
+            self.assertEqual(len(atomic_writes), len(module.MUTATIONS) + len(originals),
+                             '#2743 invalid mutants must restore every source through the '
+                             'atomic writer (one per case plus one backstop per source, '
+                             'never a publish)')
+            self.assertTrue(all(path in originals and data == originals[path]
+                                for path, data in atomic_writes),
+                            '#2743 the atomic writer must never carry mutated bytes for an '
+                            'invalid mutant')
             report = json.loads((output / 'summary.json').read_text())
             self.assertEqual([row['mutation'] for row in report['mutations']], names,
                              '#166 suite must record every selected invalid mutant')
