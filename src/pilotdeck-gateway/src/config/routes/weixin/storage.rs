@@ -98,7 +98,11 @@ impl Storage {
 
     /// TS WeixinChannel.ts:1000-1007 saveCursor():
     /// Updates cursor in stored credentials and persists to disk.
+    /// If cursor is empty, does not write to disk.
     pub fn save_cursor(&self, cursor: &str) -> Result<Option<Value>> {
+        if cursor.is_empty() {
+            return Ok(self.load_credentials());
+        }
         let owner = self.credential_owner();
         let _guard = owner.lock().unwrap();
         let Some(mut current) = self.credentials()? else {
@@ -110,6 +114,9 @@ impl Storage {
     }
 
     pub fn advance_cursor(&self, expected: &Value, cursor: &str) -> Result<Option<Value>> {
+        if cursor.is_empty() {
+            return Ok(self.load_credentials());
+        }
         let owner = self.credential_owner();
         let _guard = owner.lock().unwrap();
         let Some(mut current) = self.credentials()? else {
@@ -125,7 +132,7 @@ impl Storage {
 
     // shortcut: external CLI writers do not share this native lock; stop native
     // polling before handing off credentials, until every writer uses one owner.
-    fn credential_owner(&self) -> Arc<Mutex<()>> {
+    pub(super) fn credential_owner(&self) -> Arc<Mutex<()>> {
         static OWNERS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
         let key = fs::canonicalize(&self.home).unwrap_or_else(|_| self.home.clone());
         let mut owners = OWNERS.get_or_init(Default::default).lock().unwrap();
@@ -396,6 +403,27 @@ mod tests {
         let home = TestHome::new();
         let store = Storage::new(home.0.clone());
         assert_eq!(store.save_cursor("c1").unwrap(), None);
+    }
+
+    #[test]
+    fn test_save_cursor_empty_buf_does_not_modify_disk() {
+        // Aligns with TS: empty buf/cursor does not write to disk
+        let home = TestHome::new();
+        let store = Storage::new(home.0.clone());
+        let initial = json!({
+            "baseUrl": "https://ilink.example.com",
+            "botToken": "tok",
+            "accountId": "acc",
+            "cursor": "c1"
+        });
+        store.save_credentials(&initial).unwrap();
+
+        let res = store.save_cursor("").unwrap();
+        assert!(res.is_some());
+        assert_eq!(res.unwrap()["cursor"], "c1");
+
+        let on_disk = store.credentials().unwrap().unwrap();
+        assert_eq!(on_disk["cursor"], "c1");
     }
 
     #[test]

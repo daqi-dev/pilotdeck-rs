@@ -25,10 +25,8 @@ pub fn cron_protocol_channel_key(key: &str) -> &str {
 
 pub fn origin_channel_matches(delivery: &Value, channel: &str) -> bool {
     match delivery.get("originChannelKey") {
-        None | Some(Value::Null) => true,
-        Some(Value::String(key)) if key.is_empty() => false,
-        Some(Value::String(key)) => key == channel,
-        _ => false,
+        Some(Value::String(key)) if !key.is_empty() => key == channel,
+        _ => true,
     }
 }
 
@@ -44,7 +42,11 @@ pub(crate) fn parse_chat_id<'a>(session: &'a str, channel: &'a str) -> Option<&'
     let prefix = format!("{channel}:chat=");
     let suffix = session.strip_prefix(&prefix)?;
     let captures = CHAT_ID_RE.captures(suffix)?;
-    captures.get(1).map(|m| m.as_str())
+    let chat = captures.get(1)?.as_str();
+    if chat.contains(['\n', '\r', '\u{2028}', '\u{2029}']) {
+        return None;
+    }
+    Some(chat)
 }
 
 #[cfg(test)]
@@ -179,16 +181,74 @@ mod tests {
             None
         );
         assert_eq!(parse_chat_id("telegram:chat=\n:general", "telegram"), None);
+
+        // Invalid cases: carriage return and JS line terminators
+        assert_eq!(
+            parse_chat_id("telegram:chat=42\rsecond_line:general", "telegram"),
+            None
+        );
+        assert_eq!(parse_chat_id("telegram:chat=\r:general", "telegram"), None);
+        assert_eq!(
+            parse_chat_id("telegram:chat=42\u{2028}:general", "telegram"),
+            None
+        );
+        assert_eq!(
+            parse_chat_id("telegram:chat=42\u{2029}:general", "telegram"),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_chat_id_rejects_js_line_terminators() {
+        // TS regex `.` in single-line mode rejects \r, \n, \u2028, \u2029
+        assert_eq!(
+            parse_chat_id("telegram:chat=42\r:general", "telegram"),
+            None
+        );
+        assert_eq!(
+            parse_chat_id("telegram:chat=42\rsecond_line:general", "telegram"),
+            None
+        );
+        assert_eq!(
+            parse_chat_id("telegram:chat=42\r\nsecond_line:general", "telegram"),
+            None
+        );
+        assert_eq!(
+            parse_chat_id("telegram:chat=\r:general", "telegram"),
+            None
+        );
+        assert_eq!(
+            parse_chat_id("telegram:chat=user\u{2028}name:general", "telegram"),
+            None
+        );
+        assert_eq!(
+            parse_chat_id("telegram:chat=user\u{2029}name:general", "telegram"),
+            None
+        );
+        assert_eq!(
+            parse_chat_id(
+                "telegram:chat=42\u{2028}:s_12345678-1234-1234-1234-123456789abc",
+                "telegram"
+            ),
+            None
+        );
+        assert_eq!(
+            parse_chat_id(
+                "telegram:chat=42\u{2029}:s_12345678-1234-1234-1234-123456789abc",
+                "telegram"
+            ),
+            None
+        );
     }
 
     #[test]
     fn origin_channel_matches_ts_contract() {
-        // Empty string behavior: empty originChannelKey matches no channel
-        assert!(!origin_channel_matches(
+        // Empty string behavior: empty originChannelKey does not reject delivery (continues delivery)
+        assert!(origin_channel_matches(
             &json!({"originChannelKey": ""}),
             "telegram"
         ));
-        assert!(!origin_channel_matches(
+        assert!(origin_channel_matches(
             &json!({"originChannelKey": ""}),
             "weixin"
         ));
@@ -234,19 +294,46 @@ mod tests {
             "telegram"
         ));
 
-        // Non-string originChannelKey: returns false
-        assert!(!origin_channel_matches(
+        // Non-string originChannelKey: does not reject (continues delivery)
+        assert!(origin_channel_matches(
             &json!({"originChannelKey": 123}),
             "telegram"
         ));
-        assert!(!origin_channel_matches(
+        assert!(origin_channel_matches(
             &json!({"originChannelKey": false}),
             "telegram"
         ));
-        assert!(!origin_channel_matches(
+        assert!(origin_channel_matches(
+            &json!({"originChannelKey": true}),
+            "telegram"
+        ));
+        assert!(origin_channel_matches(
             &json!({"originChannelKey": {}}),
             "telegram"
         ));
+        assert!(origin_channel_matches(
+            &json!({"originChannelKey": []}),
+            "telegram"
+        ));
+    }
+
+    #[test]
+    fn origin_channel_matches_allows_empty_or_non_string() {
+        // Matches TS: `if (delivery.originChannelKey && delivery.originChannelKey !== channelKey) return false;`
+        // Empty string
+        assert!(origin_channel_matches(&json!({"originChannelKey": ""}), "slack"));
+        // Numbers
+        assert!(origin_channel_matches(&json!({"originChannelKey": 0}), "slack"));
+        assert!(origin_channel_matches(&json!({"originChannelKey": 42}), "slack"));
+        // Booleans
+        assert!(origin_channel_matches(&json!({"originChannelKey": false}), "slack"));
+        assert!(origin_channel_matches(&json!({"originChannelKey": true}), "slack"));
+        // Objects and Arrays
+        assert!(origin_channel_matches(&json!({"originChannelKey": { "nested": "val" }}), "slack"));
+        assert!(origin_channel_matches(&json!({"originChannelKey": [1, 2, 3]}), "slack"));
+        // Only reject when non-empty string mismatches
+        assert!(!origin_channel_matches(&json!({"originChannelKey": "telegram"}), "slack"));
+        assert!(origin_channel_matches(&json!({"originChannelKey": "slack"}), "slack"));
     }
 
     #[test]

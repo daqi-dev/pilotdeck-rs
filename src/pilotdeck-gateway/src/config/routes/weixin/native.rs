@@ -99,6 +99,31 @@ impl WeixinDelivery {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
     }
+}
+
+pub(crate) struct ChatActiveGuard {
+    delivery: Arc<WeixinDelivery>,
+    chat: Option<String>,
+}
+
+impl ChatActiveGuard {
+    pub(crate) fn new(delivery: Arc<WeixinDelivery>, chat: Option<String>) -> Self {
+        if let Some(ref c) = chat {
+            delivery.mark_chat_active(c);
+        }
+        Self { delivery, chat }
+    }
+}
+
+impl Drop for ChatActiveGuard {
+    fn drop(&mut self) {
+        if let Some(ref c) = self.chat {
+            self.delivery.mark_chat_inactive(c);
+        }
+    }
+}
+
+impl WeixinDelivery {
 
     pub async fn deliver(&self, delivery: &Value) -> Result<bool> {
         use crate::config::routes::im_cron::{parse_chat_id, session_field};
@@ -345,12 +370,7 @@ pub fn save_cursor(storage: &Storage, cursor: &str) -> Result<()> {
     if cursor.is_empty() {
         return Ok(());
     }
-    if let Ok(Some(mut creds)) = storage.credentials() {
-        if creds.get("cursor").and_then(Value::as_str) != Some(cursor) {
-            creds["cursor"] = cursor.into();
-            let _ = super::storage::write(&storage.home.join("weixin-credentials.json"), &creds);
-        }
-    }
+    let _ = storage.save_cursor(cursor);
     Ok(())
 }
 
@@ -773,14 +793,14 @@ async fn login(storage: &Storage, http: &Http, base: &str) -> Result<Value> {
                             .map(|q| json!({"qrUrl":q}))
                     })
                     .unwrap_or_else(|| json!({}));
-                storage.status("waiting_for_login", "已扫码，请在微信中确认登录", details)?;
+                storage.status("waiting_for_login", "weixin: 已扫码，等待确认...", details)?;
             }
             Some("expired") => {
                 refreshes += 1;
                 if refreshes > 3 {
                     return Err(failure("QR code expired too many times"));
                 }
-                storage.status("waiting_for_login", "二维码已过期，正在刷新", json!({}))?;
+                storage.status("waiting_for_login", "weixin: 二维码已过期，正在刷新...", json!({}))?;
                 code = qr(storage, http, base).await?;
             }
             Some("confirmed") => {
@@ -870,15 +890,15 @@ async fn connected(
                     let live = live.clone();
                     let batch = batch.clone();
                     let credentials = credentials.clone();
-                    if let Some(from_user) = batch
+                    let from_user = batch
                         .get("messages")
                         .and_then(Value::as_array)
                         .and_then(|msgs| msgs.first())
                         .and_then(|m| text(m, "from_user_id"))
-                    {
-                        delivery.mark_chat_active(from_user);
-                    }
+                        .map(|s| s.to_string());
+                    let guard = ChatActiveGuard::new(delivery.clone(), from_user);
                     workers.spawn(async move {
+                        let _guard = guard;
                         let result = live.process_batch(&credentials, batch).await;
                         (id, result)
                     });
@@ -1040,7 +1060,15 @@ async fn connected(
                             let live = live.clone();
                             let credentials = credentials.clone();
                             let id = batch.clone();
+                            let from_user = saved
+                                .get("messages")
+                                .and_then(Value::as_array)
+                                .and_then(|msgs| msgs.first())
+                                .and_then(|m| text(m, "from_user_id"))
+                                .map(|s| s.to_string());
+                            let guard = ChatActiveGuard::new(delivery.clone(), from_user);
                             workers.spawn(async move {
+                                let _guard = guard;
                                 let result = live.process_batch(&credentials, saved).await;
                                 (id, result)
                             });
@@ -1068,12 +1096,10 @@ async fn connected(
                     return Ok(());
                 }
                 consecutive_errors += 1;
-                eprintln!("weixin: poll error #{consecutive_errors}: {e}");
-                storage.status(
-                    "connected",
-                    "微信连接暂时中断，正在重试",
-                    json!({"accountId":credentials["accountId"],"error":e.message}),
-                )?;
+                eprintln!(
+                    "weixin: poll error #{consecutive_errors}: {}",
+                    super::media::format_weixin_error(&e)
+                );
                 let active = delivery.active_chats();
                 notify_connection_lost(
                     &mut conn_state,
@@ -1639,5 +1665,51 @@ mod native_poll_alignment_tests {
         assert_eq!(val["channels"]["weixin"]["state"], "stopped");
 
         let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn test_chat_active_guard_raii_lifecycle_ts_align() {
+        // Aligns with WeixinChannel.ts:536-548 runQueuedTurns finally block:
+        // this.activeChats.add(userId); try { ... } finally { this.activeChats.delete(userId); }
+        let temp = std::env::temp_dir().join(format!("wx-guard-test-{}", uuid::Uuid::new_v4()));
+        let storage = Storage::new(temp.clone());
+        let delivery = Arc::new(WeixinDelivery {
+            storage: storage.clone(),
+            http: Http::new(),
+            contexts: Default::default(),
+            pending_replies: Default::default(),
+            active_chats: Default::default(),
+        });
+
+        assert!(!delivery.active_chats().contains("user_raii"));
+        {
+            let _guard = ChatActiveGuard::new(delivery.clone(), Some("user_raii".to_string()));
+            assert!(delivery.active_chats().contains("user_raii"));
+        }
+        assert!(!delivery.active_chats().contains("user_raii"));
+
+        // None chat is a no-op
+        {
+            let _guard = ChatActiveGuard::new(delivery.clone(), None);
+            assert!(delivery.active_chats().is_empty());
+        }
+        assert!(delivery.active_chats().is_empty());
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn test_is_recoverable_poll_error_aligns_with_ts() {
+        // Aligns with WeixinChannel.ts:1020-1033 isRecoverablePollError
+        use crate::config::routes::RouteError;
+        let err1 = RouteError::new("ECONNRESET", "connection reset by peer");
+        let err2 = RouteError::new("UND_ERR_SOCKET", "socket error");
+        let err3 = RouteError::new("ETIMEDOUT", "network timeout");
+        let err4 = RouteError::new("fatal", "unrecognized application error");
+
+        assert!(is_recoverable_poll_error(&err1));
+        assert!(is_recoverable_poll_error(&err2));
+        assert!(is_recoverable_poll_error(&err3));
+        assert!(!is_recoverable_poll_error(&err4));
     }
 }
