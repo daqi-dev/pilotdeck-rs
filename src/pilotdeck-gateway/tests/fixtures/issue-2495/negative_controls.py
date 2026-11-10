@@ -22,6 +22,26 @@ the note line itself still dedups on the lexical spelling. The membership
 rows pin the two gates the pass hangs on (the note-line side and the
 hasInspectable side), the always-true row the conversion direction, and the
 dedup-dropped row the #1446/#1321 note-line dedup the refactor must not lose.
+
+#2590: the startup contract is the shared `negative_selection` shape the
+migrated family uses (sdk-mcp-session-tools #1433, handle-path-macos #1990,
+settings-gateway #1734). Every pre-mutation refusal is `refuse()` — rc 2
+with `INVALID:` on stderr, never a traceback a host reads as a failed
+control — including the binding self-check, the unknown/repeated name split
+and the stale-anchor scan. The target is admitted by `missing_target()` +
+`refuse_unusable_target()` before the evidence directory is claimed (a
+presence-only check used to let a blank or `.` value fall through and die
+inside the shared normalisation afterwards), the claim itself is `claim_dir`.
+The stale scan reads the working tree, so it takes the same `tree_lock` the
+mutation round below takes: a concurrent sibling with a mutant on disk used
+to be read back as a false stale (#2590 item 4, proven by the pre-fix run in
+this round's evidence directory). A bound assertion containing `{` / `}` is
+refused up front (#2590 item 3): the receipt protocol compares the runtime
+`format!` result byte-for-byte, so a template can never match and the row
+could only come out NO_RECEIPT. The exit contract is `verdict_exit` over a
+summary whose denominator is the static roster: a row that records no
+verdict publishes `roster-mismatch.json` and fails instead of shrinking the
+run to `N-1/N-1 killed` and exiting 0 (#2590 item 2).
 """
 import argparse
 import hashlib
@@ -36,8 +56,10 @@ FIXTURES = Path(__file__).resolve().parents[1]
 SERVICES = ROOT / 'src/pilotdeck-gateway/src/native_process/services.rs'
 TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/services_tests.rs'
 sys.path.insert(0, str(FIXTURES))
-from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic
-from negative_selection import refuse, registered
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                              tree_lock, write_source_atomic)
+from negative_selection import (claim_dir, missing_target, refuse,
+                                refuse_unusable_target, registered, verdict_exit)
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
 
 mutations = [
@@ -119,10 +141,15 @@ mutations = [
 # so a row dropped from the table would silently shrink the denominator —
 # `--check` would print a smaller count and still say OK, and the default
 # full run would judge only the survivors. fix-r2 (review P2a): the roster
-# check is the shared `negative_selection.registered` (the EXPECTED_NAMES
-# form the sibling fixtures use) instead of a local frozenset compare —
-# ordered, so a reordered row is also a drift, and a refusal is exit 2
-# ("never started"), never a traceback that reads as a failed control.
+# check is the shared `negative_selection.registered` instead of a local
+# frozenset compare — ordered, so a reordered row is also a drift, and a
+# refusal is exit 2 ("never started"), never a traceback that reads as a
+# failed control. #2590 item 7 (MM-sibling#2): the EXPECTED_NAMES roster is
+# the form the *migrated* family uses — sdk-mcp-session-tools (#1433),
+# handle-path-macos (#1990) and settings-gateway (#1734) are the precedents
+# to cite. The native-management and native-settings fixtures still compare a
+# local ordered tuple and exit via `SystemExit`/`sys.exit` (rc 1), so they
+# are explicitly not that precedent yet.
 EXPECTED_NAMES = (
     'dedup-gating-restored',
     'inspectable-registered-domain-restored',
@@ -139,6 +166,46 @@ def check_roster():
         registered(mutations, EXPECTED_NAMES)
     except ValueError as error:
         refuse(str(error))
+
+
+def stale_names():
+    """Rows whose anchor / bound-test / assertion binding no longer holds.
+
+    #2590 item 3 (DS-boundary#1): fail-closed on template braces. A bound
+    assertion is the receipt's identity and must be a static literal — the
+    receipt protocol compares the runtime `format!` result byte-for-byte, so
+    an interpolated template can never match and the row could only come out
+    NO_RECEIPT. The template string sits in the test body too, so the plain
+    binding scan stays green on that edit and only a full host round exposes
+    it (exactly the r1 -> r2 regression shape); refusing up front makes it a
+    `--check` failure instead.
+    """
+    stale = []
+    for name, path, old, new, test, assertion in mutations:
+        if '{' in assertion or '}' in assertion:
+            stale.append(f'{name} (bound assertion is a format! template)')
+            continue
+        text = path.read_text()
+        body = test_body(test)
+        if (text.count(old) != 1 or old == new or
+                not body or f'"{assertion}"' not in body):
+            stale.append(name)
+    return stale
+
+
+def roster_drift(expected, results):
+    """#2590 item 2: the recorded verdict names vs the static roster.
+
+    ``None`` when every expected name has exactly one recorded verdict, in
+    roster order; otherwise the ``(recorded, expected)`` pair. The runtime
+    ``results`` list is not the denominator: a row whose flow is skipped
+    entirely would leave the survivors all-KILLED and a green ``N-1/N-1
+    killed`` exit 0, so the caller must publish the mismatch and fail. Both
+    sides are normalised to lists, so a tuple roster compares by content, not
+    by type (a list never equals a tuple in Python).
+    """
+    recorded = [row['name'] for row in results]
+    return None if recorded == list(expected) else (recorded, list(expected))
 
 
 def test_body(test, texts=None):
@@ -166,29 +233,69 @@ def main():
     parser.add_argument('output', nargs='?')
     parser.add_argument('selected', nargs='*')
     args = parser.parse_args()
-    check_binding_scope()
+    # #2590 item 1 (handle-path-macos:148-157, sdk-mcp-session-tools:209-216):
+    # the binding self-check runs before any mutation, so its failure is a
+    # "never started" refusal (rc 2) — the pre-`mutating_sources` boundary
+    # every guard below already follows — not an uncaught traceback a host
+    # would read as "ran and not green" (1).
+    try:
+        check_binding_scope()
+    except RuntimeError as error:
+        refuse(str(error))
     check_roster()
-    stale = []
-    for name, path, old, new, test, assertion in mutations:
-        text = path.read_text()
-        body = test_body(test)
-        if (text.count(old) != 1 or old == new or
-                not body or f'"{assertion}"' not in body):
-            stale.append(name)
+    # #2590 item 1 (sdk-mcp-session-tools:225-242): the caller-side name
+    # errors are refused from argv alone, before any guard reads live
+    # sources. A full mutation round holds the tree lock with `services.rs`
+    # mutated on disk; a concurrent guards run that passes an unknown or
+    # repeated name must not queue behind that round just to be told so.
+    # `--check` keeps its own argv contract (no output, no names).
+    selected = [row for row in mutations if not args.selected or row[0] in args.selected]
+    unknown = sorted(set(args.selected) - {row[0] for row in mutations})
+    if not args.check and unknown:
+        refuse(f'#2495 unknown mutation names: {unknown}')
+    if not args.check and args.selected and len(selected) != len(args.selected):
+        repeated = sorted({name for name in args.selected
+                           if args.selected.count(name) > 1})
+        refuse(f'#2495 repeated mutation names: {repeated}')
+    # #2590 item 1 (sdk-mcp-session-tools:243-264): the output-path and
+    # target guards read argv/env only, so they too fire before any source
+    # bytes are read and before the evidence directory is claimed. The target
+    # is admitted by the one shared rule (absent, empty, blank, dot,
+    # filesystem or repository root, inside `src`): a presence-only check
+    # used to let a blank or `.` value through, and the run then died inside
+    # the shared normalisation — with artifacts on their way to the
+    # repository root and an evidence directory that read like a finished
+    # run (#1666 fix-r7/r9 shape). The output-path precheck is a fast fail on
+    # the same condition `claim_dir` owns below (an atomic
+    # `mkdir(exist_ok=False)`), so a path created after it is still refused.
+    if not args.check:
+        if not args.output:
+            refuse('#2495 an output directory is required')
+        if missing_target():
+            refuse('#2495 set CARGO_TARGET_DIR to the caller-owned build tree')
+        refuse_unusable_target()
+        if Path(args.output).exists():
+            refuse(f'#2495 output directory already exists: {Path(args.output).resolve()}')
+    # #2590 item 4 (issue-1246:251-255): the stale scan reads the working
+    # tree, so it takes the same tree lock the mutation round below takes. A
+    # concurrent sibling holding a mutant on disk used to be read back as a
+    # false "stale anchor" — proven by the pre-fix run in this round's
+    # evidence directory — and the refusal is rc 2 ("never started"), never
+    # a traceback (1).
+    with tree_lock(ROOT):
+        stale = stale_names()
     if stale:
-        raise SystemExit('#2495 stale anchor/test/assertion bindings: ' + ', '.join(stale))
+        refuse('#2495 stale anchor/test/assertion bindings: ' + ', '.join(stale)
+               + ' (a killed sibling round can leave residue that reads as '
+                 'stale; inspect with git status)')
     if args.check:
         print(f'#2495 {len(mutations)} registered mutations present '
               f'(EXPECTED_NAMES roster matched); {len(mutations)} unique anchors '
               f'and assertion bindings: OK')
         return 0
-    selected = [row for row in mutations if not args.selected or row[0] in args.selected]
-    if not selected or (args.selected and len(selected) != len(args.selected)):
-        raise SystemExit('#2495 unknown or repeated mutation')
-    if not args.output or not os.environ.get('CARGO_TARGET_DIR'):
-        raise SystemExit('#2495 output and caller CARGO_TARGET_DIR required')
-    output = Path(args.output).resolve()
-    output.mkdir(parents=True, exist_ok=False)
+    # The guards above have run; `claim_dir` makes the atomic claim (an
+    # existing directory is a "never started" refusal, not a verdict).
+    output = claim_dir(args.output)
     env = dict(os.environ)
     for key in [ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'PDRS_MUTANT', 'LIVE_E2E_MUTANT']:
         env.pop(key, None)
@@ -256,15 +363,41 @@ def main():
                                 status='INVALID', reason=reason, compiled=False))
     counts = {state: sum(row['status'] == state for row in results)
               for state in ['KILLED', 'SURVIVED', 'INVALID', 'COMPILED']}
+    # #2590 item 2 (sdk-mcp-session-tools:374-391): exactly one verdict per
+    # selected name, compared against the static roster before anything that
+    # reads as success is published. The runtime `results` list is not the
+    # denominator: a row whose flow is skipped entirely (no trigger path
+    # today; the guard is for future branches) would leave the survivors
+    # all-KILLED and a green `N-1/N-1 killed` exit 0, so a mismatch publishes
+    # no summary.json — only a file whose name says what happened.
+    expected = [name for name in EXPECTED_NAMES
+                if not args.selected or name in args.selected]
+    drift = roster_drift(expected, results)
+    if drift is not None:
+        recorded, expected_roster = drift
+        missing = [name for name in expected_roster if name not in recorded]
+        message = (f'#2495 verdict roster mismatch: missing={missing} '
+                   f'recorded={recorded} expected={expected_roster}')
+        print(message, file=sys.stderr)
+        (output / 'roster-mismatch.json').write_text(json.dumps(
+            {'verdict': 'ROSTER_MISMATCH', 'missing': missing,
+             'expected': expected_roster, 'recorded': recorded,
+             'rows': results, 'counts': counts,
+             'guardedSha256': guarded_sha256}, indent=2) + '\n')
+        return 1
     temporary = output / 'summary.json.tmp'
     temporary.write_text(json.dumps(
         {'controls': results, 'counts': counts, 'guardedSha256': guarded_sha256}, indent=2) + '\n')
     temporary.replace(output / 'summary.json')
-    print(f'summary: KILLED={counts["KILLED"]}, SURVIVED={counts["SURVIVED"]}, '
+    # The summary denominator is the static roster (never len(results)).
+    print(f'summary: KILLED={counts["KILLED"]}/{len(expected)}, SURVIVED={counts["SURVIVED"]}, '
           f'INVALID={counts["INVALID"]}', flush=True)
     print(json.dumps({'controls': results, 'counts': counts}), flush=True)
-    success = 'COMPILED' if args.compile_only else 'KILLED'
-    return int(any(row['status'] != success for row in results))
+    # #2590 item 2: the shared exit contract — zero rows is never 0 (`0/0
+    # killed` is not a pass) and every row must be KILLED — COMPILED under
+    # --compile-only.
+    return verdict_exit(results, key='status',
+                        killed='COMPILED' if args.compile_only else 'KILLED')
 
 
 if __name__ == '__main__':
