@@ -59,6 +59,8 @@ fn source_generation_asr_installer_is_resolved_and_shell_quoted() {
     std::fs::create_dir_all(&scripts).unwrap();
     std::fs::write(scripts.join("install-asr.sh"), "#!/bin/sh\n").unwrap();
     let executable = generation.join("bin/pilotdeck-gateway");
+    std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+    std::fs::write(&executable, b"physical gateway fixture").unwrap();
     let paths = builtin_paths(&Env::new(), &executable, Path::new("/unrelated-project")).unwrap();
     assert_eq!(
         paths.install_command,
@@ -66,11 +68,50 @@ fn source_generation_asr_installer_is_resolved_and_shell_quoted() {
             "sh '{}'",
             scripts
                 .join("install-asr.sh")
+                .canonicalize()
+                .unwrap()
                 .to_str()
                 .unwrap()
                 .replace('\'', "'\"'\"'")
         )
     );
     assert!(!paths.install_command.contains("npm run"));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn absent_source_installer_does_not_invent_a_command() {
+    let paths = builtin_paths(
+        &Env::new(),
+        Path::new("/absent-generation/bin/pilotdeck"),
+        Path::new("/unrelated-project"),
+    )
+    .unwrap();
+    assert!(paths.install_command.is_empty());
+}
+#[cfg(unix)]
+#[test]
+fn stable_executable_symlink_pins_physical_gateway_and_installer_generation() {
+    let root = std::env::temp_dir().join(format!("pdrs-asr-symlink-{}", uuid::Uuid::new_v4()));
+    let physical = root.join("generation/bin/pilotdeck");
+    let script = root.join("generation/source/scripts/install-asr.sh");
+    std::fs::create_dir_all(physical.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(script.parent().unwrap()).unwrap();
+    std::fs::write(&physical, b"physical CLI fixture").unwrap();
+    std::fs::write(&script, b"#!/bin/sh\n").unwrap();
+    let stable = root.join("stable-pilotdeck");
+    std::os::unix::fs::symlink(&physical, &stable).unwrap();
+    assert_eq!(
+        sibling_gateway(&stable),
+        physical
+            .canonicalize()
+            .unwrap()
+            .with_file_name("pilotdeck-gateway")
+    );
+    let paths = builtin_paths(&Env::new(), &stable, Path::new("/unrelated-project")).unwrap();
+    assert_eq!(
+        paths.install_command,
+        format!("sh '{}'", script.canonicalize().unwrap().display())
+    );
     std::fs::remove_dir_all(root).unwrap();
 }

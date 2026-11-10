@@ -22,6 +22,9 @@ fn utf8(path: &Path) -> io::Result<String> {
 /// A CLI/control process must never run itself with gateway-only helper flags.
 /// The common installation generation ships the gateway as a real sibling.
 pub fn sibling_gateway(executable: &Path) -> PathBuf {
+    let executable = executable
+        .canonicalize()
+        .unwrap_or_else(|_| executable.to_owned());
     executable.with_file_name(if cfg!(windows) {
         "pilotdeck-gateway.exe"
     } else {
@@ -44,13 +47,16 @@ pub fn node_from_path(env: &Env) -> PathBuf {
 }
 /// The diagnostic must name the installer shipped by the same source generation,
 /// rather than an npm script in the user's unrelated project working directory.
-fn install_command(env: &Env, executable: &Path, cwd: &Path) -> io::Result<String> {
+pub(crate) fn install_command(env: &Env, executable: &Path, cwd: &Path) -> io::Result<String> {
     if let Some(command) = env
         .get("PILOTDECK_FUNASR_INSTALL_COMMAND")
         .filter(|value| !value.trim().is_empty())
     {
         return Ok(command.clone());
     }
+    let executable = executable
+        .canonicalize()
+        .unwrap_or_else(|_| executable.to_owned());
     let parent = executable.parent().unwrap_or(cwd);
     let generation = parent.parent().unwrap_or(cwd);
     let mut candidates = vec![generation.join("source/scripts/install-asr.sh")];
@@ -67,10 +73,10 @@ fn install_command(env: &Env, executable: &Path, cwd: &Path) -> io::Result<Strin
     if is_native_source(cwd) {
         candidates.push(cwd.join("scripts/install-asr.sh"));
     }
-    let script = candidates
-        .iter()
-        .find(|path| path.is_file())
-        .unwrap_or(&candidates[0]);
+    let Some(script) = candidates.iter().find(|path| path.is_file()) else {
+        // Absence is diagnosed by the optional tool, not a fictitious shell command.
+        return Ok(String::new());
+    };
     // POSIX single-quote escaping also protects spaces, dollar signs and backticks.
     Ok(format!("sh '{}'", utf8(script)?.replace('\'', "'\"'\"'")))
 }
@@ -78,6 +84,9 @@ fn install_command(env: &Env, executable: &Path, cwd: &Path) -> io::Result<Strin
 /// probes equivalent generation/source/cwd node_modules layouts, never the
 /// retired first-party Gateway or FunASR JS implementation.
 pub fn builtin_paths(env: &Env, executable: &Path, cwd: &Path) -> io::Result<BuiltinMcpPaths> {
+    let executable = executable
+        .canonicalize()
+        .unwrap_or_else(|_| executable.to_owned());
     let parent = executable.parent().unwrap_or(cwd);
     let sdk = Path::new("node_modules/@playwright/mcp/cli.js");
     let mut candidates = Vec::new();
@@ -100,7 +109,7 @@ pub fn builtin_paths(env: &Env, executable: &Path, cwd: &Path) -> io::Result<Bui
         // through this legacy compatibility field. User plugin marker expansion is
         // retained by the existing registry; no internal JS fallback is configured.
         funasr_mcp_entrypoint: String::new(),
-        install_command: install_command(env, executable, cwd)?,
+        install_command: install_command(env, &executable, cwd)?,
     })
 }
 pub fn browser_servers() -> JsValue {

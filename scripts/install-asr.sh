@@ -15,7 +15,7 @@ fail() { printf '%s\n' "[pilotdeck-asr] $*" >&2; exit 1; }
 [ -n "${PILOTDECK_FUNASR_SOURCE:-}" ] || fail 'Set PILOTDECK_FUNASR_SOURCE to the local FunASR runtime-llamacpp-v0.2.0 source checkout.'
 [ -n "${PILOTDECK_LLAMA_SOURCE:-}" ] || fail 'Set PILOTDECK_LLAMA_SOURCE to the local pinned llama.cpp source checkout.'
 [ -n "${PILOTDECK_FUNASR_MODELS_DIR:-}" ] || fail 'Set PILOTDECK_FUNASR_MODELS_DIR to the local directory containing sensevoice-small-q8.gguf and fsmn-vad.gguf.'
-for tool in git cmake mktemp install find; do command -v "$tool" >/dev/null 2>&1 || fail "Required build tool is unavailable: $tool"; done
+for tool in git cmake mktemp install find stat ps date head; do command -v "$tool" >/dev/null 2>&1 || fail "Required build tool is unavailable: $tool"; done
 source_root=$(CDPATH= cd -- "$PILOTDECK_FUNASR_SOURCE" && pwd -P) || fail 'FunASR source directory is unavailable.'
 llama_root=$(CDPATH= cd -- "$PILOTDECK_LLAMA_SOURCE" && pwd -P) || fail 'llama.cpp source directory is unavailable.'
 models_root=$(CDPATH= cd -- "$PILOTDECK_FUNASR_MODELS_DIR" && pwd -P) || fail 'Model source directory is unavailable.'
@@ -35,18 +35,27 @@ case $(uname -s)/$(uname -m) in
     *) fail 'This source installer supports macOS ARM64 and Linux ARM64/x64.' ;;
 esac
 jobs=${PILOTDECK_ASR_BUILD_JOBS:-2}
-case $jobs in ''|*[!0-9]*|0) fail 'PILOTDECK_ASR_BUILD_JOBS must be a positive integer.' ;; esac
+case $jobs in ''|*[!0-9]*|0*) fail 'PILOTDECK_ASR_BUILD_JOBS must be a positive integer without leading zeroes.' ;; esac
 umask 077
 mkdir -p "$PILOT_HOME"
 pilot_home=$(CDPATH= cd -- "$PILOT_HOME" && pwd -P)
 cache=$pilot_home/funasr
-[ ! -L "$cache" ] || fail 'Refusing a symlinked runtime cache.'
+for directory in "$cache" "$cache/runtime" "$cache/runtime/v0.2.0" "$cache/models"; do
+    [ ! -L "$directory" ] || fail "Refusing a symlinked installer directory: $directory"
+    [ ! -e "$directory" ] || [ -d "$directory" ] || fail "Installer directory is not a directory: $directory"
+done
 mkdir -p "$cache/runtime/v0.2.0" "$cache/models"
 lock=$cache/.source-install.lock
-mkdir "$lock" 2>/dev/null || fail "Another source installation holds $lock; do not replace it while a build may still be active."
+if ! mkdir "$lock" 2>/dev/null; then
+    printf '%s\n' "[pilotdeck-asr] Existing installation lease: $lock" >&2
+    if [ ! -L "$lock" ] && [ -f "$lock/owner.txt" ] && [ ! -L "$lock/owner.txt" ]; then head -c 2048 "$lock/owner.txt" >&2; fi
+    fail "Confirm the recorded installer and build processes have stopped before removing the recorded stage and this lock. No existing lock or stage was removed."
+fi
+printf 'installerPid=%s\nstartedUtc=%s\nbirth=%s\n' "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(ps -p "$$" -o lstart=)" > "$lock/owner.txt"
 stage=
 cleanup() {
     if [ -n "$stage" ]; then rm -rf -- "$stage"; fi
+    rm -f -- "$lock/owner.txt"
     rmdir "$lock" 2>/dev/null || :
 }
 trap cleanup EXIT
@@ -59,6 +68,12 @@ interrupted() {
 }
 trap interrupted INT TERM HUP
 stage=$(mktemp -d "$cache/.source-build.XXXXXXXX")
+printf 'stage=%s\n' "$stage" >> "$lock/owner.txt"
+device() {
+    case $platform in darwin-*) stat -f '%d' "$1" ;; *) stat -c '%d' -- "$1" ;; esac
+}
+stage_device=$(device "$stage")
+[ "$(device "$cache/runtime/v0.2.0")" = "$stage_device" ] && [ "$(device "$cache/models")" = "$stage_device" ] || fail 'Installer stage and destination must share a filesystem for atomic publication.'
 target=$cache/runtime/v0.2.0/$platform
 [ ! -L "$target" ] || fail 'Refusing a symlinked runtime directory.'
 # Stage every new model before compilation/publication; a failed build cannot

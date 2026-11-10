@@ -34,6 +34,9 @@ async fn runtime_configuration_precedes_argument_validation() {
     let text = stringify_json(&result).unwrap().unwrap();
     assert!(text.contains("runtime is not configured"));
     assert!(!text.contains("language only"));
+    assert!(text.contains("No source installer was found or configured"));
+    assert!(!text.contains("npm run"));
+    assert!(FunasrOptions::default().install_command.is_empty());
 }
 #[tokio::test]
 async fn language_validation_precedes_project_path_lookup() {
@@ -422,7 +425,7 @@ async fn cancellation_reaps_a_non_exec_wrapper_worker() {
         .join("llama-funasr-sensevoice");
     // The worker is intentionally not exec'd by the wrapper. It holds the
     // inherited pipes, and is independently bounded even in a broken build.
-    std::fs::write(&binary,format!("#!/bin/sh\n/bin/sh -c 'echo $$ > \"{}\"; /bin/sleep 3' &\nprintf started > '{}'\nwait\n",worker.display(),started.display())).unwrap();
+    std::fs::write(&binary,format!("#!/bin/sh\n/bin/sh -c 'echo $$ > \"{}\"; /bin/sleep 8' &\nprintf started > '{}'\nwait\n",worker.display(),started.display())).unwrap();
     let (tx, rx) = watch::channel(false);
     let options = fixture.options.clone();
     let task = tokio::spawn(async move {
@@ -442,7 +445,7 @@ async fn cancellation_reaps_a_non_exec_wrapper_worker() {
         .trim()
         .parse::<i32>()
         .unwrap();
-    let pid = rustix::process::Pid::from_raw(pid).unwrap();
+    let identity = live_worker_identity(pid).expect("worker must be live before cancellation");
     tx.send_replace(true);
     let result = tokio::time::timeout(Duration::from_secs(3), task)
         .await
@@ -455,10 +458,127 @@ async fn cancellation_reaps_a_non_exec_wrapper_worker() {
             .contains("FunASR transcription cancelled.")
     );
     tokio::time::timeout(Duration::from_secs(2), async {
-        while rustix::process::test_kill_process(pid).is_ok() {
+        while live_worker_identity(pid).as_ref() == Some(&identity) {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
     .expect("non-exec ASR worker must stop with the owned process group");
+}
+
+// Identity checks never signal an observed PID. Zombies have stopped executing;
+// a reused PID with a different birth identity is not our worker.
+#[cfg(unix)]
+fn live_worker_identity(pid: i32) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        let (_, fields) = stat.rsplit_once(')')?;
+        let fields: Vec<_> = fields.split_whitespace().collect();
+        if matches!(*fields.first()?, "Z" | "X") {
+            return None;
+        }
+        Some(fields.get(19)?.to_string())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let output = std::process::Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "stat=", "-o", "lstart="])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let text = String::from_utf8(output.stdout).ok()?;
+        let trimmed = text.trim();
+        if trimmed.is_empty() || trimmed.starts_with('Z') {
+            None
+        } else {
+            Some(trimmed.to_owned())
+        }
+    }
+}
+#[cfg(unix)]
+#[tokio::test]
+async fn successful_wrapper_exit_preserves_delayed_worker_srt() {
+    let fixture = Fixture::new(
+        "( /bin/sleep 0.1; printf '1\\n00:00:01,250 --> 00:00:02,500\\nlate worker output\\n' ) &\nexit 0",
+    );
+    let result = tokio::time::timeout(
+        Duration::from_secs(3),
+        fixture.run(object([("audio_path", "audio.wav".into())])),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        f(f(&result, "structuredContent"), "text"),
+        &JsValue::from("late worker output")
+    );
+    assert!(f(&result, "isError").is_undefined());
+}
+#[cfg(unix)]
+#[tokio::test]
+async fn exited_wrapper_with_pipe_holding_worker_is_cancellable() {
+    let fixture = Fixture::new("exit 72");
+    let worker = fixture.root.join("held-worker.pid");
+    let binary = fixture
+        .options
+        .runtime_root
+        .as_ref()
+        .unwrap()
+        .join("runtime/v0.2.0")
+        .join(runtime_key())
+        .join("llama-funasr-sensevoice");
+    std::fs::write(
+        &binary,
+        format!(
+            "#!/bin/sh\n/bin/sh -c 'echo $$ > \"{}\"; /bin/sleep 8' &\nexit 0\n",
+            worker.display()
+        ),
+    )
+    .unwrap();
+    let (tx, rx) = watch::channel(false);
+    let options = fixture.options.clone();
+    let mut task = tokio::spawn(async move {
+        options
+            .transcribe(object([("audio_path", "audio.wav".into())]), rx)
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !worker.exists() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let pid: i32 = std::fs::read_to_string(worker)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let identity = live_worker_identity(pid).expect("holding worker is live");
+    // EOF has not arrived. Returning success/error here would truncate the SDK's output.
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut task)
+            .await
+            .is_err()
+    );
+    tx.send_replace(true);
+    let result = tokio::time::timeout(Duration::from_secs(3), task)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        stringify_json(&result)
+            .unwrap()
+            .unwrap()
+            .contains("FunASR transcription cancelled.")
+    );
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while live_worker_identity(pid).as_ref() == Some(&identity) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("holding worker must stop before cancellation returns");
 }

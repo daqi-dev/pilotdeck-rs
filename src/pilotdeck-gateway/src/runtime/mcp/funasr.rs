@@ -19,20 +19,11 @@ use tokio::{
 const OUTPUT_LIMIT: u64 = 32 * 1024 * 1024;
 const LINE_LIMIT: usize = 1024 * 1024;
 const VERSION: &str = "v0.2.0";
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct FunasrOptions {
     pub project_root: Option<PathBuf>,
     pub runtime_root: Option<PathBuf>,
     pub install_command: String,
-}
-impl Default for FunasrOptions {
-    fn default() -> Self {
-        Self {
-            project_root: None,
-            runtime_root: None,
-            install_command: "npm run install:asr".into(),
-        }
-    }
 }
 /// Existing gateway binary routes this explicit internal stdio role before proxy/native serving.
 pub fn parse_helper_args(args: &[OsString]) -> Option<FunasrOptions> {
@@ -274,12 +265,23 @@ async fn stop_child(
 }
 
 impl FunasrOptions {
+    fn install_diagnostic(&self, missing: &str, retry: &str) -> String {
+        if self.install_command.trim().is_empty() {
+            format!(
+                "FunASR local {missing}. No source installer was found or configured. Set PILOTDECK_FUNASR_INSTALL_COMMAND to an available source installer and follow the audio-transcription skill, then {retry}."
+            )
+        } else {
+            format!(
+                "FunASR local {missing}. Run {}, then {retry}.",
+                self.install_command
+            )
+        }
+    }
     pub async fn transcribe(&self, input: JsValue, signal: watch::Receiver<bool>) -> JsValue {
         let Some(root) = &self.runtime_root else {
-            return text_error(format!(
-                "FunASR local runtime is not configured. Run {}, then retry this tool.",
-                self.install_command
-            ));
+            return text_error(
+                self.install_diagnostic("runtime is not configured", "retry this tool"),
+            );
         };
         if !f(&input, "language").is_undefined() && !eq(f(&input, "language"), "auto") {
             return text_error("language only supports \"auto\" for the local SenseVoice runtime.");
@@ -299,9 +301,9 @@ impl FunasrOptions {
             || !tokio::fs::metadata(&model).await.is_ok_and(|m| m.is_file())
             || !tokio::fs::metadata(&vad).await.is_ok_and(|m| m.is_file())
         {
-            return text_error(format!(
-                "FunASR local runtime or models are not installed. Run {}, then retry mcp__funasr__transcribe_audio in this session.",
-                self.install_command
+            return text_error(self.install_diagnostic(
+                "runtime or models are not installed",
+                "retry mcp__funasr__transcribe_audio in this session",
             ));
         }
         let binary = binary.unwrap();
@@ -362,13 +364,15 @@ impl FunasrOptions {
                         let group = group.ok_or_else(|| io::Error::other("FunASR process group is unavailable"))?;
                         crate::process_group::wait_exit_unreaped(group).await.map_err(io::Error::from)?
                             .ok_or_else(|| io::Error::other("FunASR process exit observation is unavailable"))?;
-                        // A completed wrapper may still have a pipe-holding worker.
-                        // Signal before reaping the leader, while PGID is reserved.
-                        guard.signal(rustix::process::Signal::KILL);
                         Ok::<(), io::Error>(())
                     };
                     #[cfg(unix)]
                     let (_, out, err) = tokio::try_join!(status, read_output(stdout), read_output(stderr))?;
+                    // A successful wrapper can exit before its worker finishes writing.
+                    // Retain TS's pipe-EOF semantics; cancellation still owns the group.
+                    // Only signal after output has drained and before reaping the leader.
+                    #[cfg(unix)]
+                    guard.signal(rustix::process::Signal::KILL);
                     #[cfg(unix)]
                     let status = child.wait().await;
                     #[cfg(unix)]
@@ -696,7 +700,14 @@ where
     }
     failure.map_or(Ok(()), Err)
 }
-pub async fn serve_stdio(options: FunasrOptions) -> io::Result<()> {
+pub async fn serve_stdio(mut options: FunasrOptions) -> io::Result<()> {
+    if options.install_command.trim().is_empty() {
+        options.install_command = super::native_builtins::install_command(
+            &std::env::vars().collect(),
+            &std::env::current_exe()?,
+            &std::env::current_dir()?,
+        )?;
+    }
     serve(
         tokio::io::BufReader::new(tokio::io::stdin()),
         tokio::io::stdout(),

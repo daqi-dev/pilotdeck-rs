@@ -1553,8 +1553,9 @@ fn default_mode_unchanged() {
     const ROUTING: &str = "    let mut args = std::env::args_os().skip(1);\n    let first = args.next();\n    let explicit_native = pilotdeck_gateway::native_process::native_requested(first.as_deref());\n    // #1354 A8.5-pr3: the main entry's routing. The explicit `--native`\n    // argument (#1071) wins over the `PILOTDECK_GATEWAY_MODE` config item —\n    // the per-invocation flag outranks the deployment default, like the TS\n    // baseline's `readStringFlag(argv, \"--host\") ?? env.PILOTDECK_GATEWAY_HOST`\n    // (src/cli/pilotdeck.ts:213). The config item is still judged *before*\n    // the flag short-circuits anything, so an invalid value fails closed at\n    // startup even when `--native` is present (#1369 shape). The config\n    // item's default is proxy mode (#1303 option A), so without either\n    // explicit switch the entry below is the unchanged A4 proxy: the\n    // rollback target stage A keeps.\n    let mode_native = pilotdeck_gateway::native_process::gateway_mode(\n        std::env::var_os(\"PILOTDECK_GATEWAY_MODE\").as_deref(),\n    )?;\n    if explicit_native || mode_native {\n        return pilotdeck_gateway::native_process::run(\n            pilotdeck_gateway::native_process::Options::parse(native_arguments(\n                explicit_native,\n                first,\n                args,\n            ))?,\n        )\n        .await;\n    }\n";
     const ARGV_PLUMBING: &str = "/// #1354: `--native` is consumed by the router itself, so only the remaining\n/// arguments reach the native options parser; the config item's routing\n/// leaves every argument — `first` included — to that parser.\nfn native_arguments(\n    explicit: bool,\n    first: Option<std::ffi::OsString>,\n    rest: impl Iterator<Item = std::ffi::OsString>,\n) -> impl Iterator<Item = std::ffi::OsString> {\n    if explicit { None } else { first }.into_iter().chain(rest)\n}\n\n";
     // Source installation adds a separate exact opt-in; all legacy bytes
-    // remain pinned after removing only these two approved entry sequences.
+    // remain pinned after removing only the exact opt-in helper sequences.
     const INSTALLATION_OWNER: &str = "    if let Some(code) =\n        pilotdeck_gateway::native_installation_owner_helper(std::env::args_os().skip(1))\n    {\n        std::process::exit(code);\n    }\n";
+    const FUNASR_HELPER: &str = "    if let Some(options) = pilotdeck_gateway::runtime::mcp::funasr::parse_helper_args(\n        &std::env::args_os().skip(1).collect::<Vec<_>>(),\n    ) {\n        pilotdeck_gateway::runtime::mcp::funasr::serve_stdio(options).await?;\n        return Ok(());\n    }\n";
     let source = include_str!("../main.rs");
     negative_assert_eq!(
         source.matches(ROUTING).count(),
@@ -1572,6 +1573,11 @@ fn default_mode_unchanged() {
         "exact installation owner opt-in"
     );
     negative_assert_eq!(
+        source.matches(FUNASR_HELPER).count(),
+        1,
+        "exact FunASR helper opt-in"
+    );
+    negative_assert_eq!(
         format!(
             "{:x}",
             Sha256::digest(
@@ -1579,6 +1585,7 @@ fn default_mode_unchanged() {
                     .replacen(ROUTING, "", 1)
                     .replacen(ARGV_PLUMBING, "", 1)
                     .replacen(INSTALLATION_OWNER, "", 1)
+                    .replacen(FUNASR_HELPER, "", 1)
             )
         ),
         "02613cf4a756f4e9cfdb59c5356961798244feb209bf53a5485491c8b7dd4622",

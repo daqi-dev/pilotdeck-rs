@@ -1,10 +1,12 @@
 import {execFileSync} from 'node:child_process';
-import {copyFileSync} from 'node:fs';
-import {dirname,join} from 'node:path';
+import {copyFileSync,renameSync} from 'node:fs';
+import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-const out=process.argv[2];
+const output=process.argv[2];
 const baseline=process.env.PDRS_BASELINE;
-if(!out||!baseline)throw new Error('Set PDRS_BASELINE and supply output directory');
+if(!output||!baseline)throw new Error('Set PDRS_BASELINE and supply output directory');
+const out=resolve(output);
 const collector=join(dirname(fileURLToPath(import.meta.url)),'oracle.py');
 execFileSync('python3',['-I',collector,'--baseline',baseline,'--node',process.execPath,'--out',join(out,'collection')],{stdio:'inherit',timeout:120000});
+renameSync(join(out,'collection/oracle.json'),join(out,'collection/raw-capture.json'));
 copyFileSync(join(out,'collection/fixture.json'),join(out,'oracle.json'));

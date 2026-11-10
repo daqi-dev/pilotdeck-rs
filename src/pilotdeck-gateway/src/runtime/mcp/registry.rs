@@ -403,6 +403,10 @@ pub fn patch_project_scoped_mcp_spec(
                 .skip(1)
                 .cloned(),
         );
+        if !adapted.iter().any(|arg| arg == "--install-command") {
+            adapted.push("--install-command".to_owned());
+            adapted.push(paths.install_command.clone());
+        }
         native_args = Some(adapted);
     }
     let command = native_command.as_ref().unwrap_or(command);
@@ -1689,6 +1693,30 @@ mod native_retirement_marker_tests {
         assert_eq!(cwd, Some("/project".into()));
         assert!(per_session);
         assert_eq!(patched.call_timeout_ms, Some(123.0));
+    }
+    #[test]
+    fn legacy_funasr_without_install_flag_receives_resolved_source_command() {
+        let paths = BuiltinMcpPaths {
+            install_command: "sh '/generation/source/scripts/install-asr.sh'".into(),
+            ..Default::default()
+        };
+        let input = spec(
+            PILOTDECK_NODE_EXECUTABLE_MARKER,
+            vec![
+                PILOTDECK_FUNASR_MCP_ENTRYPOINT_MARKER.into(),
+                "--runtime-root".into(),
+                "/asr".into(),
+            ],
+        );
+        let patched = patch_project_scoped_mcp_spec(input, "/project", "/home", &paths).unwrap();
+        let McpTransportSpec::Stdio { args, .. } = patched.transport else {
+            panic!("stdio")
+        };
+        let args = args.unwrap();
+        assert_eq!(
+            args[args.len() - 2..],
+            ["--install-command", paths.install_command.as_str()]
+        );
     }
     #[test]
     fn unknown_embedded_funasr_marker_is_explicit_instead_of_an_empty_argument() {
