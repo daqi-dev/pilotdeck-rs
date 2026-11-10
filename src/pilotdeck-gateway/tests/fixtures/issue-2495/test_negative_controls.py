@@ -558,6 +558,45 @@ class TreeLockBusy(unittest.TestCase):
         self.assertIn('source guard: TimeoutError',
                       summary['controls'][0]['reason'])
 
+    def test_restore_source_baseline_error_after_entry_is_a_failed_round(self):
+        # r3b4 DS sibling#1 P2a（2×2 相位表缺 exit×SourceBaselineError 格）:
+        # the acquired guard applies to both mapped exception types alike.
+        # The cell is reachable: the contextmanager's finally re-verifies
+        # via _head_bytes, which wraps git failures into SourceBaselineError
+        # — a restore-window git failure with the flag already set must land
+        # on the red-run side (rc 1, published summary, revoked rows), never
+        # a "never started" refusal, exactly like the TimeoutError twin.
+        import contextlib
+        import negative_process
+
+        @contextlib.contextmanager
+        def fake_mutating_sources(root, paths, **kwargs):
+            yield {path: b'fixture bytes' for path in paths}
+            raise negative_process.SourceBaselineError(
+                root, 'src/pilotdeck-gateway/src/native_process/services.rs',
+                'simulated git failure on the restore re-verify')
+
+        with patch.object(negative_process, 'mutating_sources',
+                          fake_mutating_sources):
+            code, stdout, stderr, out = run(
+                environ={'CARGO_TARGET_DIR': '/nonexistent-cargo-target'},
+                patch_source=(
+                    '                for name, path, old, new, test, assertion in selected:',
+                    '                for name, path, old, new, test, assertion in []:'))
+        self.assertEqual(
+            code, 1,
+            f'a restore-phase SourceBaselineError is a failed round (rc 1), '
+            f'not a refusal: stderr={stderr!r} stdout={stdout!r}')
+        self.assertNotIn('never started', stderr)
+        self.assertNotIn('tree not pristine', stderr)
+        self.assertTrue((out / 'summary.json').exists(),
+                        'a round that started must publish its verdict')
+        self.assertIn('INVALID=7', stdout)
+        summary = json.loads((out / 'summary.json').read_text(encoding='utf-8'))
+        self.assertEqual(summary['counts']['INVALID'], 7)
+        self.assertIn('source guard: SourceBaselineError',
+                      summary['controls'][0]['reason'])
+
     def test_pristine_failure_at_entry_is_refused_not_a_failed_round(self):
         # fix-r3b (MM r3 concurrency#1 P2a): a sibling round SIGKILLed
         # mid-mutation leaves its mutant on disk; this round's acquisition
