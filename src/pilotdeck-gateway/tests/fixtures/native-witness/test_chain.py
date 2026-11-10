@@ -198,6 +198,50 @@ class ChainTests(unittest.TestCase):
         except Exception as error:
             self.fail(marker + ': ' + repr(error))
 
+    def test_compare_http_elapsed_gate_nonfinite(self):
+        marker = '#1355 r32 the elapsed anchors must be finite real numbers'
+        # fix-r32 (DS boundary P0 + MM boundary P1, probe-verified —
+        # _tmp/20261110-1355-r26-harvest/probe-r32-infnan.out): the r31 type
+        # gate alone let ``NaN``/``Infinity`` anchors through (json.loads
+        # accepts both, and ``500 - nan < 300`` is False), so a doctored
+        # http recording cleared the streamed-window oracle.  The gate now
+        # demands a finite real number on both anchors; the tree below
+        # reaches the gate with two valid chunks whose only defect is the
+        # non-finite anchor, so the oracle fires on the finiteness arm.
+        import base64
+        compare = s._load('compare', s.SCRIPT / 'compare.py')
+        folder = Path(self.temp.name) / 'elapsed-gate'
+        c.save(folder / 'run.json', {'status': 'DONE', 'audit': {'allStopped': True},
+                                     'scenarios': {'auth': {'exitCode': 0}}})
+        (folder / 'scenarios/auth').mkdir(parents=True)
+        c.save(folder / 'scenarios/auth/result.json', {'scenario': 'auth', 'status': 'PASS'})
+        c.save(folder / 'scenarios/auth/complete.json', {'scenario': 'auth', 'complete': True,
+                                                         'records': 1, 'connections': 1})
+        row = {'seq': 1, 'connection': 1, 'direction': 'receive', 'transportEnd': True,
+               'frame': {'type': 'hello_ok', 'text': 'x'}}
+        (folder / 'scenarios/auth/frames.jsonl').write_text(json.dumps(row) + '\n')
+        (folder / 'project').mkdir(parents=True)
+        (folder / 'project/note.txt').write_text('gateway parity fixture\n')
+        (folder / 'project/written.txt').write_text('HTTP written fixture\n')
+        c.save(folder / 'scenarios/quirks/result.json', {'results': []})
+
+        def chunk(text, elapsed):
+            return {'base64': base64.b64encode(text.encode()).decode(),
+                    'elapsedMs': elapsed}
+
+        plain = [{'status': 200, 'body': '{}',
+                  'chunks': [chunk('{}', 0)]}] * 6
+        streamed = [{'status': 200, 'body': 'first-last',
+                     'chunks': [chunk('first', float('nan')), chunk('-last', 500)]}] * 2
+        c.save(folder / 'scenarios/http/http.json', plain + streamed)
+        try:
+            with patch.object(compare, 'SCENARIOS', ['auth']):
+                _, errors = compare.validate(folder)
+            self.assertTrue('stream buffered/truncated' in [error['detail'] for error in errors],
+                            marker + ': ' + repr(errors))
+        except Exception as error:
+            self.fail(marker + ': ' + repr(error))
+
     def test_receipt_schema_is_shared(self):
         marker = '#1140 r10 receipt producers and consumers use one schema'
         # Sentinel addition exercises derivation, not today's literal key count.

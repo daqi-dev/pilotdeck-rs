@@ -1037,7 +1037,11 @@ def validate_expectations(registration, observations):
         case = '/'.join(observation['id'].split('/')[:3])
         projection = project_observation(observation)
         if case in measured:
-            require(measured[case] == projection, 'EXPECTATION_TS_DRIFT',
+            # fix-r32 (DS sibling#5 P3): both sides are projections of
+            # external observation documents — a ``True``/``1`` drift between
+            # repetitions of the same case folded through ``==``.
+            require(native_evidence.same_json(measured[case], projection),
+                    'EXPECTATION_TS_DRIFT',
                     case + ': repetitions disagree with each other')
         else:
             measured[case] = projection
@@ -1225,8 +1229,20 @@ def audit_native(evidence, contract):
             'PROCESS_WITNESS', 'contract launcher pid is not a real pid')
     for process in processes:
         allowed = contract['binaries'][process['role']]
-        require(process['argv'] == allowed['argv'] and process['sha256'] == allowed['sha256']
-                and process['executable'] == allowed['path']
+        # fix-r32 (anthropic sibling#1 P2): every operand here is an
+        # external document read (the observed witness and the contract
+        # itself), so ``process['sha256'] = True`` folded onto a doctored
+        # ``allowed['sha256'] = True`` through ``==`` and the identity
+        # check passed.  The argv side already had a str-element gate; the
+        # sha256/executable sides now carry their own str gates, and the
+        # three identity equalities go through same_json (type-strict —
+        # same_json(True, True) still folds, which is exactly why the
+        # explicit str gates precede).
+        require(isinstance(allowed['sha256'], str) and isinstance(allowed['path'], str)
+                and isinstance(process['sha256'], str) and isinstance(process['executable'], str)
+                and native_evidence.same_json(process['argv'], allowed['argv'])
+                and native_evidence.same_json(process['sha256'], allowed['sha256'])
+                and native_evidence.same_json(process['executable'], allowed['path'])
                 and digest(Path(allowed['path'])) == allowed['sha256'],
                 'NATIVE_PROCESS', 'exec identity/argv/hash differs from pre-launch identity')
         expected_parent = contract['launcherPid'] if process['role'] == 'host' else next(p['pid'] for p in processes if p['role'] == 'host')

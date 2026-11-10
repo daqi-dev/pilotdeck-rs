@@ -141,6 +141,18 @@ cases = [
     ('jsonl-upstream-splitlines', comparison, 'jsonl_lines(raw_upstream)', 'raw_upstream.splitlines()', 'test_jsonl_validate_frames_and_upstream'),
     ('jsonl-disk-splitlines', comparison, 'jsonl_lines(text)', 'text.splitlines()', 'test_jsonl_compare_disk_and_controls'),
     ('jsonl-index-splitlines', comparison, 'jsonl_lines(item.read_text())', 'item.read_text().splitlines()', 'test_jsonl_compare_disk_and_controls'),
+    # fix-r32 (DS boundary P0 + MM boundary P1, probe-verified —
+    # _tmp/20261110-1355-r26-harvest/probe-r32-infnan.out): the streamed-
+    # window anchors must be finite real numbers — with the isfinite arm
+    # reverted, a NaN-anchored http recording clears the oracle without
+    # ever streaming.
+    ('infnan-gate-reverted', comparison,
+     "                    or any(type(chunk.get('elapsedMs')) not in (int, float)\n"
+     "                           or not math.isfinite(chunk.get('elapsedMs'))\n"
+     "                           for chunk in (chunks[0], chunks[-1]))\n",
+     "                    or any(type(chunk.get('elapsedMs')) not in (int, float)\n"
+     "                           for chunk in (chunks[0], chunks[-1]))\n",
+     'test_compare_http_elapsed_gate_nonfinite'),
     ('jsonl-control-rows-splitlines', controls_script, "jsonl_lines((folder / f'scenarios/{name}/frames.jsonl').read_text())", "(folder / f'scenarios/{name}/frames.jsonl').read_text().splitlines()", 'test_jsonl_compare_disk_and_controls'),
     ('jsonl-fingerprint-splitlines', controls_script, 'jsonl_lines(path.read_text())', 'path.read_text().splitlines()', 'test_jsonl_compare_disk_and_controls'),
     ('omit-capture-receipt-audit', native, "for name, key in receipt_artifacts('capture').items():", 'for name, key in []:', 'test_receipt_schema_is_shared'),
@@ -350,6 +362,7 @@ messages = {
     'jsonl-index-splitlines': '#1140 r10 compare and controls preserve JSONL Unicode text',
     'jsonl-control-rows-splitlines': '#1140 r10 compare and controls preserve JSONL Unicode text',
     'jsonl-fingerprint-splitlines': '#1140 r10 compare and controls preserve JSONL Unicode text',
+    'infnan-gate-reverted': '#1355 r32 the elapsed anchors must be finite real numbers',
     'omit-capture-receipt-audit': '#1140 r10 receipt producers and consumers use one schema',
     'omit-session-receipt-audit': '#1140 r10 receipt producers and consumers use one schema',
     'copy-control-receipt-schema': '#1140 r10 receipt producers and consumers use one schema',

@@ -71,6 +71,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import sqlite3
@@ -244,7 +245,13 @@ def wire_frame(row):
     if len(data) < offset:
         raise ValueError('truncated mask')
     payload = data[offset:]
-    if len(payload) != size or opcode != row['wire']['opcode']:
+    # fix-r32 (DS sibling#3 P2, probe-r32-family): the decoded opcode is a
+    # plain int but ``row['wire']['opcode']`` is an external document read —
+    # ``1 != True`` is False, so a folded boolean opcode folded onto the
+    # decoded int.  The same_json metadata check below subsumes the value,
+    # but an independent real-int gate makes this compare hold on its own.
+    if len(payload) != size or type(row['wire']['opcode']) is not int \
+            or opcode != row['wire']['opcode']:
         raise ValueError('wire bytes/header disagree')
     metadata = {'opcode': opcode, 'fin': bool(data[0] & 128), 'rsv': data[0] & 0x70,
                 'masked': masked, 'lengthCode': length_code, 'payloadLength': size}
@@ -324,6 +331,7 @@ def validate(path, local_methods=()):
                 connections = {row.get('connection') for row in rows}
                 if (name != 'http'
                         and (type(connection_count) is not int or connection_count < 0
+                             or connection_count > len(rows)
                              or connections != set(range(1, connection_count + 1)))):
                     fail('G2.recording', f'{name}: connection count/identity mismatch')
                 pending = {}
@@ -475,7 +483,11 @@ def validate(path, local_methods=()):
             body = b''.join(base64.b64decode(chunk['base64'], validate=True) for chunk in row['chunks']).decode('utf8')
             if body != row['body']:
                 fail('G2.recording', 'HTTP raw chunk bytes / body disagree')
-        if json.loads(http[0]['body']) != {'ok': True} or json.loads(http[1]['body']).get('token') != (path / 'home/server-token').read_text().strip():
+        # fix-r32 (DS sibling#2 P1, probe-r32-scalar-repr family): ``{'ok': 1}``
+        # folded onto ``{'ok': True}`` through ``==`` and the health oracle
+        # passed; same_json is type-strict (#1372 semantics on numbers).
+        if not native_evidence.same_json(json.loads(http[0]['body']), {'ok': True}) \
+                or json.loads(http[1]['body']).get('token') != (path / 'home/server-token').read_text().strip():
             fail('G3.oracle', 'health / local token body incorrect')
         if not json.loads(http[2]['body']).get('projects') or json.loads(http[3]['body']).get('content') != 'gateway parity fixture\n':
             fail('G3.oracle', 'HTTP projects / file read fixture missing')
@@ -485,8 +497,15 @@ def validate(path, local_methods=()):
             # external document reads entering arithmetic — ``True - True``
             # is 0 and passed the 300 ms bound.  A real-number gate
             # (type() excludes bool) precedes the subtraction.
+            # fix-r32 (DS boundary P0 + MM boundary P1, probe-r32-infnan):
+            # the type gate alone let ``NaN``/``Infinity`` through —
+            # ``json.loads`` accepts both, and ``inf - 0 < 300`` /
+            # ``nan - nan < 300`` are False, so a doctored http.json could
+            # clear the streamed-window oracle without ever streaming.  The
+            # gate now demands a finite real number on both anchor chunks.
             if (len(chunks) < 2
                     or any(type(chunk.get('elapsedMs')) not in (int, float)
+                           or not math.isfinite(chunk.get('elapsedMs'))
                            for chunk in (chunks[0], chunks[-1]))
                     or chunks[-1]['elapsedMs'] - chunks[0]['elapsedMs'] < 300
                     or 'first' not in row['body'] or 'last' not in row['body']):
@@ -641,7 +660,11 @@ def compare(left, right, local_methods=()):
         try:
             a, b = projection(left, recording['left']), projection(right, recording['right'])
             for surface, rule in [('frames', 'G4.frames'), ('http', 'G5.http'), ('disk', 'G6.disk')]:
-                if a[surface] != b[surface]:
+                # fix-r32 (DS sibling#1 P1): both sides are external
+                # document projections — ``{'final': True}`` folded onto
+                # ``{'final': 1}`` through ``!=`` and the surface diff read
+                # as "no difference".  Same_json is type-strict.
+                if not native_evidence.same_json(a[surface], b[surface]):
                     failures.append({'rule': rule, 'left': a[surface], 'right': b[surface]})
         except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError, sqlite3.Error) as error:
             failures.append({'rule': 'G2.recording', 'detail': str(error)})

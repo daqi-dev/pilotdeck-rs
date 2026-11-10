@@ -4061,24 +4061,38 @@ MUTATIONS = [
      "                        content = _folded_size(sequence, budget)",
      "                        content = _folded_size(sequence)"),
     ('mod-render-bound-reverted', CHECK,
-     "            if isinstance(right, (str, bytes)):\n"
-     "                payload = len(right)\n"
      "            elif isinstance(right, (list, tuple, set, frozenset, dict)):\n"
      "                try:\n"
      "                    payload = _render_bound(right, budget)\n"
      "                except _FoldedSizeOverflow:\n"
-     "                    return _LITERAL_TEST_UNRESOLVED\n"
-     "            else:\n"
-     "                payload = len(str(right))",
-     "            if isinstance(right, (str, bytes)):\n"
-     "                payload = len(right)\n"
+     "                    return _LITERAL_TEST_UNRESOLVED\n",
+     # fix-r32: the anchor now spans only the container arm — the scalar
+     # arm has its own revert mutant below — and the reverted charge
+     # keeps threading the shared budget, so the kill isolates the
+     # render-bound semantics, not a budget-less TypeError.
      "            elif isinstance(right, (list, tuple)):\n"
-     "                payload = _folded_size(right)\n"
+     "                payload = _folded_size(right, budget)\n"
      "                if payload is None:\n"
      "                    return _LITERAL_TEST_UNRESOLVED\n"
-     "                payload += 2 * len(right)\n"
-     "            else:\n"
-     "                payload = len(str(right))"),
+     "                payload += 2 * len(right)\n"),
+    # #1652 fix-r32 (DS boundary#2 P1, probe-verified —
+    # _tmp/20261110-1355-r26-harvest/probe-r32-scalar-repr.out): the scalar
+    # arm of the same charge — with the spec-aware render bound reverted to
+    # the raw length, the ``%r``/``%a`` str and the bytes scalar probes fold
+    # past the cap the battery must resolve fail-closed.
+    ('scalar-repr-reverted', CHECK,
+     "                if isinstance(right, bytes):\n"
+     "                    payload = len(right) * 4 + 3 if isinstance(left, str) else len(right)\n"
+     "                else:\n"
+     "                    payload = (len(right) * 10 + 2\n"
+     "                               if isinstance(left, str)\n"
+     "                               and any(spec and spec[-1] in ('r', 'a')\n"
+     "                                       for spec in specs)\n"
+     "                               else len(right))",
+     "                if isinstance(right, bytes):\n"
+     "                    payload = len(right)\n"
+     "                else:\n"
+     "                    payload = len(right)"),
 ]
 
 def calibrate_dict_namespace_update(rows):
@@ -4634,6 +4648,24 @@ def mod_render_reverted(rows):
         return False, (f'failures={failures!r}, '
                        'want the r31 Mod-render battery failure')
     return True, ('aggregation-audit: the Mod render bound reverted, '
+                  'battery flagged, passed=False')
+
+def scalar_repr_reverted(rows):
+    """#1652 fix-r32: the Mod scalar payload must charge the spec-aware
+    render bound — with the charge reverted to the raw length, the scalar
+    repr-str and bytes probes fold past the cap."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any('payload charged the raw length' in failure
+               for failure in failures):
+        return False, (f'failures={failures!r}, '
+                       'want the r32 scalar-repr battery failure')
+    return True, ('aggregation-audit: the Mod scalar render bound reverted, '
                   'battery flagged, passed=False')
 
 JUDGES = {
@@ -5218,6 +5250,8 @@ JUDGES = {
         'aggregation-audit', mult_budget_unthreaded, False, ()),
     'mod-render-bound-reverted': (
         'aggregation-audit', mod_render_reverted, False, ()),
+    'scalar-repr-reverted': (
+        'aggregation-audit', scalar_repr_reverted, False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')

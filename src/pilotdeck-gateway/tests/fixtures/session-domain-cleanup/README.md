@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 240 mutants:
+`JUDGES`, keyed by the same names. The current table has 241 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -428,7 +428,10 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-ordered-binding`, `calibrate-partial-update-prebound`,
 `calibrate-partial-setdefault-prebound`,
 `calibrate-builtins-chain-fiftyone`,
-`mult-fold-budget-unthreaded`, `mod-render-bound-reverted`.
+`mult-fold-budget-unthreaded`, `mod-render-bound-reverted`,
+`scalar-repr-reverted` (fix-r32: the Mod scalar payload charge reverted to
+the raw length — the `%r`/`%a` str and the bytes scalar render probes must
+flag it; `#1652`).
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1875,7 +1878,12 @@ content walk draws from the caller's budget; the aggregation audit pins
 both with sentinel probes plus a twin-sized folding control. Two revert
 mutants join the table (`mult-fold-budget-unthreaded`,
 `mod-render-bound-reverted`, 240 total), each bound to a new judge that
-requires the battery's own failure text. (S) The boolean-folding family
+requires the battery's own failure text. fix-r32 adds the scalar arm of
+the same charge: a str left renders bytes as their repr under every spec
+(`4*len + 3`) and `%r`/`%a` render a str as its repr (`10*len + 2`
+worst case), each with its own sentinel probe and a folding `%s` twin
+(probe-r32-scalar-repr.out), plus a third revert mutant
+(`scalar-repr-reverted`, 241 total). (S) The boolean-folding family
 in the frozen comparison sites: every witness/evidence equality on
 external documents now goes through `native_evidence.same_json`
 (type-strict on booleans, #1372 number semantics — `True == 1` /

@@ -949,6 +949,10 @@ NON_AGGREGATION_POINTS = {
     # fixture, never a batch summary of children.
     ('scripts/gateway-parity/test_safety.py', 'test_compare_validate_footer_counts_refuse_boolean_folds'):
         'test-only minimal manifest tree for the footer gates; documents carry status keys as input, not a batch',
+    # fix-r32: the elapsed-gate pin builds the same kind of minimal tree
+    # (run/result documents with status keys are the audit's input fixture).
+    ('scripts/gateway-parity/test_safety.py', 'test_compare_validate_http_elapsed_gate_refuses_nonfinite_and_boolean_folds'):
+        'test-only minimal manifest tree for the streamed-window gate; documents carry status keys as input, not a batch',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
      'batch_aggregation_control'):
         'test-only; calls the shared function to assert the order',
@@ -1364,12 +1368,22 @@ def _folded_string_fold(node, budget):
             # outer ``%`` that None is escalated back to the sentinel (the
             # Mod entry guard above); truncation makes "too long" carry no
             # information about the formatted result.
-            if len(left) + len(specs) * max(len(right), width) > _FOLD_MAX_ITEMS:
+            # fix-r32 (DS boundary#2 P1, same family as the Mod payload —
+            # probe-r32-scalar-repr.out): this fold *executes* the format,
+            # so an under-charged bound means the interpreter builds the
+            # oversized render — ``%r``/``%a`` render repr (10 characters
+            # per character worst case, plus the quotes; a
+            # ``'\\U000e0000' * 700000`` operand measures 7,000,002) while
+            # ``%s`` renders the string itself (exact length).
+            charge = (len(right) * 10 + 2
+                      if any(spec and spec[-1] in ('r', 'a') for spec in specs)
+                      else len(right))
+            if len(left) + len(specs) * max(charge, width) > _FOLD_MAX_ITEMS:
                 return _FOLD_STRING_UNRESOLVED
             # fix-r13 (DS sibling#2 r12 P2): the format result is charged
             # to the fold budget before the interpreter builds it — an
             # exhausted budget stops the fold (fix-r14: as the sentinel).
-            budget[0] -= len(left) + len(specs) * max(len(right), width)
+            budget[0] -= len(left) + len(specs) * max(charge, width)
             if budget[0] < 0:
                 return _FOLD_STRING_UNRESOLVED
             try:
@@ -5067,19 +5081,27 @@ def _literal_test_value(node, budget=None):
     try:
         return _literal_test_value_fold(node, budget)
     except (ArithmeticError, TypeError, ValueError, MemoryError,
-            RecursionError):
+            RecursionError, _FoldedSizeOverflow):
+        # fix-r32 (MM simplify#2 P2): ``_render_bound`` re-raises the
+        # traversal overflow and its call sites are expected to resolve
+        # it themselves — the wrapper now carries it too, so an escape
+        # from any walker lands on the fail-closed sentinel instead of
+        # aborting the audit run.
         return _LITERAL_TEST_UNRESOLVED
 
 
 class _FoldedSizeOverflow(Exception):
-    """Internal to ``_folded_size``: the traversal budget ran out.
+    """The traversal budget ran out during a size/render walk.
 
-    Never escapes ``_folded_size`` — it maps to the None return the
-    container branches resolve as a fail-closed container.
+    fix-r32 (MM simplify#2 P2): both walkers use it — ``_folded_size``
+    maps it to the None return the container branches resolve fail-closed,
+    and ``_render_bound`` re-raises so the Mod payload branch can resolve
+    the same sentinel; the ``_literal_test_value`` wrapper catches any
+    escape.  It never aborts the audit run.
     """
 
 
-def _folded_size(value, budget=None):
+def _folded_size(value, budget):
     """The units a folded value contributes to a container cap.
 
     fix-r9 (DS boundary r8 P1, probe-verified — fix-r9-audit/probe-r9-ds-
@@ -5114,9 +5136,12 @@ def _folded_size(value, budget=None):
     folded for 17.2 s; twelve such tests 197.5 s, past the 180 s
     CHECK_TIMEOUT).  The ``budget=None`` default only serves a direct
     outside call; the fold always passes its own.
+    fix-r32 (MM simplify#1 P2): ``budget`` is required — every internal
+    call threads the caller's shared ledger, and the old ``budget=None``
+    self-mint was exactly the per-call-site fresh allowance the r31 holes
+    rode; a missing argument is now a TypeError the wrapper resolves
+    fail-closed instead of a silent 4e6 unit mint.
     """
-    if budget is None:
-        budget = [_FOLD_SIZE_WORK_CAP]
 
     def walk(item):
         if isinstance(item, (str, bytes)):
@@ -5186,13 +5211,22 @@ def _render_bound(value, budget):
         if isinstance(item, str):
             return len(item) * 10 + 2
         if isinstance(item, (bytes, bytearray)):
-            return len(item) * 4 + 2
+            # fix-r32 (DS concurrency#1 + boundary#6 r31-family P2):
+            # ``repr(b'')`` is 3 characters and every byte escapes to 4,
+            # so the +2 tail under-counted the wrapper quotes.
+            return len(item) * 4 + 3
         if isinstance(item, bool) or item is None:
             return 6
         if isinstance(item, int):
             return item.bit_length() // 3 + 2
         if isinstance(item, float):
             return 32
+        if isinstance(item, complex):
+            # fix-r32 (DS concurrency#1 + boundary#6 r31-family P2): the
+            # generic 32 tail under-counted — a complex repr carries two
+            # full float reprs plus brackets, separator and ``j``
+            # (measured worst case ~51 characters).
+            return 56
         if isinstance(item, (list, tuple, set, frozenset)):
             total = 2
             for element in item:
@@ -5489,7 +5523,25 @@ def _literal_test_value_fold(node, budget=None):
             # the ledger), and the traversal overflow resolves the same
             # fail-closed sentinel.
             if isinstance(right, (str, bytes)):
-                payload = len(right)
+                # fix-r32 (DS boundary#2 P1, probe-verified —
+                # _tmp/20261110-1355-r26-harvest/probe-r32-scalar-repr.out):
+                # the scalar charge was the raw length, but a str left
+                # renders bytes as their *repr* under every spec —
+                # ``'%s' % (b'\\x00' * 700000,)`` measured a 2,800,003-char
+                # render against a 700,000 charge — and ``%r``/``%a``
+                # render a str as its repr, up to 10 characters per
+                # character (a ``\\U000e0000`` escape) plus the quotes —
+                # ``'%r' % ('\\U000e0000' * 700000,)`` measured 7,000,002.
+                # A bytes left (PEP 461) renders ``%s`` as the bytes
+                # themselves, so it keeps the 1:1 length.
+                if isinstance(right, bytes):
+                    payload = len(right) * 4 + 3 if isinstance(left, str) else len(right)
+                else:
+                    payload = (len(right) * 10 + 2
+                               if isinstance(left, str)
+                               and any(spec and spec[-1] in ('r', 'a')
+                                       for spec in specs)
+                               else len(right))
             elif isinstance(right, (list, tuple, set, frozenset, dict)):
                 try:
                     payload = _render_bound(right, budget)
@@ -9376,6 +9428,105 @@ def _aggregation_audit_impl():
     if _vfu_fold is not _LITERAL_TEST_UNRESOLVED:
         failures.append('#892 aggregation-audit: the Mod escape payload '
                         'charged the folded content, not the render (#1652)')
+    # fix-r32 (DS boundary#5 P2 — the r31 event chain claimed "each pin
+    # carries a twin-sized control" but only the Mod render pin had one):
+    # the Mult content-walk pin and the escape-arm pin now carry their own
+    # same-shape folding controls — one link of the ``* 1``-chain, and the
+    # escape tuple at 1/100th scale — so a red pin means the charge
+    # tripped, not the probe shape.
+    _vfb_ctrl = ast.parse("[[''] * 250000]", mode='eval').body
+    _AUDIT_PASS_BUDGET = [3 * _FOLD_MAX_ITEMS // 2]
+    try:
+        _vfb_ok = _literal_test_value(_vfb_ctrl)
+    finally:
+        _AUDIT_PASS_BUDGET = None
+    if _vfb_ok is _LITERAL_TEST_UNRESOLVED:
+        failures.append('#892 aggregation-audit: the Mult content-walk twin '
+                        'control stopped folding (#1652)')
+    _vfu_ctrl = ast.parse("('%s' % (('\\U000e0000' * 500,) * 9,))",
+                          mode='eval').body
+    if _literal_test_value(_vfu_ctrl) is _LITERAL_TEST_UNRESOLVED:
+        failures.append('#892 aggregation-audit: the Mod escape twin control '
+                        'stopped folding (#1652)')
+    # fix-r32 (DS boundary#2 P1, probe-verified —
+    # _tmp/20261110-1355-r26-harvest/probe-r32-scalar-repr.out): the
+    # scalar payload charge must follow the spec — ``%r``/``%a`` render a
+    # str as its repr (10 characters per character worst case plus
+    # quotes; ``'\\U000e0000' * 700000`` measured a 7,000,002-character
+    # render against a 700,000 charge) and a str left renders bytes as
+    # their repr under every spec (``b'\\x00' * 700000`` measured
+    # 2,800,003).  Both probes resolve the sentinel while the same-shape
+    # ``%s``-str twin folds, so the sentinel is the repr charge, not the
+    # shape.  The string fold executes the format, so its ``%r`` probe
+    # must stop the same way.
+    _vsr_probe = ast.parse("'%r' % ('\\U000e0000' * 700000,)",
+                           mode='eval').body
+    if _literal_test_value(_vsr_probe) is not _LITERAL_TEST_UNRESOLVED:
+        failures.append('#892 aggregation-audit: the Mod repr-str payload '
+                        'charged the raw length, not the repr (#1652)')
+    _vsb_probe = ast.parse("'%s' % (b'\\x00' * 700000,)",
+                           mode='eval').body
+    if _literal_test_value(_vsb_probe) is not _LITERAL_TEST_UNRESOLVED:
+        failures.append('#892 aggregation-audit: the Mod bytes payload '
+                        'charged the raw length, not the repr (#1652)')
+    # The scalar (tuple-less) arm of the same charge: a str right under
+    # ``%r`` pays the repr charge with no container around it, and the
+    # ``%s`` twin at the same size folds.
+    _vss_probe = ast.parse("'%r' % ('\\U000e0000' * 700000)",
+                           mode='eval').body
+    if _literal_test_value(_vss_probe) is not _LITERAL_TEST_UNRESOLVED:
+        failures.append('#892 aggregation-audit: the Mod scalar repr-str '
+                        'payload charged the raw length (#1652)')
+    _vsbs_probe = ast.parse("'%s' % (b'\\x00' * 700000)",
+                            mode='eval').body
+    if _literal_test_value(_vsbs_probe) is not _LITERAL_TEST_UNRESOLVED:
+        failures.append('#892 aggregation-audit: the Mod scalar bytes '
+                        'payload charged the raw length (#1652)')
+    _vsr_ctrl = ast.parse("'%s' % ('x' * 700000)", mode='eval').body
+    if _literal_test_value(_vsr_ctrl) is _LITERAL_TEST_UNRESOLVED:
+        failures.append('#892 aggregation-audit: the Mod %s-str twin control '
+                        'stopped folding (#1652)')
+    _fsr_probe = ast.parse("'%r' % ('a' * 999000)", mode='eval').body
+    if _folded_string(_fsr_probe) is not _FOLD_STRING_UNRESOLVED:
+        failures.append('#892 aggregation-audit: the string fold built an '
+                        'over-cap %r render (#1652)')
+    _fsr_ctrl = ast.parse("'%s' % ('a' * 999000)", mode='eval').body
+    _fsr_ok = _folded_string(_fsr_ctrl)
+    if _fsr_ok is None or len(_fsr_ok) != 999000:
+        failures.append('#892 aggregation-audit: the string fold %s twin '
+                        'control stopped folding (#1652)')
+    # fix-r32 (DS concurrency#1 + boundary#6 P2 family): the render bound
+    # itself must stay an upper bound — sampled shapes (bytes with the
+    # +3 wrapper, complex with two full float reprs, nested containers)
+    # never charge less than the interpreter's own repr length.
+    _rb_samples = (b'', b'\x00', b'\xff' * 117,
+                   complex(1.2345678901234567e-308, 9.8765432109876543e-308),
+                   [b'\x00', 'x', 1.5], (b'\xff', (b'\x00',)))
+    _rb_budget = [10 ** 6]
+    for _rb_sample in _rb_samples:
+        if _render_bound(_rb_sample, _rb_budget) < len(repr(_rb_sample)):
+            failures.append('#892 aggregation-audit: the render bound '
+                            'under-counted a sample repr (#1652)')
+    # fix-r32 (MM simplify#1 P2): ``_folded_size`` no longer mints an
+    # allowance — the signature itself carries no default, so a
+    # budget-less call is a TypeError the wrapper resolves fail-closed,
+    # never a fresh 4e6 unit cell.
+    if _folded_size.__defaults__:
+        failures.append('#892 aggregation-audit: _folded_size minted a '
+                        'fresh allowance for a budget-less call (#1652)')
+    # fix-r32 (DS simplify r31 P2): every internal size/render walk call
+    # threads the shared budget — a machine check over this file's own
+    # AST: a call site whose budget argument is a fresh list (or missing)
+    # re-opens the per-call-site mint the r31 holes rode.
+    _own_tree = ast.parse(Path(__file__).read_text())
+    for _call in ast.walk(_own_tree):
+        if (isinstance(_call, ast.Call)
+                and isinstance(_call.func, ast.Name)
+                and _call.func.id in ('_folded_size', '_render_bound')
+                and (len(_call.args) < 2
+                     or isinstance(_call.args[1], (ast.List, ast.ListComp)))):
+            failures.append('#892 aggregation-audit: a size/render walk call '
+                            'minted or dropped its budget argument (#1652)')
     # #1652 fix-r14 (DS boundary#1 + concurrency#1 r13 P0, probe-verified —
     # fix-r14-audit/probe-r14-p0.out B): a fold stopped by the shared cell
     # must read as *possible* status evidence at every consumer — with the

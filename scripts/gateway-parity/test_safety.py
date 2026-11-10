@@ -5162,6 +5162,20 @@ class RetirementScoring(unittest.TestCase):
                  'PROCESS_WITNESS', 'contract launcher pid'),
                 ('contract launcherPid float', ('contract', 'launcherPid'), 1.0,
                  'PROCESS_WITNESS', 'contract launcher pid'),
+                # fix-r32 (anthropic sibling#1 P2): the exec-identity
+                # operands are external reads on both sides — a doctored
+                # contract folded onto a doctored witness.  Each single-side
+                # channel below proves one side; the both-sides fold follows.
+                ('process sha256 boolean', ('evidence', 'processes', 0, 'sha256'), True,
+                 'NATIVE_PROCESS', 'exec identity/argv/hash differs from pre-launch identity'),
+                ('process executable boolean', ('evidence', 'processes', 0, 'executable'), True,
+                 'NATIVE_PROCESS', 'exec identity/argv/hash differs from pre-launch identity'),
+                ('contract binary sha256 boolean', ('contract', 'binaries', 'host', 'sha256'),
+                 True, 'NATIVE_PROCESS',
+                 'exec identity/argv/hash differs from pre-launch identity'),
+                ('contract binary path boolean', ('contract', 'binaries', 'host', 'path'),
+                 True, 'NATIVE_PROCESS',
+                 'exec identity/argv/hash differs from pre-launch identity'),
             )
             for tag, channel_path, value, rule, detail in channels:
                 case = mutated(channel_path, value)
@@ -5169,6 +5183,26 @@ class RetirementScoring(unittest.TestCase):
                     self.session.audit_native(case['evidence'], case['contract'])
                 self.assertEqual(raised.exception.rule, rule, f'fix-r29 {tag}: {raised.exception}')
                 self.assertIn(detail, str(raised.exception), f'fix-r29 {tag}')
+            # fix-r32 (anthropic sibling#1 P2): the identity fold itself —
+            # both sides doctored to the same boolean pass a bare ``==``
+            # and even same_json(True, True) folds, so only the explicit
+            # str gates kill it.  (``Path(True)`` would raise TypeError;
+            # the gates short-circuit before the digest, so the corruption
+            # is reported, not escaped.)
+            for witness_side, contract_side in (
+                    (('evidence', 'processes', 0, 'sha256'), ('contract', 'binaries', 'host', 'sha256')),
+                    (('evidence', 'processes', 0, 'executable'), ('contract', 'binaries', 'host', 'path'))):
+                case = mutated(witness_side, True)
+                node = case[contract_side[0]]
+                for key in contract_side[1:-1]:
+                    node = node[key]
+                node[contract_side[-1]] = True
+                with self.assertRaises(self.session.EvidenceError) as raised:
+                    self.session.audit_native(case['evidence'], case['contract'])
+                self.assertEqual(raised.exception.rule, 'NATIVE_PROCESS',
+                                 f'fix-r32 identity fold {witness_side[-1]}: {raised.exception}')
+                self.assertIn('exec identity/argv/hash differs', str(raised.exception),
+                              f'fix-r32 identity fold {witness_side[-1]}')
             # The all-legal shape passes every pid gate and fails only on the
             # honest later mismatch — the empty independent observer.
             case = json.loads(json.dumps(base))
@@ -5360,6 +5394,104 @@ class RetirementScoring(unittest.TestCase):
             honest = footer_errors(1, 1)
             self.assertNotIn('auth: count/footer mismatch', honest)
             self.assertNotIn('auth: connection count/identity mismatch', honest)
+
+            # fix-r32 (r32 structural round, DS sibling#4 follow-up): the run
+            # document's exitCode is the same footer-family external read —
+            # ``True != 0`` is False, ``1.0 != 0`` is False, so a folded
+            # exitCode audited clean even with the r31 gate in place only on
+            # the counts.  The gate now covers the exitCode read itself.
+            for exit_code in (True, 1.0):
+                run_doc = json.loads((root / 'run.json').read_text())
+                run_doc['scenarios']['auth']['exitCode'] = exit_code
+                (root / 'run.json').write_text(json.dumps(run_doc))
+                _, errors = compare_module.validate(root)
+                self.assertIn('auth: driver failed its independent expectations',
+                              [error['detail'] for error in errors],
+                              f'fix-r32 exitCode fold {exit_code!r}')
+            run_doc = json.loads((root / 'run.json').read_text())
+            run_doc['scenarios']['auth']['exitCode'] = 0
+            (root / 'run.json').write_text(json.dumps(run_doc))
+
+            # fix-r32 (r32 structural round): the connection count also
+            # bounds the set materialisation — a huge but well-typed count
+            # fails fast on ``connection_count > len(rows)`` instead of
+            # building ``set(range(1, count + 1))`` (the oversized value is
+            # a corrupt footer, not a DoS vector for the auditor).
+            for bound in (2, 10 ** 12):
+                details = footer_errors(1, bound)
+                self.assertIn('auth: connection count/identity mismatch', details,
+                              f'fix-r32 connection-count bound {bound!r}')
+
+    def test_compare_validate_http_elapsed_gate_refuses_nonfinite_and_boolean_folds(self):
+        # fix-r32 (DS boundary P0 + MM boundary P1, probe-verified —
+        # _tmp/20261110-1355-r26-harvest/probe-r32-infnan.out): the streamed-
+        # window oracle reads the anchor chunks' elapsedMs from the recorded
+        # http.json.  The r31 type gate alone let ``NaN``/``Infinity``
+        # through (json.loads accepts both, and ``inf - 0 < 300`` /
+        # ``nan - nan < 300`` are False), so a doctored recording cleared
+        # the streaming oracle without ever streaming.  The gate now demands
+        # a finite real number on both anchors.  The tree below is the
+        # minimal walk that reaches the gate: every earlier oracle failure
+        # is appended and skipped past (``fail`` does not stop the walk),
+        # and the durable-read and http prerequisites exist so the walk
+        # survives to the streamed-window gate at all.
+        import base64
+        with tempfile.TemporaryDirectory(prefix='pdrs-1355-r32-http-') as folder:
+            root = Path(folder)
+            run_doc = {'status': 'DONE', 'audit': {'allStopped': True},
+                       'scenarios': {name: {'exitCode': 0} for name in common.SCENARIOS}}
+            (root / 'run.json').write_text(json.dumps(run_doc))
+            for name in common.SCENARIOS:
+                (root / 'scenarios' / name).mkdir(parents=True)
+            (root / 'scenarios/quirks/result.json').write_text('{}')
+            (root / 'project').mkdir(parents=True)
+            (root / 'project/note.txt').write_text('gateway parity fixture\n')
+            (root / 'project/written.txt').write_text('HTTP written fixture\n')
+            (root / 'home').mkdir(parents=True)
+            (root / 'home/cron').mkdir(parents=True)
+            (root / 'home/server-token').write_text('r32-token\n')
+
+            def chunk(text, elapsed):
+                return {'base64': base64.b64encode(text.encode()).decode(),
+                        'elapsedMs': elapsed}
+
+            def split_chunks(body, first, last):
+                half = len(body) // 2
+                return [chunk(body[:half], first), chunk(body[half:], last)]
+
+            # Rows 0/1 only need to survive the reads before the gate; the
+            # gate's http[-2:] picks rows 2/3, so both carry two anchors and
+            # first/last markers.
+            http = [
+                {'status': 200, 'body': '{"ok": true}', 'chunks': [chunk('{"ok": true}', 0)]},
+                {'status': 200, 'body': '{"token": "r32-token"}',
+                 'chunks': [chunk('{"token": "r32-token"}', 0)]},
+                {'status': 200, 'body': '{"projects": [{"name": "first-last"}]}',
+                 'chunks': split_chunks('{"projects": [{"name": "first-last"}]}', 0, 500)},
+                {'status': 200, 'body': '{"content": "gateway first to last"}',
+                 'chunks': split_chunks('{"content": "gateway first to last"}', 0, 500)},
+            ]
+            base_http = json.dumps(http)
+
+            def elapsed_errors(value, anchor):
+                doc = json.loads(base_http)
+                doc[3]['chunks'][anchor]['elapsedMs'] = value
+                (root / 'scenarios/http/http.json').write_text(json.dumps(doc))
+                _, errors = compare_module.validate(root)
+                return [error['detail'] for error in errors]
+
+            for value, anchor in ((True, 0), (True, -1), (False, -1),
+                                  (float('nan'), 0), (float('inf'), 0),
+                                  (float('-inf'), -1)):
+                details = elapsed_errors(value, anchor)
+                self.assertIn('stream buffered/truncated', details,
+                              f'fix-r32 elapsed fold {value!r} at anchor {anchor}')
+            # The honest anchors and the equal-type float spelling pass the
+            # gate (floats are legal timestamps); the too-fast honest window
+            # still fires the pre-existing value oracle, proving reach.
+            self.assertNotIn('stream buffered/truncated', elapsed_errors(0, 0))
+            self.assertNotIn('stream buffered/truncated', elapsed_errors(0.0, 0))
+            self.assertIn('stream buffered/truncated', elapsed_errors(100, -1))
 
     def test_wire_metadata_cross_check_refuses_int_folds_of_booleans(self):
         # fix-r31 (r31 structural round; #2424 :251): the decoded wire
@@ -5572,6 +5704,10 @@ _COMPARISON_DOC_NAMES = {
     'observations', 'rounds', 'outcomes', 'sources', 'driver', 'expectation',
     'expectations', 'submitted', 'received', 'finals', 'sends', 'responses',
     'final_events', 'actual_pids', 'by_pid', 'live', 'started', 'exited',
+    # fix-r32 (anthropic sibling#2): the audit_native identity walk reads
+    # through these locals — without them the contract-identity compares
+    # were invisible to the family sweep.
+    'process', 'allowed', 'expected_parent', 'p',
 }
 _COMPARISON_DOC_LOADERS = {'load', 'read', 'json_loads'}
 
@@ -5584,6 +5720,13 @@ def _comparison_doc_construction(node):
                 node.func.id in _COMPARISON_DOC_LOADERS or node.func.id == 'load'):
             return True
         if isinstance(node.func, ast.Attribute) and node.func.attr == 'loads':
+            return True
+        # fix-r32 (MM boundary#2 + concurrency#1, two lineages, probe-verified
+        # — probe-r32-family.out): a ``.get()`` chain reads out of a
+        # container, so the local it feeds carries (possibly) document
+        # data — ``exit_code = run.get(...).get('exitCode')`` stayed
+        # untracked and its ``!= 0`` compare was invisible to the ledger.
+        if isinstance(node.func, ast.Attribute) and node.func.attr == 'get':
             return True
     return isinstance(node, (ast.Dict, ast.List, ast.Set, ast.ListComp, ast.DictComp))
 
@@ -5601,6 +5744,23 @@ def _comparison_doc_read(node, constructed):
     if isinstance(node, ast.Attribute):
         return _comparison_doc_read(node.value, constructed) \
             or _comparison_doc_base(node.value, constructed)
+    # fix-r32 (MM boundary#2 + concurrency#1, two lineages, probe-verified
+    # — probe-r32-family.out): arithmetic and negation over document
+    # reads are still document reads — the elapsedMs subtraction
+    # ``chunks[-1]['elapsedMs'] - chunks[0]['elapsedMs'] < 300`` fell out
+    # of the family because a BinOp left the reader's reach, and its
+    # gate with it.  A ``type(...)`` call over a document read counts as
+    # the gate's document side (fix-r32 MM boundary#3: deleting a type
+    # gate removes its site and the ledger reports it stale).
+    if isinstance(node, ast.BinOp):
+        return _comparison_doc_read(node.left, constructed) \
+            or _comparison_doc_read(node.right, constructed)
+    if isinstance(node, ast.UnaryOp):
+        return _comparison_doc_read(node.operand, constructed)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+            and node.func.id == 'type':
+        return any(_comparison_doc_read(argument, constructed)
+                  for argument in node.args)
     return _comparison_doc_base(node, constructed)
 
 
@@ -5656,15 +5816,33 @@ def _comparison_family_sites():
             if not isinstance(node, ast.Compare):
                 continue
             ops = {ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE}
-            if not any(isinstance(op, tuple(ops)) for op in node.ops):
+            has_value_op = any(isinstance(op, tuple(ops)) for op in node.ops)
+            # fix-r32 (MM boundary#3, probe-verified — probe-r32-family.out):
+            # an is/is-not comparison whose operand is ``type(<document
+            # read>)`` is a type gate, and a gate is a site in its own
+            # right — deleting the gate (leaving the == value compare in
+            # place) removes this site and the ledger reports it stale,
+            # so the registered "a real-int gate precedes" reasons become
+            # machine-checked for the type-gate spelling.
+            gate_only = all(isinstance(op, (ast.Is, ast.IsNot))
+                            for op in node.ops)
+            if not has_value_op and not gate_only:
                 continue
             operands = [node.left] + node.comparators
             doc_sides = [_comparison_doc_read(operand, constructed)
                          for operand in operands]
             if not any(doc_sides):
                 continue
-            if not any(doc_sides[i] and (doc_sides[j] or _comparison_numeric_expr(operands[j]))
-                       for i in range(len(operands)) for j in range(len(operands)) if i != j):
+            if gate_only and not has_value_op:
+                if not any(isinstance(operand, ast.Call)
+                           and isinstance(operand.func, ast.Name)
+                           and operand.func.id == 'type'
+                           and any(_comparison_doc_read(argument, constructed)
+                                   for argument in operand.args)
+                           for operand in operands):
+                    continue
+            elif not any(doc_sides[i] and (doc_sides[j] or _comparison_numeric_expr(operands[j]))
+                         for i in range(len(operands)) for j in range(len(operands)) if i != j):
                 continue
             snippet = ast.get_source_segment(src, node) or '?'
             snippet = ' '.join(snippet.split())
@@ -5684,69 +5862,129 @@ def _comparison_family_sites():
 # carry a boolean/float fold; the reason says why).  Line and snippet both
 # anchor each entry: a moved site or a same-line drift turns the ledger red.
 _COMPARISON_POINT_REGISTRY = (
-    ('session_domain.py', 'validate_calibration', 1125, "data['cell'] == cell['name']",
+    ('session_domain.py', 'validate_calibration', 1129, "data['cell'] == cell['name']",
      'EXEMPT', 'string domain: cell names are identity strings on both sides'),
-    ('session_domain.py', 'validate_calibration', 1148,
+    ('session_domain.py', 'validate_calibration', 1133, "type(observation.get('repetition')) is int",
+     'GATE', 'fix-r32: this IS the gate body — deleting it reopens the bool/float repetition fold'),
+    ('session_domain.py', 'validate_calibration', 1151, "type(manifest['totalMeasurements']) is int",
+     'GATE', 'fix-r32: this IS the gate body for the totalMeasurements =='),
+    ('session_domain.py', 'validate_calibration', 1152,
      "manifest['totalMeasurements'] == len(observations)",
      'GATE', 'fix-r31: a real-int gate (type is int) precedes the =='),
-    ('session_domain.py', 'validate_calibration', 1166, "launch.get('exitCode') == 0",
+    ('session_domain.py', 'validate_calibration', 1170, "launch.get('exitCode') == 0",
      'GATE', 'fix-r31: a real-int gate precedes the =='),
-    ('session_domain.py', 'audit_native', 1256, 'started == exited == set(actual_pids)',
+    ('session_domain.py', 'validate_calibration', 1170, "type(launch.get('exitCode')) is int",
+     'GATE', 'fix-r32: this IS the gate body for the launch exitCode =='),
+    ('session_domain.py', 'audit_native', 1249, "process['ppid'] == expected_parent",
+     'GATE', '_retirement_real_pid precedes on both sides (fix-r8/r31)'),
+    ('session_domain.py', 'audit_native', 1272, 'started == exited == set(actual_pids)',
      'GATE', 'operands gated upstream: fix-r8 real-pid census + fix-r29 event-pid type gates'),
-    ('session_domain.py', 'audit_native', 1285,
+    ('session_domain.py', 'audit_native', 1301,
      "observer['connections'] == len({r['connection'] for r in observer['rows']})",
      'GATE', 'fix-r30: _retirement_real_count precedes on both sides'),
-    ('session_domain.py', 'audit_native', 1286,
+    ('session_domain.py', 'audit_native', 1302,
      "observer['connections'] == contract['connections']",
      'GATE', 'fix-r30: _retirement_real_count precedes on both sides'),
-    ('session_domain.py', 'audit_native', 1313, "binding['generation'] >= 1",
+    ('session_domain.py', 'audit_native', 1328, "type(binding.get('generation')) is int",
+     'GATE', 'fix-r32: this IS the gate body for the binding generation >='),
+    ('session_domain.py', 'audit_native', 1329, "binding['generation'] >= 1",
      'GATE', 'type is int precedes inside the same condition'),
-    ('session_domain.py', '_load_native_artifacts', 1427, 'named == expected',
+    ('session_domain.py', '_load_native_artifacts', 1443, 'named == expected',
      'GATE', 'isinstance str gate precedes'),
-    ('session_domain.py', '_retirement_census', 1752, 'result.returncode == 0',
+    ('session_domain.py', '_retirement_census', 1768, 'result.returncode == 0',
      'EXEMPT', 'subprocess returncode is always a plain int'),
-    ('session_domain.py', '_retirement_real_pid', 1815, '0 < value <= 2 ** 31 - 1',
+    ('session_domain.py', '_retirement_real_pid', 1831, '0 < value <= 2 ** 31 - 1',
      'GATE', 'this IS the realness gate body (bool excluded before the comparison)'),
-    ('session_domain.py', '_retirement_real_count', 1829, 'value >= 0',
+    ('session_domain.py', '_retirement_real_count', 1845, 'type(value) is int',
+     'GATE', 'fix-r32: this IS the gate body — deleting it reopens the count fold'),
+    ('session_domain.py', '_retirement_real_count', 1845, 'value >= 0',
      'GATE', 'this IS the realness gate body (type is int precedes)'),
-    ('session_domain.py', '_retirement_real_port', 1846, '0 < value <= 65535',
+    ('session_domain.py', '_retirement_real_port', 1862, '0 < value <= 65535',
      'GATE', 'this IS the realness gate body (bool excluded before the comparison)'),
-    ('session_domain.py', '_retirement_connections', 2013, 'result.returncode != 0',
+    ('session_domain.py', '_retirement_connections', 2029, 'result.returncode != 0',
      'EXEMPT', 'subprocess returncode is always a plain int'),
-    ('session_domain.py', '_retirement_listener_verdict', 2116, 'addresses != expected',
+    ('session_domain.py', '_retirement_listener_verdict', 2132, 'addresses != expected',
      'EXEMPT', 'string domain: only string addresses can equal the constructed endpoint list'),
-    ('session_domain.py', 'score_retirement_round', 2359, 'events.get(identifier, 0) < 1',
+    ('session_domain.py', 'score_retirement_round', 2269, 'driver_exit == 0',
+     'GATE', 'fix-r3 shape guard precedes in the same condition (isinstance int, bool excluded)'),
+    ('session_domain.py', 'score_retirement_round', 2375, 'events.get(identifier, 0) < 1',
      'EXEMPT', "events is the scorer's own int-valued counter over wire frames"),
-    ('session_domain.py', '_retirement_controls', 2622, "mutated.get('outcomes') == outcomes",
+    ('session_domain.py', '_retirement_strip_wire', 2403, "frame.get('method') == method",
+     'EXEMPT', 'string domain: the method parameter is an internally built string'),
+    ('session_domain.py', '_retirement_strip_receive', 2422, "frame.get('method') == method",
+     'EXEMPT', 'string domain: the method parameter is an internally built string'),
+    ('session_domain.py', '_retirement_controls', 2638, "mutated.get('outcomes') == outcomes",
      'EXEMPT', 'apparatus-compared own constructions; a fold only fails the control harder'),
-    ('session_domain.py', '_retirement_baseline_revision', 3237, 'result.returncode == 0',
+    ('session_domain.py', '_retirement_controls', 2780, "frame.get('id') == identifier",
+     'EXEMPT', 'string domain: identifier is an internally built string (fix-r4 usable-frame-id gate precedes)'),
+    ('session_domain.py', '_retirement_entry_inventory', 2932, "100 <= probe.get('status') <= 599",
+     'GATE', 'isinstance int non-bool gate precedes in the same ternary (fix-r9)'),
+    ('session_domain.py', 'ready', 3181, 'response.status == 200',
+     'EXEMPT', 'urllib HTTPResponse.status is always a plain int (stdlib, not a document)'),
+    ('session_domain.py', '_retirement_baseline_revision', 3253, 'result.returncode == 0',
      'EXEMPT', 'subprocess returncode is always a plain int'),
-    ('session_domain.py', 'main', 3560, "report['frozen']['exitCode'] != 0",
+    ('session_domain.py', 'main', 3576, "report['frozen']['exitCode'] != 0",
      'EXEMPT', 'apparatus-produced report field (frozen-check exit code)'),
-    ('session_domain.py', 'main', 3576, "audit['exitCode'] == 0",
+    ('session_domain.py', 'main', 3592, "audit['exitCode'] == 0",
      'EXEMPT', 'apparatus-produced audit field (launcher exit code)'),
-    ('session_domain.py', 'main', 3624, "report['frozen']['exitCode'] != 0",
+    ('session_domain.py', 'main', 3640, "report['frozen']['exitCode'] != 0",
      'EXEMPT', 'apparatus-produced report field (frozen-check exit code)'),
-    ('native_evidence.py', 'session_windows', 424,
+    ('native_evidence.py', 'session_windows', 427, "type(entry.get('pid')) is int",
+     'GATE', 'fix-r32: this IS the gate body for the pid reads (fix-r30 family)'),
+    ('native_evidence.py', 'session_windows', 428,
      "0 <= entry['afterExecs'] <= len(processes)",
      'GATE', 'type is int precedes inside the same condition (fix-r30)'),
-    ('native_evidence.py', 'session_windows', 436, 'windows == [0] + [1] * len(cases)',
+    ('native_evidence.py', 'session_windows', 428, "type(entry.get('afterExecs')) is int",
+     'GATE', 'fix-r32: this IS the gate body for the afterExecs bound'),
+    ('native_evidence.py', 'session_windows', 440, 'windows == [0] + [1] * len(cases)',
      'EXEMPT', 'windows is sum()-built over role tests, always plain ints'),
-    ('native_evidence.py', 'session_chain', 641, "frame['seq'] == len(received[request_id])",
+    ('native_evidence.py', 'session_chain', 644, "type(frame.get('seq')) is int",
+     'GATE', 'fix-r32: this IS the gate body for the frame seq =='),
+    ('native_evidence.py', 'session_chain', 645, "frame['seq'] == len(received[request_id])",
      'GATE', 'type is int precedes inside the same condition'),
-    ('compare.py', 'validate', 327, 'connections != set(range(1, connection_count + 1))',
+    ('native_evidence.py', 'session_chain', 645, "type(frame.get('final')) is bool",
+     'GATE', 'fix-r32: this IS the gate body for the final flag'),
+    ('compare.py', 'wire_frame', 253, "type(row['wire']['opcode']) is not int",
+     'GATE', 'fix-r32 (DS sibling#3): the independent real-int gate; the same_json metadata check subsumes the value'),
+    ('compare.py', 'validate', 309, 'exit_code != 0',
+     'GATE', 'fix-r31: a real-int gate precedes the !='),
+    ('compare.py', 'validate', 309, 'type(exit_code) is not int',
+     'GATE', 'fix-r32: this IS the gate body for the exitCode != 0'),
+    ('compare.py', 'validate', 329, 'records != len(rows)',
+     'GATE', 'fix-r31: a real-int gate precedes the !='),
+    ('compare.py', 'validate', 329, 'type(records) is not int',
+     'GATE', 'fix-r32: this IS the gate body for the records !='),
+    ('compare.py', 'validate', 333, 'connection_count < 0',
+     'GATE', 'fix-r31: a real-int gate precedes in the same condition'),
+    ('compare.py', 'validate', 333, 'type(connection_count) is not int',
+     'GATE', 'fix-r32: this IS the gate body for the connection count reads'),
+    ('compare.py', 'validate', 334, 'connection_count > len(rows)',
+     'GATE', 'fix-r32: the real-int gate precedes; every connection owns at least one row, so an oversized count is an immediate G2 mismatch (and bounds the set(range) materialisation)'),
+    ('compare.py', 'validate', 335, 'connections != set(range(1, connection_count + 1))',
      'GATE', 'fix-r31: a real-int gate precedes the comparison'),
-    ('compare.py', 'validate', 333, "row['connection'] < 1",
+    ('compare.py', 'validate', 339, "type(row.get('seq')) is not int",
+     'GATE', 'fix-r32: this IS the gate body for the recorder seq'),
+    ('compare.py', 'validate', 341, "type(row.get('connection')) is not int",
+     'GATE', 'fix-r32: this IS the row gate body for the connection field'),
+    ('compare.py', 'validate', 341, "row['connection'] < 1",
      'GATE', 'fix-r31 row gate: type is int precedes in the same condition'),
-    ('compare.py', 'validate', 347, "row['connection'] != 4",
+    ('compare.py', 'validate', 355, "row['connection'] != 4",
      'GATE', 'fix-r31 row gate precedes the auth special case'),
-    ('compare.py', 'validate', 355, "binding['generation'] < 1",
+    ('compare.py', 'validate', 363, "binding['generation'] < 1",
      'GATE', 'type is int precedes inside the same condition'),
-    ('compare.py', 'validate', 381, "frame['seq'] != expected",
+    ('compare.py', 'validate', 363, "type(binding.get('generation')) is not int",
+     'GATE', 'fix-r32: this IS the gate body for the hello binding'),
+    ('compare.py', 'validate', 375, "type(frame.get('final')) is not bool",
+     'GATE', 'fix-r32: this IS the gate body for the stream final flag'),
+    ('compare.py', 'validate', 389, "frame['seq'] != expected",
      'GATE', 'type is int precedes inside the same condition'),
-    ('compare.py', 'validate', 476, "body != row['body']",
+    ('compare.py', 'validate', 389, "type(frame.get('seq')) is not int",
+     'GATE', 'fix-r32: this IS the gate body for the event seq'),
+    ('compare.py', 'validate', 484, "body != row['body']",
      'EXEMPT', 'string domain: decoded UTF-8 chunk text vs recorded body'),
-    ('compare.py', 'validate', 501, "row['connection'] == 4",
+    ('compare.py', 'validate', 510, "chunks[-1]['elapsedMs'] - chunks[0]['elapsedMs'] < 300",
+     'GATE', 'fix-r31 real-number gate + fix-r32 isfinite gate precede in the same condition'),
+    ('compare.py', 'validate', 520, "row['connection'] == 4",
      'GATE', 'quirks rows already passed the fix-r31 row gate above'),
 )
 
@@ -5755,7 +5993,13 @@ class ComparisonPointLedger(unittest.TestCase):
     """fix-r31: the comparison-point ledger matches the family AST sweep."""
 
     def test_registered_comparison_points_match_the_ast_family_sweep(self):
-        sites = _comparison_family_sites()
+        # fix-r32 (MM concurrency#2): the sweep reads the live frozen
+        # sources, and the negative-control batches rewrite those exact
+        # files in place (write_source_atomic) inside this same parity
+        # lease — an unlocked read can see mutant bytes mid-batch and
+        # either red on them or bless them.  The sweep holds the lease.
+        with common.parity_lock():
+            sites = _comparison_family_sites()
         keys = {(entry[0], entry[1], entry[2], entry[3])
                 for entry in _COMPARISON_POINT_REGISTRY}
         self.assertEqual(len(keys), len(_COMPARISON_POINT_REGISTRY),

@@ -397,7 +397,11 @@ def session_windows(evidence, cases, paths):
     need(isinstance(witness, dict) and witness.get('complete') is True
          and witness.get('source') == 'strace-openat' and isinstance(witness.get('opens'), list),
          'session capture must carry the complete transcript-open witness')
-    host = next(p['pid'] for p in processes if p['role'] == 'host')
+    # fix-r32 (DS boundary#7 P3, defensive): the role census above already
+    # guarantees exactly one host, so the bare ``next()`` could not raise —
+    # but a None default plus the plain-int need below keeps any future
+    # census regression on the fail-closed path instead of a StopIteration.
+    host = next((p['pid'] for p in processes if p['role'] == 'host'), None)
     # fix-r31 (r31 structural round, DS sibling#1 P1 + anthropic sibling#1
     # P2 — the same finding from both lineages, probe-verified —
     # _tmp/20261110-1355-r26-harvest/probe-r31-hostpid.out): fix-r30 gated
