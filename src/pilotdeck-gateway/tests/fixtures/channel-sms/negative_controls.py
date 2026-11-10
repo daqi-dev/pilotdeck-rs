@@ -348,19 +348,28 @@ switches = [
     ('sms-port-preflight-v6-any-host', SMS / 'tests.rs',
      'v6_only_occupier_does_not_block_the_fixed_127_0_0_1_host',
      '#2691 the v6 half probed the fixed 127.0.0.1 host'),
-    # #2691: the post-start bind guard is disarmed — a start that lost the
-    # bind race degrades to the no-op handle again and the pin silently
-    # measures the occupier's listener (the pre-fix TOCTOU shape).
+    # #2691 fix-r3 (review r3, three roles): the post-start bind guard is
+    # disarmed — both ownership forms must fail under the switch. The drop
+    # form drops the channel before the guard; the replay form keeps it
+    # alive (the cron steps), so its threshold is raised by
+    # OWNERS_KEPT_ALIVE_ACROSS_START — a start that lost the bind race
+    # degrades to the no-op handle again and the pin silently measures the
+    # occupier's listener (the pre-fix TOCTOU shape).
     ('sms-pin-bind-race-unchecked', SMS / 'tests.rs',
-     'a_pin_start_that_loses_the_bind_race_is_caught_after_start',
-     '#2691 the post-start bind guard did not fire'),
-    # #2691 fix-r2: the fixed-host bind probe is skipped — a dual-stack
-    # `[::]:port` holder (the occupier the connect probe cannot see) no
-    # longer fails the preflight on a host where it blocks the product's own
-    # bind (measured on Linux; on a macOS/BSD host whose kernel lets a
-    # `SO_REUSEADDR` specific bind through over a wildcard holder the
-    # product's bind succeeds too, so the switch is unobservable there and
-    # the bound test proves it instead of assuming it).
+     ['a_pin_start_that_loses_the_bind_race_is_caught_after_start',
+      'a_replay_start_that_keeps_the_channel_alive_is_still_caught_after_start'],
+     ['#2691 the post-start bind guard did not fire',
+      '#2691 the replay-form post-start bind guard did not fire']),
+    # #2691 fix-r3 (review r3 MM boundary#3 / DS concurrency#2 / boundary#3):
+    # the fixed-host bind probe is skipped — a dual-stack `[::]:port` holder
+    # (the occupier the connect probe cannot see) no longer fails the
+    # preflight. The kill no longer leans on Linux-only semantics: on Linux
+    # the skipped probe falls through to the refused connect and the bound
+    # test's Ok branch proves the product-shaped bind still fails; on macOS
+    # the connect stalls on the holder for its whole bounded cap (the
+    # coordinator's measured baseline) and the test attributes the stall to
+    # the skipped probe with its own anchor. Both verdicts are KILLED;
+    # macOS re-verification steps are recorded in the fix-r3 RESULT.
     ('sms-port-preflight-bind-probe-skipped', SMS / 'tests.rs',
      'dual_stack_occupier_is_reported_by_the_fixed_host_bind_probe',
      '#2691 the fixed-host bind probe did not fire'),
