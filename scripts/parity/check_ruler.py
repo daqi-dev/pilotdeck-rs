@@ -62,7 +62,7 @@ check_frozen = _load('check_frozen', _HERE / 'check_frozen.py').check
 
 # #2245 fix-r7 (r6 reviews, both families — structural redesign per the
 # 2026-11-10 coordinator ruling; round history: specs/parity/frozen/
-# 20261109-2245.md through 20261110-2245-r10.md). Five patch rounds proved
+# 20261109-2245.md through 20261110-2245-r12.md). Five patch rounds proved
 # lexical enumeration does not converge, so verdicts now derive structurally:
 #   1. every 处理/处置 cell is judged on its own copy, never concatenated —
 #      a row closes only when each cell names a closure and none is pending;
@@ -133,9 +133,22 @@ _CJK_CLOSURE_RE = re.compile('|'.join(
 # determiner/preposition before risk(s) (the risk / as a risk / with risk /
 # comma-separated), passed takes on to / onto / to (incl. a comma before
 # them), and accepted for now is a deferral. Each shape has a row control.
+# r11 (DS boundary#4 / MM boundary#4, both lineages, P0): the r10 prefix was
+# ONE optional slot (`as a | the | with`) — two-slot shapes (accepted with
+# the risk / as this risk / in the risk) and single-slot ones outside the
+# three hard-coded heads (a / this / all risks) escaped the guard and read
+# closed. The prefix is now a STACKED shape family: any run of prepositions,
+# then any run of determiners, before risk(s) — each part independently
+# optional (a preposition without a determiner still blocks: accepted as
+# risk stayed open under r9/r10 and a first-round realdata recompute caught
+# the draft stacked form requiring one), and a bare risk after a comma or a
+# determiner alone blocks too.
 _EN_CLOSURE_GUARDS = {'passed': r'(?![\s,]*(?:on(?:\s+to)?|onto|to)\b)',
-                      'accepted': r'(?![\s,]*(?:(?:as\s+(?:a\s+)?|the\s+'
-                                  r'|with\s+)?risks?\b|for\s+now\b))'}
+                      'accepted': r'(?![\s,]*(?:(?:(?:as|in|on|with|'
+                                  r'under|despite|after)\s+)*'
+                                  r'(?:(?:a|an|the|this|that|these|'
+                                  r'those|all|any|no)\s+)*'
+                                  r'risks?\b|for\s+now\b))'}
 _EN_CLOSURE_RE = re.compile(r'\b(?:' + '|'.join(
     word + _EN_CLOSURE_GUARDS.get(word, '') for word in _ENGLISH_VERBS)
     + r'|wontfix)\b')
@@ -151,17 +164,34 @@ _CJK_FAILING_RE = re.compile(
 # bracket 修复中（待回归）, slash 修复中/待跟进, 【, quote, digit, latin, an
 # unknown CJK continuation like 修复中发现新问题) read CLOSED, a fail-open
 # regression from r8. The polarity is now fail-closed: 中 is in-progress
-# UNLESS the next character continues an attested noun compound
-# (_CJK_COMPOUND_NEXT — 中间件 / 中断场景 / 中心化改造 / 中文文档 …). Each
+# UNLESS the next character continues an attested noun compound. Each
 # blacklisted character keeps a closed row control and each unknown-successor
 # shape keeps a pending row control (review_r1.py).
+# r11 (DS boundary#1 / sibling#2, MM boundary#3, both lineages, P0): the r10
+# blacklist judged by the SINGLE character after 中 — 修复中等待回归 (等
+# blacklisted) and 修复中间发现新问题 (间) read CLOSED, a fail-open hole. The
+# entries are now WORD-level: an unambiguous noun-second character stays
+# bare, and characters that also start a verb phrase carry a continuation
+# guard — 等 only in the attested 中等X severities (等(?=[级严优]), NOT
+# 等待), 间 only in the attested compounds 中间件/中间层/中间态 (NOT
+# 修复中间发现新问题), 期 only before 指标 (评审中期指标 the mid-review METRIC
+# closes, while 修复中期评估 — the
+# mid-fix evaluation — is the in-progress work itself, DS sibling#2 P1). New
+# attested noun seconds join bare: 台 控 南 西 (中台服务 / 中控服务 /
+# 中南区网关 / 中西部节点, DS boundary#5 P1 false FAILs).
 # Known boundary (fail-closed direction, DS sibling#3 / boundary#4, P2): a
 # word-final 中 that is NOT progressive (缺陷集中 / 缓存命中 / 其中的) reads
 # pending — the progressive/resultative distinction is not shape-derivable,
 # and a false open costs a reviewer's glance while a false close hides a P1.
-_CJK_COMPOUND_NEXT = '间断心文层期端部档等国华'
+# Known boundary (r11): an unattested 中X noun compound (中间层 / 中期报告 /
+# 中等X outside 级严优) reads pending; 修复中文档未更新 reads closed (中文
+# the noun is indistinguishable from 中+文档) — both directions documented
+# here, each with a row control pinning the attested side.
+_CJK_COMPOUND_RULES = ('断', '心', '文', '层', '期(?=指标)', '端', '部', '档',
+                       '国', '华', '台', '控', '南', '西', '间(?=件|层|态)',
+                       '等(?=[级严优])')
 _CJK_IN_PROGRESS_RE = re.compile(
-    '[\\w一-鿿][ \\t]?中(?![' + _CJK_COMPOUND_NEXT + '])')
+    r'\w[ \t]{0,2}中(?!' + '|'.join(_CJK_COMPOUND_RULES) + ')')
 # 拒绝 keeps matching inside longer phrases (拒绝修复 / 已拒绝合入). r9 (DS
 # boundary#5): the explicit pending words carry attested right extensions —
 # 不通过的用例 / 待办事项 / 保留意见变更 are noun phrases inside a closed cell,
@@ -177,12 +207,22 @@ _EXPLICIT_PENDING_RE = re.compile('|'.join(
 # sibling#2): 局部 / 过半 / 未完全 join the attested partials; 部分 carries a
 # left guard so 全部分支 (已合并全部分支) is a closed compound, not a partial
 # (anthropic boundary#9).
+# r11 (DS sibling#4 P1 / MM boundary#6 P2): 部分 and 局部 were unconditional —
+# 影响部分用户 / 剩余风险影响部分功能 and 局部地区 are closed-scope prose,
+# not a partial disposal (false FAIL). 部分 gains the 影响 left guard (the
+# attested 全 guard stays), 局部 gains the 地区 right guard; the English
+# members gain the same treatment — almost no impact and half-open (a
+# hyphenated derivative, not the fraction half) stop reading partial, and
+# the dead duplicate 'half-way' is gone ('halfway' already covers it, with
+# its own row control keeping it attested).
 _PARTIAL_WORDS = ('部分', '一半', '阶段性', '局部', '过半', '未完全')
-# Left guards prepend (unlike the right-extension closure guards, which
-# append): (?<!全)部分 must block the compound 全部分支, not the word itself.
-_PARTIAL_GUARDS = {'部分': '(?<!全)'}
+# Guards split by side: LEFT guards prepend ((?<!全)部分 must block the
+# compound 全部分支, not the word itself), RIGHT guards append (局部(?!地区)
+# — 局部地区 is a closed-scope note, not a partial disposal).
+_PARTIAL_LEFT_GUARDS = {'部分': '(?<!全)(?<!影响)'}
+_PARTIAL_RIGHT_GUARDS = {'局部': '(?!地区)'}
 _PARTIAL_RE = re.compile('|'.join(
-    _PARTIAL_GUARDS.get(word, '') + word
+    _PARTIAL_LEFT_GUARDS.get(word, '') + word + _PARTIAL_RIGHT_GUARDS.get(word, '')
     for word in _longest_first(_PARTIAL_WORDS)))
 # r9 (DS boundary#1 / sibling#6): the English partial family mirrors the
 # Chinese partials — a modifier of partial completion keeps the row open.
@@ -190,10 +230,12 @@ _PARTIAL_RE = re.compile('|'.join(
 # walk a FIXED list (a live traversal of the module's own tuple cannot see a
 # deletion — the same self-source blindness _NEGATION_WORDS hit in r9) and
 # every member carries a row control.
+_EN_PARTIAL_GUARDS = {'almost': r'(?!\s*no\b)', 'half': r'(?!-)'}
 _EN_PARTIAL_WORDS = ('partially', 'partial', 'partly', 'almost', 'nearly',
-                     'halfway', 'half-way', 'half', 'incomplete', 'unfinished')
+                     'halfway', 'half', 'incomplete', 'unfinished')
 _EN_PARTIAL_RE = re.compile('|'.join(
-    r'\b' + re.escape(word) + r'\b' for word in _longest_first(_EN_PARTIAL_WORDS)),
+    r'\b' + re.escape(word) + _EN_PARTIAL_GUARDS.get(word, '') + r'\b'
+    for word in _longest_first(_EN_PARTIAL_WORDS)),
     re.IGNORECASE)
 _EN_PENDING_RE = re.compile(r'\bin[ -]?progress\b|\bpending\b|\btodo\b|\btbd\b'
                             r'|\bwip\b', re.IGNORECASE)
@@ -227,21 +269,35 @@ _INTENT_MARKER = re.compile('|'.join(
 # "wont fix" (no apostrophe) then reads open, a fail-closed known boundary
 # (the closure phrase keeps its apostrophe and wontfix its one word; only
 # those two attested spellings close).
+# r11 (MM boundary#8 / DS simplify#2): the r10 guard exempted EVERY
+# \w+n't before fix/fixing, not just won't — didn't fix, can't fix read as
+# affirmations, so didn't fix the leak, verified closed its cell (false
+# PASS). Only won't carries the fix exemption now; every other contraction
+# negates unconditionally.
 _EN_CONTRACTIONS = ('hasnt', 'isnt', 'wasnt', 'doesnt', 'didnt', 'arent',
                     'werent', 'couldnt', 'wouldnt', 'shouldnt',
                     'havent', 'dont', 'cant', 'mustnt', 'neednt', 'shant',
                     'aint', 'wont')
 _EN_NEGATION = re.compile(
-    r"\bnot\b|\bnever\b|\bcannot\b|\b\w+n't\b(?!\s*(?:fix|fixing)\b)|\b(?:"
-    + '|'.join(_EN_CONTRACTIONS) + r")\b", re.IGNORECASE)
+    r"\bnot\b|\bnever\b|\bcannot\b"
+    r"|\bwon't\b(?!\s*(?:fix|fixing)\b)"
+    r"|\b(?!won't\b)\w+n't\b"
+    r"|\b(?:" + '|'.join(_EN_CONTRACTIONS) + r")\b", re.IGNORECASE)
 _EN_INTENT = re.compile(r'\bwill\s+be\b|\bto\s+be\b|\bplanned\b|\bdeferred\b'
                         r'|\bpostponed\b|\bscheduled\b', re.IGNORECASE)
-_ANY_VERB = re.compile('|'.join(_longest_first(list(_CJK_VERBS) + list(_ENGLISH_VERBS))))
+# r11 (MM boundary#8): the verb after didn't / can't is the BARE form (fix,
+# not fixed), which no table carries. Deriving lemmas morphologically is
+# unreliable (fixed→fix, merged→merge, verified→verify), so the negation
+# binding accepts a word that a closure verb STARTS WITH (fix ⊂ fixed,
+# merge ⊂ merged, do ⊂ done); a word no closure verb starts with (want,
+# plant, happen) binds nothing.
+_EN_NEG_INFINITIVE = re.compile(r'\s*([A-Za-z]{2,})')
+_ANY_VERB = re.compile('|'.join(_longest_first(_CJK_VERBS + _ENGLISH_VERBS)))
 # Intention binds to gate verbs only: 观察 follows a completed disposal
 # (已修复，后续观察) instead of reopening it, while 验收 stays a gate
 # (已修，待人工验收 stays pending).
 _GATE_VERB = re.compile('|'.join(
-    _longest_first(list(_CJK_GATE_VERBS) + list(_ENGLISH_VERBS))))
+    _longest_first(_CJK_GATE_VERBS + _ENGLISH_VERBS)))
 _CLAUSE_SPLIT = re.compile(r'[，、。；：！？,;:!?]|(?<!\d)\.(?!\d)')
 # Level negation by grammar (invariant 5), two tiers as of r9 (DS boundary#2 /
 # boundary#6 / sibling#3 / sibling#5 — the r8 open-set exemption let unknown
@@ -283,25 +339,61 @@ _APOSTROPHES = '’‘‛ʼ′ʹ´ʻ‚ꞌ'
 # (false FAIL), while 100.0% matched its trailing 0 and 50 % / 50 percent
 # escaped entirely (false PASS). A percentage is now partial only inside a
 # COMPLETION context: a completion verb within a bounded gap (no clause
-# punctuation, no bracket, no digits — so 已修复，影响 30% cannot anchor, and
-# 已修复（影响 30% neither — no % digits and the bracket blocks the gap),
-# no 率 and not crossing the word "rate" (a rate metric is never a completion
-# fraction), then a decimal-capable number compared as a VALUE (<100 partial,
-# 100 / 100.0 / 1000 closed) and % / percent / pct with optional space.
-_PCT_COMPLETION_VERBS = (
-    '完成', '进度', '完成度', '已修', '修复', '处置', '验收', '复检',
-    'done', 'fixed', 'resolved', 'closed', 'merged', 'verified', 'confirmed',
-    'reviewed', 'tested', 'checked', 'accepted', 'migrated', 'passed',
-    'completed', 'modified', 'upgraded', 'retested', 'rechecked',
-    'downgraded', 'handled')
+# punctuation, no bracket — so 已修复，影响 30% cannot anchor and 已修复
+# （影响 30% neither — no % digits and the bracket blocks the gap — but
+# digits inside the gap are now fine, see r11), no 率 and not crossing the
+# word "rate" (a rate metric is never a completion fraction), then a
+# decimal-capable number compared as a VALUE (<100 partial, 100 / 100.0 /
+# 1000 closed) and % / percent / pct with optional space.
+# r11 (DS boundary#1+concurrency#2 / MM boundary#1+boundary#2, both
+# lineages, P0): the verb list was a THIRD hand-copied table — the Chinese
+# side carried only 8 of the 27 closure verbs (已合并 50% / 已解决 30% had no
+# anchor and read closed), and the gap banned digits so 已修复 3 个用例 50%
+# / completed 3 of 5 (60%) / 已完成（80%） never anchored (false PASS both
+# ways). The completion verbs are now DERIVED from the single closure word
+# source (gate verbs + the two attested progress nouns 进度/完成度 + the
+# full English table — a cross-walk equivalence assertion pins all three in
+# review_r1.py, and the derivation ends the hand-copy drift for good); the
+# gap allows digits and brackets while still refusing clause punctuation,
+# %, / and a second 率/rate/影响. The captured number must be a COMPLETE
+# token — (?<![\d.]) stops the engine from sliding the gap into the digits
+# and capturing a suffix (verified 100% must not anchor as gap ' 10' +
+# number 0).
+_CJK_PCT_EXTRA = ('进度', '完成度')
+_PCT_COMPLETION_VERBS = (_CJK_GATE_VERBS + _CJK_PCT_EXTRA + _ENGLISH_VERBS)
+_PCT_CJK_RE = '(?:' + '|'.join(_longest_first(
+    _CJK_GATE_VERBS + _CJK_PCT_EXTRA)) + ')'
+_PCT_EN_RE = (r'\b(?:' + '|'.join(_longest_first(_ENGLISH_VERBS)) + r')\b')
 _PCT_RE = re.compile(
-    '(?:' + '|'.join(_longest_first(list(_PCT_COMPLETION_VERBS))) + ')'
-    r'(?:(?!\brate\b|率)[^，。；：！？,;:!?%\d（）()\[\]【】/／]){0,6}'
-    r'(\d{1,4}(?:\.\d+)?)\s?(?:%|percent\b|pct\b)', re.IGNORECASE)
+    '(?:' + _PCT_CJK_RE + '|' + _PCT_EN_RE + ')'
+    r'(?:(?!\brate\b|impact\b|率|影响)'
+    r'[^，。；：！？,;:!?%/／]){0,12}'
+    r'(?<![\d.])(\d{1,4}(?:\.\d+)?)\s*(?:%|percent\b|pct\b)', re.IGNORECASE)
 # r10 (MM boundary#3): a residual-quantity phrase keeps the row open even
 # inside an otherwise closed cell — 已修复不通过的用例，还有 3 个 still has
 # 3 undisposed findings. 无剩余 / 没有剩余 do NOT count (negated residual).
-_RESIDUAL_RE = re.compile('还有|还剩|仍有|另有|(?<!无)(?<!没有)剩余')
+# r11 (MM boundary#5 + sibling#2 / DS sibling#5 + boundary#6, both
+# lineages, P1): the r10 family was four BARE markers — an enumerated
+# vocabulary again, the shape the coordinator ruling bans. The family is now
+# COUNT-ANCHORED: a residual quantifier only counts when a count word or a
+# known residual noun follows (还有 3 个 / 尚余 2 个 / 遗留 2 项 / fixed, 3
+# remaining), so 还有 0 个 (zero) and 另有说明 (a notice, not a count) stop
+# reading pending; 遗留 joins with its own noun set (遗留 2 项 / 遗留问题 /
+# 遗留 P1) plus a 无/没 left guard (无遗留 closes), and the English side
+# (remaining / outstanding / left / still N) finally mirrors the Chinese
+# side instead of splitting by language. Known boundary (fail-closed): a
+# bare 还有 without a count after it no longer reads pending — the count
+# anchor is what separates the residual meaning from the discourse marker,
+# so an unanchored shape costs a reviewer's glance, not a hidden finding.
+# 待 rides along with the counts so 还有待回归 keeps reading residual — the
+# r10 bare 还有 matched it, and dropping it would be a fail-open regression.
+_CJK_COUNT_WORDS = '1-9一二三四五六七八九十百几待'
+_CJK_RESIDUAL_NOUNS = 'P[012]|问题|风险|隐患|缺陷|事项'
+_RESIDUAL_RE = re.compile(
+    '(?<![无没])遗留(?=\\s*(?:[' + _CJK_COUNT_WORDS + ']|' + _CJK_RESIDUAL_NOUNS + '))'
+    '|(?:还有|还剩|仍有|剩余|尚余|余下|另有)(?=\\s*[' + _CJK_COUNT_WORDS + '])'
+    '|\\b(?:\\d+\\s*(?:remaining|outstanding|left\\s+over|left|open)\\b'
+    '|still\\s+\\d+\\b)', re.IGNORECASE)
 
 
 def _normalized_handling(cell):
@@ -332,11 +424,11 @@ def _handling_pending(handling):
     if _EN_PARTIAL_RE.search(handling):
         return True  # partially fixed / almost completed / half done (r9)
     if _RESIDUAL_RE.search(handling):
-        return True  # 还有 3 个 / 剩余 2 项 keeps the row open (r10, MM b#3)
+        return True  # 还有 3 个 / 尚余 2 个 / fixed, 3 remaining (r10 MM b#3,
+        #             count-anchored r11 MM b#5 — see _RESIDUAL_RE)
     for m in _PCT_RE.finditer(handling):
         if float(m.group(1)) < 100:
             return True  # completed 50% / fixed 70% / 修复了 70% is partial (r9)
-            # a rate metric or an impact note never anchors (r10, see _PCT_RE)
     if _CJK_IN_PROGRESS_RE.search(handling):
         return True  # 修复中 / 处置中 / 验收中 …（升级中 ≠ 已升级中间件）
     if _EXPLICIT_PENDING_RE.search(handling):
@@ -351,6 +443,14 @@ def _handling_pending(handling):
         for marker in _EN_NEGATION.finditer(clause):
             if _ANY_VERB.search(clause, marker.start()):
                 return True  # not yet fixed / never been fixed / not verified
+            word = _EN_NEG_INFINITIVE.match(clause, marker.end())
+            if (word and marker.group(0).lower() != 'wont'
+                    and any(v.startswith(word.group(1))
+                            for v in _ENGLISH_VERBS)):
+                # didn't fix / can't merge (r11, bare form). The
+                # apostrophe-free wont + fix keeps its r10 known boundary:
+                # it reads open (not the closure spelling, not pending).
+                return True
         # Intention binds to gate verbs in the clause or in later clauses; the
         # forward scan is hoisted out of the marker loop (one pass per clause).
         forward = any(_GATE_VERB.search(later) for later in clauses[i + 1:])
