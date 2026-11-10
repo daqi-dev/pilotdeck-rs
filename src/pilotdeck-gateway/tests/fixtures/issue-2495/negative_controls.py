@@ -45,7 +45,7 @@ from fix-r3, its lock timeout, both the same "never
 started" rc 2 refusal the guard already produces (fix-r3b scopes the refusal
 to the acquisition phase and withdraws the empty evidence directory; anything
 that fails after the acquisition is a red run: INVALID rows, published
-summary, rc 1). A
+summary, rc 1 — signals excepted, 128+signum per the README rc table). A
 bound assertion containing `{` / `}` is
 refused up front (#2590 item 3): the receipt protocol compares the runtime
 `format!` result byte-for-byte, so a template can never match and the row
@@ -402,6 +402,16 @@ def main():
                 # refusal. Per-row timeouts (run_owned's 900 s,
                 # wait_for_slot's 600 s) are subprocess.TimeoutExpired and
                 # are caught by the inner per-row handler either way.
+                # fix-r3b2 (DS r3b review, 四角色撞条): within the
+                # acquisition phase the refusal still maps only these two
+                # exception types — a git RuntimeError, a scanner
+                # subprocess error or an OSError snapshot read inside the
+                # acquisition also falls to the red-run handler below
+                # (fail-closed, never a false green; the started-flag
+                # shape that refuses the whole acquisition phase is
+                # follow-up entry 23 on #2590, same-json-surfaces /
+                # utf16-residual-sort precedent). Signals are outside this
+                # table entirely: 128+signum per the README preamble.
                 # fix-r3b (MM r3 concurrency#1 P2a): SourceBaselineError at
                 # entry is the same never-started phase — a sibling round
                 # SIGKILLed mid-mutation leaves its mutant on disk and this
