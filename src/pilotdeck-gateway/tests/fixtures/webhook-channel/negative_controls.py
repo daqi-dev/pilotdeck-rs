@@ -46,7 +46,16 @@ switches = [
     ('webhook-null-body-responds', SOURCE_WEBHOOK, 'no_text', '#1334 webhook oracle case no-text'),
     # #1534 P0: a pipelined null body must let the client FIN reclaim the
     # connection; without the duplicate-socket FIN probe, stop() hangs forever.
-    ('webhook-null-body-probe-off', SOURCE_WEBHOOK, 'pipelined_null_body_disconnect_reclaims_the_connection', '#1334 a pipelined null body reclaims the connection after the client FIN'),
+    # The second cell (Grok r3 boundary#2) is the degraded half of the same
+    # switch: with the probe off, the low-fd child's pipelined literal-null
+    # falls back to the unconditional `pending().await`, the child never sees
+    # the EOF and reports `served: timeout`, failing the parent's anchored
+    # served assertion — the P0-fix test proves it can see the regression, not
+    # just the fix.
+    ('webhook-null-body-probe-off', SOURCE_WEBHOOK,
+     ['pipelined_null_body_disconnect_reclaims_the_connection', 'dup_failure_serves_without_the_fin_probe'],
+     ['#1334 a pipelined null body reclaims the connection after the client FIN',
+      '#1689 the EMFILE-failing dup degrades to a probeless serve instead of dropping the connection']),
     # The error body carries the TS `code` verbatim, not a decorated one.
     ('webhook-error-body-code', SOURCE_WEBHOOK, 'unknown_route', '#1334 webhook oracle case unknown-route'),
     # `/new` replies with the fixed new-session message.
@@ -71,6 +80,35 @@ switches = [
     ('webhook-empty-text-accepted', SOURCE_WEBHOOK,
      ['no_text', 'empty_text_request_is_not_a_delivery'],
      ['#1334 webhook oracle case no-text', '#1681 the empty string is ignored']),
+    # #1699: the second assertion of the #1681 direct test, bound on its own —
+    # the ignored reply must not leave a deliveryInfo entry behind, and the
+    # accepting mutant above could mask a leak of exactly that kind.
+    ('webhook-empty-text-delivery-info', SOURCE_WEBHOOK, 'empty_text_request_is_not_a_delivery',
+     '#1681 the empty string writes no delivery info'),
+    # #1744: the admission fusion — restoring the check-then-act split lets
+    # two concurrent webhooks for one chat both pass their check and
+    # double-dispatch (the sms lane's `sms-active-insert-split` sibling).
+    ('webhook-active-insert-split', SOURCE_WEBHOOK, 'webhook_active_insert_split',
+     '#1744 concurrent same-chat webhooks dispatch exactly one turn'),
+    # #1689.1: a failed `dup(2)` for the FIN probe must degrade to a probeless
+    # serve, not drop the accepted connection (TS owns one fd per connection
+    # and never loses one). The low-RLIMIT_NOFILE reexec child stages exactly
+    # that budget; the mutant restores the drop and the client sees EOF.
+    ('webhook-dup-failure-drops', SOURCE_WEBHOOK, 'dup_failure_serves_without_the_fin_probe',
+     '#1689 the EMFILE-failing dup degrades to a probeless serve instead of dropping the connection'),
+    # Grok r2 concurrency#1 fixed the probe duplicate with a CLOEXEC direct
+    # test; Grok r3 boundary#3 adds the missing switch — the mutant restores
+    # the plain `dup(2)`, and the CLOEXEC assertion names the missing flag.
+    ('webhook-dup-no-cloexec', SOURCE_WEBHOOK, 'duplicate_socket_keeps_close_on_exec',
+     '#1689 the probe fd keeps FD_CLOEXEC across exec'),
+    # #1689.2: the accept-error backoff ladder and the one-log-per-streak
+    # counter. The mutant restores the pre-fix fixed 100 ms pause: the ladder
+    # unit test's persistent values turn red, and the low-fd child's error log
+    # shows up at ~0.3 s instead of past one second of doubling.
+    ('webhook-accept-backoff-off', SOURCE_WEBHOOK,
+     ['accept_error_backoff_ladder_is_bounded', 'dup_failure_serves_without_the_fin_probe'],
+     ['#1689 persistent accept failure 0 backs off by 200ms',
+      '#1689 the accept backoff delays the first error log past one second']),
     # #1682: `this.routes[routeName]` walks the prototype chain, so an
     # `Object.prototype` own property name (`constructor`, `__proto__`, ...)
     # resolves to a truthy value with no `secret`/`deliver`: TS authenticates
@@ -83,6 +121,10 @@ switches = [
     # An `s_` 36-hex session suffix is a cron chat id; without the suffix a
     # cron delivery to the new-session chat resolves no target.
     ('webhook-cron-suffix', SOURCE_CRON, 'cron_delivery_resolves_session_suffix_chat_ids', '#1334 an s_ session key is a cron target'),
+    # #1699: an empty `originChannelKey` is falsy in TS, so it means "not set"
+    # and the cron delivery runs; counting '' as a set foreign channel flips
+    # the cell's recorded `true` for the empty-origin step.
+    ('webhook-cron-origin-empty', SOURCE_CRON, 'cron_delivery', '#1334 webhook oracle case cron-delivery'),
     # #1729: recording type drift must fail before replay can use defaults.
     ('webhook-oracle-recorded-method', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'recorded_method_rejects_wrong_type',
      '#1334 #1729 rejects method type drift'),
@@ -120,6 +162,11 @@ switches = [
      '#1334 #1729 rejects options.secret type drift'),
     ('webhook-oracle-recorded-rate-limit', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'recorded_rate_limit_rejects_wrong_type',
      '#1334 #1729 rejects options.rateLimit type drift'),
+    # #1621: the frozen clock the fallback-delivery-id cell depends on. A
+    # fail-open read silently drops the injection and the literal fallback id
+    # goes back to clock luck.
+    ('webhook-oracle-recorded-now', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'recorded_now_rejects_wrong_type',
+     '#1334 #1729 rejects options.frozenNow type drift'),
     ('webhook-oracle-recorded-max-body', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'recorded_max_body_rejects_wrong_type',
      '#1334 #1729 rejects options.maxBodyBytes type drift'),
     ('webhook-oracle-recorded-mapper-uuid', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'recorded_mapper_uuid_rejects_wrong_type',
@@ -157,7 +204,7 @@ GUARDED = [SOURCE_WEBHOOK, SOURCE_HMAC, SOURCE_CRON,
     ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/channel/webhook/mapper.rs',
     ROOT / 'src/pilotdeck-gateway/src/channel/webhook/render.rs',
-    ROOT / 'src/pilotdeck-gateway/src/channel/webhook/status.rs',
+    ROOT / 'src/pilotdeck-gateway/src/channel/agent_status.rs',
     ROOT / 'src/pilotdeck-gateway/src/channel/mod.rs',
     ROOT / 'src/pilotdeck-gateway/src/channel/protocol.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_http.rs',
@@ -186,6 +233,10 @@ def main():
         if args.check:
             if args.output or args.names:
                 raise ValueError('--check does not take output or names')
+            # DS r2 boundary#1: an empty table must fail closed, never print
+            # "0 anchors: ok" — that shape was ruled a P0 in #1364.
+            if not rows:
+                raise ValueError('empty switch table')
             print(f'{len(rows)} switch anchors and bindings checked')
             return 0
         if not args.output or not os.environ.get('CARGO_TARGET_DIR'):

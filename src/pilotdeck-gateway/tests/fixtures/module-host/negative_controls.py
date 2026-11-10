@@ -75,19 +75,19 @@ switches = [
       '#1349 #1813 halfClose is a required recording field']),
     # #1696: a recorded pad size past the replay budget must fail the read
     # instead of aborting the test binary on a huge allocation.
-    ('module-host-oracle-pad-size', ROOT / 'src/pilotdeck-gateway/src/module_host/tests.rs', 'recorded_pad_size_rejects_drift',
+    ('module-host-oracle-pad-size', ROOT / 'src/pilotdeck-gateway/src/module_host/budget_guard.rs', 'recorded_pad_size_rejects_drift',
      '#1349 #1696 rejects pad size drift'),
     # #1696: the pad marker must be non-empty and appear exactly once, or the
     # expanded request multiplies the padding instead of replacing it.
-    ('module-host-oracle-pad-marker', ROOT / 'src/pilotdeck-gateway/src/module_host/tests.rs', 'recorded_pad_marker_rejects_drift',
+    ('module-host-oracle-pad-marker', ROOT / 'src/pilotdeck-gateway/src/module_host/budget_guard.rs', 'recorded_pad_marker_rejects_drift',
      '#1349 #1696 rejects pad marker drift'),
     # #1696: the budget cells' expanded bodies must be the recorded boundary
     # lengths, so a tiny pad cannot leave `budget-exact`/`budget-over` green.
-    ('module-host-oracle-boundary-body-length', ROOT / 'src/pilotdeck-gateway/src/module_host/tests.rs', 'recorded_budget_body_length_rejects_drift',
+    ('module-host-oracle-boundary-body-length', ROOT / 'src/pilotdeck-gateway/src/module_host/budget_guard.rs', 'recorded_budget_body_length_rejects_drift',
      '#1349 #1696 rejects boundary body length drift'),
     # #1696: a new `budget-*` cell the guard has not been taught must be
     # rejected, not replayed without any length pin.
-    ('module-host-oracle-unknown-budget-cell', ROOT / 'src/pilotdeck-gateway/src/module_host/tests.rs', 'recorded_unknown_budget_cell_is_rejected',
+    ('module-host-oracle-unknown-budget-cell', ROOT / 'src/pilotdeck-gateway/src/module_host/budget_guard.rs', 'recorded_unknown_budget_cell_is_rejected',
      '#1349 #1696 fails closed on a budget cell class with no length guard'),
     # #1947: with the framing fix off, hyper knows the value body's size
     # again and writes a `content-length` line on the 1.0 reply where Node
@@ -107,6 +107,13 @@ switches = [
      '#2153 pin method-head: the HEAD 405 carries no framing line'),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/module_host/tests.rs',
+    ROOT / 'src/pilotdeck-gateway/src/module_host/budget_guard.rs',
+    # DS r3 sibling#1: the bound tests run the shared transport closure
+    # (`module_host/tests.rs` builds it through `http_proxy::…` +
+    # `native_http::…`), so the receipts cannot prove which transport bytes
+    # they ran against without pinning them (the webhook lane's口径).
+    ROOT / 'src/pilotdeck-gateway/src/native_http.rs',
+    ROOT / 'src/pilotdeck-gateway/src/http_proxy.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',

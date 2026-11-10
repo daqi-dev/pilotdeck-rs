@@ -685,7 +685,7 @@
  },
  "node": "v22.22.0",
  "icu": "78.2",
- "expectedCaseCount": 21,
+ "expectedCaseCount": 24,
  "cases": [
   {
    "name": "health-and-routing",
@@ -1429,6 +1429,28 @@
     },
     {
      "op": "request",
+     "label": "five-units",
+     "method": "POST",
+     "target": "/webhooks/main",
+     "headers": {
+      "x-delivery-id": "d6"
+     },
+     "body": "\"abc\"",
+     "mode": "close"
+    },
+    {
+     "op": "request",
+     "label": "six-units",
+     "method": "POST",
+     "target": "/webhooks/main",
+     "headers": {
+      "x-delivery-id": "d7"
+     },
+     "body": "\"abcd\"",
+     "mode": "close"
+    },
+    {
+     "op": "request",
      "label": "empty-text",
      "method": "POST",
      "target": "/webhooks/main",
@@ -1451,6 +1473,7 @@
     }
    ],
    "scripts": [
+    [],
     []
    ],
    "expected": {
@@ -1489,6 +1512,28 @@
       "body": "{\"status\":\"accepted\",\"delivery_id\":\"d3\"}"
      },
      {
+      "label": "five-units",
+      "status": "HTTP/1.1 200 OK",
+      "headers": [
+       "content-type: application/json",
+       "date: <date>",
+       "connection: close",
+       "content-length: 47"
+      ],
+      "body": "{\"status\":\"ignored\",\"reason\":\"no text content\"}"
+     },
+     {
+      "label": "six-units",
+      "status": "HTTP/1.1 200 OK",
+      "headers": [
+       "content-type: application/json",
+       "date: <date>",
+       "connection: close",
+       "content-length: 40"
+      ],
+      "body": "{\"status\":\"accepted\",\"delivery_id\":\"d7\"}"
+     },
+     {
       "label": "empty-text",
       "status": "HTTP/1.1 200 OK",
       "headers": [
@@ -1509,6 +1554,11 @@
       "sessionKey": "webhook:chat=webhook:main:d3:general",
       "channelKey": "webhook",
       "message": "{\"raw\":\"not json at all\"}"
+     },
+     {
+      "sessionKey": "webhook:chat=webhook:main:d7:general",
+      "channelKey": "webhook",
+      "message": "\"abcd\""
      }
     ],
     "logs": [
@@ -2302,6 +2352,12 @@
     },
     {
      "op": "cron",
+     "sessionKey": "webhook:chat=webhook:main:d1:general",
+     "originChannelKey": "",
+     "text": "empty origin reply"
+    },
+    {
+     "op": "cron",
      "sessionKey": "unparseable",
      "originSessionKey": "webhook:chat=orig:general",
      "text": "origin reply"
@@ -2346,12 +2402,17 @@
      ],
      [
       "info",
+      "webhook: response for webhook:main:d1: empty origin reply"
+     ],
+     [
+      "info",
       "webhook: response for orig: origin reply"
      ]
     ],
     "cron": [
      true,
      false,
+     true,
      true,
      false
     ]
@@ -2670,6 +2731,272 @@
      [
       "info",
       "webhook: listening on http://127.0.0.1:0 — routes: main"
+     ]
+    ],
+    "cron": []
+   }
+  },
+  {
+   "name": "fallback-delivery-id",
+   "options": {
+    "port": 0,
+    "routes": {
+     "main": {
+      "secret": "__INSECURE_NO_AUTH__"
+     }
+    },
+    "frozenNow": 1700000000000
+   },
+   "steps": [
+    {
+     "op": "request",
+     "label": "no-id-first",
+     "method": "POST",
+     "target": "/webhooks/main",
+     "body": "{\"message\":\"hi\"}",
+     "mode": "close"
+    },
+    {
+     "op": "request",
+     "label": "no-id-repeat",
+     "method": "POST",
+     "target": "/webhooks/main",
+     "body": "{\"message\":\"hi\"}",
+     "mode": "close"
+    }
+   ],
+   "scripts": [
+    [
+     {
+      "type": "assistant_text_delta",
+      "text": "first reply"
+     }
+    ]
+   ],
+   "expected": {
+    "responses": [
+     {
+      "label": "no-id-first",
+      "status": "HTTP/1.1 200 OK",
+      "headers": [
+       "content-type: application/json",
+       "date: <date>",
+       "connection: close",
+       "content-length: 53"
+      ],
+      "body": "{\"status\":\"accepted\",\"delivery_id\":\"main-1700000000\"}"
+     },
+     {
+      "label": "no-id-repeat",
+      "status": "HTTP/1.1 200 OK",
+      "headers": [
+       "content-type: application/json",
+       "date: <date>",
+       "connection: close",
+       "content-length: 54"
+      ],
+      "body": "{\"status\":\"duplicate\",\"delivery_id\":\"main-1700000000\"}"
+     }
+    ],
+    "gateway": [
+     {
+      "sessionKey": "webhook:chat=webhook:main:main-1700000000:general",
+      "channelKey": "webhook",
+      "message": "hi"
+     }
+    ],
+    "logs": [
+     [
+      "info",
+      "webhook: listening on http://127.0.0.1:0 — routes: main"
+     ],
+     [
+      "info",
+      "webhook: response for webhook:main:main-1700000000: first reply"
+     ]
+    ],
+    "cron": []
+   }
+  },
+  {
+   "name": "order-combos",
+   "options": {
+    "port": 0,
+    "routes": {
+     "main": {
+      "secret": "topsecret"
+     }
+    },
+    "rateLimit": 2,
+    "maxBodyBytes": 10
+   },
+   "steps": [
+    {
+     "op": "request",
+     "label": "unknown-route-oversize",
+     "method": "POST",
+     "target": "/webhooks/nope",
+     "headers": {
+      "x-delivery-id": "d1"
+     },
+     "body": "xxxxxxxxxxxxxxxxxxxx",
+     "mode": "close"
+    },
+    {
+     "op": "request",
+     "label": "oversign-1",
+     "method": "POST",
+     "target": "/webhooks/main",
+     "headers": {
+      "x-delivery-id": "d2",
+      "x-hub-signature-256": "78e714e29806af51a2308c996418a94b3cadec0d5bc185dc50c88c675298fbac"
+     },
+     "body": "\"01234567\"",
+     "mode": "close"
+    },
+    {
+     "op": "request",
+     "label": "oversign-2",
+     "method": "POST",
+     "target": "/webhooks/main",
+     "headers": {
+      "x-delivery-id": "d3",
+      "x-hub-signature-256": "78e714e29806af51a2308c996418a94b3cadec0d5bc185dc50c88c675298fbac"
+     },
+     "body": "\"01234567\"",
+     "mode": "close"
+    },
+    {
+     "op": "request",
+     "label": "oversign-3",
+     "method": "POST",
+     "target": "/webhooks/main",
+     "headers": {
+      "x-delivery-id": "d4",
+      "x-hub-signature-256": "78e714e29806af51a2308c996418a94b3cadec0d5bc185dc50c88c675298fbac"
+     },
+     "body": "\"01234567\"",
+     "mode": "close"
+    }
+   ],
+   "scripts": [],
+   "expected": {
+    "responses": [
+     {
+      "label": "unknown-route-oversize",
+      "status": "HTTP/1.1 404 Not Found",
+      "headers": [
+       "content-type: application/json",
+       "date: <date>",
+       "connection: close",
+       "content-length: 500"
+      ],
+      "body": "{\"error\":{\"message\":\"Unknown route: nope\",\"type\":\"invalid_request_error\",\"code\":\"unknown_route\",\"userHint\":\"Check the webhook route name and retry.\",\"status\":404,\"scope\":\"http\",\"source\":\"webhook\",\"event\":\"webhook_unknown_route\"},\"agent_status\":{\"type\":\"agent_status\",\"event\":\"webhook_unknown_route\",\"detail\":{\"message\":\"Unknown route: nope\",\"code\":\"unknown_route\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Check the webhook route name and retry.\",\"scope\":\"http\",\"source\":\"webhook\",\"status\":404}}}"
+     },
+     {
+      "label": "oversign-1",
+      "status": "HTTP/1.1 401 Unauthorized",
+      "headers": [
+       "content-type: application/json",
+       "date: <date>",
+       "connection: close",
+       "content-length: 542"
+      ],
+      "body": "{\"error\":{\"message\":\"Invalid signature\",\"type\":\"invalid_request_error\",\"code\":\"invalid_signature\",\"userHint\":\"Check the webhook signing secret and signature header.\",\"status\":401,\"scope\":\"http\",\"source\":\"webhook\",\"event\":\"webhook_invalid_signature\"},\"agent_status\":{\"type\":\"agent_status\",\"event\":\"webhook_invalid_signature\",\"detail\":{\"message\":\"Invalid signature\",\"code\":\"invalid_signature\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Check the webhook signing secret and signature header.\",\"scope\":\"http\",\"source\":\"webhook\",\"status\":401}}}"
+     },
+     {
+      "label": "oversign-2",
+      "status": "HTTP/1.1 401 Unauthorized",
+      "headers": [
+       "content-type: application/json",
+       "date: <date>",
+       "connection: close",
+       "content-length: 542"
+      ],
+      "body": "{\"error\":{\"message\":\"Invalid signature\",\"type\":\"invalid_request_error\",\"code\":\"invalid_signature\",\"userHint\":\"Check the webhook signing secret and signature header.\",\"status\":401,\"scope\":\"http\",\"source\":\"webhook\",\"event\":\"webhook_invalid_signature\"},\"agent_status\":{\"type\":\"agent_status\",\"event\":\"webhook_invalid_signature\",\"detail\":{\"message\":\"Invalid signature\",\"code\":\"invalid_signature\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Check the webhook signing secret and signature header.\",\"scope\":\"http\",\"source\":\"webhook\",\"status\":401}}}"
+     },
+     {
+      "label": "oversign-3",
+      "status": "HTTP/1.1 429 Too Many Requests",
+      "headers": [
+       "content-type: application/json",
+       "date: <date>",
+       "connection: close",
+       "content-length: 547"
+      ],
+      "body": "{\"error\":{\"message\":\"Rate limit exceeded\",\"type\":\"rate_limit_error\",\"code\":\"rate_limit_exceeded\",\"userHint\":\"Wait for the webhook rate limit window to reset, then retry.\",\"status\":429,\"scope\":\"http\",\"source\":\"webhook\",\"event\":\"webhook_rate_limited\"},\"agent_status\":{\"type\":\"agent_status\",\"event\":\"webhook_rate_limited\",\"detail\":{\"message\":\"Rate limit exceeded\",\"code\":\"rate_limit_exceeded\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Wait for the webhook rate limit window to reset, then retry.\",\"scope\":\"http\",\"source\":\"webhook\",\"status\":429}}}"
+     }
+    ],
+    "gateway": [],
+    "logs": [
+     [
+      "info",
+      "webhook: listening on http://127.0.0.1:0 — routes: main"
+     ]
+    ],
+    "cron": []
+   }
+  },
+  {
+   "name": "utf8-body",
+   "options": {
+    "port": 0,
+    "routes": {
+     "main": {
+      "secret": "__INSECURE_NO_AUTH__"
+     }
+    }
+   },
+   "steps": [
+    {
+     "op": "request",
+     "label": "utf8-message",
+     "method": "POST",
+     "target": "/webhooks/main",
+     "headers": {
+      "x-delivery-id": "d1"
+     },
+     "body": "{\"message\":\"你好 webhook\"}",
+     "mode": "close"
+    }
+   ],
+   "scripts": [
+    [
+     {
+      "type": "assistant_text_delta",
+      "text": "你好回复"
+     }
+    ]
+   ],
+   "expected": {
+    "responses": [
+     {
+      "label": "utf8-message",
+      "status": "HTTP/1.1 200 OK",
+      "headers": [
+       "content-type: application/json",
+       "date: <date>",
+       "connection: close",
+       "content-length: 40"
+      ],
+      "body": "{\"status\":\"accepted\",\"delivery_id\":\"d1\"}"
+     }
+    ],
+    "gateway": [
+     {
+      "sessionKey": "webhook:chat=webhook:main:d1:general",
+      "channelKey": "webhook",
+      "message": "你好 webhook"
+     }
+    ],
+    "logs": [
+     [
+      "info",
+      "webhook: listening on http://127.0.0.1:0 — routes: main"
+     ],
+     [
+      "info",
+      "webhook: response for webhook:main:d1: 你好回复"
      ]
     ],
     "cron": []

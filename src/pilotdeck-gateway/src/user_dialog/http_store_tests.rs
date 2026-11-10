@@ -5025,3 +5025,43 @@ async fn header_budget_peak_rss() {
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
 }
+
+/// Grok r3 sibling#1 (two-family 取高 = P1): the drain duplicate must keep
+/// `FD_CLOEXEC` — the old `std::net::TcpStream::try_clone` is a plain
+/// `dup(2)` without it, and this process spawns children (module hosts, tool
+/// runners): an inherited drain fd holds the open file description through
+/// the drain window and turns the server's `close` into a withheld FIN, the
+/// same mechanism the webhook probe's duplicate fixed (#1689 fix-r2). Same
+/// shape as `channel::webhook::tests::duplicate_socket_keeps_close_on_exec`.
+#[tokio::test]
+async fn duplicate_for_drain_keeps_close_on_exec() {
+    let listener =
+        std::net::TcpListener::bind("127.0.0.1:0").expect("#1689 bind for the drain cloexec test");
+    let addr = listener
+        .local_addr()
+        .expect("#1689 local addr for the drain cloexec test");
+    let _client =
+        std::net::TcpStream::connect(addr).expect("#1689 connect for the drain cloexec test");
+    let (server, _) = listener
+        .accept()
+        .expect("#1689 accept for the drain cloexec test");
+    // `from_std` refuses a blocking socket (tokio #7172); the production path
+    // reaches `duplicate_for_drain` through tokio's own accept, whose sockets
+    // are already non-blocking.
+    server
+        .set_nonblocking(true)
+        .expect("#1689 nonblocking for the drain cloexec test");
+    let server = tokio::net::TcpStream::from_std(server)
+        .expect("#1689 tokio wrap for the drain cloexec test");
+    let (_served, drain) = super::duplicate_for_drain(server)
+        .expect("#1689 duplicate the accepted socket for the drain cloexec test");
+    let drain = drain.expect("#1689 the drain duplicate exists for the cloexec test");
+    // The workspace forbids `unsafe`, so the flags come through rustix's safe
+    // `fcntl(F_GETFD)` — the same syscall a raw `libc::fcntl` would make.
+    let flags =
+        rustix::io::fcntl_getfd(&drain).expect("#1689 fcntl(F_GETFD) for the drain cloexec test");
+    crate::negative_assert!(
+        flags.contains(rustix::io::FdFlags::CLOEXEC),
+        "#1689 the drain fd keeps FD_CLOEXEC across exec (F_GETFD = {flags:?})"
+    );
+}

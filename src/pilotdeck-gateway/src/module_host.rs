@@ -1510,5 +1510,9 @@ fn string_value(value: &str) -> JsValue {
 /// before `handlePublicHostHttpRequest` (GatewayServer.ts:96).
 pub(crate) mod approvals;
 
+/// The shared #1696 budget guards for the two replay lanes' tests (#1914).
+#[cfg(test)]
+mod budget_guard;
+
 #[cfg(test)]
 mod tests;

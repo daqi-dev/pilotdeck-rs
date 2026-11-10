@@ -1,11 +1,17 @@
-//! `src/status/agentStatus.ts` (baseline cc7c4e6), the slice the webhook
-//! channel consumes. Key insertion order is the JS object literal order, so
-//! the JSON bodies stringify identically.
+//! `src/status/agentStatus.ts` (baseline cc7c4e6), plus the
+//! visible-failure predicates and event-name set its two consumers share:
+//! `webhook-render.ts` and `api-server-render.ts` import the same
+//! `agentStatus` module on the TS side, so the Rust port lives here once
+//! (#1615) instead of one copy per lane. Key insertion order is the JS
+//! object literal order, so the JSON bodies stringify identically; `source`
+//! is the only field the lanes differ in, and it is an input.
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
+
+use crate::runtime::memory::js_trim_units;
 
 /// `createVisibleErrorStatusDetail`: severity defaults to `"error"`, visible
 /// is always true, then the caller's `detail` spread.
-pub fn create_visible_error_status_detail(input: StatusDetailInput) -> JsObject {
+pub(crate) fn create_visible_error_status_detail(input: StatusDetailInput) -> JsObject {
     let mut detail = JsObject::new();
     detail.insert("message".into(), JsValue::String(input.message));
     if let Some(message_i18n) = input.message_i18n {
@@ -32,8 +38,9 @@ pub fn create_visible_error_status_detail(input: StatusDetailInput) -> JsObject 
     detail
 }
 
-/// `createAgentStatusHttpErrorBody` for the webhook source: `{error, agent_status}`.
-pub fn create_agent_status_http_error_body(input: HttpErrorBodyInput) -> JsValue {
+/// `createAgentStatusHttpErrorBody`: `{error, agent_status}`. The lane's
+/// `source` (`"webhook"` / `"api_server"`) is the only lane-specific byte.
+pub(crate) fn create_agent_status_http_error_body(input: HttpErrorBodyInput) -> JsValue {
     let code = input
         .code
         .unwrap_or_else(|| JsValue::String(input.event.clone()));
@@ -57,7 +64,7 @@ pub fn create_agent_status_http_error_body(input: HttpErrorBodyInput) -> JsValue
         user_hint: Some(user_hint.clone()),
         user_hint_i18n: None,
         scope: input.scope,
-        source: "webhook",
+        source: input.source,
         detail: Some(detail_extra),
     });
     let mut error = JsObject::new();
@@ -74,7 +81,7 @@ pub fn create_agent_status_http_error_body(input: HttpErrorBodyInput) -> JsValue
         error.insert("status".into(), JsValue::Number(f64::from(status)));
     }
     error.insert("scope".into(), JsValue::String(input.scope.into()));
-    error.insert("source".into(), JsValue::String("webhook".into()));
+    error.insert("source".into(), JsValue::String(input.source.into()));
     error.insert("event".into(), JsValue::String(input.event));
     let mut agent_status = JsObject::new();
     agent_status.insert("type".into(), JsValue::String("agent_status".into()));
@@ -88,7 +95,7 @@ pub fn create_agent_status_http_error_body(input: HttpErrorBodyInput) -> JsValue
 
 /// `isVisibleFailureStatusDetail`: a record with `visible !== false` and
 /// `severity === "error"`.
-pub fn is_visible_failure_status_detail(detail: Option<&JsValue>) -> bool {
+pub(crate) fn is_visible_failure_status_detail(detail: Option<&JsValue>) -> bool {
     let Some(object) = detail.and_then(JsValue::as_object) else {
         return false;
     };
@@ -98,19 +105,70 @@ pub fn is_visible_failure_status_detail(detail: Option<&JsValue>) -> bool {
         && object.get("severity") == Some(&JsValue::String("error".into()))
 }
 
-/// `visibleStatusMessage`: the detail's non-blank string message, else the
-/// fallback. Blankness uses the JS trim (U+FEFF included).
-pub fn visible_status_message(detail: Option<&JsValue>, fallback: &str) -> String {
-    if let Some(message) = detail
+/// `VISIBLE_FAILURE_STATUS_EVENTS`, the `agent_status.event` names that
+/// render a visible failure even without a detail record. One copy for both
+/// renderers (#1615); the api-server negative control mutates this table.
+const VISIBLE_FAILURE_STATUS_EVENTS: [&str; 17] = [
+    "model_empty_response_exhausted",
+    "max_turns_reached",
+    "max_output_recovery_exhausted",
+    "model_request_failed",
+    "tool_call_recovery_exhausted",
+    "tool_error_loop",
+    "lifecycle_blocked",
+    "turn_failed",
+    "turn_timeout",
+    "gateway_submit_failed",
+    "session_busy",
+    "gateway_bridge_error",
+    "gateway_stream_ended_without_completion",
+    "channel_submit_failed",
+    "subagent_failed",
+    "content_filter_stop",
+    "unknown_finish_reason",
+];
+
+pub(crate) fn is_visible_failure_event_name(name: &str) -> bool {
+    VISIBLE_FAILURE_STATUS_EVENTS.contains(&name)
+}
+
+/// `isVisibleFailureAgentStatusEvent`: `detail?.visible !== false` and (the
+/// event name is in the set or the detail is a visible failure status). Both
+/// renderers' `agent_status` arm funnels through this predicate.
+pub(crate) fn is_visible_failure_agent_status_event(event: &JsValue) -> bool {
+    if matches!(
+        event.get("detail").and_then(|detail| detail.get("visible")),
+        Some(JsValue::Bool(false))
+    ) {
+        return false;
+    }
+    let in_set = event
+        .get("event")
+        .and_then(JsValue::as_string)
+        .and_then(|name| name.to_utf8().ok())
+        .is_some_and(|name| is_visible_failure_event_name(&name));
+    in_set || is_visible_failure_status_detail(event.get("detail"))
+}
+
+/// The detail's non-blank string `message`, if any: the message a visible
+/// failure renders. Blankness uses the JS trim (U+FEFF included).
+pub(crate) fn status_message(detail: Option<&JsValue>) -> Option<JsString> {
+    detail
         .and_then(JsValue::as_object)
         .and_then(|object| object.get("message"))
         .and_then(JsValue::as_string)
-        .map(|text| String::from_utf16_lossy(text.units()))
-        && !crate::metadata::js_trim(&message).is_empty()
-    {
-        return message;
-    }
-    fallback.to_owned()
+        .filter(|message| !js_trim_units(message.units()).is_empty())
+        .cloned()
+}
+
+/// `visibleStatusMessage`: the detail's non-blank string message, else the
+/// fallback, as a Rust `String` (UTF-16 lossy, the webhook renderer's
+/// flavor; the api-server renderer keeps `JsString` and calls
+/// [`status_message`] itself).
+pub(crate) fn visible_status_message(detail: Option<&JsValue>, fallback: &str) -> String {
+    status_message(detail)
+        .map(|message| String::from_utf16_lossy(message.units()))
+        .unwrap_or_else(|| fallback.to_owned())
 }
 
 fn default_user_hint_for_http_status(status: Option<u16>) -> &'static str {
@@ -133,11 +191,11 @@ fn default_http_error_type(status: Option<u16>) -> &'static str {
     }
 }
 
-pub type Scope = &'static str;
-pub type Severity = &'static str;
-pub type Source = &'static str;
+pub(crate) type Scope = &'static str;
+pub(crate) type Severity = &'static str;
+pub(crate) type Source = &'static str;
 
-pub struct StatusDetailInput {
+pub(crate) struct StatusDetailInput {
     pub message: JsString,
     pub message_i18n: Option<JsValue>,
     pub code: Option<JsValue>,
@@ -149,7 +207,7 @@ pub struct StatusDetailInput {
     pub detail: Option<JsObject>,
 }
 
-pub struct HttpErrorBodyInput {
+pub(crate) struct HttpErrorBodyInput {
     pub event: JsString,
     pub message: JsString,
     pub code: Option<JsValue>,
@@ -157,6 +215,7 @@ pub struct HttpErrorBodyInput {
     pub r#type: Option<JsValue>,
     pub user_hint: Option<JsValue>,
     pub scope: Scope,
+    pub source: Source,
     pub detail: Option<JsObject>,
     /// The `event` repeated inside `agent_status`; the error-shape variants
     /// of the TS call sites pass the same string in both positions.
@@ -185,6 +244,7 @@ mod tests {
             r#type: Some("rate_limit_error".into()),
             user_hint: Some("Wait for the webhook rate limit window to reset, then retry.".into()),
             scope: "http",
+            source: "webhook",
             detail: None,
         });
         assert_eq!(
@@ -200,6 +260,53 @@ mod tests {
         );
     }
 
+    /// #1615: the api-server lane's body is the same construction with its own
+    /// `source`; only that field's bytes differ.
+    #[test]
+    fn error_body_key_order_is_source_independent() {
+        let webhook = body_text(&create_agent_status_http_error_body(HttpErrorBodyInput {
+            event: "api_error".into(),
+            event_name: "api_error".into(),
+            message: "Request failed".into(),
+            code: Some("api_error".into()),
+            status: Some(503),
+            r#type: None,
+            user_hint: None,
+            scope: "http",
+            source: "webhook",
+            detail: None,
+        }));
+        let api_server = body_text(&create_agent_status_http_error_body(HttpErrorBodyInput {
+            event: "api_error".into(),
+            event_name: "api_error".into(),
+            message: "Request failed".into(),
+            code: Some("api_error".into()),
+            status: Some(503),
+            r#type: None,
+            user_hint: None,
+            scope: "http",
+            source: "api_server",
+            detail: None,
+        }));
+        assert_eq!(
+            webhook.replace("\"webhook\"", "\"lane\""),
+            api_server.replace("\"api_server\"", "\"lane\""),
+            "#1615 the two lanes' error bodies differ only in the source bytes"
+        );
+        assert_eq!(
+            api_server,
+            "{\"error\":{\"message\":\"Request failed\",\"type\":\"server_error\",\"code\":\
+             \"api_error\",\"userHint\":\"The server is unavailable or returned an internal \
+             error. Retry later or check server logs.\",\"status\":503,\"scope\":\"http\",\
+             \"source\":\"api_server\",\"event\":\"api_error\"},\"agent_status\":{\"type\":\
+             \"agent_status\",\"event\":\"api_error\",\"detail\":{\"message\":\"Request \
+             failed\",\"code\":\"api_error\",\"severity\":\"error\",\"visible\":true,\
+             \"userHint\":\"The server is unavailable or returned an internal error. Retry \
+             later or check server logs.\",\"scope\":\"http\",\"source\":\"api_server\",\
+             \"status\":503}}}"
+        );
+    }
+
     #[test]
     fn defaults_fill_code_type_and_user_hint() {
         let body = create_agent_status_http_error_body(HttpErrorBodyInput {
@@ -211,6 +318,7 @@ mod tests {
             r#type: None,
             user_hint: None,
             scope: "http",
+            source: "webhook",
             detail: None,
         });
         let text = body_text(&body);
@@ -270,6 +378,44 @@ mod tests {
             visible_status_message(Some(&JsValue::Object(present)), "fallback"),
             "kept",
             "#1334 present message"
+        );
+    }
+
+    /// The combined predicate both renderers previously duplicated
+    /// (#1615): hidden by `visible: false`, visible by the event-name set
+    /// with or without a detail, visible by an error-severity detail.
+    #[test]
+    fn agent_status_visibility_matches_the_event_set_and_detail() {
+        fn agent_status(event: &str, detail: Option<JsObject>) -> JsValue {
+            let mut object = JsObject::new();
+            object.insert("type".into(), "agent_status".into());
+            object.insert("event".into(), event.into());
+            if let Some(detail) = detail {
+                object.insert("detail".into(), JsValue::Object(detail));
+            }
+            JsValue::Object(object)
+        }
+        let mut hidden = JsObject::new();
+        hidden.insert("visible".into(), JsValue::Bool(false));
+        assert!(
+            !is_visible_failure_agent_status_event(&agent_status("session_busy", Some(hidden))),
+            "hidden by visible:false even with a set name"
+        );
+        assert!(
+            is_visible_failure_agent_status_event(&agent_status("session_busy", None)),
+            "in the set without a detail"
+        );
+        let mut quiet = JsObject::new();
+        quiet.insert("severity".into(), "warning".into());
+        assert!(
+            !is_visible_failure_agent_status_event(&agent_status("quiet_progress", Some(quiet))),
+            "not in the set and not an error-severity detail"
+        );
+        let mut error_detail = JsObject::new();
+        error_detail.insert("severity".into(), "error".into());
+        assert!(
+            is_visible_failure_agent_status_event(&agent_status("not_in_set", Some(error_detail))),
+            "an error-severity detail is visible without a set name"
         );
     }
 }

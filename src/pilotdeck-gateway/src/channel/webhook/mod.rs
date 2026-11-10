@@ -44,9 +44,14 @@
 mod hmac;
 mod mapper;
 mod render;
-mod status;
 #[cfg(test)]
 mod tests;
+
+/// #1615: the `agentStatus.ts` port moved to the shared
+/// [`super::agent_status`] module (the api-server lane consumes the same
+/// construction); this alias keeps the lane's call sites reading
+/// `status::…`.
+use super::agent_status as status;
 
 pub use mapper::{MappedTurn, WebhookCommand, WebhookSessionMapper, WebhookSessionMapperState};
 
@@ -78,6 +83,13 @@ use super::{
 };
 use crate::{Body, http_proxy, js_value, native_http};
 
+// #1621: the four value defaults below are byte-for-byte the TS baseline's
+// (commit cc7c4e6) — `DEFAULT_HOST`/`DEFAULT_PORT`/`DEFAULT_RATE_LIMIT`/
+// `DEFAULT_MAX_BODY_BYTES` at `src/adapters/channel/webhook/WebhookChannel.ts:15-18`,
+// applied by the constructor's `??` chain at `:58-66`. The `f64` shape mirrors
+// the `Number()` coercions that constructor runs on `port`, `rateLimit` and
+// `maxBodyBytes` before storing them, so a decimal recording replays through
+// unchanged.
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: f64 = 8643.0;
 const DEFAULT_RATE_LIMIT: f64 = 30.0;
@@ -143,6 +155,28 @@ pub struct WebhookChannelOptions {
     /// `None`: no callback, no behavior change (the hook never touches the
     /// accept/stop paths, it only reports that `accept()` returned).
     pub accepted: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Rust test seam (#1608): observation points on the literal-null body
+    /// branch. The negative control's three phases run in separate processes,
+    /// so a fixed sleep cannot prove that *this* process actually routed,
+    /// authenticated and parsed the request into the branch that hangs, or
+    /// that the duplicate-socket probe — and not some other teardown — was
+    /// what observed the client FIN. The witness turns both instants into
+    /// events a test can await. Production leaves this `None`: the witness
+    /// never touches the serving path, it only reports it.
+    pub null_body: Option<Arc<dyn NullBodyWitness>>,
+}
+
+/// #1608 test observation points for the literal-null body branch. The
+/// channel calls these and changes nothing else.
+pub trait NullBodyWitness: Send + Sync {
+    /// The request reached the branch that stays pending — the hang state
+    /// whose FIN reclamation the duplicate-socket probe exists to restore.
+    /// Fires before any mutant switch is consulted, so the disabled-probe
+    /// negative phase observes it too.
+    fn entered(&self);
+    /// The duplicate-socket probe observed the client's FIN (the `Ok(0)`
+    /// read that reclaims the connection).
+    fn reclaimed(&self);
 }
 
 /// The channel's mutable lifetime state, all behind one lock like the TS
@@ -177,6 +211,8 @@ struct Ctx {
     now: Now,
     /// #2047 test observation point, `None` in production.
     accepted: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// #1608 test observation point, `None` in production.
+    null_body: Option<Arc<dyn NullBodyWitness>>,
     mapper: Mutex<WebhookSessionMapper>,
     state: Mutex<State>,
 }
@@ -199,6 +235,7 @@ impl WebhookChannel {
                 request_timeout: options.request_timeout.unwrap_or(DEFAULT_REQUEST_TIMEOUT),
                 now: options.now.unwrap_or_else(|| Arc::new(default_now)),
                 accepted: options.accepted,
+                null_body: options.null_body,
                 mapper: Mutex::new(options.mapper.unwrap_or_else(|| {
                     WebhookSessionMapper::new(WebhookSessionMapper::random_uuid())
                 })),
@@ -209,6 +246,19 @@ impl WebhookChannel {
 
     /// `new WebhookChannel(options)`: the loader's option object, with the TS
     /// nullish-then-`Number()` coercions applied field by field.
+    ///
+    /// #1689.3: a non-numeric `rateLimit`/`maxBodyBytes` becomes `NaN` here,
+    /// exactly like the TS `Number()` coercion, and `NaN` makes both guard
+    /// comparisons (`total > maxBodyBytes`, `timestamps.length >= rateLimit`)
+    /// false — **neither bound ever rejects**. That unbounded shape is the
+    /// measured TS baseline behavior (probe
+    /// `_tmp/20261110-issue-1608/ts-probe-1689-r2-v220/probe.out`, node
+    /// v22.22.0 = the pinned baseline: `rateLimit: NaN` accepts a 40 连发
+    /// with 40 gateway calls while the default `rateLimit`=30 answers request
+    /// 31 with a 429 — the initial 6-request probe could not tell those
+    /// apart), so the Rust port replicates it on purpose rather than falling
+    /// back to the defaults — falling back would diverge.
+    /// Registered in `specs/gateway-parity/diffs/A8.3-CH-WEBHOOK-005.md`.
     pub fn from_options(options: &JsObject) -> Self {
         let field = |name: &str| options.get(name).filter(|value| !nullish(value));
         let number =
@@ -224,6 +274,7 @@ impl WebhookChannel {
             now: None,
             request_timeout: None,
             accepted: None,
+            null_body: None,
         })
     }
 
@@ -436,8 +487,44 @@ async fn start_listener(
     Ok((bound, stop, accept))
 }
 
+/// #1689: the accept-error backoff ladder. A resource-exhaustion failure
+/// (`EMFILE`/`ENFILE`/`ENOBUFS`/`ENOMEM`) persists until something outside
+/// this loop frees up, so a fixed 100 ms retry spun the core silently at
+/// 10 Hz forever; the ladder doubles per consecutive failure up to
+/// [`ACCEPT_BACKOFF_CAP`]. Any other (transient) failure keeps the original
+/// fixed pause.
+fn accept_error_backoff(consecutive: u32, persistent: bool) -> Duration {
+    // The negative-control shape: the pre-#1689 fixed 100 ms pause, which
+    // let the bound tests watch the 10 Hz silent-retry storm come back.
+    if crate::mutants::on("webhook-accept-backoff-off") {
+        return ACCEPT_TRANSIENT_PAUSE;
+    }
+    if !persistent {
+        return ACCEPT_TRANSIENT_PAUSE;
+    }
+    // 100 ms × 2^n, saturating at the cap: the first retry waits 200 ms, the
+    // fifth 3.2 s, and every retry after that 5 s.
+    ACCEPT_BACKOFF_CAP.min(ACCEPT_TRANSIENT_PAUSE.saturating_mul(2u32.saturating_pow(consecutive)))
+}
+
+/// The fixed pause a transient accept error keeps (the pre-#1689 behavior).
+const ACCEPT_TRANSIENT_PAUSE: Duration = Duration::from_millis(100);
+
+/// #1689 (fix, DS r2 concurrency#1): a literal-`null` body on a probe-less
+/// (degraded) connection — the duplicate failed, so the FIN cannot be
+/// observed — is reclaimed after this bound instead of waiting forever. See
+/// the call site for why an unbounded wait would hang `stop()` and leak the
+/// fd.
+const PROBELESS_NULL_RECLAIM: Duration = Duration::from_secs(5);
+/// The backoff ladder's ceiling: one retry per 5 s at most.
+const ACCEPT_BACKOFF_CAP: Duration = Duration::from_secs(5);
+/// Consecutive accept failures after which one error log fires per streak
+/// (`==`, so exactly one line per streak however long it runs).
+const ACCEPT_FAILURES_BEFORE_LOG: u32 = 4;
+
 async fn accept_loop(listener: TcpListener, ctx: Arc<Ctx>, mut stop: watch::Receiver<bool>) {
     let mut connections: Vec<JoinHandle<()>> = Vec::new();
+    let mut consecutive_failures = 0u32;
     loop {
         let socket = tokio::select! {
             biased;
@@ -450,12 +537,34 @@ async fn accept_loop(listener: TcpListener, ctx: Arc<Ctx>, mut stop: watch::Rece
                 }
             }
             accepted = listener.accept() => match accepted {
-                Ok((socket, _)) => socket,
+                Ok((socket, _)) => {
+                    consecutive_failures = 0;
+                    socket
+                }
                 // Node emits the accept error on the server; without a
-                // listener the process dies. Here the loop pauses briefly so
-                // a persistent error cannot spin the core.
-                Err(_) => {
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                // listener the process dies. Here the loop pauses instead —
+                // #1689: classified and bounded. A transient error keeps
+                // the original 100 ms pause; resource exhaustion backs off
+                // exponentially (up to one retry per 5 s), and a streak of
+                // [`ACCEPT_FAILURES_BEFORE_LOG`] failures logs one error
+                // instead of retrying silently forever.
+                Err(error) => {
+                    consecutive_failures += 1;
+                    if consecutive_failures == ACCEPT_FAILURES_BEFORE_LOG {
+                        log(
+                            &ctx,
+                            "error",
+                            &format!(
+                                "webhook: accept has failed {consecutive_failures} times in a row: {error}"
+                            ),
+                        );
+                    }
+                    let persistent = matches!(
+                        error.raw_os_error(),
+                        Some(libc::EMFILE) | Some(libc::ENFILE) | Some(libc::ENOBUFS)
+                            | Some(libc::ENOMEM)
+                    );
+                    tokio::time::sleep(accept_error_backoff(consecutive_failures, persistent)).await;
                     continue;
                 }
             },
@@ -474,15 +583,29 @@ async fn accept_loop(listener: TcpListener, ctx: Arc<Ctx>, mut stop: watch::Rece
         // still holds pipelined bytes, so after a follow-up request the
         // connection never observes the FIN and the `pending()` request
         // future has no other wake source; `stop()` then waits on it forever.
-        let (socket, client_probe) = match duplicate_socket(socket) {
-            Ok((socket, probe)) => (socket, Some(Arc::new(probe))),
+        //
+        // #1689: a failed duplicate must not drop the accepted connection —
+        // TS owns one fd per connection and never loses one here. Degrade to
+        // serving without the FIN probe instead: every other request is
+        // unchanged, and a literal-null body is reclaimed within
+        // [`PROBELESS_NULL_RECLAIM`] (TS reclaims the same socket in +1 ms;
+        // waiting forever would hang `stop()`, see the null-body branch). The
+        // `webhook-dup-failure-drops` mutant restores the old drop so the
+        // negative control can watch the delivery disappear.
+        let client_probe = match duplicate_socket(&socket) {
+            Ok(probe) => Some(Arc::new(probe)),
             Err(error) => {
                 log(
                     &ctx,
                     "error",
-                    &format!("webhook: cannot duplicate the accepted socket: {error}"),
+                    &format!(
+                        "webhook: cannot duplicate the accepted socket, serving without the FIN probe: {error}"
+                    ),
                 );
-                continue;
+                if crate::mutants::on("webhook-dup-failure-drops") {
+                    continue;
+                }
+                None
             }
         };
         let served = tokio::spawn(async move {
@@ -533,16 +656,45 @@ impl ChannelHandle for WebhookHandle {
 
 /// #1534: duplicate the accepted socket so the literal-`null` branch can read
 /// the client's FIN itself — hyper 1.7.0's `mid_message_detect_eof` returns
-/// `Pending` while its `read_buf` holds pipelined bytes. `try_clone` is
-/// `dup(2)`, which shares the nonblocking open file description, so both
-/// halves stay usable by tokio.
-fn duplicate_socket(socket: TcpStream) -> io::Result<(TcpStream, TcpStream)> {
-    let std_socket = socket.into_std()?;
-    let std_probe = std_socket.try_clone()?;
-    Ok((
-        TcpStream::from_std(std_socket)?,
-        TcpStream::from_std(std_probe)?,
-    ))
+/// `Pending` while its `read_buf` holds pipelined bytes. The duplicate is
+/// `F_DUPFD_CLOEXEC`, which shares the nonblocking open file description, so
+/// both halves stay usable by tokio.
+///
+/// #1689: the duplicate is taken from the **borrowed** descriptor, so a
+/// failed duplicate (EMFILE under a low descriptor limit) leaves the accepted
+/// socket with its caller — the caller then serves without the probe instead
+/// of dropping a connection TS would serve.
+///
+/// The duplicate keeps close-on-exec like the pre-#1689 `try_clone`
+/// (`F_DUPFD_CLOEXEC`) did: the probe lives for the connection's whole
+/// lifetime, and this process spawns children (module hosts, tool runners),
+/// so a plain-`dup(2)` fd without `FD_CLOEXEC` would leak the inbound client
+/// socket into them — the child then holds the open file description and the
+/// server's close never delivers the FIN, and the child can read the socket.
+fn duplicate_socket(socket: &TcpStream) -> io::Result<TcpStream> {
+    // The `webhook-dup-no-cloexec` mutant restores the plain-`dup(2)` shape
+    // (Grok r2 concurrency#1's regression, pinned by the CLOEXEC direct
+    // test): without `FD_CLOEXEC` the red assertion names the missing flag.
+    let owned = if crate::mutants::on("webhook-dup-no-cloexec") {
+        rustix::io::dup(std::os::fd::AsFd::as_fd(socket))?
+    } else {
+        std::os::fd::AsFd::as_fd(socket).try_clone_to_owned()?
+    };
+    let probe = std::net::TcpStream::from(owned);
+    TcpStream::from_std(probe)
+}
+
+/// #1689 (fix, DS r2 concurrency#1): the degraded half of the literal-null
+/// branch — reached only when `duplicate_socket` failed, so the connection
+/// has no FIN probe and hyper's buffered bytes hide the client's FIN. Waiting
+/// forever would hang the connection task, `stop()` and the fd; the bound
+/// reclaims it instead.
+async fn probeless_null_body_reclaim() -> io::Error {
+    tokio::time::sleep(PROBELESS_NULL_RECLAIM).await;
+    io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "webhook: reclaimed a probe-less connection after a literal-null body",
+    )
 }
 
 async fn handle_request(
@@ -624,21 +776,25 @@ async fn route_request(
 /// With an unknown size hyper cannot chunk a 1.0 connection, so it writes the
 /// body and closes, matching Node's bytes.
 /// Sibling: this is the one lane list — the same lanes are tabulated in
-/// `A8.3-CH-WEBHOOK-004`「范围」. The 1.0 version switch is kept in sync with
+/// `A8.3-CH-WEBHOOK-004`「范围」 (the -R2 revision's table; its stale "sms
+/// in flight" row is corrected by the appended -R3, DS r2 sibling#1). The
+/// 1.0 version switch is kept in sync with
 /// the `finalize` helpers in `src/module_host.rs`,
-/// `src/module_host/approvals.rs` and `src/api_web.rs`, and with the inline 1.0
-/// branches in `src/user_dialog/http_store.rs` and `src/native_http.rs`.
+/// `src/module_host/approvals.rs`, `src/api_web.rs` and
+/// `src/channel/sms/mod.rs` (the sms lane's pin and golden cell landed with
+/// `A8.3-CH-SMS-015`, approved 2026-11-09), and with the inline 1.0 branches
+/// in `src/user_dialog/http_store.rs` and `src/native_http.rs`.
 /// `src/channel/api_server/` (shared `src/http_proxy.rs` transport) has no
 /// local 1.0 pin and no 1.0 golden cell — its 1.0 keep-alive and status line
-/// are untested and tracked in #1688; the `sms` lane has none yet (#1913).
-/// The unsized wrapper is webhook-only because this channel answers with
-/// known-length bodies: `module_host`, `module_host/approvals` and `api_web`
-/// reply from `streamed` (unknown size), which a 1.0 connection already frames
-/// by closing, but a `Full` body would get a `content-length` from hyper that
-/// Node's 1.0 replies do not carry. The lanes that still build a `Full` body
-/// (`user_dialog/http_store.rs`, `native_http::handler_response_with_length`,
-/// module_host's provider value body) have that framing difference unmeasured
-/// per lane and tracked in #1947.
+/// are untested and tracked in #1688.
+/// The unsized wrapper is not webhook-only: each lane that answers with a
+/// known-length body carries its own — sms's `finalize`
+/// (`A8.3-CH-SMS-015`), `native_http::handler_response_with_length`,
+/// `user_dialog/http_store.rs` and module_host's provider value body
+/// (#1947) — because a `Full` body would get a `content-length` from hyper
+/// that Node's 1.0 replies do not carry, while `module_host`,
+/// `module_host/approvals` and `api_web` reply from `streamed` (unknown
+/// size), which a 1.0 connection already frames by closing.
 fn finalize(mut response: hyper::Response<Body>, version: hyper::Version) -> hyper::Response<Body> {
     if version != hyper::Version::HTTP_10 || crate::mutants::on("webhook-http10-finalize-off") {
         return response;
@@ -709,6 +865,7 @@ fn webhook_http_error_body(
         r#type: type_name.map(JsValue::from),
         user_hint: Some(user_hint.into()),
         scope: "http",
+        source: "webhook",
         detail: None,
     })
 }
@@ -946,6 +1103,12 @@ async fn handle_webhook(
     // `webhook-null-body-probe-off` mutant disables the probe so the negative
     // control can reproduce the hang.
     let text = if nullish(&body) {
+        // #1608: report that the request really reached the branch that
+        // hangs, before any mutant switch is consulted — the test's fixed
+        // sleep could only assume this.
+        if let Some(witness) = &ctx.null_body {
+            witness.entered();
+        }
         if crate::mutants::on("webhook-null-body-responds") {
             return Ok(json_response(
                 hyper::StatusCode::BAD_REQUEST,
@@ -953,44 +1116,58 @@ async fn handle_webhook(
                 keep_alive,
             ));
         }
-        if !crate::mutants::on("webhook-null-body-probe-off")
-            && let Some(probe) = client_probe
-        {
-            let mut discard = [0u8; 4096];
-            loop {
-                probe.readable().await?;
-                match probe.try_read(&mut discard) {
-                    Ok(0) => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::UnexpectedEof,
-                            "webhook: client closed after a literal-null body",
-                        ));
+        if !crate::mutants::on("webhook-null-body-probe-off") {
+            if let Some(probe) = client_probe {
+                let mut discard = [0u8; 4096];
+                loop {
+                    probe.readable().await?;
+                    match probe.try_read(&mut discard) {
+                        Ok(0) => {
+                            // #1608: the probe — not some other teardown —
+                            // observed the FIN that reclaims the connection.
+                            if let Some(witness) = &ctx.null_body {
+                                witness.reclaimed();
+                            }
+                            return Err(io::Error::new(
+                                io::ErrorKind::UnexpectedEof,
+                                "webhook: client closed after a literal-null body",
+                            ));
+                        }
+                        Ok(_) => {
+                            // Neither `readable()` nor `try_read()` draws on the
+                            // task budget (tokio 1.48 `Registration::readiness` and
+                            // `Registration::try_io` call no `coop::poll_proceed`),
+                            // so a client that keeps this socket saturated would
+                            // otherwise spin this task without ever yielding to the
+                            // scheduler: measured on a current-thread runtime, a
+                            // 10 ms ticker fell from 175 ticks/2 s to 17 with one
+                            // stream and to ~1 tick/s with 32
+                            // (`_tmp/20261106-issue-1534/coop-probe/`). Spend one
+                            // unit per read so the loop yields once the budget runs
+                            // out, exactly as hyper's own reads do.
+                            tokio::task::coop::consume_budget().await;
+                        }
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                            ) =>
+                        {
+                            continue;
+                        }
+                        Err(error) => return Err(error),
                     }
-                    Ok(_) => {
-                        // Neither `readable()` nor `try_read()` draws on the
-                        // task budget (tokio 1.48 `Registration::readiness` and
-                        // `Registration::try_io` call no `coop::poll_proceed`),
-                        // so a client that keeps this socket saturated would
-                        // otherwise spin this task without ever yielding to the
-                        // scheduler: measured on a current-thread runtime, a
-                        // 10 ms ticker fell from 175 ticks/2 s to 17 with one
-                        // stream and to ~1 tick/s with 32
-                        // (`_tmp/20261106-issue-1534/coop-probe/`). Spend one
-                        // unit per read so the loop yields once the budget runs
-                        // out, exactly as hyper's own reads do.
-                        tokio::task::coop::consume_budget().await;
-                    }
-                    Err(error)
-                        if matches!(
-                            error.kind(),
-                            io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
-                        ) =>
-                    {
-                        continue;
-                    }
-                    Err(error) => return Err(error),
                 }
             }
+            // #1689 (fix, DS r2 concurrency#1): the probe is missing — the
+            // duplicate failed under fd exhaustion, so this connection is
+            // already degraded. hyper still hides the client's FIN behind any
+            // pipelined bytes, so an unbounded wait here would hang the
+            // connection task (and `stop()`, which awaits it) and leak the fd
+            // — the #1534 hang reached through the degraded path, while TS
+            // reclaims the same socket in +1 ms. Reclaim within the bound;
+            // only this already-degraded mode differs from TS.
+            return Err(probeless_null_body_reclaim().await);
         }
         return std::future::pending().await;
     } else {
@@ -1003,6 +1180,15 @@ async fn handle_webhook(
     let Some(text) =
         text.filter(|text| !text.is_empty() || crate::mutants::on("webhook-empty-text-accepted"))
     else {
+        if crate::mutants::on("webhook-empty-text-delivery-info") {
+            // #1699: only the mutant writes here — the leak this guards
+            // against is the ignored reply still leaving a deliveryInfo
+            // entry behind, which is exactly the second assertion of
+            // `empty_text_request_is_not_a_delivery`.
+            let chat_id = format!("webhook:{route_name}:{delivery_id}");
+            let mut state = ctx.state.lock().expect("#1334 webhook state mutex");
+            state.delivery_info.insert(chat_id, JsObject::new());
+        }
         let mut body = JsObject::new();
         body.insert("status".into(), JsValue::String("ignored".into()));
         body.insert("reason".into(), JsValue::String("no text content".into()));
@@ -1275,7 +1461,39 @@ async fn handle_incoming(ctx: &Ctx, chat_id: &str, text: String) -> Result<(), C
     // turn rejected here has already run `resolve`, so a `/new` in it may
     // have re-pointed the chat's session — is pre-existing and tracked in
     // #1744.
-    let Some(_guard) = super::ActiveChat::admit(active_chats, chat_id.to_owned()) else {
+    //
+    // #1744: this `admit` *is* the fused read-judge-insert — `HashSet::insert`
+    // decides and claims the slot inside one lock section, exactly the TS
+    // event loop's synchronous `has` → `resolve` → `add` stretch. The
+    // `contains` fast path above is advisory only; the admission decision is
+    // made here. The mutant restores the pre-#1738 check-then-act split —
+    // `contains` in one section, `insert` after a yield in another — so the
+    // negative control can watch two concurrent webhooks for one chat both
+    // pass and double-dispatch.
+    let admission = if crate::mutants::on("webhook-active-insert-split") {
+        let already = {
+            active_chats
+                .lock()
+                .expect("#1738 webhook active chats mutex")
+                .contains(chat_id)
+        };
+        tokio::task::yield_now().await;
+        if already {
+            None
+        } else {
+            active_chats
+                .lock()
+                .expect("#1738 webhook active chats mutex")
+                .insert(chat_id.to_owned());
+            Some(super::ActiveChat::new(
+                active_chats.clone(),
+                chat_id.to_owned(),
+            ))
+        }
+    } else {
+        super::ActiveChat::admit(active_chats, chat_id.to_owned())
+    };
+    let Some(_guard) = admission else {
         log(
             ctx,
             "info",

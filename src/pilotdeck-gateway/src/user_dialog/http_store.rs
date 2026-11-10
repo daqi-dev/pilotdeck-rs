@@ -3584,15 +3584,21 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
 }
 
 /// Duplicate the accepted socket for the post-response drain. Tokio exposes no
-/// `try_clone`; `into_std` + `std::net::TcpStream::try_clone` + `from_std`
-/// keeps this safe without raw fd arithmetic.
+/// `try_clone`; `into_std` + a CLOEXEC-preserving `try_clone_to_owned` +
+/// `from_std` keeps this safe without raw fd arithmetic. The old
+/// `std::net::TcpStream::try_clone` is a plain `dup(2)` without `FD_CLOEXEC`
+/// (Grok r3 sibling#1, graded by two-family取高): this process spawns
+/// children (module hosts, tool runners), and an inherited drain fd would
+/// hold the open file description through the drain window, turning the
+/// server's `close` into a withheld FIN — the same mechanism the webhook
+/// probe fixed (#1689 fix-r2).
 fn duplicate_for_drain(stream: TcpStream) -> io::Result<(TcpStream, Option<TcpStream>)> {
     let std_stream = stream.into_std()?;
     let _ = std_stream.set_nonblocking(true);
-    let drain = std_stream
-        .try_clone()
+    let drain = std::os::fd::AsFd::as_fd(&std_stream)
+        .try_clone_to_owned()
         .ok()
-        .and_then(|clone| TcpStream::from_std(clone).ok());
+        .and_then(|owned| TcpStream::from_std(std::net::TcpStream::from(owned)).ok());
     Ok((TcpStream::from_std(std_stream)?, drain))
 }
 

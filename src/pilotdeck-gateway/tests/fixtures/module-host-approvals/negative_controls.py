@@ -91,19 +91,19 @@ switches = [
       '#1350 #1813 halfClose is a required recording field']),
     # #1696: a recorded pad size past the replay budget must fail the read
     # instead of aborting the test binary on a huge allocation.
-    ('approvals-oracle-pad-size', ROOT / 'src/pilotdeck-gateway/src/module_host/approvals/tests.rs', 'recorded_pad_size_rejects_drift',
+    ('approvals-oracle-pad-size', ROOT / 'src/pilotdeck-gateway/src/module_host/budget_guard.rs', 'recorded_pad_size_rejects_drift',
      '#1350 #1696 rejects pad size drift'),
     # #1696: the pad marker must be non-empty and appear exactly once, or the
     # expanded request multiplies the padding instead of replacing it.
-    ('approvals-oracle-pad-marker', ROOT / 'src/pilotdeck-gateway/src/module_host/approvals/tests.rs', 'recorded_pad_marker_rejects_drift',
+    ('approvals-oracle-pad-marker', ROOT / 'src/pilotdeck-gateway/src/module_host/budget_guard.rs', 'recorded_pad_marker_rejects_drift',
      '#1350 #1696 rejects pad marker drift'),
     # #1696: the budget cells' expanded bodies must be the recorded boundary
     # lengths, so a tiny pad cannot leave `budget-exact`/`budget-over` green.
-    ('approvals-oracle-boundary-body-length', ROOT / 'src/pilotdeck-gateway/src/module_host/approvals/tests.rs', 'recorded_budget_body_length_rejects_drift',
+    ('approvals-oracle-boundary-body-length', ROOT / 'src/pilotdeck-gateway/src/module_host/budget_guard.rs', 'recorded_budget_body_length_rejects_drift',
      '#1350 #1696 rejects boundary body length drift'),
     # #1696: a new `budget-*` cell the guard has not been taught must be
     # rejected, not replayed without any length pin.
-    ('approvals-oracle-unknown-budget-cell', ROOT / 'src/pilotdeck-gateway/src/module_host/approvals/tests.rs', 'recorded_unknown_budget_cell_is_rejected',
+    ('approvals-oracle-unknown-budget-cell', ROOT / 'src/pilotdeck-gateway/src/module_host/budget_guard.rs', 'recorded_unknown_budget_cell_is_rejected',
      '#1350 #1696 fails closed on a budget cell class with no length guard'),
     # #2153 fix-r1 (review r1): the replay normalization no longer drops the
     # empty-body `content-length: 0` (no approvals cell needed it). The
@@ -118,7 +118,14 @@ switches = [
 ]
 GUARDED = [SOURCE, PENDING,
     ROOT / 'src/pilotdeck-gateway/src/module_host/approvals/tests.rs',
+    ROOT / 'src/pilotdeck-gateway/src/module_host/budget_guard.rs',
     ROOT / 'src/pilotdeck-gateway/src/module_host.rs',
+    # DS r3 sibling#1: the bound tests run the shared transport closure
+    # (`approvals/tests.rs` builds it through `http_proxy::…` +
+    # `native_http::…`), so the receipts cannot prove which transport bytes
+    # they ran against without pinning them (the webhook lane's口径).
+    ROOT / 'src/pilotdeck-gateway/src/native_http.rs',
+    ROOT / 'src/pilotdeck-gateway/src/http_proxy.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',

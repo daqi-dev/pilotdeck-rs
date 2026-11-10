@@ -1,5 +1,8 @@
 //! Channel component: registration/config loading, lifecycle, the A7 inbound
 //! port and concrete channel adapters (A8.3 `api-server` and `webhook`).
+/// #1615: the `agentStatus.ts` port shared by the webhook and api-server
+/// lanes (error bodies, visible-failure predicates, event-name set).
+pub(crate) mod agent_status;
 pub mod api_server;
 pub mod bluebubbles;
 pub mod feishu;

@@ -48,9 +48,12 @@ use tokio::{
 };
 
 const ORACLE: &str = include_str!("../../../tests/fixtures/webhook-channel/oracle.json");
-/// The recorder's silence probe for a null-body cell that never responds.
-const PROBE: Duration = Duration::from_millis(400);
-/// The recorder's overall exchange deadline.
+/// The recorder's exchange deadline, and — #1690 — its `none`-mode silence
+/// probe window too. The two windows must be the same constant: a response
+/// the recorder saw but the replay missed (or vice versa) at the window edge
+/// would make the oracle wrong in one direction and flaky in the other, so
+/// generate.mts uses the same 5000 ms for both and a `noResponse` recording
+/// asserts a full 5 s of silence on both sides.
 const DEADLINE: Duration = Duration::from_millis(5000);
 /// The recorder's quiet poll between `handleIncoming` observations.
 const POLL: Duration = Duration::from_millis(25);
@@ -681,6 +684,40 @@ fn recorded_mapper_uuid_panics_on_wrong_type() {
     recorded_mapper_uuid(&json!({"mapperFixedUuid": []}));
 }
 
+/// #1621: the fallback-delivery-id cell freezes the generator's `Date.now`
+/// and records the frozen instant here (milliseconds, the `Date.now()` unit).
+/// The replay injects the same instant through the Rust `now` seam, so the
+/// literal `${routeName}-${now}` fallback id and its same-key dedup replay
+/// deterministically instead of by clock luck.
+fn recorded_now_checked(value: &Value) -> Result<Option<f64>, String> {
+    recorded_checked(
+        value.get("frozenNow"),
+        "options.frozenNow",
+        "a number",
+        Value::as_f64,
+        false,
+        crate::mutants::on("webhook-oracle-recorded-now"),
+    )
+}
+
+fn recorded_now(value: &Value) -> Option<f64> {
+    recorded_now_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_now_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_now_checked(&json!({"frozenNow": []})).is_err(),
+        "#1334 #1729 rejects options.frozenNow type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 options.frozenNow must be a number")]
+fn recorded_now_panics_on_wrong_type() {
+    recorded_now(&json!({"frozenNow": []}));
+}
+
 fn recorded_scripts_checked(value: &Value) -> Result<Option<&Vec<Value>>, String> {
     recorded_checked(
         value.get("scripts"),
@@ -1282,6 +1319,14 @@ fn absent_recording_fields_keep_defaults() {
         recorded_mapper_uuid(&json!({"mapperFixedUuid":true})).is_some(),
         "#1334 valid options.mapperFixedUuid"
     );
+    assert!(
+        recorded_now(&empty).is_none(),
+        "#1334 absent options.frozenNow"
+    );
+    assert!(
+        recorded_now(&json!({"frozenNow":1_700_000_000_000.0})).is_some(),
+        "#1334 valid options.frozenNow"
+    );
     assert!(recorded_scripts(&empty).is_none(), "#1334 absent scripts");
     assert!(
         recorded_scripts(&json!({"scripts":[]})).is_some(),
@@ -1346,10 +1391,38 @@ fn recorded_request_modes_and_bytes_stay_legal() {
             .starts_with("GET /health HTTP/1.0\r\n"),
         "#1684 a recorded version lands on the request line"
     );
+    // #1690 (fix, Grok r1 boundary#2): the generator writes the request
+    // string with Node's default utf8 socket-write encoding — the socket's
+    // `setEncoding('latin1')` governs reads only — so the whole request,
+    // head included, rides as real UTF-8 (an é anywhere is 0xC3 0xA9). A
+    // latin1 body map would panic here and, worse, silently shrink the
+    // golden's coverage to ASCII bodies.
+    assert_eq!(
+        wire_bytes("X-H: é\r\n\r\n你"),
+        b"X-H: \xc3\xa9\r\n\r\n\xe4\xbd\xa0".to_vec(),
+        "#1690 the whole request rides UTF-8 on the wire, like the generator's socket.write"
+    );
 }
 
-/// One direct-test delivery: the same shape the recorder's `post()` built.
+/// One direct-test delivery: the same header **order** the recorder's close
+/// mode builds — `Connection: close` ahead of `Content-Length`, matching
+/// `request_bytes_checked` and the recorder's `post()` (Grok r3 sibling#3 /
+/// DS r3 simplify#3: the old insertion parked the header after
+/// `Content-Length`).
 fn post_body(delivery_id: Option<&str>, body: &str) -> String {
+    let mut request = post_body_keep_alive(delivery_id, body);
+    let length_line = request
+        .find("Content-Length:")
+        .expect("#1334 post content-length line");
+    request.replace_range(length_line..length_line, "Connection: close\r\n");
+    request
+}
+
+/// The same delivery without `Connection: close`, so a follow-up request
+/// can be pipelined on the same connection — the #1689 low-fd child pipes a
+/// literal-`null` body behind its normal delivery to reach the degraded
+/// null branch (DS r2 concurrency#1).
+fn post_body_keep_alive(delivery_id: Option<&str>, body: &str) -> String {
     let mut lines = vec![
         "POST /webhooks/main HTTP/1.1".to_owned(),
         "Host: 127.0.0.1".to_owned(),
@@ -1357,18 +1430,20 @@ fn post_body(delivery_id: Option<&str>, body: &str) -> String {
     if let Some(id) = delivery_id {
         lines.push(format!("x-delivery-id: {id}"));
     }
-    lines.push("Connection: close".to_owned());
     lines.push(format!("Content-Length: {}", body.len()));
     format!("{}\r\n\r\n{}", lines.join("\r\n"), body)
 }
 
-fn latin1_bytes(text: &str) -> Vec<u8> {
-    text.chars()
-        .map(|character| {
-            u8::try_from(u32::from(character))
-                .unwrap_or_else(|_| panic!("#1334 oracle char {character:?} is outside latin1"))
-        })
-        .collect()
+/// The recorder's request transport (#1690, fixed in the Grok r1 review and
+/// the DS r2 re-review for `raw_until_close`): Node writes the request string
+/// with the socket's default **utf8** encoding — `setEncoding('latin1')` only
+/// governs reads — so the whole request, head included, reaches the listener
+/// as real UTF-8 bytes. The old split (latin1 head / utf8 body) was identical
+/// only while every recorded head was ASCII and would diverge from the
+/// recorder on the first non-ASCII header; the same applied to the last
+/// latin1 writer, `raw_until_close`, fixed in the same round.
+fn wire_bytes(request: &str) -> Vec<u8> {
+    request.as_bytes().to_vec()
 }
 
 /// Index just past a complete response in `buffer`, like the recorder's
@@ -1409,7 +1484,7 @@ fn content_length(head_text: &str) -> Option<usize> {
 enum Exchange {
     Error(String),
     /// The recorder's deadline passed with nothing on the wire: the socket is
-    /// still open and silent (the 400 ms null-body probe).
+    /// still open and silent (the null-body probe).
     NoResponse,
     /// The peer closed the socket without sending a byte (the oversize cell).
     /// Kept apart from `NoResponse` so the oracle can tell "closed" from
@@ -1453,7 +1528,7 @@ fn error_code(error: &std::io::Error) -> String {
 
 /// The recorder's `rawExchange`: a latin1 socket, one write per keep-alive
 /// response, ended by the response count, EOF, a socket error or the mode's
-/// own deadline (the 400 ms silence probe of the null-body cell).
+/// own deadline (the silence probe of the null-body cell).
 async fn raw_exchange(port: Option<u16>, request: &str, mode: &str, count: usize) -> Exchange {
     let Some(port) = port else {
         return Exchange::Error("no-listener".to_owned());
@@ -1463,11 +1538,12 @@ async fn raw_exchange(port: Option<u16>, request: &str, mode: &str, count: usize
         Ok(Err(error)) => return Exchange::Error(error_code(&error)),
         Err(_) => return Exchange::Error("ETIMEDOUT".to_owned()),
     };
+    let request = wire_bytes(request);
     stream
-        .write_all(&latin1_bytes(request))
+        .write_all(&request)
         .await
         .expect("#1334 write request bytes");
-    let budget = if mode == "none" { PROBE } else { DEADLINE };
+    let budget = DEADLINE;
     let start = Instant::now();
     let mut buffer = String::new();
     let mut raws: Vec<String> = Vec::new();
@@ -1487,7 +1563,7 @@ async fn raw_exchange(port: Option<u16>, request: &str, mode: &str, count: usize
                     if sent < count {
                         sent += 1;
                         stream
-                            .write_all(&latin1_bytes(request))
+                            .write_all(&request)
                             .await
                             .expect("#1334 rewrite request bytes");
                     } else {
@@ -1740,8 +1816,17 @@ async fn run_case(case: &Value) -> Value {
         mapper: recorded_mapper_uuid(options)
             .unwrap_or(false)
             .then(|| WebhookSessionMapper::new(Arc::new(|| JsString::from(FIXED_UUID)))),
-        now: None,
+        // #1621: a scenario recorded with `frozenNow` shims `Date.now` in the
+        // generator, so the replay injects the same instant here — the
+        // fallback delivery id and the dedup window keyed on it then replay
+        // the literal recorded ids.
+        now: recorded_now(options).map(|millis| {
+            let seconds = millis / 1000.0;
+            let now: Now = Arc::new(move || seconds);
+            now
+        }),
         accepted: None,
+        null_body: None,
         request_timeout: None,
     });
     let deps = ChannelStartDeps {
@@ -1963,6 +2048,18 @@ replay_tests! {
     // the prototype chain in TS, so it authenticates against the global secret
     // and is accepted instead of 404'd.
     object_prototype_route_names => "object-prototype-route-names",
+    // #1621: both requests carry no delivery-id header, so the id falls back
+    // to `${routeName}-${now}`; the frozen clock makes the literal id
+    // (`main-1700000000`) and its same-key dedup deterministic on both sides.
+    fallback_delivery_id => "fallback-delivery-id",
+    // #1621: the order cells pin precedence — route lookup before the size
+    // cap (an oversize body to an unknown route answers 404, not the
+    // zero-byte close), the rate window before the signature, and rejected
+    // signatures still consuming rate quota (401, 401, then 429).
+    order_combos => "order-combos",
+    // #1690: a non-ASCII body reaches the listener as real UTF-8 bytes and
+    // the rendered reply comes back through the same channel.
+    utf8_body => "utf8-body",
 }
 
 /// #1684: oracle cases with a dedicated direct test instead of a generic
@@ -2030,10 +2127,10 @@ fn replay_cases_cover_exactly_the_oracle() {
         .expect("#1334 oracle cases array");
     negative_assert_eq!(
         recorded["expectedCaseCount"].as_u64(),
-        Some(21),
-        "#1334 oracle declares twenty-one cases"
+        Some(24),
+        "#1334 oracle declares twenty-four cases"
     );
-    negative_assert_eq!(cases.len(), 21, "#1334 oracle carries twenty-one cases");
+    negative_assert_eq!(cases.len(), 24, "#1334 oracle carries twenty-four cases");
     negative_assert_eq!(
         recorded["node"].as_str(),
         Some("v22.22.0"),
@@ -2065,10 +2162,20 @@ fn replay_cases_cover_exactly_the_oracle() {
 /// `HTTP/1.0` (the accepted-diff entry A8.3-CH-WEBHOOK-004, oracle case
 /// `http10` records Node's line), as in the other listeners — the lane list lives in
 /// `finalize`'s `Sibling:` paragraph and in `A8.3-CH-WEBHOOK-004`「范围」.
+/// #1947 r8-2: the status line is no longer hardcoded — it is read from
+/// `expected.responses[0].status` and compared as the registered diff (Node's
+/// recorded line with only the version token swapped), and the case's `logs`
+/// and single `steps` entry join the comparison, so a regenerated oracle that
+/// changes any of them fails here instead of only the headers and the body.
 #[tokio::test]
 async fn http10_request_closes_the_connection() {
     let case = case("http10");
     let steps = recorded_steps(&case).expect("#1334 oracle steps");
+    negative_assert_eq!(
+        steps.len(),
+        1,
+        "#1947 pin http10: the case records exactly one request step"
+    );
     let request = request_bytes(
         steps
             .first()
@@ -2080,9 +2187,24 @@ async fn http10_request_closes_the_connection() {
         "#1684 pin http10: the oracle step stays an HTTP/1.0 keep-alive request: {request:?}"
     );
     let expected = recorded_expected(&case).expect("#1334 expected validated object");
+    let recorded = &expected["responses"][0];
+    negative_assert_eq!(
+        recorded["label"],
+        steps[0]["label"],
+        "#1947 pin http10: the response is labeled by the request step that drew it"
+    );
     // The recorded case's own options, not a hand-built twin: a regenerated
-    // cell that changes the route or port must fail here too.
+    // cell that changes the route must fail here too. The port is pinned the
+    // other way round (#1947): the pin always binds an OS-assigned port, and
+    // the recording must say the same — a regenerated cell that grows a
+    // concrete port fails here instead of the pin silently binding it (and
+    // colliding with the fixed-port families on a shared runner).
     let options = recorded_options(&case).expect("#1334 oracle options object");
+    negative_assert_eq!(
+        recorded_port(options).and_then(Value::as_f64),
+        Some(0.0),
+        "#1947 pin http10: the oracle records an OS-assigned port"
+    );
     let routes = parse_json(
         &recorded_routes(options)
             .expect("#1334 options.routes validated object")
@@ -2092,13 +2214,27 @@ async fn http10_request_closes_the_connection() {
     .as_object()
     .expect("#1334 oracle routes object")
     .clone();
+    // The pin's own log capture, the same sink `run_case` replays through, so
+    // `expected.logs` can join the comparison below.
+    let logs: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let logger: ChannelLog = {
+        let logs = logs.clone();
+        Arc::new(move |level: &str, text: &str| {
+            logs.lock()
+                .expect("#1947 pin http10 logs mutex")
+                .push(json!([level, text]));
+        })
+    };
     let channel = WebhookChannel::new(WebhookChannelOptions {
-        port: recorded_port(options).and_then(Value::as_f64),
+        port: Some(0.0),
         routes: Some(routes),
         ..Default::default()
     });
     channel
-        .start(ChannelStartDeps::default())
+        .start(ChannelStartDeps {
+            log: Some(logger),
+            ..Default::default()
+        })
         .await
         .expect("#1684 start for the http10 pin");
     let port = channel
@@ -2106,15 +2242,46 @@ async fn http10_request_closes_the_connection() {
         .expect("#1684 bound listener for the http10 pin")
         .port();
     let (raw, closed) = raw_until_close(port, &request).await;
+    // Snapshot before the stop: the stopping log is not part of the oracle,
+    // exactly like the recorder's trailing `handle.stop()`.
+    let masked = logs
+        .lock()
+        .expect("#1947 pin http10 logs mutex")
+        .iter()
+        .map(|entry| {
+            json!([
+                entry[0].as_str().unwrap_or_default(),
+                mask_failed_start(entry[1].as_str().unwrap_or_default())
+            ])
+        })
+        .collect::<Vec<_>>();
     let _ = channel.stop_with_reason(Some("1684")).await;
 
+    // The registered diff, read from the oracle instead of hardcoded: the
+    // recorded line stays Node's `HTTP/1.1`, and ours is that line with only
+    // the version token swapped to hyper's `HTTP/1.0`.
+    let recorded_status = recorded["status"]
+        .as_str()
+        .expect("#1947 pin http10: the response records a status line");
     assert!(
-        raw.starts_with("HTTP/1.0 200 OK\r\n"),
-        "#1684 pin http10: hyper answers with its own 1.0 status line (Node's 1.1 line is the accepted-diff entry A8.3-CH-WEBHOOK-004): {raw:?}"
+        recorded_status.starts_with("HTTP/1.1 "),
+        "#1947 pin http10: the oracle status line stays Node's 1.1 line (A8.3-CH-WEBHOOK-004): {recorded_status:?}"
+    );
+    assert!(
+        raw.starts_with(&format!(
+            "HTTP/1.0{}\r\n",
+            &recorded_status["HTTP/1.1".len()..]
+        )),
+        "#1947 pin http10: hyper answers with its own 1.0 status line and Node's code and reason (A8.3-CH-WEBHOOK-004): {raw:?}"
     );
     assert!(
         closed,
         "#1684 pin http10: the 1.0 response closes the connection like Node: {raw:?}"
+    );
+    negative_assert_eq!(
+        Value::Array(masked),
+        expected["logs"],
+        "#1947 pin http10: the start log replays Node's line (the configured port, not the bound one)"
     );
     // Everything else replays: the close-delimited framing (no `content-length`,
     // no chunking), the header set and the body, byte for byte after the usual
@@ -2376,6 +2543,7 @@ async fn empty_text_request_is_not_a_delivery() {
         now: None,
         request_timeout: None,
         accepted: None,
+        null_body: None,
     });
     channel
         .start(ChannelStartDeps {
@@ -2419,6 +2587,165 @@ async fn empty_text_request_is_not_a_delivery() {
         .expect("#1334 channel stop");
 }
 
+/// #1699: the TS gate is `if (!text)`, and among strings only `""` is falsy —
+/// so the falsy-looking `"0"`, `"false"` and `" "` are real text once a field
+/// arm extracts them: each gets the accepted reply and a `deliveryInfo`
+/// entry. `"0"` and `"false"` additionally reach the gateway verbatim; the
+/// trimmed-blank `" "` does not on either side (TS `if (!mapped.message)`),
+/// which is why its assertion stops at the delivery. Parameterized, because
+/// the point is the truthiness table, not any single member of it.
+#[tokio::test]
+async fn falsy_looking_strings_are_deliveries() {
+    for (index, (body, message)) in [
+        (r#"{"text":"0"}"#, "0"),
+        (r#"{"message":"false"}"#, "false"),
+        (r#"{"text":" "}"#, " "),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let gateway = Arc::new(MockGateway::from_scripts(&[]));
+        let channel = WebhookChannel::new(WebhookChannelOptions {
+            port: Some(0.0),
+            routes: Some(insecure_routes()),
+            now: Some(Arc::new(|| 12345.0)),
+            ..Default::default()
+        });
+        channel
+            .start(ChannelStartDeps {
+                turn_gateway: Some(gateway.clone() as Arc<dyn TurnGateway>),
+                ..Default::default()
+            })
+            .await
+            .expect("#1699 start for the falsy-looking text test");
+        let port = channel.bound_addr().expect("#1699 bound listener").port();
+        // A plain id: the HTTP header parser strips the trailing space a
+        // `falsy-{message}` id would end with.
+        let delivery_id = format!("falsy-{index}");
+        let chat_id = format!("webhook:main:{delivery_id}");
+        let exchange =
+            raw_exchange(Some(port), &post_body(Some(&delivery_id), body), "close", 1).await;
+        match exchange {
+            Exchange::Raws(raws) => negative_assert!(
+                raws.first()
+                    .is_some_and(|raw| raw.contains("\"status\":\"accepted\"")),
+                "#1699 the falsy-looking body {message:?} is accepted, not ignored"
+            ),
+            other => panic!("#1699 unexpected exchange for {message:?}: {other:?}"),
+        }
+        negative_assert!(
+            channel
+                .ctx
+                .state
+                .lock()
+                .expect("#1699 webhook state mutex")
+                .delivery_info
+                .contains_key(&chat_id),
+            "#1699 the falsy-looking body {message:?} writes a delivery info entry"
+        );
+        if message != " " {
+            until(|| !gateway.calls_snapshot().is_empty()).await;
+            let calls = gateway.calls_snapshot();
+            negative_assert_eq!(
+                calls.first().and_then(|call| call["message"].as_str()),
+                Some(message),
+                "#1699 the gateway receives the text verbatim"
+            );
+        }
+        timeout(DEADLINE, channel.stop_with_reason(None))
+            .await
+            .expect("#1699 the falsy-looking text test stops its channel")
+            .expect("#1699 stop ok");
+    }
+}
+
+/// #1689.3: the TS `Number()` coercion turns a non-numeric `rateLimit` /
+/// `maxBodyBytes` into `NaN`, and both guards that compare against it
+/// (`total > maxBodyBytes`, `timestamps.length >= rateLimit`) come out
+/// false — **neither bound ever rejects**. The probe on the fixed baseline
+/// (`_tmp/20261110-issue-1608/ts-probe-1689/probe.out`) measured exactly
+/// that: `maxBodyBytes: NaN` and `: Infinity` both accept a 2 MiB + 7
+/// body, `rateLimit: NaN` accepts every request of a burst. The Rust port
+/// replicates the unbounded shape on purpose (registered in
+/// `specs/gateway-parity/diffs/A8.3-CH-WEBHOOK-005.md`); silently falling
+/// back to the defaults instead would reject requests TS serves, so this
+/// test pins the replication.
+#[tokio::test]
+async fn non_numeric_bounds_are_unbounded_like_the_ts_baseline() {
+    let options = parse_json(
+        &json!({
+            "port": 0,
+            "routes": {"main": {"secret": "__INSECURE_NO_AUTH__"}},
+            "rateLimit": "not-a-number",
+            "maxBodyBytes": "also not a number",
+        })
+        .to_string(),
+    )
+    .expect("#1689 options JSON")
+    .as_object()
+    .expect("#1689 options object")
+    .clone();
+    let gateway = Arc::new(MockGateway::from_scripts(&[]));
+    let recorder = Recorder::default();
+    let channel = WebhookChannel::from_options(&options);
+    channel
+        .start(ChannelStartDeps {
+            log: Some(recorder.logger()),
+            turn_gateway: Some(gateway.clone() as Arc<dyn TurnGateway>),
+            ..Default::default()
+        })
+        .await
+        .expect("#1689 start for the NaN bounds test");
+    let port = channel.bound_addr().expect("#1689 bound listener").port();
+
+    // Past the 1 MiB default cap and still served: `total > NaN` is false.
+    let oversize = "x".repeat(1_048_577);
+    let exchange = raw_exchange(
+        Some(port),
+        &post_body(Some("nan-oversize"), &oversize),
+        "close",
+        1,
+    )
+    .await;
+    match exchange {
+        Exchange::Raws(raws) => negative_assert!(
+            raws.first()
+                .is_some_and(|raw| raw.contains("\"status\":\"accepted\"")),
+            "#1689 a NaN maxBodyBytes never rejects the oversize body"
+        ),
+        other => panic!("#1689 the oversize body was not served: {other:?}"),
+    }
+
+    // The default window would cap this burst at 30; NaN admits every one.
+    for index in 0..40 {
+        let id = format!("nan-rate-{index}");
+        let exchange = raw_exchange(
+            Some(port),
+            &post_body(Some(&id), r#"{"message":"hi"}"#),
+            "close",
+            1,
+        )
+        .await;
+        match exchange {
+            Exchange::Raws(raws) => negative_assert!(
+                raws.first()
+                    .is_some_and(|raw| raw.contains("\"status\":\"accepted\"")),
+                "#1689 a NaN rateLimit admits request {index} of the 40-request burst"
+            ),
+            other => panic!("#1689 burst request {index} was not served: {other:?}"),
+        }
+    }
+    negative_assert_eq!(
+        gateway.calls_snapshot().len(),
+        41,
+        "#1689 the NaN bounds deliver all 41 bodies to the gateway"
+    );
+    timeout(DEADLINE, channel.stop_with_reason(None))
+        .await
+        .expect("#1689 the NaN bounds test stops its channel")
+        .expect("#1689 stop ok");
+}
+
 #[test]
 fn prune_keeps_the_exact_cutoff() {
     let mut state = State::default();
@@ -2452,6 +2779,7 @@ fn rate_ctx(limit: f64) -> Arc<Ctx> {
         request_timeout: DEFAULT_REQUEST_TIMEOUT,
         now: Arc::new(|| 0.0),
         accepted: None,
+        null_body: None,
         mapper: Mutex::new(WebhookSessionMapper::new(
             WebhookSessionMapper::random_uuid(),
         )),
@@ -2557,6 +2885,365 @@ async fn handle_incoming_reentry_skips_active_chat() {
     );
     first.abort();
     second.abort();
+}
+
+/// #1744: the admission fusion's concurrency matrix — state is the chat's
+/// admission slot, the events are two concurrent inbound messages for the
+/// same chat, the timings are where each racer sits when the other checks:
+///
+/// | shape      | A checks | A inserts | B checks   | B inserts          |
+/// |------------|----------|-----------|------------|--------------------|
+/// | fused      | empty    | wins slot | A's slot   | `insert` false, skip |
+/// | split (mutant) | empty | parked before insert | empty | inserts anyway → both turn |
+///
+/// The HeldGateway keeps the first dispatch's turn in flight (the TS shape
+/// the fusion exists for), so fused the second message sees the chat active
+/// and is skipped — exactly one turn and a named skip log. Under
+/// `webhook-active-insert-split` both messages park between their check and
+/// their insert, so both dispatch. The duplicate-delivery dispatch (same id
+/// twice) is already the `duplicate_delivery` cell; this is the same-chat
+/// concurrent arm.
+#[tokio::test]
+async fn webhook_active_insert_split() {
+    let calls = Arc::new(Mutex::new(Vec::<String>::new()));
+    let gateway = Arc::new(HeldGateway {
+        calls: calls.clone(),
+        held: Mutex::new(Vec::new()),
+    });
+    let recorder = Recorder::default();
+    let channel = WebhookChannel::new(test_options());
+    install(&channel, Some(gateway), recorder.logger());
+    let ctx = channel.ctx.clone();
+    let first = {
+        let ctx = ctx.clone();
+        tokio::spawn(async move {
+            let _ = handle_incoming(&ctx, "webhook:main:chat", "one".to_owned()).await;
+        })
+    };
+    let second = {
+        let ctx = ctx.clone();
+        tokio::spawn(async move {
+            let _ = handle_incoming(&ctx, "webhook:main:chat", "two".to_owned()).await;
+        })
+    };
+    // Enough yields for both spawned tasks to reach their park point: fused,
+    // the first turn parks inside its event stream (holding the chat active)
+    // and the second task skips; under the switch both park between their
+    // check and their insert, before either claims the slot.
+    for _ in 0..16 {
+        tokio::task::yield_now().await;
+    }
+    negative_assert_eq!(
+        calls.lock().expect("#1744 held calls mutex").len(),
+        1,
+        "#1744 concurrent same-chat webhooks dispatch exactly one turn"
+    );
+    negative_assert!(
+        recorder.has("webhook: chat webhook:main:chat already active, skipping"),
+        "#1744 the losing same-chat webhook is skipped by name"
+    );
+    first.abort();
+    second.abort();
+}
+
+/// #1689.2: the accept-error backoff ladder, pinned value by value. The
+/// pre-#1689 fixed 100 ms pause let a persistent resource-exhaustion error
+/// (`EMFILE`/`ENFILE`/`ENOBUFS`/`ENOMEM`) spin the core at 10 Hz silently,
+/// forever; the ladder doubles per consecutive failure and saturates at
+/// 5 s, while a transient error keeps the original pause.
+#[test]
+fn accept_error_backoff_ladder_is_bounded() {
+    for consecutive in 0..12 {
+        negative_assert_eq!(
+            accept_error_backoff(consecutive, false),
+            Duration::from_millis(100),
+            "#1689 a transient accept error keeps the fixed 100 ms pause"
+        );
+    }
+    let ladder = [
+        Duration::from_millis(200),
+        Duration::from_millis(400),
+        Duration::from_millis(800),
+        Duration::from_millis(1600),
+        Duration::from_millis(3200),
+        Duration::from_secs(5),
+    ];
+    for (index, pause) in ladder.iter().enumerate() {
+        negative_assert_eq!(
+            accept_error_backoff(index as u32 + 1, true),
+            *pause,
+            "#1689 persistent accept failure {index} backs off by {pause:?}"
+        );
+    }
+    for consecutive in 6..48u32 {
+        negative_assert_eq!(
+            accept_error_backoff(consecutive, true),
+            Duration::from_secs(5),
+            "#1689 the accept backoff caps at 5 s from failure {consecutive} on"
+        );
+    }
+}
+
+/// #1689.1 end-to-end: under a low `RLIMIT_NOFILE` the channel must not drop
+/// an accepted connection when the `dup(2)` for the FIN probe fails — it
+/// serves without the probe instead, exactly like TS, which owns one fd per
+/// connection and has no probe to duplicate — and a failing `accept` must
+/// back off and log once instead of the pre-#1689 silent 10 Hz retry.
+///
+/// The fd budget cannot be staged in-process (the limit is per-process and
+/// the runtime already owns its descriptors), so the observation runs in a
+/// reexec'd child like `mutation_clear_deep_tree_with_low_fd_limit`
+/// (`file_memory.rs`): the child lowers the limit, exhausts the free fds
+/// with held `/dev/null` handles, frees exactly one for the client socket
+/// (so the queued connection makes every `accept` fail `EMFILE`), and
+/// reports its observations on stderr (`--nocapture`: libtest otherwise
+/// swallows a passing test's output); this parent turns the report into
+/// the anchored assertions. The child never prints stdout, and the explicit
+/// `--test-threads=2` pin keeps libtest's whole-line receipt intact for
+/// `exact_receipt.rs`.
+///
+/// Timeline inside the child (t=0 is the client connect): `accept` fails
+/// at every backoff wake (200+400+800 ms), the 4th failure logs one error
+/// line, and the storm keeps failing silently after that; at t≈4 s one
+/// last fd is freed, so the next wake accepts, `dup` finds nothing, and
+/// the probeless serve still answers the request. The same buffer also
+/// pipelines a literal-`null` request (DS r2 concurrency#1): on the
+/// probeless connection the degraded null branch must reclaim it within
+/// its bound instead of hanging the connection task. Under
+/// `webhook-accept-backoff-off` the log appears at ~0.3 s instead; under
+/// `webhook-dup-failure-drops` the accepted socket is dropped and the
+/// client sees a zero-byte close.
+#[tokio::test]
+async fn dup_failure_serves_without_the_fin_probe() {
+    const CHILD_ENV: &str = "PDRS_1689_LOW_FD_EXHAUSTION";
+    const TEST_PATH: &str = "channel::webhook::tests::dup_failure_serves_without_the_fin_probe";
+    if std::env::var_os(CHILD_ENV).is_some() {
+        dup_failure_low_fd_child().await;
+        return;
+    }
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", TEST_PATH, "--test-threads=2", "--nocapture"])
+        .env(CHILD_ENV, "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("#1689 spawn the low-fd child");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if child.try_wait().expect("#1689 child poll").is_some() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            child.kill().expect("#1689 kill the overrun child");
+            child.wait().expect("#1689 reap the overrun child");
+            panic!("#1689 low-fd child exceeded 60 seconds");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let output = child
+        .wait_with_output()
+        .expect("#1689 collect the low-fd child");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        crate::test_exact_receipt::single_pass(&output.status, TEST_PATH, &stdout),
+        "#1689 low-fd child receipt: {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        output.status
+    );
+    let marker = |prefix: &str| {
+        stderr
+            .lines()
+            .find_map(|line| line.strip_prefix(prefix))
+            .map(str::to_owned)
+    };
+    let elapsed = marker("#1689-log-elapsed-ms=");
+    let count = marker("#1689-log-count=");
+    let served = marker("#1689-served=");
+    assert!(
+        elapsed.is_some() && count.is_some() && served.is_some(),
+        "#1689 incomplete child report:\n{stderr}"
+    );
+    let elapsed: u128 = elapsed
+        .expect("#1689 elapsed marker")
+        .parse()
+        .expect("#1689 elapsed parses");
+    negative_assert!(
+        (1200..=15_000).contains(&elapsed),
+        "#1689 the accept backoff delays the first error log past one second (child: {elapsed} ms)"
+    );
+    negative_assert_eq!(
+        count.clone().unwrap_or_default(),
+        "1",
+        "#1689 one accept error log fires per failure streak, not one per retry (child: {})",
+        count.clone().unwrap_or_default()
+    );
+    negative_assert_eq!(
+        served.clone().unwrap_or_default(),
+        "accepted",
+        "#1689 the EMFILE-failing dup degrades to a probeless serve instead of dropping the connection (child served: {})",
+        served.clone().unwrap_or_default()
+    );
+    // DS r2 concurrency#1: on the same probeless connection the pipelined
+    // literal-null must be reclaimed within the bound — before the fix the
+    // handler waited forever, the read loop timed out and the assertion
+    // above already failed with `served: timeout`.
+    let reclaim = marker("#1689-null-reclaim-ms=");
+    let reclaim: u128 = reclaim
+        .expect("#1689 null-reclaim marker")
+        .parse()
+        .expect("#1689 null-reclaim parses");
+    negative_assert!(
+        (7000..=19_000).contains(&reclaim),
+        "#1689 the probe-less literal-null body reclaims the connection within the bound (child: {reclaim} ms)"
+    );
+}
+
+/// The child half of [`dup_failure_serves_without_the_fin_probe`]: reports
+/// through stderr markers, never asserts on the observations, so a
+/// mutant-induced difference fails the parent's anchored assertion instead
+/// of the child's exit code.
+async fn dup_failure_low_fd_child() {
+    use rustix::process::{Resource, getrlimit, setrlimit};
+    let mut limit = getrlimit(Resource::Nofile);
+    limit.current = Some(48);
+    setrlimit(Resource::Nofile, limit).expect("#1689 child sets the fd limit");
+    let logs: Arc<Mutex<Vec<(Instant, String, String)>>> = Arc::default();
+    let sink = logs.clone();
+    let gateway = Arc::new(MockGateway::from_scripts(&[]));
+    let channel = WebhookChannel::new(test_options());
+    channel
+        .start(ChannelStartDeps {
+            log: Some(Arc::new(move |level: &str, text: &str| {
+                sink.lock().expect("#1689 child log mutex").push((
+                    Instant::now(),
+                    level.to_owned(),
+                    text.to_owned(),
+                ));
+            })),
+            turn_gateway: Some(gateway as Arc<dyn TurnGateway>),
+            ..Default::default()
+        })
+        .await
+        .expect("#1689 child starts the channel");
+    let port = channel
+        .bound_addr()
+        .expect("#1689 child bound listener")
+        .port();
+
+    // Exhaust the free descriptors; the held files keep them open.
+    let mut held: Vec<std::fs::File> = Vec::new();
+    while let Ok(file) = std::fs::File::open("/dev/null") {
+        held.push(file);
+    }
+    eprintln!("#1689-held={}", held.len());
+
+    // Free exactly one: the client socket. The queued connection then makes
+    // every accept fail EMFILE, which is the storm the backoff bounds.
+    assert!(held.len() >= 4, "#1689 child exhausted at least 4 fds");
+    held.truncate(held.len() - 1);
+    let started = Instant::now();
+    let mut client = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#1689 child connects");
+    let request = wire_bytes(&post_body_keep_alive(Some("low-fd"), r#"{"message":"hi"}"#));
+    // DS r2 concurrency#1: pipeline a literal-`null` body plus a follow-up
+    // request into the same buffer and half-close, so once the degraded
+    // accept succeeds the probeless connection sits exactly on the branch
+    // that used to wait forever (hyper cannot see the FIN behind the
+    // buffered bytes). The reclaim must stay bounded instead.
+    let mut request = request;
+    request.extend_from_slice(&null_request_bytes(true));
+    client
+        .write_all(&request)
+        .await
+        .expect("#1689 child writes the request");
+    client
+        .shutdown()
+        .await
+        .expect("#1689 child half-closes for the pipelined null");
+    // The storm window: under the ladder the log fires at ~1.4 s and the
+    // failures after it stay silent; 4 s observes both halves.
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let snapshots = logs.lock().expect("#1689 child log mutex").clone();
+    let accept_errors: Vec<&(Instant, String, String)> = snapshots
+        .iter()
+        .filter(|(_, level, text)| *level == "error" && text.contains("accept has failed"))
+        .collect();
+    match accept_errors.first() {
+        Some((at, _, _)) => eprintln!(
+            "#1689-log-elapsed-ms={}",
+            at.duration_since(started).as_millis()
+        ),
+        None => eprintln!("#1689-log-elapsed-ms=none"),
+    }
+    eprintln!("#1689-log-count={}", accept_errors.len());
+
+    // Free the last fd: the next backoff wake accepts (and `dup` finds
+    // nothing, which is the degrade under test).
+    held.truncate(held.len() - 1);
+    let reply = timeout(Duration::from_secs(20), async {
+        let mut seen = Vec::new();
+        let mut buffer = [0u8; 4096];
+        loop {
+            match client.read(&mut buffer).await {
+                Ok(0) => return (true, seen, Some(started.elapsed().as_millis())),
+                Ok(n) => seen.extend_from_slice(&buffer[..n]),
+                Err(error) => return (false, format!("{error}").into_bytes(), None),
+            }
+        }
+    })
+    .await;
+    let served = match reply {
+        Ok((true, bytes, eof_elapsed))
+            if String::from_utf8_lossy(&bytes).contains("\"status\":\"accepted\"") =>
+        {
+            eprintln!("#1689-null-reclaim-ms={}", eof_elapsed.unwrap_or_default());
+            "accepted"
+        }
+        Ok((true, _, _)) => "closed",
+        Ok((false, text, _)) => {
+            eprintln!("#1689-read-error={}", String::from_utf8_lossy(&text));
+            "read-error"
+        }
+        Err(_) => "timeout",
+    };
+    eprintln!("#1689-served={served}");
+}
+
+/// #1689 (fix-r1, Grok r2 concurrency#1): the probe duplicate must keep
+/// close-on-exec. A plain `dup(2)` fd would leak the inbound client socket
+/// into every spawned child (module hosts, tool runners), and the child then
+/// holds the open file description — the server's close no longer delivers
+/// the FIN, and the child can read the socket. This pins the
+/// `F_DUPFD_CLOEXEC` semantics of `std`'s `try_clone_to_owned` so the r1 P0
+/// cannot silently regress back to `rustix::io::dup`.
+#[tokio::test]
+async fn duplicate_socket_keeps_close_on_exec() {
+    let listener =
+        std::net::TcpListener::bind("127.0.0.1:0").expect("#1689 bind for the cloexec test");
+    let addr = listener
+        .local_addr()
+        .expect("#1689 local addr for the cloexec test");
+    let _client = std::net::TcpStream::connect(addr).expect("#1689 connect for the cloexec test");
+    let (server, _) = listener
+        .accept()
+        .expect("#1689 accept for the cloexec test");
+    // `from_std` refuses a blocking socket (tokio #7172); the production path
+    // reaches `duplicate_socket` through tokio's own accept, whose sockets are
+    // already non-blocking.
+    server
+        .set_nonblocking(true)
+        .expect("#1689 nonblocking for the cloexec test");
+    let server =
+        tokio::net::TcpStream::from_std(server).expect("#1689 tokio wrap for the cloexec test");
+    let probe = super::duplicate_socket(&server).expect("#1689 duplicate the accepted socket");
+    // The workspace forbids `unsafe`, so the flags come through rustix's safe
+    // `fcntl(F_GETFD)` — the same syscall a raw `libc::fcntl` would make.
+    let flags = rustix::io::fcntl_getfd(&probe).expect("#1689 fcntl(F_GETFD) for the cloexec test");
+    negative_assert!(
+        flags.contains(rustix::io::FdFlags::CLOEXEC),
+        "#1689 the probe fd keeps FD_CLOEXEC across exec (F_GETFD = {flags:?})"
+    );
 }
 
 /// #1614: a rejected `submit` must reach the reply and the log, must not be
@@ -2954,6 +3641,24 @@ fn null_request_bytes(pipeline_health: bool) -> Vec<u8> {
     bytes
 }
 
+/// #1608: the null-body branch's two observation points ([`super::
+/// NullBodyWitness`]) on two `Notify`s, so a test can await each transition
+/// instead of sleeping on a timer and hoping the scheduler played along.
+#[derive(Default)]
+struct NotifiedNullBodyWitness {
+    entered: tokio::sync::Notify,
+    reclaimed: tokio::sync::Notify,
+}
+
+impl super::NullBodyWitness for NotifiedNullBodyWitness {
+    fn entered(&self) {
+        self.entered.notify_one();
+    }
+    fn reclaimed(&self) {
+        self.reclaimed.notify_one();
+    }
+}
+
 /// #1534 P0: a literal-`null` body followed by a pipelined request, then a
 /// client FIN, must reclaim the connection. hyper 1.7.0's
 /// `mid_message_detect_eof` returns `Pending` whenever its `read_buf` holds
@@ -2962,9 +3667,22 @@ fn null_request_bytes(pipeline_health: bool) -> Vec<u8> {
 /// `_tmp/20261106-1534-p0/verdict.md`: Rust hung, the same bytes/timing on TS
 /// reclaimed the socket in +1 ms). The `webhook-null-body-probe-off` mutant
 /// removes the probe so the negative control reproduces the hang.
+///
+/// #1608: the three control phases run in separate processes, so the old
+/// 300 ms sleep could not prove that *this* process formed the precondition
+/// (the request routed, authenticated and parsed into the null branch) or
+/// that the probe — not some unrelated teardown — observed the FIN. The
+/// `NullBodyWitness` seam turns both instants into waits: the FIN is sent
+/// only after the branch is known to be entered, and the reclaim is its own
+/// assertion after the #1334 one (so the disabled-probe negative phase still
+/// fails at the anchor the control binds).
 #[tokio::test]
 async fn pipelined_null_body_disconnect_reclaims_the_connection() {
-    let channel = WebhookChannel::new(test_options());
+    let witness = Arc::new(NotifiedNullBodyWitness::default());
+    let channel = WebhookChannel::new(WebhookChannelOptions {
+        null_body: Some(witness.clone()),
+        ..test_options()
+    });
     channel
         .start(ChannelStartDeps::default())
         .await
@@ -2982,13 +3700,25 @@ async fn pipelined_null_body_disconnect_reclaims_the_connection() {
         .write_all(&null_request_bytes(true))
         .await
         .expect("#1334 send the pipelined null request");
-    // Let hyper read the whole segment into its buffer before the FIN.
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // #1608: the FIN is only meaningful once the request is inside the
+    // branch that hangs; wait for the branch to say so.
+    let entered = matches!(timeout(DEADLINE, witness.entered.notified()).await, Ok(()));
+    negative_assert!(
+        entered,
+        "#1608 the pipelined null request reached the literal-null branch"
+    );
     stream
         .shutdown()
         .await
         .expect("#1334 half-close the pipelined-null client");
     drop(stream);
+    // #1608: the probe must be the one that observed the FIN. With the probe
+    // disabled this wait just expires and the stop deadline below carries
+    // the failure at the control's own anchor.
+    let reclaimed = matches!(
+        timeout(DEADLINE, witness.reclaimed.notified()).await,
+        Ok(())
+    );
     let resolved = matches!(
         timeout(DEADLINE, channel.stop_with_reason(Some("p0"))).await,
         Ok(Ok(()))
@@ -2996,6 +3726,10 @@ async fn pipelined_null_body_disconnect_reclaims_the_connection() {
     negative_assert!(
         resolved,
         "#1334 a pipelined null body reclaims the connection after the client FIN"
+    );
+    negative_assert!(
+        reclaimed,
+        "#1608 the duplicate-socket probe observed the client FIN"
     );
 }
 
@@ -3036,6 +3770,13 @@ async fn plain_null_body_disconnect_reclaims_the_connection() {
     );
 }
 
+/// #1947: the close-delimited read is bounded. Without a cap, a reply that
+/// streams past any size the pin means to compare would grow `raw` until the
+/// deadline instead of failing the test — the same fail-not-abort shape the
+/// pad-size guard gives the replay (`budget_guard.rs`, #1696): the budget is
+/// refused *before* the unbounded read can decide the outcome.
+const RAW_READ_BUDGET: usize = 64 * 1024;
+
 /// #1684: one request answered with the raw bytes up to the peer's FIN, plus
 /// whether the peer actually closed (`true`) or the read deadline expired
 /// while the socket stayed open (`false`) — the oracle's `closed` flag only
@@ -3046,7 +3787,7 @@ async fn raw_until_close(port: u16, request: &str) -> (String, bool) {
         .await
         .expect("#1684 connect for the http10 pin");
     stream
-        .write_all(&latin1_bytes(request))
+        .write_all(&wire_bytes(request))
         .await
         .expect("#1684 write the http10 request");
     let mut raw = String::new();
@@ -3059,7 +3800,14 @@ async fn raw_until_close(port: u16, request: &str) -> (String, bool) {
         match timeout(wait, stream.read(&mut chunk)).await {
             Err(_elapsed) => return (raw, false),
             Ok(Ok(0)) => return (raw, true),
-            Ok(Ok(read)) => raw.extend(chunk[..read].iter().map(|&byte| byte as char)),
+            Ok(Ok(read)) => {
+                raw.extend(chunk[..read].iter().map(|&byte| byte as char));
+                assert!(
+                    raw.len() <= RAW_READ_BUDGET,
+                    "#1947 the http10 raw read grew past the {RAW_READ_BUDGET}-byte budget: a \
+                     close-delimited reply this large is not what the pin compares"
+                );
+            }
             Ok(Err(error)) => panic!("#1684 http10 read failed: {error}"),
         }
     }

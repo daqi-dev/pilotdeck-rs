@@ -30,6 +30,9 @@ ROOT = Path(__file__).resolve().parents[5]
 SERVER = ROOT / "src/pilotdeck-gateway/src/channel/api_server/server.rs"
 MOD = ROOT / "src/pilotdeck-gateway/src/channel/api_server/mod.rs"
 RENDER = ROOT / "src/pilotdeck-gateway/src/channel/api_server/render.rs"
+# #1615: the visible-failure event-name table moved from `render.rs` into the
+# shared `agentStatus` port the webhook lane consumes too.
+AGENT_STATUS = ROOT / "src/pilotdeck-gateway/src/channel/agent_status.rs"
 REPLAY = "channel::api_server::tests::replays_real_ts_api_server_cells"
 DUPLICATE = "channel::api_server::tests::duplicate_chat_is_busy_then_free"
 OVERSIZED = "channel::api_server::tests::oversized_body_closes_without_response"
@@ -125,7 +128,7 @@ mutations = [
     ),
     (
         "visible-failure-name",
-        RENDER,
+        AGENT_STATUS,
         '    "turn_failed",',
         '    "turn_failed_x",',
         RENDER_VISIBLE,

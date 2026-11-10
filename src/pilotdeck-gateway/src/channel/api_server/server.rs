@@ -545,7 +545,7 @@ fn error_response(
     code: &str,
     kind: Option<&str>,
     user_hint: &str,
-    scope: &str,
+    scope: &'static str,
 ) -> Response<crate::Body> {
     json_response(
         status,
