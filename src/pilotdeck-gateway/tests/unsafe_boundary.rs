@@ -2566,6 +2566,67 @@ mod vendored_edge_negative_controls {
     }
 
     #[test]
+    fn image_binding_version_targets_build_path_and_source_are_pinned() {
+        let fixture = Fixture::new();
+        let original = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("vendor");
+        let vendor = fixture.root.join("vendor");
+        let package = vendor.join("libvips");
+        fs::create_dir_all(&package).unwrap();
+        let manifest = fs::read(original.join("libvips-source.json")).unwrap();
+        fs::write(vendor.join("libvips-source.json"), &manifest).unwrap();
+        let document: Value = serde_json::from_slice(&manifest).unwrap();
+        for row in document["files"].as_array().unwrap() {
+            let relative = row["path"].as_str().unwrap();
+            let dest = package.join(relative);
+            fs::create_dir_all(dest.parent().unwrap()).unwrap();
+            fs::copy(original.join("libvips").join(relative), dest).unwrap();
+        }
+        let metadata = serde_json::json!({
+            "name": "libvips", "version": "2.3.0", "dependencies": [],
+            "targets": [
+                {"kind": ["lib"], "src_path": package.join("src/lib.rs")},
+                {"kind": ["custom-build"], "src_path": package.join("build.rs")}
+            ]
+        });
+        vendored_boundary(&package, &metadata);
+        let mut changed = metadata.clone();
+        changed["version"] = serde_json::json!("2.3.1");
+        assert!(
+            rejection(|| vendored_boundary(&package, &changed)).contains("pinned native version")
+        );
+        changed = metadata.clone();
+        changed["targets"][1]["src_path"] = serde_json::json!(package.join("other-build.rs"));
+        assert!(std::panic::catch_unwind(|| vendored_boundary(&package, &changed)).is_err());
+        changed = metadata.clone();
+        changed["targets"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"kind":["bin"],"src_path":package.join("src/lib.rs")}));
+        assert!(std::panic::catch_unwind(|| vendored_boundary(&package, &changed)).is_err());
+        changed = metadata.clone();
+        changed["targets"].as_array_mut().unwrap().pop();
+        assert!(std::panic::catch_unwind(|| vendored_boundary(&package, &changed)).is_err());
+        let source = package.join("src/lib.rs");
+        let bytes = fs::read(&source).unwrap();
+        fs::write(&source, b"altered source").unwrap();
+        assert!(
+            rejection(|| vendored_boundary(&package, &metadata))
+                .contains("pinned native source changed")
+        );
+        fs::write(&source, bytes).unwrap();
+        fs::write(package.join("unexpected.rs"), b"unexpected").unwrap();
+        assert!(
+            rejection(|| vendored_boundary(&package, &metadata))
+                .contains("native source tree contains")
+        );
+        fs::remove_file(package.join("unexpected.rs")).unwrap();
+        vendored_boundary(&package, &metadata);
+    }
+
+    #[test]
     fn vendored_non_lib_targets_are_rejected() {
         let fixture = Fixture::new();
         let lib = fixture.source("lib.rs", "// lib\n");
