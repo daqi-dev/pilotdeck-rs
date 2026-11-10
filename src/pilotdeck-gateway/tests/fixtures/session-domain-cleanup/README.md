@@ -1700,3 +1700,33 @@ baseline 9 RED before — 负控先证红; probes 21 with 12 red on head, 0
 control-red, 0 unexpected after; real-tree aggregation-audit
 self-check PASS with verdicts byte-identical to the r25 head;
 test_safety 158/158; check_frozen --base dcc110f5f PASS 30).
+
+fix-r27 (anthropic r26-c boundary#1 P0, probe-verified before/after —
+`_tmp/20261110-1355-r26-harvest/probe-p0-mult.out`): the Mult fold
+accepted only ``str * Constant-int`` — the commuted ``1 * 'tus'`` and
+the constant-expression counts (``'tus' * +1``, ``'tus' * (2 - 1)``)
+fell outside that grammar into the fail-open None, and
+``report['sta' + 1 * 'tus'] = 'PASS'`` escaped the status-write
+enumeration on both the key and the value side (``'PA' + 1 * 'SS'`` the
+same) — the one-value-two-meanings gap r14 closed for budget exhaustion
+and r18 for the grammar, on the multiplication face.  The fold is
+symmetric now (whichever side folded to a string is the sequence) and
+the count is judged with `_literal_test_value` threaded on the same
+budget: a runtime count operand keeps the plain None of the contract
+(r19: the runtime half is word-aware and lives in
+`_conditional_status_word`); a constant non-int count makes the product
+raise at runtime and keeps the plain None; a pure-literal count the fold
+cannot resolve stops as the r14 sentinel, never the fail-open None.
+New `_fsr10` pins: three fold shapes (all must fold to 'status'),
+three polarity pins (runtime None / non-int None / unresolved
+sentinel), and four e2e rogues (three key-side, one value-side) that
+must all be enumerated.  The revert mutant is killed
+(`mutneg-r27.out` M01 back to the old one-sided grammar, pin-bound,
+battery fires on the real-tree audit; fixture restored sha-verified).
+Real-tree aggregation-audit self-check PASS with verdicts
+byte-identical to the r26 merged head (`agg-audit-r27.out`);
+test_safety 162/162; three `check_frozen --base origin/main` suites
+PASS unchanged (no registered file touched, `--write` a no-op).
+Evidence `_tmp/20261110-1355-r26-harvest/` (probe-p0-mult.out,
+probe-p0-mult-after.out, mutneg-r27.out, agg-audit-r27.out,
+test-safety-r27.tail.out).

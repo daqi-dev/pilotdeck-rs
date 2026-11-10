@@ -1335,24 +1335,54 @@ def _folded_string_fold(node, budget):
                 # the expression raises at runtime and can never write a
                 # status, so this stays a plain "not a known literal".
                 return None
-        if (isinstance(node.op, ast.Mult) and left is not None
-                and isinstance(node.right, ast.Constant)
-                and isinstance(node.right.value, int)):
+        if isinstance(node.op, ast.Mult) and (left is not None
+                                               or right is not None):
+            # fix-r27 (anthropic r26-c boundary#1 P0, probe-verified —
+            # _tmp/20261110-1355-r26-harvest/probe-p0-mult.out): the
+            # branch folded only ``str * Constant-int`` — the commuted
+            # ``1 * 'tus'`` and the constant-expression counts
+            # ``'tus' * +1`` / ``'tus' * (2 - 1)`` fell outside that
+            # grammar into the fail-open None, and
+            # ``report['sta' + 1 * 'tus'] = 'PASS'`` escaped the
+            # status-write enumeration on both the key and the value side
+            # — the same one-value-two-meanings gap r14 closed for budget
+            # exhaustion and r18 for the grammar.  The multiplication is
+            # symmetric now (whichever side folded to a string is the
+            # sequence) and the count is judged with
+            # ``_literal_test_value`` (the fold that already resolves
+            # UnaryOp/BinOp constants, threaded on the same budget):
+            # a runtime count operand keeps the plain None of the
+            # contract (r19: the runtime half is word-aware and lives in
+            # _conditional_status_word); a constant count that is not an
+            # int makes the product raise at runtime — the same plain
+            # None as a ``%`` pair the interpreter cannot build; a
+            # pure-literal count the fold cannot resolve leaves the
+            # product a constant-by-semantics unknown — the r14
+            # sentinel, never the fail-open None.
+            string, count_node = ((left, node.right) if left is not None
+                                  else (right, node.left))
+            if _test_is_runtime(count_node):
+                return None
+            count = _literal_test_value(count_node, budget)
+            if count is _LITERAL_TEST_UNRESOLVED:
+                return _FOLD_STRING_UNRESOLVED
+            if not isinstance(count, int):
+                return None
             # fix-r6 (DS sibling r5 P2-2): same cap for repetition, judged
             # on the folded result's length.  fix-r7 (MM boundary r6 P2):
             # ``len(left) == 0`` keeps the cap at zero while the repetition
             # itself still raises OverflowError for an oversized count
             # (``'' * 10**100``); the wrapper resolves that to the sentinel
             # (fix-r14).
-            if len(left) * abs(node.right.value) > _FOLD_MAX_ITEMS:
+            if len(string) * abs(count) > _FOLD_MAX_ITEMS:
                 return None
             # fix-r13 (DS sibling#2 r12 P2): the repetition is charged to
             # the fold budget before it runs — an exhausted budget stops
             # the fold (fix-r14: as the sentinel).
-            budget[0] -= len(left) * abs(node.right.value)
+            budget[0] -= len(string) * abs(count)
             if budget[0] < 0:
                 return _FOLD_STRING_UNRESOLVED
-            return left * node.right.value
+            return string * count
     # fix-r18 (DS r17 boundary#1 P0 + sibling#1 P1; MM r17 boundary#1 P0 +
     # concurrency#1 P0 — two families, four roles, probe-verified in
     # fix-r18-audit/probe-r18-p0.out shapes F1/F2/F3/F6): the grammar above
@@ -10227,6 +10257,67 @@ def _aggregation_audit_impl():
         failures.append('#892 aggregation-audit: a sibling arm read '
                         '"already traced" and failed a healthy twin-arm '
                         f'relay ({_fsr9_sibling_seen_slots[:2]}) (#1652)')
+    # #1652 fix-r27 (anthropic r26-c boundary#1 P0, probe-verified —
+    # _tmp/20261110-1355-r26-harvest/probe-p0-mult.out, before/after):
+    # the Mult fold accepted only ``str * Constant-int`` — the commuted
+    # ``1 * 'tus'`` and the constant-expression counts (``'tus' * +1``,
+    # ``'tus' * (2 - 1)``) fell outside that grammar into the fail-open
+    # None, and ``report['sta' + 1 * 'tus'] = 'PASS'`` escaped the
+    # status-write enumeration on both the key and the value side.  Fold
+    # face first: all three shapes must fold to the word.
+    _fsr10_shapes = [
+        "'sta' + 1 * 'tus'",
+        "'sta' + 'tus' * +1",
+        "'sta' + 'tus' * (2 - 1)",
+    ]
+    if any(_folded_string(ast.parse(shape, mode='eval').body) != 'status'
+           for shape in _fsr10_shapes):
+        failures.append('#892 aggregation-audit: a commuted/unary-count '
+                        'repetition read as runtime instead of folding '
+                        'to the status word (#1652)')
+    # Polarity face: a runtime count operand keeps the plain None of the
+    # contract (r19: the runtime half is word-aware and lives in
+    # _conditional_status_word); a constant non-int count makes the
+    # product raise at runtime and keeps the same plain None; a
+    # pure-literal count the fold cannot resolve leaves the product a
+    # constant-by-semantics unknown — the r14 sentinel, never the
+    # fail-open None.
+    _fsr10_runtime = ast.parse("'tus' * count", mode='eval').body
+    if _folded_string(_fsr10_runtime) is not None:
+        failures.append('#892 aggregation-audit: a runtime repetition '
+                        'count lost the None contract of the runtime '
+                        'half (#1652)')
+    _fsr10_non_int = ast.parse("'tus' * 1.0", mode='eval').body
+    if _folded_string(_fsr10_non_int) is not None:
+        failures.append('#892 aggregation-audit: a repetition with a '
+                        'constant non-int count raises at runtime and '
+                        'keeps the plain None (#1652)')
+    _fsr10_unresolved = ast.parse("'tus' * (2 ** 999999)",
+                                  mode='eval').body
+    if _folded_string(_fsr10_unresolved) is not _FOLD_STRING_UNRESOLVED:
+        failures.append('#892 aggregation-audit: an unresolvable constant '
+                        'repetition count must stop the fold as the '
+                        'sentinel, not read as negative evidence (#1652)')
+    # End-to-end: every write below puts the exact status word in at
+    # runtime (rogue0-rogue2 by the key, rogue3 by the value), so each
+    # must be enumerated.
+    _fsr10_writes = [
+        "    report['sta' + 1 * 'tus'] = 'PASS'",
+        "    report['sta' + 'tus' * +1] = 'PASS'",
+        "    report['sta' + 'tus' * (2 - 1)] = 'PASS'",
+        "    report['status'] = 'PA' + 1 * 'SS'",
+    ]
+    _fsr10_lines = ['report = {}', '']
+    for _i, _write in enumerate(_fsr10_writes):
+        _fsr10_lines += [f'def rogue{_i}(rows):', _write, '    return 0', '']
+    _fsr10_found, _fsr10_dup = scan_aggregation_tree(
+        ast.parse('\n'.join(_fsr10_lines)), 'fix-r27-self-check.py')
+    for _i in range(len(_fsr10_writes)):
+        if ('fix-r27-self-check.py', f'rogue{_i}') not in _fsr10_found:
+            failures.append('#892 aggregation-audit: a commuted/unary-count '
+                            'status write escaped enumeration '
+                            f'(rogue{_i}) (#1652)')
+            break
     # fix-r26 (structural, review verdict): the polarity migration must
     # be verifiable by machine, not by re-review — this source may not
     # regain an any-arm ``_inevitably_shared`` exemption consumer (the
