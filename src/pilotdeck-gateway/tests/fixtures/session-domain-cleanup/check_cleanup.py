@@ -5401,8 +5401,26 @@ def _literal_test_value_fold(node, budget=None):
                 width = max([width] + [abs(operand) for operand in operands
                                        if isinstance(operand, int)
                                        and not isinstance(operand, bool)])
-            payload = (len(right) if isinstance(right, (str, bytes, list, tuple))
-                       else len(str(right)))
+            # fix-r30 (DS r29 boundary#1 P1, probe-verified —
+            # _tmp/20261110-1355-r26-harvest/probe-p1-modpayload.out): the
+            # payload bound counted the *container* — ``len(right)`` is
+            # 1500 for ``['x' * 1000] * 1500`` while ``'%s' %`` renders the
+            # whole nested structure (measured 1,506,000 chars past the
+            # 1e6 cap from a ~30-byte source; the reviewer's full-size
+            # spelling is ~1 GB from ~40 bytes).  Containers now pay their
+            # recursive folded size plus the separators the repr renders;
+            # an over-budget traversal resolves the same fail-closed
+            # sentinel.  ``str``/``bytes`` keep their length, other scalars
+            # ``len(str(right))`` as before.
+            if isinstance(right, (str, bytes)):
+                payload = len(right)
+            elif isinstance(right, (list, tuple)):
+                payload = _folded_size(right)
+                if payload is None:
+                    return _LITERAL_TEST_UNRESOLVED
+                payload += 2 * len(right)
+            else:
+                payload = len(str(right))
             if len(left) + len(specs) * max(payload, width) > _FOLD_MAX_ITEMS:
                 return _LITERAL_TEST_UNRESOLVED
         # fix-r13 (DS boundary#2 + sibling#1 r12 P1 family, probe-verified —
@@ -5417,10 +5435,28 @@ def _literal_test_value_fold(node, budget=None):
         # traversal overflow.  int materialisations are skipped: the bit
         # caps above already bound them by result size.
         if isinstance(node.op, ast.Mult):
+            # fix-r30 (DS r29 boundary#1 P1, same family as the Mod payload
+            # bound above): the debit charged only the *outer* container —
+            # ``len`` of ``[['x' * 999999]] * 999``-style nesting counts
+            # elements, not the materialised content, so the copies could
+            # be built ~1000x past their true folded cost.  A materialised
+            # container pays both metrics, the max of the two — the element
+            # count (the traversal bound the #892 ``[''] * 999999`` pin
+            # charges) and the folded content (the nested shape the DS hole
+            # rode); either alone under-states the result.  str/bytes keep
+            # their length, and an over-budget traversal resolves the same
+            # fail-closed sentinel.
             for sequence, count in ((left, right), (right, left)):
                 if (isinstance(sequence, (str, bytes, list, tuple))
                         and isinstance(count, int)):
-                    budget[0] -= len(sequence) * abs(count)
+                    if isinstance(sequence, (str, bytes)):
+                        size = len(sequence)
+                    else:
+                        content = _folded_size(sequence)
+                        if content is None:
+                            return _LITERAL_TEST_UNRESOLVED
+                        size = max(len(sequence), content)
+                    budget[0] -= size * abs(count)
         elif (isinstance(node.op, ast.Add)
                 and isinstance(left, (str, bytes, list, tuple))
                 and isinstance(right, (str, bytes, list, tuple))):

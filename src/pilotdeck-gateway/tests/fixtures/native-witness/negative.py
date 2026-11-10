@@ -66,8 +66,13 @@ cases = [
     ('unbounded-provider-read', collector, 'connection.settimeout(5)', 'connection.settimeout(None)', 'test_provider_read_deadline'),
     ('omit-connect', native, "calls.append({'ownerPid': owners[tid]", "[].append({'ownerPid': owners[tid]", 'test_process_and_network'),
     ('wrong-thread-owner', native, "calls.append({'ownerPid': owners[tid]", "calls.append({'ownerPid': tid", 'test_process_and_network'),
-    ('trust-exec-ledger', native, "and evidence['execWitness'] == replay['execWitness']", 'and True', 'test_replay_exec'),
-    ('trust-network-ledger', native, "network_equal = evidence['networkWitness'] == replay['networkWitness']", 'network_equal = True', 'test_replay_network'),
+    # fix-r30 (anthropic r29 P1, three STALE ANCHOR — native_evidence.py
+    # spells these comparisons with same_json since fix-r29 killed the
+    # boolean-collapse channel; the before-anchors here still spelled the
+    # retired bare ==, so every run reported 0 matches and refused to run):
+    # re-anchored to the HEAD spelling, mutation unchanged.
+    ('trust-exec-ledger', native, "and same_json(evidence['execWitness'], replay['execWitness'])", 'and True', 'test_replay_exec'),
+    ('trust-network-ledger', native, "network_equal = same_json(evidence['networkWitness'], replay['networkWitness'])", 'network_equal = True', 'test_replay_network'),
     ('omit-exit-status', source, "'-f', '-q', '-xx'", "'-f', '-qq', '-xx'", 'test_command'),
     ('bypass-parity-lock', collector, 'lease.enter_context(parity_lock(timeout=1))', 'lease.enter_context(ExitStack())', 'test_parity_lock_busy'),
     ('ignore-busy-port', collector, '            probe_bind(candidate, reuse_address=reuse_address)', '            pass', 'test_ports_blocked'),

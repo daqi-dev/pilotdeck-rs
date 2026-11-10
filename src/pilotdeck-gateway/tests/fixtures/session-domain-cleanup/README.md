@@ -1815,3 +1815,41 @@ pins (`test_audit_native_rejects_boolean_pids_on_every_witness_field`,
 for 164/164; this round touches three registered files, so gateway-parity
 `check_frozen --write` re-registers the hashes (event
 `frozen/20261108-1355-r1.md` fix-r29 section).
+
+fix-r30 (DS r29 boundary#1 P1 + concurrency#1 P2-arbitrated-to-P1 +
+sibling#1 P1, anthropic sibling#2/boundary#2-adjacent — both lineages
+hit the same gaps; probes in `_tmp/20261110-1355-r26-harvest/`): the
+container *content* the r29 gates did not charge, the resource-exhaustion
+classification, and the connections counts. (1) The `%` fold's payload
+bound and the Mult debit charged the *outer* container only —
+`'%s' % ([['x' * 999999]] * 999)` folded a ~999 MB string from ~30 bytes
+of source (probe-r30-fold.out: 999,004,995 chars pre-fix, sentinel in
+< 1 ms post-fix; DS scenario ② re-checked with the exact spelling in
+probe-r30-ds2.out). A container right operand now pays its recursive
+`_folded_size` plus the rendered separators in the payload bound, and a
+materialised container's Mult debit is the *max* of its element count
+(the traversal bound the #892 `[''] * 999999` pin charges — a content-only
+debit would zero out empty-string elements and unpin it) and its folded
+content. (2) MemoryError/RecursionError join BLOCKED_APPARATUS_ERRORS and
+carry their own `APPARATUS_RESOURCES` failure rule: apparatus resource
+exhaustion is the apparatus' own BLOCKED/2, never a judged-product FAIL/1
+with `failure.rule='EVIDENCE'` (the pre-fix inner handler contradicted the
+outer handler and retirement_report, which already classified both as
+BLOCKED). (3) The connections counts are gated with
+`_retirement_real_count` (the count twin of the pid/port realness rules:
+a plain non-negative int is all `len()` can emit; `True == 1` and
+`1.0 == 1` are corrupt artifacts) on both the audit comparison and the
+loader's malformed-document gate. Witness side:
+`native_evidence.session_windows` gates the transcript-open pid with the
+`type(...) is int` real-pid rule (both reviewers hit it), the three
+native-witness negative anchors re-anchor to the `same_json` spelling r29
+left in `native_evidence.py` (they were STALE and refused to run), and
+same-json-surfaces grows four witness-replay revert rows (processes /
+execWitness / networkWitness / transcriptWitness, 22 cases) bound to four
+new `SameJsonSurfaces` pins each with an equal-type control. test_safety
+grows the boundary values the pid table lacked (0, 2**31, 1.0 on the
+event/launcher channels) plus five connections channels on a witnessed
+variant, and the suite-level resource-exhaustion pin, for 169/169; this
+round touches three registered files, so gateway-parity
+`check_frozen --write` re-registers the hashes (event
+`frozen/20261108-1355-r1.md` fix-r30 section).

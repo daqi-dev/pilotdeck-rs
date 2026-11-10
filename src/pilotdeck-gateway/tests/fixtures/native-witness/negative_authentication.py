@@ -169,7 +169,10 @@ cases = [
     ('accept-synthetic', session, "require(launch.get('scope') != 'SYNTHETIC_CONTROL_ONLY'\n            and evidence.get('scope') != 'SYNTHETIC_CONTROL_ONLY', 'NATIVE_CAPTURE',", "require(True, 'NATIVE_CAPTURE',", 'test_formal_rejects_synthetic'),
     ('accept-failure-receipt', native, "need(not (folder / 'failure.json').exists(), 'capture carries a failure record')", "need(True, 'capture carries a failure record')", 'test_failure_receipt'),
     ('omit-formal-replay', session, 'evidence = native_evidence.checked_evidence(raw, launch, evidence)', 'evidence = evidence', 'test_omitted_short_descendant'),
-    ('trust-formal-network', native, "network_equal = evidence['networkWitness'] == replay['networkWitness']", 'network_equal = True', 'test_omitted_network'),
+    # fix-r30 (anthropic r29 P1, same STALE ANCHOR family as negative.py
+    # trust-{exec,network}-ledger): re-anchored to the same_json spelling
+    # native_evidence.py carries since fix-r29, mutation unchanged.
+    ('trust-formal-network', native, "network_equal = same_json(evidence['networkWitness'], replay['networkWitness'])", 'network_equal = True', 'test_omitted_network'),
     ('promote-incomplete', native, "checked['execWitness']['complete'] = evidence['execWitness']['complete'] is True and exec_equal", "checked['execWitness']['complete'] = True", 'test_failure_flags_not_promoted'),
     ('drop-provider-coverage', session, 'if case in required and case not in covered:', 'if False:', 'test_provider_case_missing'),
     ('loose-provider-marker', native, "markers = set(re.findall(r'\\[native-witness:([^\\]]+)\\]', '\\n'.join(texts)))\n        need(markers == {case}, 'provider request must have one case owner')\n        need(case in cases and f'[native-witness:{case}] controlled wait' in texts", "markers = set(re.findall(r'\\[native-witness:([^\\]]+)\\]', request['raw']))\n        need(markers == {case}, 'provider request must have one case owner')\n        need(case in cases and f'[native-witness:{case}] controlled wait' in request['raw']", 'test_provider_marker_wrong_field'),

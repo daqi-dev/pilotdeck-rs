@@ -231,8 +231,18 @@ class RetirementLaunchError(EvidenceError):
 # FAIL — subprocess.TimeoutExpired is a SubprocessError subclass (main's except
 # tuple catches it), but it is not a TimeoutError, so the old BLOCKED
 # classification tuple let it fall through to status=FAIL.
+# fix-r30 (DS r29 concurrency#1, arbitrated P2b「假 FAIL→P1」): MemoryError
+# joins — fix-r29 added it to the suite inner handler's catch tuple, which
+# turned an apparatus-side memory exhaustion into a scored product FAIL
+# (status=FAIL, rule='EVIDENCE', exit 1) while main's outer handler and
+# retirement_report's own catch (:3403, fix-r6) both report the same exception
+# BLOCKED. An in-process MemoryError is by construction apparatus-side: a
+# product OOM surfaces as the product's recorded exit, never as this
+# process's exception. RecursionError joins for the same reason — it is the
+# other resource-exhaustion class retirement_report already BLOCKS.
 BLOCKED_APPARATUS_ERRORS = (ApparatusVerificationError, PermissionError, TimeoutError,
-                            KeyboardInterrupt, subprocess.TimeoutExpired)
+                            KeyboardInterrupt, subprocess.TimeoutExpired,
+                            MemoryError, RecursionError)
 
 
 def require(condition, rule, detail):
@@ -1245,7 +1255,14 @@ def audit_native(evidence, contract):
             require(digest(Path(artifact['path'])) == artifact['sha256'], 'SURFACES', name + ' artifact changed')
     observer = evidence['observer']
     require(bool(observer['rows']), 'EMPTY_OBSERVER', 'empty independent observer')
-    require(observer['connections'] == len({r['connection'] for r in observer['rows']})
+    # fix-r30 (DS r29 sibling#1 P1, same family as the fix-r29 pid gates):
+    # ``isinstance(x, int)`` accepts True and ``True == 1`` passes the count
+    # comparison, so a corrupt ``{"connections": true}`` observer document (or
+    # contract) audited through the boolean collapse channel.  Both sides of
+    # every comparison follow the real-count rule before ``==`` sees them.
+    require(_retirement_real_count(observer['connections'])
+            and _retirement_real_count(contract['connections'])
+            and observer['connections'] == len({r['connection'] for r in observer['rows']})
             and observer['connections'] == contract['connections'], 'CONNECTIONS', 'connection count mismatch')
     # #1140 fix-r2: no evidence/contract binding equality here -- load_native_
     # capture fills the audited binding from the same contract, so this
@@ -1356,8 +1373,12 @@ def _load_native_artifacts(folder):
         require(key not in launch and key not in prelaunch, 'BINDING',
                 'runtime binding/observer records must not be pre-registered before launch')
     observer = read(folder / 'session-domain/observer.json')
+    # fix-r30 (DS r29 sibling#1 P1): ``isinstance(True, int)`` is True, so the
+    # malformed-document gate let a boolean connections count through to the
+    # audit comparison; the loader follows the same real-count rule.
     require(isinstance(observer, dict) and isinstance(observer.get('rows'), list)
-            and isinstance(observer.get('connections'), int), 'EMPTY_OBSERVER', 'observer document malformed')
+            and _retirement_real_count(observer.get('connections')),
+            'EMPTY_OBSERVER', 'observer document malformed')
     require(bool(observer['rows']), 'EMPTY_OBSERVER', 'empty independent observer')
     contract = dict(launch, binding=_observer_binding(observer['rows']),
                     observerRows=observer['rows'], bindingSource='observer-hello')
@@ -1769,6 +1790,20 @@ def _retirement_real_pid(value):
             and 0 < value <= 2 ** 31 - 1)
 
 
+def _retirement_real_count(value):
+    """True when *value* can be a recorded count at all (fix-r30, DS r29
+    sibling#1 P1).
+
+    The count twin of the pid/port realness rules: an observer or contract
+    connections count is produced by len() on the observed set, which can
+    only emit a plain non-negative int — a bool (``isinstance(True, int)``
+    is True, ``True == 1``) or a float (``1.0 == 1``) is a corrupt artifact
+    walking the same boolean/float collapse channel the fix-r29 pid gates
+    closed, so it never reaches the count comparison.
+    """
+    return type(value) is int and value >= 0
+
+
 def _retirement_real_port(value):
     """True when *value* can be a TCP port at all (#1355 r1 fix-r9, DS boundary r8 P0).
 
@@ -2101,6 +2136,24 @@ def _retirement_evidence_pairs(verdict):
     return pairs
 
 
+def _retirement_usable_frame_id(identifier):
+    """True when *identifier* can serve as a strip-set member (fix-r4, DS
+    sibling P1).
+
+    An unhashable id (list/dict) or a bool dies at the set arithmetic below;
+    a frame whose id cannot be named cannot be proven to belong to *method*,
+    so it is never added and never matched — the mutation leaves it in place
+    and the scorer's own guards (not the strip) judge it fail-closed.
+
+    fix-r30 (anthropic r29 simplify#1 P2): the definition sits ahead of
+    ``_retirement_wire_backing`` like every other helper this family shares
+    (``_retirement_frame_rows`` / ``_retirement_list_rows``) — fix-r29's
+    forward reference worked but broke the file's definition-order
+    convention.
+    """
+    return isinstance(identifier, (int, str)) and not isinstance(identifier, bool)
+
+
 def _retirement_wire_backing(frames):
     """Map methods to their request ids and the responses/events that answered.
 
@@ -2295,18 +2348,6 @@ def score_retirement_round(row, expected):
     verdict['rules'] = problems
     verdict['status'] = 'FAIL' if problems else 'PASS'
     return verdict
-
-
-def _retirement_usable_frame_id(identifier):
-    """True when *identifier* can serve as a strip-set member (fix-r4, DS
-    sibling P1).
-
-    An unhashable id (list/dict) or a bool dies at the set arithmetic below;
-    a frame whose id cannot be named cannot be proven to belong to *method*,
-    so it is never added and never matched — the mutation leaves it in place
-    and the scorer's own guards (not the strip) judge it fail-closed.
-    """
-    return isinstance(identifier, (int, str)) and not isinstance(identifier, bool)
 
 
 def _retirement_strip_wire(mutated, method):
@@ -3566,7 +3607,15 @@ def main():
                 if args.suite == 'deadline':
                     report.pop('cells', None)  # No consumable partial score after failed final verification.
                     report['executionStatus'] = 'NOT_RUN'
-                report['failure'] = {'rule': getattr(error, 'rule', 'EVIDENCE'), 'detail': str(error)}
+                # fix-r30 (DS r29 concurrency#1, arbitrated up by the P2b
+                # 「假 FAIL→P1」 rule): apparatus resource exhaustion is the
+                # apparatus' own BLOCKED, never the product-side EVIDENCE
+                # failure spelling -- the pre-fix tuple let a MemoryError land
+                # as a judged-product FAIL with failure.rule='EVIDENCE'.
+                report['failure'] = {
+                    'rule': ('APPARATUS_RESOURCES' if isinstance(error, (MemoryError, RecursionError))
+                             else getattr(error, 'rule', 'EVIDENCE')),
+                    'detail': str(error)}
                 code = common.aggregate_status(report['status'])[1]
             save(output / 'report.json', report)
             print(json.dumps({'status': report['status'], 'suite': args.suite, 'report': str(output / 'report.json'),

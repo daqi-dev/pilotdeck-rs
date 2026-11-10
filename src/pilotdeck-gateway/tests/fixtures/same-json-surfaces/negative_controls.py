@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """#2039 same_json surface mutations; memory rehearsal or guarded post-commit run.
 
-Each case reverts one of the six comparisons this batch moved to the strict
-``same_json`` walk back to Python's bare ``==``/``!=`` (the exact regression
-shape: ``True == 1`` passing a drifted JSON boolean as identical).  The bound
-tests are the #2039 pins in ``scripts/gateway-parity/test_safety.py``
-(``SameJsonSurfaces``); only that class's own single-line ``#2039`` assertion
-counts as a kill.
+Each case reverts one of the ten comparisons moved to the strict ``same_json``
+walk back to Python's bare ``==``/``!=`` (the exact regression shape: ``True
+== 1`` passing a drifted JSON boolean as identical) -- the six #2039 surfaces
+plus the four witness replay comparisons fix-r29 hardened after the boolean-
+collapse audit.  The bound tests are the pins in
+``scripts/gateway-parity/test_safety.py`` (``SameJsonSurfaces``); only that
+class's own single-line assertion counts as a kill.
 
 --memory patches the loader in-process (no source bytes are written, the
 shared tree lock is still held for the whole drill); the default mode writes
@@ -53,7 +54,7 @@ common = root / 'scripts/gateway-parity/common.py'
 # deadline the worst case is the whole table times 3 bound commands each
 # charged ``timeout + twice the kill grace`` -- the 10 cases the r2 review
 # counted already summed to exactly MAX_AGE, and the table has since grown to
-# 18.  The budget bounds the window below that age instead: it is checked
+# 22.  The budget bounds the window below that age instead: it is checked
 # before every case and a spent budget marks the rest INVALID (never KILLED,
 # never silently skipped), so the run fails closed instead of outliving the
 # lease.
@@ -116,6 +117,28 @@ cases = [
      "    checked['cleanup']['allStopped'] = same_json(evidence['cleanup'], replay['cleanup'])",
      "    checked['cleanup']['allStopped'] = evidence['cleanup'] == replay['cleanup']",
      'test_cleanup_replay_drift_is_not_coerced'),
+    # fix-r30 (DS r29 sibling#3 + anthropic sibling#2, two lineages hit the
+    # same gap): the four witness replay comparisons fix-r29 moved to
+    # same_json had no committed mutation -- reverting any one of them to
+    # bare ``==`` left every pin green.  Each row reverts exactly one of the
+    # four; the bound pins live next to test_cleanup_replay_drift_is_not_
+    # coerced in the SameJsonSurfaces class.
+    ('witness-processes-bare-equal', native,
+     "exec_equal = (same_json(evidence['processes'], replay['processes'])",
+     "exec_equal = (evidence['processes'] == replay['processes']",
+     'test_processes_replay_drift_is_not_coerced'),
+    ('witness-exec-replay-bare-equal', native,
+     "and same_json(evidence['execWitness'], replay['execWitness']))",
+     "and evidence['execWitness'] == replay['execWitness'])",
+     'test_exec_witness_replay_drift_is_not_coerced'),
+    ('witness-network-replay-bare-equal', native,
+     "network_equal = same_json(evidence['networkWitness'], replay['networkWitness'])",
+     "network_equal = evidence['networkWitness'] == replay['networkWitness']",
+     'test_network_witness_replay_drift_is_not_coerced'),
+    ('witness-transcript-replay-bare-equal', native,
+     "transcript_equal = same_json(evidence['transcriptWitness'], replay['transcriptWitness'])",
+     "transcript_equal = evidence['transcriptWitness'] == replay['transcriptWitness']",
+     'test_transcript_witness_replay_drift_is_not_coerced'),
     ('prelaunch-bare-equal', native,
      "    need(same_json({k: v for k, v in contract.items() if k != 'launcherPid'}, prelaunch),",
      "    need({k: v for k, v in contract.items() if k != 'launcherPid'} == prelaunch,",
@@ -195,6 +218,10 @@ EXPECTED_NAMES = ('surfaces-frames-bare-not-equal',
                   'surfaces-applicable-bare-not-equal',
                   'surfaces-registry-fields-bare-not-equal',
                   'cleanup-replay-bare-equal',
+                  'witness-processes-bare-equal',
+                  'witness-exec-replay-bare-equal',
+                  'witness-network-replay-bare-equal',
+                  'witness-transcript-replay-bare-equal',
                   'prelaunch-bare-equal',
                   'receipt-tracer-exit-bare-equal',
                   'ws-profile-opcode-rsv-bare-equal',
@@ -215,6 +242,10 @@ messages = {
     'surfaces-applicable-bare-not-equal': '#2039 registry.applicable boolean drift must surface',
     'surfaces-registry-fields-bare-not-equal': '#2039 registry.events boolean drift must surface',
     'cleanup-replay-bare-equal': '#2039 cleanup allStopped=1 must not coerce to True',
+    'witness-processes-bare-equal': 'fix-r30 processes pid boolean drift must not coerce the exec replay',
+    'witness-exec-replay-bare-equal': 'fix-r30 exec witness boolean drift must not coerce complete',
+    'witness-network-replay-bare-equal': 'fix-r30 network witness boolean drift must not coerce complete',
+    'witness-transcript-replay-bare-equal': 'fix-r30 transcript witness boolean drift must not coerce complete',
     'prelaunch-bare-equal': '#2039 boolean drift in the prelaunch mirror is rejected',
     'receipt-tracer-exit-bare-equal': '#2039 tracer exit code boolean drift is rejected',
     'ws-profile-opcode-rsv-bare-equal': '#2039 ws profile opcode boolean drift is rejected',

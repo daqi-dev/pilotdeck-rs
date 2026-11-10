@@ -399,7 +399,15 @@ def session_windows(evidence, cases, paths):
     for entry in witness['opens']:
         path = entry.get('path') if isinstance(entry, dict) else None
         key = transcript_key(path)
-        need(key is not None and entry.get('pid') == host
+        # fix-r30 (DS r29 sibling#2 P2 + anthropic sibling#3 P2, both
+        # families): the host-owned gate was a bare ``==`` — ``True == 1``
+        # (host pid 1) and ``1.0 == 1`` passed it, the same boolean/float
+        # collapse channel the fix-r29 pid gates closed. checked_evidence's
+        # same_json replay usually refuses the drifted capture first, but a
+        # producer or test that builds checked evidence directly has no such
+        # screen, so the type gate stands here too (the afterExecs twin
+        # already spelled it this way).
+        need(key is not None and type(entry.get('pid')) is int and entry.get('pid') == host
              and type(entry.get('afterExecs')) is int and 0 <= entry['afterExecs'] <= len(processes),
              'transcript opens must be host-owned session transcripts')
         canonical_path(path)

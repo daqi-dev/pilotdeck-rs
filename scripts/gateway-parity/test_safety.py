@@ -1258,6 +1258,62 @@ class ImportIsolation(unittest.TestCase):
                                      'EVIDENCE' if stage == 'work' else 'APPARATUS_IMPORTS', message + ': rule')
                     self.assertFalse(held, message + ': released')
 
+    def test_suite_resource_exhaustion_is_blocked_not_a_product_fail(self):
+        # fix-r30 (DS r29 concurrency#1, arbitrated up by the P2b 「假 FAIL→
+        # P1」 rule): MemoryError/RecursionError raised inside the suite body
+        # are the apparatus' own resource exhaustion — BLOCKED/2 with a rule
+        # of its own, never a judged-product FAIL/1 carrying
+        # failure.rule='EVIDENCE'.  The pre-fix BLOCKED_APPARATUS_ERRORS let
+        # exactly that land (the outer handler and retirement_report already
+        # classified the same exception as BLOCKED, so the inner handler
+        # contradicted the suite's own failure grading).
+        from contextlib import ExitStack, contextmanager, redirect_stdout
+        import io
+        message = 'fix-r30 suite resource exhaustion is BLOCKED/2/APPARATUS_RESOURCES, not FAIL/1/EVIDENCE'
+        entry = _load('resource_error_entry', common.SCRIPT / 'session_domain.py')
+        for error_type in (MemoryError, RecursionError):
+            with self.subTest(error=error_type.__name__), ExitStack() as stack:
+                held = False
+                def refuse(*args, **kwargs):
+                    self.assertTrue(held, message + ': error injection holds lease')
+                    raise error_type('controlled resource exhaustion')
+                @contextmanager
+                def recorded_lock(*args, **kwargs):
+                    nonlocal held
+                    held = True
+                    try:
+                        yield
+                    finally:
+                        held = False
+                controls = SimpleNamespace(run_all=refuse)
+                stack.enter_context(patch.object(entry, 'parity_lock', recorded_lock))
+                stack.enter_context(patch.object(entry, '_load', return_value=controls))
+                # No-op the HEAD-bytes verifier like the late-error template
+                # above: this pin injects at the work stage, and the real
+                # check would (correctly) refuse the uncommitted probe bytes.
+                stack.enter_context(patch.object(entry, '_verify_cli_imports', side_effect=None))
+                for attr, value in [('E1_SOURCES', ()), ('hashes', lambda: {}),
+                                    ('baseline_dependency_hashes', lambda *a: {}),
+                                    ('frozen_check', lambda: {'exitCode': 0}),
+                                    ('run_fixture', lambda *a: {'exitCode': 0, 'launcherAndFixtureReaped': True}),
+                                    ('validate_calibration', lambda *a: {})]:
+                    stack.enter_context(patch.object(entry, attr, value))
+                path = self.folder / ('resource' + error_type.__name__)
+                stack.enter_context(patch.object(sys, 'argv',
+                                                 ['session_domain', '--suite', 'calibrate', '--output', str(path)]))
+                output = stack.enter_context(redirect_stdout(io.StringIO()))
+                try:
+                    code = entry.main()
+                    report = json.loads((path / 'report.json').read_text())
+                    summary = json.loads(output.getvalue())
+                except (Exception, KeyboardInterrupt) as error:
+                    self.fail(message + ': escaped ' + repr(error))
+                self.assertEqual((report.get('status'), code), ('BLOCKED', 2),
+                                message + f': {report.get("failure")} / {output.getvalue()}')
+                self.assertEqual(summary.get('status'), 'BLOCKED', message + ': JSON')
+                self.assertEqual(report.get('failure', {}).get('rule'), 'APPARATUS_RESOURCES', message + ': rule')
+                self.assertFalse(held, message + ': released')
+
     def test_ruler_late_validation_errors_are_distinct_from_evidence_failures(self):
         from contextlib import ExitStack, contextmanager, redirect_stdout, redirect_stderr
         import ast
@@ -2604,6 +2660,12 @@ class SameJsonSurfaces(unittest.TestCase):
     common.py, the spent-budget branch has a committed regression pin, and
     the terminate handler body is pinned functionally, not just by the
     call-site count.
+
+    fix-r30 (DS r29 sibling#3 + anthropic sibling#2, two lineages hit the
+    same gap): the four witness replay comparisons fix-r29 moved to
+    same_json carry their own drift pins here (processes, execWitness,
+    networkWitness, transcriptWitness), each with an equal-type control, so
+    a revert to bare ``==`` turns the bound negative-control case red.
     """
 
     @classmethod
@@ -2687,6 +2749,73 @@ class SameJsonSurfaces(unittest.TestCase):
             checked = self.native.checked_evidence('raw', {}, dict(ledger, cleanup={'allStopped': True}))
         self.assertTrue(checked['cleanup']['allStopped'] is True,
                         '#2039 cleanup allStopped stays True on equal type')
+
+    # fix-r30 (DS r29 sibling#3 + anthropic sibling#2, two lineages hit the
+    # same gap): the four witness replay comparisons fix-r29 moved to
+    # same_json had no regression pin -- reverting any one of them to bare
+    # ``==`` kept this class green.  Each pin drifts one JSON value into the
+    # boolean/number coercion channel (``True == 1``) in exactly the replay
+    # that comparison owns, and carries its own equal-type control so a red
+    # pin can only mean the strict walk was lost, never that healthy equal
+    # data stopped certifying.  parse_trace is patched for the same reason
+    # as the cleanup pin above.
+    def _witness_base(self):
+        return {'processes': [], 'execWitness': {'complete': True},
+                'networkWitness': {'complete': True},
+                'transcriptWitness': {'complete': True},
+                'cleanup': {'allStopped': True}}
+
+    def test_processes_replay_drift_is_not_coerced(self):
+        base = self._witness_base()
+        ledger = dict(base, processes=[{'pid': 1}])
+        drift = dict(base, processes=[{'pid': True}])
+        with patch.object(self.native, 'parse_trace', return_value=drift):
+            checked = self.native.checked_evidence('raw', {}, ledger)
+        self.assertTrue(checked['execWitness']['complete'] is False,
+                        'fix-r30 processes pid boolean drift must not coerce the exec replay')
+        with patch.object(self.native, 'parse_trace', return_value=dict(base, processes=[{'pid': 1}])):
+            checked = self.native.checked_evidence('raw', {}, ledger)
+        self.assertTrue(checked['execWitness']['complete'] is True,
+                        'fix-r30 equal-type processes replay keeps exec complete True')
+
+    def test_exec_witness_replay_drift_is_not_coerced(self):
+        base = self._witness_base()
+        ledger = dict(base, execWitness={'complete': True, 'events': [1]})
+        drift = dict(base, execWitness={'complete': True, 'events': [True]})
+        with patch.object(self.native, 'parse_trace', return_value=drift):
+            checked = self.native.checked_evidence('raw', {}, ledger)
+        self.assertTrue(checked['execWitness']['complete'] is False,
+                        'fix-r30 exec witness boolean drift must not coerce complete')
+        with patch.object(self.native, 'parse_trace', return_value=dict(base, execWitness={'complete': True, 'events': [1]})):
+            checked = self.native.checked_evidence('raw', {}, ledger)
+        self.assertTrue(checked['execWitness']['complete'] is True,
+                        'fix-r30 equal-type exec witness replay keeps complete True')
+
+    def test_network_witness_replay_drift_is_not_coerced(self):
+        base = self._witness_base()
+        ledger = dict(base, networkWitness={'complete': True, 'calls': [1]})
+        drift = dict(base, networkWitness={'complete': True, 'calls': [True]})
+        with patch.object(self.native, 'parse_trace', return_value=drift):
+            checked = self.native.checked_evidence('raw', {}, ledger)
+        self.assertTrue(checked['networkWitness']['complete'] is False,
+                        'fix-r30 network witness boolean drift must not coerce complete')
+        with patch.object(self.native, 'parse_trace', return_value=dict(base, networkWitness={'complete': True, 'calls': [1]})):
+            checked = self.native.checked_evidence('raw', {}, ledger)
+        self.assertTrue(checked['networkWitness']['complete'] is True,
+                        'fix-r30 equal-type network witness replay keeps complete True')
+
+    def test_transcript_witness_replay_drift_is_not_coerced(self):
+        base = self._witness_base()
+        ledger = dict(base, transcriptWitness={'complete': True, 'opens': [1]})
+        drift = dict(base, transcriptWitness={'complete': True, 'opens': [True]})
+        with patch.object(self.native, 'parse_trace', return_value=drift):
+            checked = self.native.checked_evidence('raw', {}, ledger)
+        self.assertTrue(checked['transcriptWitness']['complete'] is False,
+                        'fix-r30 transcript witness boolean drift must not coerce complete')
+        with patch.object(self.native, 'parse_trace', return_value=dict(base, transcriptWitness={'complete': True, 'opens': [1]})):
+            checked = self.native.checked_evidence('raw', {}, ledger)
+        self.assertTrue(checked['transcriptWitness']['complete'] is True,
+                        'fix-r30 equal-type transcript witness replay keeps complete True')
 
     def test_prelaunch_drift_is_not_coerced(self):
         # ``load_capture`` re-checks the launch contract against the prelaunch
@@ -5013,13 +5142,21 @@ class RetirementScoring(unittest.TestCase):
                  'PROCESS_WITNESS', 'wrong parent PID'),
                 ('process ppid float', ('evidence', 'processes', 0, 'ppid'), 1.0,
                  'PROCESS_WITNESS', 'wrong parent PID'),
+                ('process ppid zero', ('evidence', 'processes', 0, 'ppid'), 0,
+                 'PROCESS_WITNESS', 'wrong parent PID'),
+                ('process ppid oversized', ('evidence', 'processes', 0, 'ppid'), 2 ** 31,
+                 'PROCESS_WITNESS', 'wrong parent PID'),
                 ('event pid', ('evidence', 'execWitness', 'events', 0, 'pid'), True,
+                 'PROCESS_WITNESS', 'unknown process'),
+                ('event pid float', ('evidence', 'execWitness', 'events', 0, 'pid'), 1.0,
                  'PROCESS_WITNESS', 'unknown process'),
                 ('event ppid', ('evidence', 'execWitness', 'events', 0, 'ppid'), True,
                  'PROCESS_WITNESS', 'child exec before parent'),
                 ('egress ownerPid', ('evidence', 'networkWitness', 'calls', 0, 'ownerPid'),
                  True, 'HIDDEN_HELPER', 'undeclared helper'),
                 ('contract launcherPid', ('contract', 'launcherPid'), True,
+                 'PROCESS_WITNESS', 'contract launcher pid'),
+                ('contract launcherPid float', ('contract', 'launcherPid'), 1.0,
                  'PROCESS_WITNESS', 'contract launcher pid'),
             )
             for tag, channel_path, value, rule, detail in channels:
@@ -5034,6 +5171,43 @@ class RetirementScoring(unittest.TestCase):
             with self.assertRaises(self.session.EvidenceError) as raised:
                 self.session.audit_native(case['evidence'], case['contract'])
             self.assertEqual(raised.exception.rule, 'EMPTY_OBSERVER', raised.exception)
+
+            # fix-r30 (DS r29 sibling#1 P1 — the same boolean/float collapse
+            # channel the pid gates above close, on the count they missed):
+            # ``isinstance(True, int)`` and ``True == 1`` let a corrupt
+            # ``{"connections": true}``/``1.0`` observer document or contract
+            # pass CONNECTIONS by value.  The gate sits behind EMPTY_OBSERVER,
+            # so these channels run on a witnessed variant — one synthetic
+            # observer row shaped only as far as CONNECTIONS needs.  The
+            # equal-type control gets past CONNECTIONS and stops honestly on
+            # the later OBSERVER_WIRE gate the minimal row does not satisfy.
+            witnessed = json.loads(json.dumps(base))
+            witnessed['evidence']['observer']['rows'] = [
+                {'connection': 1, 'direction': 'send', 'frame': 'text'}]
+            witnessed['evidence']['observer']['connections'] = 1
+            for tag, channel_path, value in (
+                    ('observer connections boolean', ('evidence', 'observer', 'connections'), True),
+                    ('observer connections float', ('evidence', 'observer', 'connections'), 1.0),
+                    ('contract connections boolean', ('contract', 'connections'), True),
+                    ('contract connections float', ('contract', 'connections'), 1.0),
+                    ('contract connections negative', ('contract', 'connections'), -1)):
+                case = json.loads(json.dumps(witnessed))
+                node = case[channel_path[0]]
+                for key in channel_path[1:-1]:
+                    node = node[key]
+                node[channel_path[-1]] = value
+                with self.assertRaises(self.session.EvidenceError) as raised:
+                    self.session.audit_native(case['evidence'], case['contract'])
+                self.assertEqual(raised.exception.rule, 'CONNECTIONS',
+                                 f'fix-r30 {tag}: {raised.exception}')
+                self.assertIn('connection count mismatch', str(raised.exception),
+                              f'fix-r30 {tag}')
+            with self.assertRaises(self.session.EvidenceError) as raised:
+                self.session.audit_native(json.loads(json.dumps(witnessed['evidence'])),
+                                          dict(witnessed['contract']))
+            self.assertNotEqual(raised.exception.rule, 'CONNECTIONS',
+                                'fix-r30 equal-type connections pass the CONNECTIONS gate, '
+                                f'not {raised.exception}')
 
     def test_forwarding_control_normalizes_a_corrupt_rows_sample_before_injection(self):
         # fix-r29 (DS r28-b simplify#2 P2, read as P1 by the P2b rule — the
