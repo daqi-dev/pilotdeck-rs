@@ -2542,11 +2542,14 @@ def _spells_a_repository_path(node, constants, seen=()):
     """Whether the *value* of ``node`` is a repository path, not data about one.
 
     Only the value-producing spine is followed: ``str(...)`` / ``Path(...)``
-    wrappers, ``/`` joins, ``.resolve()`` / ``.parent`` and module constants.
-    A call that merely takes a repository path as one of its arguments —
-    ``difflib.unified_diff(..., fromfile=str(SOURCE))``, ``sorted(unknown)``
-    next to a source path — hands back text or a list, not the path, and must
-    not read as a path join.
+    wrappers, ``/`` joins, bare attribute chains such as ``.parent`` and
+    module constants. A *method call* breaks the chain: ``.resolve()`` is
+    not followed (a documented blind class — the README's follow-up list
+    registers the ``__file__``-derived ``sys.path`` insertion spellings that
+    ride on it, r37), and a call that merely takes a repository path as one
+    of its arguments — ``difflib.unified_diff(..., fromfile=str(SOURCE))``,
+    ``sorted(unknown)`` next to a source path — hands back text or a list,
+    not the path, and must not read as a path join.
     """
     if isinstance(node, ast.Name):
         if node.id in ROOT_NAMES or node.id == '__file__':
@@ -3073,6 +3076,104 @@ def _bare_tail(node, constants, seen=(), aliases=None):
     return False
 
 
+def _tail_spells_a_relative_directory(node, constants, seen=(), aliases=None):
+    """Whether the last path component is a relative literal that is not bare.
+
+    ``SMS / 'runtime/memory/gateway.rs'`` and ``SMS / '../x.rs'`` both end in
+    a literal that carries separators. The first spells its directory inline,
+    so the host's ``git grep -F`` still finds the key in the text; the second's
+    separators normalise away (``'./x.rs'``, ``'x.rs/'``, ``'a/../x.rs'`` the
+    same) and the key exists nowhere the host can grep. Telling the two apart
+    is ``resolve``'s job, against the table's own text; this predicate only
+    admits the family so the join is *evaluated* instead of dropped at the
+    shape gate (r37, review P0 — the gate used to make both spellings silent).
+    An inline spelling that still spells its own last two components
+    (``'runtime/memory/gateway.rs'``) stays outside: the host greps the text
+    and finds the key there, so the historic silence is correct. A literal
+    must carry a ``/``: a lone ``..`` or a backslash-only spelling has nothing
+    for the runtime to normalise away and keeps its historic reading.
+    Absolute and drive-prefixed literals stay outside too: their reset
+    semantics keep the historic silence. The traversal mirrors ``_bare_tail``
+    statement for statement so the two predicates admit the same spellings.
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        # A separator must be present for the literal to be this family at
+        # all: a lone ``..`` or a backslash-only spelling has no ``/`` for the
+        # runtime to normalise away, so it keeps its historic reading.
+        if ('/' not in node.value or node.value.startswith('/')
+                or _is_drive_prefixed(node.value)):
+            return False
+        parts = tuple(part for part in node.value.split('/')
+                      if part not in ('', '.'))
+        collapsed = _collapsed_segments(parts)
+        if collapsed and collapsed[0] == '..':
+            # A leading parent climbs into the join's base, so the key's
+            # directory comes from outside the tail and the tail alone can
+            # never spell it (``'../x.rs'`` under ``…/channel/sms`` keys
+            # ``channel/x.rs``).
+            return True
+        if len(collapsed) < 2:
+            # ``'./mod.rs'``, ``'mod.rs/'`` and ``'a/../mod.rs'`` all
+            # normalise to a bare file name: the key's directory is the
+            # base's last component, which the tail never spells.
+            return True
+        # ``'runtime/memory/gateway.rs'`` keeps spelling its own last two
+        # components, so the host's ``git grep -F`` still finds the key in
+        # the text and the join keeps the historic silence; only a tail
+        # whose ``..`` folding makes its own last two components a string
+        # the text does not spell (``'a/b/../c.rs'`` keys ``a/c.rs``)
+        # joins the recorded family.
+        return '/'.join(collapsed[-2:]) not in node.value
+    if isinstance(node, ast.Name):
+        if node.id in seen or node.id not in constants:
+            return False
+        return _tail_spells_a_relative_directory(
+            constants[node.id], constants, seen + (node.id,), aliases)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        return _tail_spells_a_relative_directory(node.right, constants, seen,
+                                                  aliases)
+    if isinstance(node, ast.Call):
+        func = node.func
+        if isinstance(func, ast.Name):
+            if func.id == 'Path':
+                return bool(node.args) and _tail_spells_a_relative_directory(
+                    node.args[-1], constants, seen, aliases)
+            if _qualified_spelling(func, aliases) in _STDLIB_JOIN_CALLS:
+                tail = _joined_tail(node) if node.args else None
+                return (tail is not None
+                        and _tail_spells_a_relative_directory(
+                            tail, constants, seen, aliases))
+        if isinstance(func, ast.Attribute):
+            if func.attr in ('joinpath', 'with_name'):
+                return bool(node.args) and _tail_spells_a_relative_directory(
+                    node.args[-1], constants, seen, aliases)
+            if (func.attr == 'join'
+                    and _qualified_spelling(func, aliases) in _FILESYSTEM_JOIN_CALLS):
+                tail = _joined_tail(node)
+                return (tail is not None
+                        and _tail_spells_a_relative_directory(
+                            tail, constants, seen, aliases))
+            if func.attr in PATH_CALL_ATTRS:
+                return _tail_spells_a_relative_directory(
+                    func.value, constants, seen, aliases)
+    return False
+
+
+def _ends_in_a_literal_tail(node, constants, aliases=None):
+    """Whether a join ends in a literal the scanner can judge, bare or not.
+
+    ``_bare_tail`` alone is the shape of a key that *must* be anchored; adding
+    the relative-directory literal admits the joins whose separators might
+    normalise away, so ``resolve`` can compare the derived key against the
+    table text and decide between recording (the key is not greppable) and the
+    historic inline silence (it is). Callers that only want the must-anchor
+    shapes keep using ``_bare_tail`` directly.
+    """
+    return (_bare_tail(node, constants, aliases=aliases)
+            or _tail_spells_a_relative_directory(node, constants,
+                                                  aliases=aliases))
+
+
 def _qualified_spelling(node, aliases):
     """The dotted spelling of an expression with its head resolved by import.
 
@@ -3195,7 +3296,7 @@ def _is_path_shape(node, constants, aliases=None):
         return True
     if isinstance(node, ast.BinOp):
         if isinstance(node.op, ast.Div):
-            return _bare_tail(node, constants, aliases=aliases)
+            return _ends_in_a_literal_tail(node, constants, aliases=aliases)
         return _joins_a_path_string(node, constants)   # ``+`` / ``%`` with a path literal
     if isinstance(node, ast.JoinedStr):
         return _joins_a_path_string(node, constants)
@@ -3204,19 +3305,24 @@ def _is_path_shape(node, constants, aliases=None):
         if isinstance(func, ast.Name):
             qualified = _qualified_spelling(func, aliases)
             if qualified in ('Path', 'pathlib.Path'):
-                return bool(node.args) and _bare_tail(node, constants, aliases=aliases)
+                return bool(node.args) and _ends_in_a_literal_tail(
+                    node, constants, aliases=aliases)
             if qualified in _STDLIB_JOIN_CALLS:
                 # ``from os.path import join as j``: a bare name is the same
                 # filesystem join as the dotted spelling (r25, review P2a).
                 tail = _joined_tail(node) if node.args else None
-                return tail is not None and _bare_tail(tail, constants, aliases=aliases)
+                return (tail is not None
+                        and _ends_in_a_literal_tail(tail, constants,
+                                                     aliases=aliases))
             return False
         if isinstance(func, ast.Attribute):
             if func.attr in PATH_CALL_ATTRS:
-                return _bare_tail(node, constants, aliases=aliases)
+                return _ends_in_a_literal_tail(node, constants, aliases=aliases)
             if func.attr == 'join':
                 tail = _joined_tail(node) if node.args else None
-                return tail is not None and _bare_tail(tail, constants, aliases=aliases)
+                return (tail is not None
+                        and _ends_in_a_literal_tail(tail, constants,
+                                                     aliases=aliases))
             if func.attr in ('format', 'format_map'):
                 value = _string_value(func.value, constants)
                 return value is not None and _path_literal_ending_in_file(value)
@@ -3412,7 +3518,34 @@ def _shared_module_keys(tree, root=FIXTURES, table_dir=()):
     return keys
 
 
-def bare_concat_keys(tree, table, root=FIXTURES):
+def _text_without_anchor_declarations(text, tree):
+    """The table's text with the ``DISCOVERY_ANCHORS`` assignments removed.
+
+    The declarations exist precisely to put the discovery keys into the text
+    the host greps, so reading the raw text would make every recorded key
+    look greppable and drop the requirement the moment it is satisfied
+    (r37): the greppability question the last-operand rule asks is whether
+    the key is spelled anywhere *else*. Whole spanned lines are dropped — a
+    statement sharing a line with a declaration loses its text too, which
+    can only record more, never less.
+    """
+    lines = text.splitlines(keepends=True)
+    drop = set()
+    for statement in tree.body:
+        targets = []
+        if isinstance(statement, ast.Assign):
+            targets = statement.targets
+        elif isinstance(statement, (ast.AnnAssign, ast.AugAssign)):
+            targets = [statement.target]
+        if not any(isinstance(target, ast.Name)
+                   and target.id == 'DISCOVERY_ANCHORS' for target in targets):
+            continue
+        drop.update(range(statement.lineno, statement.end_lineno + 1))
+    return ''.join(line for number, line in enumerate(lines, start=1)
+                   if number not in drop)
+
+
+def bare_concat_keys(tree, table, root=FIXTURES, text=''):
     """``({key: [source expression, ...]}, problems)`` for one table.
 
     A key is the discovery key ``dir/file`` of a path the table builds from a
@@ -3421,9 +3554,17 @@ def bare_concat_keys(tree, table, root=FIXTURES):
     literal tuple. Every path shape the scanner cannot resolve is reported, so a
     table that hides its directory behind an unsupported expression fails the
     guard instead of quietly passing it.
+
+    ``text`` is the table's own source; the last-join-operand rule below reads
+    it (minus the ``DISCOVERY_ANCHORS`` declarations themselves) to tell "the
+    key is spelled in the file, so the host's ``git grep -F`` finds it" from
+    "the tail's separators normalise away, so the text never spells the key".
+    An empty ``text`` (the default) records instead of staying silent —
+    fail-closed when a caller has no text to compare with.
     """
     self_path = (FIXTURES_FROM_ROOT + tuple(table.split('/')) if root == FIXTURES
                  else tuple(table.split('/')))
+    text = _text_without_anchor_declarations(text, tree)
     constants = _constants(tree)
     unfollowable = _unfollowable_module_names(tree, constants)
     local_ambiguous = _ambiguous_local_names(tree, constants)
@@ -3644,11 +3785,29 @@ def bare_concat_keys(tree, table, root=FIXTURES):
             report_unresolvable(expression)
             return False
         if not _bare_tail(node, constants, aliases=aliases):
-            # The directory is spelled inline, so the key is findable in the
-            # file text — unless the key itself carries whitespace, in which
-            # case the host can never schedule it (see ``record``).
+            # The directory is *usually* spelled inline when the tail is not a
+            # bare component, so the key is findable in the file text — unless
+            # the key itself carries whitespace, in which case the host can
+            # never schedule it (see ``record``). It is not findable at all
+            # when the tail's own separators normalise away: ``SMS /
+            # '../x.rs'`` reads ``channel/x.rs`` and ``'./mod.rs'`` /
+            # ``'mod.rs/'`` / ``'a/../mod.rs'`` read ``sms/mod.rs``, none of
+            # which the text spells, so the host's ``git grep -F`` never
+            # hits and the row used to be neither keyed nor reported — the
+            # table silently lost its schedule (r37, review P0; the
+            # ``_collapsed_segments`` docstring's own leading-``..`` example
+            # was exactly this shape). Record whenever the normalised key is
+            # absent from the file text, which also covers an inline spelling
+            # whose ``..`` folds across the key's own two components; an
+            # inline spelling that still contains the key keeps today's
+            # silence, and so does a key the file spells anywhere else
+            # (another row's anchor, a comment — the host greps the whole
+            # file either way).
             if _key_contains_whitespace(node, constants, self_path, aliases):
                 report_whitespace_key(expression)
+                return False
+            if len(segments) >= 2 and '/'.join(segments[-2:]) not in text:
+                return record(segments, expression)
             return False
         return record(segments, expression)
 
@@ -4157,7 +4316,7 @@ def violations(text, table, anchors=None):
                         'and anchors cannot schedule it (only a change to the '
                         f'table file itself emits it): {table}')
         return problems
-    required, scan_problems = bare_concat_keys(tree, table)
+    required, scan_problems = bare_concat_keys(tree, table, text=text)
     problems.extend(problem for problem in scan_problems
                     if not problem.startswith('no discovery key'))
     for key in sorted(_shared_module_keys(tree, FIXTURES,
@@ -4217,7 +4376,7 @@ def sweep(root=FIXTURES):
             continue
         text = path.read_text(encoding='utf-8')
         tree = ast.parse(text)
-        keys, problems = bare_concat_keys(tree, rel, root=root)
+        keys, problems = bare_concat_keys(tree, rel, root=root, text=text)
         for key in _shared_module_keys(tree, root, tuple(rel.split('/')[:-1])):
             # A table that imports a shared helper is scheduled for changes to
             # that helper only if the helper's key occurs in its own text; the
@@ -6795,6 +6954,70 @@ class DiscoveryAnchorTests(unittest.TestCase):
                                 '#2133-r34 the registered dynamic-import '
                                 f'closure shape {label!r} reports: {problems}')
 
+    def test_the_registered_resolved_sys_path_insertion_stays_silent(self):
+        """The registered ``.resolve()`` sys.path insertion shapes keep their silence.
+
+        ``_spells_a_repository_path`` follows only bare attribute chains (a
+        method call breaks the chain), so ``sys.path.insert(0, str(Path(
+        __file__).resolve().parents[1]))`` — the shape dozens of real tables
+        use to reach a repository directory — yields no key and no report:
+        helper modules imported from that directory stay invisible to the
+        import closure, a false negative the r36 MiniMax review raised as
+        boundary P0. The chain-following family stopped per the arbitration
+        card (``state/decisions-20261109-2136-slice-family-arbitration.md``,
+        board 4f8de196d rule 15): no AST patch, the shapes are registered as
+        a blind class in the README's follow-up list (r37), and this pin
+        holds the current behaviour. A change in *either* direction —
+        following the method chain and reporting the insertion, or keying
+        the directory — must turn this red and reopen the registration, not
+        drift past it. The equivalent ``.parent`` and ``/`` spellings *do*
+        report (counter-controls below), so the register cannot silently
+        widen to cover this family either.
+        """
+        shapes = {
+            'resolve then parents': (
+                "import sys\n"
+                "sys.path.insert(0, "
+                "str(Path(__file__).resolve().parents[1]))\n"
+                "import negative_control\n"),
+            'resolve alone': (
+                "import sys\n"
+                "sys.path.insert(0, str(Path(__file__).resolve()))\n"
+                "import negative_control\n"),
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = (
+                    "from pathlib import Path\n"
+                    "DISCOVERY_ANCHORS = ()\n" + body
+                )
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(problems == [],
+                                '#2133-r37 the registered resolved sys.path '
+                                f'insertion shape {label!r} reports: '
+                                f'{problems}')
+        counter_controls = {
+            'parent chain': (
+                "import sys\n"
+                "sys.path.insert(0, str(Path(__file__).parent))\n"),
+            'join spelling': (
+                "import sys\n"
+                "FIXTURES = Path(__file__).resolve().parents[1]\n"
+                "sys.path.insert(0, str(FIXTURES / '_shared'))\n"),
+        }
+        for label, body in counter_controls.items():
+            with self.subTest(counter=label):
+                synthetic = (
+                    "from pathlib import Path\n"
+                    "DISCOVERY_ANCHORS = ()\n" + body
+                )
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(
+                    any('unsupported sys.path insertion' in problem
+                        for problem in problems),
+                    '#2133-r37 the counter-control shape '
+                    f'{label!r} stopped reporting: {problems}')
+
     def test_an_import_cycle_terminates(self):
         """Two helpers importing each other must not loop the walk."""
         with tempfile.TemporaryDirectory() as workspace:
@@ -7673,6 +7896,110 @@ class DiscoveryAnchorTests(unittest.TestCase):
         self.assertTrue(
             any('missing anchor: tmp/mod.rs' in problem for problem in problems),
             problems)
+
+    def test_a_separator_bearing_tail_that_normalises_away_is_keyed(self):
+        """``SMS / '../x.rs'`` keys ``channel/x.rs`` — it used to key nothing.
+
+        The last operand of a join carrying a separator was dropped at the
+        shape gate whatever its runtime meaning, so ``'../x.rs'``,
+        ``'./mod.rs'``, ``'mod.rs/'`` and ``'a/../mod.rs'`` built real files
+        whose discovery keys the text never spells, and the host's
+        ``git grep -F`` could not schedule the table: neither keyed nor
+        reported, a silent hole (r37, review P0 — the
+        ``_collapsed_segments`` docstring's own ``SMS / '../x.rs'`` example
+        was exactly the missed shape). The pathlib spellings now record the
+        normalised key; declaring it turns the table green and puts the key
+        in the text where the host greps.
+        """
+        cases = {
+            ('leading parent', 'division'): ('../x.rs', 'channel/x.rs'),
+            ('leading parent', 'Path'): ('../x.rs', 'channel/x.rs'),
+            ('leading parent', 'joinpath'): ('../x.rs', 'channel/x.rs'),
+            ('leading dot', 'division'): ('./mod.rs', 'sms/mod.rs'),
+            ('leading dot', 'Path'): ('./mod.rs', 'sms/mod.rs'),
+            ('leading dot', 'joinpath'): ('./mod.rs', 'sms/mod.rs'),
+            ('trailing separator', 'division'): ('mod.rs/', 'sms/mod.rs'),
+            ('trailing separator', 'Path'): ('mod.rs/', 'sms/mod.rs'),
+            ('trailing separator', 'joinpath'): ('mod.rs/', 'sms/mod.rs'),
+            ('internal parent', 'division'): ('a/../mod.rs', 'sms/mod.rs'),
+            ('internal parent', 'Path'): ('a/../mod.rs', 'sms/mod.rs'),
+            ('internal parent', 'joinpath'): ('a/../mod.rs', 'sms/mod.rs'),
+            ('folded across components', 'division'): ('a/b/../c.rs', 'a/c.rs'),
+            ('folded across components', 'Path'): ('a/b/../c.rs', 'a/c.rs'),
+        }
+        for (shape, spelling), (tail, key) in cases.items():
+            with self.subTest(shape=shape, spelling=spelling):
+                expression = {
+                    'division': f'SMS / {tail!r}',
+                    'Path': f'Path(SMS, {tail!r})',
+                    'joinpath': f'SMS.joinpath({tail!r})',
+                }[spelling]
+                header = (
+                    "from pathlib import Path\n"
+                    "ROOT = Path(__file__).resolve().parents[5]\n"
+                    "SMS = ROOT / 'src/pilotdeck-gateway/src/channel/sms'\n"
+                    "DISCOVERY_ANCHORS = ()\n"
+                )
+                problems = violations(header + f'rows = [{expression}]\n',
+                                      'example/negative_controls.py')
+                self.assertTrue(
+                    any(f'missing anchor: {key} ' in problem
+                        for problem in problems),
+                    f'#2133-r37 {shape} via {spelling} must demand the '
+                    f'normalised key {key}: {problems}')
+                declared = (header.replace('DISCOVERY_ANCHORS = ()',
+                                           f'DISCOVERY_ANCHORS = ({key!r},)')
+                            + f'rows = [{expression}]\n')
+                self.assertIn(key, declared)
+                self.assertEqual(violations(declared,
+                                           'example/negative_controls.py'), [],
+                                 f'#2133-r37 {shape} via {spelling} with the '
+                                 f'anchor declared: '
+                                 f'{violations(declared, "example/negative_controls.py")}')
+
+    def test_a_stdlib_join_with_a_separator_bearing_tail_reports(self):
+        """``os.path.join(SMS, '../x.rs')`` reports instead of staying silent.
+
+        The pathlib spellings of the r37 family record the normalised key;
+        this scanner cannot resolve a filesystem join whose base is a
+        ``Path`` object, so the same tail there fails closed as an
+        unresolvable repository path — never the silent drop the shape gate
+        used to apply before r37.
+        """
+        for tail in ('../x.rs', './mod.rs', 'mod.rs/', 'a/../mod.rs'):
+            with self.subTest(tail=tail):
+                synthetic = (
+                    "import os\n"
+                    "from pathlib import Path\n"
+                    "ROOT = Path(__file__).resolve().parents[5]\n"
+                    "SMS = ROOT / 'src/pilotdeck-gateway/src/channel/sms'\n"
+                    "DISCOVERY_ANCHORS = ()\n"
+                    f"rows = [os.path.join(SMS, {tail!r})]\n"
+                )
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(
+                    any('unresolvable repository path' in problem
+                        for problem in problems),
+                    f'#2133-r37 os.path.join(SMS, {tail!r}) must not be '
+                    f'silent: {problems}')
+
+    def test_an_inline_directory_spelling_keeps_its_historic_silence(self):
+        """``SOURCE / 'runtime/memory/gateway.rs'`` needs no anchor.
+
+        The r37 widening admits separator-bearing tails so the normalising
+        family is keyed, but a tail that still spells its own last two
+        components keeps the historic silence: the host's ``git grep -F``
+        finds the key in the text, and demanding an anchor would fail every
+        inline spelling in the tree (the first cut of the fix did exactly
+        that to five real tables).
+        """
+        synthetic = (
+            "from pathlib import Path\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [ROOT / 'src/pilotdeck-gateway/src/channel/sms/mod.rs']\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
 
     def test_a_parent_component_inside_a_relative_join_is_normalised(self):
         """``os.path.join(SMS, 'sms/..', 'mod.rs')`` is ``SMS/mod.rs``.
