@@ -346,6 +346,9 @@ impl Requests {
         let skill = SkillMethod::from_wire(method).ok_or_else(unavailable)?;
         let mut options =
             SkillManagerOptions::new(self.options.home.to_string_lossy().into_owned());
+        options.builtin_skills_root =
+            super::assembly::explicit_builtin_skills_root(&self.options, &self.env)
+                .map(|root| root.to_string_lossy().into_owned());
         options.env = Some(self.env.clone());
         options.home_dir = Some(self.options.home.to_string_lossy().into_owned());
         let snapshot = context.snapshot();

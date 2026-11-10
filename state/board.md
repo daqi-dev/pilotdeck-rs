@@ -5855,3 +5855,6 @@ r76 fmt/strict clippy/四bin及35历史定向通过；已落盘r72四生产宿�
 
 
 04:40增记：59e的19渠道/SOP与七外部渠道在途reload已采到真实终态屏障；#1356固定TS源码→Rust新写→TS读回→Rust再写/冷读正常格通过，真实WS排空失败格禁止下一writer且新数据保全，TS回滚仅Cron格式重写/迁移marker新增明确留证。59e公开101真实wire已调用（75成功/6不可用/20其他显式错误保留），不冒称101功能全PASS；完整Gateway lib仍在cb8运行，随后CLI。两家产品r2发现技能清单/旧npm默认/物理exe安装路径与oracle复算出口遗漏，root已收清单来源及取消锚点修复，core补其余；Linux9件旧消费者修复已commit0a266fdaa，r2两家在跑，冻结尚未登记。native on/off均因默认浏览器MCP失败exec而INCOMPLETE，原trace保留；7b979ff9d使受控profile显式禁三builtin，不改72判据/parser，默认MCP另验。渠道身份/附件候选eba6bf041与技能完整性456fedfb4待新头构建。本轮核main8a总差异又发现两份已合入决策卡缺失，现按原字节补回，历史决策不丢；无产品文件删除。主线/前端/旧快照未迁移，本机无构建；接续证据主仓_tmp/20261111-gateway-closeout。
+
+
+05:14增记：59e完整Gateway lib6202PASS/8FAIL/254ignored；7SMS为宿主固定端口冲突，同59e隔离Docker单/四线程均7PASS，原FAIL不覆写；default-mode精确排除新增显式helper已提交待新头测试。CLI宿主guard因ptrace74中止，隔离同59e54PASS/2辅助ignored。150入口均BOUND到59e真实原件但NOT_EVALUATED，真实HTTP发现module-host两路未装配而落SPA；现补生产六cap（skills/model catalog/prepare/stream/file/SOP）及独立请求取消，cb8候选严格clippy/四bin通过，刚收catalog新测试待编译。MuPDF0.8从源码构建，TS1.27.0/Rust引擎1.27.2有已测PDF样本一致但不宣称全域；大base64栈错差异仍pending。Linux r3七件3c01238e0已收，11正控/18锁释放/聚合与14受影响真负控/237锚点通过，正式committed HEAD all、固定TS k5及FROZEN登记仍待；两谱系r3并行审。MCP/技能/渠道修复两谱系产品r3在审。下一步同头新HTTP/取消/渠道/MCP测试、正式校准及host/session/retirement，不混算旧头。证据主仓_tmp/20261111-gateway-closeout与三个finish包；本机零构建、原统一树/前端/快照未动。

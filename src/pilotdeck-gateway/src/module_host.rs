@@ -4,19 +4,11 @@
 //! the wire client). This is the #1349 component: it replicates the TS
 //! `publicHostHttpTransport.ts` (baseline cc7c4e6) transport cell by cell but
 //! answers from the Rust host itself, so no TS process participates. It is
-//! not wired into `native_process` dispatch yet (#1305 owns the wiring); a
-//! caller composes it in front of its own routing and treats `None` as "not
-//! handled" — TS `handlePublicHostHttpRequest` returning `false`.
-//!
-//! Cells deliberately not modeled: the `resolve` callback throwing or
-//! rejecting (TS injects a function; the Rust provider is an injected `Arc`,
-//! so the channel does not exist), the `req`-aborted/`res`-close
-//! AbortController wiring (it is bound to the real socket lifecycle the
-//! native listener owns — the #1250 lane — and the 499
-//! `PUBLIC_HOST_CANCELLED` provider response is covered as a plain
-//! response), and `res` errors after headers were flushed, which the TS
-//! catch answers by destroying the socket; here the same zero-terminator
-//! close is the hyper body error the streaming cells replay.
+//! mounted by the native production listener before static routing. The
+//! resolver selects the authenticated principal's project generation and may
+//! reject a binding before advertising or calling a capability. Stream receiver
+//! cancellation belongs to the production model port; the transport preserves
+//! its status, headers and streamed body without a TypeScript fallback.
 //!
 //! Transport-level byte divergences of the hyper codec are the ones the
 //! A8.4-NATIVE-HTTP-001 ledger entry already registers for this listener
@@ -27,10 +19,10 @@
 //! `400 Connection: close` (measured, oracle cell `premature-close`), which
 //! hyper renders as the handler-error zero-byte close — the transport itself
 //! writes nothing in either stack.
-// The component is not wired into `native_process` dispatch yet (#1305 owns
-// the wiring), so outside the test build nothing constructs it.
+// Some fixture-only provider and serialization cells remain available for the
+// complete transport contract; production installs its project-bound provider.
 #![cfg_attr(not(test), allow(dead_code))]
-use crate::{Body, metadata, model_catalog::trim};
+use crate::{Body, ProxyError, metadata, model_catalog::trim};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
@@ -111,6 +103,7 @@ const FLUSH_PAUSE: Duration = Duration::from_millis(1);
 /// scripted resolver's scenario) or nothing, and consuming the remaining
 /// fields — the TS runtime adapter threads `options.principal` into its
 /// runtime calls — belongs to the #1305 wiring lane.
+#[derive(Clone)]
 pub(crate) struct PublicHostPrincipal {
     // Validated and forwarded, but nothing in this crate reads them yet:
     // the TS runtime adapter threads `options.principal` into its runtime
@@ -176,13 +169,25 @@ pub(crate) trait PublicHostProvider: Send + Sync {
         input: &JsValue,
         principal: &PublicHostPrincipal,
     ) -> Pin<Box<dyn Future<Output = Result<HostResponse, HostFailure>> + Send + '_>>;
+    fn call_with_signal(
+        &self,
+        operation: &str,
+        input: &JsValue,
+        principal: &PublicHostPrincipal,
+        _signal: crate::runtime::model::router::AbortFlag,
+    ) -> Pin<Box<dyn Future<Output = Result<HostResponse, HostFailure>> + Send + '_>> {
+        self.call(operation, input, principal)
+    }
 }
 
 /// The TS `resolve(principal)` seam: the provider is chosen per request from
 /// the validated principal. An absent resolver (a `Config` without
 /// `capabilities`) is the transport's 501.
+pub(crate) type HostResolveFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Arc<dyn PublicHostProvider>, HostFailure>> + Send + 'a>>;
+
 pub(crate) trait PublicHostResolver: Send + Sync {
-    fn resolve(&self, principal: &PublicHostPrincipal) -> Arc<dyn PublicHostProvider>;
+    fn resolve(&self, principal: &PublicHostPrincipal) -> HostResolveFuture<'_>;
 }
 
 /// The transport's routing inputs: the bearer token and the optional
@@ -308,7 +313,10 @@ pub(crate) async fn serve(
             version,
         )));
     };
-    let provider = resolver.resolve(&principal);
+    let provider = match resolver.resolve(&principal).await {
+        Ok(provider) => provider,
+        Err(failure) => return Some(Ok(finalize(failure_response(failure, keep_alive), version))),
+    };
     let operations = if crate::mutants::on("module-host-describe-filter-off") {
         provider.operations()
     } else {
@@ -374,37 +382,23 @@ pub(crate) async fn serve(
             version,
         )));
     }
-    let response = match provider.call(&operation, &call_input, &principal).await {
+    let signal = crate::runtime::model::router::AbortFlag::new();
+    let cancel = CancelHostCall(signal.clone());
+    let response = match provider
+        .call_with_signal(&operation, &call_input, &principal, signal)
+        .await
+    {
         Ok(response) => response,
-        Err(failure) => {
-            let code = failure.code.unwrap_or_else(|| {
-                if crate::mutants::on("module-host-failure-default-off") {
-                    String::new()
-                } else {
-                    "PUBLIC_HOST_TRANSPORT_FAILED".to_owned()
-                }
-            });
-            let body = match &failure.message {
-                Some(message) => format!(
-                    "{{\"code\":{},\"message\":{}}}",
-                    json_text(&code),
-                    json_text(message)
-                ),
-                None => format!("{{\"code\":{}}}", json_text(&code)),
-            };
-            return Some(Ok(finalize(
-                send_json(
-                    hyper::StatusCode::from_u16(failure.status.unwrap_or(502))
-                        .unwrap_or(hyper::StatusCode::BAD_GATEWAY),
-                    &body,
-                    keep_alive,
-                ),
-                version,
-            )));
-        }
+        Err(failure) => return Some(Ok(finalize(failure_response(failure, keep_alive), version))),
     };
     Some(Ok(finalize(
-        provider_response(response, keep_alive),
+        provider_response(response, keep_alive).map(|body| {
+            HostCallBody {
+                body,
+                _cancel: cancel,
+            }
+            .boxed()
+        }),
         version,
     )))
 }
@@ -1227,8 +1221,9 @@ pub(crate) struct CatalogPort {
 pub(crate) struct ModuleHostResolver(pub(crate) Arc<ModuleHostPorts>);
 
 impl PublicHostResolver for ModuleHostResolver {
-    fn resolve(&self, _principal: &PublicHostPrincipal) -> Arc<dyn PublicHostProvider> {
-        Arc::clone(&self.0) as Arc<dyn PublicHostProvider>
+    fn resolve(&self, _principal: &PublicHostPrincipal) -> HostResolveFuture<'_> {
+        let provider = Arc::clone(&self.0) as Arc<dyn PublicHostProvider>;
+        Box::pin(async move { Ok(provider) })
     }
 }
 
@@ -1512,3 +1507,56 @@ pub(crate) mod approvals;
 
 #[cfg(test)]
 mod tests;
+
+fn failure_response(failure: HostFailure, keep_alive: bool) -> hyper::Response<Body> {
+    let code = failure.code.unwrap_or_else(|| {
+        if crate::mutants::on("module-host-failure-default-off") {
+            String::new()
+        } else {
+            "PUBLIC_HOST_TRANSPORT_FAILED".to_owned()
+        }
+    });
+    let body = match &failure.message {
+        Some(message) => format!(
+            "{{\"code\":{},\"message\":{}}}",
+            json_text(&code),
+            json_text(message)
+        ),
+        None => format!("{{\"code\":{}}}", json_text(&code)),
+    };
+    send_json(
+        hyper::StatusCode::from_u16(failure.status.unwrap_or(502))
+            .unwrap_or(hyper::StatusCode::BAD_GATEWAY),
+        &body,
+        keep_alive,
+    )
+}
+
+/// Cancellation follows the HTTP work and then the response body. Dropping an
+/// unfinished handler or a disconnected stream cancels this request only.
+struct CancelHostCall(crate::runtime::model::router::AbortFlag);
+impl Drop for CancelHostCall {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+struct HostCallBody {
+    body: Body,
+    _cancel: CancelHostCall,
+}
+impl http_body::Body for HostCallBody {
+    type Data = Bytes;
+    type Error = ProxyError;
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<http_body::Frame<Bytes>, ProxyError>>> {
+        http_body::Body::poll_frame(Pin::new(&mut self.get_mut().body), cx)
+    }
+    fn is_end_stream(&self) -> bool {
+        http_body::Body::is_end_stream(&self.body)
+    }
+    fn size_hint(&self) -> http_body::SizeHint {
+        http_body::Body::size_hint(&self.body)
+    }
+}

@@ -1563,7 +1563,9 @@ fn native_sandbox_check_resolved_write(
             }
         }
     }
-    NativeSandbox::new(mode, temporary_root).check_write(&os_path(&root), target)
+    NativeSandbox::new(mode, temporary_root)
+        .check_write(&os_path(&root), target)
+        .map(|_| ())
 }
 
 pub mod plan_todo;

@@ -2,7 +2,7 @@
 //! `/auth/local-token`, the `/api/web` route group (#2354), static fallback,
 //! and the plain 404, aligned with the TS `GatewayServer.handleHttpRequest`
 //! (fixtures `native-http-basic` and `api-web`). Public approvals and
-//! module-host stay with TS, and the default proxy routing is untouched.
+//! module-host share this production listener; default proxy routing is untouched.
 //! Transport byte-level divergences
 //! (header name case, chunk-size case, the bare 400's `content-length: 0`,
 //! the HTTP/1.0 status line echo) and parse-layer divergences (target
@@ -114,6 +114,7 @@ pub(crate) struct Config {
     /// every non-gateway listener and frozen fixture still pins.
     pub api_web: Option<crate::api_web::Config>,
     pub approvals: Option<crate::module_host::approvals::Config>,
+    pub public_host: Option<crate::module_host::Config>,
 }
 
 /// Route one parsed non-upgrade request to its TS-equivalent response.
@@ -143,6 +144,14 @@ pub(crate) async fn serve_with_body(
         }
         if let Some(response) = crate::module_host::approvals::serve(&mut request, approvals).await
         {
+            return finish(version, response?);
+        }
+    }
+    if let Some(public_host) = &config.public_host {
+        if let Some(rejection) = node_parser_admission(&request)? {
+            return finish(version, rejection);
+        }
+        if let Some(response) = crate::module_host::serve(&mut request, public_host).await {
             return finish(version, response?);
         }
     }

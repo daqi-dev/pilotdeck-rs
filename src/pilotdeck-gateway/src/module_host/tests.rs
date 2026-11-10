@@ -339,10 +339,15 @@ fn recorded_half_close_panics_when_absent() {
 /// the one the describe-filter cells exercise.
 struct Scripted;
 impl PublicHostResolver for Scripted {
-    fn resolve(&self, principal: &PublicHostPrincipal) -> Arc<dyn PublicHostProvider> {
-        Arc::new(ScriptedProvider {
+    fn resolve(
+        &self,
+        principal: &PublicHostPrincipal,
+    ) -> Pin<Box<dyn Future<Output = Result<Arc<dyn PublicHostProvider>, HostFailure>> + Send + '_>>
+    {
+        let provider = Arc::new(ScriptedProvider {
             agent: principal.agent_id.to_utf8().unwrap_or_default(),
-        })
+        }) as Arc<dyn PublicHostProvider>;
+        Box::pin(async move { Ok(provider) })
     }
 }
 
@@ -1366,7 +1371,7 @@ async fn resolver_hands_back_the_installed_ports() {
     let (parent, ports) = ports_fixture();
     let resolver = ModuleHostResolver(Arc::clone(&ports));
     let principal = principal_fixture();
-    let resolved = resolver.resolve(&principal);
+    let resolved = resolver.resolve(&principal).await.unwrap();
     assert_eq!(
         resolved.operations(),
         ports.operations(),

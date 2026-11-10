@@ -109,6 +109,7 @@ impl NativeWsServer {
             control: None,
             api_web: None,
             approvals: None,
+            public_host: None,
         };
         Ok(Self {
             // Node's checker phase anchors at the 'listening' event; this
@@ -161,6 +162,11 @@ impl NativeWsServer {
     /// Mount the `/api/web` route group on this listener (#2354): the token
     /// is the same bearer the WS lane checks, and the catalog is the native
     /// metadata registry over the same home the WS lane reads.
+    pub(crate) fn with_public_host(mut self, config: crate::module_host::Config) -> Self {
+        self.http.public_host = Some(config);
+        self
+    }
+
     pub(crate) fn with_approvals(mut self, config: crate::module_host::approvals::Config) -> Self {
         self.http.approvals = Some(config);
         self

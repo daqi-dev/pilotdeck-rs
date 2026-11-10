@@ -16,6 +16,8 @@ workspace = true
 [dependencies]
 chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
 md-5 = "=0.10.6"
+# Fixed TS uses MuPDF; compile bundled C sources for the native PDF parser.
+mupdf = { version = "=0.8.0", default-features = false, features = ["base14-fonts", "bundled-fonts"] }
 pilotdeck-child-signals = { path = "../pilotdeck-child-signals" }
 base64 = "=0.22.1"
 libc = "=0.2.190"

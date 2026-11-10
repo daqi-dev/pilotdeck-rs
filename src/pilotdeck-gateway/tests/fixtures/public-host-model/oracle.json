@@ -1,0 +1,1298 @@
+{
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/composition/activeRuntimeModelPorts.ts": "1cda5a7ffeff2d33d761e6fc090d5a964a5d689cfdacd5bd3f6377c626a0db17",
+    "src/composition/publicHostRuntimeAdapter.ts": "9c00004d54385d3ae8f5a89db1b792d8acecc1fd59695a8c3e419a1b57335567",
+    "src/model/request/validateModelRequest.ts": "4971c82e3acb56df411f5a03ad5ee42eedce295b949225789b8423e607dae4d1",
+    "src/model/protocol/multimodal.ts": "92e9e0391a14230cf4c12c0f0dc38b73c8729ed3e083273c3043c1b5f283cc74"
+  },
+  "nodeVersions": {
+    "node": "22.22.0",
+    "icu": "78.2",
+    "uv": "1.52.1"
+  },
+  "config": {
+    "providers": {
+      "p": {
+        "id": "p",
+        "protocol": "openai",
+        "baseUrl": "http://127.0.0.1:9",
+        "models": {
+          "m": {
+            "id": "m",
+            "capabilities": {
+              "maxContextTokens": 8192,
+              "maxOutputTokens": 256,
+              "supportsStreaming": true,
+              "supportsSystemPrompt": true,
+              "supportsToolUse": true
+            },
+            "multimodal": {}
+          }
+        }
+      }
+    }
+  },
+  "cases": [
+    {
+      "case": "valid",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "unsupported_modality",
+          "message": "Model does not support text input.",
+          "details": {
+            "modality": "text"
+          }
+        }
+      }
+    },
+    {
+      "case": "budget-output-and-timeout",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        "budget": {
+          "maxOutputTokens": 64,
+          "timeoutMs": 17
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "unsupported_modality",
+          "message": "Model does not support text input.",
+          "details": {
+            "modality": "text"
+          }
+        }
+      }
+    },
+    {
+      "case": "fallback-model-id",
+      "input": {
+        "requestId": "req",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "model": "p/m"
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "unsupported_modality",
+          "message": "Model does not support text input.",
+          "details": {
+            "modality": "text"
+          }
+        }
+      }
+    },
+    {
+      "case": "concrete-request-model",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "model": "m"
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "unsupported_modality",
+          "message": "Model does not support text input.",
+          "details": {
+            "modality": "text"
+          }
+        }
+      }
+    },
+    {
+      "case": "trim-check-preserves-request-id",
+      "input": {
+        "requestId": "  req  ",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "unsupported_modality",
+          "message": "Model does not support text input.",
+          "details": {
+            "modality": "text"
+          }
+        }
+      }
+    },
+    {
+      "case": "request-not-object",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": []
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_request",
+          "message": "request must be an object"
+        }
+      }
+    },
+    {
+      "case": "budget-null",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        "budget": null
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_request",
+          "message": "request must be an object"
+        }
+      }
+    },
+    {
+      "case": "missing-model-id",
+      "input": {
+        "requestId": "req",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_request",
+          "message": "modelId is required"
+        }
+      }
+    },
+    {
+      "case": "blank-model-id",
+      "input": {
+        "requestId": "req",
+        "modelId": " ﻿",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_request",
+          "message": "modelId is required"
+        }
+      }
+    },
+    {
+      "case": "missing-request-id",
+      "input": {
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_request",
+          "message": "requestId is required"
+        }
+      }
+    },
+    {
+      "case": "unknown-model",
+      "input": {
+        "requestId": "req",
+        "modelId": "missing",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "model_not_available",
+          "message": "Selected model missing is not a single available catalog entry"
+        }
+      }
+    },
+    {
+      "case": "ambiguous-model",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          },
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "model_id_ambiguous",
+          "message": "Selected model p/m is not a single available catalog entry"
+        }
+      }
+    },
+    {
+      "case": "unavailable-model",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": false
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "model_not_available",
+          "message": "Selected model p/m is not a single available catalog entry"
+        }
+      }
+    },
+    {
+      "case": "request-model-mismatch",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "model": "other"
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "model_selection_mismatch",
+          "message": "request model differs from selected model"
+        }
+      }
+    },
+    {
+      "case": "request-provider-mismatch",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "provider": null
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "model_selection_mismatch",
+          "message": "provider differs from selected model"
+        }
+      }
+    },
+    {
+      "case": "max-input-unsupported",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        "budget": {
+          "maxInputTokens": 1
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "unsupported_budget",
+          "message": "maxInputTokens needs measured prompt tokens"
+        }
+      }
+    },
+    {
+      "case": "max-input-invalid",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        "budget": {
+          "maxInputTokens": 0
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_budget",
+          "message": "maxInputTokens must be a positive integer"
+        }
+      }
+    },
+    {
+      "case": "output-zero",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        "budget": {
+          "maxOutputTokens": 0
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_budget",
+          "message": "maxOutputTokens must be a positive integer"
+        }
+      }
+    },
+    {
+      "case": "output-null",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        "budget": {
+          "maxOutputTokens": null
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_budget",
+          "message": "maxOutputTokens must be a positive integer"
+        }
+      }
+    },
+    {
+      "case": "timeout-fractional",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        "budget": {
+          "timeoutMs": 0.5
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_budget",
+          "message": "timeoutMs must be a positive integer"
+        }
+      }
+    },
+    {
+      "case": "timeout-too-large",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        "budget": {
+          "timeoutMs": 9007199254740992
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_budget",
+          "message": "timeoutMs must be a positive integer"
+        }
+      }
+    },
+    {
+      "case": "output-over-cap",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        "budget": {
+          "maxOutputTokens": 257
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_budget",
+          "message": "maxOutputTokens exceeds selected model limit"
+        }
+      }
+    },
+    {
+      "case": "request-over-budget",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 65
+        },
+        "budget": {
+          "maxOutputTokens": 64
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_budget",
+          "message": "request maxOutputTokens exceeds budget"
+        }
+      }
+    },
+    {
+      "case": "request-output-string-preserved",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": "legacy"
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "unsupported_modality",
+          "message": "Model does not support text input.",
+          "details": {
+            "modality": "text"
+          }
+        }
+      }
+    },
+    {
+      "case": "request-output-fractional",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 0.5
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_budget",
+          "message": "maxOutputTokens exceeds selected model limit"
+        }
+      }
+    },
+    {
+      "case": "missing-messages",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {}
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_request",
+          "message": "messages must be a non-empty array"
+        }
+      }
+    },
+    {
+      "case": "messages-empty",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": []
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_request",
+          "message": "messages must be a non-empty array"
+        }
+      }
+    },
+    {
+      "case": "message-array",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            []
+          ]
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_request",
+          "message": "messages[0] must be an object"
+        }
+      }
+    },
+    {
+      "case": "system-role",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "system",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_request",
+          "message": "messages[0].role must be user or assistant"
+        }
+      }
+    },
+    {
+      "case": "content-string",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "hello"
+            }
+          ]
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_request",
+          "message": "messages[0].content must be a non-empty canonical block array"
+        }
+      }
+    },
+    {
+      "case": "content-empty",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": []
+            }
+          ]
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_request",
+          "message": "messages[0].content must be a non-empty canonical block array"
+        }
+      }
+    },
+    {
+      "case": "block-array",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                []
+              ]
+            }
+          ]
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_request",
+          "message": "messages[0].content[0] must be a canonical content block"
+        }
+      }
+    },
+    {
+      "case": "block-unknown",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "other"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_request",
+          "message": "messages[0].content[0] must be a canonical content block"
+        }
+      }
+    },
+    {
+      "case": "invalid-speed",
+      "input": {
+        "requestId": "req",
+        "modelId": "p/m",
+        "request": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "speed": 2
+        }
+      },
+      "catalog": {
+        "items": [
+          {
+            "id": "p/m",
+            "provider": "p",
+            "model": "m",
+            "available": true
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "code": "invalid_speed",
+          "message": "speed must be between 0 and 1."
+        }
+      }
+    }
+  ]
+}

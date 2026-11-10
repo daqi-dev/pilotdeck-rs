@@ -161,7 +161,14 @@ impl NativeSopControl {
     }
     async fn profile(&self, project: Option<&JsValue>) -> Result<Profile> {
         let (lease, snapshot) = self.snapshot(project).await?;
-        let config = value(value(value(&snapshot, "config"), "modules"), "sop").clone();
+        let store = Self::store_for_snapshot(&snapshot)?;
+        Ok(Profile {
+            _lease: lease,
+            store,
+        })
+    }
+    fn store_for_snapshot(snapshot: &JsValue) -> Result<DiskSopStore> {
+        let config = value(value(value(snapshot, "config"), "modules"), "sop").clone();
         if config.is_undefined() || matches!(config, JsValue::Null) {
             return Err(fail(
                 "SOP_MODULE_DISABLED",
@@ -173,10 +180,122 @@ impl NativeSopControl {
             .ok_or_else(|| plain("SOP stateRoot is unavailable."))?
             .to_utf8()
             .map_err(|_| plain("SOP stateRoot cannot be represented by this host."))?;
-        Ok(Profile {
-            _lease: lease,
-            store: DiskSopStore::new(PathBuf::from(state).join("sessions")),
+        Ok(DiskSopStore::new(PathBuf::from(state).join("sessions")))
+    }
+    async fn original_admission(
+        &self,
+        project: &JsString,
+        session: &JsString,
+    ) -> Result<Option<JsValue>> {
+        let home = self.options.home.clone();
+        let p = project.clone();
+        let id = session.clone();
+        blocking(move || {
+            let root = super::project_scope::resolve(&p).map_err(io_error)?;
+            let path = bounded_chat_dir(&home, &root)
+                .map_err(io_error)?
+                .join(format!(
+                    "{}.jsonl",
+                    crate::storage::sanitize_session_id(&id)
+                ));
+            let read = crate::storage::read_transcript_bounded(&path)
+                .map_err(|e| plain(e.to_string().as_str()))?;
+            if !read.read.diagnostics.is_empty() {
+                return Ok(None);
+            }
+            Ok(read_admission(&read.read.entries, &id))
         })
+        .await
+    }
+    async fn same_snapshot_admission(
+        &self,
+        project: &JsString,
+        snapshot: &JsValue,
+        original: &JsValue,
+    ) -> Result<bool> {
+        let user = value(original, "pilotDeckUserId")
+            .as_string()
+            .cloned()
+            .ok_or_else(|| plain("SOP admission owner is unavailable."))?;
+        let current = self
+            .admission_for_snapshot(project, snapshot, &user)
+            .await?;
+        Ok(current.as_ref().is_some_and(|v| {
+            [
+                "tenantId",
+                "agentId",
+                "pilotDeckUserId",
+                "projectKey",
+                "actorUserId",
+                "credentialId",
+                "staffDeckOrigin",
+            ]
+            .iter()
+            .all(|k| v.get(k) == original.get(k))
+        }))
+    }
+    /// Read original authority through the caller's retained project generation.
+    /// Cross-project acquisition occurs only after owner/project/session gates.
+    pub(crate) async fn authority(
+        &self,
+        input: &JsValue,
+        principal: &crate::module_host::PublicHostPrincipal,
+        generation: &RuntimeLease,
+    ) -> Result<JsValue> {
+        let input = authority_input(input)?;
+        if installation_owner(&self.helper, &self.database())
+            .await
+            .as_ref()
+            != Some(&principal.pilot_deck_user_id)
+        {
+            return Err(authority_failure("SOP_AUTHORITY_SESSION_DENIED"));
+        }
+        let projects = self.projects().await?;
+        if projects
+            .iter()
+            .filter(|project| **project == input.project)
+            .count()
+            != 1
+            || !self.has_session(&input.project, &input.session).await?
+        {
+            return Err(authority_failure("SOP_AUTHORITY_SESSION_DENIED"));
+        }
+        let root = super::project_scope::resolve(&input.project).map_err(io_error)?;
+        // Authorize existence before acquiring any other project's configuration.
+        let (_selected_lease, snapshot) = if generation.runtime().project_root() == root {
+            let resources = generation
+                .runtime()
+                .resources()
+                .get::<ProjectResources>()
+                .ok_or_else(|| plain("SOP project resources are unavailable."))?;
+            (None, resources.context().snapshot())
+        } else {
+            let (lease, snapshot) = self
+                .snapshot(Some(&JsValue::String(input.project.clone())))
+                .await?;
+            (Some(lease), snapshot)
+        };
+        let original = self
+            .original_admission(&input.project, &input.session)
+            .await?
+            .ok_or_else(|| authority_failure("SOP_AUTHORITY_ADMISSION_MISMATCH"))?;
+        if !self
+            .same_snapshot_admission(&input.project, &snapshot, &original)
+            .await?
+            || !authority_admission_matches(&input, principal, &original)
+        {
+            return Err(authority_failure("SOP_AUTHORITY_ADMISSION_MISMATCH"));
+        }
+        let state = Self::store_for_snapshot(&snapshot)?
+            .authority(&input.session, input.revision)
+            .await
+            .map_err(|error| match error.code.as_str() {
+                "SOP_REVISION_CONFLICT" | "SOP_AUTHORITY_STATE_INACTIVE" => {
+                    authority_failure(&error.code)
+                }
+                _ => error.approval(),
+            })?;
+        Ok(authority_merge(input.context, original, state))
     }
     pub(crate) fn bridge(self: &Arc<Self>) -> Arc<dyn ApprovalBridge> {
         Arc::new(ApprovalBridgeImpl {
@@ -359,6 +478,98 @@ impl NativeSopControl {
         .await)
     }
 }
+struct AuthorityInput {
+    session: JsString,
+    project: JsString,
+    credential: JsString,
+    revision: f64,
+    context: JsValue,
+}
+fn authority_failure(code: &str) -> ApprovalFailure {
+    ApprovalFailure {
+        status: Some(if code.contains("REVISION") { 409 } else { 403 }),
+        code: Some(code.into()),
+        message: Some(code.into()),
+    }
+}
+fn authority_input(input: &JsValue) -> Result<AuthorityInput> {
+    let invalid = || authority_failure("SOP_AUTHORITY_INPUT_INVALID");
+    let object = input.as_object().ok_or_else(invalid)?;
+    if object.own_entries().iter().any(|(key, _)| {
+        ![
+            "sessionKey",
+            "projectKey",
+            "expectedRevision",
+            "requestId",
+            "admissionCredentialId",
+        ]
+        .iter()
+        .any(|allowed| key.equals_str(allowed))
+    }) {
+        return Err(invalid());
+    }
+    let string = |key| {
+        value(input, key)
+            .as_string()
+            .filter(|s| !crate::model_catalog::trim(s).is_empty())
+            .cloned()
+            .ok_or_else(invalid)
+    };
+    let session = string("sessionKey")?;
+    let project = string("projectKey")?;
+    let credential = string("admissionCredentialId")?;
+    let _request = string("requestId")?;
+    let revision = value(input, "expectedRevision")
+        .as_number()
+        .filter(|n| n.is_finite() && *n >= 1.0 && n.fract() == 0.0)
+        .ok_or_else(invalid)?;
+    let context = object.clone();
+    let context = {
+        let mut public = pilotdeck_protocol::JsObject::new();
+        for (key, value) in context.entries() {
+            if !key.equals_str("admissionCredentialId") {
+                public.insert(key.clone(), value.clone());
+            }
+        }
+        public
+    };
+    Ok(AuthorityInput {
+        session,
+        project,
+        credential,
+        revision,
+        context: JsValue::Object(context),
+    })
+}
+fn authority_admission_matches(
+    input: &AuthorityInput,
+    principal: &crate::module_host::PublicHostPrincipal,
+    admission: &JsValue,
+) -> bool {
+    [
+        ("projectKey", &input.project),
+        ("pilotDeckUserId", &principal.pilot_deck_user_id),
+        ("tenantId", &principal.tenant_id),
+        ("actorUserId", &principal.actor_user_id),
+        ("agentId", &principal.agent_id),
+        ("credentialId", &input.credential),
+    ]
+    .iter()
+    .all(|(key, expected)| value(admission, key) == &JsValue::String((*expected).clone()))
+}
+fn authority_merge(context: JsValue, admission: JsValue, state: JsValue) -> JsValue {
+    let mut result = context
+        .as_object()
+        .expect("validated authority context")
+        .clone();
+    result.insert("admission".into(), admission);
+    if let Some(state) = state.as_object() {
+        for (key, value) in state.own_entries() {
+            result.insert(key.clone(), value.clone());
+        }
+    }
+    JsValue::Object(result)
+}
 fn string(input: &JsValue, key: &str) -> Result<JsString> {
     value(input, key).as_string().cloned().ok_or_else(|| {
         fail(
@@ -501,51 +712,17 @@ impl NativeApprovalCatalog for NativeSopControl {
         session: &'a JsString,
     ) -> FutureResult<'a, Option<JsValue>> {
         Box::pin(async move {
-            let home = self.options.home.clone();
-            let p = project.clone();
-            let id = session.clone();
-            let original = blocking(move || {
-                let root = super::project_scope::resolve(&p).map_err(io_error)?;
-                let path = bounded_chat_dir(&home, &root)
-                    .map_err(io_error)?
-                    .join(format!(
-                        "{}.jsonl",
-                        crate::storage::sanitize_session_id(&id)
-                    ));
-                let read = crate::storage::read_transcript_bounded(&path)
-                    .map_err(|e| plain(e.to_string().as_str()))?;
-                if !read.read.diagnostics.is_empty() {
-                    return Ok(None);
-                }
-                Ok(read_admission(&read.read.entries, &id))
-            })
-            .await?;
+            let original = self.original_admission(project, session).await?;
             let Some(original) = original else {
                 return Ok(None);
             };
             let (_lease, snapshot) = self
                 .snapshot(Some(&JsValue::String(project.clone())))
                 .await?;
-            let user = value(&original, "pilotDeckUserId")
-                .as_string()
-                .cloned()
-                .ok_or_else(|| plain("SOP admission owner is unavailable."))?;
-            let current = self
-                .admission_for_snapshot(project, &snapshot, &user)
-                .await?;
-            if !current.as_ref().is_some_and(|v| {
-                [
-                    "tenantId",
-                    "agentId",
-                    "pilotDeckUserId",
-                    "projectKey",
-                    "actorUserId",
-                    "credentialId",
-                    "staffDeckOrigin",
-                ]
-                .iter()
-                .all(|k| v.get(k) == original.get(k))
-            }) {
+            if !self
+                .same_snapshot_admission(project, &snapshot, &original)
+                .await?
+            {
                 return Ok(None);
             }
             Ok(Some(original))
@@ -1055,3 +1232,7 @@ mod resume_error_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "sop_control_authority_tests.rs"]
+mod authority_tests;

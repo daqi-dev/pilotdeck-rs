@@ -407,6 +407,7 @@ pub(super) async fn start_with_webhook(
         crate::channel::feishu::FeishuWebhookSlot::resolver(&slot),
         super::switch_wiring::AssemblySwitchHandles {
             approvals: switch_slots.approvals.get().cloned(),
+            public_host: switch_slots.public_host.get().cloned(),
             cron: switch_slots.cron.get().cloned(),
             automation: switch_slots.automation.get().cloned(),
             channels: switch_slots.channels.get().cloned().ok_or_else(|| {
@@ -596,6 +597,17 @@ async fn start_assembly(
             .approvals
             .set(sop.bridge())
             .map_err(|_| "SOP approval slot is already occupied")?;
+    }
+    if let Some(slots) = &switch_slots {
+        slots
+            .public_host
+            .set(Arc::new(super::public_host::Resolver::new(
+                options.clone(),
+                env.clone(),
+                project.clone(),
+                sop.clone(),
+            )))
+            .map_err(|_| "Public host slot is already occupied")?;
     }
     let snapshot_enabled = snapshot::snapshot_enabled(&options, &project).await?;
     let snapshot_recorder =

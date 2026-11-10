@@ -427,6 +427,7 @@ fn native_config() -> native_http::Config {
         control: None,
         api_web: None,
         approvals: None,
+        public_host: None,
     }
 }
 
