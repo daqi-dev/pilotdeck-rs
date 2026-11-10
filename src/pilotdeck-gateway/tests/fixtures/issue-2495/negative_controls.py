@@ -35,13 +35,18 @@ inside the shared normalisation afterwards), the claim itself is `claim_dir`.
 The stale scan reads the working tree, so it takes the same `tree_lock` the
 mutation round below takes: a concurrent sibling with a mutant on disk used
 to be read back as a false stale (#2590 item 4, proven by the pre-fix run in
-this round's evidence directory). A bound assertion containing `{` / `}` is
+this round's evidence directory), and a lock that stays busy past the wait —
+or a source read that fails — is itself that same refusal (fix-r2: never an
+uncaught TimeoutError / OSError traceback a host would read as rc 1). A
+bound assertion containing `{` / `}` is
 refused up front (#2590 item 3): the receipt protocol compares the runtime
 `format!` result byte-for-byte, so a template can never match and the row
 could only come out NO_RECEIPT. The exit contract is `verdict_exit` over a
 summary whose denominator is the static roster: a row that records no
 verdict publishes `roster-mismatch.json` and fails instead of shrinking the
-run to `N-1/N-1 killed` and exiting 0 (#2590 item 2).
+run to `N-1/N-1 killed` and exiting 0 (#2590 item 2), and under
+`--compile-only` the summary reports `COMPILED=n/N` — the verdict the exit
+contract counts — instead of a false `KILLED=0/N` (fix-r2).
 """
 import argparse
 import hashlib
@@ -208,6 +213,19 @@ def roster_drift(expected, results):
     return None if recorded == list(expected) else (recorded, list(expected))
 
 
+def summary_line(counts, denominator, compile_only):
+    """#2590 fix-r2 (DS-boundary#2): the summary's verdict word follows the mode.
+
+    Under ``--compile-only`` every row records ``COMPILED`` and the exit
+    contract counts exactly that, so a fixed ``KILLED=0/N`` line reads like
+    "everything survived" next to a green exit — the word must be the verdict
+    ``verdict_exit`` counts. The default full run keeps ``KILLED``.
+    """
+    state = 'COMPILED' if compile_only else 'KILLED'
+    return (f'summary: {state}={counts[state]}/{denominator}, '
+            f'SURVIVED={counts["SURVIVED"]}, INVALID={counts["INVALID"]}')
+
+
 def test_body(test, texts=None):
     if texts is None:
         texts = {TESTS: TESTS.read_text()}
@@ -281,9 +299,18 @@ def main():
     # concurrent sibling holding a mutant on disk used to be read back as a
     # false "stale anchor" — proven by the pre-fix run in this round's
     # evidence directory — and the refusal is rc 2 ("never started"), never
-    # a traceback (1).
-    with tree_lock(ROOT):
-        stale = stale_names()
+    # a traceback (1). fix-r2 (DS-boundary#1 / MM-concurrency#1, 取高 P1):
+    # "never a traceback" must hold when the wait itself fails too. A
+    # sibling mutation round can hold this lock far past the 900 s default
+    # (every row is up to four cargo calls), and the guarded reads can fail
+    # with OSError / UnicodeDecodeError, so the acquisition and the scan are
+    # one refused block, not an uncaught exception a host reads as rc 1.
+    try:
+        with tree_lock(ROOT):
+            stale = stale_names()
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        refuse(f'#2495 tree lock or stale read failed: '
+               f'{type(error).__name__}: {error}')
     if stale:
         refuse('#2495 stale anchor/test/assertion bindings: ' + ', '.join(stale)
                + ' (a killed sibling round can leave residue that reads as '
@@ -390,8 +417,7 @@ def main():
         {'controls': results, 'counts': counts, 'guardedSha256': guarded_sha256}, indent=2) + '\n')
     temporary.replace(output / 'summary.json')
     # The summary denominator is the static roster (never len(results)).
-    print(f'summary: KILLED={counts["KILLED"]}/{len(expected)}, SURVIVED={counts["SURVIVED"]}, '
-          f'INVALID={counts["INVALID"]}', flush=True)
+    print(summary_line(counts, len(expected), args.compile_only), flush=True)
     print(json.dumps({'controls': results, 'counts': counts}), flush=True)
     # #2590 item 2: the shared exit contract — zero rows is never 0 (`0/0
     # killed` is not a pass) and every row must be KILLED — COMPILED under
