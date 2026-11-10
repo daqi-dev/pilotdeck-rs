@@ -238,6 +238,14 @@ jobs:
           # （stale 扫描在树锁内读净树，锁忙本身也是 rc 2 拒跑）；全量杀灭轮（需要 cargo
           # 与净树）仍由协调者在宿主跑。
           python3 -I src/pilotdeck-gateway/tests/fixtures/issue-2495/negative_controls.py --check
+          # #2572 fix-r1（双谱系评审 P2-a，同 #1433/#1354/#2391 先例）：名册三夹具的
+          # --check 也进 CI——锚点 / 静态名册任一漂移即本步非零退出（fix-r2 收敛措辞：
+          # storage / registry 两夹具另核测试绑定；issue-1437 的 --check 只核锚点，其
+          # 绑定漂移由宿主全量轮的正控暴露，绑定核验归 #2858 迁移批）；全量杀灭轮
+          # （需要 cargo 与净树）仍由协调者在宿主跑。
+          python3 -I src/pilotdeck-gateway/tests/fixtures/native-storage-stimulus/negative_controls.py --check
+          python3 -I src/pilotdeck-gateway/tests/fixtures/native-registry-switch/negative_controls.py --check
+          python3 -I src/pilotdeck-gateway/tests/fixtures/issue-1437-methods/negative_controls.py --check
       # #2516 fix-r1（P2-a 5）：槽位探针残余负控全量进 CI。纯 Python 零 cargo
       # （变异体经 published_module 内存发布，不写树、不需要净树），全量含基线
       # 17 例 + 七杀 + 名册核验，任一 SURVIVED / INVALID / 名册漂移即本步非零

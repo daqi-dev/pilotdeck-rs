@@ -296,5 +296,275 @@ class ManagerRosterGuard(unittest.TestCase):
                         f'{stderr!r}')
 
 
+TRIPLE_ENTRIES = (
+    # #2572 fix-r2: the third field pins each absolute denominator OUTSIDE
+    # the fixture (the FULL_ROSTER = 36 precedent above); a coordinated
+    # "delete a row, shrink the roster, lower EXPECTED_TOTAL" edit must fail
+    # here instead of shrinking the run silently.
+    ('native-registry-switch', '#1369', 7),
+    ('native-storage-stimulus', '#1370', 18),
+    ('issue-1437-methods', '#1437', 21),
+)
+
+
+def load_named_entry(directory):
+    """Import a fixture entry by directory (the source file is the truth)."""
+    entry = FIXTURES / directory / 'negative_controls.py'
+    spec = importlib.util.spec_from_file_location(
+        directory.replace('-', '_') + '_negative_controls', entry)
+    module = importlib.util.module_from_spec(spec)
+    saved = sys.path[:]
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        # The entry prepends its import roots at module level; keep the test
+        # interpreter's path as it was.
+        sys.path[:] = saved
+    return module
+
+
+class TripleFixtureRosterGuard(unittest.TestCase):
+    """#2572 fix-r1: the three roster fixtures' startup defences need a pin.
+
+    Both review families found the same hole: the roster defences this batch
+    added (``EXPECTED_NAMES`` + ``registered`` + ``refuse``) had no machine
+    check of their own — shrinking ``EXPECTED_NAMES``, or reverting the
+    unknown/repeated refusals to bare ``SystemExit`` strings, kept every
+    existing gate green. The three ``--check`` lines also enter CI directly
+    (ci.yml 绑定漂移自检); this case additionally pins the exit codes, the
+    named stderr, and the "a refusal claims no evidence directory" contract.
+    No cargo, no tree mutation: every refusal fires before any write —
+    #2572 fix-r2 hardens that promise by stubbing the execution layer, so a
+    regressed refusal fails fast instead of mutating sources and launching
+    cargo. fix-r2 also pins the absolute denominator outside the fixtures
+    (FULL_ROSTER precedent), `--check` misuse, and the name-refusals-first
+    ordering (both review families converged on those).
+    """
+
+    def setUp(self):
+        self.base = Path(tempfile.mkdtemp(prefix='negctl-2572-'))
+        self.addCleanup(shutil.rmtree, self.base, ignore_errors=True)
+
+    def drive(self, module, argv, *, shrink=False, target=True):
+        """Run a loaded entry's main() under a synthetic argv; capture I/O."""
+        out = self.base / 'out'
+        names = module.EXPECTED_NAMES[:-1] if shrink else module.EXPECTED_NAMES
+        stdout, stderr = io.StringIO(), io.StringIO()
+        environment = {**os.environ}
+        if target:
+            environment['CARGO_TARGET_DIR'] = str(self.base / 'cargo-target')
+        else:
+            environment.pop('CARGO_TARGET_DIR', None)
+
+        def execution_reached(*_args, **_kwargs):
+            raise AssertionError(
+                'the execution layer was reached: these drives must stop '
+                'at a startup refusal, not mutate sources or launch cargo')
+
+        stubs = [patch.object(module, name, execution_reached)
+                 for name in ('mutating_sources', 'run_owned', 'run_cases')
+                 if hasattr(module, name)]
+        # #2572 fix-r3 (DS r3 P1): `patch.dict(..., clear=False)` (the default)
+        # only updates, so with a host shell that already exports
+        # CARGO_TARGET_DIR a `target=False` drive did not actually remove it
+        # and the order test could pass green for the wrong reason. The
+        # snapshot above is complete, so replacing the environment wholesale
+        # is the honest semantics. The stub list is also asserted: a fixture
+        # that renames all three execution entries would silently stop
+        # guarding the execution layer at all.
+        if not stubs:
+            raise AssertionError(
+                f'{module.__name__}: no execution entry (mutating_sources/'
+                f'run_owned/run_cases) found to stub; the guard went inert')
+        with contextlib.ExitStack() as stack:
+            for entered in [patch.dict(os.environ, environment, clear=True),
+                            patch.object(module, 'EXPECTED_NAMES', names),
+                            *stubs,
+                            patch('sys.argv',
+                                  [str(self.base / 'launch.py'), *argv]),
+                            contextlib.redirect_stdout(stdout),
+                            contextlib.redirect_stderr(stderr)]:
+                stack.enter_context(entered)
+            try:
+                code = module.main()
+            except SystemExit as error:
+                code = error.code
+        return code, out, stdout.getvalue(), stderr.getvalue()
+
+    def test_the_roster_is_consistent_and_check_passes(self):
+        for directory, tag, total in TRIPLE_ENTRIES:
+            with self.subTest(directory=directory):
+                module = load_named_entry(directory)
+                self.assertTrue(
+                    module.EXPECTED_TOTAL == total
+                    == len(module.EXPECTED_NAMES) == len(module.mutations),
+                    f'{tag} the denominator must stay pinned outside the '
+                    f'fixture: EXPECTED_TOTAL={module.EXPECTED_TOTAL} '
+                    f'pin={total} roster={len(module.EXPECTED_NAMES)} '
+                    f'table={len(module.mutations)}')
+                code, _out, _stdout, stderr = self.drive(module, ['--check'])
+                self.assertTrue(code == 0,
+                                f'{tag} --check must pass on a clean tree; '
+                                f'stderr={stderr!r}')
+
+    def test_a_drifted_roster_never_starts(self):
+        for directory, tag, _total in TRIPLE_ENTRIES:
+            with self.subTest(directory=directory):
+                module = load_named_entry(directory)
+                code, out, _stdout, stderr = self.drive(
+                    module, ['--check'], shrink=True)
+                self.assertTrue(code == 2,
+                                f'{tag} a drifted roster must refuse to start '
+                                f'(2), got {code}')
+                self.assertTrue('drifted' in stderr,
+                                f'{tag} the refusal must name the drift: '
+                                f'{stderr!r}')
+                self.assertTrue(not out.exists(),
+                                f'{tag} a refusal must not claim the '
+                                'evidence directory')
+
+    def test_an_unknown_name_refuses_to_start(self):
+        for directory, tag, _total in TRIPLE_ENTRIES:
+            with self.subTest(directory=directory):
+                module = load_named_entry(directory)
+                name = 'no-such-mutation-2572'
+                out = self.base / 'out'
+                code, out, _stdout, stderr = self.drive(
+                    module, [str(out), name])
+                self.assertTrue(code == 2,
+                                f'{tag} an unknown name must refuse to start '
+                                f'(2), got {code}')
+                self.assertTrue(name in stderr,
+                                f'{tag} the refusal must name the mutation: '
+                                f'{stderr!r}')
+                self.assertTrue(not out.exists(),
+                                f'{tag} a refusal must not claim the '
+                                'evidence directory')
+
+    def test_a_repeated_name_refuses_to_start(self):
+        for directory, tag, _total in TRIPLE_ENTRIES:
+            with self.subTest(directory=directory):
+                module = load_named_entry(directory)
+                name = module.EXPECTED_NAMES[0]
+                out = self.base / 'out'
+                code, out, _stdout, stderr = self.drive(
+                    module, [str(out), name, name])
+                self.assertTrue(code == 2,
+                                f'{tag} a repeated name must refuse to start '
+                                f'(2), got {code}')
+                self.assertTrue('repeated' in stderr and name in stderr,
+                                f'{tag} the refusal must name the repeat: '
+                                f'{stderr!r}')
+                self.assertTrue(not out.exists(),
+                                f'{tag} a refusal must not claim the '
+                                'evidence directory')
+
+    def test_check_rejects_extra_arguments(self):
+        # #2572 fix-r2 (MM review): `--check OUT` used to print a green line
+        # and silently drop the rest of the command line — a caller cannot
+        # tell "roster verified" from "arguments swallowed".
+        for directory, tag, _total in TRIPLE_ENTRIES:
+            with self.subTest(directory=directory):
+                module = load_named_entry(directory)
+                out = self.base / 'out'
+                code, out, _stdout, stderr = self.drive(
+                    module, ['--check', str(out)])
+                self.assertTrue(code == 2,
+                                f'{tag} --check with extra arguments must '
+                                f'refuse to start (2), got {code}')
+                self.assertTrue('--check' in stderr,
+                                f'{tag} the refusal must name the misuse: '
+                                f'{stderr!r}')
+                self.assertTrue(not out.exists(),
+                                f'{tag} a refusal must not claim the '
+                                'evidence directory')
+            # #2572 fix-r3 (DS r3 P2): the three-way disjunct above only pins
+            # `--check OUT`; a roster name or `--compile-only` after --check is
+            # the same swallowed-misuse shape and must refuse identically.
+            with self.subTest(directory=directory, extra='a roster name'):
+                module = load_named_entry(directory)
+                out = self.base / 'out'
+                code, out, _stdout, stderr = self.drive(
+                    module, ['--check', module.EXPECTED_NAMES[0]])
+                self.assertTrue(code == 2,
+                                f'{tag} --check with a mutation name must '
+                                f'refuse to start (2), got {code}')
+                self.assertTrue('--check' in stderr,
+                                f'{tag} the refusal must name the misuse: '
+                                f'{stderr!r}')
+                self.assertTrue(not out.exists(),
+                                f'{tag} a refusal must not claim the '
+                                'evidence directory')
+            with self.subTest(directory=directory, extra='--compile-only'):
+                module = load_named_entry(directory)
+                out = self.base / 'out'
+                code, out, _stdout, stderr = self.drive(
+                    module, ['--check', '--compile-only'])
+                self.assertTrue(code == 2,
+                                f'{tag} --check with --compile-only must '
+                                f'refuse to start (2), got {code}')
+                self.assertTrue('--check' in stderr,
+                                f'{tag} the refusal must name the misuse: '
+                                f'{stderr!r}')
+                self.assertTrue(not out.exists(),
+                                f'{tag} a refusal must not claim the '
+                                'evidence directory')
+            # #2572 fix-r3 (DS r3 boundary P2): issue-1437 parses argv by
+            # hand, so a mistyped first token that merely *starts* with a
+            # dash (`--chec`) used to fall into the run path and became an
+            # output directory; it must refuse as an unrecognized flag. The
+            # two argparse siblings abbreviate `--chec` to `--check`, which
+            # is a legitimate green `--check` (argparse prefix matching), so
+            # only issue-1437 is driven with the mistyped flag.
+            if directory == 'issue-1437-methods':
+                with self.subTest(directory=directory, extra='--chec'):
+                    module = load_named_entry(directory)
+                    out = self.base / 'out'
+                    code, out, _stdout, stderr = self.drive(
+                        module, ['--chec', str(out)])
+                    self.assertTrue(code == 2,
+                                    f'{tag} a mistyped flag must refuse to '
+                                    f'start (2), got {code}')
+                    self.assertTrue('--chec' in stderr,
+                                    f'{tag} the refusal must name the '
+                                    f'mistyped flag: {stderr!r}')
+                    self.assertTrue(not out.exists(),
+                                    f'{tag} a refusal must not claim the '
+                                    'evidence directory')
+
+    def test_a_bad_name_refuses_before_the_source_guards(self):
+        # #2572 fix-r2 (both review families): with every binding body
+        # unreadable (a concurrent full run is mutating the tree) and no
+        # CARGO_TARGET_DIR set, a typo'd name still reports itself — never
+        # a stale-anchor or target refusal that reads as "it ran and was
+        # not green".
+        for directory, tag, _total in TRIPLE_ENTRIES:
+            with self.subTest(directory=directory):
+                module = load_named_entry(directory)
+                name = 'no-such-mutation-2572'
+                out = self.base / 'out'
+                with contextlib.ExitStack() as stack:
+                    if hasattr(module, 'check_binding_scope'):
+                        stack.enter_context(patch.object(
+                            module, 'check_binding_scope', lambda: None))
+                    if hasattr(module, 'test_body'):
+                        # every binding body missing → a stale scan that ran
+                        # first would refuse with a stale-anchor rc 1
+                        stack.enter_context(patch.object(
+                            module, 'test_body',
+                            lambda *args, **kwargs: ''))
+                    code, out, _stdout, stderr = self.drive(
+                        module, [str(out), name], target=False)
+                self.assertTrue(code == 2,
+                                f'{tag} the name refusal must fire before '
+                                f'the source guards (2), got {code}')
+                self.assertTrue(name in stderr,
+                                f'{tag} the refusal must name the mutation: '
+                                f'{stderr!r}')
+                self.assertTrue(not out.exists(),
+                                f'{tag} a refusal must not claim the '
+                                'evidence directory')
+
+
 if __name__ == '__main__':
     unittest.main()
