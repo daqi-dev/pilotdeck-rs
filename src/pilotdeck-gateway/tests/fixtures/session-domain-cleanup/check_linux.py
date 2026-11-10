@@ -21,6 +21,8 @@ from unittest.mock import patch
 
 HERE=Path(__file__).resolve().parent
 _PREVIOUS_TEMP_DIR=tempfile.tempdir
+_PREVIOUS_PYCACHE=sys.pycache_prefix
+_PREVIOUS_DONT_WRITE=sys.dont_write_bytecode
 _pyc_root=tempfile.TemporaryDirectory(prefix='pdrs-linux-cleanup-pyc-')
 tempfile.tempdir=_pyc_root.name
 sys.pycache_prefix=_pyc_root.name
@@ -206,6 +208,8 @@ def execute_controls(md, output):
         finally:
             signal.signal(signal.SIGTERM,previous)
             tempfile.tempdir=_PREVIOUS_TEMP_DIR
+            sys.pycache_prefix=_PREVIOUS_PYCACHE
+            sys.dont_write_bytecode=_PREVIOUS_DONT_WRITE
             _pyc_root.cleanup()
 
 
@@ -240,6 +244,8 @@ def main():
         return common.aggregate_status(report['status'])[1]
     finally:
         tempfile.tempdir=_PREVIOUS_TEMP_DIR
+        sys.pycache_prefix=_PREVIOUS_PYCACHE
+        sys.dont_write_bytecode=_PREVIOUS_DONT_WRITE
         _pyc_root.cleanup()
 
 

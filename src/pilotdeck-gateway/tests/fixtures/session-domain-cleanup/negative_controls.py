@@ -1828,8 +1828,15 @@ def controls_nested_same_name(rows):
 # JUDGES below: #820's anchor selfcheck reads literal replacement tables only,
 # so callables stay out of MUTATIONS.
 MUTATIONS = [
+    ('kernel-source-lease-gate-removed', CHECK,
+     '    if proof is None:\n        return kernel_control_report(None,None,reason)',
+     '    if False:\n        return kernel_control_report(None,None,reason)'),
+    ('kernel-result-passed-forced', CHECK,
+     "            'passed': status=='PASS','report':report,'reason':reason}",
+     "            'passed': True,'report':report,'reason':reason}"),
+
     ('empty-eligible-guard-removed', NEGATIVE,
-     "    if (not eligible or len(MUTATIONS)!=EXPECTED_DECLARED\n            or len({row[0]for row in MUTATIONS})!=EXPECTED_DECLARED\n            or len(eligible)!=EXPECTED_APPLICABLE.get(sys.platform,EXPECTED_APPLICABLE['other'])):",
+     '    if not mutation_inventory_matches(sys.platform,eligible):',
      '    if False:'),
 
     ('linux-initial-identity-gate-removed', LINUX_SOURCE,
@@ -4317,7 +4324,9 @@ def linux_kernel_regression(rows,case,field,want):
 
 
 JUDGES = {
-    'empty-eligible-guard-removed':('batch-aggregation',lambda rows:match(rows,'batch-aggregation',{'negativeRestored.emptyStatus':'PASS','negativeRestored.emptyReturncode':0}),False,()),
+    'kernel-source-lease-gate-removed':('kernel-lease',lambda rows:match(rows,'kernel-lease',{'unownedPassed':True,'foreignPassed':True}),False,()),
+    'kernel-result-passed-forced':('kernel-result',lambda rows:match(rows,'kernel-result',{'failedPacketPassed':True}),False,()),
+    'empty-eligible-guard-removed':('batch-aggregation',lambda rows:match(rows,'batch-aggregation',{'negativeRestored.emptyStatus':'PASS','negativeRestored.emptyReturncode':0,'negativeRestored.truncatedStatus':'PASS','negativeRestored.truncatedReturncode':0,'negativeRestored.duplicateStatus':'PASS','negativeRestored.duplicateReturncode':0,'negativeRestored.renamedStatus':'PASS','negativeRestored.renamedReturncode':0,'negativeRestored.reorderedStatus':'PASS','negativeRestored.reorderedReturncode':0}),False,()),
     'linux-initial-identity-gate-removed':('linux-kernel-controls',lambda rows:linux_kernel_regression(rows,'helper-initial-identity','observerCalls',1),False,()),
     'linux-pre-reap-identity-gate-removed':('linux-kernel-controls',lambda rows:linux_kernel_regression(rows,'helper-pre-reap-identity','result.status','VERIFIED'),False,()),
     'linux-refusal-erases-finding':('linux-kernel-controls',lambda rows:linux_kernel_regression(rows,'signal-refused-positive-finding','result.status','NOT_VERIFIED'),False,()),
@@ -5081,21 +5090,30 @@ def require_restored(source, digest):
         raise RuntimeError(f'source restore hash mismatch: {source.name}')
 
 
-EXPECTED_DECLARED=238
-EXPECTED_APPLICABLE={'linux':233,'darwin':230,'other':225}
-
-
 DARWIN_ONLY = frozenset(('empty-group-probe-removed','sigterm-removed',
     'sigkill-escalation-removed','eperm-census-ignored','blocked-branch-removed'))
-LINUX_ONLY = frozenset(('linux-initial-identity-gate-removed','linux-pre-reap-identity-gate-removed','linux-refusal-erases-finding','linux-empty-group-probe-removed','linux-sigterm-removed',
+LINUX_ONLY = frozenset(('kernel-source-lease-gate-removed','linux-initial-identity-gate-removed','linux-pre-reap-identity-gate-removed','linux-refusal-erases-finding','linux-empty-group-probe-removed','linux-sigterm-removed',
     'linux-sigkill-escalation-removed','linux-positive-finding-dropped-on-denial',
     'linux-unknown-error-means-empty'))
+
+
+EXPECTED_MUTATION_ROSTERS = {'declared': {'count': 240, 'sha256': '3e34f458185d0fa0d667b7f122b161695100b95dbf2900393d89478c35890a5e'}, 'linux': {'count': 235, 'sha256': 'c7459a939bd128108d58cc95004f6d1335401acf1721048c9d4bd49cf67d3d56'}, 'darwin': {'count': 231, 'sha256': '3089dcaf3741124a7c5fca9dcb3d0d911be350bc9a869c058d51c41b52e1f767'}, 'other': {'count': 226, 'sha256': '2850c7ca8749302116b3d890604d6097880af020a47fa0b6bdf2a4e6641ee769'}}
 
 
 def applicable_mutations(platform):
     return [row for row in MUTATIONS
             if (row[0] not in DARWIN_ONLY or platform=='darwin')
             and (row[0] not in LINUX_ONLY or platform=='linux')]
+
+
+def mutation_inventory_matches(platform, eligible):
+    def stamp(rows):
+        names=[row[0]for row in rows]
+        return {'count':len(names),'sha256':hashlib.sha256(
+            json.dumps(names,separators=(',',':'),ensure_ascii=True).encode()).hexdigest()}
+    key=platform if platform in ('linux','darwin') else 'other'
+    return (bool(eligible) and stamp(MUTATIONS)==EXPECTED_MUTATION_ROSTERS['declared']
+            and stamp(eligible)==EXPECTED_MUTATION_ROSTERS[key])
 
 
 def main():
@@ -5112,9 +5130,7 @@ def main():
     _install_terminate_handlers()
     eligible = applicable_mutations(sys.platform)
     known = {row[0] for row in eligible}
-    if (not eligible or len(MUTATIONS)!=EXPECTED_DECLARED
-            or len({row[0]for row in MUTATIONS})!=EXPECTED_DECLARED
-            or len(eligible)!=EXPECTED_APPLICABLE.get(sys.platform,EXPECTED_APPLICABLE['other'])):
+    if not mutation_inventory_matches(sys.platform,eligible):
         common=committed_status_contract(ROOT)
         return common.aggregate_status('BLOCKED')[1]
     if set(args.only) - known or len(args.only) != len(set(args.only)):

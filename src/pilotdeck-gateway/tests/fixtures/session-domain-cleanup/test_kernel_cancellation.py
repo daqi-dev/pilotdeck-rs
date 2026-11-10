@@ -58,7 +58,7 @@ class Cancellation(unittest.TestCase):
         supervisor=load('kernel_cancellation_supervisor',HERE/'check_cleanup.py')
         command=[sys.executable,'-I','-B',str(Path(__file__).resolve()),'--worker','--output',str(OUTPUT)]
         try:
-            result=supervisor.run_kernel_cli_process(command,timeout=5)
+            result=supervisor.run_kernel_cli_process(command,timeout=5,ready=OUTPUT/'ready.json')
         except subprocess.TimeoutExpired as error:
             (OUTPUT/'worker.stdout').write_text(error.stdout or '')
             (OUTPUT/'worker.stderr').write_text(error.stderr or '')

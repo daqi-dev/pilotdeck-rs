@@ -53,6 +53,7 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 import shutil
+import select
 import signal
 import subprocess
 import sys
@@ -796,54 +797,143 @@ def linux_filtered_proc_control(md):
     return result
 
 
-def run_kernel_cli_process(command, timeout=90):
-    """Own only this strict CLI child; TERM lets its kernel registry unwind."""
-    process=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
-                             text=True,start_new_session=True)
+def run_kernel_cli_process(command, timeout=90, ready=None):
+    """Own the CLI child; the test's operation timeout starts at readiness."""
+    process=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     fd=None
     try:
         fd=os.pidfd_open(process.pid,0)
-        try:stdout,stderr=process.communicate(timeout=timeout)
+        try:
+            if ready is not None:
+                start_deadline=time.monotonic()+60
+                while not ready.is_file() and process.poll() is None:
+                    if time.monotonic()>=start_deadline:
+                        raise subprocess.TimeoutExpired(command,60)
+                    time.sleep(.02)
+            stdout,stderr=process.communicate(timeout=timeout)
         except BaseException as error:
-            if fd is not None:
-                try:signal.pidfd_send_signal(fd,signal.SIGTERM)
-                except ProcessLookupError:pass
+            try:signal.pidfd_send_signal(fd,signal.SIGTERM)
+            except ProcessLookupError:pass
             try:stdout,stderr=process.communicate(timeout=15)
             except subprocess.TimeoutExpired:
-                signal.pidfd_send_signal(fd,signal.SIGKILL)
-                stdout,stderr=process.communicate(timeout=5)
+                try:signal.pidfd_send_signal(fd,signal.SIGKILL)
+                except ProcessLookupError:pass
+                try:stdout,stderr=process.communicate(timeout=5)
+                except subprocess.TimeoutExpired as unreaped:
+                    # Preserve the last collected bytes and an explicit unknown
+                    # cleanup condition, never report a clean timeout.
+                    unreaped.cleanupUnverified=True
+                    raise
             if isinstance(error,subprocess.TimeoutExpired):
-                raise subprocess.TimeoutExpired(command,timeout,output=stdout,stderr=stderr) from error
+                raise subprocess.TimeoutExpired(command,error.timeout,output=stdout,stderr=stderr) from error
             raise
         return SimpleNamespace(returncode=process.returncode,stdout=stdout,stderr=stderr)
     finally:
         if fd is not None:os.close(fd)
         elif process.poll() is None:
-            process.terminate();process.wait(timeout=15)
+            process.terminate()
+            try:process.communicate(timeout=15)
+            except subprocess.TimeoutExpired:
+                process.kill();process.communicate(timeout=5)
+
+
+def kernel_upper_lease(md):
+    """Prove the direct negative runner still owns both existing leases."""
+    owner=md.common.owner(md.common.LOCK)
+    parent=os.getppid()
+    if (not owner or owner.get('pid')!=parent or owner.get('cleanupPending') is not True
+            or not isinstance(owner.get('token'),str) or not owner['token']
+            or not 0<=time.time()-owner['timestamp']<=md.common.MAX_AGE):
+        return None,'no live parent parity owner'
+    fd=None
+    try:
+        fd=os.pidfd_open(parent,0);poll=select.poll();poll.register(fd,select.POLLIN)
+        if poll.poll(0):return None,'parent parity owner exited'
+        parent_dir=Path('/proc')/str(parent)
+        cwd=Path(os.readlink(parent_dir/'cwd'))
+        args=(parent_dir/'cmdline').read_bytes().split(b'\0')[1:]
+        while args and args[0] in (b'-I',b'-B'):args=args[1:]
+        expected=Path(__file__).resolve().with_name('negative_controls.py')
+        if not args or (cwd/os.fsdecode(args[0])).resolve()!=expected:
+            return None,'parent is not the registered source-control runner'
+        lock=(ROOT/'.negative-source.lock').stat()
+        identity=(os.major(lock.st_dev),os.minor(lock.st_dev),lock.st_ino)
+        matching=False
+        for line in Path('/proc/locks').read_text().splitlines():
+            fields=line.split()
+            if len(fields)<8 or fields[1:4]!=['FLOCK','ADVISORY','WRITE'] or fields[4]!=str(parent):continue
+            major,minor,inode=fields[5].split(':')
+            if (int(major,16),int(minor,16),int(inode))==identity:matching=True;break
+        if not matching or poll.poll(0) or os.getppid()!=parent or md.common.owner(md.common.LOCK)!=owner:
+            return None,'parent source flock or parity owner is not stable'
+        return {'parentPid':parent,'treeLockInode':lock.st_ino},None
+    except (OSError,ValueError,KeyError) as error:
+        return None,f'cannot prove parent source lease: {error}'
+    finally:
+        if fd is not None:os.close(fd)
+
+
+def kernel_control_report(document, report, reason=None):
+    """One audited mapping for both real kernel control consumers."""
+    if document is None:
+        status,code=md.common.aggregate_status('BLOCKED')
+    else:
+        valid=(document.get('status')=='PASS' and document.get('exitCode')==0
+               and document.get('testsRun')==11 and document.get('skipped')==[]
+               and document.get('sourceUnchanged') is True and document.get('success') is True
+               and document.get('errors')==[] and document.get('failures')==[]
+               and isinstance(document.get('rows'),list) and len(document['rows'])==11)
+        status,code=md.common.aggregate_status('PASS' if valid else 'FAIL')
+    return {'mode':'linux-kernel-controls','status':status,'exitCode':code,
+            'passed': status=='PASS','report':report,'reason':reason}
 
 
 def linux_kernel_controls(md, output):
-    """In-process counterpart of the strict standalone kernel control CLI.
-
-    Source mutation controls use the existing mutating_sources guard; this
-    mode deliberately does not launch a second HEAD-gated CLI on a mutant.
-    The normal --mode all path below retains that independent strict CLI.
-    """
+    """Execute the same controls only under the real parent source guard."""
+    proof,reason=kernel_upper_lease(md)
+    if proof is None:
+        return kernel_control_report(None,None,reason)
     path=Path(__file__).with_name('check_linux.py')
     spec=importlib.util.spec_from_file_location('linux_kernel_fixture',path)
     fixture=importlib.util.module_from_spec(spec)
+    saved=(tempfile.tempdir,sys.pycache_prefix,sys.dont_write_bytecode,sys.modules.get('_guard'))
     sys.modules[spec.name]=fixture
-    source=path.read_bytes();exec(compile(source,str(path),'exec'),fixture.__dict__)
-    fixture._apparatus_source=source
-    folder=output/'linux-kernel-controls'
-    result,stable=fixture.execute_controls(md,folder)
-    document=fixture.summarize_controls(result,stable)
-    report=folder/'report.json'
-    report.write_text(json.dumps(document,indent=2))
-    return {'mode':'linux-kernel-controls','passed':bool(
-        document.get('status')=='PASS' and document.get('testsRun')==11
-        and not document.get('skipped') and document.get('sourceUnchanged') is True),
-        'report':str(report),'execution':'in-process registered source-mutation controls'}
+    try:
+        source=path.read_bytes();exec(compile(source,str(path),'exec'),fixture.__dict__)
+        fixture._apparatus_source=source
+        folder=output/'linux-kernel-controls'
+        result,stable=fixture.execute_controls(md,folder)
+        document=fixture.summarize_controls(result,stable)
+        report=folder/'report.json';report.write_text(json.dumps(document,indent=2))
+        row=kernel_control_report(document,str(report));row['sourceLease']=proof
+        return row
+    finally:
+        tempfile.tempdir,sys.pycache_prefix,sys.dont_write_bytecode,old_guard=saved
+        if old_guard is None:sys.modules.pop('_guard',None)
+        else:sys.modules['_guard']=old_guard
+        sys.modules.pop(spec.name,None)
+        cache=getattr(fixture,'_pyc_root',None)
+        if cache is not None:cache.cleanup()
+
+
+def kernel_lease_control(md,output):
+    with patch.object(md.common,'owner',return_value=None):
+        unowned=linux_kernel_controls(md,output/'unowned')
+    wrong={'pid':os.getpid(),'token':'foreign','timestamp':time.time(),'cleanupPending':True}
+    with patch.object(md.common,'owner',return_value=wrong):
+        foreign=linux_kernel_controls(md,output/'foreign')
+    return {'mode':'kernel-lease','unownedPassed':unowned.get('passed'),
+            'foreignPassed':foreign.get('passed'),
+            'passed':all(row.get('status')=='BLOCKED' and row.get('passed') is False
+                         and row.get('report') is None for row in (unowned,foreign))}
+
+
+def kernel_result_control():
+    document={'status':'FAIL','exitCode':1,'testsRun':11,'skipped':[],
+              'sourceUnchanged':True,'success':False,'errors':[],'failures':[{}],'rows':[{}]*11}
+    row=kernel_control_report(document,'injected failed report')
+    return {'mode':'kernel-result','failedPacketPassed':row['passed'],
+            'passed':row['status']=='FAIL' and row['passed'] is False}
 
 
 def _blocked_case(md, killpg_error, kill_error=None):
@@ -912,6 +1002,7 @@ def status_controls(md):
 # each registered point's every return path must route its status/exit
 # computation through the shared function (``unshared_status_slots``).
 AGGREGATION_POINTS = {
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py','kernel_control_report'): 'kernel-controls-report',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_linux.py', 'summarize_controls'): 'linux-controls-summary',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_linux.py', 'main'): 'linux-controls-main',
     ('scripts/gateway-parity/_guard.py', '_failure'): 'guard-failure',
@@ -1026,6 +1117,9 @@ NON_AGGREGATION_POINTS = {
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/negative_controls.py',
      'terminate_cleanly'):
         'signal-driven abort path: raises SystemExit to unwind after restoring the mutated tree, not a batch status',
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
+     'kernel_result_control'):
+        'negative control creates a forged packet; its verdict is delegated to registered kernel_control_report',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
      'census_snapshot_race_control'):
         'test-only synthetic census snapshot used to force the race; not a batch summary',
@@ -7387,6 +7481,10 @@ def negative_restored_replays(output):
     cases = (
         ('pass', 'darwin', 'PASS', 0, 'KILLED', True, ('PASS', 0)),
         ('empty', 'darwin', 'PASS', 0, 'KILLED', True, ('BLOCKED', 2)),
+        ('truncated', 'darwin', 'PASS', 0, 'KILLED', True, ('BLOCKED', 2)),
+        ('duplicate', 'darwin', 'PASS', 0, 'KILLED', True, ('BLOCKED', 2)),
+        ('renamed', 'darwin', 'PASS', 0, 'KILLED', True, ('BLOCKED', 2)),
+        ('reordered', 'darwin', 'PASS', 0, 'KILLED', True, ('BLOCKED', 2)),
         ('skip', 'freebsd', 'PASS_WITH_SKIPS', 1, 'KILLED', True,
          ('PASS_WITH_SKIPS', 1)),
         ('survived', 'darwin', 'PASS', 0, 'SURVIVED', True, ('FAIL', 1)),
@@ -7403,8 +7501,17 @@ def negative_restored_replays(output):
         fake_summary = {'status': restored_status, 'results': result_rows}
         fake = SimpleNamespace(returncode=restored_code, stdout='', stderr='')
         saved = (nc.sys.argv, nc.sys.platform, nc.mutating_sources, nc.run_check,
-                 nc.read_summary, nc.classify, nc.pgrep_launcher, nc.applicable_mutations)
+                 nc.read_summary, nc.classify, nc.pgrep_launcher, nc.applicable_mutations,nc.MUTATIONS,nc.LINUX_ONLY)
         if tag == 'empty':nc.applicable_mutations=lambda _platform: []
+        if tag == 'truncated':nc.MUTATIONS=nc.MUTATIONS[:-1]
+        if tag == 'duplicate':nc.MUTATIONS=nc.MUTATIONS[:-1]+[nc.MUTATIONS[0]]
+        if tag == 'renamed':
+            old=next(row[0]for row in nc.MUTATIONS if row[0]in nc.LINUX_ONLY)
+            nc.MUTATIONS=[('injected-renamed-row',*row[1:])if row[0]==old else row for row in nc.MUTATIONS]
+            nc.LINUX_ONLY=(nc.LINUX_ONLY-{old})|{'injected-renamed-row'}
+        if tag == 'reordered':
+            select_cases=nc.applicable_mutations
+            nc.applicable_mutations=lambda platform:list(reversed(select_cases(platform)))
         nc.mutating_sources = fake_mutating
         nc.run_check = lambda *_a, **_k: fake
         nc.read_summary = lambda *_a, **_k: (fake_summary, None)
@@ -7416,7 +7523,7 @@ def negative_restored_replays(output):
             with patch.object(Path, 'write_text', guarded_write_text), \
                     patch.object(Path, 'write_bytes', guarded_write_bytes):
                 code = nc.main()
-            if tag=='empty' and code==2 and not case.exists():
+            if tag in ('empty','truncated','duplicate','renamed','reordered') and code==2 and not case.exists():
                 observed=('BLOCKED',code)
             else:
                 report=json.loads((case/'summary.json').read_text())
@@ -7429,7 +7536,7 @@ def negative_restored_replays(output):
                         f'{type(error).__name__}: {error}']
         finally:
             (nc.sys.argv, nc.sys.platform, nc.mutating_sources, nc.run_check,
-             nc.read_summary, nc.classify, nc.pgrep_launcher, nc.applicable_mutations) = saved
+             nc.read_summary, nc.classify, nc.pgrep_launcher, nc.applicable_mutations,nc.MUTATIONS,nc.LINUX_ONLY) = saved
         rows[f'{tag}Status'] = observed[0]
         rows[f'{tag}Returncode'] = observed[1]
         rows[f'{tag}Passed'] = not failures
@@ -7596,6 +7703,10 @@ def batch_aggregation_control(md, output):
         'negativeRestored': {
             'passStatus': 'PASS', 'passReturncode': 0,
                              'emptyStatus':'BLOCKED','emptyReturncode':2,
+                             'truncatedStatus':'BLOCKED','truncatedReturncode':2,
+                             'duplicateStatus':'BLOCKED','duplicateReturncode':2,
+                             'renamedStatus':'BLOCKED','renamedReturncode':2,
+                             'reorderedStatus':'BLOCKED','reorderedReturncode':2,
             'skipStatus': 'PASS_WITH_SKIPS', 'skipReturncode': 1,
             'survivedStatus': 'FAIL', 'survivedReturncode': 1,
             'invalidStatus': 'BLOCKED', 'invalidReturncode': 2,
@@ -7626,7 +7737,7 @@ def batch_aggregation_control(md, output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--mode', choices=('linux-kernel-controls', 'clean', 'leak', 'ignore', 'blocked', 'status',
+    parser.add_argument('--mode', choices=('kernel-lease','kernel-result','kernel-cancellation','linux-kernel-controls', 'clean', 'leak', 'ignore', 'blocked', 'status',
                                            'eperm-live-member', 'identity-lost', 'census-unavailable',
                                            'census-snapshot', 'census-descendant', 'census-unstable',
                                            'census-truncated', 'census-enumeration',
@@ -7645,7 +7756,7 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     results = []
     modes = ('clean', 'leak', 'ignore') if args.mode == 'all' else (
-        () if args.mode in ('linux-kernel-controls', 'status', 'runtime-negative', 'blocked', 'wiring',
+        () if args.mode in ('kernel-lease','kernel-result','kernel-cancellation','linux-kernel-controls', 'status', 'runtime-negative', 'blocked', 'wiring',
                             'batch-aggregation', 'aggregation-audit',
                             'eperm-live-member', 'identity-lost', 'census-unavailable',
                             'census-snapshot', 'census-descendant', 'census-unstable',
@@ -7727,6 +7838,24 @@ def main():
             result = control_failure('batch-aggregation', error)
         results.append(result)
         print(json.dumps(result, ensure_ascii=False), flush=True)
+    if args.mode in ('kernel-result','all'):
+        result=kernel_result_control();results.append(result)
+        print(json.dumps(result,ensure_ascii=False),flush=True)
+    if args.mode in ('kernel-lease','all') and sys.platform=='linux':
+        try:result=kernel_lease_control(md,output)
+        except Exception as error:result=control_failure('kernel-lease',error)
+        results.append(result);print(json.dumps(result,ensure_ascii=False),flush=True)
+    if args.mode in ('kernel-cancellation','all') and sys.platform=='linux':
+        try:
+            cancel_output=output/'kernel-cancellation'
+            child=run_kernel_cli_process([sys.executable,'-I','-B',str(Path(__file__).with_name('test_kernel_cancellation.py')),
+                                           '--output',str(cancel_output)])
+            (output/'kernel-cancellation.log').write_text(child.stdout+child.stderr)
+            document=json.loads((cancel_output/'result.json').read_text())
+            result={'mode':'kernel-cancellation','passed':child.returncode==0 and document.get('pass') is True,
+                    'report':str(cancel_output/'result.json')}
+        except Exception as error:result=control_failure('kernel-cancellation',error)
+        results.append(result);print(json.dumps(result,ensure_ascii=False),flush=True)
     if args.mode == 'linux-kernel-controls' and sys.platform == 'linux':
         try:
             result=linux_kernel_controls(md,output)
@@ -7741,10 +7870,9 @@ def main():
                 str(Path(__file__).with_name('check_linux.py')),'--output',str(linux_output)])
             (output / 'linux-kernel-controls.log').write_text(child.stdout + child.stderr)
             document = json.loads((linux_output / 'report.json').read_text())
-            result = {'mode': 'linux-kernel-controls', 'passed': bool(
-                child.returncode == 0 and document.get('status') == 'PASS'
-                and document.get('testsRun') == 11 and not document.get('skipped')
-                and document.get('sourceUnchanged') is True), 'report': str(linux_output / 'report.json')}
+            if child.returncode!=0:
+                raise RuntimeError(f'strict kernel CLI exited {child.returncode}')
+            result=kernel_control_report(document,str(linux_output/'report.json'))
         except Exception as error:
             if isinstance(error,subprocess.TimeoutExpired):
                 stdout=error.stdout or '';stderr=error.stderr or ''
@@ -7762,6 +7890,8 @@ def main():
         results.append(result)
         print(json.dumps(result, ensure_ascii=False), flush=True)
     status, skipped = summarize_results(results)
+    if args.mode=='linux-kernel-controls' and any(row.get('status')=='BLOCKED' for row in results):
+        status, _ = md.common.aggregate_status('BLOCKED')
     _, exit_code = md.common.aggregate_status(status)
     # #892 r24: the map that computes this exit code is itself under audit.  A
     # same-named redefinition of ``load_session_domain`` hands ``md`` a stub

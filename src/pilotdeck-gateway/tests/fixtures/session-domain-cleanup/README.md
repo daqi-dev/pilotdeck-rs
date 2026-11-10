@@ -301,7 +301,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 238 declared mutants (233 applicable on Linux, 230 on Darwin):
+`JUDGES`, keyed by the same names. The current table has 240 declared mutants (platform counts and ordered fingerprints in `EXPECTED_MUTATION_ROSTERS`):
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -309,7 +309,8 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `snapshot-race-accepted`, `unstable-census-accepted`, `truncation-accepted`,
 `enumeration-failure-empty`, `signal-gate-removed`, `pid-blocked-as-gone`,
 `linux-initial-identity-gate-removed`, `linux-pre-reap-identity-gate-removed`,
-`linux-refusal-erases-finding`, `empty-eligible-guard-removed`, `linux-visible-census-trusted`, `linux-eperm-means-empty`, `linux-no-esrch-needed`,
+`linux-refusal-erases-finding`, `empty-eligible-guard-removed`,
+`kernel-source-lease-gate-removed`, `kernel-result-passed-forced`, `linux-visible-census-trusted`, `linux-eperm-means-empty`, `linux-no-esrch-needed`,
 `linux-empty-group-probe-removed`, `linux-sigterm-removed`, `linux-sigkill-escalation-removed`,
 `linux-positive-finding-dropped-on-denial`, `linux-unknown-error-means-empty`,
 `linux-controls-summary-forced-pass`, `batch-status-relaxed`,
@@ -1057,6 +1058,8 @@ holds only below the interpreter's recursion limit.
 
 Linux uses `/proc` and pidfd only to record positive same-group member findings. It never calls that visible set complete. The held leader pins the group before any real signal; after reaping it, only kernel `killpg(pgid, 0)=ESRCH` proves the group absent. EPERM/unknown remain BLOCKED, identity loss without a prior finding remains NOT_VERIFIED; an already recorded positive finding remains GROUP_NOT_EMPTY with signalRefused if a real signal is refused. Remediation never erases that finding. Darwin retains its independent complete-census path. Other platforms remain explicitly unsupported. `check_cleanup.py --mode all` runs the eleven `check_linux.py` controls (the original eight plus both helper identity gates and a refused-signal finding control) on Linux; visible-set/EPERM mutations target the new helper and must be KILLED. The registered proof concerns this process group, not descendants that escaped it with setsid.
 
-#2916 platform-specific source controls: the five Darwin-only signal/census mutants remain unchanged for Darwin; Linux runs five literal helper counterparts against real groups and actual denial/unknown-error branches. Inapplicable explicit --only names are BLOCKED, never KILLED or silently passed. The Linux control summary is a registered shared aggregation point and has its own forced-PASS source mutant. The table has 238 declared rows; Darwin-only and Linux-only mutations are selected explicitly per platform.
+#2916 platform-specific source controls: the five Darwin-only signal/census mutants remain unchanged for Darwin; Linux runs five literal helper counterparts against real groups and actual denial/unknown-error branches. Inapplicable explicit --only names are BLOCKED, never KILLED or silently passed. The Linux control summary is a registered shared aggregation point and has its own forced-PASS source mutant. Platform-specific source selection is pinned by the ordered rosters.
 
 #2916 strict standalone kernel CLI preloads the helper and verifies its HEAD bytes before controls. The explicit in-process fixture mode reuses the same eleven controls under the existing source snapshot/lease guard; there is no allow-mutated flag or fake HEAD. Executing common.py bytes are now included in the result. Kernel control cancellation terminates pinned member identities and held unreaped groups before reaping, and the CLI supervisor sends TERM with bounded cleanup grace while retaining timeout output. The registered mutation inventory rejects an empty or changed eligible denominator; the restored-outcome replay selects a named cross-platform row and has an empty-eligible injection.
+
+The in-process Linux mode requires the actual direct negative runner, its live parity-owner record and its same-tree kernel flock. `--mode all` runs the strict kernel CLI and the separate real cancellation regression; the latter starts the timeout only after the owned group is ready.
