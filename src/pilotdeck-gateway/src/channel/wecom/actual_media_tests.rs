@@ -19,6 +19,8 @@ struct Wire {
     commands: Mutex<std::collections::VecDeque<String>>,
     command_id: AtomicUsize,
     image_reset_started: std::sync::atomic::AtomicBool,
+    bad_media_requested: std::sync::atomic::AtomicBool,
+    bad_media_served: AtomicUsize,
     generation: AtomicUsize,
     frames: Mutex<Vec<(usize, Value)>>,
     model: Mutex<Vec<Value>>,
@@ -91,6 +93,10 @@ async fn wecom_actual_host_media_and_help() {
                         loop {
                             let frame=tokio::select!{
                                 _=ticks.tick()=>{
+                                    if state.bad_media_requested.swap(false,Ordering::SeqCst) {
+                                        let event=json!({"cmd":"aibot_msg_callback","headers":{"req_id":"in-bad-media"},"body":{"msgid":"m-bad-media","from":{"userid":"alice"},"chatid":"alice","chattype":"single","msgtype":"file","file":{"url":format!("http://{address}/missing"),"aeskey":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8","filename":"missing.txt"}}});
+                                        if peer.send(Message::Text(event.to_string().into())).await.is_err(){break;}
+                                    }
                                     let input=state.commands.lock().unwrap().pop_front();
                                     if let Some(input)=input {
                                         let id=state.command_id.fetch_add(1,Ordering::SeqCst)+1;
@@ -131,6 +137,11 @@ async fn wecom_actual_host_media_and_help() {
                     }
                     let mut bytes=vec![]; while !bytes.ends_with(b"\r\n\r\n") {let mut byte=[0];if socket.read_exact(&mut byte).await.is_err(){return} bytes.push(byte[0]);assert!(bytes.len()<65536);}
                     let headers=String::from_utf8(bytes).unwrap();
+                    if headers.starts_with("GET /missing ") {
+                        socket.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+                        state.bad_media_served.fetch_add(1,Ordering::SeqCst);
+                        return;
+                    }
                     if headers.starts_with("GET /encrypted-image ") {
                         use base64::Engine;
                         let encrypted=base64::engine::general_purpose::STANDARD.decode("vvnZzQwwP9hfNIvc8y0ibwEwDM1d7N6V3Nzz7HsesBiU3aH8QnW3pptM6KyyarPcRP60anbGyAa5QGdleiW9RXOoRwYOiQ54Ek9x0ymzmAGTUJ/C0PRQ77xBd/xcBsv1").unwrap();
@@ -323,6 +334,36 @@ async fn wecom_actual_host_media_and_help() {
         "image-input A7 run uploads and sends a real image to the same external callback",
     )
     .await;
+    command(&state, "/new", "已创建新会话").await;
+    let before_bad = state.model.lock().unwrap().len();
+    state.bad_media_requested.store(true, Ordering::SeqCst);
+    eventually(
+        || state.bad_media_served.load(Ordering::SeqCst) == 1,
+        "missing encrypted media returns actual HTTP 404",
+    )
+    .await;
+    state
+        .commands
+        .lock()
+        .unwrap()
+        .push_back("after-missing-media-42".to_owned());
+    eventually(
+        || {
+            state
+                .model
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|model| model.to_string().contains("after-missing-media-42"))
+        },
+        "next valid message reaches A7 after media error",
+    )
+    .await;
+    assert_eq!(
+        state.model.lock().unwrap().len(),
+        before_bad + 1,
+        "failed media must not start an extra model turn"
+    );
     let listed = command(&state, "/projects", "项目列表：").await;
     let name = super::channel_command_fixture::project_name(&listed);
     command(&state, &format!("/switch-project {name}"), "已切换到项目").await;

@@ -17,6 +17,8 @@ const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z
 struct Wire {
     incoming: tokio::sync::broadcast::Sender<Value>,
     sockets: AtomicUsize,
+    transport_active: Mutex<Vec<String>>,
+    transport_seen: Mutex<Vec<String>>,
     seq: AtomicUsize,
     acks: AtomicUsize,
     phase: AtomicUsize,
@@ -35,6 +37,8 @@ impl Default for Wire {
         Self {
             incoming: tokio::sync::broadcast::channel(32).0,
             sockets: AtomicUsize::new(0),
+            transport_active: Mutex::new(vec![]),
+            transport_seen: Mutex::new(vec![]),
             seq: AtomicUsize::new(0),
             acks: AtomicUsize::new(0),
             phase: AtomicUsize::new(0),
@@ -51,6 +55,34 @@ impl Default for Wire {
     }
 }
 impl Wire {
+    fn transport_only(&self, id: &str) -> bool {
+        let active = self.transport_active.lock().unwrap();
+        active.len() == 1 && active[0] == id
+    }
+    fn transport_counts(&self, id: &str) -> (usize, usize) {
+        let seen = self
+            .transport_seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|item| item.as_str() == id)
+            .count();
+        let discoveries = self
+            .http
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(path, _, body)| {
+                path == "/callback/ws/endpoint"
+                    && serde_json::from_slice::<Value>(body)
+                        .ok()
+                        .and_then(|v| v["AppID"].as_str().map(str::to_owned))
+                        .as_deref()
+                        == Some(id)
+            })
+            .count();
+        (seen, discoveries)
+    }
     fn preserve_failure(&self) {
         let mut prior = self
             .failure_evidence
@@ -81,7 +113,17 @@ impl Wire {
             })
             .collect();
         let transcripts:Vec<Value>=self.home.lock().unwrap_or_else(|e|e.into_inner()).as_ref().map(|home|walk(&home.join("projects")).into_iter().filter(|p|p.extension().is_some_and(|e|e=="jsonl")).map(|p|json!({"path":p,"text":std::fs::read_to_string(&p).unwrap_or_default()})).collect()).unwrap_or_default();
-        let value = json!({"http":http,"models":self.models.lock().unwrap_or_else(|e|e.into_inner()).clone(),"sent":self.sent.lock().unwrap_or_else(|e|e.into_inner()).clone(),"sockets":self.sockets.load(Ordering::SeqCst),"acks":self.acks.load(Ordering::SeqCst),"transcripts":transcripts});
+        let transport_active = self
+            .transport_active
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let transport_seen = self
+            .transport_seen
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let value = json!({"http":http,"models":self.models.lock().unwrap_or_else(|e|e.into_inner()).clone(),"sent":self.sent.lock().unwrap_or_else(|e|e.into_inner()).clone(),"sockets":self.sockets.load(Ordering::SeqCst),"transportActive":transport_active,"transportSeen":transport_seen,"acks":self.acks.load(Ordering::SeqCst),"transcripts":transcripts});
         match std::fs::create_dir_all(&base).and_then(|_| {
             std::fs::write(&path, serde_json::to_vec_pretty(&value).unwrap_or_default())
         }) {
@@ -223,14 +265,15 @@ async fn peer(
             incoming=listener.accept()=>{let(mut socket,_)=incoming.unwrap();let state=shared.clone();let(output,approved,denied)=(output.clone(),approved.clone(),denied.clone());tasks.spawn(async move{
             let mut peek=[0;8192];loop{let n=match socket.peek(&mut peek).await{Ok(n)if n>0=>n,_=>return};if peek[..n].windows(4).any(|w|w==b"\r\n\r\n"){break;}tokio::time::sleep(Duration::from_millis(1)).await;}
             if String::from_utf8_lossy(&peek).to_ascii_lowercase().contains("upgrade: websocket"){
-            let mut ws=tokio_tungstenite::accept_async(socket).await.unwrap();let mut incoming=state.incoming.subscribe();state.sockets.fetch_add(1,Ordering::SeqCst);let mut seq=0;
+            let line=String::from_utf8_lossy(&peek);let target=line.lines().next().unwrap().split_whitespace().nth(1).unwrap();let identity=target.split("device_id=").nth(1).expect("mock WS device identity").split('&').next().unwrap().to_owned();
+            let mut ws=tokio_tungstenite::accept_async(socket).await.unwrap();let mut incoming=state.incoming.subscribe();state.sockets.fetch_add(1,Ordering::SeqCst);state.transport_seen.lock().unwrap().push(identity.clone());state.transport_active.lock().unwrap().push(identity.clone());let mut seq=0;
             loop{tokio::select!{event=incoming.recv()=>{let Ok(event)=event else{break};seq+=1;if ws.send(Message::Binary(frame(&event,seq).into())).await.is_err(){break;}},
             message=ws.next()=>match message{Some(Ok(Message::Binary(raw)))=>{if raw.windows(12).any(|w|w==br#"{"code":200}"#){state.acks.fetch_add(1,Ordering::SeqCst);}},Some(Ok(Message::Close(_)))=>{let _=ws.close(None).await;break},Some(Ok(_))=>{},_=>break}
-            }}state.sockets.fetch_sub(1,Ordering::SeqCst);return;}
+            }}state.sockets.fetch_sub(1,Ordering::SeqCst);let mut active=state.transport_active.lock().unwrap();let pos=active.iter().position(|v|v==&identity).expect("accepted WS identity remains tracked");active.remove(pos);return;}
             let mut raw=vec![];while !raw.ends_with(b"\r\n\r\n"){let mut b=[0];if socket.read_exact(&mut b).await.is_err(){return}raw.push(b[0]);assert!(raw.len()<65536);}
             let header=String::from_utf8(raw).unwrap();let path=header.lines().next().unwrap().split_whitespace().nth(1).unwrap().to_owned();let authorization=header.lines().find_map(|l|l.split_once(':').filter(|(k,_)|k.eq_ignore_ascii_case("authorization")).map(|(_,v)|v.trim().to_owned())).unwrap_or_default();let size=header.lines().find_map(|l|l.to_ascii_lowercase().strip_prefix("content-length:").map(|v|v.trim().parse::<usize>().unwrap())).unwrap_or(0);let mut raw=vec![0;size];if socket.read_exact(&mut raw).await.is_err(){return}state.http.lock().unwrap().push((path.clone(),authorization,raw.clone()));
             let body:Value=serde_json::from_slice(&raw).unwrap_or(Value::Null);
-            let mut delayed_write=false;let(status,mime,data)=if path=="/callback/ws/endpoint"{("200 OK","application/json",json!({"code":0,"data":{"URL":format!("ws://{address}/feishu?service_id=77&device_id=fixture"),"ClientConfig":{"PingInterval":1,"ReconnectCount":2,"ReconnectInterval":0.01,"ReconnectNonce":0}}}).to_string().into_bytes())
+            let mut delayed_write=false;let(status,mime,data)=if path=="/callback/ws/endpoint"{let app_id=body["AppID"].as_str().expect("discovery app id");("200 OK","application/json",json!({"code":0,"data":{"URL":format!("ws://{address}/feishu?service_id=77&device_id={app_id}"),"ClientConfig":{"PingInterval":1,"ReconnectCount":2,"ReconnectInterval":0.01,"ReconnectNonce":0}}}).to_string().into_bytes())
             }else if path.contains("tenant_access_token"){("200 OK","application/json",json!({"code":0,"tenant_access_token":"mock-tenant-token","expire":7200}).to_string().into_bytes())
             }else if path.contains("/resources/img-bad"){("404 Not Found","application/json",b"{}".to_vec())
             }else if path.contains("/resources/img-key"){use base64::Engine;("200 OK","image/png",base64::engine::general_purpose::STANDARD.decode(PNG).unwrap())
@@ -536,14 +579,16 @@ async fn feishu_actual_server_media_a7_upload_interactions_new_reload_shutdown()
         peer.state.sockets.load(Ordering::SeqCst) == 0
     })
     .await;
+    let retired_first = peer.state.transport_counts("cli_0123456789abcdef");
     peer.state.generation.store(1, Ordering::SeqCst);
+    config["adapters"]["feishu"]["appId"] = "cli_1111111111111111".into();
     config["adapters"]["feishu"]["enabled"] = true.into();
     std::fs::write(&path, config.to_string()).unwrap();
     connection.receive(json!({"type":"request","id":"enable-feishu-media","method":"reload_config","params":{}}).to_string()).await.unwrap();
     until(
         &peer.state,
         "public reload creates fresh Feishu transport",
-        || peer.state.sockets.load(Ordering::SeqCst) == 1,
+        || peer.state.transport_only("cli_1111111111111111"),
     )
     .await;
     peer.state.text("reload-start");
@@ -585,13 +630,15 @@ async fn feishu_actual_server_media_a7_upload_interactions_new_reload_shutdown()
         || peer.state.sockets.load(Ordering::SeqCst) == 0,
     )
     .await;
+    let retired_second = peer.state.transport_counts("cli_1111111111111111");
+    config["adapters"]["feishu"]["appId"] = "cli_2222222222222222".into();
     config["adapters"]["feishu"]["enabled"] = true.into();
     std::fs::write(&path, config.to_string()).unwrap();
     connection.receive(json!({"type":"request","id":"enable-feishu-held","method":"reload_config","params":{}}).to_string()).await.unwrap();
     until(
         &peer.state,
         "held turn reload starts fresh transport",
-        || peer.state.sockets.load(Ordering::SeqCst) == 1,
+        || peer.state.transport_only("cli_2222222222222222"),
     )
     .await;
     peer.state.delayed_release.notify_one();
@@ -604,6 +651,28 @@ async fn feishu_actual_server_media_a7_upload_interactions_new_reload_shutdown()
         "held provider response write attempted",
         || peer.state.delayed_write_result.load(Ordering::SeqCst) != 0,
     )
+    .await;
+    until(&peer.state, "held old turn has durable terminal", || {
+        let entries: Vec<Value> = walk(&options.home.join("projects"))
+            .into_iter()
+            .filter(|p| p.extension().is_some_and(|e| e == "jsonl"))
+            .flat_map(|p| {
+                std::fs::read_to_string(p)
+                    .unwrap_or_default()
+                    .lines()
+                    .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let Some(accepted) = entries.iter().find(|entry| {
+            entry["type"] == "accepted_input" && entry.to_string().contains("reload-delayed-final")
+        }) else {
+            return false;
+        };
+        entries
+            .iter()
+            .any(|entry| entry["type"] == "turn_result" && entry["turnId"] == accepted["turnId"])
+    })
     .await;
     peer.state.text("after-late-response");
     until(
@@ -640,11 +709,13 @@ async fn feishu_actual_server_media_a7_upload_interactions_new_reload_shutdown()
         peer.state.sockets.load(Ordering::SeqCst) == 0
     })
     .await;
+    let retired_third = peer.state.transport_counts("cli_2222222222222222");
+    config["adapters"]["feishu"]["appId"] = "cli_3333333333333333".into();
     config["adapters"]["feishu"]["enabled"] = true.into();
     std::fs::write(&path, config.to_string()).unwrap();
     connection.receive(json!({"type":"request","id":"enable-feishu-pending","method":"reload_config","params":{}}).to_string()).await.unwrap();
     until(&peer.state, "pending reload starts new transport", || {
-        peer.state.sockets.load(Ordering::SeqCst) == 1
+        peer.state.transport_only("cli_3333333333333333")
     })
     .await;
     peer.state.text("1");
@@ -653,6 +724,26 @@ async fn feishu_actual_server_media_a7_upload_interactions_new_reload_shutdown()
     })
     .await;
     assert!(!denied.exists(), "late approval must not execute old turn");
+    let final_active = peer.state.transport_active.lock().unwrap().clone();
+    let final_seen = peer.state.transport_seen.lock().unwrap().clone();
+    eprintln!(
+        "Feishu transport identities active={final_active:?} seen={final_seen:?}; retired={retired_first:?},{retired_second:?},{retired_third:?}"
+    );
+    assert_eq!(
+        peer.state.transport_counts("cli_0123456789abcdef"),
+        retired_first,
+        "first retired app must not rediscover or reconnect"
+    );
+    assert_eq!(
+        peer.state.transport_counts("cli_1111111111111111"),
+        retired_second,
+        "second retired app must not rediscover or reconnect"
+    );
+    assert_eq!(
+        peer.state.transport_counts("cli_2222222222222222"),
+        retired_third,
+        "third retired app must not rediscover or reconnect"
+    );
     let prompts = peer
         .state
         .sent
