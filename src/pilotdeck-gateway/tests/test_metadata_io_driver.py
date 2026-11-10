@@ -9647,15 +9647,22 @@ class AggregationAudit(unittest.TestCase):
                                     '#166 busy lock must never write source')
                     return write_text(path, *a, **k)
 
-                def refuse_fixture_atomic(*_args, **_kwargs):
-                    # #2743 (DS boundary P2a): fixtures migrated to
-                    # write_source_atomic bind their own global at import, so
-                    # patching the guard's attribute never intercepts their
-                    # publish/restore; a mutant that skips the busy lock and
-                    # reaches the on-disk mutation must fail here, not
-                    # silently rename the guarded sources.
-                    raise AssertionError('#166 busy lock must not publish source '
-                                         'bytes through the fixture global')
+                atomic_calls = []
+
+                def record_fixture_atomic(root, path, data, *, mode=None):
+                    # #2743 (DS r2 concurrency #2 / boundary #1): fixtures
+                    # migrated to write_source_atomic bind their own global at
+                    # import, so patching the guard's attribute never
+                    # intercepts their publish/restore. Record rather than
+                    # raise -- main()'s blanket `except Exception` would
+                    # swallow an AssertionError and come back out as exactly
+                    # the BLOCKED/INVALID this probe already asserts, so a
+                    # raise cannot turn the probe red. The empty-list
+                    # assertion below is what makes a busy-lock bypass
+                    # visible; `publish.call_count == 0` stays the
+                    # guard-attribute mirror of the same claim.
+                    atomic_calls.append(Path(path))
+                    return None
 
                 # #1166: the pristine admission now runs a real external
                 # scanner that needs genuine git; these #166 wiring probes
@@ -9677,8 +9684,11 @@ class AggregationAudit(unittest.TestCase):
                     if hasattr(module, 'pgrep_launcher'):
                         module.pgrep_launcher = lambda: ''
                     if hasattr(module, 'write_source_atomic'):
-                        module.write_source_atomic = refuse_fixture_atomic
+                        module.write_source_atomic = record_fixture_atomic
                     code = module.main()
+                self.assertEqual(atomic_calls, [],
+                                 '#166 busy lock must not publish source '
+                                 'bytes through the fixture global')
                 # #1903：还原改走 `write_source_atomic`（临时文件 + `os.replace`），不再经过
                 # `Path.write_text/bytes`；只钉那两个入口，这条「拒锁期间不得写源码」的探针
                 # 对还原路径就变成空转（r1 DeepSeek sibling / zai sibling P2）。
@@ -9732,12 +9742,17 @@ class AggregationAudit(unittest.TestCase):
                     self.assertTrue(path.is_relative_to(Path(temp).resolve()), '#166 dirty guard must never write source')
                     return write_text(path, *args, **kwargs)
 
-                def refuse_fixture_atomic(*_args, **_kwargs):
-                    # #2743 (DS boundary P2a): same blind spot as the busy-lock
-                    # probe -- the fixture's own write_source_atomic global is
-                    # invisible to the guard-level patch above.
-                    raise AssertionError('#166 dirty guard must not publish source '
-                                         'bytes through the fixture global')
+                atomic_calls = []
+
+                def record_fixture_atomic(root, path, data, *, mode=None):
+                    # #2743 (DS r2 concurrency #2 / boundary #1): same blind
+                    # spot as the busy-lock probe -- the fixture's own
+                    # write_source_atomic global is invisible to the
+                    # guard-level patch above, and an AssertionError here is
+                    # swallowed into the BLOCKED shape this probe already
+                    # expects. Record and assert empty after main() instead.
+                    atomic_calls.append(Path(path))
+                    return None
 
                 with patch.object(importlib.machinery.SourceFileLoader, 'get_data', data):
                     spec = importlib.util.spec_from_file_location('negative_166_' + folder, path)
@@ -9773,11 +9788,14 @@ class AggregationAudit(unittest.TestCase):
                         if hasattr(module, 'pgrep_launcher'):
                             module.pgrep_launcher = lambda: ''
                         if hasattr(module, 'write_source_atomic'):
-                            module.write_source_atomic = refuse_fixture_atomic
+                            module.write_source_atomic = record_fixture_atomic
                         try:
                             code = module.main()
                         except Exception as error:
                             caught = error
+                    self.assertEqual(atomic_calls, [],
+                                     '#166 dirty guard must not publish source '
+                                     'bytes through the fixture global')
                     # #1903：同 busy-lock 探针 —— 还原走 `write_source_atomic`，不经过
                     # `Path.write_bytes`，只钉旧入口等于没钉还原路径。
                     self.assertEqual(restore_wiring_problems(guard), [],
