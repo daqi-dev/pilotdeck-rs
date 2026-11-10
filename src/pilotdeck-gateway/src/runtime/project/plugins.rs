@@ -2,6 +2,7 @@
 //! ProjectRuntimeResourcesBundle.ts:218-225.
 use super::*;
 use crate::runtime::plugins::{PluginRuntime, PluginRuntimeOptions};
+use pilotdeck_protocol::JsValue;
 use std::{any::Any, sync::Arc};
 
 pub struct PluginFamilySource {
@@ -55,13 +56,29 @@ impl ResourceFamilySource for NativeStylePluginFamilySource {
     fn family(&self) -> Family {
         Family::PluginRuntime
     }
-    fn stage(&self, _context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
+    fn stage(&self, context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
+        let mut enabled = self.options.builtin_plugins_enabled.clone();
+        let snapshot = context.snapshot();
+        if let Some(configured) = snapshot
+            .get("config")
+            .and_then(|config| config.get("extension"))
+            .and_then(|extension| extension.get("builtinPluginsEnabled"))
+            .and_then(JsValue::as_object)
+        {
+            for (name, value) in configured.entries() {
+                if let Some(value) = value.as_bool()
+                    && let Ok(name) = name.to_utf8()
+                {
+                    enabled.insert(name, value);
+                }
+            }
+        }
         let runtime = Arc::new(PluginRuntime::new_native_style_only(PluginRuntimeOptions {
             project_root: self.options.project_root.clone(),
             pilot_home: self.options.pilot_home.clone(),
             builtin_skills_root: self.options.builtin_skills_root.clone(),
             builtin_plugins: self.options.builtin_plugins.clone(),
-            builtin_plugins_enabled: self.options.builtin_plugins_enabled.clone(),
+            builtin_plugins_enabled: enabled,
         }));
         let resource = Arc::new(PluginResources { runtime });
         sink.register_owner(self.family(), resource.clone());

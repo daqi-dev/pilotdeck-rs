@@ -1,0 +1,205 @@
+{
+  "node": {
+    "node": "22.22.0",
+    "acorn": "8.15.0",
+    "ada": "2.9.2",
+    "amaro": "1.1.4",
+    "ares": "1.34.6",
+    "brotli": "1.1.0",
+    "cjs_module_lexer": "2.1.0",
+    "cldr": "48.0",
+    "icu": "78.2",
+    "llhttp": "9.3.0",
+    "modules": "127",
+    "napi": "10",
+    "nbytes": "0.1.1",
+    "ncrypto": "0.0.1",
+    "nghttp2": "1.64.0",
+    "openssl": "3.5.4",
+    "simdjson": "3.13.0",
+    "simdutf": "6.4.2",
+    "sqlite": "3.50.4",
+    "tz": "2025c",
+    "undici": "6.23.0",
+    "unicode": "17.0",
+    "uv": "1.52.1",
+    "uvwasi": "0.0.23",
+    "v8": "12.4.254.21-node.33",
+    "zlib": "1.3.1-470d3a2",
+    "zstd": "1.5.7"
+  },
+  "sources": {
+    "src/extension/plugins/runtime/PluginRuntime.ts": "c601a4f1b01dee289ca715e723c4f579a775f84f72317c7317e5f72b7cd915b4",
+    "src/extension/plugins/runtime/PluginRegistry.ts": "d22f432d191c60f22da54ce7949e9085129c20817ec5fd433bd97180bd0f81da",
+    "src/extension/plugins/loading/PluginLoader.ts": "93727f3f56cf46e797fbe51bd47e61f19bab098c094fb31daf11a5e33449b2cf"
+  },
+  "results": [
+    {
+      "mode": "builtin-only",
+      "plugins": [
+        {
+          "name": "browser-use",
+          "source": "builtin",
+          "path": "<root>/builtin-only/assets/browser-use"
+        }
+      ],
+      "skills": [
+        {
+          "name": "browser-use",
+          "description": "BUILTIN CONTENT description",
+          "path": "<root>/builtin-only/assets/browser-use/SKILL.md",
+          "content": "BUILTIN CONTENT\n"
+        }
+      ],
+      "read": {
+        "browser-use": "BUILTIN CONTENT\n"
+      }
+    },
+    {
+      "mode": "same-key-disk",
+      "plugins": [
+        {
+          "name": "browser-use",
+          "source": "builtin",
+          "path": "<root>/same-key-disk/disk/browser-use"
+        },
+        {
+          "name": "a-first",
+          "source": "builtin",
+          "path": "<root>/same-key-disk/disk/a-first"
+        },
+        {
+          "name": "z-last",
+          "source": "builtin",
+          "path": "<root>/same-key-disk/disk/z-last"
+        }
+      ],
+      "skills": [
+        {
+          "name": "browser-use",
+          "description": "DISK CONTENT description",
+          "path": "<root>/same-key-disk/disk/browser-use/SKILL.md",
+          "content": "DISK CONTENT\n"
+        },
+        {
+          "name": "a-first",
+          "description": "FIRST CONTENT description",
+          "path": "<root>/same-key-disk/disk/a-first/SKILL.md",
+          "content": "FIRST CONTENT\n"
+        },
+        {
+          "name": "z-last",
+          "description": "LAST CONTENT description",
+          "path": "<root>/same-key-disk/disk/z-last/SKILL.md",
+          "content": "LAST CONTENT\n"
+        }
+      ],
+      "read": {
+        "browser-use": "DISK CONTENT\n",
+        "a-first": "FIRST CONTENT\n",
+        "z-last": "LAST CONTENT\n"
+      }
+    },
+    {
+      "mode": "disabled-builtin-keeps-disk",
+      "plugins": [
+        {
+          "name": "a-first",
+          "source": "builtin",
+          "path": "<root>/disabled-builtin-keeps-disk/disk/a-first"
+        },
+        {
+          "name": "browser-use",
+          "source": "builtin",
+          "path": "<root>/disabled-builtin-keeps-disk/disk/browser-use"
+        },
+        {
+          "name": "z-last",
+          "source": "builtin",
+          "path": "<root>/disabled-builtin-keeps-disk/disk/z-last"
+        }
+      ],
+      "skills": [
+        {
+          "name": "a-first",
+          "description": "FIRST CONTENT description",
+          "path": "<root>/disabled-builtin-keeps-disk/disk/a-first/SKILL.md",
+          "content": "FIRST CONTENT\n"
+        },
+        {
+          "name": "browser-use",
+          "description": "DISK CONTENT description",
+          "path": "<root>/disabled-builtin-keeps-disk/disk/browser-use/SKILL.md",
+          "content": "DISK CONTENT\n"
+        },
+        {
+          "name": "z-last",
+          "description": "LAST CONTENT description",
+          "path": "<root>/disabled-builtin-keeps-disk/disk/z-last/SKILL.md",
+          "content": "LAST CONTENT\n"
+        }
+      ],
+      "read": {
+        "a-first": "FIRST CONTENT\n",
+        "browser-use": "DISK CONTENT\n",
+        "z-last": "LAST CONTENT\n"
+      }
+    },
+    {
+      "mode": "project-wins",
+      "plugins": [
+        {
+          "name": "browser-use",
+          "source": "builtin",
+          "path": "<root>/project-wins/disk/browser-use"
+        },
+        {
+          "name": "a-first",
+          "source": "builtin",
+          "path": "<root>/project-wins/disk/a-first"
+        },
+        {
+          "name": "z-last",
+          "source": "builtin",
+          "path": "<root>/project-wins/disk/z-last"
+        },
+        {
+          "name": "browser-use",
+          "source": "global",
+          "path": "<root>/project-wins/home/skills/browser-use"
+        },
+        {
+          "name": "browser-use",
+          "source": "project",
+          "path": "<root>/project-wins/project/.pilotdeck/skills/browser-use"
+        }
+      ],
+      "skills": [
+        {
+          "name": "browser-use",
+          "description": "PROJECT CONTENT description",
+          "path": "<root>/project-wins/project/.pilotdeck/skills/browser-use/SKILL.md",
+          "content": "PROJECT CONTENT\n"
+        },
+        {
+          "name": "a-first",
+          "description": "FIRST CONTENT description",
+          "path": "<root>/project-wins/disk/a-first/SKILL.md",
+          "content": "FIRST CONTENT\n"
+        },
+        {
+          "name": "z-last",
+          "description": "LAST CONTENT description",
+          "path": "<root>/project-wins/disk/z-last/SKILL.md",
+          "content": "LAST CONTENT\n"
+        }
+      ],
+      "read": {
+        "browser-use": "PROJECT CONTENT\n",
+        "a-first": "FIRST CONTENT\n",
+        "z-last": "LAST CONTENT\n"
+      }
+    }
+  ],
+  "normalization": "Only the generated fixture root becomes <root>; content/descriptions/catalog order/read output preserved."
+}

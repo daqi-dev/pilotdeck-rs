@@ -563,8 +563,10 @@ pub(crate) fn stage_native_style_plugins(
         ],
         &mut budget,
     )?;
-    let mut plugins = Vec::new();
-    let mut failures = Vec::new();
+    let mut skill_budget = StyleBudget::native_skills();
+    let builtins = stage_native_builtin_skills(options, &mut skill_budget)?;
+    let mut plugins = builtins.plugins;
+    let mut failures = builtins.staged_failures;
     for entry in paths {
         let attempt = entry.manifest.and_then(|manifest| {
             native::load_from_manifest(&entry.path, entry.source, &manifest, &mut budget)
@@ -579,7 +581,7 @@ pub(crate) fn stage_native_style_plugins(
             }),
         }
     }
-    let skills = stage_native_standalone_skills(options)?;
+    let skills = stage_native_standalone_skills(options, &mut skill_budget)?;
     plugins.extend(skills.plugins);
     failures.extend(skills.staged_failures);
     Ok(LoadFromDiskResult {
@@ -588,11 +590,64 @@ pub(crate) fn stage_native_style_plugins(
     })
 }
 
+/// First-party builtin skill declaration. This is a real bounded Markdown
+/// contribution, not a catalogue sort rule or an identity-only placeholder.
+/// The broader browser plugin's MCP declaration is outside this skill profile.
+/// TS loads builtin plugins before disk candidates; a later same-name/source
+/// standalone replaces content while PluginRegistry retains its original slot.
+fn stage_native_builtin_skills(
+    options: &PluginRuntimeOptions,
+    budget: &mut StyleBudget,
+) -> Result<LoadFromDiskResult, PluginRuntimeError> {
+    let mut result = LoadFromDiskResult {
+        plugins: Vec::new(),
+        staged_failures: Vec::new(),
+    };
+    let Some(root) = &options.builtin_skills_root else {
+        return Ok(result);
+    };
+    let name = "browser-use";
+    if options.builtin_plugins_enabled.get(name) == Some(&false) {
+        return Ok(result);
+    }
+    let path = root.join(name);
+    if !fs::metadata(&path).is_ok_and(|metadata| metadata.is_dir()) {
+        return Ok(result);
+    }
+    match markdown::load_standalone_skill_bounded(name, &path, budget) {
+        Ok(skill) => result.plugins.push(Arc::new(LoadedPlugin {
+            name: name.to_owned(),
+            path,
+            source: PluginSource::Builtin,
+            skills: vec![skill],
+            commands: Vec::new(),
+            output_styles: Vec::new(),
+            hooks_config: None,
+            mcp_servers: None,
+            lsp_servers: None,
+            dispose: None,
+        })),
+        Err(error) if error.code == Some("STYLE_RELOAD_LIMIT") => {
+            return Err(PluginRuntimeError::gateway(
+                "NATIVE_SKILL_LIMIT",
+                "Native skill source budget exceeded.",
+            ));
+        }
+        Err(_) => result.staged_failures.push(PluginRefreshFailure {
+            path,
+            source: PluginSource::Builtin,
+            kind: PluginKind::Skill,
+        }),
+    }
+    Ok(result)
+}
+
 /// Standalone skills are inert markdown: no plugin manifests, hooks, MCP,
 /// command directories, scripts, or assets are read by this selective loader.
 /// Native-only bound: 8 MiB source bytes and 2,048 directory entries total.
 fn stage_native_standalone_skills(
     options: &PluginRuntimeOptions,
+    budget: &mut StyleBudget,
 ) -> Result<LoadFromDiskResult, PluginRuntimeError> {
     let paths = PilotExtensionPaths::resolve(&options.project_root, &options.pilot_home);
     let mut directories = Vec::new();
@@ -603,7 +658,6 @@ fn stage_native_standalone_skills(
         (paths.global_skills_dir, PluginSource::Global),
         (paths.project_skills_dir, PluginSource::Project),
     ]);
-    let mut budget = StyleBudget::native_skills();
     let mut plugins = Vec::new();
     let mut staged_failures = Vec::new();
     for (directory, source) in directories {
@@ -627,7 +681,7 @@ fn stage_native_standalone_skills(
             if !fs::metadata(&path).is_ok_and(|meta| meta.is_dir()) {
                 continue;
             }
-            match markdown::load_standalone_skill_bounded(&basename(&path), &path, &mut budget) {
+            match markdown::load_standalone_skill_bounded(&basename(&path), &path, budget) {
                 Ok(skill) => plugins.push(Arc::new(LoadedPlugin {
                     name: basename(&path),
                     path,
@@ -898,3 +952,7 @@ mod native_hook_loading_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "builtin_priority_tests.rs"]
+mod builtin_priority_tests;
