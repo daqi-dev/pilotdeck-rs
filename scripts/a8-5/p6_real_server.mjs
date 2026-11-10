@@ -82,7 +82,20 @@ async function main() {
   log("pre/ws-hello", { type: (await ws.hello())?.type });
   log("pre/ws-describe", { ok: (await ws.request("describe_server"))?.ok });
   const ka = await keepAliveProbe(port);
-  log("pre/ka", await ka.once("/health"));
+  // #2756（同 p16 #2662 守门形状）：建池前提守门——首次请求失败或响应 Connection
+  // 非 keep-alive（缺头按完整 HTTP/1.1 隐式）时池空，SIGTERM 轮的 keepalive-http
+  // 是新连接在途，「既有 keep-alive 连接被拆」语义不成立（matrix.md §4.2 / §5.1
+  // 单样本格 n=1 无退路），故记 SKIP 行、该条目跳过。
+  const kaFirst = await ka.once("/health");
+  const kaPool = kaFirst.premise === true;
+  log("pre/ka", kaFirst);
+  if (!kaPool) {
+    log("ka/SKIP-sigterm-keepalive-http", {
+      reason: kaFirst.premiseReason,
+      kaFirst,
+      note: "建池前提未成立：sigterm-concurrent 的 keepalive-http 跳过（新连接对照已由 new-http 覆盖，不重复产出），「既有 keep-alive 在途被拆」观测不作对照",
+    });
+  }
 
   // SIGTERM 同一轮并发四个入口请求
   child.kill("SIGTERM");
@@ -92,7 +105,10 @@ async function main() {
       (c) => c.hello(),
       (e) => ({ kind: "new-ws", error: e.message }),
     ),
-    ka.once("/health").then((r) => ({ kind: "keepalive-http", ...r })),
+    // #2756：前提未成立时跳过（池空时是新建连而非复用在途，证据无效——同 p16 观察 3 形状）。
+    kaPool
+      ? ka.once("/health").then((r) => ({ kind: "keepalive-http", ...r }))
+      : Promise.resolve({ kind: "keepalive-http", skipped: true, reason: "建池前提未成立（见 ka/SKIP-sigterm-keepalive-http）" }),
     httpProbe(port, "/health").then((r) => ({ kind: "new-http", ...r })),
   ]);
   log("sigterm-concurrent", concurrent);
