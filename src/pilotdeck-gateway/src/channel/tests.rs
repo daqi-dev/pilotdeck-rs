@@ -1621,6 +1621,17 @@ fn loader_keys_partition_rejected_and_implemented() {
             "#2301 every module subset key is implemented or a bundle key"
         );
     }
+    // #2367: the bundle group's reverse closure into the same whitelist. The
+    // loop above iterates the whitelist, so it cannot notice a bundle key the
+    // whitelist lost — dropping `weixin`/`feishu` kept every cell green while
+    // `unmigrated_subset_channels_stay_loadable` silently tested one key
+    // fewer.
+    for key in BUNDLE_CHANNEL_KEYS {
+        crate::negative_assert!(
+            SUBSET_CHANNEL_KEYS.contains(key),
+            "#2367 every bundle key is in the module subset whitelist"
+        );
+    }
     // Reverse closure: a rejection-table entry that is neither a loader key
     // nor one of the two bundle-built strict keys refuses configs TS accepts.
     for key in UNMIGRATED_CHANNEL_KEYS {

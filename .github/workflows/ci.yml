@@ -1,5 +1,7 @@
 name: ci
 
+# 钉版（#2762）：2026-11-09 ubuntu-latest 滚 26.04（镜像 20261101.186.1）致三测稳定红，所有 runs-on 钉回 ubuntu-24.04。
+
 # r7（#1809 评审 P0）：本文件**每个** run step 都显式 `shell: bash`。step 级
 # `shell:` 优先于 workflow / job 级 `defaults.run.shell`（GitHub workflow syntax：
 # "You can override the default shell settings … using the `shell` keyword"），
@@ -22,7 +24,7 @@ jobs:
   # state/decisions-20261031-ci-docs-scope.md）。本 job 自身无条件运行（先跑分类器自测），
   # 重 job 的跳过只认它的输出，check 只放行「skipped 且 docs_only=true」这一条路径。
   scope:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
     steps:
@@ -47,7 +49,7 @@ jobs:
   metadata-observer:
     needs: [scope]
     if: ${{ needs.scope.outputs.docs_only != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -90,6 +92,11 @@ jobs:
           # 两者都在 -O 子进程里跑真实源码（假 cargo / 一处注入编辑），不需要 cargo 名额。
           python3 -B -m unittest -v test_negative_run_guards
           python3 -B -m unittest -v network-timing/test_negative_controls.py
+          # #2309 fix-r3：manager-gateway 的「先核对名册后发布」此前无任何机检分母——
+          # 删一条 EXPECTED_NAMES 或把 recorded != expected 拆成常量，CI 仍全绿。
+          # 该自测桩掉 cargo 三件套与源守卫窗口后驱动真实 main()，跑批真名册、
+          # 真锚点 mutate、真发布；不需要 cargo 名额。
+          python3 -B -m unittest -v test_negative_roster_guards
       # #1570：共享负控的副本清单从源码推导（src/ 之外被编译期读取的输入）。
       # 漏一份不会表现成「变异存活」，而是整条变异 INVALID——尺子静默失去判别力。
       # 这里跑推导与 fail-closed 边界的自测；不需要 cargo。
@@ -149,7 +156,7 @@ jobs:
   negative-controls:
     needs: [scope]
     if: ${{ needs.scope.outputs.docs_only != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 上界只作兜底：夹具自己按 PDRS_NEGCTL_DEADLINE（默认 5400 s）收口，并在
     # 截止 / SIGTERM 时还原源码、发 TIMEOUT summary 后非零退出（#1692 §1）。
     # 实测（run 42176640534）：平台 job 超时**不会**跳过 `if: always()` 上传，但会
@@ -245,7 +252,7 @@ jobs:
   retirement-outcome-parity:
     needs: [scope]
     if: ${{ needs.scope.outputs.docs_only != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 外层预算必须**大于**全 job 内部最坏和 + 开销（r11 P0）：判据是
     # RETIREMENT_JOB_TIMEOUT_MINUTES × 60 > INTERNAL_WORST_CASE_SECONDS
     # + JOB_OVERHEAD_MARGIN_SECONDS，由 self_check.py 遍历实际 steps 求值
@@ -331,7 +338,7 @@ jobs:
   check:
     needs: [scope, metadata-observer, rust, a51-coverage, negative-controls, retirement-outcome-parity]
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Require scope success
         if: ${{ always() && needs.scope.result != 'success' }}
@@ -363,7 +370,7 @@ jobs:
   rust:
     needs: [scope]
     if: ${{ needs.scope.outputs.docs_only != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_PROFILE_TEST_DEBUG: line-tables-only
@@ -487,7 +494,7 @@ jobs:
   a51-coverage:
     needs: [scope]
     if: ${{ needs.scope.outputs.docs_only != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # 校验器只读当前检出文件，不读取 Git 历史，默认浅检出即可。
       - uses: actions/checkout@v4
@@ -549,7 +556,7 @@ jobs:
   # （schema 与快照本就是同一次生成，彼此一致不证明与基线一致）。依赖装得起（3 个钉死包 + lockfile），
   # 不需要「跳过基线」的退路；本地仍可用 PDRS_REQUIRE_BASELINE=1 把缺基线判 FAIL。
   gateway-schema-baseline:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       PILOTDECK_BASELINE_REF: cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85 # OpenBMB/PilotDeck 冻结基线（2026-10-14，schema-FROZEN.md）
     steps:

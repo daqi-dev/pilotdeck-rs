@@ -60,6 +60,7 @@ impl Log {
             .push(value.into());
     }
 }
+#[derive(Clone)]
 struct Gate(watch::Sender<bool>);
 impl Gate {
     fn new() -> Self {
@@ -127,6 +128,11 @@ impl LiveSession for Arc<Session> {
     }
     fn submit(&self, input: JsValue, options: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
         self.log.host("submit");
+        if self.setup["pumpPanic"] == true {
+            // #2498: the worker task dies before its own `finish`, so the
+            // manage arm's JoinError branch owns the delivery close.
+            panic!("#2498 injected worker panic");
+        }
         if self.setup["input"]["timeoutMs"]
             .as_f64()
             .is_some_and(|v| v > 0.0)
@@ -491,6 +497,16 @@ impl SubmitHostServices for Services {
         status: &'a JsValue,
     ) -> SubmitFuture<'a, Result<(), SubmitError>> {
         Box::pin(async {
+            // #2498: this gated record is a *cancellable* `Gate::wait()`
+            // future — when a budget drops the await, the gate future is
+            // simply cancelled and its continuation never runs. Production
+            // `record_failure` (native_process/services.rs) dispatches a
+            // `spawn_blocking` task that cannot be cancelled: its durable
+            // write keeps running and can land after the budget and the
+            // close. The #2498 cells therefore prove the wire side (no
+            // terminal frame enqueues past the budget) and the bounded
+            // close; the durable late write is registered separately in
+            // specs/gateway-parity/diffs/A7.2-TURN-PANIC-FINISH-001-R3.md.
             if self.session.setup["failureGate"] == true {
                 self.session.log.host("failure_enter");
                 self.session.failure_gate.wait().await;
@@ -567,6 +583,9 @@ struct Registry {
     log: Arc<Log>,
     setup: Value,
     pending: Arc<AtomicUsize>,
+    /// #2498: holds every append behind a step-opened gate, so the panic
+    /// arm's bounded drain is provably parked on in-flight writes.
+    append_gate: Gate,
 }
 impl Registry {
     fn track<T: Send + 'static>(&self, future: RegistryFuture<T>) -> RegistryFuture<T> {
@@ -615,6 +634,21 @@ impl TurnRunRegistry for Registry {
                     "injected registry append failure".into(),
                 ))
             });
+        }
+        if self.setup["registryAppendStuck"] == true {
+            // #2498 fix-r1: an append whose future never settles and never
+            // reaches the registry worker — the never-settling host append
+            // the consumer's trailing wait must not wait for. Untracked on
+            // purpose: the post-step settle joins only writes that complete.
+            return Box::pin(std::future::pending());
+        }
+        if self.setup["registryAppendGate"] == true {
+            let gate = self.append_gate.clone();
+            let future = self.port.append(run, event);
+            return self.track(Box::pin(async move {
+                gate.wait().await;
+                future.await
+            }));
         }
         self.track(self.port.append(run, event))
     }
@@ -686,6 +720,64 @@ fn terminal_wire_codes(log: &Log) -> Vec<String> {
         .filter(|code| code == "turn_timeout" || code == "gateway_submit_failed")
         .collect()
 }
+/// The failure frames the #2498 panic arm enqueues behind the registry gate:
+/// the failure status (`agent_status` carries the code as `event`) and the
+/// terminal error frame (carries it as `code`).
+fn failure_appends(log: &Log) -> usize {
+    log.registry
+        .lock()
+        .expect("#748 submit fixture prerequisite")
+        .iter()
+        .filter(|entry| entry["op"] == "append")
+        .filter(|entry| {
+            entry["event"]["code"] == "gateway_submit_failed"
+                || entry["event"]["event"] == "gateway_submit_failed"
+        })
+        .count()
+}
+/// Wait until the panicked arm has enqueued both failure frames behind the
+/// registry append gate, then let it park inside its bounded drain. The bound
+/// is wall-clock, not a spin count or a tokio timer: the fixture registry
+/// runs its FIFO jobs on a real OS thread, so a paused tokio clock cannot
+/// bound the accept I/O that precedes the panic, while a genuine regression
+/// still fails at the bound instead of hanging.
+async fn await_panic_failure_records(log: &Log) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while failure_appends(log) < 2 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "#2498 the panicked arm never recorded its failure frames (appends={}, registry={:?})",
+            failure_appends(log),
+            log.registry
+                .lock()
+                .expect("#748 submit fixture prerequisite")
+                .len(),
+        );
+        tokio::task::yield_now().await;
+    }
+    for _ in 0..32 {
+        tokio::task::yield_now().await;
+    }
+}
+/// #2498: spin — wall-clock bounded, like `await_panic_failure_records` —
+/// until the panic arm has closed the whole turn: the stream ended,
+/// admission released and the host's after-turn hook ran. A missing close
+/// is this assertion, never a hang, and the bound is wall clock because the
+/// registry worker is a real OS thread a paused tokio clock cannot bound.
+async fn await_panic_closure(owned_probe: impl Fn() -> bool, name: &str, what: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !owned_probe() {
+        assert!(std::time::Instant::now() < deadline, "#2498 {name}: {what}");
+        tokio::task::yield_now().await;
+    }
+}
+/// The closure probe shared by every #2498 panic cell: the turn stream
+/// ended, the admission is released and `after_turn` has run.
+fn panic_turn_closed(log: &Log, owner: &SessionOwner) -> bool {
+    log.ended.load(Ordering::SeqCst)
+        && !owner.has_active_turn(&"s".into())
+        && host_count(log, "after") > 0
+}
 async fn collect(mut stream: TurnSubmission, log: Arc<Log>) {
     loop {
         match stream.next().await {
@@ -737,7 +829,16 @@ async fn replay_case(case: &Value) {
         .as_array()
         .expect("#748 submit fixture prerequisite")
         .iter()
-        .any(|s| s == "timeout");
+        .any(|s| {
+            s == "timeout"
+                || s.as_str() == Some("panic-drain")
+                || s.as_str() == Some("panic-budget")
+                || s.as_str() == Some("panic-close")
+                || s.as_str() == Some("panic-stuck")
+                || s.as_str() == Some("panic-record-stuck")
+                || s.as_str() == Some("panic-record-slow-release")
+                || s.as_str() == Some("timer-record-stuck")
+        });
     if controlled_clock {
         tokio::time::pause();
     }
@@ -810,6 +911,7 @@ async fn replay_case(case: &Value) {
         log: log.clone(),
         setup: setup.clone(),
         pending: Arc::default(),
+        append_gate: Gate::new(),
     });
     let services = Arc::new(Services {
         session: session.clone(),
@@ -1003,6 +1105,113 @@ async fn replay_case(case: &Value) {
                         .push(json(&event));
                 }
             }
+            // #2498 cells: the pump panics inside the worker, so the manage
+            // arm's JoinError branch owns the failure record and the delivery
+            // close. The failure appends stay behind the registry gate until
+            // this step, so the arm's bounded drain is provably parked on them
+            // before the clock moves; `settle` after the step then joins the
+            // released writes.
+            "panic-drain" => {
+                await_panic_failure_records(&log).await;
+                registry.append_gate.open();
+            }
+            "panic-budget" => {
+                await_panic_failure_records(&log).await;
+                tokio::time::advance(Duration::from_millis(500)).await;
+                registry.append_gate.open();
+            }
+            "panic-close" => {
+                await_panic_failure_records(&log).await;
+                tokio::time::advance(Duration::from_millis(1100)).await;
+                // #2498 fix-r1: the expired budget closes delivery before
+                // the appends settle — assert the closure while the appends
+                // are still gated. An acceptance that only runs after the
+                // gate opens cannot tell the hard close from the appends
+                // eventually settling (the shape the r1 review rejected).
+                await_panic_closure(
+                    || panic_turn_closed(&log, &owner),
+                    name,
+                    "the hard close must end the turn while the failure appends are still gated",
+                )
+                .await;
+                registry.append_gate.open();
+            }
+            // #2498 fix-r1 cells: the gate never opens at all — the failure
+            // appends are stuck host futures — and the turn must still close
+            // within the abort budget. The registry pending counter is not
+            // held (the stuck appends bypass `track`), so the post-step
+            // settle below cannot hang on them.
+            "panic-stuck" => {
+                await_panic_failure_records(&log).await;
+                tokio::time::advance(Duration::from_millis(1100)).await;
+            }
+            // #2498 fix-r1: the durable failure record itself hangs — a stuck
+            // host future that, before the fix, sat ahead of the budget so
+            // the close never even started. Wait for the record to enter
+            // its gate, let the budget expire, and require the close.
+            "panic-record-stuck" => {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                while host_count(&log, "failure_enter") == 0 {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "#2498 {name}: the panicked arm never entered the stuck failure record (host={:?})",
+                        log.host.lock().expect("#748 submit fixture prerequisite")
+                    );
+                    tokio::task::yield_now().await;
+                }
+                tokio::time::advance(Duration::from_millis(1100)).await;
+            }
+            // #2498 fix-r2: the failure record settles, but only after the
+            // budget — the third cell the shared budget introduces. The close
+            // must happen while the record is still gated, and releasing the
+            // record afterwards must not enqueue its frames: the budget
+            // abandoned the record, so the terminal frames never enter the
+            // queue (the wire assertion below pins the empty queue).
+            "panic-record-slow-release" => {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                while host_count(&log, "failure_enter") == 0 {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "#2498 {name}: the panicked arm never entered the slow failure record (host={:?})",
+                        log.host.lock().expect("#748 submit fixture prerequisite")
+                    );
+                    tokio::task::yield_now().await;
+                }
+                tokio::time::advance(Duration::from_millis(1100)).await;
+                await_panic_closure(
+                    || panic_turn_closed(&log, &owner),
+                    name,
+                    "the hard close must end the turn while the slow failure record is still gated",
+                )
+                .await;
+                session.failure_gate.open();
+            }
+            // #2498 fix-r2: the timer winner's durable `turn_timeout` record
+            // hangs — before the fix the manage arm parked on it ahead of the
+            // settlement and the `close_live`, the same shape the panic arm
+            // had before fix-r1 (and the same shape TS exhibits: its
+            // `settleTimeout` awaits the record and the pump finally awaits
+            // that settlement). The record now shares the panic arm's abort
+            // budget; the stuck record is abandoned at the budget and the
+            // close ends the turn with no terminal frame on the wire.
+            "timer-record-stuck" => {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                while host_count(&log, "failure_enter") == 0 {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "#2498 {name}: the timer arm never entered the stuck failure record (host={:?})",
+                        log.host.lock().expect("#748 submit fixture prerequisite")
+                    );
+                    tokio::task::yield_now().await;
+                }
+                tokio::time::advance(Duration::from_millis(1100)).await;
+                await_panic_closure(
+                    || panic_turn_closed(&log, &owner),
+                    name,
+                    "the timer arm must close the turn without waiting for the stuck failure record",
+                )
+                .await;
+            }
             other => panic!("unknown fixture step: {other}"),
         }
         settle(&registry).await;
@@ -1044,6 +1253,42 @@ async fn replay_case(case: &Value) {
             assert_eq!(
                 actual, expected,
                 "#813 {name}: step {index} {step}: submit scenario must match"
+            );
+        }
+    }
+    // #2498: the panic arm's close must end the turn within the abort budget,
+    // without waiting for durable appends that never settle. The spin is
+    // wall-clock bounded (the registry worker is a real OS thread; a paused
+    // tokio clock cannot bound it) so a missing close is an assertion
+    // failure here, never a hang. This must precede `consumer.await` for the
+    // same reason.
+    if let Some(wire_expectation) = case["panicWire"].as_str() {
+        await_panic_closure(
+            || panic_turn_closed(&log, &owner),
+            name,
+            "the panic arm must close the turn without waiting for never-settling appends",
+        )
+        .await;
+        let wire = terminal_wire_codes(&log);
+        if wire_expectation == "dropped" {
+            crate::negative_assert!(
+                wire.is_empty(),
+                "#2498 {name}: failure frames settling after the hard close are dropped (wire {wire:?})"
+            );
+        } else {
+            crate::negative_assert_eq!(
+                wire,
+                vec!["gateway_submit_failed".to_string()],
+                "#2498 {name}: the bounded drain delivers the in-flight failure frames (wire {wire:?})"
+            );
+            crate::negative_assert!(
+                log.visible
+                    .lock()
+                    .expect("#748 submit fixture prerequisite")
+                    .iter()
+                    .any(|event| event["type"] == "agent_status"
+                        && event["event"] == "gateway_submit_failed"),
+                "#2498 {name}: the failure status frame must survive the bounded drain"
             );
         }
     }
@@ -1374,6 +1619,160 @@ async fn timeout_takeover_writes_exactly_one_terminal() {
             .await
             .unwrap_or_else(|_| panic!("{} deadlocked", name));
     }
+}
+/// #2498: a panicked worker never reaches its own `finish`, so the manage
+/// arm's JoinError branch owns the delivery close. Real-TS measurement
+/// (`_tmp/20261026-issue-2498/ts-probe-2498.out`, InProcessGateway at
+/// cc7c4e65, Node v22.22.0): a pump throw whose failure registry appends
+/// never settle hangs the TS turn forever (probe A: ended=false,
+/// active=true, after never called), while appends settling late still
+/// deliver both failure frames (probe B). The Rust close is bounded by the
+/// same abort budget as the timer-path backstop, deliberately diverging for
+/// never- and late-settling appends (specs/gateway-parity/diffs/
+/// A7.2-TURN-PANIC-FINISH-001.md).
+#[tokio::test]
+async fn panicked_worker_closes_delivery_within_abort_budget() {
+    // Cell 1 ("panic-drain"): the gated appends settle with the clock
+    // frozen — the bounded drain delivers both failure frames.
+    // Cell 2 ("panic-budget"): 500ms elapse, still inside the 1000ms budget
+    // floor — still delivered, pinning `.max(1_000)`.
+    // Cell 3 ("panic-close"): the budget expires before the appends settle
+    // — the hard close ends the turn and the late frames are dropped. The
+    // closure is asserted while the appends are still gated (fix-r1): only
+    // asserting after the gate opens could not tell the close from the
+    // appends settling.
+    let cases = [
+        ("panic-drain-delivers", "panic-drain", "delivered"),
+        ("panic-budget-delivers", "panic-budget", "delivered"),
+        ("panic-close-drops-late-frames", "panic-close", "dropped"),
+    ];
+    for (name, step, wire) in cases {
+        let case = json!({
+            "name": name,
+            "setup": {"pumpPanic": true, "registryAppendGate": true},
+            "steps": [step],
+            "native": [],
+            "results": [],
+            "orderOnly": true,
+            "panicWire": wire,
+        });
+        tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
+            .await
+            .unwrap_or_else(|_| panic!("{} deadlocked", name));
+    }
+}
+/// #2498 fix-r1: the never-settling cell the r1 review required — the
+/// failure appends are stuck host futures the gate never releases, and the
+/// turn (stream end, admission, completion fence, after-turn hook) must
+/// still close within the abort budget. Pre-fix this is the P0 minimal
+/// reproduction: only the manage arm was bounded, the consumer's `next()`
+/// still parked on the trailing `pending` set forever
+/// (`specs/gateway-parity/diffs/A7.2-TURN-PANIC-FINISH-001-R2.md`).
+#[tokio::test]
+async fn never_settling_appends_still_close_the_panic_turn() {
+    let case = json!({
+        "name": "panic-stuck-never-settling",
+        "setup": {"pumpPanic": true, "registryAppendStuck": true},
+        "steps": ["panic-stuck"],
+        "native": [],
+        "results": [],
+        "orderOnly": true,
+        "panicWire": "dropped",
+    });
+    tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
+        .await
+        .unwrap_or_else(|_| panic!("panic-stuck-never-settling deadlocked"));
+}
+/// #2498 fix-r1: the durable failure record hangs ahead of the budget —
+/// pre-fix the abort-budget timer was never even created, so the turn (and
+/// its admission and completion fence) hung on the stuck host future. With
+/// the record inside the same budget, the budget drops the await of the
+/// record future and the hard close ends the turn; no failure frame is
+/// enqueued, so the wire carries no terminal frame at all. What the budget
+/// drops is the await — the fixture's gated record is a cancellable
+/// `Gate::wait()`, while production `record_failure` is `spawn_blocking`
+/// (uncancellable; its durable write can still land after the close, which
+/// is registered in
+/// `specs/gateway-parity/diffs/A7.2-TURN-PANIC-FINISH-001-R3.md`, not
+/// proven here).
+#[tokio::test]
+async fn stuck_failure_record_still_closes_the_panic_turn() {
+    let case = json!({
+        "name": "panic-record-stuck",
+        "setup": {"pumpPanic": true, "failureGate": true},
+        "steps": ["panic-record-stuck"],
+        "native": [],
+        "results": [],
+        "orderOnly": true,
+        "panicWire": "dropped",
+    });
+    tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
+        .await
+        .unwrap_or_else(|_| panic!("panic-record-stuck deadlocked"));
+}
+/// #2498 fix-r2: the third cell the shared abort budget introduces — the
+/// failure record settles, but only after the budget has expired. TS has no
+/// budget at all: the record and the appends share one unbounded wait chain
+/// (probe C, `_tmp/20261026-issue-2498/fix-r2/ts-probe-2498-r2.out`), so both
+/// failure frames are delivered once the slow record settles. Rust drops
+/// the await of the record at the budget, so the terminal frames never
+/// enter the queue — a wire-visible divergence registered in
+/// `specs/gateway-parity/diffs/A7.2-TURN-PANIC-FINISH-001-R3.md`. What the
+/// budget drops is the await: the fixture's gated record is a cancellable
+/// `Gate::wait()`, while production `record_failure` is `spawn_blocking`
+/// (uncancellable — its durable write can still land after the budget and
+/// the close, registered alongside in the R3 entry); this cell proves the
+/// wire side and the bounded close only.
+#[tokio::test]
+async fn slow_failure_record_settling_after_budget_drops_the_failure_frames() {
+    let case = json!({
+        "name": "panic-record-slow-release",
+        "setup": {"pumpPanic": true, "failureGate": true},
+        "steps": ["panic-record-slow-release"],
+        "native": [],
+        "results": [],
+        "orderOnly": true,
+        "panicWire": "dropped",
+    });
+    tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
+        .await
+        .unwrap_or_else(|_| panic!("panic-record-slow-release deadlocked"));
+}
+/// #2498 fix-r2: the timer winner's durable `turn_timeout` record was an
+/// unbounded host future ahead of the settlement and the `close_live` — a
+/// stuck record parked the manage arm forever (and the worker parks on the
+/// settlement), the same hang shape the panic arm had before fix-r1. TS
+/// exhibits the same wait (`settleTimeout` awaits the record, the pump
+/// finally awaits that settlement — probe D shows the turn closing only
+/// after a slow record settles,
+/// `_tmp/20261026-issue-2498/fix-r3/ts-probe-2498-r3.out`), so bounding it
+/// is the registered "close over hang" trade-off, not a TS-matching fix
+/// (`specs/gateway-parity/diffs/A7.2-TURN-PANIC-FINISH-001-R3.md`). The
+/// fixture's gated record is a cancellable `Gate::wait()`; production
+/// `record_failure` is `spawn_blocking` and its durable write can land
+/// after the budget and the close (registered in the R3 entry) — this cell
+/// proves the manage arm does not wait past the budget and the turn closes,
+/// not the durable late write.
+#[tokio::test]
+async fn stuck_timer_record_still_closes_the_turn() {
+    let case = json!({
+        "name": "timer-record-stuck",
+        "setup": {"input": {"timeoutMs": 100}, "failureGate": true},
+        // #2498: `observe` first so the settle after it starts the spawned
+        // worker and the turn timer registers its deadline before the
+        // `timeout` step's clock advance — advancing first would strand the
+        // deadline past the (already moved) clock and the timer would never
+        // fire, exactly the shape the #727 timer cells avoid with their
+        // leading `observe`.
+        "steps": ["observe", "timeout", "timer-record-stuck"],
+        "native": [],
+        "results": [],
+        "orderOnly": true,
+        "panicWire": "dropped",
+    });
+    tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
+        .await
+        .unwrap_or_else(|_| panic!("timer-record-stuck deadlocked"));
 }
 #[tokio::test]
 async fn unavailable_capabilities_are_explicitly_refused() {

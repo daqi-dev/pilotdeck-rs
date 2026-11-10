@@ -181,13 +181,5 @@ pub(super) fn require_text(
     }
 }
 
-fn string(value: &JsValue, name: &str) -> Result<JsString, RequestError> {
-    value
-        .get(name)
-        .and_then(JsValue::as_string)
-        .cloned()
-        .ok_or_else(|| RequestError::new(format!("{name} must be a string.")))
-}
-
 #[cfg(test)]
 mod tests;

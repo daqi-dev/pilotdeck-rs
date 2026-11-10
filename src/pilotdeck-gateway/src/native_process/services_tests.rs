@@ -379,6 +379,102 @@ fn symlinked_project_spelling_keeps_lease_attachments() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn lease_logical_root_keeps_alias_spelled_attachments_inline() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    // #1618 item 5: `lease_lexical` must stay the project's *logical* spelling
+    // (`project_dir.join(".tmp").join("chat-upload-leases")`); canonicalizing it
+    // back to the realpath root drops every lease attachment a client echoes
+    // under the symlinked project spelling into the not-found branch. This is
+    // the static-assertion copy of
+    // `symlinked_project_spelling_keeps_lease_attachments` above — its killing
+    // assertions are formatted (`got: …`), so the #946 receipt protocol cannot
+    // bind a mutation row to it.
+    let alias = scratch.0.with_file_name(format!(
+        "{}-alias",
+        scratch
+            .0
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("pdrs-1321")
+    ));
+    symlink(&scratch.0, &alias).expect("#1618 project alias symlink");
+    let path = alias
+        .join(".tmp")
+        .join("chat-upload-leases")
+        .join("u1")
+        .join("a.png");
+    std::fs::write(&path, [1u8, 2, 3, 4]).expect("#1618 alias lease file");
+    let logical = path.to_str().expect("#1618 lease UTF-8").to_owned();
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(
+            &alias,
+            &message("hello"),
+            &[attachment(&logical, "image/png")],
+        ),
+        "#1618 an alias-spelled lease attachment must compose the turn",
+    );
+    // The alias is a sibling of `Scratch::drop`'s root, so nothing else
+    // removes it; drop it before the assertions so a failing
+    // `negative_assert!` does not leak it either (r5 review P2a, same
+    // cleanup as `symlinked_project_spelling_keeps_lease_attachments`).
+    std::fs::remove_file(&alias).ok();
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        blocks
+            .iter()
+            .any(|block| block.get("type") == Some(&"image".into())),
+        "#1618 the logical spelling of the lease root must keep alias-spelled lease attachments inline"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn lease_canonical_root_keeps_physically_spelled_attachments_inline() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    // #1618 item 5 (the other spelling): a client that resolved the project
+    // first hands back the canonical lease spelling, so the lexical pre-filter
+    // carries the canonicalized root as its second entry
+    // (`lease_lexical_roots = [lease_lexical, lease_lexical_canon]`). Dropping
+    // the canonical entry sends the physically-spelled lease attachment to the
+    // not-found branch even though the project alias still resolves.
+    let alias = scratch.0.with_file_name(format!(
+        "{}-alias",
+        scratch
+            .0
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("pdrs-1321")
+    ));
+    symlink(&scratch.0, &alias).expect("#1618 project alias symlink");
+    // `Scratch::lease` spells the physical root (not the alias), which is
+    // exactly the canonical spelling this test must keep inline.
+    let spelling = scratch.lease("a.png");
+    std::fs::write(&spelling, [1u8, 2, 3, 4]).expect("#1618 lease file");
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(
+            &alias,
+            &message("hello"),
+            &[attachment(&spelling, "image/png")],
+        ),
+        "#1618 a physically-spelled lease attachment must compose the turn",
+    );
+    // Same as above: the alias lives outside `Scratch::drop`'s root and is
+    // dead once the turn is composed; remove it before the assertions so a
+    // failing `negative_assert!` does not leak it (r5 review P2a).
+    std::fs::remove_file(&alias).ok();
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        blocks
+            .iter()
+            .any(|block| block.get("type") == Some(&"image".into())),
+        "#1618 the canonical spelling of the lease root must keep physically-spelled lease attachments inline"
+    );
+}
+
 #[test]
 fn dual_registration_carries_both_spellings() {
     use std::os::unix::fs::symlink;
@@ -1267,6 +1363,64 @@ fn unsupported_extension_warning_diagnosed() {
             && allowed.contains(&JsValue::from(noext_path.as_str()))
             && allowed.contains(&JsValue::from(ipynb_path.as_str())),
         "#1469 the registered unsupported attachments must register allowedReadFiles"
+    );
+}
+
+#[test]
+fn registered_unsupported_extension_keeps_its_warning_diagnostic() {
+    let scratch = Scratch::new();
+    // #1469: warnings enter the diagnostics block regardless of registration
+    // (composer :259-263 — `Warning => true` in `diagnostic_enters`). A
+    // channel-registered attachment with a non-whitelisted extension must
+    // still carry the `attachment_unsupported` warning; gating the warning on
+    // registration would drop it. Static-assertion copy of the killing half
+    // of `unsupported_extension_warning_diagnosed` above (its assertions are
+    // formatted, so the #946 receipt protocol cannot bind a row to them).
+    let bin_path = scratch.lease("data.bin");
+    std::fs::write(&bin_path, b"\0binary").expect("#1469 bin fixture");
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(&scratch.0, &message("hello"), &[attachment(&bin_path, "")]),
+        "#1469 a registered unsupported extension must compose the turn",
+    );
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        diagnostics_block(&blocks).contains(
+            "File extension .bin is not in the inline text whitelist; skipped. If this is \
+             plain text, use read_file with the exact path; otherwise convert it before \
+             inspection."
+        ),
+        "#1469 a registered attachment with an unsupported extension must still carry its warning diagnostic"
+    );
+}
+
+#[test]
+fn unregistered_unsupported_extension_still_carries_the_warning() {
+    let scratch = Scratch::new();
+    // #1469: the `unsupported_file_message` push is the one step both
+    // severities share — dropping it silences the diagnostic for registered
+    // and uploaded attachments alike. This row's attachment is deliberately
+    // unregistered (an uploaded lease bundle, no channelKey): the warning
+    // filter passes it either way (`Warning => true` / `Warning =>
+    // !registered` both admit an unregistered attachment), so only the
+    // missing push can turn this assertion red.
+    let bin_path = scratch.lease("memo.bin");
+    std::fs::write(&bin_path, b"\0binary").expect("#1469 bin fixture");
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(
+            &scratch.0,
+            &message("hello"),
+            &[upload_attachment(&bin_path, "")],
+        ),
+        "#1469 an unregistered unsupported extension must compose the turn",
+    );
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        diagnostics_block(&blocks).contains(
+            "File extension .bin is not in the inline text whitelist; skipped. If this is \
+             plain text, use read_file with the exact path; otherwise convert it before \
+             inspection."
+        ),
+        "#1469 the unsupported-file message must enter the diagnostics block"
     );
 }
 

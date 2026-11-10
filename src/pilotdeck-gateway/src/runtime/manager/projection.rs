@@ -339,14 +339,27 @@ impl<R: ManagerProjectResolver> ManagerProjection<R> {
 }
 
 /// One native gateway-method outcome. There is no `Forward`: every error in
-/// this component is a measured TS error, not a host boundary.
+/// this component is a measured TS error, not a host boundary. `Error` carries
+/// a thrown TS error: the real `managerSessions` / `managerBrowsers` throw
+/// (`InProcessGateway.ts:2828-2834`, `createLocalGateway.ts:1259-1270`), and
+/// the WS connection answers `{ok:false,error:{code,message}}`
+/// (`GatewayWsConnection.ts:231-260`), so the entry must return a request
+/// failure rather than a successful response whose body happens to be an
+/// error object (#2309, the #1456 `MemoryDispatch` shape).
 #[derive(Clone, Debug, PartialEq)]
 pub enum ManagerDispatch {
     Response(JsValue),
+    Error(ManagerError),
 }
 
-/// `InProcessGateway.manager*` adapter. `dispatch` is the only wire-facing
-/// method and is deliberately absent from `dispatch.rs::LOCAL_METHODS`.
+/// `InProcessGateway.manager*` adapter. `dispatch` is deliberately absent from
+/// `dispatch.rs`'s `LOCAL_METHODS` and has no production consumer yet (the
+/// native-process entry in `native_process/management.rs` calls `sessions` /
+/// `browsers` directly); its outcome shape mirrors
+/// [`crate::runtime::memory::gateway::MemoryDispatch`] since #1456 and
+/// [`crate::runtime::snapshot::SnapshotDispatch`] since #2194: unknown methods
+/// return `None`, a success is the wire result JSON, and a failure is
+/// [`ManagerDispatch::Error`], never a flattened response.
 pub struct ManagerGateway<R> {
     projection: ManagerProjection<R>,
 }
@@ -387,17 +400,18 @@ impl<R: ManagerProjectResolver> ManagerGateway<R> {
     }
 
     /// WS method names. Unknown methods return `None` so default dispatch keeps
-    /// forwarding; known errors become a TS-shaped response object.
+    /// forwarding; a failure is [`ManagerDispatch::Error`], never a flattened
+    /// response body (#2309).
     pub fn dispatch(&self, method: &str, params: &JsValue) -> Option<ManagerDispatch> {
         let outcome = match method {
             "manager_sessions" => self.sessions(params),
             "manager_browsers" => self.browsers(params),
             _ => return None,
         };
-        Some(ManagerDispatch::Response(match outcome {
-            Ok(value) => value,
-            Err(error) => error.as_json(),
-        }))
+        Some(match outcome {
+            Ok(value) => ManagerDispatch::Response(value),
+            Err(error) => ManagerDispatch::Error(error),
+        })
     }
 }
 

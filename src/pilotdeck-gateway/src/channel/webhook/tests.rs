@@ -1501,9 +1501,12 @@ async fn raw_exchange(port: Option<u16>, request: &str, mode: &str, count: usize
 }
 
 /// The recorder's `normalize`: status line verbatim, lowercased header
-/// sequence with `date` masked, hyper's bare-400 `content-length: 0`
-/// dropped (A8.4-NATIVE-HTTP-001) and chunk-size lines case-folded.
-fn normalize(raw: &str) -> Value {
+/// sequence with `date` masked and chunk-size lines case-folded — plus, on
+/// the `parser_admission` step only, hyper's bare-400 `content-length: 0`
+/// dropped (A8.4-NATIVE-HTTP-001 item 3, scoped like api-server's #1683
+/// fix). Every other length line compares verbatim, so an unregistered
+/// step that grows one replays red instead of normalizing away (#2153).
+fn normalize(raw: &str, parser_admission: bool) -> Value {
     let Some(split) = raw.find("\r\n\r\n") else {
         return json!({"status": null, "headers": [], "body": ""});
     };
@@ -1520,10 +1523,13 @@ fn normalize(raw: &str) -> Value {
         };
         let name = name.trim().to_ascii_lowercase();
         let value = value.trim();
-        let entry = format!("{name}: {}", if name == "date" { "<date>" } else { value });
-        if entry != "content-length: 0" {
-            headers.push(entry);
+        if parser_admission && name == "content-length" && value == "0" {
+            // hyper's implicit empty-body length on the registered bare
+            // 400 only.
+            continue;
         }
+        let entry = format!("{name}: {}", if name == "date" { "<date>" } else { value });
+        headers.push(entry);
     }
     let body = if chunked_head(head) {
         lowercase_chunk_sizes(body)
@@ -1580,10 +1586,31 @@ fn pin(raw: &str) -> String {
         .join("\r\n")
 }
 
+/// #2153: the label of the one step whose hyper bytes carry a
+/// `content-length: 0` the TS golden does not — the bare parser-level 400
+/// of A8.4-NATIVE-HTTP-001 item 3, scoped like api-server's
+/// `parser_admission` cells.
+const PARSER_ADMISSION_LABEL: &str = "unknown-method";
+
+/// #2153 (fix-r3, review r3): the predicate that grants the
+/// `content-length: 0` mask. Every consumer — the exemption in
+/// `run_request`, the uniqueness guard and the raw-byte pin's step lookup —
+/// goes through this one function, so widening the predicate anywhere
+/// fails the guard, which pins that exactly one oracle step satisfies it.
+fn parser_admission(label: &str) -> bool {
+    label == PARSER_ADMISSION_LABEL
+}
+
 /// The recorder's `runRequests`: one oracle response entry per exchange
 /// outcome, keep-alive counts included.
 async fn run_request(port: &Option<u16>, step: &Value, responses: &mut Vec<Value>) {
     let label = step["label"].as_str().expect("#1334 oracle step label");
+    // #2153: see `fn parser_admission` above. Every other step compares its
+    // length lines verbatim, so an extra one replays red instead of
+    // normalizing away; the
+    // `content_length_zero_stays_scoped_to_the_registered_rejection` pin
+    // holds the raw bytes behind the mask in both directions.
+    let parser_admission_step = parser_admission(label);
     let mode = recorded_mode(step).unwrap_or("close");
     // Validate even when close mode or a failed exchange will not consume
     // these fields. Otherwise malformed recordings can still replay green.
@@ -1602,7 +1629,7 @@ async fn run_request(port: &Option<u16>, step: &Value, responses: &mut Vec<Value
         Exchange::Raws(raws) => {
             if count == 1 {
                 let one = raws.into_iter().next().unwrap_or_default();
-                let mut entry = normalize(&one);
+                let mut entry = normalize(&one, parser_admission_step);
                 entry["label"] = json!(label);
                 responses.push(entry);
                 if pin_response {
@@ -1610,7 +1637,7 @@ async fn run_request(port: &Option<u16>, step: &Value, responses: &mut Vec<Value
                 }
             } else {
                 for (index, one) in raws.iter().enumerate() {
-                    let mut entry = normalize(one);
+                    let mut entry = normalize(one, parser_admission_step);
                     entry["label"] = json!(format!("{label}-{}", index + 1));
                     responses.push(entry);
                 }
@@ -2091,9 +2118,10 @@ async fn http10_request_closes_the_connection() {
     );
     // Everything else replays: the close-delimited framing (no `content-length`,
     // no chunking), the header set and the body, byte for byte after the usual
-    // normalization. The status line is left out because it is the one
-    // registered diff, pinned above as hyper's own 1.0 line.
-    let actual = normalize(&raw);
+    // normalization — with no length exemption, since neither side writes one
+    // here (the 1.0 close-delimited framing is its own registered diff, pinned
+    // above as hyper's own 1.0 status line).
+    let actual = normalize(&raw, false);
     let recorded = &expected["responses"][0];
     negative_assert_eq!(
         actual["headers"],
@@ -2104,6 +2132,155 @@ async fn http10_request_closes_the_connection() {
         actual["body"],
         recorded["body"],
         "#1684 pin http10: the 1.0 response replays Node's body"
+    );
+}
+
+/// #2153: the replay normalization drops hyper's `content-length: 0` on the
+/// one registered bare parser-level 400 (the `unknown-method` step,
+/// A8.4-NATIVE-HTTP-001 item 3, scoped like api-server's `parser_admission`
+/// cells), so the raw bytes have to be pinned in both directions or the mask
+/// could hide a drift: the rejection that stopped carrying the line (a
+/// missing rejection) and an unregistered answer that grew one (the extra
+/// length line the replay must catch) both compare green through the mask
+/// alone. Both requests are the case's own recorded steps, sent through the
+/// same `request_bytes` path the replay uses.
+#[tokio::test]
+async fn content_length_zero_stays_scoped_to_the_registered_rejection() {
+    let case = case("health-and-routing");
+    let steps = recorded_steps(&case).expect("#1334 oracle steps");
+    let step = |label: &str| {
+        steps
+            .iter()
+            .find(|step| step["label"].as_str() == Some(label))
+            .unwrap_or_else(|| panic!("#2153 the {label} step is missing from the oracle"))
+    };
+    let options = recorded_options(&case).expect("#1334 oracle options object");
+    let routes = parse_json(
+        &recorded_routes(options)
+            .expect("#1334 options.routes validated object")
+            .to_string(),
+    )
+    .expect("#1334 oracle routes JSON")
+    .as_object()
+    .expect("#1334 oracle routes object")
+    .clone();
+    let channel = WebhookChannel::new(WebhookChannelOptions {
+        routes: Some(routes),
+        // #2153 fix-r1 (review r1): a temporary port, like every other
+        // listener in this file — `..Default::default()` would bind the
+        // channel's DEFAULT_PORT (8643), which has no ownership and fails
+        // loudly under a concurrent test run.
+        port: Some(0.0),
+        ..Default::default()
+    });
+    channel
+        .start(ChannelStartDeps::default())
+        .await
+        .expect("#2153 start for the content-length pin");
+    let port = channel
+        .bound_addr()
+        .expect("#2153 bound listener for the content-length pin")
+        .port();
+
+    // Registered direction: the bare 400 really carries the line the mask
+    // drops — a hyper that stopped emitting the rejection (or its length
+    // line) fails here instead of replaying green.
+    let (bare, closed) = raw_until_close(port, &request_bytes(step(PARSER_ADMISSION_LABEL))).await;
+    assert!(
+        bare.starts_with("HTTP/1.1 400 Bad Request\r\n"),
+        "#2153 pin: the unknown-method step stays a bare parser-level 400: {bare:?}"
+    );
+    assert!(
+        bare.to_ascii_lowercase()
+            .contains("\r\ncontent-length: 0\r\n"),
+        "#2153 pin: the bare 400 carries the registered content-length: 0: {bare:?}"
+    );
+    assert!(
+        closed,
+        "#2153 pin: the bare 400 closes the connection: {bare:?}"
+    );
+
+    // Unregistered direction: the health 200 carries exactly its one
+    // recorded length line — a spurious `content-length: 0` anywhere else is
+    // the extra line the narrowed replay must catch.
+    let (health, _) = raw_until_close(port, &request_bytes(step("health"))).await;
+    let lower = health.to_ascii_lowercase();
+    negative_assert_eq!(
+        lower.match_indices("content-length:").count(),
+        1,
+        "#2153 pin: the health 200 carries exactly one content-length line: {health:?}"
+    );
+    assert!(
+        lower.contains("\r\ncontent-length: 36\r\n"),
+        "#2153 pin: the health 200 keeps its recorded length 36: {health:?}"
+    );
+
+    let _ = channel.stop_with_reason(None).await;
+}
+
+/// #2153: the exemption `run_request` grants the `unknown-method` step is
+/// the only one left — an injected `content-length: 0` on any other step (or
+/// a spurious second line next to a recorded value) must survive
+/// normalization, while the registered bare 400's line stays masked.
+#[test]
+fn only_the_registered_step_masks_a_content_length_zero() {
+    let head =
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nDate: Fri, 09 Jan 2026 00:00:00 GMT";
+    let plain = format!("{head}\r\n\r\n{{\"ok\":true}}");
+    let injected = format!("{head}\r\ncontent-length: 0\r\n\r\n{{\"ok\":true}}");
+    let valued = format!("{head}\r\ncontent-length: 36\r\n\r\n{{\"ok\":true}}");
+    let duplicated =
+        format!("{head}\r\ncontent-length: 36\r\ncontent-length: 0\r\n\r\n{{\"ok\":true}}");
+    negative_assert!(
+        normalize(&injected, false) != normalize(&plain, false),
+        "#2153 an extra content-length: 0 on an unregistered step must not normalize away"
+    );
+    negative_assert!(
+        normalize(&duplicated, false) != normalize(&valued, false),
+        "#2153 a spurious second content-length: 0 must not normalize away"
+    );
+    // The registered direction stays masked: the bare 400's hyper line is
+    // the one exemption left, so the TS-shaped bytes still compare equal.
+    let bare = "HTTP/1.1 400 Bad Request\r\nconnection: close\r\ncontent-length: 0\r\n\r\n";
+    let ts_shaped = "HTTP/1.1 400 Bad Request\r\nconnection: close\r\n\r\n";
+    negative_assert_eq!(
+        normalize(bare, true),
+        normalize(ts_shaped, true),
+        "#2153 the registered unknown-method exemption still masks hyper's content-length: 0"
+    );
+}
+
+/// #2153 fix-r1 (review r1): the exemption picks its step by label, and
+/// labels are not unique across the oracle — `first` / `repeat` already
+/// repeat across cases. This guard pins that `PARSER_ADMISSION_LABEL`
+/// occurs in exactly one step of the whole oracle, so a future case reusing
+/// the label cannot silently inherit the bare-400 exemption; it fails here
+/// instead. fix-r2 (review r2): the filter reads the same shared
+/// `PARSER_ADMISSION_LABEL` the exemption itself uses. fix-r3 (review r3):
+/// both go through `fn parser_admission`, so widening the predicate
+/// anywhere — not just the constant — fails this guard.
+#[test]
+fn unknown_method_is_the_label_of_exactly_one_oracle_step() {
+    let value = oracle();
+    let hits = value["cases"]
+        .as_array()
+        .expect("#1334 oracle cases array")
+        .iter()
+        .flat_map(|case| {
+            let name = case["name"].as_str().expect("#1334 oracle case name");
+            recorded_steps(case)
+                .expect("#1334 oracle steps")
+                .iter()
+                .filter(|step| step["label"].as_str().is_some_and(parser_admission))
+                .map(move |_| name)
+        })
+        .collect::<Vec<&str>>();
+    assert_eq!(
+        hits,
+        vec!["health-and-routing"],
+        "#2153 the unknown-method label belongs to exactly the health-and-routing \
+         case's bare parser-level 400 — any other case reusing the label must \
+         fail here rather than inherit the content-length exemption"
     );
 }
 

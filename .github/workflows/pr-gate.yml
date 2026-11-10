@@ -11,7 +11,7 @@ jobs:
   pr-gate:
     # 10-29：草稿（首次推送即开、早跑 CI）尚未贴结果块，判必红、只制造噪声；转 ready 时由 ready_for_review 触发。
     if: github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:

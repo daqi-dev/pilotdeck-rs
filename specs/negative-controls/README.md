@@ -122,7 +122,13 @@
 （#2422 起自管，#2425/#2431 硬化：CLI 对齐为 `OUT [--memory] [NAME ...]` 后进
 `test_negative_optimize_guards.py` 三条拒跑矩阵）、`session-reservation-2391` ·
 `session-delete-2392`（#2391 fix-r1 起即按 `negative_selection` 契约落形：
-`EXPECTED_NAMES` + `claim_dir` + `verdict_exit`，`--check` 进 CI）。**其余同族入口尚未迁移**，
+`EXPECTED_NAMES` + `claim_dir` + `verdict_exit`，`--check` 进 CI）、
+`manager-gateway`（#2309 fix-r2 起完整落形：`EXPECTED_NAMES` + `registered` + `select` +
+`claim_dir` + `missing_target`/`refuse_unusable_target` + `verdict_exit`，case 循环自管、
+先核对 verdict 名册后发布，进 `test_negative_optimize_guards.py` 拒跑矩阵；fix-r3 起硬化：
+变异写入与逐项恢复走 `write_source_atomic`、自持窗口装 SIGTERM/SIGHUP/SIGQUIT 还原处理器、
+`pending.for_script` 以入口自身路径为身份键且作为启动前置、summary 载荷记 `selected` 执行集、
+名册防线由 `test_negative_roster_guards.py` 机检并进 CI）。**其余同族入口尚未迁移**，
 由 #1666 按目录分批推进，名单是机器可检的：`tests/fixtures/test_negative_optimize_guards.py`
 的 `PENDING_BARE_ASSERTS` 登记每个仍含裸 `assert` 的 `*/negative_controls.py` 及理由，
 该表只减不增——新脚本带裸 `assert` 会让 CI 红，迁移一个就在同一次改动里删掉它的条目。
@@ -153,9 +159,30 @@
 | 42 | 全杀但基线不是 HEAD，只是非宿主证据（用到的脚本按自身规约） |
 
 分界判据是「有没有真的开始变异」：进 `mutating_sources` 之前返回的都算 2，进去之后被打断的算 1。
-被信号直接杀死（SIGKILL 137）不在表内，看证据是否完整；安装了取消处理器的已迁移脚本，
-守卫回写窗口外的取消退 2，落在共享守卫回写窗口内的取消先完成还原与复核再退
-128+signum（`negative_process.mutating_sources` 延迟信号契约，两处阶段不同码是刻意的）。
+被信号直接杀死（SIGKILL 137）不在表内，看证据是否完整；以下退出码都以前台、未继承
+SIG_IGN 为前提（nohup / 后台链式宿主把 SIGINT / SIGTERM 设成 SIG_IGN 传给子进程时，
+信号被静默吞掉，进程既不退、证据也不终止，宿主需 SIGKILL / 超时兜底；实测：SIG_IGN
+子进程对 SIGINT+SIGTERM 均存活）。没装取消处理器的入口（如 `settings-gateway`）
+按信号默认处置退出：守卫回写窗口外被 SIGTERM 当场杀死、退出码 143（SIGHUP 129 /
+SIGQUIT 131 同理），树可能停在变异中、证据不完整；SIGINT 由解释器自身转成
+KeyboardInterrupt、未捕获退 130（实测 `raise KeyboardInterrupt` → 130；settings-gateway
+顶层 `except BaseException` 在 `entered` 翻转前的启动段把它收成拒跑码 2，之后
+record_failed_run 再抛、退 130）；落在回写窗口内则先完成还原与复核再退 128+signum
+（守卫对 SIG_DFL 同样换 handler 延迟；继承来的 SIG_IGN 不换，窗内收 SIGINT 既不
+延迟也不退）。装了取消处理器的自管脚本分两族，都在装好处理器之后才谈取消语义，
+安装前的启动段一律按信号默认处置：`issue-297` 两入口（`issue-297`、
+`issue-297-domain-fold`）在守卫回写窗口外的取消当「从未开跑」拒跑，退 2；
+`same-json-surfaces` 与 `mode-routing` 的 `terminate_cleanly`（session-domain-cleanup
+#892 r23 镜像）窗口外只对它注册的三个信号（SIGTERM / SIGHUP / SIGQUIT）退
+128+signum，SIGINT 不在其列。落在共享守卫回写
+窗口内的取消一律先完成还原与复核，随后按相位分码：issue-297 的编译预检
+（`compile_controls` 自己的 `mutating_sources` 窗口）让守卫退出抛的
+`SystemExit(128+signum)` 穿过 `except Exception` 成为进程退出码，且不写
+compile-summary；same-json / mode-routing / 无处理器入口同样在守卫退出时抛
+`SystemExit(128+signum)`；issue-297 的判定段（`negative_suite.run_cases`）则把
+该退出归一化回 2、发布全 INVALID 总结——判定段窗外、窗内都是 2。经共享执行器
+`mutation_suite` 的入口（如 `network-timing`）不套用本段规则，窗外取消记 rc=1
+（见 `tests/fixtures/README.md` 的执行器既有语义）。
 这套分界不依赖 `assert`，所以 `-O` 下不变。已知的唯一例外是 `regex-proto-budget`（#1265）：
 它在 `claim_dir` 之后、第一个变异之前自己跑一遍 crate 的 compile_fail doctest 基线（CI 跑不了
 特性门测试），红了也以 2 拒跑、`OUT/doctests.log` 留档——这一次 2 带证据目录，是刻意的。
@@ -171,8 +198,14 @@
 `src` 这类目标同样在领取证据目录之前以 2 拒跑——这两个入口是直接 `try:
 target_environment(...) except RuntimeError: refuse(...)`，效果等价于
 `refuse_unusable_target()`（同一份取值规则，只是没有包成谓词）；
-`cli-parity-mock-gateway` 与 `same-json-surfaces` 不编译 Cargo，**四档全豁免**，由登记表
-守卫断言它们没有任何 target 读取；
+`cli-parity-mock-gateway` 与 `same-json-surfaces` 自身源码不读 target（登记表守卫断言无任何
+读取形态），**四档全豁免**——但两者委托的 `mutating_sources` 窗口会经 `_ensure_workspace_scanner`
+读 `CARGO_TARGET_DIR`（未设置取共享默认、空串/纯空白/dot 在共享规则处拒绝）且冷主机上可能 cargo 编译
+扫描器，故「不编译 Cargo」不成立（#2552）：「未设置」会启动矩阵 300s 子进程跑不完的完整 guarded 批；
+空串/纯空白/dot 在 same-json-surfaces 经 #2431 started 旗标以 rc 2 拒（#2552 实测：rc 2、stderr 点名
+target、无证据目录，实际可矩阵承载——纳入矩阵待登记表支持「自身源码不调 target_environment」的
+形态，#2552 跟进）、在 cli-parity-mock-gateway 以启动异常逐行收成 INVALID 证据后退 1（证据目录已领，
+留档不撤），均非入口自身的 target 守卫；
 **树脏 / 领锁超时 / oracle 读不了**三条，自管入口里 `settings-gateway`（`entered` 旗标）、
 两个 `issue-297` 入口（编译预检的 `guard_failed` → 2，只覆盖源码守卫、不含 oracle 读取）与
 `same-json-surfaces`（#2422 起的 `started` 旗标，#2431 落了 rc2 回归钉）已实现
@@ -194,6 +227,9 @@ target_environment(...) except RuntimeError: refuse(...)`，效果等价于
 （未设置 / 空串 / 纯空白 / `.` 四档）、目录已存在三条矩阵覆盖全族。豁免按**模式**登记
 （`interaction-values` / `turn-submit-admission` 只豁免「未设置」，由
 `negative_process.target_environment` 补共享 target；`cli-parity-mock-gateway` 与
-`same-json-surfaces` 不编译 Cargo，四档都无意义），每条带理由与「理由所依赖的源码事实」断言（`target_environment` 必须是真调用，
+`same-json-surfaces` 自身不读 target、四档全豁免——两者委托的 `mutating_sources` 窗口实际会读
+`CARGO_TARGET_DIR` 并可能冷启动 cargo 编译扫描器，非「不编译 Cargo」（#2552），其中 same-json 的
+空串/纯空白/dot 实为 rc 2 可承载、纳入矩阵待登记表新形态（#2552 跟进），逐条理由见登记表），
+每条带理由与「理由所依赖的源码事实」断言（`target_environment` 必须是真调用，
 AST 判；豁免多档的入口不得出现任何 target 读取形态），加个名字不能静默缩小矩阵。
 共享执行器的四分数值仍以 `tests/fixtures/README.md` 为准，不与本节互相替代。

@@ -648,9 +648,33 @@ impl ChannelAdapter for SmsChannel {
                 // in-flight ones — the `wecom_callback` lane's shape
                 // (`wecom_callback/http.rs`).
                 let mut connections = tokio::task::JoinSet::new();
+                // #2257: left the loop through the closed shutdown channel.
+                let mut sender_dropped = false;
                 loop {
                     tokio::select! {
-                        _ = shutdown_rx.changed() => break,
+                        changed = shutdown_rx.changed() => match changed {
+                            // A normal `stop()`: the `ServerEntry` holding the
+                            // sender stays alive until its task is awaited, so
+                            // the drain below runs while somebody observes it.
+                            Ok(()) => break,
+                            // #2257: every sender is gone. Two paths land here:
+                            // a `stop()` whose async block panicked at its
+                            // first log line (the #1339 logger-panic case —
+                            // `server.take()` already ran, so the entry, the
+                            // sender and the task handle drop together in the
+                            // unwind), or a handle dropped without `stop()` at
+                            // all. Nobody awaits this task, so the drain below
+                            // would run unobserved — and it holds the
+                            // listener's port for up to [`STOP_DRAIN_LIMIT`]
+                            // (idle keep-alive connections wait out their head
+                            // deadlines), so a same-port `start` fails its
+                            // bind and silently degrades to a [`NoopHandle`].
+                            // #2026's error-path release delay.
+                            Err(_) => {
+                                sender_dropped = true;
+                                break;
+                            }
+                        },
                         accepted = listener.accept() => match accepted {
                             Ok((stream, _)) => {
                                 let shared = server_shared.clone();
@@ -720,8 +744,20 @@ impl ChannelAdapter for SmsChannel {
                 // what prove both halves load-bearing: `sms-stop-no-drain`
                 // restores the pre-#2026 detach shape (the set is forgotten,
                 // so its aborting drop never runs),
-                // `sms-stop-drain-unbounded` the TS unbounded shape.
-                if crate::mutants::on("sms-stop-no-drain") {
+                // `sms-stop-drain-unbounded` the TS unbounded shape, and
+                // #2269's `sms-stop-drain-predrain-count` the r1 counting
+                // shape (a pre-drain snapshot instead of the post-bound
+                // read).
+                if sender_dropped && !crate::mutants::on("sms-stop-drain-on-sender-drop") {
+                    // #2257: the closed-channel path — skip the drain. The
+                    // set's drop aborts the in-flight connection tasks and the
+                    // listener is released with the task's return, so the port
+                    // is free for a rebind immediately instead of after a
+                    // drain nobody observes. The mutation switch restores the
+                    // pre-#2257 shape (an unconditional drain on the Err path
+                    // too), which the port-rebind case in
+                    // `head_timeout_tests.rs` kills.
+                } else if crate::mutants::on("sms-stop-no-drain") {
                     // The pre-#2026 shape: stop the accept loop and return
                     // with the connections still running. Forgetting the set
                     // leaks it, so the aborting `Drop` of a `JoinSet` never
@@ -729,6 +765,13 @@ impl ChannelAdapter for SmsChannel {
                     // bare `tokio::spawn`s of the pre-#2026 code.
                     std::mem::forget(connections);
                 } else {
+                    // #2269: the r1 shape (`deab130c0`) read the count
+                    // before the drain started, so every connection the
+                    // drain retired was still counted — the bound case in
+                    // `head_timeout_tests.rs` kills the mutant by its warn
+                    // text (3 where the aborted set holds 2).
+                    let pre_drain_count = crate::mutants::on("sms-stop-drain-predrain-count")
+                        .then(|| connections.len());
                     let drain = async { while connections.join_next().await.is_some() {} };
                     if crate::mutants::on("sms-stop-drain-unbounded") {
                         drain.await;
@@ -746,7 +789,7 @@ impl ChannelAdapter for SmsChannel {
                         // connection the whole drain retired. An
                         // under-report cannot happen — a live task stays in
                         // the set until it is reaped.
-                        let remaining = connections.len();
+                        let remaining = pre_drain_count.unwrap_or_else(|| connections.len());
                         server_shared.log(
                             "warn",
                             format!(
@@ -954,10 +997,85 @@ fn twiml_response() -> Response<Full<Bytes>> {
         .expect("#1339 static response parts")
 }
 
+/// Node answers every HTTP/1.0 request with an `HTTP/1.1` status line,
+/// `Connection: close` and a close-delimited body (no `content-length`), even
+/// when the request asks to keep alive — measured on the pinned Node v22.22.0
+/// (`_tmp/20261108-sms-residual/probe-sms-http10.out`, the #1913 probe), the
+/// same shape the webhook lane measured for its own handler in #1684. Pinning
+/// the response version to `HTTP_10` keeps hyper's `fix_keep_alive` in its
+/// HTTP/1.0 branch, so the socket closes instead of staying open waiting out
+/// the keep-alive the request carried; hyper's `HTTP/1.0` status line against
+/// Node's `HTTP/1.1` is the accepted-diff entry A8.3-CH-SMS-015, the same
+/// class as the webhook lane's A8.3-CH-WEBHOOK-004. The body is also made
+/// unsized: this channel answers with known-length bodies ([`sized`]), which
+/// hyper frames with `content-length` on any version, while Node's 1.0
+/// replies are close-delimited — with an unknown size hyper cannot chunk a
+/// 1.0 connection, so it writes the body and closes, matching Node's bytes.
+fn finalize(mut response: Response<crate::Body>, version: hyper::Version) -> Response<crate::Body> {
+    if version != hyper::Version::HTTP_10 {
+        return response;
+    }
+    *response.version_mut() = hyper::Version::HTTP_10;
+    let body = std::mem::replace(response.body_mut(), crate::native_http::streamed(None));
+    *response.body_mut() = Unsized(body).boxed();
+    response
+}
+
+/// A body whose size hyper cannot know (#1913): everything else delegates, so
+/// the frames and the end-of-stream flag are unchanged.
+struct Unsized(crate::Body);
+
+impl hyper::body::Body for Unsized {
+    type Data = Bytes;
+    type Error = crate::ProxyError;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        std::pin::Pin::new(&mut self.get_mut().0).poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.0.is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        hyper::body::SizeHint::default()
+    }
+}
+
 async fn handle_request(
     request: Request<Incoming>,
     shared: Arc<SmsShared>,
 ) -> Result<Response<crate::Body>, DestroyConnection> {
+    let version = request.version();
+    route_request(request, shared)
+        .await
+        .map(|response| finalize(response, version))
+}
+
+async fn route_request(
+    request: Request<Incoming>,
+    shared: Arc<SmsShared>,
+) -> Result<Response<crate::Body>, DestroyConnection> {
+    // #2152: the TS channel is a bare `http.createServer` (SmsChannel.ts:89,
+    // no options), so llhttp / `_http_server.js` reject a bad method, a
+    // non-ASCII or malformed target, an over-budget header block and an
+    // HTTP/1.1 request without `Host` *before* the handler runs — the same
+    // gate the webhook and api-server channels already run (#1683). The
+    // rejection flows through the same `finalize` as every other response.
+    // The gate's `Err` is the zero-byte socket close a CONNECT to a plain
+    // `http.Server` performs — the same wire outcome as the payload guard,
+    // so it maps explicitly onto the connection destroy hyper already
+    // performs for this error type (the serve result is discarded); the
+    // mapping stays at the call site instead of a blanket `From` so a future
+    // io error in here cannot silently become a connection destroy.
+    if let Some(rejection) =
+        crate::native_http::node_parser_admission(&request).map_err(|_| DestroyConnection)?
+    {
+        return Ok(rejection);
+    }
     let (path, port, auth_token, host, public_url) = {
         let runtime = shared.runtime.lock().await;
         (

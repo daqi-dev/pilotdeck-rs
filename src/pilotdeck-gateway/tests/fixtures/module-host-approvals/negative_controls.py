@@ -105,6 +105,16 @@ switches = [
     # rejected, not replayed without any length pin.
     ('approvals-oracle-unknown-budget-cell', ROOT / 'src/pilotdeck-gateway/src/module_host/approvals/tests.rs', 'recorded_unknown_budget_cell_is_rejected',
      '#1350 #1696 fails closed on a budget cell class with no length guard'),
+    # #2153 fix-r1 (review r1): the replay normalization no longer drops the
+    # empty-body `content-length: 0` (no approvals cell needed it). The
+    # mutant reintroduces the unconditional drop, so the injected-line unit
+    # test fails at its own assertion; the HEAD-405 product mutant grows the
+    # wire line the raw pin holds.
+    ('approvals-normalize-cl0-off', ROOT / 'src/pilotdeck-gateway/src/module_host/approvals/tests.rs',
+     'content_length_zero_compares_verbatim',
+     '#2153 an extra content-length: 0 on the HEAD 405 must not normalize away'),
+    ('approvals-head-405-cl0', SOURCE, 'method_head_bytes_stay_pinned',
+     '#2153 pin method-head: the HEAD 405 carries no framing line'),
 ]
 GUARDED = [SOURCE, PENDING,
     ROOT / 'src/pilotdeck-gateway/src/module_host/approvals/tests.rs',

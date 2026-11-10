@@ -1988,6 +1988,131 @@ async fn empty_response_body_arms_idle_timer_without_a_body_poll() {
     );
 }
 
+/// #2152 fix-r2 (review concurrency#1): a parser-admission rejection returns
+/// before `serve`'s finishing, so without the rejection finishing the timer
+/// stays in the request phase (`expired` is `None` there — no deadline at
+/// all) and the lifecycle keeps the in-flight latch. This state test drives
+/// the real gate (`FROB` head) through the production `parser_admission` over
+/// a real `TimeoutStream` and asserts the exchange finishes like a served
+/// response: the timer is back to `Idle` with the idle deadline armed (so a
+/// wedged 400 is closed at the keep-alive deadline, never pinned forever),
+/// the lifecycle is reset — including a previous, still-unflushed keep-alive
+/// advertisement the rejection must supersede — and the connection task ends,
+/// releasing its permit. The full write-blocked pipeline replay (the review's
+/// two unproven premises) stays with the registered P2 follow-up.
+#[tokio::test]
+async fn parser_rejection_finishes_the_keepalive_lifecycle() {
+    let timer = Arc::new(KeepAliveTimer::new(
+        Duration::from_secs(5),
+        Duration::from_millis(200),
+        Arc::new(AtomicBool::new(false)),
+    ));
+    // The state the rejection must supersede: a previous response on this
+    // connection advertised keep-alive and its bytes are still unflushed (the
+    // review's interleaving — a pipelined rejected head behind a pending
+    // response).
+    {
+        let mut lifecycle = timer.lifecycle.lock().unwrap();
+        lifecycle.advertised_keep_alive = true;
+        lifecycle.response_write.expected_body = 16;
+    }
+    let (client, server_io) = tokio::io::duplex(8 * 1024);
+    let service_timer = timer.clone();
+    let state_timer = timer.clone();
+    let service = service_fn(move |request: Request<Incoming>| {
+        let timer = service_timer.clone();
+        async move {
+            timer.request_started();
+            // The production rejection branch: the real gate plus its
+            // connection finishing, the same call the server closure makes.
+            if let Some(rejection) = parser_admission(&request, &timer)? {
+                return Ok::<_, std::io::Error>(rejection);
+            }
+            unreachable!("#2152 only parser-rejected heads reach this closure")
+        }
+    });
+    let connection = http1::Builder::new()
+        .timer(TokioTimer::new())
+        .header_read_timeout(None::<Duration>)
+        .serve_connection(
+            TokioIo::new(TimeoutStream::new(
+                server_io,
+                timer,
+                DEFAULT_MAX_HEADER_BYTES,
+            )),
+            service,
+        );
+    let permits = Arc::new(Semaphore::new(1));
+    let permit = permits.clone().try_acquire_owned().unwrap();
+    let task = tokio::spawn(async move {
+        let _permit = permit;
+        connection
+            .await
+            .expect("#2152 the rejected connection must end, not hang");
+    });
+
+    let mut client = client;
+    client
+        .write_all(b"FROB / HTTP/1.1\r\nHost: h\r\n\r\n")
+        .await
+        .expect("#2152 the FROB head write must succeed");
+    let head = read_head(&mut client).await;
+    assert!(
+        head.starts_with("HTTP/1.1 400"),
+        "#2152 the gate must answer the FROB head with the bare parser 400: {head:?}"
+    );
+    // The service has returned by the time the response head is on the wire,
+    // so the finishing assertions below are ordered after it, not racing it.
+    {
+        let state = state_timer.state.lock().unwrap();
+        assert!(
+            matches!(state.phase, TimeoutPhase::Idle),
+            "#2152 the rejection must finish the exchange: the timer is still in the request phase (no deadline at all)"
+        );
+        assert!(
+            state.idle_deadline.is_some(),
+            "#2152 the rejection must arm the keep-alive idle deadline, or a wedged 400 pins the permit forever"
+        );
+    }
+    {
+        let lifecycle = state_timer.lifecycle.lock().unwrap();
+        assert!(
+            !lifecycle.request_in_flight,
+            "#2152 the rejection must clear the in-flight latch, or close() waits on a request that already ended"
+        );
+        assert!(
+            !lifecycle.advertised_keep_alive,
+            "#2152 the rejection must supersede the previous keep-alive advertisement"
+        );
+        assert!(
+            !lifecycle.close_after_response,
+            "#2152 the rejection must clear the close-after-response bookkeeping"
+        );
+        assert_eq!(
+            lifecycle.response_write.expected_body, 0,
+            "#2152 the rejection must reset the response-write tracking of the previous response"
+        );
+    }
+    // The 400 is `Connection: close`, so hyper closes right after writing it;
+    // the idle deadline armed above must never be needed on this well-behaved
+    // peer — the read is bounded so a stalled close fails the test instead of
+    // hanging it.
+    let mut byte = [0u8; 1];
+    let read = tokio::time::timeout(Duration::from_secs(2), client.read(&mut byte))
+        .await
+        .expect("#2152 the rejected connection must close after the 400")
+        .expect("#2152 the closed connection's final read must succeed");
+    assert_eq!(read, 0, "#2152 expected EOF on the rejected connection");
+    tokio::time::timeout(Duration::from_secs(2), task)
+        .await
+        .expect("#2152 the rejected connection task did not end")
+        .unwrap();
+    assert!(
+        permits.try_acquire().is_ok(),
+        "#2152 the rejected connection's permit was not released"
+    );
+}
+
 /// A peer that has already shut down its read half cannot observe the EOF; the
 /// permit is the only observable proof that the idle timer still closed the
 /// HEAD connection. Without the `Drop` arm this connection would pin the only

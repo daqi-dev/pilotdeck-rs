@@ -93,7 +93,7 @@ impl Requests {
     ///
     /// A thrown projection error becomes a `RequestError`, matching the TS
     /// `throw` the WS connection turns into `{ok:false,error:{code,message}}`
-    /// (`GatewayWsConnection.ts:231-260`): a structured `DialogGatewayError`
+    /// (`GatewayWsConnection.ts:223-255`): a structured `DialogGatewayError`
     /// keeps its code, and a code-less `TypeError` (null/undefined params)
     /// takes the same `gateway_request_failed` fallback as Node. Returning the
     /// error object as a successful body made a failed `memory_list` / wipe

@@ -34,6 +34,15 @@
 //! detaching them, with the mutation switches `sms-stop-no-drain` (the
 //! pre-#2026 detach shape) and `sms-stop-drain-unbounded` (the TS
 //! unbounded-block shape) registered in the same table.
+//!
+//! #2257 adds the closed-channel cases: a `stop()` task that panics at its
+//! first log line, or a handle dropped without `stop()`, leaves the accept
+//! task unobserved — nobody awaits it — so a drain there would only hold the
+//! listener's port (up to `STOP_DRAIN_LIMIT`) for a same-port `start` to fail
+//! its bind against. The closed channel now skips the drain; the
+//! unconditional one is the mutation switch `sms-stop-drain-on-sender-drop`,
+//! and #2269's `sms-stop-drain-predrain-count` restores the r1 pre-drain
+//! snapshot the truncation warn used to count with.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,18 +51,30 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-use super::super::protocol::ChannelStartDeps;
+use super::super::protocol::{ChannelLog, ChannelStartDeps};
 use super::*;
 
-/// Ports not used by the gold-master cases (18800–18855, 18929, 18941) or the
-/// WeCom lane (18993–18998).
-const PORT_HALF_HEAD: u16 = 18971;
-const PORT_POSITIVE: u16 = 18972;
+/// Ports sit in the free gap above the wecom-callback golden replay segment
+/// (18900–18921) and below the feishu segment (18960–18999: the feishu
+/// oracle replay binds 18960–18972, its pins bind 18973/18980/18990–18993).
+/// Within the gap the sms lane owns 18922–18923 (the http10 pins), 18924–18925
+/// (this module's head-timeout pins, the constants right below), 18926 (the
+/// json-null cell) and 18927–18928 (the #2152 parser-admission pins) — keep
+/// this ledger in sync when an sms pin moves: #2257 fix-r4, fix-r5 and
+/// #2152 fix-r1 each caught a port collision in this gap. fix-r5 moved the
+/// head-timeout pins here off 18971/18972, which the feishu replay binds
+/// (same class as the 18904 wecom overlap fixed in fix-r4). 18973–18979
+/// remain inside the feishu registered range; only 18973 has an actual
+/// cross-lane bind (the feishu NULL_PIN_ROUTER), tracked in #2446.
+const PORT_HALF_HEAD: u16 = 18924;
+const PORT_POSITIVE: u16 = 18925;
 const PORT_DEFAULT_WIRING: u16 = 18973;
 const PORT_DEFAULT_DEADLINE: u16 = 18974;
 const PORT_STOP_DRAIN: u16 = 18975;
 const PORT_STOP_BOUND: u16 = 18977;
 const PORT_BIND_RACE: u16 = 18976;
+const PORT_STOP_PANIC: u16 = 18978;
+const PORT_STOP_DROP: u16 = 18979;
 
 /// The injected deadline for the fast cases. Far above scheduler jitter (the
 /// complete head is already in the socket buffer before the server polls) and
@@ -90,6 +111,13 @@ const BOUND_UPPER: Duration = Duration::from_secs(75);
 /// The outer wait for `stop()` in the ignored bound case: above
 /// [`BOUND_UPPER`] with margin, below the 90 s connection deadline.
 const BOUND_WAIT: Duration = Duration::from_secs(80);
+/// The #2257 port-rebind bound: on the closed-channel path the accept task
+/// returns without draining, so the listener's port rebinds immediately —
+/// well inside this window. A drain nobody observes (the
+/// `sms-stop-drain-on-sender-drop` mutation) holds the port for the whole
+/// 60 s [`STOP_DRAIN_LIMIT`] instead, because the stalled connection's
+/// [`BOUND_DEADLINE`] head deadline outlives the bound.
+const REBIND_LIMIT: Duration = Duration::from_secs(2);
 
 struct NullSender;
 impl SmsSender for NullSender {
@@ -161,6 +189,42 @@ async fn start(port: u16, injected: Option<Duration>) -> (Arc<dyn ChannelHandle>
     assert!(
         Arc::strong_count(&shared) >= 2,
         "#1955 start() on port {port} returned the no-op handle (the bind lost \
+         the race with another listener), so these assertions would measure a \
+         foreign server"
+    );
+    (handle, shared)
+}
+
+/// [`start`] with an injected logger: the #2257 panic case needs the stop
+/// task's first log line to panic, which the plain helper's `log: None`
+/// cannot produce.
+async fn start_with_logger(
+    port: u16,
+    injected: Option<Duration>,
+    logger: Option<ChannelLog>,
+) -> (Arc<dyn ChannelHandle>, Arc<SmsShared>) {
+    match std::net::TcpListener::bind(("127.0.0.1", port)) {
+        Ok(probe) => drop(probe),
+        Err(error) => panic!(
+            "#2257 port {port} is already in use ({error}); another worktree is \
+             running this suite — re-run when it is done"
+        ),
+    }
+    let channel = SmsChannel::new(options(port, injected));
+    let shared = channel.shared.clone();
+    let handle = channel
+        .start(ChannelStartDeps {
+            config: None,
+            report_status: None,
+            log: logger,
+            turn_gateway: None,
+        })
+        .await
+        .expect("#2257 sms start");
+    drop(channel);
+    assert!(
+        Arc::strong_count(&shared) >= 2,
+        "#2257 start() on port {port} returned the no-op handle (the bind lost \
          the race with another listener), so these assertions would measure a \
          foreign server"
     );
@@ -659,6 +723,164 @@ async fn stop_returns_at_the_drain_bound_when_a_connection_outlives_it() {
         "#2026 the truncation warn counts only the connections still in the \
          set at the bound (the naturally retired one must not be counted), \
          saw {recorded:?}"
+    );
+}
+
+/// A spawned `handle.stop()` outcome as a message: `None` when it completed,
+/// otherwise the stop error or the panic payload it aborted with. Local twin
+/// of `sms/tests.rs`'s `stop_outcome` — the two modules' negative-control
+/// tables split their prefixes, so this module cannot reach that helper.
+fn stop_payload(
+    joined: Result<Result<(), ChannelError>, tokio::task::JoinError>,
+) -> Option<String> {
+    match joined {
+        Ok(Ok(())) => None,
+        Ok(Err(error)) => Some(format!("#2257 stop returned an error: {error:?}")),
+        Err(join_error) => {
+            let panic = join_error.into_panic();
+            Some(
+                panic
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| panic.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+                    .unwrap_or_else(|| "#2257 non-string panic payload".to_owned()),
+            )
+        }
+    }
+}
+
+/// #2257: the port must rebind inside [`REBIND_LIMIT`]. The closed-channel
+/// path releases the listener with the accept task's return; an unobserved
+/// drain (the `sms-stop-drain-on-sender-drop` mutation) holds the port for
+/// the whole [`STOP_DRAIN_LIMIT`], because the stalled connection's
+/// [`BOUND_DEADLINE`] head deadline outlives the bound.
+async fn assert_port_rebinds(port: u16) {
+    let deadline = tokio::time::Instant::now() + REBIND_LIMIT;
+    loop {
+        match std::net::TcpListener::bind(("127.0.0.1", port)) {
+            Ok(rebound) => {
+                drop(rebound);
+                return;
+            }
+            Err(_busy) if tokio::time::Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(error) => panic!(
+                "#2257 the port {port} did not rebind inside {REBIND_LIMIT:?} \
+                 ({error}); the closed-channel path still held it — an \
+                 unobserved drain"
+            ),
+        }
+    }
+}
+
+/// #2257: one closed-channel path. A `stop()` whose async block panics at its
+/// first log line (the #1339 logger-panic shape — `server.take()` already ran,
+/// so the [`ServerEntry`], the watch sender and the task handle drop together
+/// in the unwind) leaves the accept task with nobody holding the shutdown
+/// sender, and nobody awaiting the task. The pre-#2257 shape drained on this
+/// path too — unobserved — and held the listener's port for up to
+/// [`STOP_DRAIN_LIMIT`], so a same-port `start` failed its bind and silently
+/// degraded to a no-op handle (#2026's error-path release delay). With the fix
+/// the closed channel skips the drain: the task returns, the `JoinSet`'s drop
+/// aborts the in-flight connection, and the port rebinds immediately.
+#[tokio::test]
+async fn a_stop_task_that_panics_at_its_log_line_frees_the_port_without_a_drain() {
+    let logger: ChannelLog = Arc::new(|_level: &str, message: &str| {
+        if message.starts_with("sms: stopping (boom") {
+            panic!("#2257 injected logger panic");
+        }
+    });
+    let (handle, shared) =
+        start_with_logger(PORT_STOP_PANIC, Some(BOUND_DEADLINE), Some(logger)).await;
+    // The stalled connection: its 90 s head deadline outlives the 60 s drain
+    // bound, so it can only leave through the abort of a skipped drain — or
+    // pin the port for the whole bound under the mutation.
+    let mut stalled = connect(PORT_STOP_PANIC).await;
+    stalled
+        .write_all(b"POST /sms/incoming HTTP/1.1\r\nHost: x\r\n")
+        .await
+        .expect("#2257 write the half head");
+    let deadline = tokio::time::Instant::now() + READ_LIMIT;
+    while shared
+        .live_connections
+        .load(std::sync::atomic::Ordering::SeqCst)
+        < 1
+    {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "#2257 the accept loop never took the connection"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    let stopping = tokio::spawn({
+        let handle = handle.clone();
+        async move { handle.stop("boom").await }
+    });
+    let payload = stop_payload(stopping.await);
+    crate::negative_assert!(
+        payload
+            .as_deref()
+            .is_some_and(|message| message.contains("#2257 injected logger panic")),
+        "#2257 the stop task must surface the injected logger panic: {payload:?}"
+    );
+    assert_port_rebinds(PORT_STOP_PANIC).await;
+    let (bytes, closed) = read_until_close(&mut stalled, DRAIN_TRUNCATED).await;
+    assert!(
+        closed,
+        "#2257 the returned task aborted the stalled connection: no EOF \
+         inside {DRAIN_TRUNCATED:?}"
+    );
+    assert_eq!(
+        bytes,
+        Vec::<u8>::new(),
+        "#2257 the aborted connection closed with zero bytes; its own \
+         {BOUND_DEADLINE:?} head deadline had not fired"
+    );
+}
+
+/// #2257: the other closed-channel path — a handle dropped without calling
+/// `stop()` at all. Dropping the handle drops its [`ServerEntry`] and with it
+/// the watch sender, so the accept task observes the closed channel
+/// unobserved. The same port-rebind bound as the panic case: the skip
+/// releases the listener with the task's return, while the unconditional
+/// drain (the `sms-stop-drain-on-sender-drop` mutation) holds the port for
+/// the whole [`STOP_DRAIN_LIMIT`].
+#[tokio::test]
+async fn a_dropped_handle_frees_the_port_without_a_drain() {
+    let (handle, shared) = start(PORT_STOP_DROP, Some(BOUND_DEADLINE)).await;
+    let mut stalled = connect(PORT_STOP_DROP).await;
+    stalled
+        .write_all(b"POST /sms/incoming HTTP/1.1\r\nHost: x\r\n")
+        .await
+        .expect("#2257 write the half head");
+    let deadline = tokio::time::Instant::now() + READ_LIMIT;
+    while shared
+        .live_connections
+        .load(std::sync::atomic::Ordering::SeqCst)
+        < 1
+    {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "#2257 the accept loop never took the connection"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    drop(handle);
+    assert_port_rebinds(PORT_STOP_DROP).await;
+    let (bytes, closed) = read_until_close(&mut stalled, DRAIN_TRUNCATED).await;
+    assert!(
+        closed,
+        "#2257 the returned task aborted the stalled connection: no EOF \
+         inside {DRAIN_TRUNCATED:?}"
+    );
+    assert_eq!(
+        bytes,
+        Vec::<u8>::new(),
+        "#2257 the aborted connection closed with zero bytes; its own \
+         {BOUND_DEADLINE:?} head deadline had not fired"
     );
 }
 

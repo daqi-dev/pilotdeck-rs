@@ -6,7 +6,7 @@
 
 去确定化处理：`x-delivery-id` 显式给出；日志里的端口固定显示 `http://127.0.0.1:0`（`listening on` 行只含配置端口，配置即为 0）；失败启动日志尾部（含 errno）置 `<masked>`；`port-in-use` 场景记录哨兵 `"<busy-port>"`，重放端自建 blocker 换真实端口。handleIncoming 是 fire-and-forget，每场景用静默轮询（25ms × 至多 200 次，连续两次稳定即止）等日志/网关流平稳后再捕获。每场景结束后 stop 监听器，进程可正常退出。
 
-Rust 重放（`channel::webhook::tests`）按同一步骤 DSL 驱动原生实现，比较响应、gateway 调用、日志、cron 布尔。已登记差异在重放端归一：hyper 对解析器裸 400 补的 `content-length: 0` 丢弃（A8.4-NATIVE-HTTP-001）；Node 的 `keep-alive: timeout=5` 头丢弃（hyper 不发）；Date 值本身两侧都置 `<date>`。重生成到**新的**目录：
+Rust 重放（`channel::webhook::tests`）按同一步骤 DSL 驱动原生实现，比较响应、gateway 调用、日志、cron 布尔。已登记差异在重放端归一：hyper 对解析器裸 400 补的 `content-length: 0`——#2153 起仅在 `PARSER_ADMISSION_LABEL`（`unknown-method`）登记步丢弃，其余步逐字比，与录制侧 `generate.mts` 同一常量语义（A8.4-NATIVE-HTTP-001）；Node 的 `keep-alive: timeout=5` 头丢弃（hyper 不发）；Date 值本身两侧都置 `<date>`。重生成到**新的**目录：
 
 ```sh
 export PDRS_BASELINE=/absolute/path/to/PilotDeck

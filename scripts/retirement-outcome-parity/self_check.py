@@ -90,9 +90,10 @@ PR_GATE = REPO_ROOT / '.github' / 'workflows' / 'pr-gate.yml'
 def _load_checker():
     """按 spec 再加载一份 check_outcome_parity（pycache_prefix 已在模块头设好）。
 
-    只为读 `EXPECTED_CONTROLS`：条数的单一登记点在 check_outcome_parity.py，
-    negative_controls 的执行器与这里的 check_negctl 同源读，不各抄一份
-    （评审 r7 P1——控件集被删到 0 条时执行器空真判 PASS）。
+    只为读 `EXPECTED_CONTROLS` / `EXPECTED_CONTROL_IDS` 等登记值：名册与条数的
+    单一登记点在 check_outcome_parity.py，negative_controls 的执行器与这里的
+    check_negctl 同源读，不各抄一份（评审 r7 P1——控件集被删到 0 条时执行器
+    空真判 PASS；#2378——条数拦不住改名/重复，登记值升级为 ID 全集）。
     #2452：checker 模块体第一件事是自建一个新的 `sys.pycache_prefix`——进程内
     exec 会把宿主的前缀顶掉（复写进程级状态）。这里保存/还原：加载期间用 checker
     自建的隔离前缀（它自己的 atexit 负责清理），加载完宿主前缀原样恢复。
@@ -110,6 +111,14 @@ def _load_checker():
 CHECK = _load_checker()
 EXPECTED_CONTROLS = CHECK.EXPECTED_CONTROLS
 EXPECTED_POSITIVES = CHECK.EXPECTED_POSITIVES
+# #2378：ID 名册（条数拦不住改名/重复），check_negctl 与执行器同源读这里。
+EXPECTED_CONTROL_IDS = CHECK.EXPECTED_CONTROL_IDS
+EXPECTED_POSITIVE_IDS = CHECK.EXPECTED_POSITIVE_IDS
+# 判决词表（r4 sibling#1）：期望 counts 的键集也从登记点同源取，不做第四份
+# 字面量副本——执行器词表扩/改后 self_check 按旧键集比较，闸门要跑完最长
+# 1800 s 的负控轮才暴露。
+NEGATIVE_VERDICTS = CHECK.NEGATIVE_VERDICTS
+POSITIVE_VERDICTS = CHECK.POSITIVE_VERDICTS
 # 各检查子进程的内部超时（评审 r9 P2：外层 timeout-minutes 的预算算式要用它们，
 # 之前是散在调用点的字面量——抬哪个都改不动派生断言）。最坏和见
 # INTERNAL_WORST_CASE_SECONDS。
@@ -439,14 +448,35 @@ def check_negctl():
         raise CheckFailure(f'negative controls rc={result.returncode} '
                            f'status={summary.get("status")!r} counts={counts} '
                            f'positiveCounts={positive_counts}')
-    if counts.get('KILLED') != EXPECTED_CONTROLS:
-        raise CheckFailure(f'expected {EXPECTED_CONTROLS} KILLED, got {counts}')
+    # #2378：计数与名册都钉死。计数只对 KILLED / HELD 逐键核过条数，词表外键
+    # （SURVIVED==0 且 INVALID==0 的「两个零」）拦不住记录侧缩水；这里直接要求
+    # counts **整字典**等于期望值。名册从 summary 的 controls / positives 条目
+    # 里读 id（执行器侧已拒绝不等名册，这里再核一遍「self_check 拿到的 summary
+    # 确实覆盖了登记全集」，防两端各改一边后仍然互相自洽地变绿）。
+    # r4 sibling#1：期望 counts 的键集从登记点的词表同源推导（不再写字面量），
+    # 整字典比较保留——执行器词表多出词表外键时这里照样不等。
+    expected_counts = dict.fromkeys(NEGATIVE_VERDICTS, 0)
+    expected_counts['KILLED'] = EXPECTED_CONTROLS
+    if counts != expected_counts:
+        raise CheckFailure(f'expected counts {{KILLED: {EXPECTED_CONTROLS}, '
+                           f'SURVIVED: 0, INVALID: 0}}, got {counts}')
     # 正控条数同样钉死（r9 合并补全）：build_positives 被删空时 positiveCounts 全 0、
-    # status 仍 PASS——「应当 PASS 的性质」静默失保。
-    if (positive_counts.get('HELD') != EXPECTED_POSITIVES
-            or positive_counts.get('BROKEN') or positive_counts.get('INVALID')):
-        raise CheckFailure(f'expected {EXPECTED_POSITIVES} positives HELD '
-                           f'(0 BROKEN / INVALID), got {positive_counts}')
+    # status 仍 PASS——「应当 PASS 的性质」静默失保；#2378 同样升级为整字典 + ID 名册。
+    expected_positive_counts = dict.fromkeys(POSITIVE_VERDICTS, 0)
+    expected_positive_counts['HELD'] = EXPECTED_POSITIVES
+    if positive_counts != expected_positive_counts:
+        raise CheckFailure(f'expected positiveCounts {{HELD: {EXPECTED_POSITIVES}, '
+                           f'BROKEN: 0, INVALID: 0}}, got {positive_counts}')
+    control_ids = sorted(str(entry.get('id')) for entry
+                         in summary.get('controls') or [])
+    if control_ids != sorted(EXPECTED_CONTROL_IDS):
+        raise CheckFailure(f'summary control ids {control_ids} do not match the '
+                           f'registered roster {sorted(EXPECTED_CONTROL_IDS)} (#2378)')
+    positive_ids = sorted(str(entry.get('id')) for entry
+                         in summary.get('positives') or [])
+    if positive_ids != sorted(EXPECTED_POSITIVE_IDS):
+        raise CheckFailure(f'summary positive ids {positive_ids} do not match the '
+                           f'registered roster {sorted(EXPECTED_POSITIVE_IDS)} (#2378)')
     return (f'{counts["KILLED"]}/{EXPECTED_CONTROLS} KILLED, '
             f'{positive_counts["HELD"]}/{EXPECTED_POSITIVES} HELD, '
             '0 SURVIVED/INVALID/BROKEN')

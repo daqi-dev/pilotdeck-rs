@@ -205,11 +205,12 @@ fn finish(
 
 /// Node http.Server's parser-level admission, used by the native listeners that
 /// back a TS `http.createServer` surface: the module-host router here, the
-/// webhook channel's own listener, and the api-server channel (#1683). This is
+/// webhook channel's own listener, the api-server channel (#1683), and the
+/// sms and user_dialog HTTP-store lanes (#2152). This is
 /// not router policy: llhttp and `_http_server.js` enforce it before any request
-/// handler runs, so every such listener has to call it. Not yet wired in the sms
-/// and user_dialog HTTP-store lanes, nor in wecom_callback's private listener
-/// (#2152 / #1774) — those listeners predate this gate and still diverge.
+/// handler runs, so every such listener has to call it. Not yet wired in
+/// wecom_callback's private listener (#1774) — that listener predates this
+/// gate and still diverges.
 /// `Ok(None)` admits the request; `Err` is the zero-byte socket close a
 /// CONNECT to a plain http.Server performs (no `connect` listener).
 pub(crate) fn node_parser_admission<B>(
@@ -446,7 +447,15 @@ pub(crate) fn whatwg_path(target: &str) -> String {
 /// no body bytes. hyper adds `content-length: 0` for the empty sized body
 /// (registered transport diff); the connection still closes.
 fn parser_bad_request() -> hyper::Response<Body> {
-    let mut response = hyper::Response::new(http_proxy::empty());
+    let mut response =
+        hyper::Response::new(if crate::mutants::on("native-http-parser-400-cl0-off") {
+            // #2153 negative control: the streamed empty body drops hyper's
+            // implicit `content-length: 0`, the registered-direction drift the
+            // api-web gate pin holds.
+            streamed(None)
+        } else {
+            http_proxy::empty()
+        });
     *response.status_mut() = hyper::StatusCode::BAD_REQUEST;
     response
         .headers_mut()
@@ -518,7 +527,14 @@ pub(crate) fn over_header_budget<B>(request: &hyper::Request<B>) -> bool {
 /// Date, no body bytes — the same shape as the bare 400 (hyper's
 /// `content-length: 0` transport diff included).
 pub(crate) fn request_header_fields_too_large() -> hyper::Response<Body> {
-    let mut response = hyper::Response::new(http_proxy::empty());
+    let mut response = hyper::Response::new(if crate::mutants::on("native-http-431-cl0-off") {
+        // #2153 negative control: the streamed empty body drops hyper's
+        // implicit `content-length: 0`, the registered-direction drift the
+        // budget replay's raw pin holds.
+        streamed(None)
+    } else {
+        http_proxy::empty()
+    });
     *response.status_mut() = hyper::StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE;
     response
         .headers_mut()

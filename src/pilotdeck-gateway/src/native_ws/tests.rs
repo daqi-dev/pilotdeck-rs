@@ -535,12 +535,13 @@ async fn budget_capture(socket: &mut TcpStream) -> (String, bool) {
 /// the Date value is masked (the recording is masked already, Rust renders
 /// the live clock), header names are case-folded (hyper renders Title-Case,
 /// TS writes lowercase and literal-cased names), hyper's implicit
-/// `content-length: 0` line is dropped, and the chunk-size line is
-/// case-folded (hyper writes `B`, Node writes `b`). The cells this fixture
-/// records are one response each, with either an empty body (101, 431) or
-/// one small chunk plus terminator (200), so the folding only walks that
-/// shape.
-fn budget_normalize(raw: &str) -> String {
+/// `content-length: 0` line is dropped on the registered 431 cells only
+/// (#2153, the same scoping native_http's `parser_admission` cells carry),
+/// and the chunk-size line is case-folded (hyper writes `B`, Node writes
+/// `b`). The cells this fixture records are one response each, with either
+/// an empty body (101, 431) or one small chunk plus terminator (200), so
+/// the folding only walks that shape.
+fn budget_normalize(raw: &str, parser_admission: bool) -> String {
     let Some((head, body)) = raw.split_once("\r\n\r\n") else {
         return raw.to_owned();
     };
@@ -564,8 +565,12 @@ fn budget_normalize(raw: &str) -> String {
         }
         if name.eq_ignore_ascii_case("date") {
             out.push_str("date: <masked>\r\n");
-        } else if name.eq_ignore_ascii_case("content-length") && value.trim() == "0" {
-            // hyper's implicit empty-body length on the bare 400/431.
+        } else if (parser_admission || crate::mutants::on("native-ws-budget-cl0-mask-always"))
+            && name.eq_ignore_ascii_case("content-length")
+            && value.trim() == "0"
+        {
+            // hyper's implicit empty-body length on the registered 431s
+            // only.
         } else {
             out.push_str(&name.to_ascii_lowercase());
             out.push(':');
@@ -601,6 +606,41 @@ fn budget_normalize(raw: &str) -> String {
         out.push_str(body);
     }
     out
+}
+
+/// #2153: the cells whose replay needs the `content-length: 0` exemption —
+/// exactly the fixture's 431 cells, the canned span-budget rejection
+/// (`native_http::request_header_fields_too_large`) whose typed empty body
+/// hyper adds a `content-length: 0` line to while the TS golden records none.
+/// Like native_http's `PARSER_ADMISSION_CELLS` the list is explicit, so a
+/// cell that grows a length line anywhere else replays red instead of
+/// normalizing away; `parser_admission_cells_cover_exactly_the_oracle_431s`
+/// holds the list against the oracle, and
+/// `budget_content_length_zero_stays_scoped_to_the_registered_431s` pins the
+/// raw bytes behind the mask in both directions.
+const PARSER_ADMISSION_CELLS: &[&str] = &[
+    "plain-16384",
+    "plain-16385",
+    "plain-20480",
+    "upgrade-16384",
+    "upgrade-16385",
+    "upgrade-17020",
+    "upgrade-20480",
+];
+
+/// #2153 fix-r1 (review r1): the predicate that grants the
+/// `content-length: 0` mask. Every consumer — the exemption in the boundary
+/// replay and the coverage guard — goes through this one function, so
+/// widening the predicate anywhere fails the guard instead of silently
+/// re-widening the mask (the webhook fix-r3 shape).
+fn parser_admission(id: &str) -> bool {
+    if crate::mutants::on("native-ws-budget-cl0-off") {
+        return false;
+    }
+    if crate::mutants::on("native-ws-budget-cl0-wide") {
+        return true;
+    }
+    PARSER_ADMISSION_CELLS.contains(&id)
 }
 
 /// #1351 (2026-11-06 review): the TrackHeader arithmetic the TS recorder
@@ -681,9 +721,12 @@ async fn upgrade_budget_boundary_matches_ts() {
             .expect("#1351 boundary cell send");
         let (raw, observed) = budget_capture(&mut socket).await;
         let _ = socket.shutdown().await;
+        // #2153: the mask is granted per cell through `fn parser_admission`,
+        // so every other cell's length lines compare verbatim.
+        let admitted = parser_admission(id);
         negative_assert_eq!(
-            budget_normalize(&raw),
-            budget_normalize(recorded),
+            budget_normalize(&raw, admitted),
+            budget_normalize(recorded, admitted),
             "#1351 every boundary cell's response matches the recorded TS bytes"
         );
         negative_assert_eq!(
@@ -694,7 +737,140 @@ async fn upgrade_budget_boundary_matches_ts() {
     }
     finish(stop, task).await;
 }
-/// One upgrade-lane budget cell of the same head shape as
+
+/// #2153 fix-r1 (review r1): the exemption list and the oracle describe the
+/// same cell set, so neither can drift alone — the admitted ids, read
+/// through the same `fn parser_admission` the replay's exemption uses, are
+/// exactly the oracle's 431 cells (the canned rejection of the span budget;
+/// the served cells answer 101 or a chunked 200). A cell that gains or loses
+/// the 431 shape fails here with its id, and a stale list entry points at
+/// the cell to re-check — widening or dropping the predicate fails here
+/// instead of re-widening the replay's mask.
+#[test]
+fn parser_admission_cells_cover_exactly_the_oracle_431s() {
+    let recorded = budget_oracle();
+    let cells = recorded["cells"].as_array().expect("#1351 oracle cells");
+    let mut admitted: Vec<&str> = cells
+        .iter()
+        .map(|cell| cell["id"].as_str().expect("#1351 oracle cell id"))
+        .filter(|id| parser_admission(id))
+        .collect();
+    admitted.sort_unstable();
+    let mut oracle_431s: Vec<&str> = cells
+        .iter()
+        .filter(|cell| {
+            cell["response"]
+                .as_str()
+                .expect("#1351 oracle cell response")
+                .starts_with("HTTP/1.1 431 Request Header Fields Too Large\r\n")
+        })
+        .map(|cell| cell["id"].as_str().expect("#1351 oracle cell id"))
+        .collect();
+    oracle_431s.sort_unstable();
+    negative_assert_eq!(
+        admitted,
+        oracle_431s,
+        "#2153 the content-length exemption covers exactly the oracle's 431 cells"
+    );
+}
+
+/// #2153: the raw-pin anchors, standalone literals the native-ws-entry
+/// negative-control table's audit can quote and the receipt protocol
+/// records verbatim (`negative_receipt.rs` matches the recorded assertion
+/// by exact equality, so an interpolated message never matches the table's
+/// literal anchor — fix-r2, review r2).
+const PIN_REGISTERED_431: &str = "#2153 pin: the registered 431 carries content-length: 0";
+const PIN_SERVED_NO_LENGTH: &str = "#2153 pin: the served cell carries no content-length at all";
+
+/// #2153 fix-r2 (review r2): record the anchor constant itself as the
+/// receipt's assertion — the same record-literal-then-panic-with-detail
+/// shape as `negative_receipt.rs`'s `expect_*` helpers — and keep the cell
+/// id and raw bytes in the panic text for the human reader. Both directions
+/// fail here on the wire bytes (the 101 cell's inserted `content-length: 0`
+/// is on the wire under the pinned hyper), so a verbatim receipt makes the
+/// table's two product rows KILLED without touching their bindings.
+fn pin_failure(assertion: &str, id: &str, raw: &str) -> ! {
+    crate::test_negative_receipt::record_failure(assertion);
+    panic!("{assertion} ({id}): {raw:?}");
+}
+
+/// #2153: the `content-length: 0` exemption `fn parser_admission` grants the
+/// 431 cells is the only one, so the raw bytes have to be pinned in both
+/// directions or the mask could hide a drift: a 431 that stopped carrying
+/// the line (the rejection disappearing into a bare close) and a served
+/// cell that grew one (the extra length line the narrowed replay must
+/// catch) both compare green through the mask alone. Every exchange writes
+/// the cell's own recorded request bytes, like the replay.
+#[tokio::test]
+async fn budget_content_length_zero_stays_scoped_to_the_registered_431s() {
+    let recorded = budget_oracle();
+    let cells = recorded["cells"].as_array().expect("#1351 oracle cells");
+    let (address, stop, task) = start(Arc::default(), DEADLINE).await;
+    for cell in cells {
+        let id = cell["id"].as_str().expect("#1351 oracle cell id");
+        let request = cell["request"]
+            .as_str()
+            .expect("#1351 oracle cell request")
+            .as_bytes();
+        let served_431 = cell["response"]
+            .as_str()
+            .expect("#1351 oracle cell response")
+            .starts_with("HTTP/1.1 431 Request Header Fields Too Large\r\n");
+        let mut socket = TcpStream::connect(address)
+            .await
+            .expect("#2153 content-length pin connect");
+        socket
+            .write_all(request)
+            .await
+            .expect("#2153 content-length pin send");
+        let (raw, _) = budget_capture(&mut socket).await;
+        let _ = socket.shutdown().await;
+        let lower = raw.to_ascii_lowercase();
+        if served_431 {
+            if !lower.contains("\r\ncontent-length: 0\r\n") {
+                pin_failure(PIN_REGISTERED_431, id, &raw);
+            }
+        } else if lower.contains("\r\ncontent-length:") {
+            pin_failure(PIN_SERVED_NO_LENGTH, id, &raw);
+        }
+    }
+    finish(stop, task).await;
+}
+
+/// #2153: the exemption `fn parser_admission` grants is the only masking
+/// left — an injected `content-length: 0` on a served cell must survive
+/// normalization (an extra hyper length line replays red), while the
+/// registered 431's line stays masked.
+#[test]
+fn only_the_registered_cells_mask_a_content_length_zero() {
+    let recorded = budget_oracle();
+    let response = |id: &str| {
+        recorded["cells"]
+            .as_array()
+            .expect("#1351 oracle cells")
+            .iter()
+            .find(|cell| cell["id"].as_str() == Some(id))
+            .and_then(|cell| cell["response"].as_str())
+            .unwrap_or_else(|| panic!("#2153 the {id} cell is missing from the oracle"))
+            .to_owned()
+    };
+    let served = response("plain-16383");
+    let injected = served.replacen("\r\n\r\n", "\r\ncontent-length: 0\r\n\r\n", 1);
+    negative_assert!(
+        budget_normalize(&injected, false) != budget_normalize(&served, false),
+        "#2153 an injected content-length: 0 on a served cell must not normalize away"
+    );
+    // The registered direction stays masked: hyper's line on the 431 is the
+    // one exemption left, so the TS-shaped bytes still compare equal.
+    let bare = response("plain-16384");
+    let hyper_shaped = bare.replacen("\r\n\r\n", "\r\ncontent-length: 0\r\n\r\n", 1);
+    negative_assert_eq!(
+        budget_normalize(&hyper_shaped, true),
+        budget_normalize(&bare, true),
+        "#2153 the registered 431 exemption still masks hyper's content-length: 0"
+    );
+}
+
 /// `upgrade_head_respects_span_budget` (tracked 93 + n): writes the head,
 /// asserts the canned 431 and its `Connection: close`, then requires the
 /// connection to close (the read reaching EOF — the same two-step
@@ -2692,4 +2868,169 @@ async fn ws_stderr_probe_child(token: &str) {
         .expect("#2434 server finish deadline")
         .expect("#2434 server task")
         .expect("#2434 successful drain");
+}
+
+// #2351: exercise the real runner with stop futures that complete, panic, or
+// never complete. No production panic hook or process-global mutation is needed.
+async fn phased_drain_fixture(stop: impl Future<Output = ()> + Send + 'static) -> PhasedRun {
+    let host = native_ws_fixture(Arc::new(Requests::default()));
+    NativeWsServer::bind(
+        "127.0.0.1:0".parse().expect("#2351 fixture listen address"),
+        host,
+        "fixture-token".into(),
+        "probe".into(),
+    )
+    .await
+    .expect("#2351 fixture bind")
+    .run_phased(stop, Duration::from_millis(100))
+}
+
+async fn phased_runner_exited(phased: &PhasedRun) {
+    timeout(DEADLINE, async {
+        while !phased.runner.is_finished() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("#2351 runner exit is bounded");
+}
+
+#[tokio::test]
+async fn phased_drain_waiter_cancellation_preserves_success() {
+    let (stop, stopped) = oneshot::channel();
+    let phased = phased_drain_fixture(async {
+        stopped.await.expect("#2351 normal stop is delivered");
+    })
+    .await;
+    let mut predecessor = Box::pin(phased.drained());
+    negative_assert!(
+        poll_request(predecessor.as_mut()).is_pending(),
+        "#2351 predecessor waits for stop"
+    );
+    drop(predecessor);
+    let mut first = Box::pin(phased.drained());
+    let mut second = Box::pin(phased.drained());
+    negative_assert!(
+        poll_request(first.as_mut()).is_pending() && poll_request(second.as_mut()).is_pending(),
+        "#2351 successors wait independently before stop"
+    );
+    stop.send(()).expect("#2351 normal runner still owns stop");
+    let verdicts = timeout(DEADLINE, async { tokio::join!(first, second) })
+        .await
+        .expect("#2351 normal waiters finish within deadline");
+    negative_assert_eq!(
+        verdicts,
+        (true, true),
+        "#2351 normal waiters agree on success"
+    );
+    negative_assert!(
+        timeout(DEADLINE, phased.drained())
+            .await
+            .expect("#2351 repeated successful drain is bounded"),
+        "#2351 late waiter preserves success after runner exits"
+    );
+    timeout(DEADLINE, phased.finish())
+        .await
+        .expect("#2351 successful finish is bounded")
+        .expect("#2351 successful drain finishes cleanly");
+}
+
+#[tokio::test]
+async fn phased_drain_runner_panic_wakes_all_waiters() {
+    let (stop, stopped) = oneshot::channel();
+    let phased = phased_drain_fixture(async {
+        stopped.await.expect("#2351 panic trigger is delivered");
+        panic!("#2351 injected runner panic");
+    })
+    .await;
+    let mut first = Box::pin(phased.drained());
+    let mut second = Box::pin(phased.drained());
+    negative_assert!(
+        poll_request(first.as_mut()).is_pending() && poll_request(second.as_mut()).is_pending(),
+        "#2351 both waiters are pending before runner panic"
+    );
+    stop.send(())
+        .expect("#2351 runner still owns panic trigger");
+    phased_runner_exited(&phased).await;
+    // A failed runner must not require this lock to publish its failure. A
+    // different caller may hold it through a slow finish after the panic.
+    let held = timeout(DEADLINE, phased.inner.lock())
+        .await
+        .expect("#2351 panic releases the inner mutex");
+    let verdicts = crate::test_negative_receipt::expect_ok(
+        timeout(DEADLINE, async { tokio::join!(first, second) }).await,
+        "#2351 panic wakes every drained waiter within deadline",
+    );
+    negative_assert_eq!(
+        verdicts,
+        (false, false),
+        "#2351 panic is a failed drain for every waiter"
+    );
+    negative_assert!(
+        !timeout(DEADLINE, phased.drained())
+            .await
+            .expect("#2351 late panic waiter is bounded without the inner lock"),
+        "#2351 late panic waiter observes the same failure"
+    );
+    drop(held);
+    negative_assert!(
+        timeout(DEADLINE, phased.finish())
+            .await
+            .expect("#2351 finish after panic is bounded")
+            .is_err(),
+        "#2351 finish after panic reports failure"
+    );
+}
+
+#[tokio::test]
+async fn phased_drain_runner_abort_is_observable() {
+    for started in [false, true] {
+        let (entered, entry) = oneshot::channel();
+        let phased = phased_drain_fixture(async move {
+            entered.send(()).expect("#2351 runner entry is observed");
+            std::future::pending::<()>().await;
+        })
+        .await;
+        if started {
+            timeout(DEADLINE, entry)
+                .await
+                .expect("#2351 runner starts within deadline")
+                .expect("#2351 runner entered its never-completing stop");
+        }
+        phased.runner.abort();
+        phased_runner_exited(&phased).await;
+        for _ in 0..2 {
+            negative_assert!(
+                !timeout(DEADLINE, phased.drained())
+                    .await
+                    .expect("#2351 aborted runner cannot strand a drain waiter"),
+                "#2351 abort is consistently a failed drain"
+            );
+        }
+        negative_assert!(
+            timeout(DEADLINE, phased.finish())
+                .await
+                .expect("#2351 finish after abort is bounded")
+                .is_err(),
+            "#2351 finish after abort reports failure"
+        );
+    }
+}
+
+#[tokio::test]
+async fn phased_drain_drop_aborts_runner() {
+    let (held, released) = oneshot::channel::<()>();
+    let phased = phased_drain_fixture(async move {
+        let _held = held;
+        std::future::pending::<()>().await;
+    })
+    .await;
+    drop(phased);
+    negative_assert!(
+        timeout(DEADLINE, released)
+            .await
+            .expect("#2351 dropping PhasedRun releases its runner stop future")
+            .is_err(),
+        "#2351 runner stop future is dropped without completing"
+    );
 }

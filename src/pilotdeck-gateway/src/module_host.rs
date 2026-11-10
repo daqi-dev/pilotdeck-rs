@@ -233,14 +233,22 @@ pub(crate) async fn serve(
         )));
     }
     if !crate::mutants::on("module-host-method-off") && request.method() != hyper::Method::POST {
-        return Some(Ok(finalize(
-            send_json(
-                hyper::StatusCode::METHOD_NOT_ALLOWED,
-                "{\"code\":\"PUBLIC_HOST_METHOD_NOT_ALLOWED\"}",
-                keep_alive,
-            ),
-            version,
-        )));
+        let mut response = send_json(
+            hyper::StatusCode::METHOD_NOT_ALLOWED,
+            "{\"code\":\"PUBLIC_HOST_METHOD_NOT_ALLOWED\"}",
+            keep_alive,
+        );
+        // #2153 negative control: the HEAD 405 growing hyper's empty-body
+        // `content-length: 0` is the unregistered drift the narrowed replay
+        // must catch (`method_head_and_undefined_body_bytes_stay_pinned`
+        // holds the wire bytes).
+        if crate::mutants::on("module-host-head-405-cl0") && request.method() == hyper::Method::HEAD
+        {
+            response
+                .headers_mut()
+                .insert(hyper::header::CONTENT_LENGTH, "0".parse().expect("header"));
+        }
+        return Some(Ok(finalize(response, version)));
     }
     let Some(resolver) = config.capabilities.clone() else {
         if crate::mutants::on("module-host-provider-off") {

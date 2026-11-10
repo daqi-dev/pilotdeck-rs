@@ -3,9 +3,11 @@
 positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one sms-channel behavior and is killed by the oracle replay
-cell or dedicated test that pins that behavior's TS bytes (26 → 72; `#1984`
+cell or dedicated test that pins that behavior's TS bytes (26 → 74; `#1984`
 added `sms-oracle-boundary-unregistered`, `#1957` added
-`sms-oracle-signed-signature-header` — the `switches` table is the truth
+`sms-oracle-signed-signature-header`, `#1913` added
+`sms-oracle-recorded-version`, `#2152` added
+`sms-oracle-recorded-omit-host` — the `switches` table is the truth
 source). `#1879` only rewrites existing reads (`recorded_present`
 covers `env` / `sendFailAt` / `turn.*` / `truncate` / `halfClose` / `headers` /
 `reason` / `extra` now), so it adds no switch. Run one sample in the authoring
@@ -323,6 +325,22 @@ switches = [
       '#1339 #1957 signed case must record a non-empty X-Twilio-Signature header',
       '#1339 #1957 signed case must replay at least one request step',
       '#1339 #1957 signed case must record a non-empty X-Twilio-Signature header']),
+    # #1913: the recorded `version` field is read fail-open — a corrupted
+    # value replays as the `HTTP/1.1` default and the `http10` cell's
+    # close-delimited reply never arrives (the replay times out instead).
+    # Killed by the wrong-type rejection, same shape as the other
+    # recorded-field switches.
+    ('sms-oracle-recorded-version', SMS / 'tests.rs',
+     'recorded_version_rejects_wrong_type',
+     '#1913 rejects version type drift'),
+    # #2152: the recorded `omitHost` field is read fail-open — a corrupted
+    # value replays as "keep the Host line" and the missing-host cell sends a
+    # Host header, turning the parser-rejection 400 into an admitted routed
+    # answer. Killed by the wrong-type rejection, same shape as the other
+    # recorded-field switches.
+    ('sms-oracle-recorded-omit-host', SMS / 'tests.rs',
+     'recorded_omit_host_rejects_wrong_type',
+     '#2152 rejects omitHost type drift'),
 ]
 GUARDED = [SMS / name for name in (
     'mod.rs', 'gateway.rs', 'mapper.rs', 'render.rs', 'elicitation.rs',

@@ -10,8 +10,10 @@
 //! barrier snapshots pending writes like TS Promise.all: an external emit that
 //! arrives during the drain may still append, but enqueue after close is a
 //! no-op. `next` waits for those trailing writes before retaining replay and
-//! detaching the sink. A result_unknown is an operational uncertainty, not a
-//! second business completion or the final WS response (owned by connection).
+//! detaching the sink — except after a hard close (`close_live`, #2498), which
+//! ends the stream without waiting, like TS's `queue.close()`. A
+//! result_unknown is an operational uncertainty, not a second business
+//! completion or the final WS response (owned by connection).
 use crate::runtime::cleanup_task::lock;
 use std::collections::{HashSet, VecDeque};
 use std::future::Future;
@@ -236,6 +238,10 @@ struct State {
     failure_published: bool,
     finishing: bool,
     closed: bool,
+    /// Set together with `closed` by `close_live` only: a hard close that
+    /// must end delivery without waiting for writes whose appends have not
+    /// settled (#2498). `finish` sets `closed` alone, after its drain.
+    hard_closed: bool,
 }
 struct Publication {
     state: Mutex<State>,
@@ -368,6 +374,30 @@ impl Publication {
             notified.await;
         }
     }
+    /// The consumer's trailing wait: resolves when the writes settle, or a
+    /// hard close (`close_live`, #2498) ends delivery — whichever comes
+    /// first. Unlike `wait_for` (the session-end drain barrier, which keeps
+    /// waiting like TS's `Promise.all`), a trailing write whose append never
+    /// settles must not park the consumer past a hard close, or the turn —
+    /// and its admission and completion fence — never release.
+    async fn wait_for_trailing_writes(&self, writes: &HashSet<u64>) {
+        loop {
+            let notified = self.changed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            // Bind the guard check so the `MutexGuard` is dropped before the
+            // await: a named binding held across `notified.await` would make
+            // this future non-`Send` (the consumer runs on a spawned task).
+            let settled_or_closed = {
+                let state = lock(&self.state);
+                state.hard_closed || state.pending.is_disjoint(writes)
+            };
+            if settled_or_closed {
+                return;
+            }
+            notified.await;
+        }
+    }
 }
 
 /// One admitted turn. The caller owns the pump and calls finish once the
@@ -458,9 +488,17 @@ impl TurnPublisher {
     /// TS timeout calls queue.close() immediately after enqueueing its error.
     /// Already-started durable appends still settle; events completing after
     /// close cannot re-open live delivery. The owned pump drains separately.
+    /// #2498: the hard flag makes `next` end the stream at once instead of
+    /// waiting for the trailing writes — TS's consumer also ends at
+    /// `queue.close()` while the pending writes wait only in the pump's own
+    /// `Promise.all`, never blocking delivery. The panic arm reaches this
+    /// on its abort budget, where TS hangs (A7.2-TURN-PANIC-FINISH-001/-R2).
     pub fn close_live(&self) {
         let _pump = lock(&self.pump);
-        lock(&self.publication.state).closed = true;
+        let mut state = lock(&self.publication.state);
+        state.closed = true;
+        state.hard_closed = true;
+        drop(state);
         self.publication.changed.notify_waiters();
     }
     pub async fn finish(&self) {
@@ -506,7 +544,13 @@ impl TurnPublisher {
                 }
             };
             if let Some(writes) = trailing {
-                self.publication.wait_for(&writes).await;
+                // #2498: the trailing wait ends at a hard close — a
+                // never-settling append must not park the consumer past
+                // `close_live`, or `join!(manage, consume)` in submit never
+                // returns and the turn, admission and completion fence leak.
+                // Frames already in the queue above were settled before the
+                // close and are still drained first, like TS's `queue.close`.
+                self.publication.wait_for_trailing_writes(&writes).await;
                 let _pump = lock(&self.pump);
                 self.coordinator.retain_terminal(
                     &self.publication.run.session_key,

@@ -10,21 +10,59 @@
 //! before the requests registry is consulted, so this family does not
 //! register an `abort_turn` handler.
 use super::super::requests::Requests;
-use super::string;
+use super::{input_property, require_text};
 use crate::{
+    js_value,
     metadata::object,
     runtime::{
         connection::{Call, RequestError},
         steer::{SteerMessage, SteerReason},
     },
 };
-use pilotdeck_protocol::JsValue;
+use pilotdeck_protocol::{JsString, JsValue};
 
 pub(super) const METHODS: &[&str] = &["steer_turn", "cancel_steer", "hook_async_result"];
 pub(super) const HANDLER: super::Handler = super::Handler::AfterAdmission(Requests::steer_request);
 
 fn steer_reason_str(reason: &SteerReason) -> &'static str {
     reason.as_str()
+}
+
+fn no_active_turn(field: &'static str) -> JsValue {
+    object([
+        (field, JsValue::Bool(false)),
+        ("reason", "no_active_turn".into()),
+    ])
+}
+fn turn_mismatch(field: &'static str) -> JsValue {
+    object([
+        (field, JsValue::Bool(false)),
+        ("reason", "turn_mismatch".into()),
+    ])
+}
+
+/// `String(value)` for the steer item id. TS `steerTurn` / `cancelSteer` embed
+/// `input.itemId` verbatim (no guard, no coercion — probes
+/// `_tmp/20261026-issue-1604/ts-probe/output.txt` s5/s8), but the mailbox's
+/// item identity is a `JsString` through `SteerMessage` / `cancel`, so a
+/// non-string id travels as its unchecked `String()` form: objects become
+/// `[object Object]` instead of throwing the ToPrimitive TypeError TS never
+/// raises here. The durable `queueItemId` therefore shows the coerced text —
+/// ledger A7.2-STEER-INPUT-001. Because the coerced text also keys the
+/// `seen` / `cancelled` sets, cross-type same-text interleavings alias in
+/// Rust while TS keys by the raw wire value — the interleaved response
+/// frames may differ (ledger §交错 A/B); a missing key folds to the literal
+/// text "undefined" and an explicit `null` to "null" (probe
+/// `_tmp/20261109-review-2382-r2-ds/ts-probe/output5.txt`), so each also
+/// aliases a genuine string id of that spelling. The empty text (`[]` and
+/// `""` both fold to `""`) aliases the same way (ledger 差异 7) and is the
+/// one coerced id the durable claim gate skips, where TS's truthiness gate
+/// claims the raw `[]` (ledger 差异 6, probe
+/// `_tmp/20261109-review-2382-r5-ds/ts-probe/output6.txt`).
+fn item_id_string(value: &JsValue) -> Result<JsString, RequestError> {
+    js_value::to_string_units(value)
+        .map(JsString::from_utf16)
+        .map_err(|_| RequestError::new(js_value::StackOverflow::MESSAGE))
 }
 
 /// An attachments field carries nothing when it is absent, null/undefined,
@@ -76,25 +114,25 @@ impl Requests {
     /// check active run → prepare attachments → build canonical message →
     /// enqueue via the admission-locked mailbox path.
     async fn handle_steer_turn(&self, params: JsValue) -> Result<JsValue, RequestError> {
-        let session_key = string(&params, "sessionKey")?;
-        let run_id = string(&params, "runId")?;
-        let item_id = string(&params, "itemId")?;
-        let message_text = string(&params, "message")?;
-
-        // TS: no active run → no_active_turn; wrong run → turn_mismatch
-        // (InProcessGateway.ts:1860-1862).
-        let active_run = self.owner.active_turn_run_id(&session_key);
-        let Some(active_run) = active_run else {
-            return Ok(object([
-                ("accepted", JsValue::Bool(false)),
-                ("reason", "no_active_turn".into()),
-            ]));
+        // TS `steerTurn` has no input guard: `input.sessionKey` is read
+        // straight into the `activeTurnRunId` lookup (InProcessGateway.ts:
+        // 1860-1862). A nullish params throws on the property read; every
+        // non-string key is a Map miss exactly like a blank or absent one
+        // (#1604 probes, `_tmp/20261026-issue-1604/ts-probe/output.txt` s1-s3).
+        let session_key = input_property(&params, "sessionKey")?;
+        let Some(JsValue::String(session_key)) = session_key.as_ref() else {
+            return Ok(no_active_turn("accepted"));
         };
-        if active_run != run_id {
-            return Ok(object([
-                ("accepted", JsValue::Bool(false)),
-                ("reason", "turn_mismatch".into()),
-            ]));
+        let active_run = self.owner.active_turn_run_id(session_key);
+        let Some(active_run) = active_run else {
+            return Ok(no_active_turn("accepted"));
+        };
+        // TS: `activeRunId !== input.runId` — strict equality against the
+        // map's (always string) run id, so any non-string or absent runId
+        // mismatches instead of erroring (probe s4/s10).
+        if !matches!(input_property(&params, "runId")?, Some(JsValue::String(ref id)) if id == &active_run)
+        {
+            return Ok(turn_mismatch("accepted"));
         }
 
         // Attachments are rejected immediately after the admission branches,
@@ -119,30 +157,35 @@ impl Requests {
         // already checked above (`active_turn_for` performs the guard).
         let steer_info = crate::runtime::project::interaction_steer::active_turn_for(
             &self.project,
-            &session_key,
+            session_key,
             Some(&active_run),
         );
         let Some(steer_info) = steer_info else {
-            return Ok(object([
-                ("accepted", JsValue::Bool(false)),
-                ("reason", "no_active_turn".into()),
-            ]));
+            return Ok(no_active_turn("accepted"));
         };
 
         // Regression-test interleave point for the admission-vs-enqueue race:
         // by the time this handler resumes, the steer target may have closed
         // and restarted under the same textual turn ID. Inert unless armed.
         #[cfg(test)]
-        race_hook::pause(&session_key).await;
+        race_hook::pause(session_key).await;
 
         // Canonical TS steer message format (InProcessGateway.ts:1871-1883).
+        // The composer passes the raw wire message through as the text block
+        // (`text: agentInput.text` with no attachments,
+        // GatewayAttachmentTurnComposer.ts:67-71), so a non-string `message`
+        // is embedded verbatim (probe s6), and `queueItemId` carries the
+        // item id's coerced form (see `item_id_string`).
+        let item_id =
+            item_id_string(&input_property(&params, "itemId")?.unwrap_or(JsValue::Undefined))?;
+        let message_text = input_property(&params, "message")?.unwrap_or(JsValue::Undefined);
         let message = crate::metadata::object([
             ("role", "user".into()),
             (
                 "content",
                 JsValue::Array(vec![object([
                     ("type", "text".into()),
-                    ("text", JsValue::String(message_text)),
+                    ("text", message_text),
                 ])]),
             ),
             (
@@ -181,36 +224,36 @@ impl Requests {
     /// `InProcessGateway.cancelSteer`:
     /// cancel a queued steer item by `itemId`.
     async fn handle_cancel_steer(&self, params: JsValue) -> Result<JsValue, RequestError> {
-        let session_key = string(&params, "sessionKey")?;
-        let run_id = string(&params, "runId")?;
-        let item_id = string(&params, "itemId")?;
-
-        let active_run = self.owner.active_turn_run_id(&session_key);
-        let Some(active_run) = active_run else {
-            return Ok(object([
-                ("cancelled", JsValue::Bool(false)),
-                ("reason", "no_active_turn".into()),
-            ]));
+        // Same guard-free reads as `steerTurn` (InProcessGateway.ts:1887-1893):
+        // the session key feeds the `activeTurnRunId` Map lookup, the run id
+        // is compared with strict equality, and the item id is embedded
+        // verbatim on the TS side (`cancel` of an unknown id — including a
+        // non-string one — records the cancellation and answers
+        // `{cancelled: true}`; probe m2).
+        let session_key = input_property(&params, "sessionKey")?;
+        let Some(JsValue::String(session_key)) = session_key.as_ref() else {
+            return Ok(no_active_turn("cancelled"));
         };
-        if active_run != run_id {
-            return Ok(object([
-                ("cancelled", JsValue::Bool(false)),
-                ("reason", "turn_mismatch".into()),
-            ]));
+        let active_run = self.owner.active_turn_run_id(session_key);
+        let Some(active_run) = active_run else {
+            return Ok(no_active_turn("cancelled"));
+        };
+        if !matches!(input_property(&params, "runId")?, Some(JsValue::String(ref id)) if id == &active_run)
+        {
+            return Ok(turn_mismatch("cancelled"));
         }
 
         let steer_info = crate::runtime::project::interaction_steer::active_turn_for(
             &self.project,
-            &session_key,
+            session_key,
             Some(&active_run),
         );
         let Some(steer_info) = steer_info else {
-            return Ok(object([
-                ("cancelled", JsValue::Bool(false)),
-                ("reason", "no_active_turn".into()),
-            ]));
+            return Ok(no_active_turn("cancelled"));
         };
 
+        let item_id =
+            item_id_string(&input_property(&params, "itemId")?.unwrap_or(JsValue::Undefined))?;
         let result = steer_info
             .cancel(item_id)
             .await
@@ -233,24 +276,26 @@ impl Requests {
 
     /// U9 `hook_async_result` — deliver an async-hook output to its registry.
     async fn handle_hook_async_result(&self, params: JsValue) -> Result<JsValue, RequestError> {
-        let session_key = string(&params, "sessionKey")?;
-        let invocation_id = string(&params, "invocationId")?;
-
         // TS validates unconditionally before any lookup
-        // (InProcessGateway.ts:1896-1899): blank ids are rejected even when
-        // no async-hook registry is staged, rather than reporting unknown.
-        // Same blank semantics as `AsyncHookRegistry::submit`, the Rust side
-        // of the same TS function.
-        if crate::runtime::async_hooks::blank(&session_key)
-            || crate::runtime::async_hooks::blank(&invocation_id)
-        {
-            return Err(RequestError {
-                code: "INVALID_ASYNC_HOOK_RESULT".into(),
-                message: "sessionKey and invocationId are required.".into(),
-                details: None,
-                validation: None,
-            });
-        }
+        // (InProcessGateway.ts:1896-1899): `!input.sessionKey?.trim() ||
+        // !input.invocationId?.trim()`, sessionKey first. #1604: the same
+        // three-layer guard every other method family uses — blank ids are
+        // rejected with the domain error even when no async-hook registry is
+        // staged, and a non-string id is the boundary's `?.trim is not a
+        // function` TypeError instead of this file's old
+        // "<field> must be a string.".
+        let session_key = require_text(
+            &params,
+            "sessionKey",
+            "INVALID_ASYNC_HOOK_RESULT",
+            "sessionKey and invocationId are required.",
+        )?;
+        let invocation_id = require_text(
+            &params,
+            "invocationId",
+            "INVALID_ASYNC_HOOK_RESULT",
+            "sessionKey and invocationId are required.",
+        )?;
 
         let Some(registry) = &self.async_hook_registry else {
             // No InteractionSteer resource staged → no pending hooks possible.

@@ -392,7 +392,7 @@ impl<R: SnapshotProjectResolver> SnapshotProjection<R> {
 /// synthesized error. `Error` carries a thrown TS error: the real
 /// `snapshotList` / `snapshotGet` / `snapshotRestore` throw, and the WS
 /// connection answers `{ok:false,error:{code,message}}`
-/// (`GatewayWsConnection.ts:231-260`), so the entry must return a request
+/// (`GatewayWsConnection.ts:223-255`), so the entry must return a request
 /// failure rather than a successful response whose body happens to be an
 /// error object (#2194, the #1456 `MemoryDispatch` shape).
 #[derive(Clone, Debug, PartialEq)]
@@ -716,6 +716,12 @@ mod tests {
     use super::*;
     use crate::storage::WorkspaceSnapshotConfig;
     use std::io;
+
+    /// Every snapshot method on the WS surface. The dispatch tests pin their
+    /// denominators against this one list so deleting or renaming a method,
+    /// or shrinking a loop, fails the tests instead of silently narrowing
+    /// coverage (#2308 review P2s).
+    const SNAPSHOT_WS_METHODS: [&str; 3] = ["snapshot_list", "snapshot_get", "snapshot_restore"];
 
     #[test]
     fn mkdtemp_errno_uses_the_method_whitelist() {
@@ -1143,6 +1149,7 @@ mod tests {
         fs::create_dir_all(&home).expect("#2194 create home");
         let gateway =
             SnapshotGateway::new(None, SnapshotProjects::new(&home, &scratch.0), "/fallback");
+        let mut routed: Vec<&str> = Vec::new();
         for (method, input, code) in [
             (
                 "snapshot_list",
@@ -1180,7 +1187,14 @@ mod tests {
                 "DialogGatewayError",
                 "#2194 {method} dispatch error name"
             );
+            routed.push(method);
         }
+        // #2308 fix-r2: pin the executed denominator — take/filter/continue
+        // on the loop, or deleting/renaming a case, must fail here.
+        assert_eq!(
+            routed, SNAPSHOT_WS_METHODS,
+            "#2194 every snapshot method must keep its failure routing covered"
+        );
         assert!(
             gateway.dispatch("memory_list", &params(&[])).is_none(),
             "#2194 non-snapshot methods stay forwardable"
@@ -1193,11 +1207,76 @@ mod tests {
         );
     }
 
+    /// A resolver whose project resolution hits the R19 host boundary: every
+    /// snapshot method must surface as `Forward`, never a synthesized error or
+    /// a flattened response. Same shape as the memory family's
+    /// `HostBoundaryRegistry`.
+    struct HostBoundaryResolver;
+    impl SnapshotProjectResolver for HostBoundaryResolver {
+        fn resolve_project_key(
+            &self,
+            _project_key: &[u16],
+        ) -> Result<String, SnapshotProjectionError> {
+            Err(SnapshotProjectionError::node_io_required())
+        }
+        fn workspace_id(&self, _project_key: &str) -> String {
+            String::new()
+        }
+    }
+
+    /// #2308: the `Forward` arm of `dispatch` had zero coverage — no test
+    /// asserted `SnapshotDispatch::Forward` even though the coverage list
+    /// claimed it. A requires_host boundary (the `node_io_required` errno
+    /// shape) must forward every snapshot method to the Node host.
+    #[test]
+    fn dispatch_forwards_requires_host_boundary() {
+        // The provider is never exercised: the resolver boundary fires before
+        // any provider I/O, so any configured root works.
+        let scratch = TempDir::new();
+        let root = scratch.0.to_string_lossy().into_owned();
+        let provider =
+            crate::storage::create_workspace_snapshot_provider(WorkspaceSnapshotConfig {
+                root: root.clone(),
+                snapshot_root: root,
+            });
+        let gateway = SnapshotGateway::new(Some(provider), HostBoundaryResolver, "/fallback");
+        let forward_cases = [
+            ("snapshot_list", params(&[("projectKey", "/p".into())])),
+            (
+                "snapshot_get",
+                params(&[("projectKey", "/p".into()), ("snapshotId", "s".into())]),
+            ),
+            (
+                "snapshot_restore",
+                params(&[("projectKey", "/p".into()), ("snapshotId", "s".into())]),
+            ),
+        ];
+        // #2308: pin the executed denominator — take/filter/continue on the
+        // loop, or deleting/renaming any case, must fail here (review P2s).
+        let mut forwarded: Vec<&str> = Vec::new();
+        for (method, input) in forward_cases {
+            assert_eq!(
+                gateway.dispatch(method, &input),
+                Some(SnapshotDispatch::Forward),
+                "#2308 {method} must forward a requires_host boundary to the Node host"
+            );
+            forwarded.push(method);
+        }
+        assert_eq!(
+            forwarded, SNAPSHOT_WS_METHODS,
+            "#2308 all three snapshot methods must actually hit the Forward arm"
+        );
+    }
+
     /// A8.2-pr2 keeps the native component unregistered: default dispatch must
     /// keep forwarding all three methods to the TS host.
     #[test]
     fn snapshot_methods_stay_outside_default_dispatch() {
-        for method in ["snapshot_list", "snapshot_get", "snapshot_restore"] {
+        // #2308 fix-r2: iterate the shared pinned list instead of a fourth
+        // local copy of the method names. fix-r3: pin the executed set too —
+        // take/filter/continue on this loop must fail like the others.
+        let mut checked: Vec<&str> = Vec::new();
+        for method in SNAPSHOT_WS_METHODS {
             let request = params(&[
                 ("type", "request".into()),
                 ("id", "1".into()),
@@ -1207,7 +1286,12 @@ mod tests {
                 !crate::dispatch::is_local(&request),
                 "#888 {method} must not join LOCAL_METHODS in this package"
             );
+            checked.push(method);
         }
+        assert_eq!(
+            checked, SNAPSHOT_WS_METHODS,
+            "#888 all three snapshot methods must stay outside LOCAL_METHODS"
+        );
     }
 
     /// `dispatch` used to forward the whole request when the projection hit the

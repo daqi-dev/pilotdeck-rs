@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""#1458/#1459/#1462/#1464/#1468/#1469/#1629: every attach-followups-a mutation.
+"""#1458/#1459/#1462/#1464/#1468/#1469/#1618/#1629: every attach-followups-a mutation.
 
 Usage: negative_controls.py --check
        negative_controls.py [--compile-only] NEW_OUTPUT_DIR [mutation ...]
 Every mutation must compile, fail at its bound nonce receipt, and pass again
 after restoration. Source bytes must equal HEAD; no alternate baseline exists.
-The shared-filter row (filter-info-inverted) and the two #1458/#1469 rows
-together pin the one composer filter behind both diagnostics. The eight #1468
-rows pin the handle binding itself: the dropped containment check (the
+The shared-filter rows (filter-info-inverted, warning-gated-on-registration
+and unsupported-file-message-dropped) and the two #1458/#1469 rows together
+pin the one composer filter behind both diagnostics. The two #1618 item-5
+rows pin the lexical pre-filter's dual spelling roots. The eight #1468 rows
+pin the handle binding itself: the dropped containment check (the
 multi-step choreography reaches the read only through it), the fail-open
 error arm, the (dev, inode) depth check it complements, the pre-open identity
 itself, the no-follow sampling of that identity (a link planted before the
@@ -124,6 +126,23 @@ mutations = [
      '        DiagnosticSeverity::Info => registered,',
      'native_process::services_tests::registered_pdf_has_no_size_estimate_diagnostic',
      '#1458 a registered pdf must not carry the pdf_size_estimate diagnostic'),
+    # #1469: the warning half of the one composer filter had no row of its
+    # own — `filter-info-inverted` above pins the Info arm, but nothing proved
+    # `Warning => true` (warnings enter the diagnostics block regardless of
+    # registration). The push row covers the one step both severities share;
+    # its bound test is deliberately an unregistered upload, so the warning
+    # filter passes it either way and only the dropped push — not a
+    # registration gate — can turn that row red.
+    ('warning-gated-on-registration', SERVICES,
+     '        DiagnosticSeverity::Warning => true,',
+     '        DiagnosticSeverity::Warning => !registered,',
+     'native_process::services_tests::registered_unsupported_extension_keeps_its_warning_diagnostic',
+     '#1469 a registered attachment with an unsupported extension must still carry its warning diagnostic'),
+    ('unsupported-file-message-dropped', SERVICES,
+     '                    diagnostics.push(unsupported_file_message(&entry.path, &ext).into());',
+     '                    let _ = unsupported_file_message(&entry.path, &ext);',
+     'native_process::services_tests::unregistered_unsupported_extension_still_carries_the_warning',
+     '#1469 the unsupported-file message must enter the diagnostics block'),
     ('handle-path-check-dropped', SERVICES,
      '''        Ok(handle) => {
             let named_inside = handle.starts_with(lease_root)
@@ -314,6 +333,25 @@ mutations = [
     // #1468: the second legitimate home of a lease object.''',
      'native_process::services_tests::lease_root_link_is_not_a_home',
      '#1468 a lease root that is a link into the project must not become a home'),
+    # #1618 item 5 (P1): the lexical pre-filter's dual spelling roots. The
+    # first row reverts `lease_lexical` to the canonicalized root (the
+    # pre-#2423 shape), so a symlinked project's alias-spelled lease paths
+    # take the not-found branch; the second drops the canonical entry, so a
+    # physically-spelled lease path does. Each row has its own
+    # static-assertion bound test — the pre-existing
+    # `symlinked_project_spelling_keeps_lease_attachments` kills the same
+    # behaviors, but its assertions are formatted (`got: …`) and the #946
+    # receipt protocol can only bind an exact static string.
+    ('lease-logical-root-canonicalized', SERVICES,
+     '    let lease_lexical = project_dir.join(".tmp").join("chat-upload-leases");',
+     '    let lease_lexical = project_canon.join(".tmp").join("chat-upload-leases");',
+     'native_process::services_tests::lease_logical_root_keeps_alias_spelled_attachments_inline',
+     '#1618 the logical spelling of the lease root must keep alias-spelled lease attachments inline'),
+    ('lease-canonical-spelling-dropped', SERVICES,
+     '    let lease_lexical_roots = [lease_lexical.clone(), lease_lexical_canon];',
+     '    let lease_lexical_roots = [lease_lexical.clone()];',
+     'native_process::services_tests::lease_canonical_root_keeps_physically_spelled_attachments_inline',
+     '#1618 the canonical spelling of the lease root must keep physically-spelled lease attachments inline'),
 ]
 
 

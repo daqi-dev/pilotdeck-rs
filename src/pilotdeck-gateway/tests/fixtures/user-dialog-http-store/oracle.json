@@ -658,7 +658,7 @@
     "clientResponses": 69,
     "clientBodyFailures": 6,
     "handlerCases": 111,
-    "socketRequests": 18,
+    "socketRequests": 20,
     "flow": 16,
     "constructors": 29,
     "handlerConstruction": 7
@@ -6470,6 +6470,31 @@
         "status": 200,
         "contentType": "application/json; charset=utf-8",
         "body": "{\"version\":1,\"result\":null}"
+      }
+    },
+    {
+      "name": "unknown-method",
+      "request": {
+        "method": "FROB",
+        "path": "/v1/gateway-user-dialog-store/clear"
+      },
+      "response": {
+        "status": 400,
+        "contentType": null,
+        "body": ""
+      }
+    },
+    {
+      "name": "missing-host",
+      "request": {
+        "method": "GET",
+        "path": "/v1/gateway-user-dialog-store/clear",
+        "setHost": false
+      },
+      "response": {
+        "status": 400,
+        "contentType": null,
+        "body": ""
       }
     }
   ],
