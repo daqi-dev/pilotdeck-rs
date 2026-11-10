@@ -237,9 +237,11 @@ impl Default for WatchOptions {
 /// The floor [`watch_loop`] clamps `poll_interval` to (#1650).
 ///
 /// `tokio::time::interval` panics on a zero period, and that panic happens
-/// inside the detached watcher task: `WatchHandle::stop` swallows the
-/// `JoinError` and `Drop` only aborts, so a zero `poll_interval` would stop
-/// config hot reload without a trace.
+/// inside the detached watcher task: `Drop` only aborts, and only
+/// [`WatchHandle::stop`] ever joins the task — where the death is at most
+/// reported after the fact ([`WatchStop::Panicked`], #1920), never prevented —
+/// so a zero `poll_interval` would still stop config hot reload with no
+/// signal until a `stop` happened to be called.
 ///
 /// Half the 20 ms default rather than the 1 ms floors elsewhere in the tree:
 /// every tick stats the watched paths, and only a metadata change (or an
@@ -785,6 +787,28 @@ pub struct WatchHandle {
     changes: mpsc::UnboundedSender<()>,
 }
 
+/// How [`WatchHandle::stop`] found the watcher task (#1920).
+///
+/// `stop` aborts the task before joining it, so the cancelled shape is the
+/// normal one; this enum exists so the other two are no longer swallowed the
+/// way `let _ = task.await` used to swallow them. A watcher that died by panic
+/// looks exactly like a stopped one through every other observable —
+/// `is_finished()` (tokio marks the panicked task complete), a released
+/// `Weak`, "no reload" — which is #1650's silent hot-reload death, so the
+/// fact of the panic has to leave the API to be observable at all. The panic
+/// message itself already reaches stderr through the default panic hook;
+/// the enum carries the queryable fact, not a copy of the payload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WatchStop {
+    /// The task returned on its own before the abort took effect (the store
+    /// was dropped and the loop's owner check ended it).
+    Finished,
+    /// The task was aborted by this very `stop` — the normal path.
+    Cancelled,
+    /// The task had died by panic: hot reload had been silently off since.
+    Panicked,
+}
+
 impl WatchHandle {
     /// Feed one change notification, exactly as a filesystem change of a
     /// watched path would (the baseline's `fs.watch` callback).
@@ -793,11 +817,28 @@ impl WatchHandle {
     }
 
     /// Stop watching and wait until the watcher task has ended; a pending
-    /// debounced reload is cancelled.
-    pub async fn stop(mut self) {
-        if let Some(task) = self.task.take() {
-            task.abort();
-            let _ = task.await;
+    /// debounced reload is cancelled. Returns how the task actually ended
+    /// (#1920): the abort this stop issues makes [`WatchStop::Cancelled`] the
+    /// normal shape, [`WatchStop::Finished`] means the loop had already
+    /// returned on its own (the store was dropped first), and
+    /// [`WatchStop::Panicked`] means the watcher had died by panic — the
+    /// #1650 silent death that `let _ = task.await` used to hide.
+    pub async fn stop(mut self) -> WatchStop {
+        let Some(task) = self.task.take() else {
+            // The task was already taken out of this handle (a test joined it
+            // itself); there is no watcher left to classify.
+            return WatchStop::Finished;
+        };
+        task.abort();
+        match task.await {
+            // Measured on this runtime (tokio 1.48): abort-then-join joins
+            // `Err(JoinError::Cancelled)` and a task that died by panic joins
+            // `Err(JoinError::Panic(..))`, so `is_panic()` — checked first,
+            // like #1899's `watcher_stop` — leaves `is_cancelled()` as the
+            // only other shape.
+            Err(err) if err.is_panic() => WatchStop::Panicked,
+            Err(_) => WatchStop::Cancelled,
+            Ok(()) => WatchStop::Finished,
         }
     }
 }
@@ -998,6 +1039,46 @@ fn startup_sample_gate(path: &Path) {
 
 #[cfg(not(test))]
 fn startup_sample_gate(_path: &Path) {}
+
+/// #1920 test hook: a one-shot gate that makes exactly one store's watcher
+/// task die by panic on its first poll — keyed to the store's `Inner`
+/// allocation and consumed on its one fire, so libtest's parallel watchers
+/// on other tests' stores can neither re-arm nor re-fire it (the same
+/// per-store isolation as the other hooks above). It exists because
+/// `WatchHandle::stop`'s panic arm needs a watcher that really died by panic,
+/// and no public input produces one anymore: #1650 and #1736 clamp every
+/// option that used to panic the loop.
+#[cfg(test)]
+static WATCH_LOOP_PANIC_GATE: Mutex<Option<usize>> = Mutex::new(None);
+
+/// Arms the next watcher of this store to die by panic on its first poll
+/// (#1920 test hook).
+#[cfg(test)]
+fn arm_watch_loop_panic(inner: &Arc<Inner>) {
+    *lock(&WATCH_LOOP_PANIC_GATE) = Some(Arc::as_ptr(inner) as usize);
+}
+
+/// Fires [`WATCH_LOOP_PANIC_GATE`] if a test armed it for this store's
+/// watcher (#1920 test hook).
+#[cfg(test)]
+fn watch_loop_panic_gate(inner: &Weak<Inner>) {
+    let armed = {
+        let mut slot = lock(&WATCH_LOOP_PANIC_GATE);
+        match *slot {
+            Some(key) if key == inner.as_ptr() as usize => {
+                *slot = None;
+                true
+            }
+            _ => false,
+        }
+    };
+    if armed {
+        panic!("#1920 test hook: simulated watch_loop failure");
+    }
+}
+
+#[cfg(not(test))]
+fn watch_loop_panic_gate(_inner: &Weak<Inner>) {}
 
 struct WatchedPath {
     path: PathBuf,
@@ -1506,6 +1587,8 @@ async fn watch_loop(
     options: WatchOptions,
     mut changes: mpsc::UnboundedReceiver<()>,
 ) {
+    // #1920 test hook: kill exactly the armed store's watcher by panic.
+    watch_loop_panic_gate(&inner);
     // #1650: a zero/sub-floor period would panic this detached task and stop
     // hot reload silently; see [`MIN_POLL_INTERVAL`]. #1736: an over-ceiling
     // period would strand the ticker at `Instant::far_future` after its first
