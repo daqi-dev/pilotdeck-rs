@@ -33,13 +33,24 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import Case, classify, declares_test, passed
+from negative_suite import Case, classify, declares_test, passed, bind_module_file
 
 root = Path(__file__).resolve().parents[5]
 gates = root / 'src/pilotdeck-gateway/src/runtime/always_on/gates.rs'
 automation = root / 'src/pilotdeck-gateway/src/native_process/assembly/automation.rs'
 capabilities = root / 'src/pilotdeck-gateway/src/native_process/capabilities.rs'
 scheduler = root / 'src/pilotdeck-gateway/src/runtime/always_on/scheduler.rs'
+methods_always_on = root / 'src/pilotdeck-gateway/src/native_process/methods/always_on.rs'
+# 修复轮 r3 P2（simplify）：绑定测试到源文件的映射从 bound_test_source 的
+# 深度 1/2 猜路径启发式换成 #1890 共享装置 bind_module_file 的显式
+# (prefix, path) 清单——未列出的前缀、多余的 `::` 层级、空短名都
+# fail-closed 报错，不再是「找不到文件就返回 None」的软失败。
+bound_modules = (
+    ('runtime::always_on::scheduler::tests::', scheduler),
+    ('runtime::always_on::gates::tests::', gates),
+    ('native_process::assembly::automation::tests::', automation),
+    ('native_process::methods::always_on::tests::', methods_always_on),
+)
 oracle = root / 'src/pilotdeck-gateway/tests/fixtures/always-on-2294/oracle.json'
 GATES_REPLAY = 'runtime::always_on::gates::tests::replays_the_gate_chain_golden'
 B2_REPLAY = 'native_process::assembly::automation::tests::b2_start_stop_order'
@@ -156,18 +167,6 @@ def check_anchor(row, original):
 readme = Path(__file__).with_name('README.md')
 
 
-def bound_test_source(name):
-    """The file a `--exact` test name lives in: the module path minus its
-    trailing `tests` (or the module itself when that is the file)."""
-    base = root / 'src/pilotdeck-gateway/src'
-    parts = name.split('::')
-    for depth in (1, 2):
-        candidate = base.joinpath(*parts[:-depth]).with_suffix('.rs')
-        if candidate.is_file():
-            return candidate
-    return None
-
-
 def check_manifest():
     """Every hand-copied number must equal the artifact it describes.
 
@@ -179,6 +178,11 @@ def check_manifest():
     """
     errors = []
     manifest = json.loads(oracle.read_text())
+    # 修复轮 r3 P2（boundary）：空 oracle 让下面每一段核对都空洞通过——
+    # 总数为零、分组表与 Rows 为空、场景绑定无内容——所以先拒绝空清单
+    # 本身，--check 对被清空的 oracle.json 不再空心绿灯。
+    if not manifest:
+        return ['oracle.json: the scenario manifest is empty']
     counts = {}
     for entry in manifest:
         counts[entry['id'][0]] = counts.get(entry['id'][0], 0) + 1
@@ -224,17 +228,22 @@ def check_manifest():
     for entry in manifest:
         if f'"{entry["id"]}"' not in replay:
             errors.append(f'{entry["id"]}: no bound replay in the always-on sources')
+    # 修复轮 r3 P2（simplify）：bind_module_file 显式列出 (prefix, path)，
+    # 绑定到唯一文件；未列出的前缀 / 多余 `::` 层级 / 空短名 fail-closed。
+    bound_sources = {path: path.read_text() for _, path in bound_modules}
     for row in mutations:
         ident = row[4].rsplit('::', 1)[-1]
-        source = bound_test_source(row[4])
-        if source is None:
-            errors.append(f'{row[0]}: no source file for bound test {ident}')
+        try:
+            source, short = bind_module_file(row[4], bound_modules)
+        except ValueError as error:
+            errors.append(f'{row[0]}: {error}')
+            continue
         # 双谱系评审 P2（DS+MM simplify 两家撞上）：绑定测试存在性复用共享装置
         # negative_suite.declares_test（#2064 r10 硬化版：注释/字符串先抹白、左
         # 边界、三拼写折叠），不自写裸正则——注释里的 `fn name(` 满足裸正则，
         # 满足不了 declares_test，--check 不再空心通过。
-        elif not declares_test(source.read_text(), ident):
-            errors.append(f'{row[0]}: bound test {ident} is not defined in {source.name}')
+        if not declares_test(bound_sources[source], short):
+            errors.append(f'{row[0]}: bound test {short} is not defined in {source.name}')
     return errors
 
 
