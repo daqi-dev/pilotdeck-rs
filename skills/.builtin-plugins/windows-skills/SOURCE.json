@@ -1,0 +1,11 @@
+{
+  "upstream": "PilotDeck",
+  "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "source": "src/extension/plugins/builtin/windows-skills/skills/powershell-safe-invocation/SKILL.md",
+  "observedDistSource": "dist/src/extension/plugins/builtin/windows-skills/skills/powershell-safe-invocation/SKILL.md",
+  "sha256": "6748cbc46061399ad2ce3270cfd7ecd7ac37fc11aef18a38183bd6bdf0eb3d2a",
+  "bytes": 4219,
+  "licenseFile": "../../../LICENSE",
+  "upstreamLicenseSha256": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
+  "scope": "Only user-authorized model-visible Markdown; no plugin TypeScript, script, or other asset copied. Preserve the repository root LICENSE."
+}

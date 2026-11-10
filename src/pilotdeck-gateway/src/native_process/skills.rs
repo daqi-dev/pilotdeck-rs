@@ -345,3 +345,7 @@ mod disabled_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "skills_windows_tests.rs"]
+mod windows_builtin_tests;

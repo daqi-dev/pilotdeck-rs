@@ -1,0 +1,67 @@
+{
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": {
+    "node": "22.22.0",
+    "acorn": "8.15.0",
+    "ada": "2.9.2",
+    "amaro": "1.1.4",
+    "ares": "1.34.6",
+    "brotli": "1.1.0",
+    "cjs_module_lexer": "2.1.0",
+    "cldr": "48.0",
+    "icu": "78.2",
+    "llhttp": "9.3.0",
+    "modules": "127",
+    "napi": "10",
+    "nbytes": "0.1.1",
+    "ncrypto": "0.0.1",
+    "nghttp2": "1.64.0",
+    "openssl": "3.5.4",
+    "simdjson": "3.13.0",
+    "simdutf": "6.4.2",
+    "sqlite": "3.50.4",
+    "tz": "2025c",
+    "undici": "6.23.0",
+    "unicode": "17.0",
+    "uv": "1.52.1",
+    "uvwasi": "0.0.23",
+    "v8": "12.4.254.21-node.33",
+    "zlib": "1.3.1-470d3a2",
+    "zstd": "1.5.7"
+  },
+  "platform": "darwin",
+  "defaultBuiltinNames": [
+    "browser-use",
+    "funasr",
+    "windows-skills"
+  ],
+  "sources": {
+    "src/extension/plugins/runtime/PluginRuntime.ts": "c601a4f1b01dee289ca715e723c4f579a775f84f72317c7317e5f72b7cd915b4",
+    "src/extension/plugins/loading/PluginLoader.ts": "93727f3f56cf46e797fbe51bd47e61f19bab098c094fb31daf11a5e33449b2cf",
+    "src/extension/plugins/builtin/loadBuiltinPlugins.ts": "850760e812095892bee4314d68b013e85dac85d54a4b3e46a54ad81c5b7dd70e",
+    "dist/src/extension/plugins/builtin/windows-skills/plugin.json": "57f9b710a353500c158c25eb005dd74f541a31d16119b342197e93133064cd8f",
+    "dist/src/extension/plugins/builtin/windows-skills/skills/powershell-safe-invocation/SKILL.md": "6748cbc46061399ad2ce3270cfd7ecd7ac37fc11aef18a38183bd6bdf0eb3d2a"
+  },
+  "cases": [
+    {
+      "enabled": true,
+      "skills": [
+        {
+          "name": "windows-skills:powershell-safe-invocation",
+          "description": "Use when writing or running PowerShell on Windows, especially native programs, quoted paths, escaping, pwsh, Start-Process, file operations, or shell troubleshooting.",
+          "pathSuffix": "skills/powershell-safe-invocation/SKILL.md",
+          "contentSha256": "1bd5b18e55549fdcda44372d41b276e9dad4ab74c4ecfce9e6aa87068cbe73eb"
+        }
+      ],
+      "readQualifiedSha256": "1bd5b18e55549fdcda44372d41b276e9dad4ab74c4ecfce9e6aa87068cbe73eb",
+      "readShortSha256": "1bd5b18e55549fdcda44372d41b276e9dad4ab74c4ecfce9e6aa87068cbe73eb"
+    },
+    {
+      "enabled": false,
+      "skills": [],
+      "readQualifiedSha256": null,
+      "readShortSha256": null
+    }
+  ],
+  "normalization": "Only skill path is represented as actual suffix below windows-skills; model body checked by SHA256, not rewritten."
+}

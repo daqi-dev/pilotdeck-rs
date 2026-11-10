@@ -41,7 +41,7 @@ async fn authorized_legacy_assets_reach_the_native_catalog_and_read_skill() {
     let runtime = PluginRuntime::new_native_style_only(PluginRuntimeOptions {
         project_root: scratch.0.join("project"),
         pilot_home: scratch.0.join("home"),
-        builtin_skills_root: Some(assets),
+        builtin_skills_root: Some(assets.clone()),
         builtin_plugins: vec![],
         builtin_plugins_enabled: Default::default(),
     });
@@ -53,12 +53,25 @@ async fn authorized_legacy_assets_reach_the_native_catalog_and_read_skill() {
         .iter()
         .map(|skill| skill.path.canonicalize().unwrap())
         .collect::<BTreeSet<_>>();
+    let windows_asset = assets
+        .join(".builtin-plugins/windows-skills/skills/powershell-safe-invocation/SKILL.md")
+        .canonicalize()
+        .unwrap();
+    let mut complete_paths = expected_paths.clone();
+    assert!(complete_paths.insert(windows_asset.clone()));
     assert_eq!(
-        actual_paths, expected_paths,
-        "all 32 packaged skills reach the actual native generation"
+        actual_paths, complete_paths,
+        "the original 32/109 set plus exactly the separately declared Windows builtin"
+    );
+    assert_eq!(
+        actual_paths
+            .difference(&expected_paths)
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([windows_asset])
     );
     let native = NativeSkills::from_contributions(&lease.contributions.skills);
-    assert_eq!(native.list_skills().len(), 32);
+    assert_eq!(native.list_skills().len(), 33);
     let weather = lease
         .contributions
         .skills

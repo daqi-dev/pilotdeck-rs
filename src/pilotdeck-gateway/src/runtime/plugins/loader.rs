@@ -606,38 +606,63 @@ fn stage_native_builtin_skills(
     let Some(root) = &options.builtin_skills_root else {
         return Ok(result);
     };
-    let name = "browser-use";
-    if options.builtin_plugins_enabled.get(name) == Some(&false) {
-        return Ok(result);
-    }
-    let path = root.join(name);
-    if !fs::metadata(&path).is_ok_and(|metadata| metadata.is_dir()) {
-        return Ok(result);
-    }
-    match markdown::load_standalone_skill_bounded(name, &path, budget) {
-        Ok(skill) => result.plugins.push(Arc::new(LoadedPlugin {
-            name: name.to_owned(),
-            path,
-            source: PluginSource::Builtin,
-            skills: vec![skill],
-            commands: Vec::new(),
-            output_styles: Vec::new(),
-            hooks_config: None,
-            mcp_servers: None,
-            lsp_servers: None,
-            dispose: None,
-        })),
-        Err(error) if error.code == Some("STYLE_RELOAD_LIMIT") => {
-            return Err(PluginRuntimeError::gateway(
-                "NATIVE_SKILL_LIMIT",
-                "Native skill source budget exceeded.",
-            ));
+    // First-party declarative assets, independent of host OS. No executable
+    // plugin entry, callback, or asset directory is loaded through this table.
+    for (plugin_name, plugin_directory, skill_directory, namespace) in [
+        ("browser-use", "browser-use", "", false),
+        (
+            "windows-skills",
+            ".builtin-plugins/windows-skills",
+            "skills/powershell-safe-invocation",
+            true,
+        ),
+    ] {
+        if options.builtin_plugins_enabled.get(plugin_name) == Some(&false) {
+            continue;
         }
-        Err(_) => result.staged_failures.push(PluginRefreshFailure {
-            path,
-            source: PluginSource::Builtin,
-            kind: PluginKind::Skill,
-        }),
+        let plugin_path = root.join(plugin_directory);
+        let skill_path = if skill_directory.is_empty() {
+            plugin_path.clone()
+        } else {
+            plugin_path.join(skill_directory)
+        };
+        if !fs::metadata(&skill_path).is_ok_and(|metadata| metadata.is_dir()) {
+            continue;
+        }
+        match markdown::load_standalone_skill_bounded(&basename(&skill_path), &skill_path, budget) {
+            Ok(mut skill) => {
+                if namespace {
+                    skill.name = markdown::get_plugin_command_name(
+                        plugin_name,
+                        &skill.path,
+                        &plugin_path.join("skills"),
+                    );
+                }
+                result.plugins.push(Arc::new(LoadedPlugin {
+                    name: plugin_name.to_owned(),
+                    path: plugin_path,
+                    source: PluginSource::Builtin,
+                    skills: vec![skill],
+                    commands: Vec::new(),
+                    output_styles: Vec::new(),
+                    hooks_config: None,
+                    mcp_servers: None,
+                    lsp_servers: None,
+                    dispose: None,
+                }));
+            }
+            Err(error) if error.code == Some("STYLE_RELOAD_LIMIT") => {
+                return Err(PluginRuntimeError::gateway(
+                    "NATIVE_SKILL_LIMIT",
+                    "Native skill source budget exceeded.",
+                ));
+            }
+            Err(_) => result.staged_failures.push(PluginRefreshFailure {
+                path: plugin_path,
+                source: PluginSource::Builtin,
+                kind: PluginKind::Skill,
+            }),
+        }
     }
     Ok(result)
 }
@@ -677,6 +702,11 @@ fn stage_native_standalone_skills(
         }
         names.sort();
         for name in names {
+            if source == PluginSource::Builtin
+                && name.as_os_str() == std::ffi::OsStr::new(".builtin-plugins")
+            {
+                continue; // private builtin assets are not standalone skills
+            }
             let path = directory.join(name);
             if !fs::metadata(&path).is_ok_and(|meta| meta.is_dir()) {
                 continue;

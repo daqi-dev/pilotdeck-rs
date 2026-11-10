@@ -1476,8 +1476,12 @@ async fn start_assembly(
                 FileRunRegistry::open(options.home.join("runs.json"))?,
             )?)),
         };
+        // createLocalGateway.ts: the host preview is process-local temporary
+        // output, separate from persistent session tool-result references.
         let artifacts = Arc::new(GatewayToolResultArtifactStore::new(
-            options.home.join("tool-results"),
+            crate::runtime::turn::projector::node_temp_dir(|key| std::env::var_os(key))?
+                .join("pilotdeck-tool-output")
+                .join(std::process::id().to_string()),
             4096,
         )?);
         let projector = Arc::new(GatewayAgentEventProjector::new(
