@@ -280,11 +280,16 @@ export function keepAlivePremise(r) {
  * 另暴露 freeSocketCount()（agent.freeSockets 占用数）供调用方在 close/SIGTERM
  * 前最后一刻复检池占用——服务端空闲超时会收掉池内 idle socket（实测 ~5.5–6s，
  * keepAliveTimeout 5000 + 余量），且 server.close() 本身 ~11ms 内即 FIN 掉池内
- * socket（close 后池必空，复检必须在 close 前）。 */
+ * socket（close 后池必空，复检必须在 close 前）。
+ * fix-r2（concurrency#3 残余）：freeSocketCount 改按各 origin 键下数组长度
+ * 求和——原 Object.keys().length 数的是 origin 键数，同 origin 多 socket 时
+ * 低估；键删除时机虽经实测（v22.22.0 空闲收尾后键已删、freeSockets 同步填充，
+ * 见 fix-r2 仲裁矩阵），但求和版不依赖该未文档化行为、语义即函数名。 */
 export async function keepAliveProbe(port) {
   const http = await import("node:http");
   const agent = new http.Agent({ keepAlive: true, keepAliveMsecs: 1000 });
-  const freeSocketCount = () => Object.keys(agent.freeSockets || {}).length;
+  const freeSocketCount = () => Object.values(agent.freeSockets ?? {}).reduce(
+    (n, a) => n + (Array.isArray(a) ? a.length : 0), 0);
   const once = (pathName) =>
     new Promise((res) => {
       const req = http.request(

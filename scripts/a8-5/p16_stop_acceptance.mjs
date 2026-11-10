@@ -141,11 +141,14 @@ async function partA() {
   const ka = await keepAliveProbe(PORT_A);
   const pooled1 = await ka.once("/health");
   const pooledPremise = pooled1.premise === true;
+  // fix-r2（DS sibling#1 撞条）：note 不再断言「复用直测前提成立」——该断言在
+  // 池被服务端空闲超时收空时与 A/SKIP-pool-drained-before-reuse / agentReuse
+  // skipped 互为反证；收窄为「请求 1 已入池」，close 前是否仍占用指向 SKIP 行。
   log("A/agent-pooled-request1", {
     pooled1,
     pooledPremise,
     note: pooledPremise
-      ? "close() 前经该 agent 完成请求 1、socket 入池（复用直测前提成立）"
+      ? "请求 1 已入池（close() 前经该 agent 完成）；close 前池内是否仍占用不作断言——见 A/SKIP-pool-drained-before-reuse（该行未出现即仍占用）"
       : "复用直测前提未成立（pooled1 失败或 Connection 非 keep-alive，socket 未入池）——见 A/SKIP-agent-reuse",
   });
   if (!pooledPremise) {
@@ -240,17 +243,22 @@ async function partA() {
   // fix-r1：前提改为 pooledAtClose（close 前最后一刻池占用，见 A/SKIP-pool-
   // drained-before-reuse）；失败分支保留 once 原字段（error 等随 {...r} 带出，
   // #2756 fix-r1 评审 concurrency P2——「疑似挂起」须与其它非预期形状可辨），
-  // 成功分支另带 reusedSocket（新旧连接可辨）。
+  // 成功分支另带 reusedSocket（fix-r2 措辞限定：close 后正常重建连与池提前
+  // 收尾的新连接同为 false、无判别力，判别依据是上面的池占用复检，作参考）。
+  // fix-r2（Grok simplify#2）：两处 reason 三元提局部常量，消除双份漂移面。
+  const reuseSkipReason = pooledPremise
+    ? "池在 close 前被服务端空闲超时收尾（见 A/SKIP-pool-drained-before-reuse）"
+    : "复用直测前提未成立（见 A/SKIP-agent-reuse）";
   const agentReuse = pooledAtClose
     ? await ka.once("/health").then((r) => (r.ok === true
         ? r
         : { ...r, phase: r.code === "ECONNREFUSED" ? "connect-phase" : "other" }))
-    : { skipped: true, reason: pooledPremise ? "池在 close 前被服务端空闲超时收尾（见 A/SKIP-pool-drained-before-reuse）" : "复用直测前提未成立（见 A/SKIP-agent-reuse）" };
+    : { skipped: true, reason: reuseSkipReason };
   ka.destroy();
   // #2662 fix-r3：note 随实测状态推导，不再无条件断言 ECONNREFUSED/connect 相位
   // 与裸层对照——agentReuse 非预期形状或裸层前提未成立时对应句不产出。
   const reuseNote = agentReuse.skipped
-    ? `agent 复用直测跳过（${pooledPremise ? "池在 close 前被服务端空闲超时收尾，见 A/SKIP-pool-drained-before-reuse" : "前提未成立，见 A/SKIP-agent-reuse"}）；fetch 新连接与 newTcpRefused 与入池无关，照常记录`
+    ? `agent 复用直测跳过（${reuseSkipReason}）；fetch 新连接与 newTcpRefused 与入池无关，照常记录`
     : agentReuse.ok !== true && agentReuse.code === "ECONNREFUSED"
       ? "同 agent（close 前池化，见 A/agent-pooled-request1）复用直测：ECONNREFUSED 是 connect 相位错误（agent 丢弃已被服务端关闭的 socket 后重建连），非同 socket 报错"
         + (rawPremise && finBeforeWrite
