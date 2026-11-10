@@ -592,8 +592,10 @@ def _descend(dir_fd, part):
             child = os.open(part, os.O_RDONLY | _O_DIRECTORY | _NOFOLLOW, dir_fd=dir_fd)
         except FileNotFoundError as error:
             if not first:
-                # 建完到第二次 open 之间目录被移走：仍是环境不可用，必须收口成 rc2；
-                # 裸 raise 会冒成 traceback rc1，被下游读成「某个控件 SURVIVED」（Codex r14 P1）。
+                # 建完到第二次 open 之间目录被移走：裸 raise 会冒成 traceback rc1，
+                # 被下游读成「某个控件 SURVIVED」（Codex r14 P1）；收口成 OutputError
+                # 本身不决定 rc——控件循环里的调用点由调用方收成该控件 INVALID
+                # （#2573），只有 main() 发布 summary.json 处穿出为 rc2。
                 raise OutputError(f'cannot open {part!r} as a real directory: it disappeared '
                                   f'after it was created: {error}') from error
             try:

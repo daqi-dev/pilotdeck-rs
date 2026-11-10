@@ -206,8 +206,17 @@ def check_manifest():
     """
     errors = []
     manifest = json.loads(oracle.read_text())
+    # 修复轮 r6 P2（DS sibling#2，always-on 侧 fix-r3 空 oracle 拒绝的同族）：
+    # 各节被清空成 []（README 计数表同步归零）时逐节 0==0、replay 绑定循环
+    # 零次，全部空心通过；整份被删成 {} 则在下面 KeyError 冒 traceback——先
+    # 拒绝空清单本身，--check 对被清空的 oracle.json 不再绿灯。
+    if not manifest:
+        return ['oracle.json: the scenario manifest is empty']
     text = readme.read_text()
     for section in SECTIONS:
+        if not manifest.get(section):
+            errors.append(f'oracle.json: section {section} is empty')
+            continue
         match = re.search(rf'^\| `{section}` \| (\d+) \|', text, re.M)
         count = len(manifest[section])
         if not match:
