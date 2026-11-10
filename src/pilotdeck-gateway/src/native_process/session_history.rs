@@ -318,6 +318,7 @@ pub(super) fn storage(home: PathBuf, fallback: PathBuf, owner: SessionOwner) -> 
                     let lease_path = path.clone();
                     Some(tokio::task::spawn_blocking(move || {
                         crate::runtime::session::transcript_locks::cold_write_lease(&lease_path)
+                            .map_err(request_error)?
                             .ok_or_else(|| request_error(crate::runtime::session::transcript_locks::writer_busy_error()))
                     }).await.map_err(io)??)
                 } else {

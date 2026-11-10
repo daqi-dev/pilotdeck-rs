@@ -117,8 +117,7 @@ def main():
               'self_compare_error': self_status['error'], 'controls': controls,
               'evidence': str(args.self_compare), 'review_notice': '独立评审由协调者填写，当前未判定。'}
     result['machine_checks_pass'] = all(result[k] for k in ('self_compare', 'negative_controls', 'both_broken', 'positive_controls', 'frozen_hashes', 'fully_frozen', 'independent_review'))
-    args.json.parent.mkdir(parents=True, exist_ok=True)
-    args.json.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')
+    G.write_result_exclusive(args.json, json.dumps(result, ensure_ascii=False, indent=2) + '\n')
     print(json.dumps(result, ensure_ascii=False))
     # Pending independent review never becomes an overall acceptance PASS.
     return 2 if result['machine_checks_pass'] else 1

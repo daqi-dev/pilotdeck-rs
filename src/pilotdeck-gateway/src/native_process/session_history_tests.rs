@@ -676,7 +676,9 @@ async fn real_storage_commit_during_active_turn_unlinks_only_its_sidecars() {
     let key = JsString::from("session");
     let run = JsString::from("active-run");
     let turn = requests.owner.begin_turn(&key, &run).unwrap();
-    let writer = crate::runtime::session::transcript_locks::cold_write_lease(&path).unwrap();
+    let writer = crate::runtime::session::transcript_locks::cold_write_lease(&path)
+        .unwrap()
+        .unwrap();
     let finalize = storage(
         requests.options.home.clone(),
         requests.options.project.clone(),

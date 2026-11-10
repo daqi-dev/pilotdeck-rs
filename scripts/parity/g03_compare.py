@@ -47,6 +47,10 @@ from typing import Any
 
 WORKTREE = Path(__file__).resolve().parents[2]
 
+# #2398: bound for every git subprocess launched below (rev-parse baseline
+# discovery); the isolation itself mirrors check_frozen.py / #2372 fix-r1.
+GIT_TIMEOUT_SECONDS = 30
+
 
 def jsonl_lines(text):
     """Only LF delimits JSONL; preserve internal blanks for caller validation."""
@@ -64,9 +68,22 @@ def baseline_path() -> 'Path':
             return Path(configured).resolve()
         raise FileNotFoundError(f"PDRS_BASELINE={configured} is not a directory")
     candidates = [WORKTREE / "resources/PilotDeck"]
-    common = subprocess.run(["git", "-C", str(WORKTREE), "rev-parse", "--path-format=absolute", "--git-common-dir"],
-                            capture_output=True, text=True)
-    if common.returncode == 0 and common.stdout.strip():
+    # #2398 fix-r1: same git isolation as check_frozen.py — never inherit GIT_*
+    # from the caller, never read a global gitconfig, and never hang past the
+    # bound. safe.directory=* keeps cross-uid checkouts usable: pinning
+    # GIT_CONFIG_GLOBAL drops the caller's safe.directory, and without it a
+    # dubious-ownership repo would turn the freeze gate into a false FAIL.
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    try:
+        common = subprocess.run(["git", "--no-optional-locks", "-c", "core.fsmonitor=false",
+                                 "-c", "core.hooksPath=/dev/null", "-c", "safe.directory=*",
+                                 "-C", str(WORKTREE), "rev-parse",
+                                 "--path-format=absolute", "--git-common-dir"],
+                                capture_output=True, text=True, env=env, timeout=GIT_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        common = None
+    if common is not None and common.returncode == 0 and common.stdout.strip():
         candidates.append(Path(common.stdout.strip()).parent / "resources/PilotDeck")
     for candidate in candidates:
         if candidate.is_dir():
@@ -93,6 +110,71 @@ T = load_original_trace()
 
 def sha256(path: 'Path') -> 'str':
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _result_temporary(path: 'Path') -> 'Path':
+    """#2398 fix-r1: sibling temp path — never the target itself, so a crash
+    between create and publish can only leave a dotfile behind, never a 0-byte
+    or half-written result that blocks every later run at the published path."""
+    return path.with_name(f'.{path.name}.tmp.{os.getpid()}')
+
+
+def _write_result_temporary(path: 'Path', data: 'str') -> 'Path':
+    temporary = _result_temporary(path)
+    with open(temporary, 'x', encoding='utf-8') as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+    return temporary
+
+
+def _publish_exclusive(temporary: 'Path', path: 'Path') -> 'None':
+    # os.link publishes atomically and refuses an existing target: the result
+    # becomes visible only when it is complete, and a later run can never
+    # overwrite an earlier run's results.
+    try:
+        os.link(temporary, path)
+    except FileExistsError:
+        raise SystemExit(f'#2398 result file already exists: {path} '
+                         '(an earlier run produced it; remove it or pass a different --json path)')
+
+
+def write_result_exclusive(path: 'Path', data: 'str') -> 'None':
+    """#2398: create the result file exclusively and publish it atomically.
+    Unlike the device-patches 20261108-1841 variant (which falls back to
+    .attempt-N and exits 0), this helper exits loudly: the parity CLIs refuse
+    to replace an earlier run's results."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = _write_result_temporary(path, data)
+    try:
+        _publish_exclusive(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def write_results_exclusive(entries: 'list[tuple[Path, str]]') -> 'None':
+    """#2398 fix-r1: publish a group of result files (json + markdown) as one
+    unit: every temp file is fully written first, then all targets are linked;
+    a failure unlinks what this call already published, so a consumer never
+    sees a half-published group (new json + stale markdown)."""
+    paths = [Path(path) for path, _ in entries]
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    temporaries = [(path, _write_result_temporary(path, data))
+                   for path, (_, data) in zip(paths, entries)]
+    published = []
+    try:
+        for path, temporary in temporaries:
+            _publish_exclusive(temporary, path)
+            published.append(path)
+    except BaseException:
+        for path in published:
+            path.unlink(missing_ok=True)
+        raise
+    finally:
+        for _, temporary in temporaries:
+            temporary.unlink(missing_ok=True)
 
 
 def canon(value: 'Any') -> 'str':
@@ -531,8 +613,7 @@ def main():
     result = compare_directories(args.left, args.right, side_left=args.side_left, side_right=args.side_right, path_align=align)
     data = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
     if args.json:
-        args.json.parent.mkdir(parents=True, exist_ok=True)
-        args.json.write_text(data)
+        write_result_exclusive(args.json, data)
         print(json.dumps({k: result[k] for k in ("verdict", "complete", "passed", "expected_scenarios")}))
     else:
         print(data, end="")

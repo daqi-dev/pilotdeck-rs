@@ -254,7 +254,7 @@ async fn native_declaration_budget_failure_keeps_generation_and_old_contribution
         pilot_home: home,
         builtin_skills_root: None,
         builtin_plugins: vec![],
-        builtin_plugins_enabled: Default::default(),
+        builtin_plugins_enabled: isolated_builtin_switches(),
     });
     runtime.refresh().await.unwrap();
     let mut lease = runtime.acquire_contribution_snapshot().await.unwrap();
@@ -272,13 +272,26 @@ async fn native_declaration_budget_failure_keeps_generation_and_old_contribution
     runtime.dispose().await.unwrap();
 }
 
+// These isolated disk-loader fixtures predate the default first-party MCP
+// declarations. Disable those declarations so exact budget boundaries count
+// only the fixture under test, while the separate builtin tests exercise them.
+fn isolated_builtin_switches() -> std::collections::HashMap<String, bool> {
+    [
+        ("browser-use".into(), false),
+        ("funasr".into(), false),
+        ("windows-skills".into(), false),
+    ]
+    .into_iter()
+    .collect()
+}
+
 fn declaration_options(root: &Path) -> PluginRuntimeOptions {
     PluginRuntimeOptions {
         project_root: root.join("project"),
         pilot_home: root.join("home"),
         builtin_skills_root: None,
         builtin_plugins: vec![],
-        builtin_plugins_enabled: Default::default(),
+        builtin_plugins_enabled: isolated_builtin_switches(),
     }
 }
 

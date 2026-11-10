@@ -599,70 +599,90 @@ fn stage_native_builtin_skills(
     options: &PluginRuntimeOptions,
     budget: &mut StyleBudget,
 ) -> Result<LoadFromDiskResult, PluginRuntimeError> {
+    use crate::runtime::mcp::native_builtins;
     let mut result = LoadFromDiskResult {
         plugins: Vec::new(),
         staged_failures: Vec::new(),
     };
-    let Some(root) = &options.builtin_skills_root else {
-        return Ok(result);
-    };
-    // First-party declarative assets, independent of host OS. No executable
-    // plugin entry, callback, or asset directory is loaded through this table.
-    for (plugin_name, plugin_directory, skill_directory, namespace) in [
-        ("browser-use", "browser-use", "", false),
+    let executable = std::env::current_exe()
+        .map_err(|e| PluginRuntimeError::gateway("NATIVE_MCP_PATH", e.to_string()))?;
+    let fallback = executable
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("../skills");
+    let root = options.builtin_skills_root.as_deref().unwrap_or(&fallback);
+    // Only these inert first-party declarations may contribute builtin MCP.
+    // No executable plugin entry/callback or arbitrary on-disk manifest loads.
+    for (name, directory, skill_relative) in [
+        (
+            "browser-use",
+            ".builtin-plugins/browser-use",
+            Some("skills/browser-use-install"),
+        ),
+        ("funasr", ".builtin-plugins/funasr", None),
         (
             "windows-skills",
             ".builtin-plugins/windows-skills",
-            "skills/powershell-safe-invocation",
-            true,
+            Some("skills/powershell-safe-invocation"),
         ),
     ] {
-        if options.builtin_plugins_enabled.get(plugin_name) == Some(&false) {
+        if options.builtin_plugins_enabled.get(name) == Some(&false) {
             continue;
         }
-        let plugin_path = root.join(plugin_directory);
-        let skill_path = if skill_directory.is_empty() {
-            plugin_path.clone()
-        } else {
-            plugin_path.join(skill_directory)
-        };
-        if !fs::metadata(&skill_path).is_ok_and(|metadata| metadata.is_dir()) {
-            continue;
-        }
-        match markdown::load_standalone_skill_bounded(&basename(&skill_path), &skill_path, budget) {
-            Ok(mut skill) => {
-                if namespace {
-                    skill.name = markdown::get_plugin_command_name(
-                        plugin_name,
-                        &skill.path,
-                        &plugin_path.join("skills"),
-                    );
+        let path = root.join(directory);
+        let mut skills = Vec::new();
+        if let Some(relative) = skill_relative {
+            let skill_path = path.join(relative);
+            if fs::metadata(&skill_path).is_ok_and(|m| m.is_dir()) {
+                match markdown::load_standalone_skill_bounded(
+                    &basename(&skill_path),
+                    &skill_path,
+                    budget,
+                ) {
+                    Ok(mut skill) => {
+                        skill.name = markdown::get_plugin_command_name(
+                            name,
+                            &skill.path,
+                            &path.join("skills"),
+                        );
+                        skills.push(skill);
+                    }
+                    Err(error) if error.code == Some("STYLE_RELOAD_LIMIT") => {
+                        return Err(PluginRuntimeError::gateway(
+                            "NATIVE_SKILL_LIMIT",
+                            "Native skill source budget exceeded.",
+                        ));
+                    }
+                    Err(_) => result.staged_failures.push(PluginRefreshFailure {
+                        path: path.clone(),
+                        source: PluginSource::Builtin,
+                        kind: PluginKind::Skill,
+                    }),
                 }
-                result.plugins.push(Arc::new(LoadedPlugin {
-                    name: plugin_name.to_owned(),
-                    path: plugin_path,
-                    source: PluginSource::Builtin,
-                    skills: vec![skill],
-                    commands: Vec::new(),
-                    output_styles: Vec::new(),
-                    hooks_config: None,
-                    mcp_servers: None,
-                    lsp_servers: None,
-                    dispose: None,
-                }));
+            } else if name == "windows-skills" {
+                continue;
             }
-            Err(error) if error.code == Some("STYLE_RELOAD_LIMIT") => {
-                return Err(PluginRuntimeError::gateway(
-                    "NATIVE_SKILL_LIMIT",
-                    "Native skill source budget exceeded.",
-                ));
-            }
-            Err(_) => result.staged_failures.push(PluginRefreshFailure {
-                path: plugin_path,
-                source: PluginSource::Builtin,
-                kind: PluginKind::Skill,
-            }),
         }
+        let mcp_servers = match name {
+            "browser-use" => Some(native_builtins::browser_servers()),
+            "funasr" => Some(
+                native_builtins::funasr_servers(&executable)
+                    .map_err(|e| PluginRuntimeError::gateway("NATIVE_MCP_PATH", e.to_string()))?,
+            ),
+            _ => None,
+        };
+        result.plugins.push(Arc::new(LoadedPlugin {
+            name: name.to_owned(),
+            path,
+            source: PluginSource::Builtin,
+            skills,
+            commands: Vec::new(),
+            output_styles: Vec::new(),
+            hooks_config: None,
+            mcp_servers,
+            lsp_servers: None,
+            dispose: None,
+        }));
     }
     Ok(result)
 }

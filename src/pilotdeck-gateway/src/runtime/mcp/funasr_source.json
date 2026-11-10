@@ -1,0 +1,12 @@
+{
+  "license": "AGPL-3.0-only; see repository LICENSE and upstream LICENSE",
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "source": "src/extension/plugins/builtin/funasr/funasr-local-mcp.mjs",
+  "sourceSha256": "c6996290437c7084d34a7d62f5425a6e854e5d93dc72bc94371110aece477cb7",
+  "reuseScope": "Only model-visible tool description/inputSchema/instructions and observed JSON-RPC output. Rust protocol/path/process/SRT implementation independently authored; no JS code copied.",
+  "nodeVersions": {
+    "node": "22.22.0",
+    "icu": "78.2",
+    "uv": "1.52.1"
+  }
+}

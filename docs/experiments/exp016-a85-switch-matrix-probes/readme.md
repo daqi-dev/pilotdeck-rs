@@ -52,7 +52,7 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
 | p13_empty_set | #2255 空集合格 | 组件级三格 + 全空五步组合级：全部 0–4ms 落定（空集合不挂起、退出路径可达） |
 | p14_child/p14_half_stop | #2255 半停格 | 真 cron 先真停不回滚 + alwaysOn stop 失败：单失败原样抛、finally 照走 unpublish、二次 stop no-op；server 级半停窗口 E1/E2 可服务、后续四步照走、退出码 0 |
 | p15_child/p15_driver | #2255 单飞 + 退出码抬升 | 重复信号（SIGTERM×2+SIGINT）下 automation.stop 恰 1 次（两层单飞缓存）；挂起窗口内 late unhandledRejection ⇒ exit 1（对照 0） |
-| p16_stop_acceptance | #2258 停接纳机制观测面 | 机制 A（关 listener，真实 server）：新连接三层 ECONNREFUSED、空闲 keep-alive 服务端 FIN、裸层复用已 FIN 连接 = 写成功后静默悬挂（同 keep-alive agent close 前池化、close 后复用直测 ECONNREFUSED connect 相位——重建连直测）；机制 B-RST/B-EOF（纯 node 受控）：握手一律完成后 RST（ECONNRESET）或 EOF（node:http 层两者同为 ECONNRESET 码，fetch 层可区分 ECONNRESET / UND_ERR_SOCKET） |
+| p16_stop_acceptance | #2258 停接纳机制观测面 | 机制 A（关 listener，真实 server）：新连接三层 ECONNREFUSED、空闲 keep-alive 服务端 FIN、裸层复用已 FIN 连接 = 写成功后静默悬挂（同 keep-alive agent close 前池化、close 后复用直测 ECONNREFUSED connect 相位——重建连直测）；机制 B-RST/B-EOF（纯 node 受控）：握手一律完成后 RST（ECONNRESET）或 EOF（node:http 层两者同为 ECONNRESET 码，fetch 层可区分 ECONNRESET / UND_ERR_SOCKET）。前提守门（#2662）：两处健康检查响应须为 keep-alive（缺头按完整 HTTP/1.1 响应头隐式）、窗内须实际观测到干净 FIN（`end`，非 error→close 异常拆链），否则对应观察降级——agent-reuse 前提失败落 `A/SKIP-agent-reuse`，裸层/FIN 前提失败以 `rawPremise`/`finObserved` 字段与降级 note 体现（不发独立 SKIP 行），不出上述结论 |
 
 ## 结论
 

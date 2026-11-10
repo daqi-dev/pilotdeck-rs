@@ -439,7 +439,7 @@ impl Requests {
         ));
         let lease_path = transcript.clone();
         let writer = tokio::task::spawn_blocking(move || {
-            transcript_locks::cold_write_lease(&lease_path)
+            transcript_locks::cold_write_lease(&lease_path)?
                 .ok_or_else(transcript_locks::writer_busy_error)
         })
         .await
@@ -548,7 +548,6 @@ impl Requests {
         // writer lease a session holds, so it cannot interleave with the
         // factory's restore→publish window; a busy lease means a session owns
         // the transcript after all (use its writer or report busy).
-        let live = super::super::assembly::live_recorder(&self.recorders, &key);
         let recorders = self.recorders.clone();
         let home = self.options.home.clone();
         let value_field: JsValue = params.get("value").cloned().unwrap_or(JsValue::Undefined);
@@ -589,53 +588,42 @@ impl Requests {
             meta.insert("updatedAt".into(), JsValue::String(updated_at.into()));
             let turn_id = JsString::from(if is_tag { "sdk-tag" } else { "sdk-rename" });
             let entry = JsValue::Object(meta);
-            if let Some((_owner, recorder)) = live {
+            let live = || {
+                let Some((owner, recorder)) =
+                    super::super::assembly::live_recorder(&recorders, &key_clone)
+                else {
+                    return Ok(None);
+                };
                 transcript_locks::ensure_recorder_matches(&fence_path, &recorder)?;
                 recorder
                     .writer()
-                    .record_session_metadata_checked(&key_clone, &turn_id, entry)
-                    .map_err(|e| RequestError::new(e.to_string()))?;
-                return Ok(());
-            }
-            let adapter = AsyncTranscriptAdapter::new(
-                Arc::new(JsonlTranscriptStore::new_bounded()),
-                Arc::new(move |_: &ProjectKey| chat_dir.clone()),
-            );
-            let storage = adapter
-                .create_session_storage(SessionStorageInput {
-                    project_root: project_root.clone(),
-                    pilot_home: home.clone(),
-                    session_id: key_clone.clone(),
-                    now: None,
-                })
-                .map_err(|e| RequestError::new(e.to_string()))?;
-            let Some(_lease) = transcript_locks::cold_write_lease(&storage.transcript_path) else {
-                // #1457 fix-r3: a session claimed the transcript after the
-                // lookup. Append through its writer if it is published;
-                // otherwise report busy instead of forking the chain.
-                if let Some((_owner, recorder)) =
-                    super::super::assembly::live_recorder(&recorders, &key_clone)
-                {
-                    transcript_locks::ensure_recorder_matches(&fence_path, &recorder)?;
-                    recorder
-                        .writer()
-                        .record_session_metadata_checked(&key_clone, &turn_id, entry)
-                        .map_err(|e| RequestError::new(e.to_string()))?;
-                    return Ok(());
-                }
-                return Err(transcript_locks::writer_busy_error());
+                    .record_session_metadata_checked(&key_clone, &turn_id, entry.clone())
+                    .map_err(|error| RequestError::new(error.to_string()))?;
+                Ok(Some(owner))
             };
-            // Seed the writer's sequence from the existing transcript so the
-            // metadata entry continues the chain rather than restarting at 1.
-            if matches!(storage.transcript_exists(), Some(Ok(true))) {
-                storage
-                    .restore()
-                    .map_err(|e| RequestError::new(e.to_string()))?;
-            }
-            storage
-                .transcript
-                .record_session_metadata(&key_clone, &turn_id, entry)
-                .map_err(|e| RequestError::new(e.to_string()))?;
+            transcript_locks::append_metadata_with_lease(
+                live,
+                || {
+                    let adapter = AsyncTranscriptAdapter::new(
+                        Arc::new(JsonlTranscriptStore::new_bounded()),
+                        Arc::new(move |_: &ProjectKey| chat_dir.clone()),
+                    );
+                    adapter
+                        .create_session_storage(SessionStorageInput {
+                            project_root,
+                            pilot_home: home,
+                            session_id: key_clone.clone(),
+                            now: None,
+                        })
+                        .map_err(|error| RequestError::new(error.to_string()))
+                },
+                |storage| {
+                    storage
+                        .transcript
+                        .record_session_metadata(&key_clone, &turn_id, entry.clone())
+                        .map_err(|error| RequestError::new(error.to_string()))
+                },
+            )?;
             Ok(())
         })
         .await
@@ -708,94 +696,52 @@ impl Requests {
             crate::storage::sanitize_session_id(&session_key)
         ));
         let write_fence = transcript_locks::acquire(&fence_path).await?;
-        let live_recorder = super::super::assembly::live_recorder(&self.recorders, &session_key);
         let recorders = self.recorders.clone();
-        if let Some((_owner, recorder)) = live_recorder {
-            // The live writer numbers its append from its own in-memory
-            // sequence, so it appends under the same fence the fresh writers
-            // hold — otherwise it can append while `record_model_selection`
-            // holds a tail both of them read as `N`. fix-r3: the checked
-            // append turns a writer that closed under us into an error instead
-            // of a `recorded: true` with nothing on disk.
-            let session_key2 = session_key.clone();
-            let turn_id2 = turn_id.clone();
-            let status2 = status.clone();
-            let recorded = tokio::task::spawn_blocking(move || {
-                let _permit = permit;
-                let _write = write_fence;
+        let home = self.options.home.clone();
+        let recorded = tokio::task::spawn_blocking(move || -> Result<bool, RequestError> {
+            // Keep both resources through detached blocking IO after RPC cancellation.
+            let _permit = permit;
+            let _write = write_fence;
+            let live = || {
+                let Some((owner, recorder)) =
+                    super::super::assembly::live_recorder(&recorders, &session_key)
+                else {
+                    return Ok(None);
+                };
                 transcript_locks::ensure_recorder_matches(&fence_path, &recorder)?;
                 recorder
                     .writer()
-                    .record_agent_status_message_checked(&session_key2, &turn_id2, &status2)
-                    .map(|()| true)
-                    .map_err(|e| RequestError::new(e.to_string()))
-            })
-            .await
-            .map_err(|e| RequestError::new(e.to_string()))??;
-            return Ok(object([("recorded", JsValue::Bool(recorded))]));
-        }
-
-        // Cold path: write to the durable transcript directly, holding the
-        // session writer lease so a concurrent hydrate cannot restore the same
-        // tail and publish a recorder beside this append.
-        let home = self.options.home.clone();
-        let recorded = tokio::task::spawn_blocking(move || {
-            // The fence must outlive a cancelled request, so it moves into the
-            // blocking closure instead of dropping with this future.
-            let _permit = permit;
-            let _write = write_fence;
-            let adapter = AsyncTranscriptAdapter::new(
-                Arc::new(JsonlTranscriptStore::new_bounded()),
-                Arc::new(move |_: &ProjectKey| chat_dir.clone()),
-            );
-            match adapter.create_session_storage(SessionStorageInput {
-                project_root: project_root.clone(),
-                pilot_home: home.clone(),
-                session_id: session_key.clone(),
-                now: None,
-            }) {
-                Ok(storage) => {
-                    let Some(_lease) = transcript_locks::cold_write_lease(&storage.transcript_path)
-                    else {
-                        // A session claimed the transcript after the lookup:
-                        // append through its writer, or report that nothing was
-                        // recorded instead of forking the chain.
-                        return super::super::assembly::live_recorder(&recorders, &session_key)
-                            .is_some_and(|(_owner, recorder)| {
-                                if transcript_locks::ensure_recorder_matches(&fence_path, &recorder)
-                                    .is_err()
-                                {
-                                    return false;
-                                }
-                                recorder
-                                    .writer()
-                                    .record_agent_status_message_checked(
-                                        &session_key,
-                                        &turn_id,
-                                        &status,
-                                    )
-                                    .is_ok()
-                            });
-                    };
-                    // Seed the writer's sequence from the existing transcript so
-                    // the status entry continues the chain rather than restarting
-                    // at 1.
-                    if matches!(storage.transcript_exists(), Some(Ok(true)))
-                        && storage.restore().is_err()
-                    {
-                        return false;
-                    }
+                    .record_agent_status_message_checked(&session_key, &turn_id, &status)
+                    .map_err(|error| RequestError::new(error.to_string()))?;
+                Ok(Some(owner))
+            };
+            transcript_locks::append_metadata_with_lease(
+                live,
+                || {
+                    let adapter = AsyncTranscriptAdapter::new(
+                        Arc::new(JsonlTranscriptStore::new_bounded()),
+                        Arc::new(move |_: &ProjectKey| chat_dir.clone()),
+                    );
+                    adapter
+                        .create_session_storage(SessionStorageInput {
+                            project_root,
+                            pilot_home: home,
+                            session_id: session_key.clone(),
+                            now: None,
+                        })
+                        .map_err(|error| RequestError::new(error.to_string()))
+                },
+                |storage| {
                     storage
                         .transcript
                         .record_agent_status_message(&session_key, &turn_id, &status)
-                        .map(|()| true)
-                        .unwrap_or(false)
-                }
-                Err(_) => false,
-            }
+                        .map_err(|error| RequestError::new(error.to_string()))
+                },
+            )?;
+            Ok(true)
         })
         .await
-        .unwrap_or(false);
+        .map_err(|error| RequestError::new(error.to_string()))??;
         Ok(object([("recorded", JsValue::Bool(recorded))]))
     }
 }
@@ -1056,6 +1002,7 @@ mod tests {
         // Stand in for `factory`: the lease is taken before restore and held
         // while the recorder is not yet in the map.
         let lease = transcript_locks::cold_write_lease(&storage.transcript_path)
+            .expect("the writer lease probe succeeds")
             .expect("#1457 the transcript lease is free before the session loads");
 
         let error = crate::runtime::turn::gateway::GatewayRequests::request(
@@ -1080,6 +1027,260 @@ mod tests {
                 .unwrap_or(false),
             false,
             "#1457 the refused append wrote nothing"
+        );
+    }
+
+    /// #1873: the status cold path answers the same retryable busy error the
+    /// rename and config paths give when a session holds the writer lease.
+    /// The pre-fix shape returned `recorded: false` — TS's "not live and no
+    /// cold provider" answer, which never holds in the native process.
+    #[tokio::test]
+    async fn status_cold_write_reports_busy_while_a_session_holds_the_lease() {
+        let (_scratch, requests) = crate::native_process::management_tests::setup();
+        let home = requests.options.home.clone();
+        let project = requests.options.project.clone();
+        let adapter = AsyncTranscriptAdapter::new(
+            Arc::new(JsonlTranscriptStore::new()),
+            Arc::new(move |k: &ProjectKey| {
+                crate::session_chat_dir(&home, &k.project_root, &k.project_root.to_string_lossy())
+            }),
+        );
+        let storage = adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: project.clone(),
+                pilot_home: requests.options.home.clone(),
+                session_id: "d3/session".into(),
+                now: None,
+            })
+            .expect("#1873 the transcript storage opens");
+        // Stand in for `factory`: the lease is taken before restore and held
+        // while the recorder is not yet in the map.
+        let lease = transcript_locks::cold_write_lease(&storage.transcript_path)
+            .expect("#1873 the transcript lease probe itself must not fail")
+            .expect("#1873 the transcript lease is free before the session loads");
+        let error = crate::runtime::turn::gateway::GatewayRequests::request(
+            &requests,
+            "record_agent_status_message".into(),
+            crate::metadata::object([
+                ("sessionKey", "d3-session".into()),
+                ("turnId", "must-not-fork".into()),
+                ("status", JsValue::Undefined),
+            ]),
+        )
+        .await
+        .expect_err(
+            "#1873 a cold status append must not run beside a session that owns the writer",
+        );
+        negative_assert_eq!(
+            error.code.as_str(),
+            "SESSION_WRITER_BUSY",
+            "#1873 the racing cold status append reports the retryable busy error"
+        );
+        drop(lease);
+        negative_assert_eq!(
+            std::fs::read_to_string(&storage.transcript_path)
+                .map(|text| text.contains("must-not-fork"))
+                .unwrap_or(false),
+            false,
+            "#1873 the refused status append wrote nothing"
+        );
+    }
+
+    /// #1873 P2: a `<transcript>.lock` that cannot be opened is a storage
+    /// failure. The pre-fix `try_writer_lease` folded every error into the
+    /// busy answer, so a broken chat directory masqueraded as a session that
+    /// would eventually drain; the request must fail with the underlying
+    /// error, never the retryable busy code.
+    #[tokio::test]
+    async fn status_cold_write_surfaces_a_broken_lock_file_as_an_error() {
+        let (_scratch, requests) = crate::native_process::management_tests::setup();
+        let home = requests.options.home.clone();
+        let project = requests.options.project.clone();
+        let adapter = AsyncTranscriptAdapter::new(
+            Arc::new(JsonlTranscriptStore::new()),
+            Arc::new(move |k: &ProjectKey| {
+                crate::session_chat_dir(&home, &k.project_root, &k.project_root.to_string_lossy())
+            }),
+        );
+        let storage = adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: project.clone(),
+                pilot_home: requests.options.home.clone(),
+                session_id: "d5/session".into(),
+                now: None,
+            })
+            .expect("#1873 the transcript storage opens");
+        let mut lock = std::ffi::OsString::from(storage.transcript_path.as_os_str());
+        lock.push(".lock");
+        std::fs::create_dir(std::path::PathBuf::from(&lock))
+            .expect("#1873 the broken ledger lock is in place");
+        let error = crate::runtime::turn::gateway::GatewayRequests::request(
+            &requests,
+            "record_agent_status_message".into(),
+            crate::metadata::object([
+                ("sessionKey", "d5-session".into()),
+                ("turnId", "broken-lock".into()),
+                ("status", JsValue::Undefined),
+            ]),
+        )
+        .await
+        .expect_err("#1873 the status append surfaces the storage failure");
+        negative_assert!(
+            error.code.as_str() != "SESSION_WRITER_BUSY",
+            "#1873 a broken lock file is a storage error, not the retryable busy answer"
+        );
+        negative_assert!(
+            String::from_utf16_lossy(error.message.units())
+                .contains("Could not open session ledger lock"),
+            "#1873 the storage error names the ledger lock, got {}",
+            String::from_utf16_lossy(error.message.units())
+        );
+    }
+
+    /// #1873: the rename cold path answers the same storage-error separation
+    /// the status caller got — a broken ledger lock is never the retryable
+    /// busy answer for a rename either. The `#1873` `try_writer_lease`
+    /// `Result` split reaches this caller through the shared
+    /// `append_metadata_with_lease` protocol.
+    #[tokio::test]
+    async fn rename_cold_write_surfaces_a_broken_lock_file_as_an_error() {
+        let (_scratch, requests) = crate::native_process::management_tests::setup();
+        let home = requests.options.home.clone();
+        let project = requests.options.project.clone();
+        let adapter = AsyncTranscriptAdapter::new(
+            Arc::new(JsonlTranscriptStore::new()),
+            Arc::new(move |k: &ProjectKey| {
+                crate::session_chat_dir(&home, &k.project_root, &k.project_root.to_string_lossy())
+            }),
+        );
+        let storage = adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: project.clone(),
+                pilot_home: requests.options.home.clone(),
+                session_id: "d6/session".into(),
+                now: None,
+            })
+            .expect("#1873 the rename transcript storage opens");
+        let mut lock = std::ffi::OsString::from(storage.transcript_path.as_os_str());
+        lock.push(".lock");
+        std::fs::create_dir(std::path::PathBuf::from(&lock))
+            .expect("#1873 the rename broken ledger lock is in place");
+        let error = crate::runtime::turn::gateway::GatewayRequests::request(
+            &requests,
+            "rename_session".into(),
+            crate::metadata::object([
+                ("sessionKey", "d6-session".into()),
+                ("value", "broken-lock-rename".into()),
+            ]),
+        )
+        .await
+        .expect_err("#1873 the rename append surfaces the storage failure");
+        negative_assert!(
+            error.code.as_str() != "SESSION_WRITER_BUSY",
+            "#1873 the rename storage failure is never the retryable busy code"
+        );
+        negative_assert!(
+            String::from_utf16_lossy(error.message.units())
+                .contains("Could not open session ledger lock"),
+            "#1873 the rename storage error names the ledger lock, got {}",
+            String::from_utf16_lossy(error.message.units())
+        );
+    }
+
+    /// #1874: a recorder whose writer already closed must surface the close
+    /// as an error, not answer `updated: true` with nothing on disk. The live
+    /// closure's checked append is what makes the closed writer visible; the
+    /// unchecked form the cold path uses would silently no-op.
+    #[tokio::test]
+    async fn rename_reports_a_closed_writer_as_an_error() {
+        let (_scratch, requests) = crate::native_process::management_tests::setup();
+        let home = requests.options.home.clone();
+        let project = requests.options.project.clone();
+        let adapter = AsyncTranscriptAdapter::new(
+            Arc::new(JsonlTranscriptStore::new()),
+            Arc::new(move |k: &ProjectKey| {
+                crate::session_chat_dir(&home, &k.project_root, &k.project_root.to_string_lossy())
+            }),
+        );
+        let storage = adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: project,
+                pilot_home: requests.options.home.clone(),
+                session_id: "d7/session".into(),
+                now: None,
+            })
+            .expect("#1874 the transcript storage opens");
+        let recorder = Arc::new(Recorder::from_writer(Arc::new(storage.transcript)));
+        requests
+            .recorders
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert("d7/session".into(), Arc::downgrade(&recorder));
+        // A close that raced the request — the exact window fix-r2's checked
+        // append exists for.
+        recorder.writer().close();
+        let error = crate::runtime::turn::gateway::GatewayRequests::request(
+            &requests,
+            "rename_session".into(),
+            crate::metadata::object([
+                ("sessionKey", "d7-session".into()),
+                ("value", "must-not-vanish".into()),
+            ]),
+        )
+        .await
+        .expect_err("#1874 a closed session writer is an error, not a silent rename");
+        negative_assert!(
+            String::from_utf16_lossy(error.message.units()).contains("the session writer closed"),
+            "#1874 the rename error names the closed session writer, got {}",
+            String::from_utf16_lossy(error.message.units())
+        );
+    }
+
+    /// #1874: the status twin of the closed-writer gate — a closed writer
+    /// must be an error, not a `recorded: true` with nothing on disk.
+    #[tokio::test]
+    async fn status_reports_a_closed_writer_as_an_error() {
+        let (_scratch, requests) = crate::native_process::management_tests::setup();
+        let home = requests.options.home.clone();
+        let project = requests.options.project.clone();
+        let adapter = AsyncTranscriptAdapter::new(
+            Arc::new(JsonlTranscriptStore::new()),
+            Arc::new(move |k: &ProjectKey| {
+                crate::session_chat_dir(&home, &k.project_root, &k.project_root.to_string_lossy())
+            }),
+        );
+        let storage = adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: project,
+                pilot_home: requests.options.home.clone(),
+                session_id: "d8/session".into(),
+                now: None,
+            })
+            .expect("#1874 the transcript storage opens");
+        let recorder = Arc::new(Recorder::from_writer(Arc::new(storage.transcript)));
+        requests
+            .recorders
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert("d8/session".into(), Arc::downgrade(&recorder));
+        // A close that raced the request — the exact window fix-r2's checked
+        // append exists for.
+        recorder.writer().close();
+        let error = crate::runtime::turn::gateway::GatewayRequests::request(
+            &requests,
+            "record_agent_status_message".into(),
+            crate::metadata::object([
+                ("sessionKey", "d8-session".into()),
+                ("turnId", "must-not-vanish".into()),
+                ("status", JsValue::Undefined),
+            ]),
+        )
+        .await
+        .expect_err("#1874 a closed session writer is an error, not a recorded status");
+        negative_assert!(
+            String::from_utf16_lossy(error.message.units()).contains("the session writer closed"),
+            "#1874 the status error names the closed session writer, got {}",
+            String::from_utf16_lossy(error.message.units())
         );
     }
 
@@ -1425,7 +1626,9 @@ mod tests {
         std::fs::create_dir_all(&storage.file_history_dir).unwrap();
         let history = storage.file_history_dir.join("owned-history");
         std::fs::write(&history, b"history bytes").unwrap();
-        let lease = transcript_locks::cold_write_lease(&storage.transcript_path).unwrap();
+        let lease = transcript_locks::cold_write_lease(&storage.transcript_path)
+            .unwrap()
+            .unwrap();
         let params = object([("sessionKey", JsValue::String(key))]);
         let error = requests.session_delete(&params).await.unwrap_err();
         assert_eq!(error.code.as_str(), "SESSION_WRITER_BUSY");

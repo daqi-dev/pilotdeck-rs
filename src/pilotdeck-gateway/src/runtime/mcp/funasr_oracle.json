@@ -1,0 +1,395 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "source": "src/extension/plugins/builtin/funasr/funasr-local-mcp.mjs",
+  "sourceSha256": "c6996290437c7084d34a7d62f5425a6e854e5d93dc72bc94371110aece477cb7",
+  "versions": {
+    "node": "22.22.0",
+    "acorn": "8.15.0",
+    "ada": "2.9.2",
+    "amaro": "1.1.4",
+    "ares": "1.34.6",
+    "brotli": "1.1.0",
+    "cjs_module_lexer": "2.1.0",
+    "cldr": "48.0",
+    "icu": "78.2",
+    "llhttp": "9.3.0",
+    "modules": "127",
+    "napi": "10",
+    "nbytes": "0.1.1",
+    "ncrypto": "0.0.1",
+    "nghttp2": "1.64.0",
+    "openssl": "3.5.4",
+    "simdjson": "3.13.0",
+    "simdutf": "6.4.2",
+    "sqlite": "3.50.4",
+    "tz": "2025c",
+    "undici": "6.23.0",
+    "unicode": "17.0",
+    "uv": "1.52.1",
+    "uvwasi": "0.0.23",
+    "v8": "12.4.254.21-node.33",
+    "zlib": "1.3.1-470d3a2",
+    "zstd": "1.5.7"
+  },
+  "cases": [
+    {
+      "case": "initialize",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "2025-03-26"
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "protocolVersion": "2025-03-26",
+          "capabilities": {
+            "tools": {}
+          },
+          "serverInfo": {
+            "name": "pilotdeck-funasr-local",
+            "version": "0.2.0"
+          },
+          "instructions": "Use transcribe_audio only with an audio path inside the active PilotDeck project."
+        }
+      }
+    },
+    {
+      "case": "tools-list",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list"
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "tools": [
+            {
+              "name": "transcribe_audio",
+              "description": "Transcribe a project-local audio file with the local FunASR SenseVoice runtime. Returns transcript text and timestamped segments.",
+              "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "audio_path"
+                ],
+                "properties": {
+                  "audio_path": {
+                    "type": "string",
+                    "description": "Absolute or project-relative path to an audio file inside the current project."
+                  },
+                  "language": {
+                    "type": "string",
+                    "enum": [
+                      "auto"
+                    ],
+                    "default": "auto",
+                    "description": "SenseVoice local CLI detects language automatically."
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "case": "success",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "transcribe_audio",
+          "arguments": {
+            "audio_path": "audio.wav"
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "hello world\n\nTimestamped segments:\n[1.250 - 2.500] hello world"
+            }
+          ],
+          "structuredContent": {
+            "text": "hello world",
+            "segments": [
+              {
+                "start": 1.25,
+                "end": 2.5,
+                "text": "hello world"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "case": "language-before-path",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "transcribe_audio",
+          "arguments": {
+            "language": null
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "language only supports \"auto\" for the local SenseVoice runtime."
+            }
+          ],
+          "isError": true
+        }
+      }
+    },
+    {
+      "case": "escape",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "transcribe_audio",
+          "arguments": {
+            "audio_path": "escape.wav"
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "audio_path must resolve inside the current project root"
+            }
+          ],
+          "isError": true
+        }
+      }
+    },
+    {
+      "case": "missing-file",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "transcribe_audio",
+          "arguments": {
+            "audio_path": "missing.wav"
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "audio file does not exist or is inaccessible: missing.wav"
+            }
+          ],
+          "isError": true
+        }
+      }
+    },
+    {
+      "case": "url",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "transcribe_audio",
+          "arguments": {
+            "audio_path": "https://invalid.example/audio.wav"
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "audio_path must be a local project file, not a URL"
+            }
+          ],
+          "isError": true
+        }
+      }
+    },
+    {
+      "case": "exit-error",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "transcribe_audio",
+          "arguments": {
+            "audio_path": "audio.wav"
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "FunASR transcription failed (exit 9): real mock diagnostic"
+            }
+          ],
+          "isError": true
+        }
+      }
+    },
+    {
+      "case": "empty-srt",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "transcribe_audio",
+          "arguments": {
+            "audio_path": "audio.wav"
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "FunASR completed but did not produce SRT segments. empty diagnostic"
+            }
+          ],
+          "isError": true
+        }
+      }
+    },
+    {
+      "case": "no-runtime-precedes-language",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "transcribe_audio",
+          "arguments": {
+            "language": "bad"
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "FunASR local runtime is not configured. Run mock install, then retry this tool."
+            }
+          ],
+          "isError": true
+        }
+      }
+    },
+    {
+      "case": "unknown-tool",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "bad"
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Unknown tool: bad"
+            }
+          ],
+          "isError": true
+        }
+      }
+    },
+    {
+      "case": "unknown-method",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "ping"
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "error": {
+          "code": -32601,
+          "message": "Method not found: ping"
+        }
+      }
+    },
+    {
+      "case": "missing-model",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "transcribe_audio",
+          "arguments": {
+            "audio_path": "audio.wav"
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "FunASR local runtime or models are not installed. Run mock install, then retry mcp__funasr__transcribe_audio in this session."
+            }
+          ],
+          "isError": true
+        }
+      }
+    }
+  ]
+}

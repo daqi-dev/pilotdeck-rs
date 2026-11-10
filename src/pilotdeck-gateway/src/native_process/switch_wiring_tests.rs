@@ -20,7 +20,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    sync::watch,
+    sync::{oneshot, watch},
     time::timeout,
 };
 
@@ -831,4 +831,117 @@ async fn a_panicking_runner_halts_and_the_death_march_returns() {
             "#2351 post-halt walk preserves the failed drain verdict"
         );
     }
+}
+
+/// #2557: the final-cancellation cell — the walk itself is `finish()`'s
+/// first and only caller, the close half spends the whole shared deadline
+/// (the hanging channel stop), and the first finish's single poll parks
+/// inside the close-notice window (the partial-head survivor holds its
+/// join), so the already-elapsed deadline cuts it there, before the request
+/// below the window ever fires. The walk's timeout branch must re-issue the
+/// host teardown request itself: the process exits when the walk returns
+/// and no revisit is coming, so without the re-issue the only request left
+/// is the unawaited `StopHost` drop one.
+///
+/// Real clock: the close half really burns the entries backstop (drain
+/// budget + `BACKSTOP_SLACK_MS`) off the shared deadline, and the host
+/// thread's cross-thread `entered` wake must race no virtual clock. The
+/// construction is inline (like the #2351 walk's) because the test holds
+/// its own `Arc<PhasedRun>` for the revisit probe.
+#[tokio::test]
+async fn the_final_cancellation_cell_still_requests_the_host_teardown() {
+    let (entered, entered_rx) = oneshot::channel::<()>();
+    let (release, release_rx) = oneshot::channel::<()>();
+    let host = native_ws_fixture_with_cleanup(Arc::new(WiringRequests), async move {
+        let _ = entered.send(());
+        let _ = release_rx.await;
+        Ok(())
+    });
+    let home = Scratch::new("2557-final-cancellation");
+    let server = NativeWsServer::bind(
+        "127.0.0.1:0".parse().expect("#2557 cell listen address"),
+        host,
+        "fixture-token".into(),
+        "probe".into(),
+    )
+    .await
+    .expect("#2557 cell binds a real WS server");
+    let address = server.local_addr().expect("#2557 cell address");
+    let channels = Arc::new(NativeChannels::new(NativeChannelsOptions {
+        pilot_home: home.path().to_owned(),
+        config: Arc::new(parse_json("{}").expect("#2557 cell config JSON")),
+        endpoints: Default::default(),
+        weixin: crate::channel::weixin::WeixinChannelOptions::default(),
+        weixin_maker: None,
+        feishu: crate::channel::feishu::FeishuOptions::default(),
+        log: None,
+        report_status: None,
+        close_host: None,
+    }));
+    channels
+        .server()
+        .hot_start_channel(Arc::new(HangingChannel {
+            key: crate::channel::protocol::ChannelKey::new("hanging"),
+        }))
+        .await
+        .expect("#2557 cell hanging channel starts");
+    let (trigger, trigger_rx) = watch::channel(false);
+    let phased = Arc::new(server.run_phased(trigger_stop(trigger_rx), Duration::from_millis(150)));
+    let faces = ProductionFaces::new(None, AdmissionGate::new(channels, trigger), phased.clone());
+    let mut survivor = TcpStream::connect(address)
+        .await
+        .expect("#2557 survivor connect");
+    survivor
+        .write_all(b"GET /ws HTTP/1.1\r\n")
+        .await
+        .expect("#2557 survivor partial head write");
+    // The accept-loop barrier (the #749 shape): a completed handshake
+    // behind the survivor proves the survivor's task is already in the
+    // connections set, so the entry drain below is really held open by it.
+    drop(RawClient::connect(address).await);
+    // The walk: the entry drain expires on the survivor, the hanging
+    // channel stop burns the whole shared deadline, and the first finish
+    // is cut inside the close-notice window by the same elapsed deadline.
+    let teardown = faces.finish_after_halt().await;
+    // The close half also reported, pinning that the deadline really was
+    // spent by the close join rather than left for the finish to run in.
+    let teardown = teardown.expect_err("#2557 the double-cut walk reports failures");
+    assert!(
+        teardown
+            .to_string()
+            .contains("channel close: exceeded the halt close bound"),
+        "#2557 the close half burned the shared deadline, got {teardown}"
+    );
+    // The owner-finish string is the cell itself: the first finish was cut
+    // mid-body by the deadline, it did not complete with a verdict of its
+    // own (a host-shutdown drain failure would read differently).
+    assert!(
+        teardown
+            .to_string()
+            .contains("owner finish: exceeded the halt owner bound"),
+        "#2557 the finish half was cut by the shared deadline, got {teardown}"
+    );
+    // The re-issue: `faces` and the local `phased` clone are both held
+    // here, so `StopHost`'s drop request has not fired and cannot be the
+    // source — the only request this cell can produce is the walk's own
+    // timeout-branch re-issue. The negative-control anchor
+    // (`switch-halt-owner-skip-reissue` skips it): with the re-issue gone,
+    // no request goes out and the signal never comes.
+    negative_assert!(
+        matches!(timeout(DEADLINE, entered_rx).await, Ok(Ok(()))),
+        "#2557 the final walk re-issues the host teardown request"
+    );
+    // The revisit (a caller after the walk — the test itself) observes the
+    // interrupted verdict, pinning that the cut finish had started: its
+    // single poll set the in-progress marker before the window join.
+    let verdict = timeout(DEADLINE, phased.finish())
+        .await
+        .expect("#2557 the revisit is bounded");
+    negative_assert!(
+        matches!(&verdict, Err(error) if error.to_string()
+            .contains("native WS owner finish was interrupted")),
+        "#2557 the revisit observes the interrupted verdict"
+    );
+    release.send(()).expect("#2557 cleanup release");
+    drop(survivor);
 }

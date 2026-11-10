@@ -725,6 +725,34 @@ mod tests {
         assert!(!cases.is_empty(), "#2140 probe records locales");
         for case in cases {
             let lang = case["lang"].as_str().expect("#2140 probe case lang");
+            // #2170: audit the recorded `resolved` against the row's language
+            // subtag before replaying the pairs, so a corrupted locale column
+            // cannot pass silently.
+            let resolved = case["resolved"]
+                .as_str()
+                .expect("#2170 probe case resolved");
+            let language = lang.split(['.', '@', '_']).next().unwrap_or("");
+            // #2170 (minimax boundary#1): `starts_with("")` is always true, so
+            // a row without a language subtag would audit as vacuously fine.
+            assert!(
+                !language.is_empty(),
+                "#2170 {lang}: probe row needs a language subtag"
+            );
+            // #2170 fix-r5 (DS boundary#2): compare the leading resolved
+            // subtag by equality, not by prefix — a prefix comparison lets
+            // a first subtag that merely starts with the language through
+            // (e.g. a corrupted `frr-FR` column vs language `fr`; the
+            // paired mutation `probe-resolved-prefix-poisoned` pins this).
+            // The product `collator()` maps `C`/`POSIX` to `en-US`
+            // (skills.rs `collator`), so those languages expect `en`.
+            let expected_language = match language {
+                "C" | "POSIX" => "en",
+                other => other,
+            };
+            assert!(
+                resolved.split('-').next() == Some(expected_language),
+                "#2170 {lang}: resolved {resolved:?} keeps the row language {language:?}"
+            );
             let collator = collator(&Env::from_pairs(&[("LANG", lang), ("LC_ALL", lang)]))
                 .expect("#2140 probe collator loads");
             let pairs = case["pairs"].as_array().expect("#2140 probe case pairs");

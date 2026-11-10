@@ -61,6 +61,13 @@ struct Handler {
     /// Test gate for gated-event: the first non-final event waits here.
     event_gate: Arc<Notify>,
     gated_event: bool,
+    /// Wall clock when the handler's final-event callback ran. Anchors the
+    /// #1891 post-terminal cleanup bound at the peer's last frame: everything
+    /// the bound measures (finish_terminal → close → dispose → receipt poll)
+    /// happens after it, so the granted spawn/execution margins cannot trip
+    /// it. First writer wins; a second final is a protocol violation the
+    /// surrounding assertions own.
+    final_at: std::sync::OnceLock<std::time::Instant>,
 }
 impl Handler {
     fn new(mode: &str) -> Arc<Self> {
@@ -100,6 +107,7 @@ impl Handler {
             large_response: mode == "response-byte-limit",
             event_gate: Arc::new(Notify::new()),
             gated_event: mode == "gated-event",
+            final_at: std::sync::OnceLock::new(),
         })
     }
 }
@@ -145,6 +153,9 @@ impl HostHandler for Handler {
             cancel.cancel(Some(self.cancel_reason.clone()));
             cancel.cancel(Some("ignored-second-reason".into()));
         }
+        if event.get("final").and_then(JsValue::as_bool) == Some(true) {
+            let _ = self.final_at.set(std::time::Instant::now());
+        }
         let never = self.event_never;
         let applied = self.applied_events.clone();
         self.events.fetch_add(1, Ordering::SeqCst);
@@ -183,17 +194,30 @@ impl Drop for ActiveCall {
 
 fn limits() -> Limits {
     Limits {
-        handshake_timeout: Duration::from_secs(2),
-        execution_timeout: Some(Duration::from_secs(2)),
+        // #1891: liveness margins, not limits under test — every spawn here is
+        // a real Python fixture, and the old 2 s handshake / 2 s execution were
+        // wall-clock bets on host scheduling (the same source #978 measured
+        // reddening on a host running eight concurrent lib suites; this file's
+        // own #230 notes already recorded loaded-CI 2 s failures). The
+        // deadline-pinning tests below override these fields explicitly, so
+        // only the protocol-flow consumers see the margin, and no assertion or
+        // error kind changes: a fixture that truly hangs still reds.
+        handshake_timeout: Duration::from_secs(60),
+        execution_timeout: Some(Duration::from_secs(60)),
         close_timeout: Duration::from_secs(1),
+        // fix-r1 (#1891 review): `io_timeout` covers the flush-side write wait
+        // on the same real child (`connection.rs`), the exact path the #978
+        // loaded-host reddening ran through, so it joins the same margin
+        // instead of inheriting the 5 s default.
+        io_timeout: Duration::from_secs(60),
         ..Limits::default()
     }
 }
 // Protocol assertions should not race Python startup/IO on a loaded CI worker.
+// #1891: same-source sibling of `limits()` above, so its clocks carry the same
+// margins; `close_timeout` is the only field that differs (#542-era 5 s).
 fn protocol_limits() -> Limits {
     Limits {
-        handshake_timeout: Duration::from_secs(5),
-        execution_timeout: Some(Duration::from_secs(10)),
         close_timeout: Duration::from_secs(5),
         ..limits()
     }
@@ -219,7 +243,11 @@ impl Drop for ManualClock {
     }
 }
 async fn wait_for_event(label: &str, ready: impl Fn() -> bool) {
-    let watchdog = std::time::Instant::now() + Duration::from_secs(10);
+    // #1891 fix-r1: the waited-on conditions are fixture-file writes and other
+    // real-peer progress, so the anti-hang bound must not become a tighter
+    // ceiling than the liveness margins the callers grant (a loaded host that
+    // legitimately takes tens of seconds to publish must still pass).
+    let watchdog = std::time::Instant::now() + Duration::from_secs(60);
     while !ready() {
         assert!(
             std::time::Instant::now() < watchdog,
@@ -233,8 +261,11 @@ impl Receipt {
     fn assert_pass(&self, mode: &str) {
         // The peer writes this after the host closes its stdin, so it may still be
         // in flight when the result arrives (#230); wait briefly before judging.
+        // #1891 fix-r2: the write is a real-peer round trip in flight, so the
+        // poll window joins the liveness margins instead of racing loaded-CI
+        // scheduling (the old 5 s was the same bet fix-r1 removed elsewhere).
         let expected = format!("PASS {mode}\n");
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
         let mut text = std::fs::read_to_string(&self.0).unwrap_or_default();
         while text != expected && std::time::Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
@@ -309,14 +340,18 @@ fn request() -> ExecuteRequest {
         operation_deadline: None,
     }
 }
-async fn run(mode: &str) -> Result<ExecuteResult, HostError> {
+async fn run(mode: &str) -> (Result<ExecuteResult, HostError>, Arc<Handler>) {
+    let handler = Handler::new(mode);
     let (mut command, receipt) = peer(mode);
-    let client = HostClient::spawn(&mut command, Some(&"fixture".into()), limits()).await?;
-    let result = client.execute(request(), Handler::new(mode)).await;
+    let client = match HostClient::spawn(&mut command, Some(&"fixture".into()), limits()).await {
+        Ok(client) => client,
+        Err(error) => return (Err(error), handler),
+    };
+    let result = client.execute(request(), handler.clone()).await;
     if result.is_ok() {
         receipt.assert_pass(mode);
     }
-    result
+    (result, handler)
 }
 
 #[tokio::test]
@@ -334,20 +369,46 @@ async fn handshake_execute_ack_and_terminal() {
         "rejected",
         "cleanup-hang",
     ] {
-        let started = Instant::now();
-        let result = run(mode).await.unwrap_or_else(|e| panic!("{mode}: {e}"));
+        // #1891: receipt-wired run failure; the failure point and the
+        // pass/fail condition are unchanged — the label only makes the
+        // negative-control shrink mutant observable by name. fix-r2 (review
+        // P1-1): the label is the row-table literal `negative_receipt`
+        // matches byte-for-byte; the mode rides inside the error payload,
+        // not the assertion text.
+        let (run_result, handler) = run(mode).await;
+        let result = crate::test_negative_receipt::expect_ok(
+            run_result.map_err(|error| format!("{mode}: {error:?}")),
+            "#1891 host fixture run failed",
+        );
         assert_eq!(
             matches!(result, ExecuteResult::Rejected(_)),
-            mode == "rejected"
+            mode == "rejected",
+            "{mode}: terminal/rejected shape"
         );
         // Protocol semantics, not a timing race: the bound only guards the
-        // unbounded-cleanup regression (the peer's own hang is a 60 s sleep).
-        // The elapsed span covers Python startup and the peer round trips, so
-        // it must tolerate a loaded CI worker instead of racing it (#308).
-        assert!(
-            started.elapsed() < Duration::from_secs(10),
-            "unbounded cleanup: {mode}"
-        );
+        // unbounded-cleanup regression (the peer's own hang is a 60 s sleep,
+        // `fixture.py` cleanup-hang), so it must stay strictly below that
+        // 60 s hang — but it must also stay looser than the clocks the same
+        // run grants. fix-r2 (review P1-2): fix-r1 measured from before
+        // run(), so the granted 60 s handshake margin could legally trip the
+        // 30 s bound on a loaded host. The bound now applies to cleanup-hang
+        // only (the one mode with a hanging peer) and is anchored at the
+        // handler's final-event callback — the peer's last frame. The span
+        // it measures (finish_terminal → close → dispose → receipt poll) is
+        // granted close_timeout (1 s) plus the 60 s receipt poll, both far
+        // below 30 s when healthy, while a cleanup that waited on the
+        // peer's 60 s sleep completes past it. The other ten modes hang no
+        // peer; their anti-hang bound is the suite's terminate-after.
+        if mode == "cleanup-hang" {
+            let anchored = handler
+                .final_at
+                .get()
+                .expect("#1891 cleanup-hang terminal reached the handler");
+            assert!(
+                anchored.elapsed() < Duration::from_secs(30),
+                "unbounded cleanup: {mode}"
+            );
+        }
         println!("HOST_PASS {mode}");
     }
 }
@@ -387,7 +448,7 @@ async fn cancelled_and_failed_terminal_results_are_accepted() {
         ("failed-error", "failed", "error"),
         ("failed-max-turns", "failed", "max_turns"),
     ] {
-        let ExecuteResult::Terminal(event) = run(mode).await.unwrap() else {
+        let ExecuteResult::Terminal(event) = run(mode).await.0.unwrap() else {
             panic!("expected terminal: {mode}");
         };
         assert!(text_is(event.get("outcome"), outcome), "{mode}");
@@ -445,7 +506,7 @@ async fn four_required_negative_controls() {
             "before execute reached a terminal",
         ),
     ] {
-        let error = run(mode).await.expect_err(mode);
+        let error = run(mode).await.0.expect_err(mode);
         assert_eq!(error.kind, kind, "{mode}: {error}");
         assert_eq!(error.accepted, accepted, "{mode}: {error}");
         assert!(error.message.contains(reason), "{mode}: {error}");
@@ -468,7 +529,7 @@ async fn handshake_and_execute_correlation_negative_controls() {
         ("rejected-error-message", "controlled failure message"),
         ("rejected-unknown", "unknown error"),
     ] {
-        let error = run(mode).await.expect_err(mode);
+        let error = run(mode).await.0.expect_err(mode);
         assert_eq!(error.kind, HostErrorKind::Protocol, "{mode}: {error}");
         assert!(!error.accepted, "{mode}: {error}");
         assert!(error.message.contains(reason), "{mode}: {error}");
@@ -505,7 +566,9 @@ async fn unknown_fixture_mode_fails_immediately() {
     let _stdin = child.stdin.take().unwrap();
     // The watchdog only prevents a hang; the fixture must merely start Python
     // and exit before reading hello, which is machine-speed dependent (#308).
-    let output = timeout(Duration::from_secs(5), child.wait_with_output())
+    // fix-r1 (#1891): a cold interpreter start is exactly the loaded-host
+    // stall the liveness margins cover, so it gets the same 60 s headroom.
+    let output = timeout(Duration::from_secs(60), child.wait_with_output())
         .await
         .unwrap()
         .unwrap();
@@ -641,7 +704,7 @@ async fn invalid_frames_sequences_and_terminal_never_succeed() {
         ("no-streaming", "streaming execute"),
         ("malformed", "Malformed NDJSON"),
     ] {
-        let error = run(mode).await.expect_err(mode);
+        let error = run(mode).await.0.expect_err(mode);
         assert!(error.message.contains(reason), "{mode}: {error}");
         println!("HOST_REJECT {mode}: {error}");
     }
@@ -666,12 +729,19 @@ async fn callbacks_do_not_block_input_or_run_twice() {
         println!("HOST_PASS {mode}");
     }
     let started = Instant::now();
-    let error = run("callback-disconnect").await.unwrap_err();
+    let error = run("callback-disconnect").await.0.unwrap_err();
     assert_eq!(error.kind, HostErrorKind::Disconnected);
     // The kind above is the oracle (an execution timeout would surface as
     // Timeout); this wall bound only guards gross hangs, so it must not race
-    // Python startup on a loaded CI worker (#308).
-    assert!(error.accepted && started.elapsed() < Duration::from_secs(5));
+    // Python startup on a loaded CI worker (#308). fix-r1 (#1891): kept
+    // strictly looser than the `limits()` margins the same spawn grants.
+    // fix-r2 (review P2): the span includes the spawn, so the bound must
+    // cover the granted handshake 60 s + execution 60 s plus teardown — the
+    // 70 s form re-tightened it to "handshake plus 10 s".
+    assert!(
+        error.accepted && started.elapsed() < Duration::from_secs(130),
+        "callback-disconnect span: {error}"
+    );
     println!("HOST_REJECT callback-disconnect: {error}");
 }
 #[tokio::test]
@@ -719,9 +789,20 @@ async fn default_execution_timeout_is_unbounded_past_former_watchdog() {
     let mode = "gated-event";
     let handler = Handler::new(mode);
     let (mut command, receipt) = peer("positive");
-    let client = HostClient::spawn(&mut command, None, Limits::default())
-        .await
-        .unwrap();
+    // #1891 fix-r1: the peer is the real `fixture.py`, so the startup-side
+    // clocks get the liveness margin; `execution_timeout` stays `None` because
+    // the unbounded default is the very behavior under test.
+    let client = HostClient::spawn(
+        &mut command,
+        None,
+        Limits {
+            handshake_timeout: Duration::from_secs(60),
+            io_timeout: Duration::from_secs(60),
+            ..Limits::default()
+        },
+    )
+    .await
+    .unwrap();
     let clock = ManualClock::start();
     let task = tokio::spawn(client.execute(request(), handler.clone()));
     wait_for_event("first event blocked in handler", || {
@@ -740,7 +821,9 @@ async fn default_execution_timeout_is_unbounded_past_former_watchdog() {
     );
     handler.event_gate.notify_one();
     drop(clock);
-    let result = timeout(Duration::from_secs(10), task)
+    // #1891 fix-r1: strictly looser than the 60 s liveness margins granted
+    // above, so a loaded host decides the result, not this watchdog.
+    let result = timeout(Duration::from_secs(70), task)
         .await
         .expect("unbounded execution did not resume after releasing the event")
         .unwrap()
@@ -768,7 +851,14 @@ async fn cancellation_without_terminal_exits_within_post_cancel_deadline() {
         ),
     ] {
         let (mut command, receipt) = peer(mode);
-        let limits = Limits::default();
+        // #1891 fix-r1: same real-`fixture.py` spawn as the siblings above,
+        // so the startup-side clocks get the margin; the post-cancel deadline
+        // under test is virtual-clock driven and unaffected.
+        let limits = Limits {
+            handshake_timeout: Duration::from_secs(60),
+            io_timeout: Duration::from_secs(60),
+            ..Limits::default()
+        };
         let deadline = POST_CANCEL_EXIT_TIMEOUT;
         let client = HostClient::spawn(&mut command, None, limits).await.unwrap();
         let pid = client.connection.pid().expect("owned peer pid");
@@ -824,7 +914,9 @@ async fn cancellation_without_terminal_exits_within_post_cancel_deadline() {
         .await;
         std::fs::write(receipt.0.with_extension("close-release"), b"release").unwrap();
         drop(clock);
-        let error = timeout(Duration::from_secs(10), task)
+        // #1891 fix-r1: strictly looser than the 60 s margins granted above;
+        // the settle spans the peer's close handshake on a loaded host.
+        let error = timeout(Duration::from_secs(70), task)
             .await
             .unwrap_or_else(|_| panic!("{mode}: cancellation waited past its bounded exit"))
             .unwrap()
@@ -852,9 +944,19 @@ async fn cancellation_without_terminal_exits_within_post_cancel_deadline() {
 async fn late_terminal_after_cancel_wins_over_post_cancel_deadline() {
     let mode = "host-cancel-late-terminal";
     let (mut command, receipt) = peer(mode);
-    let client = HostClient::spawn(&mut command, None, Limits::default())
-        .await
-        .unwrap();
+    // #1891 fix-r1: real `fixture.py` peer — the startup-side clocks get the
+    // liveness margin, the post-cancel deadline under test is virtual.
+    let client = HostClient::spawn(
+        &mut command,
+        None,
+        Limits {
+            handshake_timeout: Duration::from_secs(60),
+            io_timeout: Duration::from_secs(60),
+            ..Limits::default()
+        },
+    )
+    .await
+    .unwrap();
     let cancellation = Cancellation::default();
     let handler = Handler::new(mode);
     let clock = ManualClock::start();
@@ -882,24 +984,26 @@ async fn late_terminal_after_cancel_wins_over_post_cancel_deadline() {
     );
     std::fs::write(receipt.0.with_extension("release"), b"release\n").unwrap();
     // If the bound is too short, the cancelled execute returns Timeout before
-    // the peer's 3 s terminal can be applied. Poll briefly, then resume the
-    // clock (child shutdown needs it) and report the actual settle result
-    // instead of a bare watchdog.
-    let watchdog = std::time::Instant::now() + Duration::from_secs(5);
+    // the peer's 3 s terminal can be applied. Poll first (the peer has to
+    // notice the release file, a real round trip — #1891 fix-r1 gives it the
+    // liveness margin), then resume the clock (child shutdown needs it) and
+    // report the actual settle result instead of a bare watchdog.
+    let watchdog = std::time::Instant::now() + Duration::from_secs(60);
     while handler.applied_events.load(Ordering::SeqCst) != 2 && std::time::Instant::now() < watchdog
     {
         tokio::task::yield_now().await;
     }
     drop(clock);
     if handler.applied_events.load(Ordering::SeqCst) != 2 {
-        let outcome = timeout(Duration::from_secs(10), task)
+        let outcome = timeout(Duration::from_secs(70), task)
             .await
             .expect("cancelled execute did not settle after the late terminal");
         panic!(
             "{mode}: cancelled execute settled as {outcome:?} instead of applying the 3 s terminal"
         );
     }
-    let result = timeout(Duration::from_secs(10), task)
+    // #1891 fix-r1: strictly looser than the 60 s margins granted above.
+    let result = timeout(Duration::from_secs(70), task)
         .await
         .expect("late terminal did not win over the post-cancel exit deadline")
         .unwrap()
@@ -984,7 +1088,10 @@ async fn dropped_execute_reaps_child_and_aborts_callback() {
     let task = tokio::spawn(client.execute(request(), handler.clone()));
     // The callback start is a round trip through the Python peer, so it is
     // machine-speed dependent; the watchdog must not race CI load (#308).
-    timeout(Duration::from_secs(5), async {
+    // fix-r1 (#1891): given the same 60 s liveness shape as the first-byte
+    // class — the bound below, by contrast, waits only on the aborted task's
+    // in-process Drop, which is pure scheduler work.
+    timeout(Duration::from_secs(60), async {
         while handler.active_calls.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
         }
@@ -1170,12 +1277,15 @@ async fn unbounded_execution_and_maximum_terminal_drain_do_not_panic() {
         let client = HostClient::spawn(&mut command, None, bounded)
             .await
             .unwrap();
-        // The watchdog must stay strictly looser than the limits this test
-        // grants: variant 2 still allows a legal 2 s execution, and a peer
-        // using that time would otherwise be cut off by the outer bound with
-        // an ambiguous timeout instead of the limit under test (#308).
+        // The watchdog must stay strictly looser than the clocks this test
+        // grants: both variants keep `limits()`' 60 s handshake, and variant 2
+        // a legal 60 s execution (#1891), so a peer spending both legitimately
+        // must not be cut off with an ambiguous timeout instead of the limit
+        // under test (#308). The unbounded fields under test (None / MAX) are
+        // covered by the fixture's own self-termination, not by this bound.
+        // fix-r1: 70 s covered only one of the two 60 s clocks.
         let result = timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(130),
             client.execute(request(), Handler::new("positive")),
         )
         .await
@@ -1585,10 +1695,10 @@ async fn cancel_disconnect_and_timeout_preserve_unknown_progress() {
             Some(handler.applied_events.load(Ordering::SeqCst) as f64 - 1.0)
         );
     }
-    let error = run("disconnect").await.unwrap_err();
+    let error = run("disconnect").await.0.unwrap_err();
     assert_eq!(error.last_applied_sequence, Some(-1.0));
     assert_eq!(error.stream_id, Some("stream".into()));
-    let error = run("rejected-nonfinal").await.unwrap_err();
+    let error = run("rejected-nonfinal").await.0.unwrap_err();
     assert_eq!(error.last_applied_sequence, None);
     assert_eq!(error.stream_id, None);
 }

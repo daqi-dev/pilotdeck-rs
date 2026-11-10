@@ -214,8 +214,7 @@ def main():
         result = run_controls(args.source)
     except (OSError, ValueError, TypeError, KeyError) as error:
         result = {'ok': False, 'negative_controls': False, 'both_broken': False, 'error': str(error)}
-    args.json.parent.mkdir(parents=True, exist_ok=True)
-    args.json.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')
+    G.write_result_exclusive(args.json, json.dumps(result, ensure_ascii=False, indent=2) + '\n')
     print(json.dumps(result, ensure_ascii=False))
     return 0 if result['ok'] else 1
 

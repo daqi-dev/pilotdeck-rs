@@ -5,13 +5,16 @@ Run after the coordinator commits the patch. This script deliberately refuses
 uncommitted/new sources. The caller supplies CARGO_TARGET_DIR; no alternate
 repository or build directory is created. Use --check-anchors before commit.
 """
+import io
 import os
 from pathlib import Path
 import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                               write_source_atomic)
+from negative_selection import registered, refuse
 from negative_suite import Case, classify, invalidate_completed, passed, publish_summary
 
 root = Path(__file__).resolve().parents[5]
@@ -200,26 +203,155 @@ mutations = [
      'storage::tests::equal_sequence_created_at_keeps_isolated_utf16_weights',
      '#1109 oracle baseline commit mismatch'),
 ]
+# fix-r3 (minimax boundary#3, DS r4b sibling family): the run denominator must
+# be a literal, not `len(mutations)` — a dropped row would silently shrink
+# the run (CLI twin's EXPECTED_NAMES form).
+EXPECTED_NAMES = (
+    'icu-vendor-registration-lost',
+    'icu-test-target-restored',
+    'icu-bench-target-restored',
+    'icu-lib-only-guard-relaxed',
+    'code-unit-order',
+    'replacement-fold',
+    'pua-collision',
+    'catalog-host-remains',
+    'session-host-remains',
+    'valid-pair-split',
+    'french-secondary-forward',
+    'identical-raw-units',
+    'identical-tie-dropped',
+    'french-script-fallback-lost',
+    'french-script-widened',
+    'french-explicit-script-repaired',
+    'archive-host-remains',
+    'transcript-host-remains',
+    'workspace-host-remains',
+    'archive-local-method-lost',
+    'catalog-local-method-lost',
+    'oracle-commit-corrupt',
+    'transcript-oracle-commit-corrupt',
+)
+
+
+def check_roster():
+    try:
+        registered(mutations, EXPECTED_NAMES)
+    except ValueError as error:
+        refuse(str(error))
+
+
+def row_error(name, count, old, new, test, marker):
+    """One validator for BOTH anchor paths (fix-r3, DS r1 sibling#1 /
+    minimax concurrency#1 / boundary#2 / anthropic simplify#1: the run loop
+    used to check only count and old == new, so an empty marker survived
+    into classify(), where `'' in evidence` matches ANY panic -- a kill for
+    the wrong reason)."""
+    if count != 1 or old == new:
+        return f'{name}: stale/invalid anchor: expected=1 actual={count}'
+    if not test or not marker:
+        return f'{name}: empty test or marker binding'
+    return None
+
+
+def check_anchors(rows=None, stdout=None, stderr=None):
+    """Exit non-zero on any expired anchor; an empty manifest never passes.
+
+    fix-r4 (DS fix-r3 concurrency#1 / boundary#1): the table is passed as
+    `rows`, never rewritten in place -- `anchor_selfcheck.py` statically
+    rejects in-place mutation-table updates (clear/slice/element writes),
+    which would turn the repo anchor gate red as a false FAIL."""
+    rows = mutations if rows is None else rows
+    stdout = sys.stdout if stdout is None else stdout
+    stderr = sys.stderr if stderr is None else stderr
+    errors = []
+    # #2170 P3: the count is genuinely deduplicated per (path, old) anchor —
+    # the old "N unique anchors" wording counted table rows.
+    seen, duplicates = set(), []
+    for name, path, old, new, test, marker in rows:
+        key = (str(path), old)
+        if key in seen:
+            duplicates.append(name)
+        seen.add(key)
+        error = row_error(name, path.read_text(encoding='utf-8').count(old),
+                          old, new, test, marker)
+        if error:
+            errors.append(error)
+    for error in errors:
+        print(error, file=stdout)
+    if not rows:
+        # #1364 P0-a form: an empty manifest must never print "0 anchors
+        # checked" and return 0.
+        print('empty mutation manifest; refusing to pass', file=stderr)
+        return 2
+    print(f'{len(seen)} unique anchors checked ({len(rows)} rows)', file=stdout)
+    if duplicates:
+        print('rows sharing an anchor: ' + ', '.join(duplicates), file=stdout)
+    return int(bool(errors))
+
+
+def self_check():
+    """Negative control for this gate (#1364 P0-a): the empty-manifest and
+    empty-marker fail-closed branches must actually fire.
+
+    fix-r4 (DS fix-r3 concurrency#2 / sibling#6): check_roster() runs first,
+    so the CI `--self-check` entry also pins EXPECTED_NAMES against the
+    shipped table (drift -> rc=2, never silently green)."""
+    if not mutations:
+        print('self-check FAILED: the shipped mutation manifest is empty', file=sys.stderr)
+        return 1
+    check_roster()
+    out, err = io.StringIO(), io.StringIO()
+    status = check_anchors(rows=[], stdout=out, stderr=err)
+    if status == 0:
+        print('self-check FAILED: an empty manifest passed the anchor gate', file=sys.stderr)
+        return 1
+    if 'empty mutation manifest' not in err.getvalue():
+        print('self-check FAILED: empty manifest did not report the explicit error',
+              file=sys.stderr)
+        return 1
+    # The empty-marker arm is bound to ITS message (#2728 lesson: a criterion
+    # that only matches the row name can be satisfied by a stale-anchor
+    # error, passing for the wrong reason). A stale first-row anchor makes
+    # this arm refuse to pass, so the branch can only be verified on a table
+    # whose first anchor is live.
+    blank_row = (*mutations[0][:5], '')
+    out2 = io.StringIO()
+    status2 = check_anchors(rows=[blank_row] + mutations[1:], stdout=out2)
+    if status2 == 0 or 'empty test or marker binding' not in out2.getvalue():
+        print('self-check FAILED: an empty marker binding passed the anchor gate',
+              file=sys.stderr)
+        return 1
+    print(f'self-check: empty manifest fails closed (rc={status}); '
+          f'empty marker binding fails closed (rc={status2}); '
+          f'shipped manifest still has {len(mutations)} anchors: ok')
+    return 0
 
 
 def main():
-    if sys.argv[1:] == ['--check-anchors']:
-        errors = []
-        for name, path, old, new, _test, _marker in mutations:
-            if path.read_text().count(old) != 1 or old == new:
-                errors.append(f'{name}: expired or invalid anchor')
-        print('\n'.join(errors) if errors else f'{len(mutations)} unique anchors checked')
-        return int(bool(errors))
-    args = [a for a in sys.argv[1:] if a != '--compile-only']
-    compile_only = '--compile-only' in sys.argv[1:]
+    args = sys.argv[1:]
+    if args == ['--self-check']:
+        return self_check()
+    if args == ['--check-anchors']:
+        check_roster()
+        return check_anchors()
+    compile_only = '--compile-only' in args
+    args = [a for a in args if a != '--compile-only']
+    # fix-r4 (DS fix-r3 sibling#2 / boundary#2): startup rejections go
+    # through refuse() (rc=2, "never started") like the CLI twin — a string
+    # SystemExit is rc=1 and reads as "ran and did not come out green".
+    for a in args:
+        if a.startswith('-'):
+            refuse(f'#132 unknown option or mode combination: {a}')
     if not args:
-        raise SystemExit('usage: --check-anchors | [--compile-only] NEW_OUTPUT_DIR [mutation ...]')
+        refuse('usage: --check-anchors | --self-check | '
+               '[--compile-only] NEW_OUTPUT_DIR [mutation ...]')
+    check_roster()
     selected = [row for row in mutations if not args[1:] or row[0] in args[1:]]
     if not selected or (args[1:] and len(selected) != len(args[1:])):
-        raise SystemExit('#132 unknown or duplicate mutation')
+        refuse('#132 unknown or duplicate mutation')
     env = dict(os.environ)
     if not env.get('CARGO_TARGET_DIR'):
-        raise SystemExit('#132 caller must supply CARGO_TARGET_DIR')
+        refuse('#132 caller must supply CARGO_TARGET_DIR')
     out = Path(args[0]).resolve()
     out.mkdir(parents=True, exist_ok=False)
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
@@ -252,11 +384,17 @@ def main():
                 arguments = [test, '--', '--exact']
                 try:
                     original = originals[path].decode()
-                    if original.count(old) != 1 or old == new:
-                        raise ValueError('expired or invalid anchor')
+                    # fix-r3: shared validator with check_anchors -- an empty
+                    # marker must refuse HERE too, not only in --check-anchors.
+                    error = row_error(name, original.count(old), old, new, test, marker)
+                    if error:
+                        raise ValueError(error)
                     if not compile_only and not passed(run(name + '-positive', arguments, test), test):
                         raise RuntimeError('positive control did not pass')
-                    path.write_text(original.replace(old, new, 1))
+                    # #1903: a truncating write here would leave a half-file
+                    # on SIGKILL; the rename publish never does.
+                    write_source_atomic(root, path,
+                                        original.replace(old, new, 1).encode())
                     if run(name + '-compile', ['--no-run'], test).returncode != 0:
                         raise RuntimeError('mutant did not compile; never a kill')
                     row['compiled'] = True
@@ -269,7 +407,7 @@ def main():
                 except Exception as error:
                     row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
                 finally:
-                    path.write_bytes(originals[path])
+                    write_source_atomic(root, path, originals[path])
                 try:
                     restored = run(name + '-restored', ['--no-run'] if compile_only else arguments, test)
                     if restored.returncode or (not compile_only and not passed(restored, test)):

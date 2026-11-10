@@ -161,6 +161,16 @@ async fn bounded<T>(future: impl Future<Output = T>) -> T {
 /// sidecar, the same measurement put all of them under 10 ms, and widening
 /// them would only make a hung mailbox or disposer take six times longer to
 /// surface (#978 second review).
+///
+/// #1891: the same margin now also wraps the sibling peer-fixture tests in
+/// this file (the live-session / reload / retire / dispose-cancel / paused
+/// cleanup / spawn tests' peer-driven `turn.next()` frames, the child-exit
+/// awaits of `wait_disposed`/final `registry.dispose()`, and `drive_to_peer`'s
+/// pid-publication phase) and their `factory()`/`TurnHostFactory::new`
+/// `Limits` — the same source #978 measured, previously left at the defaults.
+/// Awaits that only observe in-process state (reload/retire transitions,
+/// never-spawned commands, steer mailbox probes) deliberately keep the
+/// shared 10 s bound; each keep is exempted in the #1891 result table.
 const SIDECAR_LIVENESS: Duration = Duration::from_secs(60);
 
 /// #2054: the `steer-insert` case watches the transcript while the host is
@@ -187,9 +197,16 @@ const STEER_CLOSE_WINDOW: Duration =
 const STEER_CLOSE_STEP: Duration = Duration::from_millis(5);
 
 async fn bounded_liveness<T>(future: impl Future<Output = T>) -> T {
-    timeout(SIDECAR_LIVENESS, future)
-        .await
-        .expect("sidecar liveness wait timed out")
+    match timeout(SIDECAR_LIVENESS, future).await {
+        Ok(value) => value,
+        Err(_elapsed) => {
+            // #1891: receipt-wired watchdog failure; the panic text is the
+            // same expect message, only the negative-control protocol sees
+            // the extra step.
+            crate::test_negative_receipt::record_failure("sidecar liveness wait timed out");
+            panic!("sidecar liveness wait timed out")
+        }
+    }
 }
 // dispose signals cancellation; a detached handler disposer may still own the
 // last lease after the stream ends. Observe release with a deadline rather than
@@ -291,7 +308,19 @@ fn factory(
     TurnHostFactory::new(
         registry,
         deployment,
-        Limits::default(),
+        // #1891: every `factory()` deployment is a real Python sidecar (the
+        // live peer fixtures) or a command that fails before any child exists,
+        // so the product's own per-frame waits carry the #978/#1851 liveness
+        // margin instead of the 10 s handshake / 5 s io defaults — a host
+        // running eight concurrent lib suites starved a peer past the io
+        // default. These are watchdogs, not assertions: a sidecar that truly
+        // hangs or rejects the handshake still fails closed, and the
+        // never-spawned callers never reach the waits at all.
+        Limits {
+            handshake_timeout: SIDECAR_LIVENESS,
+            io_timeout: SIDECAR_LIVENESS,
+            ..Default::default()
+        },
         Some(JsString::from("fixture")),
         move |_, _| ports(context_runtime.clone()),
     )
@@ -657,7 +686,14 @@ async fn live_session_shares_recorder_and_reads_current_history() {
     let session = TurnHostFactory::new(
         registry.clone(),
         peer("success", Some(&pid_file)),
-        Limits::default(),
+        // #1891: same-source sibling of `factory()` above — a real `peer.py`
+        // under `Limits::default()` is the exact shape #978 measured reddening
+        // under load, so this construction gets the same liveness margin.
+        Limits {
+            handshake_timeout: SIDECAR_LIVENESS,
+            io_timeout: SIDECAR_LIVENESS,
+            ..Default::default()
+        },
         Some(JsString::from("fixture")),
         move |_, shared| {
             assert!(
@@ -708,7 +744,7 @@ async fn live_session_shares_recorder_and_reads_current_history() {
             )
             .expect("#741k input fixture setup");
         let mut completed = None;
-        while let Some(event) = bounded(turn.next())
+        while let Some(event) = bounded_liveness(turn.next())
             .await
             .expect("#741k input fixture setup")
         {
@@ -763,7 +799,7 @@ async fn live_session_shares_recorder_and_reads_current_history() {
         assert_peer_reaped(&pid_file).await;
     }
     session.dispose().await.expect("#741k input fixture setup");
-    bounded(registry.dispose())
+    bounded_liveness(registry.dispose())
         .await
         .expect("#741k input fixture setup");
 }
@@ -851,6 +887,9 @@ async fn session_cwd_environment_worker() {
     let session = TurnHostFactory::new(
         registry.clone(),
         deployment,
+        // #1891: exempt on purpose — the composition error returns from
+        // `assemble` before any sidecar spawn, so no wait in this test can
+        // starve on a child; the default limits keep their original meaning.
         Limits::default(),
         Some(JsString::from("fixture")),
         move |_, _| ports_with_tool_results_dir(None, PathBuf::from("../spill")),
@@ -923,7 +962,7 @@ async fn reload_between_turns_uses_new_generation() {
             })
             .unwrap();
         let mut completed = None;
-        while let Some(event) = bounded(turn.next()).await.unwrap() {
+        while let Some(event) = bounded_liveness(turn.next()).await.unwrap() {
             if event.get("type") == Some(&"turn_completed".into()) {
                 completed = Some(event);
             }
@@ -943,7 +982,7 @@ async fn reload_between_turns_uses_new_generation() {
         assert_eq!(current.lease_count(), 0);
     }
     assert_eq!(old.state(), crate::runtime::project::RuntimeState::Disposed);
-    bounded(registry.dispose()).await.unwrap();
+    bounded_liveness(registry.dispose()).await.unwrap();
 }
 
 #[tokio::test]
@@ -961,12 +1000,16 @@ async fn reload_mid_turn_holds_old_lease_until_turn_drops() {
         )
         .unwrap();
     assert_eq!(
-        bounded(turn.next()).await.unwrap().unwrap().get("type"),
+        bounded_liveness(turn.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .get("type"),
         Some(&"turn_started".into())
     );
-    bounded(turn.next()).await.unwrap().unwrap(); // host accepted
+    bounded_liveness(turn.next()).await.unwrap().unwrap(); // host accepted
     assert_eq!(
-        bounded(turn.next())
+        bounded_liveness(turn.next())
             .await
             .expect("#741k user_prompt_submitted event")
             .expect("#741k user_prompt_submitted payload")
@@ -982,12 +1025,12 @@ async fn reload_mid_turn_holds_old_lease_until_turn_drops() {
     drop(turn);
     // The dropped stream releases the execute future; the turn's cleanup
     // releases the lease, and only then may the old generation dispose.
-    bounded(old.wait_disposed()).await.unwrap();
+    bounded_liveness(old.wait_disposed()).await.unwrap();
     assert_peer_reaped(&pid_file).await;
     assert_eq!(old.lease_count(), 0);
     assert_eq!(old.state(), crate::runtime::project::RuntimeState::Disposed);
     assert_ts_lease("after-last-release", 0, 1, "disposed");
-    bounded(registry.dispose()).await.unwrap();
+    bounded_liveness(registry.dispose()).await.unwrap();
 }
 
 #[tokio::test]
@@ -1005,12 +1048,16 @@ async fn retire_does_not_dispose_while_lease_outstanding() {
         )
         .unwrap();
     assert_eq!(
-        bounded(turn.next()).await.unwrap().unwrap().get("type"),
+        bounded_liveness(turn.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .get("type"),
         Some(&"turn_started".into())
     );
-    bounded(turn.next()).await.unwrap().unwrap(); // host accepted
+    bounded_liveness(turn.next()).await.unwrap().unwrap(); // host accepted
     assert_eq!(
-        bounded(turn.next())
+        bounded_liveness(turn.next())
             .await
             .expect("#741k user_prompt_submitted event")
             .expect("#741k user_prompt_submitted payload")
@@ -1037,14 +1084,14 @@ async fn retire_does_not_dispose_while_lease_outstanding() {
     assert_eq!(runtime.lease_count(), 1);
     assert_ts_lease("retire-with-second-lease", 1, 0, "retired");
     drop(turn);
-    bounded(runtime.wait_disposed()).await.unwrap();
+    bounded_liveness(runtime.wait_disposed()).await.unwrap();
     assert_peer_reaped(&pid_file).await;
     assert_eq!(runtime.lease_count(), 0);
     assert_eq!(
         runtime.state(),
         crate::runtime::project::RuntimeState::Disposed
     );
-    bounded(registry.dispose()).await.unwrap();
+    bounded_liveness(registry.dispose()).await.unwrap();
 }
 
 #[tokio::test]
@@ -1090,6 +1137,8 @@ async fn spawn_failure_releases_prepared_retired_generation() {
     let factory = TurnHostFactory::new(
         registry.clone(),
         deployment,
+        // #1891: exempt on purpose — the command is `/nonexistent-pdrs-sidecar`
+        // and fails at spawn, so the handshake/io waits are never entered.
         Limits::default(),
         Some(JsString::from("fixture")),
         move |_, _| {
@@ -1156,10 +1205,10 @@ async fn dispose_cancels_pending_host_creation_and_releases_lease() {
             wire(),
         )
         .unwrap();
-    bounded(turn.next()).await.unwrap().unwrap(); // host started
-    bounded(turn.next()).await.unwrap().unwrap(); // host accepted
+    bounded_liveness(turn.next()).await.unwrap().unwrap(); // host started
+    bounded_liveness(turn.next()).await.unwrap().unwrap(); // host accepted
     assert_eq!(
-        bounded(turn.next())
+        bounded_liveness(turn.next())
             .await
             .expect("#741k user_prompt_submitted event")
             .expect("#741k user_prompt_submitted payload")
@@ -1171,13 +1220,13 @@ async fn dispose_cancels_pending_host_creation_and_releases_lease() {
     session.dispose().await.unwrap();
     // The prepared handler still owns the lease until cancellation is polled.
     assert_eq!(runtime.lease_count(), 1);
-    let event = bounded(pending.as_mut()).await.unwrap().unwrap();
+    let event = bounded_liveness(pending.as_mut()).await.unwrap().unwrap();
     assert_eq!(
         event.get("result").unwrap().get("type"),
         Some(&"aborted".into())
     );
     drop(pending);
-    assert!(bounded(turn.next()).await.unwrap().is_none());
+    assert!(bounded_liveness(turn.next()).await.unwrap().is_none());
     wait_for_lease_release(&runtime)
         .await
         .unwrap_or_else(|_| panic!("host cleanup left {} lease(s)", runtime.lease_count()));
@@ -1244,12 +1293,16 @@ impl PausedHostCleanup {
             )
             .unwrap();
         assert_eq!(
-            bounded(turn.next()).await.unwrap().unwrap().get("type"),
+            bounded_liveness(turn.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .get("type"),
             Some(&"turn_started".into())
         );
-        bounded(turn.next()).await.unwrap().unwrap(); // host accepted
+        bounded_liveness(turn.next()).await.unwrap().unwrap(); // host accepted
         assert_eq!(
-            bounded(turn.next())
+            bounded_liveness(turn.next())
                 .await
                 .expect("#741k user_prompt_submitted event")
                 .expect("#741k user_prompt_submitted payload")
@@ -1259,7 +1312,7 @@ impl PausedHostCleanup {
         drive_to_peer(turn.as_mut(), &pid_file, true).await;
         session.dispose().await.unwrap();
         drop(turn);
-        bounded(entered.notified()).await;
+        bounded_liveness(entered.notified()).await;
         assert_peer_reaped(&pid_file).await;
         assert_eq!(cleanup.runtime.lease_count(), 1, "disposer owns the lease");
         cleanup
@@ -1363,7 +1416,11 @@ async fn drive_to_peer(
     execute: bool,
 ) {
     let mut pending = turn.next();
-    bounded(async {
+    // #1891: the pid-publication (and execute-marker) wait below is the same
+    // sidecar cold-start phase as the #978 command-entry gate — it advances
+    // only when the real Python child makes progress, so it gets the
+    // liveness margin, not the shared in-process 10 s.
+    bounded_liveness(async {
         tokio::select! {
             result = &mut pending => panic!("peer should remain pending: {result:?}"),
             _ = async {

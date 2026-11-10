@@ -37,12 +37,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, Weak};
 
-#[cfg(test)]
-use pilotdeck_protocol::JsString;
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 use crate::runtime::connection::RequestError;
 use crate::runtime::session::factory::WriterLease;
+use pilotdeck_protocol::JsString;
 
 /// Weak entries only: a fence lives as long as some request is holding or
 /// waiting on it, and dead handles are pruned on every acquisition.
@@ -92,12 +91,15 @@ pub(crate) fn ensure_recorder_matches(
 
 /// The session writer lease for a transcript no session owns right now.
 ///
-/// `None` means a session holds it — hydrating (its recorder is not published
+/// `Ok(None)` means a session holds it — hydrating (its recorder is not published
 /// yet) or closing (its writer is already closed) — so a cold append would
 /// fork the sequence chain. Callers must then append through the recorder or
 /// surface the retryable busy error; they must never write cold anyway.
-pub(crate) fn cold_write_lease(transcript_path: &Path) -> Option<WriterLease> {
+pub(crate) fn cold_write_lease(
+    transcript_path: &Path,
+) -> Result<Option<WriterLease>, RequestError> {
     crate::runtime::session::factory::try_writer_lease(transcript_path)
+        .map_err(|error| RequestError::new(error.to_string()))
 }
 
 /// The retryable error a metadata request reports when a session owns the
@@ -110,6 +112,31 @@ pub(crate) fn writer_busy_error() -> crate::runtime::connection::RequestError {
         details: None,
         validation: None,
     }
+}
+
+/// One checked live append, cold lease/restore/append, then a live re-query
+/// on contention. Callers supply the storage factory so their already-resolved
+/// safe directory and bounded store policy are preserved (#1873/#1874).
+pub(crate) fn append_metadata_with_lease(
+    live: impl Fn() -> Result<Option<JsString>, RequestError>,
+    create: impl FnOnce() -> Result<crate::storage::SessionStorage, RequestError>,
+    cold: impl FnOnce(&crate::storage::SessionStorage) -> Result<(), RequestError>,
+) -> Result<Option<JsString>, RequestError> {
+    if let Some(owner) = live()? {
+        return Ok(Some(owner));
+    }
+    let storage = create()?;
+    let Some(_lease) = cold_write_lease(&storage.transcript_path)? else {
+        return live()?.map(Some).ok_or_else(writer_busy_error);
+    };
+    // Preserve the registered restore/probe policy; #2686 tracks probe errors.
+    if matches!(storage.transcript_exists(), Some(Ok(true))) {
+        storage
+            .restore()
+            .map_err(|error| RequestError::new(error.to_string()))?;
+    }
+    cold(&storage)?;
+    Ok(None)
 }
 
 /// Hold the returned guard across the whole read-modify-write of one transcript

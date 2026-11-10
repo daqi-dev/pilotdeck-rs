@@ -76,13 +76,15 @@ STREAM-002 保留 `textErrors(textContent,400)`，增加 `textErrors(innerText,2
 
 边界回源限制：冻结 Gateway `mapModelEvent`（约 :530–543）不投影 message_end，不能声称当前原生链路实际发出了 assistant_stream_end。mock 使用 TurnTimeline 的真实 message_end 边界坐标，覆盖 bridge 已支持的 assistant_stream_end → stream_end 契约；自检明确断言该原生 projector 输出为空，并单独验证边界的 bridge 形状。timeline 的 delta 与 assistant_block 最终块则确实由原生 projector 逐帧对比，前端 `useChatRealtimeHandlers.ts:745–750` 会将它们送入 applyTimelineMessage。
 
-协调者 old8 命令（无需重建旧 Vite 产物；output 必须尚不存在）：
+协调者 old8 命令（无需重建旧 Vite 产物；output 必须尚不存在；按
+`scripts/cli-parity/README.md`「锁被保留时怎么解」节的宿主片段取
+`/tmp/pdrs-parity.lock` 租约并发布 `cleanupPending: true`——本块无墙钟上界、
+不得用短块豁免——释放用该节 trap 形态，`set -eu` 失败路径也走释放；回收与残留同节）：
 
 ```sh
 (
   set -eu
-  mkdir /tmp/pdrs-parity.lock || exit 1
-  trap 'rmdir /tmp/pdrs-parity.lock' EXIT
+  : "${TOKEN:?需要 /tmp/pdrs-parity.lock 租约——先按 scripts/cli-parity/README.md「锁被保留时怎么解」节的宿主片段取锁}"
   node scripts/fe-parity/run.mjs --suite streaming-scroll --frontends old \
     --output _tmp/fe-parity/coordinator-stream-old8
 )
@@ -144,6 +146,8 @@ old=`_build/fe-parity/old`，new=`_build/dist-leptos`（与exp007共同产物形
 
 ## 验证与运行
 
+本文件所有需要 listen / Chrome 的协调者命令块（`--network-self-check`、streaming-scroll、a-class、baseline、skeleton、real 系、coexist、blackbox-deploy 两侧）一律先按 `scripts/cli-parity/README.md`「锁被保留时怎么解」节的宿主片段取 `/tmp/pdrs-parity.lock` 租约并发布 `cleanupPending: true`，释放用该节的 trap 形态（含失败路径）；`--self-check`、`--reconcile` 与 `node --test` 离线项不需要。`run.mjs` 自身不取锁（grep 无 `pdrs-parity`），宿主不预持即无锁；本装置固定端口（28376–28379、28410–28413、28420–28422 等）落在 gateway 系装置允许的 28xxx 区间内，不持租约即有并发撞口面。
+
 ```sh
 # 可在禁止loopback listen的worker沙箱跑，绝不监听/启动Chrome：
 node scripts/fe-parity/run.mjs --self-check
@@ -151,6 +155,9 @@ node scripts/fe-parity/run.mjs --self-check
 node scripts/fe-parity/run.mjs --self-check --rules-only
 # 已构建旧侧时可单独校准其资产：
 node scripts/fe-parity/run.mjs --self-check --frontends old
+# ↓ 以下命令需要 listen/Chrome，未持租约时此处硬失败（不静默无锁运行）；取锁与释放按
+#   cli-parity README「锁被保留时怎么解」节的宿主片段（含 trap 形态释放）：
+: "${TOKEN:?需要 /tmp/pdrs-parity.lock 租约——先按 scripts/cli-parity/README.md「锁被保留时怎么解」节取锁}"
 # 由协调者在可listen环境跑，检查真实静态/HTTP代理/WS upgrade，两入口同mock：
 node scripts/fe-parity/run.mjs --network-self-check
 # 协调者先校准旧侧聊天，再观察新侧真实失败：
@@ -252,13 +259,15 @@ onboarding 是空 providers，无 gateway。其 OpenAI UI 预设 URL 不读 E2E 
 
 离线：`node --test scripts/fe-parity/mock-llm.test.mjs`（14 组正负控制；冻结 native OpenAI parser 验证流式/非流式，冻结 PNG 编码验证 4 色，stub 网络保护，无 listen/Chrome）；`run.mjs --self-check` 同时核对两个 real 配置的实际注册。默认 self-check 仍要求 old/new 资产齐备；只有 old 资产的现场使用 `--self-check --frontends old`；无资产的规则验证使用既有 `--rules-only`。real 浏览器 preflight 不要求 mock-UI 静态 bundle，因为运行只读 Vite dev 源码，而规则/协议/注册检查全部执行。
 
-协调者在沙箱外运行（output 必须尚不存在；无需再提供真实 API key）：
+协调者在沙箱外运行（output 必须尚不存在；无需再提供真实 API key；按
+`scripts/cli-parity/README.md`「锁被保留时怎么解」节的宿主片段取
+`/tmp/pdrs-parity.lock` 租约并发布 `cleanupPending: true`——本块无墙钟上界、
+不得用短块豁免——释放用该节 trap 形态，`set -eu` 失败路径也走释放；回收与残留同节）：
 
 ```sh
 (
   set -eu
-  mkdir /tmp/pdrs-parity.lock || exit 1
-  trap 'rmdir /tmp/pdrs-parity.lock' EXIT
+  : "${TOKEN:?需要 /tmp/pdrs-parity.lock 租约——先按 scripts/cli-parity/README.md「锁被保留时怎么解」节的宿主片段取锁}"
   node scripts/fe-parity/run.mjs --suite real --real-mode all --frontends old \
     --output _tmp/fe-parity/coordinator-real-old5
 )
@@ -478,15 +487,18 @@ runtime 目录为本 worktree `_tmp/fe-parity/deploy-run/run-*/<cell>/`。复用
 
 **StaffDeck BLOCKED 的具体缺项**：PilotDeck 基线仅含接入 profile/协议和 replacement fixture，真实模块来自独立锁定 StaffDeck checkout。回源 `tests/composition/formal-approval-fixture.ts:79–83` 要求 `STAFFDECK_SOP_ROOT` 与匹配 Python；`products/pilotdeck-staffdeck-sop/conformance/run_staffdeck_knowledge_lifecycle.py:28,40–43,47–63,115–131` 使用外部 `app.module_knowledge_app` 和预置种子。基线默认路径 `/Users/a1/.../StaffDeck-portable-sop` 不在本机；本机另有 StaffDeck 目录/venv，但缺这两个所需模块入口，不等价于锁定 runtime。还需真实预置 Knowledge 的 `kb_preset_data_001` / `kb_preset_sales_001` / `kchunk_preset_sales_001`；SOP 原件 `sops/operator-approval.yaml` 已同时包含 `operator_approval` 与 `operator_approval_alternate`，需由隔离真实模块加载，不能误报为缺少定义文件。现入口固定报告 BLOCKED，**不会**接受任意外部服务 URL 或假 Knowledge/SOP 作为替代。人提供锁定源码、已有依赖与种子后还需补其受审计的隔离启动编排；本轮未下载、安装、借用活跃服务或伪造业务结果。这是尚未完成的前提，不是永久降低验收分母。
 
-协调者整块旧侧命令（output 必须新建；当前预期因 StaffDeck 为 BLOCKED 最终 exit 1，保留其余格原始结果）：
+协调者整块旧侧命令（output 必须新建；当前预期因 StaffDeck 为 BLOCKED 最终 exit 1，
+保留其余格原始结果——**正因预期 exit 1，释放必须用 `scripts/cli-parity/README.md`
+「锁被保留时怎么解」节的 trap 形态**，直线释放会被 `set -e` 跳过留下永不自愈的锁；
+取锁同节宿主片段、发布 `cleanupPending: true`，本块无墙钟上界、不得用短块豁免；
+回收与残留同节）：
 
 ```sh
 (
   set -eu
+  : "${TOKEN:?需要 /tmp/pdrs-parity.lock 租约——先按 scripts/cli-parity/README.md「锁被保留时怎么解」节的宿主片段取锁}"
   cd /Users/da/ws/pilotdeck-rs/_build/wt-f2e
   test ! -e _tmp/fe-parity/coordinator-b-old4
-  mkdir /tmp/pdrs-parity.lock || exit 1
-  trap 'rmdir /tmp/pdrs-parity.lock' EXIT
   node scripts/fe-parity/run.mjs --suite blackbox-deploy \
     --profiles staffdeck,minimal,replacement --frontends old \
     --output _tmp/fe-parity/coordinator-b-old4
@@ -549,6 +561,10 @@ runtime 为基线自己的 `createRuntimeSupervisor` **start-built** 模式（se
 离线正控/负控：`node --test scripts/fe-parity/coexist-boundary.test.mjs scripts/fe-parity/coexist-patch.test.mjs scripts/fe-parity/coexist-accounting.test.mjs scripts/fe-parity/coexist-self-check.test.mjs`（无 listen/Chrome）。`coexist-patch.test.mjs` 用 `executeOptionAPatchBranch` **真实执行**部署模板（不再镜像谓词）；`coexist-accounting.test.mjs` 合成 Playwright 报告验证三态（含 P0-1 重复实例、P0-2 新侧三态消费）；`coexist-self-check.test.mjs` 核对 COEXIST_CASES↔spec 注册、C3 快照归属（命名空间 + 跨 storage 搬移/同名遮蔽检出力）、S1/C3 接线、端口守卫顺序、fatal ERROR 与 B 总判分接线，及 `assertCoexistExecutionEnv` 拒绝用例。浏览器级负控按本仓负控规则放 `src/pilotdeck-gateway/tests/fixtures/fe-coexist/negative_controls.py`（声明式 mutations 表，26 变异：boundary 10 + 部署模板 3 + 计分/目录 7 + C3 快照 3 + 接线 3；其中 `active-project-unchecked` / `s1-marker-reverted` 是 spec 源文本接线守卫，非行为检出——浏览器级负控需真实部署；新增文件提交前不在 HEAD，`mutating_sources` 拒跑时由协调者宿主执行）。B 新侧配对：`--suite blackbox-deploy --frontends new`（或 `old,new`）只跑 native-auth 格（冻结 `real-auth-native.spec.mjs` 原样对共存部署），其余格 `NOT_RUN_NEW_SIDE` 列理由；新侧不能把 B 变绿，其诚实 FAIL 使 B 总状态 FAIL，配对 run 证据无效（执行错误）则记 ERROR（fix-r2 P0-2）。
 
 ```sh
+# 协调者块：前两条需要 listen/Chrome（coexist / blackbox-deploy 新侧），未持租约时硬失败；
+# 取锁与释放按 cli-parity README「锁被保留时怎么解」节的宿主片段（含 trap 形态释放）。
+# 第三条 node --test 是离线项，本身不需要租约：
+: "${TOKEN:?需要 /tmp/pdrs-parity.lock 租约——先按 scripts/cli-parity/README.md「锁被保留时怎么解」节取锁}"
 node scripts/fe-parity/run.mjs --suite coexist --frontends old    # 当前预期：N3 原验收格 FAIL → 总状态 FAIL（F3 决策项）
 node scripts/fe-parity/run.mjs --suite blackbox-deploy --frontends new   # 新侧配对（native-auth only，诚实 FAIL）
 node --test scripts/fe-parity/coexist-boundary.test.mjs scripts/fe-parity/coexist-patch.test.mjs \

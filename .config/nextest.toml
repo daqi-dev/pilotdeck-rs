@@ -1,4 +1,8 @@
 # CI 使用默认核数；失败不重试，慢测试只报告，不终止。
+# #1891 fix-r1 注记：slow-timeout 与测试侧 60 s 活性余量同值是巧合的邻界
+# （只报告不终止，无影响）；若将来启用 terminate-after，其值必须大于本仓
+# 最长的活性看门狗（当前为 host/tests.rs 的 130 s 外圈），否则看门狗到点
+# 的同一瞬间 harness 会先杀测试，留下没有断言文本的 KILLED。
 [profile.ci]
 retries = 0
 slow-timeout = { period = "60s" }

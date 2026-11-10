@@ -45,7 +45,7 @@ async-imap = { version = "=0.12.0", default-features = false, features = ["runti
 lettre = { version = "=0.11.23", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls"] }
 # UTF-16 ECMAScript matching for opt-in user-dialog forms.
 regress = { git = "https://github.com/ridiculousfish/regress", rev = "95c04041cd9b30249961eb80d950102c29c9586c", default-features = false, features = ["std", "utf16", "prohibit-unsafe"] }
-tokio = { version = "=1.48.0", features = ["macros", "rt-multi-thread", "net", "signal", "time", "io-util", "sync", "process", "fs"] }
+tokio = { version = "=1.48.0", features = ["macros", "rt-multi-thread", "net", "signal", "time", "io-util", "io-std", "sync", "process", "fs"] }
 # #1344: slack Socket Mode WS client (SplitSink/SplitStream). Already locked
 # as a tokio-tungstenite transitive dependency; no version or download change
 # (same feature set: sink+std, no async-await macros).

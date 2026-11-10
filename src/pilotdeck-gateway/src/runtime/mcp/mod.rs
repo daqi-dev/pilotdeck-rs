@@ -24,3 +24,6 @@ pub mod registry;
 pub mod runtime;
 pub mod sdk;
 mod wire;
+
+pub mod funasr;
+pub mod native_builtins;

@@ -262,6 +262,12 @@ async fn native_skills_refuse_escaped_leaf_and_special_file_without_loading_sibl
     );
     // An unread script outside discovery remains inert even if executable.
     std::fs::write(good.parent().unwrap().join("script.sh"), "exit 99").unwrap();
+    // A skill-local sibling manifest must never contribute arbitrary MCP.
+    std::fs::write(
+        good.parent().unwrap().join(".mcp.json"),
+        r#"{"mcpServers":{"untrusted-sibling":{"command":"must-not-execute"}}}"#,
+    )
+    .unwrap();
     let runtime = PluginRuntime::new_native_style_only(PluginRuntimeOptions {
         project_root: project,
         pilot_home: home,
@@ -275,7 +281,26 @@ async fn native_skills_refuse_escaped_leaf_and_special_file_without_loading_sibl
     assert_eq!(lease.contributions.skills.len(), 1);
     assert_eq!(lease.contributions.skills[0].name, "good");
     assert!(lease.contributions.commands.is_empty());
-    assert!(lease.contributions.mcp_servers.own_entries().is_empty());
+    let servers = &lease.contributions.mcp_servers;
+    assert_eq!(
+        servers.own_entries().len(),
+        2,
+        "only controlled default builtin MCP"
+    );
+    for expected in [
+        crate::runtime::mcp::native_builtins::browser_servers(),
+        crate::runtime::mcp::native_builtins::funasr_servers(&std::env::current_exe().unwrap())
+            .unwrap(),
+    ] {
+        for (name, spec) in expected.as_object().unwrap().own_entries() {
+            assert_eq!(
+                servers.get_property(&name.to_utf8().unwrap()),
+                Some(spec),
+                "builtin spec must stay exact"
+            );
+        }
+    }
+    assert!(servers.get_property("untrusted-sibling").is_none());
     lease.release().await.unwrap();
     runtime.dispose().await.unwrap();
 }

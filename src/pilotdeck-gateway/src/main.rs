@@ -10,6 +10,12 @@ async fn main() -> Result<(), ProxyError> {
     {
         std::process::exit(code);
     }
+    if let Some(options) = pilotdeck_gateway::runtime::mcp::funasr::parse_helper_args(
+        &std::env::args_os().skip(1).collect::<Vec<_>>(),
+    ) {
+        pilotdeck_gateway::runtime::mcp::funasr::serve_stdio(options).await?;
+        return Ok(());
+    }
     // Node's process-wide SIGXFSZ ignore (a write past RLIMIT_FSIZE reports
     // EFBIG instead of killing the process); register the same disposition
     // at startup through tokio's safe signal API so every fs write in this

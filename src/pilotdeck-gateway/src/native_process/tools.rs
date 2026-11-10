@@ -333,6 +333,7 @@ impl SessionTools {
         session_tool_results_dir(&root, session)
     }
 
+    #[cfg(test)]
     pub fn turn(
         &self,
         identity: &ExecutionIdentity,
@@ -342,6 +343,7 @@ impl SessionTools {
         self.turn_with_authority(identity, recorder, signal, None)
     }
 
+    #[cfg(test)]
     pub fn turn_with_authority(
         &self,
         identity: &ExecutionIdentity,
@@ -349,6 +351,32 @@ impl SessionTools {
         signal: Cancellation,
         authority: Option<crate::runtime::turn::interaction::TurnInteractionAuthority>,
     ) -> SessionPorts {
+        let settings = self
+            .persisted_permissions_home()
+            .map(|home| super::persisted_permissions::read(&home))
+            .unwrap_or_default();
+        self.turn_with_authority_and_settings(identity, recorder, signal, authority, settings)
+    }
+
+    pub(super) fn persisted_permissions_home(&self) -> Option<PathBuf> {
+        self.fork_scope.is_none().then(|| self.options.home.clone())
+    }
+
+    pub(super) fn turn_with_authority_and_settings(
+        &self,
+        identity: &ExecutionIdentity,
+        recorder: Arc<Recorder>,
+        signal: Cancellation,
+        authority: Option<crate::runtime::turn::interaction::TurnInteractionAuthority>,
+        persisted: super::persisted_permissions::Settings,
+    ) -> SessionPorts {
+        let persisted_skip = persisted.skip_permissions;
+        let persisted_error = persisted.error;
+        let turn_rules = if self.fork_scope.is_some() {
+            self.permission_rules.clone()
+        } else {
+            self.permission_rules.with_user_rules(persisted.rules)
+        };
         // #1864 (b): the effective mode — a non-empty
         // `managedPermissions.defaultMode` wins, else the stored selection —
         // is written back before the context is emitted, so `Permissions::
@@ -359,11 +387,26 @@ impl SessionTools {
         // the previous mode and the plan-round-trip stack below untouched.
         let (mut turn_context, permission_mode) = {
             let mut state = self.permission.0.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(mode) = permission::configured_permission_mode(&self.config).or_else(|| {
-                self.permission_mode_source
-                    .as_ref()
-                    .and_then(|source| source())
-            }) {
+            if let Some(mode) = permission::configured_permission_mode(&self.config)
+                .or_else(|| {
+                    self.permission_mode_source
+                        .as_ref()
+                        .and_then(|source| source())
+                })
+                .or_else(|| {
+                    // Host default applies only below managed and stored selections.
+                    // Re-reading false resets a previous persisted bypass on next turn.
+                    (self.permission_mode_source.is_some() && self.fork_scope.is_none()).then(
+                        || {
+                            if persisted_skip {
+                                "bypassPermissions".into()
+                            } else {
+                                "default".into()
+                            }
+                        },
+                    )
+                })
+            {
                 state.0.mode = crate::config::permission::PermissionMode::from(mode);
             }
             // TS HostPermissionModeState.applyTurnInput runs after session config
@@ -411,7 +454,7 @@ impl SessionTools {
             }
             turn_context.bypass_available &= automation.bypass_available;
         }
-        turn_context.rules = self.permission_rules.snapshot();
+        turn_context.rules = turn_rules.snapshot();
         if let Some(files) = &self.plan_files {
             turn_context.plan_directory_path = Some(files.directory_string());
         }
@@ -541,7 +584,7 @@ impl SessionTools {
                 identity.clone(),
                 config.clone(),
                 recorder.clone(),
-                self.permission_rules.clone(),
+                turn_rules.clone(),
                 authority.clone(),
                 self.fork_scope.as_deref(),
                 tools.clone(),
@@ -570,7 +613,11 @@ impl SessionTools {
             Arc::new(Permissions(Mutex::new((turn_context.clone(), None)))),
             SchedulerMode::Concurrent,
         )
-        .with_catalog_error(knowledge_catalog_error.or(sdk_catalog_error))
+        .with_catalog_error(
+            persisted_error
+                .or(knowledge_catalog_error)
+                .or(sdk_catalog_error),
+        )
         .with_event_emitter({
             let emit = permission_emit.clone();
             Arc::new(move |event| {
@@ -963,7 +1010,7 @@ impl SessionTools {
                     )
                     .interaction,
                     context: turn_context,
-                    rules: self.permission_rules.clone(),
+                    rules: turn_rules.clone(),
                     coordinator: self.interactions.clone(),
                     emit: permission_emit.clone(),
                     timeout: Duration::from_secs(30),

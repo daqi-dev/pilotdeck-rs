@@ -1,0 +1,80 @@
+{
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": {
+    "node": "22.22.0",
+    "acorn": "8.15.0",
+    "ada": "2.9.2",
+    "amaro": "1.1.4",
+    "ares": "1.34.6",
+    "brotli": "1.1.0",
+    "cjs_module_lexer": "2.1.0",
+    "cldr": "48.0",
+    "icu": "78.2",
+    "llhttp": "9.3.0",
+    "modules": "127",
+    "napi": "10",
+    "nbytes": "0.1.1",
+    "ncrypto": "0.0.1",
+    "nghttp2": "1.64.0",
+    "openssl": "3.5.4",
+    "simdjson": "3.13.0",
+    "simdutf": "6.4.2",
+    "sqlite": "3.50.4",
+    "tz": "2025c",
+    "undici": "6.23.0",
+    "unicode": "17.0",
+    "uv": "1.52.1",
+    "uvwasi": "0.0.23",
+    "v8": "12.4.254.21-node.33",
+    "zlib": "1.3.1-470d3a2",
+    "zstd": "1.5.7"
+  },
+  "platform": "darwin",
+  "defaultBuiltinNames": [
+    "browser-use",
+    "funasr",
+    "windows-skills"
+  ],
+  "sources": {
+    "src/extension/plugins/runtime/PluginRuntime.ts": "c601a4f1b01dee289ca715e723c4f579a775f84f72317c7317e5f72b7cd915b4",
+    "src/extension/plugins/loading/PluginLoader.ts": "93727f3f56cf46e797fbe51bd47e61f19bab098c094fb31daf11a5e33449b2cf",
+    "src/extension/plugins/builtin/loadBuiltinPlugins.ts": "850760e812095892bee4314d68b013e85dac85d54a4b3e46a54ad81c5b7dd70e",
+    "dist/src/extension/plugins/builtin/browser-use/plugin.json": "f13b8373058d24646994462449e42c6b3e71d183e97de2c2fc8d4f255fe4754b",
+    "dist/src/extension/plugins/builtin/browser-use/skills/browser-use-install/SKILL.md": "f5bbbd426f3e6465578ec12ece1ebd5601568b211e7378cdd7313ec6d49015f7"
+  },
+  "cases": [
+    {
+      "enabled": true,
+      "skills": [
+        {
+          "name": "browser-use:browser-use-install",
+          "description": "Use before browser-use, Playwright MCP, web browsing, browser automation, or when browser-use fails with a missing browser, missing executable, \"Executable doesn't exist\", or Chrome/Chromium install error in PilotDeck Desktop.",
+          "pathSuffix": "skills/browser-use-install/SKILL.md",
+          "contentSha256": "7f08d42435047c552676a5a03ab92b32696f7ad1e22f574186dcc6567ed0ffd3"
+        }
+      ],
+      "mcpServers": {
+        "browser-use": {
+          "command": "__PILOTDECK_NODE_EXECUTABLE__",
+          "args": [
+            "__PILOTDECK_PLAYWRIGHT_MCP_ENTRYPOINT__",
+            "--browser",
+            "chromium",
+            "--allow-unrestricted-file-access"
+          ],
+          "perSession": true
+        }
+      },
+      "readQualifiedSha256": "7f08d42435047c552676a5a03ab92b32696f7ad1e22f574186dcc6567ed0ffd3",
+      "readShortSha256": "7f08d42435047c552676a5a03ab92b32696f7ad1e22f574186dcc6567ed0ffd3"
+    },
+    {
+      "enabled": false,
+      "skills": [],
+      "mcpServers": {},
+      "readQualifiedSha256": null,
+      "readShortSha256": null
+    }
+  ],
+  "normalization": "Only skill path is represented as actual suffix below browser-use; model body checked by SHA256, not rewritten."
+}

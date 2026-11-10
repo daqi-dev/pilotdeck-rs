@@ -69,7 +69,7 @@ TS sidecar 自比可按回捞后的 G03 v1 通道口径校准；上游严格逐�
 
 基线优先取本 worktree 的 `resources/PilotDeck`，不存在时回退到 `PDRS_BASELINE`，均不存在则报错；离线原料默认取本 worktree `_tmp`，外部原料通过 `--source` / `--control-source` 指定。classify 缩为只计算身份 multiplicity 的函数；删掉 `is_relocatable` 和未使用的 `before`；E12 按结构化 `toolCallId` 字段精确匹配。畸形自比 JSON 统一产生结构化失败，机器通过条件纳入冻结登记。
 
-离线回归使用同一批 TS5 / exp001 原料，改前改后 controls 全过、S 均为 53；未重新采集全量对拍。独立回归对照 `scripts/parity/controls/review_r1.py` 使用独立临时锁，验证死 PID / 超龄接管、活锁等待、所有权保护、实际子进程超时与清锁、缺账本拒绝、E12 子串误命中拒绝、默认路径与畸形 JSON、冻结闸门；先重新生成 self-compare.json 再运行，避免陈旧哈希遮蔽 JSON 形状检查。逐项结果和命令记录在 `_tmp/RESULT-r1.md`。
+离线回归使用同一批 TS5 / exp001 原料，改前改后 controls 全过、S 均为 53；未重新采集全量对拍。独立回归对照 `scripts/parity/controls/review_r1.py` 使用独立临时锁，验证死 PID / 超龄接管、活锁等待、所有权保护、实际子进程超时与清锁、缺账本拒绝、E12 子串误命中拒绝、默认路径与畸形 JSON、冻结闸门；先重新生成 self-compare.json 再运行，避免陈旧哈希遮蔽 JSON 形状检查（#2398 后结果文件独占创建，重算前先删除旧 `_tmp/self-compare.json` / `_tmp/self-compare.md` 或换新路径；review_r1 的临时报告在独立临时目录，不受影响）。逐项结果和命令记录在 `_tmp/RESULT-r1.md`。
 
 ## 后续
 

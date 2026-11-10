@@ -3,7 +3,10 @@ use crate::{
     negative_assert, negative_assert_eq,
     runtime::{
         connection::{Call, RequestError},
-        turn::gateway::{GatewayRequests, tests::native_ws_fixture},
+        turn::gateway::{
+            GatewayRequests,
+            tests::{native_ws_fixture, native_ws_fixture_with_cleanup},
+        },
     },
     test_native_ws_sample::RFC6455_SAMPLE_NONCE,
 };
@@ -11,7 +14,17 @@ use pilotdeck_protocol::{JsString, JsValue};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::{sync::Notify, time::timeout};
+/// #1891: the server's drain budget — the only clock granted to the scripted
+/// in-process `GatewayRequests` fixture, and the behavior several drain tests
+/// pin, so it keeps the 5 s form.
 const DEADLINE: Duration = Duration::from_secs(5);
+/// #1891 fix-r1: the client-side reads wait for response *bytes* from the
+/// local listener's serving task. That task shares this worker's scheduler
+/// with everything else in the suite, so the #978 starvation mechanism (a
+/// loaded host delaying a responder past a short deadline) applies here too —
+/// "no real sidecar" is not an exemption from scheduling. These are pure
+/// anti-hang bounds: no assertion or reply shape changes.
+const RESPONSE_LIVENESS: Duration = Duration::from_secs(60);
 const ORACLE: &str = include_str!("../../tests/fixtures/native-ws-entry/oracle.json");
 #[derive(Default)]
 struct Requests {
@@ -180,7 +193,9 @@ impl Client {
         let mut socket = TcpStream::connect(address).await.expect("#749 TCP connect");
         socket.write_all(format!("GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: {RFC6455_SAMPLE_NONCE}\r\n\r\n").as_bytes()).await.expect("#749 upgrade write");
         let mut header = vec![];
-        timeout(DEADLINE, async {
+        // #1891 fix-r1: first-response read from the listener's serving task
+        // (see RESPONSE_LIVENESS) — liveness bound, not a reply oracle.
+        timeout(RESPONSE_LIVENESS, async {
             while !header.ends_with(b"\r\n\r\n") {
                 header.push(socket.read_u8().await.expect("#749 upgrade response byte"));
             }
@@ -213,7 +228,9 @@ impl Client {
         self.frame(1, value.to_string().as_bytes()).await;
     }
     async fn read(&mut self) -> (u8, Vec<u8>) {
-        let result = timeout(DEADLINE, async {
+        // #1891 fix-r1: response bytes from the listener's serving task
+        // (see RESPONSE_LIVENESS) — liveness bound, not a reply oracle.
+        let result = timeout(RESPONSE_LIVENESS, async {
             loop {
                 if let Some(frame) = self
                     .decoder
@@ -287,7 +304,9 @@ async fn start(
 }
 async fn finish(stop: oneshot::Sender<()>, task: tokio::task::JoinHandle<Result<(), ProxyError>>) {
     stop.send(()).expect("#749 stop server");
-    timeout(DEADLINE, task)
+    // #1891 fix-r1: strictly looser than the drain budget granted above, so
+    // scheduling decides the join, not this watchdog.
+    timeout(RESPONSE_LIVENESS, task)
         .await
         .expect("#749 server finish deadline")
         .expect("#749 server task")
@@ -373,8 +392,9 @@ async fn invalid_upgrade() {
             .expect("#749 invalid upgrade connect");
         socket.write_all(format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n{key}\r\n").as_bytes()).await.expect("#749 invalid upgrade send");
         let mut bytes = vec![];
+        // #1891 fix-r1: response bytes (see RESPONSE_LIVENESS).
         let reply = crate::test_negative_receipt::expect_ok(
-            timeout(DEADLINE, socket.read_to_end(&mut bytes)).await,
+            timeout(RESPONSE_LIVENESS, socket.read_to_end(&mut bytes)).await,
             "#749 invalid upgrade rejected",
         );
         crate::test_negative_receipt::expect_ok(reply, "#749 invalid upgrade rejected");
@@ -413,7 +433,8 @@ async fn upgrade_head_respects_span_budget() {
             .await
             .expect("#1292 budget upgrade send");
         let mut header = vec![];
-        timeout(DEADLINE, async {
+        // #1891 fix-r1: response bytes (see RESPONSE_LIVENESS).
+        timeout(RESPONSE_LIVENESS, async {
             while !header.ends_with(b"\r\n\r\n") {
                 header.push(
                     socket
@@ -442,7 +463,7 @@ async fn upgrade_head_respects_span_budget() {
             );
             let mut rest = vec![];
             let closed = crate::test_negative_receipt::expect_ok(
-                timeout(DEADLINE, socket.read_to_end(&mut rest)).await,
+                timeout(RESPONSE_LIVENESS, socket.read_to_end(&mut rest)).await,
                 "#1292 the over-budget upgrade head closes the connection like the non-upgrade lane",
             );
             crate::test_negative_receipt::expect_ok(
@@ -471,6 +492,14 @@ const BUDGET_ORACLE: &str =
 /// The quiet window the TS recorder used: a response is complete after a
 /// quarter second of silence while the connection stays open.
 const QUIET: Duration = Duration::from_millis(250);
+/// #1891: liveness watchdog for the first response byte, not an assertion
+/// about the response. This capture loop is the verbatim sibling of the one
+/// the #978 fix relaxed in `module_host::tests`, where a host running eight
+/// concurrent lib suites starved the serving task past the old deadline
+/// (8/48 loaded copies reddened "produced no bytes and stayed open"); the
+/// byte oracle and the closed flag are unchanged, and a connection that truly
+/// never answers still reds after this margin.
+const FIRST_BYTE: Duration = Duration::from_secs(60);
 
 fn budget_oracle() -> Value {
     crate::test_baseline::oracle(BUDGET_ORACLE);
@@ -501,9 +530,13 @@ async fn budget_capture(socket: &mut TcpStream) -> (String, bool) {
     let mut buffer = vec![0u8; 8192];
     let start = std::time::Instant::now();
     let mut closed = false;
-    while start.elapsed() < DEADLINE {
+    while start.elapsed() < FIRST_BYTE {
         let wait = if out.is_empty() {
-            DEADLINE - start.elapsed()
+            // Saturating: the loop condition above re-reads `elapsed`, so on a
+            // loaded host it can cross the cap between the two reads and the
+            // plain subtraction would panic on the very stall this watcher
+            // must tolerate (#978 boundary review).
+            FIRST_BYTE.saturating_sub(start.elapsed())
         } else {
             QUIET
         };
@@ -523,7 +556,7 @@ async fn budget_capture(socket: &mut TcpStream) -> (String, bool) {
             }
         }
     }
-    negative_assert!(
+    crate::negative_assert!(
         !out.is_empty() || closed,
         "#1351 every boundary cell produced bytes or closed"
     );
@@ -888,7 +921,8 @@ async fn upgrade_budget_cell(address: std::net::SocketAddr, n: usize, what: &str
         .await
         .unwrap_or_else(|error| panic!("#1351 {what} send: {error}"));
     let mut header = vec![];
-    timeout(DEADLINE, async {
+    // #1891 fix-r1: response bytes (see RESPONSE_LIVENESS).
+    timeout(RESPONSE_LIVENESS, async {
         while !header.ends_with(b"\r\n\r\n") {
             header.push(
                 socket
@@ -911,9 +945,10 @@ async fn upgrade_budget_cell(address: std::net::SocketAddr, n: usize, what: &str
     );
     let close = format!("#1351 {what} closes the connection like the non-upgrade lane");
     let mut rest = vec![];
+    // #1891 fix-r1: response bytes (see RESPONSE_LIVENESS).
     crate::test_negative_receipt::expect_ok(
         crate::test_negative_receipt::expect_ok(
-            timeout(DEADLINE, socket.read_to_end(&mut rest)).await,
+            timeout(RESPONSE_LIVENESS, socket.read_to_end(&mut rest)).await,
             &close,
         ),
         &close,
@@ -1131,8 +1166,9 @@ async fn shutdown_cancels_handshake() {
     )
     .expect("#749 half handshake join");
     let mut tail = Vec::new();
+    // #1891 fix-r1: response bytes (see RESPONSE_LIVENESS).
     crate::test_negative_receipt::expect_ok(
-        timeout(DEADLINE, socket.read_to_end(&mut tail)).await,
+        timeout(RESPONSE_LIVENESS, socket.read_to_end(&mut tail)).await,
         "#749 half handshake reclaimed",
     )
     .expect("#749 half handshake EOF");
@@ -1602,7 +1638,8 @@ async fn close_tail_resumes_on_next_data() {
         // The entire batch fits in the duplex read buffer. Writer EOF is the
         // deterministic barrier proving its close frame has been processed.
         let mut replies = vec![];
-        timeout(DEADLINE, client.read_to_end(&mut replies))
+        // #1891 fix-r1: response bytes (see RESPONSE_LIVENESS).
+        timeout(RESPONSE_LIVENESS, client.read_to_end(&mut replies))
             .await
             .expect("#749 next-data close deadline")
             .expect("#749 next-data close read");
@@ -1680,7 +1717,8 @@ async fn closed_batch(wire: Vec<u8>) -> usize {
     // Each complete batch is queued atomically before the transport is polled.
     client.write_all(&wire).await.expect("#749 batch write");
     let mut replies = vec![];
-    timeout(DEADLINE, client.read_to_end(&mut replies))
+    // #1891 fix-r1: response bytes (see RESPONSE_LIVENESS).
+    timeout(RESPONSE_LIVENESS, client.read_to_end(&mut replies))
         .await
         .expect("#749 batch close deadline")
         .expect("#749 batch close read");
@@ -1755,7 +1793,8 @@ async fn read_continues_under_writer_backpressure() {
     );
     client.shutdown().await.expect("#749 backpressure EOF");
     let mut output = vec![];
-    timeout(DEADLINE, client.read_to_end(&mut output))
+    // #1891 fix-r1: response bytes (see RESPONSE_LIVENESS).
+    timeout(RESPONSE_LIVENESS, client.read_to_end(&mut output))
         .await
         .expect("#749 drain output deadline")
         .expect("#749 drain output");
@@ -2238,7 +2277,8 @@ async fn completed_writes_and_requests_release_capacity() {
             ))
             .await
             .expect("#749 capacity successor send");
-        let received = timeout(DEADLINE, async {
+        // #1891 fix-r1: response bytes (see RESPONSE_LIVENESS).
+        let received = timeout(RESPONSE_LIVENESS, async {
             loop {
                 if let Some(frame) = decoder
                     .next_server()
@@ -3042,4 +3082,188 @@ async fn phased_drain_drop_aborts_runner() {
             .is_err(),
         "#2351 runner stop future is dropped without completing"
     );
+}
+
+/// #2557: a partial-head HTTP client — the connection that keeps the
+/// close-notice window's join set non-empty. It never upgrades, so the stop
+/// is consumed without closing it (`served_heads == 0` is never idle) and
+/// the close-notice watch the WS transport alone observes does not apply;
+/// its headers deadline is disarmed by the same stop (the #749 half
+/// handshake shape), it never submits a host job, and nothing but the strong
+/// abort reclaims it.
+async fn partial_head_survivor(address: SocketAddr) -> TcpStream {
+    let mut socket = TcpStream::connect(address)
+        .await
+        .expect("#2557 survivor connect");
+    socket
+        .write_all(b"GET /ws HTTP/1.1\r\n")
+        .await
+        .expect("#2557 survivor partial head write");
+    socket
+}
+
+/// #2557: the two merged `request_shutdown` re-issue sites in the S4 half —
+/// the revisit branch's (the interrupted marker) and the first run's (ahead
+/// of the abort join) — each need a deletion that turns this test red. The
+/// gated cleanup runs inside the host teardown drain, so its `entered`
+/// signal is exactly "the teardown request went out and the dedicated host
+/// thread acted on it"; nothing here awaits `stopped()`, so a request that
+/// never fires is a signal that never comes. Real clock like the interrupted
+/// revisit's: the host thread's cross-thread wake is what is awaited.
+#[tokio::test]
+async fn a_cancelled_owner_finish_still_requests_the_host_teardown() {
+    // Scenario A — the drop inside the close-notice window: the revisit's
+    // own re-issue is the only request that can follow.
+    {
+        let (entered, entered_rx) = oneshot::channel::<()>();
+        let (release, release_rx) = oneshot::channel::<()>();
+        let host = native_ws_fixture_with_cleanup(Arc::new(Requests::default()), async move {
+            let _ = entered.send(());
+            let _ = release_rx.await;
+            Ok(())
+        });
+        let server = NativeWsServer::bind(
+            "127.0.0.1:0"
+                .parse()
+                .expect("#2557 scenario A listen address"),
+            host,
+            "fixture-token".into(),
+            "probe".into(),
+        )
+        .await
+        .expect("#2557 scenario A fixture bind");
+        let address = server.local_addr().expect("#2557 scenario A address");
+        let (stop, stop_rx) = oneshot::channel::<()>();
+        let phased = server.run_phased(
+            async move {
+                let _ = stop_rx.await;
+            },
+            Duration::from_millis(100),
+        );
+        let survivor = partial_head_survivor(address).await;
+        // A completed handshake behind the survivor is the accept-loop
+        // barrier (the #749 shape): the FIFO accept guarantees the
+        // survivor's task is already in the connections set when the stop
+        // below fires, so the drain is really held open by it, not racing
+        // a backlog entry the loop never accepted.
+        let mut barrier = Client::connect(address).await;
+        barrier.close().await;
+        stop.send(()).expect("#2557 scenario A stop fires");
+        negative_assert!(
+            !timeout(DEADLINE, phased.drained())
+                .await
+                .expect("#2557 scenario A drain bounded"),
+            "#2557 the survivor holds the entry drain open"
+        );
+        // One poll parks the first finish at the window join — the only
+        // await point before the request: the marker is set, the notice is
+        // out, and no request has been sent.
+        let mut first = Box::pin(phased.finish());
+        negative_assert!(
+            poll_request(first.as_mut()).is_pending(),
+            "#2557 the first finish parks in the close-notice window"
+        );
+        drop(first);
+        let verdict = timeout(DEADLINE, phased.finish())
+            .await
+            .expect("#2557 scenario A revisit is bounded");
+        negative_assert!(
+            matches!(&verdict, Err(error) if error.to_string()
+                .contains("native WS owner finish was interrupted")),
+            "#2557 the revisit records the interrupted verdict"
+        );
+        // The #2557 direct-deletion witness (the revisit branch's re-issue
+        // deleted — no optional switch here, per the R6 correction entry
+        // (A8.5-SWITCH-MACHINE-001-R6) these two direct-deletion
+        // witnesses carry no fixture row): with it
+        // gone, no request ever goes out — the first run died inside the
+        // window and the unawaited `StopHost` drop request is all that is
+        // left while the phased run is alive.
+        negative_assert!(
+            matches!(timeout(DEADLINE, entered_rx).await, Ok(Ok(()))),
+            "#2557 the revisit re-issue requests the host teardown"
+        );
+        release.send(()).expect("#2557 scenario A cleanup release");
+        drop(survivor);
+    }
+    // Scenario B — the drop past the window, inside the abort join: the
+    // first run's own re-issue is the only request that has gone out, and it
+    // is asserted before any revisit could send one.
+    {
+        let (entered, entered_rx) = oneshot::channel::<()>();
+        let (release, release_rx) = oneshot::channel::<()>();
+        let host = native_ws_fixture_with_cleanup(Arc::new(Requests::default()), async move {
+            let _ = entered.send(());
+            let _ = release_rx.await;
+            Ok(())
+        });
+        let server = NativeWsServer::bind(
+            "127.0.0.1:0"
+                .parse()
+                .expect("#2557 scenario B listen address"),
+            host,
+            "fixture-token".into(),
+            "probe".into(),
+        )
+        .await
+        .expect("#2557 scenario B fixture bind");
+        let address = server.local_addr().expect("#2557 scenario B address");
+        let (stop, stop_rx) = oneshot::channel::<()>();
+        let phased = server.run_phased(
+            async move {
+                let _ = stop_rx.await;
+            },
+            Duration::from_millis(100),
+        );
+        let survivor = partial_head_survivor(address).await;
+        // The same accept-loop barrier as scenario A's.
+        let mut barrier = Client::connect(address).await;
+        barrier.close().await;
+        stop.send(()).expect("#2557 scenario B stop fires");
+        negative_assert!(
+            !timeout(DEADLINE, phased.drained())
+                .await
+                .expect("#2557 scenario B drain bounded"),
+            "#2557 the survivor again holds the entry drain open"
+        );
+        let mut first = Box::pin(phased.finish());
+        negative_assert!(
+            poll_request(first.as_mut()).is_pending(),
+            "#2557 the first finish parks in the window again"
+        );
+        // Let the window expire in real time: a paused clock would race
+        // its auto-advance against the host thread's cross-thread `entered`
+        // wake, which nothing virtual would deliver in time.
+        tokio::time::sleep(CLOSE_FRAME_WINDOW + Duration::from_millis(50)).await;
+        // The second poll runs the window's expiry through: the request
+        // ahead of the abort join fires synchronously, and the half parks in
+        // the join's await (the aborted survivor's reaping needs the
+        // scheduler, so this manual poll stays Pending).
+        negative_assert!(
+            poll_request(first.as_mut()).is_pending(),
+            "#2557 the first finish parks in the abort join past the request"
+        );
+        // The #2557 direct-deletion witness (the first run's re-issue
+        // deleted — no optional switch here, per the R6 correction entry
+        // (A8.5-SWITCH-MACHINE-001-R6) these two direct-deletion
+        // witnesses carry no fixture row): with it
+        // gone, no request has gone out — the half was cut before
+        // `host.shutdown`'s own request was reached, and the revisit below
+        // is what would have sent one. Anchored before that.
+        negative_assert!(
+            matches!(timeout(DEADLINE, entered_rx).await, Ok(Ok(()))),
+            "#2557 the pre-join re-issue requests the host teardown"
+        );
+        drop(first);
+        let verdict = timeout(DEADLINE, phased.finish())
+            .await
+            .expect("#2557 scenario B revisit is bounded");
+        negative_assert!(
+            matches!(&verdict, Err(error) if error.to_string()
+                .contains("native WS owner finish was interrupted")),
+            "#2557 the revisit still records the interrupted verdict"
+        );
+        release.send(()).expect("#2557 scenario B cleanup release");
+        drop(survivor);
+    }
 }

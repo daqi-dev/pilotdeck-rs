@@ -21,7 +21,7 @@
 use crate::{
     config::Env,
     host::{
-        HostClient, HostError, HostErrorKind, Limits,
+        HostClient, HostError, HostErrorKind, HostFuture, Limits,
         modules::{ModuleRouter, budget, capability, context, model::TurnContext, model_port},
     },
     runtime::{
@@ -200,7 +200,7 @@ type PortsFactory = dyn Fn(
         Arc<Recorder>,
         crate::runtime::hooks::Cancellation,
         Option<super::interaction::TurnInteractionAuthority>,
-    ) -> SessionPorts
+    ) -> HostFuture<SessionPorts>
     + Send
     + Sync;
 
@@ -280,6 +280,33 @@ impl TurnHostFactory {
         + Sync
         + 'static,
     ) -> Self {
+        Self::new_with_async_authority(
+            registry,
+            deployment,
+            limits,
+            expected_module_id,
+            move |identity, recorder, signal, authority| {
+                let result = ports(identity, recorder, signal, authority);
+                Box::pin(async move { Ok(result) })
+            },
+        )
+    }
+
+    pub fn new_with_async_authority(
+        registry: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
+        deployment: Deployment,
+        limits: Limits,
+        expected_module_id: Option<JsString>,
+        ports: impl Fn(
+            &ExecutionIdentity,
+            Arc<Recorder>,
+            crate::runtime::hooks::Cancellation,
+            Option<super::interaction::TurnInteractionAuthority>,
+        ) -> HostFuture<SessionPorts>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
         Self {
             registry,
             deployment,
@@ -348,12 +375,15 @@ impl TurnHostFactory {
     ) -> LiveSessionAdapter {
         let ports = self.ports.clone();
         self.ports = Arc::new(move |identity, recorder, signal, authority| {
-            let mut ports = ports(identity, recorder.clone(), signal, authority);
-            ports.recorder = Some(model_port::DurableRecorder {
-                recorder,
-                recording_session_id: ports.recorder.and_then(|r| r.recording_session_id),
-            });
-            ports
+            let future = ports(identity, recorder.clone(), signal, authority);
+            Box::pin(async move {
+                let mut ports = future.await?;
+                ports.recorder = Some(model_port::DurableRecorder {
+                    recorder,
+                    recording_session_id: ports.recorder.and_then(|r| r.recording_session_id),
+                });
+                Ok(ports)
+            })
         });
         let close_timeout = self.limits.close_timeout;
         let unique_tcp_request_id = matches!(&self.deployment, Deployment::Tcp { .. });
@@ -450,7 +480,7 @@ impl TurnHostFactory {
             None => self.registry.acquire(None),
         }
         .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
-        let ports = (self.ports)(identity, recorder, signal, authority);
+        let ports = (self.ports)(identity, recorder, signal, authority).await?;
         if let Some(controller) = &self.loop_controller {
             let catalog = ports.tool_execution.clone()
                 as Arc<dyn crate::host::modules::capability::ToolCatalog>;

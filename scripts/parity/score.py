@@ -395,8 +395,7 @@ def main():
                    reference_registration=args.reference_registration)
     data = json.dumps(result, ensure_ascii=False, indent=2) + '\n'
     if args.json:
-        args.json.parent.mkdir(parents=True, exist_ok=True)
-        args.json.write_text(data)
+        G.write_result_exclusive(args.json, data)
         print(json.dumps({key: result[key] for key in ('valid_score', 'verdict', 'score')}, ensure_ascii=False))
     else:
         print(data, end='')

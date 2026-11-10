@@ -4,7 +4,7 @@
 use super::*;
 use crate::runtime::{
     mcp::{
-        registry::{BuiltinMcpPaths, ProjectMcpRuntimeProvider, ProjectMcpRuntimeProviderOptions},
+        registry::{ProjectMcpRuntimeProvider, ProjectMcpRuntimeProviderOptions},
         sdk::SystemEnvironment,
     },
     model::http::ProxySettings,
@@ -62,6 +62,10 @@ impl ResourceFamilySource for McpFamilySource {
                 ..ProxySettings::default()
             });
 
+        // SDK discovery must not make the project generation depend on a live
+        // process cwd. Installed roots and executable siblings remain usable
+        // after cwd deletion; session composition owns the TS uv_cwd error.
+        let sdk_cwd = std::env::current_dir().unwrap_or_else(|_| project_root.to_path_buf());
         let options = ProjectMcpRuntimeProviderOptions {
             project_root: project_root
                 .to_str()
@@ -75,7 +79,12 @@ impl ResourceFamilySource for McpFamilySource {
             proxy: proxy_settings,
             on_diagnostic: None,
             environment: Arc::new(SystemEnvironment),
-            builtin_paths: BuiltinMcpPaths::default(),
+            builtin_paths: crate::runtime::mcp::native_builtins::builtin_paths(
+                &context.env(),
+                &std::env::current_exe().map_err(|e| RuntimeError::new(e.to_string()))?,
+                &sdk_cwd,
+            )
+            .map_err(|e| RuntimeError::new(e.to_string()))?,
         };
 
         let provider = Arc::new(ProjectMcpRuntimeProvider::new(options));

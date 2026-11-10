@@ -31,7 +31,19 @@ use tokio::{
 };
 
 const ORACLE: &str = include_str!("../../tests/fixtures/native-http-basic/oracle.json");
+/// #1891: exempt from the first-byte relaxation on purpose — the remaining
+/// `DEADLINE` uses bound in-process listener operations only (the local TCP
+/// connect, the accept-loop join after `stop`, and the listener's own drain
+/// budget), which never wait for a sidecar; the first-byte capture below has
+/// its own liveness constant.
 const DEADLINE: Duration = Duration::from_secs(5);
+/// #1891: liveness watchdog for the first response byte, not an assertion
+/// about the response. The sibling loop in `module_host::tests` reddened
+/// "produced no bytes and stayed open" on 8/48 loaded copies under #978 with
+/// twice this five-second window; the byte oracle and the closed flag are
+/// unchanged, and a connection that truly never answers still reds after
+/// this margin.
+const FIRST_BYTE: Duration = Duration::from_secs(60);
 /// The same quiet window the TS recorder used: a response is complete after a
 /// quarter second of silence while the connection stays open.
 const QUIET: Duration = Duration::from_millis(250);
@@ -235,9 +247,13 @@ async fn capture(stream: &mut TcpStream, id: &str) -> (String, bool) {
     let mut buffer = vec![0u8; 8192];
     let start = Instant::now();
     let mut closed = false;
-    while start.elapsed() < DEADLINE {
+    while start.elapsed() < FIRST_BYTE {
         let wait = if out.is_empty() {
-            DEADLINE - start.elapsed()
+            // Saturating: the loop condition above re-reads `elapsed`, so on a
+            // loaded host it can cross the cap between the two reads and the
+            // plain subtraction would panic on the very stall this watcher
+            // must tolerate (#978 boundary review).
+            FIRST_BYTE.saturating_sub(start.elapsed())
         } else {
             QUIET
         };
@@ -257,7 +273,10 @@ async fn capture(stream: &mut TcpStream, id: &str) -> (String, bool) {
             }
         }
     }
-    assert!(
+    // #1891: receipt-wired form of the assert; the text and the pass/fail
+    // condition are unchanged, so the shrink mutant still has to die on this
+    // exact oracle instead of on timing.
+    crate::negative_assert!(
         !out.is_empty() || closed,
         "#1209 cell {id} produced no bytes and stayed open"
     );

@@ -629,6 +629,98 @@ pub(super) fn write_text_file(
     })
 }
 
+/// Resolve the already-authorized target for this call, then pin its parent.
+/// Keep the original spelling for transcript keys and tool results.
+pub(super) fn authorized_history_source(
+    resolved: &ResolvedWritePath,
+    context: &crate::runtime::tools::ToolRunContext,
+) -> Result<crate::storage::file_history::AuthorizedHistorySource, crate::runtime::tools::ToolError>
+{
+    let path = os_path(&resolved.absolute);
+    let target = resolve_path_following_symlinks(&path)
+        .map_err(|error| write_io_error(error, &resolved.absolute))?;
+    let mut roots = vec![normalize(&cwd(context))];
+    roots.extend(
+        additional_working_directories(context)
+            .iter()
+            .map(normalize),
+    );
+    let lexical_in_root = roots
+        .iter()
+        .any(|root| within_root(&resolved.absolute, root));
+    let real_roots: Vec<PathBuf> = roots
+        .iter()
+        .map(|root| {
+            resolve_path_following_symlinks(&os_path(root)).unwrap_or_else(|_| os_path(root))
+        })
+        .collect();
+    let trusted_root = real_roots.iter().find(|root| target.starts_with(root));
+    if lexical_in_root
+        && !permission_mode(context).equals_str("bypassPermissions")
+        && trusted_root.is_none()
+    {
+        return Err(tool_error(
+            "path_not_allowed",
+            format!(
+                "Path {} resolves outside the PilotDeck workspace.",
+                text(&resolved.absolute)
+            ),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use crate::runtime::{project::SandboxMode, tools::sandbox::NativeSandbox};
+        let mode = match context
+            .fields
+            .get("nativeSandboxMode")
+            .and_then(JsValue::as_string)
+        {
+            Some(value) if value.equals_str("read-only") => Some(SandboxMode::ReadOnly),
+            Some(value) if value.equals_str("workspace-write") => Some(SandboxMode::WorkspaceWrite),
+            _ => None,
+        };
+        if let Some(mode) = mode {
+            let temporary_root = context
+                .fields
+                .get("nativeSandboxTemporaryRoot")
+                .and_then(JsValue::as_string)
+                .map(os_path)
+                .unwrap_or_else(|| PathBuf::from("/tmp"));
+            let mut sandbox_root = cwd(context);
+            if !permission_mode(context).equals_str("bypassPermissions") {
+                for candidate in additional_working_directories(context) {
+                    if within_root(&resolved.absolute, &candidate) {
+                        sandbox_root = candidate;
+                    }
+                }
+            }
+            NativeSandbox::new(mode, temporary_root)
+                .check_write(&os_path(&sandbox_root), &target)?;
+        }
+    }
+    crate::storage::file_history::AuthorizedHistorySource::open_resolved(
+        &path,
+        &target,
+        trusted_root.map(PathBuf::as_path),
+    )
+    .map_err(|error| tool_error("tool_execution_failed", error.to_string()))
+}
+
+pub(super) fn write_text_file_authorized(
+    source: &crate::storage::file_history::AuthorizedHistorySource,
+    path: &JsString,
+    expected: Option<&str>,
+    content: &str,
+) -> Result<WriteResult, crate::runtime::tools::ToolError> {
+    let (created, metadata) = source
+        .write_checked(expected, content)
+        .map_err(|error| failed(error, "write", path))?;
+    Ok(WriteResult {
+        created,
+        mtime_ms: metadata_mtime_ms(&metadata),
+    })
+}
+
 fn metadata_mtime_ms(metadata: &fs::Metadata) -> f64 {
     let modified = metadata.modified().unwrap_or(UNIX_EPOCH);
     match modified.duration_since(UNIX_EPOCH) {

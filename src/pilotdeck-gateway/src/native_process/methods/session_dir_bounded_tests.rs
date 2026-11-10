@@ -151,7 +151,31 @@ async fn native_session_io_child() {
             Some(&JsValue::Bool(false))
         );
     } else if method == "record_agent_status_message" {
-        assert_eq!(result.unwrap().get("recorded"), Some(&JsValue::Bool(false)));
+        // #1873: a refused cold append is a storage failure, never a successful
+        // recorded:false response or the retryable writer-contention answer.
+        let error = result.expect_err("unsafe cold status append must fail");
+        assert_eq!(error.code, "gateway_request_failed");
+        if case == "lock-fifo" {
+            assert_eq!(
+                error.message,
+                JsString::from("Native session ledger lock is not a regular file.")
+            );
+        } else if case == "lock-symlink" {
+            assert!(
+                error
+                    .message
+                    .to_utf8()
+                    .unwrap()
+                    .contains("Could not open session ledger lock"),
+                "cold status must preserve the lock-open diagnostic: {error:?}"
+            );
+        } else {
+            let message = error.message.to_utf8().unwrap();
+            assert!(
+                message.contains("transcript") && message.contains("not a regular file"),
+                "cold status must preserve the transcript refusal: {error:?}"
+            );
+        }
     } else {
         assert!(result.is_err(), "{method}: unsafe transcript accepted");
     }

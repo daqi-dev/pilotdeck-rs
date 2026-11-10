@@ -196,9 +196,19 @@ async fn deliver(
 }
 
 async fn next(turn: &mut dyn LiveTurn) -> Result<Option<JsValue>, RuntimeError> {
-    timeout(Duration::from_secs(15), turn.next())
-        .await
-        .expect("#741i/#855: LiveTurn must make progress (timeout is not a mutation kill)")
+    const PROGRESS: &str =
+        "#741i/#855: LiveTurn must make progress (timeout is not a mutation kill)";
+    match timeout(Duration::from_secs(60), turn.next()).await {
+        Ok(value) => value,
+        Err(_elapsed) => {
+            // #1891: receipt-wired watchdog failure; the panic text is the
+            // same expect message. The parenthetical still scopes product
+            // mutants — this wired firing only names the #1891 negative
+            // control that shrinks the window itself.
+            crate::test_negative_receipt::record_failure(PROGRESS);
+            panic!("{PROGRESS}")
+        }
+    }
 }
 
 async fn persisted_failure(turn: &mut dyn LiveTurn) -> String {
@@ -660,9 +670,17 @@ async fn spawn_client_with(mode: &str, argument: Option<&str>) -> Result<HostCli
     HostClient::spawn(
         &mut command,
         Some(&"fixture".into()),
+        // #1891: liveness margins for the real Python fixture spawn (both the
+        // live-session peer and the a6-host fixture), not limits under test —
+        // the same source #978 measured reddening on a host running eight
+        // concurrent lib suites. The re-judged site: this block previously
+        // carried handshake 5 s / execution 10 s (the issue body said 5/5);
+        // both are waits on the sidecar, so both get the margin, and the
+        // stream oracles below are unchanged.
         Limits {
-            handshake_timeout: Duration::from_secs(5),
-            execution_timeout: Some(Duration::from_secs(10)),
+            handshake_timeout: Duration::from_secs(60),
+            execution_timeout: Some(Duration::from_secs(60)),
+            io_timeout: Duration::from_secs(60),
             ..Limits::default()
         },
     )
@@ -3864,14 +3882,16 @@ async fn live_recording_matrix(phase: usize, action: &str) {
         drop(turn);
     }
     if let Some(disposal) = session_disposal {
-        timeout(Duration::from_secs(15), disposal)
+        timeout(Duration::from_secs(60), disposal)
             .await
             .expect("#743 dispose writer drain timeout")
             .expect("#743 dispose writer drain");
     }
     // The worker owns the slot until append returns; explicit release above
     // is the progress condition, timeout only fails the test (never unlocks).
-    timeout(Duration::from_secs(15), async {
+    // #1891: the owner set includes the live peer's lease release, so this
+    // gets the liveness margin rather than the old 15 s.
+    timeout(Duration::from_secs(60), async {
         while active() || runtime.lease_count() != 0 {
             tokio::task::yield_now().await;
         }
@@ -3924,7 +3944,7 @@ async fn live_recording_matrix(phase: usize, action: &str) {
         }
         drop(replacement);
     }
-    timeout(Duration::from_secs(15), &mut disposal)
+    timeout(Duration::from_secs(60), &mut disposal)
         .await
         .expect("#743 recording prerequisite")
         .expect("#743 recording prerequisite");
@@ -4427,9 +4447,15 @@ async fn real_sidecar_case(mode: &str) {
     let client = HostClient::spawn(
         &mut command,
         None,
+        // #1891: the real TS sidecar pays the heaviest cold start in this
+        // file (node + tsx transform before the first byte), so the old
+        // 15 s handshake / 20 s execution margins get the same #978/#1851
+        // liveness margin as the Python peers; the oracle comparisons below
+        // are unchanged.
         Limits {
-            handshake_timeout: Duration::from_secs(15),
-            execution_timeout: Some(Duration::from_secs(20)),
+            handshake_timeout: Duration::from_secs(60),
+            execution_timeout: Some(Duration::from_secs(60)),
+            io_timeout: Duration::from_secs(60),
             ..Limits::default()
         },
     )

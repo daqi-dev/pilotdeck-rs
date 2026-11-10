@@ -143,6 +143,28 @@ fn wire_options_for(turn: &str) -> JsValue {
 async fn client(mode: &str) -> Result<HostClient, HostError> {
     client_with_close_timeout(mode, Limits::default().close_timeout).await
 }
+/// #1891: liveness margin for the awaits in this file that cannot complete
+/// without the real `peer.py` (`live-*` modes): the stream frames, the
+/// disposer gates that follow the child's terminal, and the final
+/// `registry.dispose()` that waits for it to exit — the same source #978
+/// measured reddening on a host running eight concurrent lib suites. These
+/// are watchdogs, not assertions: the frame sequences and lease accounting
+/// below are unchanged. The scripted `InteractionTurn` tests in this file
+/// deliberately keep the shared in-process `bounded()`; each keep is
+/// exempted in the #1891 result table.
+const SIDECAR_LIVENESS: Duration = Duration::from_secs(60);
+async fn bounded_liveness<T>(future: impl std::future::Future<Output = T>) -> T {
+    match tokio::time::timeout(SIDECAR_LIVENESS, future).await {
+        Ok(value) => value,
+        Err(_elapsed) => {
+            // #1891: receipt-wired watchdog failure; the panic text is the
+            // same expect message, only the negative-control protocol sees
+            // the extra step.
+            crate::test_negative_receipt::record_failure("sidecar liveness wait timed out");
+            panic!("sidecar liveness wait timed out")
+        }
+    }
+}
 /// `client` for a peer mode that takes an extra scratch-directory argument
 /// the test and the peer synchronize on through files.
 async fn client_with_arg(mode: &str, argument: &str) -> Result<HostClient, HostError> {
@@ -157,8 +179,12 @@ async fn client_with_arg(mode: &str, argument: &str) -> Result<HostClient, HostE
     HostClient::spawn(
         &mut command,
         Some(&"fixture".into()),
+        // #1891: liveness margins for the real `peer.py` spawn, not limits
+        // under test — same-source sibling of the #978 sites.
         Limits {
-            execution_timeout: Some(Duration::from_secs(5)),
+            handshake_timeout: SIDECAR_LIVENESS,
+            execution_timeout: Some(SIDECAR_LIVENESS),
+            io_timeout: SIDECAR_LIVENESS,
             close_timeout: Limits::default().close_timeout,
             ..Default::default()
         },
@@ -179,8 +205,12 @@ async fn client_with_close_timeout(
     HostClient::spawn(
         &mut command,
         Some(&"fixture".into()),
+        // #1891: as above; `close_timeout` stays caller-owned because the
+        // dispose-timeout test pins it deliberately at 10 ms.
         Limits {
-            execution_timeout: Some(Duration::from_secs(5)),
+            handshake_timeout: SIDECAR_LIVENESS,
+            execution_timeout: Some(SIDECAR_LIVENESS),
+            io_timeout: SIDECAR_LIVENESS,
             close_timeout,
             ..Default::default()
         },
@@ -248,7 +278,11 @@ async fn host_consumes_actual_generations_across_reload_and_live_stdio() {
         )
         .unwrap();
     assert_eq!(
-        bounded(stream.next()).await.unwrap().unwrap().get("type"),
+        bounded_liveness(stream.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .get("type"),
         Some(&"turn_started".into())
     );
     bounded(registry.reload()).await.unwrap();
@@ -264,7 +298,11 @@ async fn host_consumes_actual_generations_across_reload_and_live_stdio() {
             wire_options(),
         )
         .unwrap();
-    while bounded(predecessor.next()).await.unwrap().is_some() {}
+    while bounded_liveness(predecessor.next())
+        .await
+        .unwrap()
+        .is_some()
+    {}
     assert_accepted_once(&recorder, "turn", 1);
     let mut newer = second
         .submit_turn_for_test(
@@ -272,20 +310,28 @@ async fn host_consumes_actual_generations_across_reload_and_live_stdio() {
             wire_options_for("reload-next"),
         )
         .unwrap();
-    bounded(newer.next()).await.unwrap();
+    bounded_liveness(newer.next()).await.unwrap();
     assert_eq!(old.lease_count(), 1);
     assert_eq!(current.lease_count(), 1);
     for running in [&mut stream, &mut newer] {
-        bounded(running.next()).await.unwrap().unwrap(); // host accepted
+        bounded_liveness(running.next()).await.unwrap().unwrap(); // host accepted
         assert_eq!(
-            bounded(running.next()).await.unwrap().unwrap().get("type"),
+            bounded_liveness(running.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .get("type"),
             Some(&"user_prompt_submitted".into())
         );
         assert_eq!(
-            bounded(running.next()).await.unwrap().unwrap().get("type"),
+            bounded_liveness(running.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .get("type"),
             Some(&"model_request_started".into())
         );
-        let observed = bounded(running.next()).await.unwrap().unwrap();
+        let observed = bounded_liveness(running.next()).await.unwrap().unwrap();
         assert_eq!(observed.get("type"), Some(&"agent_status".into()));
         let actual = observed
             .get("receivedPayload")
@@ -297,16 +343,20 @@ async fn host_consumes_actual_generations_across_reload_and_live_stdio() {
         }
         assert!(actual.get("forged").is_none());
         assert_eq!(
-            bounded(running.next()).await.unwrap().unwrap().get("type"),
+            bounded_liveness(running.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .get("type"),
             Some(&"turn_completed".into())
         );
-        assert!(bounded(running.next()).await.unwrap().is_none());
+        assert!(bounded_liveness(running.next()).await.unwrap().is_none());
     }
     assert_accepted_once(&recorder, "reload-next", 2);
-    bounded(old.wait_disposed()).await.unwrap();
+    bounded_liveness(old.wait_disposed()).await.unwrap();
     assert_eq!(old_events.release_count(), 1);
     assert_eq!(current.state(), RuntimeState::Active);
-    bounded(registry.dispose()).await.unwrap();
+    bounded_liveness(registry.dispose()).await.unwrap();
 }
 
 #[tokio::test]
@@ -508,7 +558,7 @@ async fn host_live_stdio_dispatches_all_four_ports_and_delivers_buffered_events(
             )
             .unwrap();
         let mut events = Vec::new();
-        while let Some(event) = bounded(stream.next()).await.unwrap() {
+        while let Some(event) = bounded_liveness(stream.next()).await.unwrap() {
             events.push(event);
         }
         assert_eq!(events[2].get("type"), Some(&"user_prompt_submitted".into()));
@@ -518,7 +568,7 @@ async fn host_live_stdio_dispatches_all_four_ports_and_delivers_buffered_events(
         assert_eq!(events[5].get("type"), Some(&"turn_completed".into()));
         assert_accepted_once(&recorder, turn_id, index + 1);
     }
-    bounded(registry.dispose()).await.unwrap();
+    bounded_liveness(registry.dispose()).await.unwrap();
 }
 
 fn interaction_registry(scratch: &Scratch) -> ProjectRuntimeRegistry {
@@ -602,19 +652,27 @@ async fn host_drop_stream_immediately_resubmits_same_session_before_old_dispose(
             wire_options(),
         )
         .unwrap();
-    bounded(first.next()).await.unwrap().unwrap(); // host started
-    bounded(first.next()).await.unwrap().unwrap(); // host accepted
+    bounded_liveness(first.next()).await.unwrap().unwrap(); // host started
+    bounded_liveness(first.next()).await.unwrap().unwrap(); // host accepted
     assert_eq!(
-        bounded(first.next()).await.unwrap().unwrap().get("type"),
+        bounded_liveness(first.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .get("type"),
         Some(&"user_prompt_submitted".into())
     );
     assert_eq!(
-        bounded(first.next()).await.unwrap().unwrap().get("type"),
+        bounded_liveness(first.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .get("type"),
         Some(&"model_request_started".into())
     );
     {
         let mut pending = first.next();
-        bounded(async {
+        bounded_liveness(async {
             tokio::select! {
                 _ = entered.notified() => {},
                 result = &mut pending => panic!("disposer must pause before terminal: {result:?}"),
@@ -633,7 +691,7 @@ async fn host_drop_stream_immediately_resubmits_same_session_before_old_dispose(
             wire_options_for("next"),
         )
         .unwrap();
-    let event = bounded(next.next()).await.unwrap().unwrap();
+    let event = bounded_liveness(next.next()).await.unwrap().unwrap();
     let mut kinds = vec![event.get("type").cloned().unwrap()];
     assert_eq!(
         runtime.lease_count(),
@@ -644,7 +702,7 @@ async fn host_drop_stream_immediately_resubmits_same_session_before_old_dispose(
     until(|| runtime.lease_count() == 1).await;
     // The old disposer runs while the replacement is still active. Its stale
     // handles must not close any of the new turn's interaction resources.
-    while let Some(event) = bounded(next.next()).await.unwrap() {
+    while let Some(event) = bounded_liveness(next.next()).await.unwrap() {
         kinds.push(event.get("type").cloned().unwrap());
     }
     assert_eq!(
@@ -661,7 +719,7 @@ async fn host_drop_stream_immediately_resubmits_same_session_before_old_dispose(
     println!(
         "drop sequence: same-session replacement completed; old disposer released exactly once"
     );
-    bounded(registry.dispose()).await.unwrap();
+    bounded_liveness(registry.dispose()).await.unwrap();
 }
 
 #[derive(Default)]
@@ -756,13 +814,13 @@ async fn host_dispose_timeout_resubmit_waits_for_old_recorder() {
             wire_options(),
         )
         .unwrap();
-    bounded(first.next()).await.unwrap().unwrap();
+    bounded_liveness(first.next()).await.unwrap().unwrap();
     let old = turns.lock().unwrap()[0].clone();
     old.enqueue(pending_steer("old")).await.unwrap();
     // Terminal delivery and EOF prove HostClient's actual dispose timeout has
     // expired while the old recorder remains deliberately blocked.
-    while bounded(first.next()).await.unwrap().is_some() {}
-    bounded(recorder.entered.notified()).await;
+    while bounded_liveness(first.next()).await.unwrap().is_some() {}
+    bounded_liveness(recorder.entered.notified()).await;
     println!(
         "timeout sequence: old stream reached EOF with discard held; rows={:?}",
         recorder.rows.lock().unwrap()
@@ -819,7 +877,7 @@ async fn host_dispose_timeout_resubmit_waits_for_old_recorder() {
     let runtime = registry.resolve(None).unwrap();
     until(|| runtime.lease_count() == 2).await; // A and C, not abandoned B
     recorder.release.notify_one();
-    bounded(next_event).await.unwrap().unwrap();
+    bounded_liveness(next_event).await.unwrap().unwrap();
     let current = turns.lock().unwrap()[1].clone();
     current.enqueue(pending_steer("new")).await.unwrap();
     assert_eq!(
@@ -833,13 +891,13 @@ async fn host_dispose_timeout_resubmit_waits_for_old_recorder() {
             "insert:end"
         ]
     );
-    while bounded(next.next()).await.unwrap().is_some() {}
+    while bounded_liveness(next.next()).await.unwrap().is_some() {}
     assert_eq!(old.release_count(), 1);
     println!(
         "timeout sequence: old discard completed before new insert; rows={:?}",
         recorder.rows.lock().unwrap()
     );
-    bounded(registry.dispose()).await.unwrap();
+    bounded_liveness(registry.dispose()).await.unwrap();
 }
 
 #[test]
@@ -1148,7 +1206,7 @@ async fn live_notice(mode: &str) {
             wire_options(),
         )
         .expect("#741 notice live submit");
-    let started = tokio::time::timeout(Duration::from_secs(15), stream.next())
+    let started = tokio::time::timeout(SIDECAR_LIVENESS, stream.next())
         .await
         .expect("#741 notice first timeout")
         .expect("#741 notice first next")
@@ -1167,7 +1225,7 @@ async fn live_notice(mode: &str) {
             )
             .expect("#741 notice dropped slot released");
         for kind in ["turn_started", "input_accepted"] {
-            let event = tokio::time::timeout(Duration::from_secs(15), successor.next())
+            let event = tokio::time::timeout(SIDECAR_LIVENESS, successor.next())
                 .await
                 .expect("#741 notice successor timeout")
                 .expect("#741 notice successor next")
@@ -1179,10 +1237,10 @@ async fn live_notice(mode: &str) {
             );
         }
         drop(successor);
-        bounded(session.dispose())
+        bounded_liveness(session.dispose())
             .await
             .expect("#741 notice drop dispose");
-        bounded(registry.dispose())
+        bounded_liveness(registry.dispose())
             .await
             .expect("#741 notice drop registry dispose");
         return;
@@ -1192,7 +1250,7 @@ async fn live_notice(mode: &str) {
     }
     let mut delivered = vec![started];
     for _ in 0..20 {
-        let event = tokio::time::timeout(Duration::from_secs(15), stream.next())
+        let event = tokio::time::timeout(SIDECAR_LIVENESS, stream.next())
             .await
             .expect("#741 notice live next timeout")
             .expect("#741 notice live next");
@@ -1255,10 +1313,10 @@ async fn live_notice(mode: &str) {
         "#741 notice live success"
     );
     drop(stream);
-    bounded(session.dispose())
+    bounded_liveness(session.dispose())
         .await
         .expect("#741 notice live dispose");
-    bounded(registry.dispose())
+    bounded_liveness(registry.dispose())
         .await
         .expect("#741 notice registry dispose");
 }

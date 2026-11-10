@@ -13,7 +13,14 @@ use serde_json::{Value, json};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::{sync::Notify, time::timeout};
 
-const DEADLINE: Duration = Duration::from_secs(5);
+/// #1891 fix-r2 (review P2): every wait below rides the in-process listener's
+/// serving task, which shares this worker's scheduler with the whole suite —
+/// the exact #978 starvation mechanism fix-r1 relaxed to 60 s in the sibling
+/// `native_ws/tests.rs` (RESPONSE_LIVENESS). The old 5 s bound raced that
+/// scheduling instead of the behavior under test. The two `host.shutdown`
+/// call sites pass this as their drain budget in tests whose business has
+/// already completed, so the wider value never extends a passing run.
+const DEADLINE: Duration = Duration::from_secs(60);
 const CAP_ASSERT: &str = "#1079 connection budget bounds half handshakes";
 const INPUT_ASSERT: &str = "#1079 aggregate pressure closes only contender";
 const CLEANUP_ASSERT: &str = "#1079 shutdown and cancellation release all resources";

@@ -297,12 +297,16 @@ impl NativeWsServer {
             drop(guard);
             runner_done.send_replace(Some(drained));
         });
+        // #2557: the walk's synchronous re-issue handle — cloned before the
+        // literal below moves the guard into the run.
+        let host = cleanup.0.clone();
         PhasedRun {
             _cleanup: cleanup,
             inner,
             done,
             runner,
             drain_budget,
+            host,
         }
     }
 }
@@ -567,6 +571,11 @@ pub struct PhasedRun {
     /// construction, so readable without the inner lock. The post-halt walk
     /// bounds its own close join with it (`switch_wiring.rs`).
     drain_budget: Duration,
+    /// #2557: the host handle, duplicated like the budget above — the
+    /// post-halt walk re-issues the teardown request synchronously after
+    /// its shared deadline cut a first `finish()` short, without going
+    /// through `finish()` again (see `request_host_shutdown`).
+    host: TurnGateway,
 }
 
 impl Drop for PhasedRun {
@@ -599,6 +608,20 @@ impl PhasedRun {
     /// bound the post-halt walk reuses for its own close join.
     pub fn drain_budget(&self) -> Duration {
         self.drain_budget
+    }
+
+    /// #2557: the post-halt walk's synchronous re-issue of the host teardown
+    /// request after its shared deadline cut a first `finish()` mid-body —
+    /// the walk returns on the timeout and the process exits, so no revisit
+    /// is coming. The re-issue cannot go through `finish()`: it first awaits
+    /// the inner lock, which a concurrent holder can hold past the deadline
+    /// the walk just exhausted; and the revisit branch inside, once entered,
+    /// would itself re-issue and then only report the interrupted verdict
+    /// (#2363, once-only) — the direct synchronous request on the host gate
+    /// needs neither. Idempotent like every other request site
+    /// (`send_if_modified` keeps the first budget).
+    pub fn request_host_shutdown(&self) {
+        self.host.request_shutdown(self.drain_budget);
     }
 
     /// S4's WS half: close notice, abort, host shutdown, error reporting.

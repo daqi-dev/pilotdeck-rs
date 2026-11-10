@@ -316,7 +316,7 @@ impl NativeDialogRecovery {
                 project_root: project.clone(), pilot_home: home, session_id: session.clone(), now: None,
             }).map_err(error)?;
             let live = crate::native_process::assembly::live_recorder(&recorders, &session);
-            let cold = if live.is_none() { Some(transcript_locks::cold_write_lease(&path).ok_or_else(transcript_locks::writer_busy_error)?) } else { None };
+            let cold = if live.is_none() { Some(transcript_locks::cold_write_lease(&path)?.ok_or_else(transcript_locks::writer_busy_error)?) } else { None };
             let _cold = cold;
             let entries = storage.read_transcript(Some(crate::storage::TRANSCRIPT_MAX_BYTES)).map_err(error)?.entries;
             let writer = if let Some((_, recorder)) = &live {
@@ -708,7 +708,7 @@ mod tests {
         assert_eq!(failure.code, "INVALID_USER_DIALOG_RESPONSE");
         assert_eq!(journal.recover().unwrap().len(), 1);
         let path = chat.join("blocked-recovery.jsonl");
-        let lease = transcript_locks::cold_write_lease(&path).unwrap();
+        let lease = transcript_locks::cold_write_lease(&path).unwrap().unwrap();
         let failure = port
             .recover_answer(
                 &requests,

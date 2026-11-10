@@ -49,7 +49,7 @@ fn normalize(value: Value, root: &Path) -> Value {
 }
 
 #[tokio::test]
-async fn actual_builtin_content_same_key_override_disabled_and_source_priority_match_fixed_ts() {
+async fn programmatic_builtin_same_key_override_disabled_and_priority_match_fixed_ts() {
     let scratch = Scratch::new();
     for mode in [
         "builtin-only",
@@ -67,11 +67,15 @@ async fn actual_builtin_content_same_key_override_disabled_and_source_priority_m
             "browser-use",
             "BUILTIN CONTENT",
         );
-        let builtin = stage_native_builtin_skills(
-            &options(&root, Some(assets)),
-            &mut StyleBudget::native_skills(),
-        )
-        .unwrap();
+        // This oracle explicitly tests a caller-supplied programmatic builtin
+        // with a standalone skill. Production browser-use has a distinct real
+        // browser-use-install asset and MCP, tested separately below.
+        let builtin = LoadFromDiskResult {
+            plugins: vec![Arc::new(
+                load_skill_from_path(&assets.join("browser-use"), PluginSource::Builtin).unwrap(),
+            )],
+            staged_failures: Vec::new(),
+        };
         assert_eq!(builtin.plugins.len(), 1);
         assert_eq!(
             builtin.plugins[0].skills[0].content, "BUILTIN CONTENT\n",
@@ -193,12 +197,97 @@ async fn disabling_builtin_keeps_standalone_and_deleting_asset_retires_its_skill
 }
 
 #[test]
-fn missing_builtin_assets_publish_no_empty_placeholder() {
+fn missing_skill_assets_still_publish_real_mcp_consumers() {
     let scratch = Scratch::new();
     let result = stage_native_builtin_skills(
         &options(&scratch.0, Some(scratch.0.join("missing"))),
         &mut StyleBudget::native_skills(),
     )
     .unwrap();
-    assert!(result.plugins.is_empty());
+    assert_eq!(
+        result
+            .plugins
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["browser-use", "funasr"]
+    );
+    assert!(
+        result
+            .plugins
+            .iter()
+            .all(|p| p.skills.is_empty() && p.mcp_servers.is_some())
+    );
+}
+
+#[tokio::test]
+async fn actual_browser_builtin_asset_mcp_disable_and_whole_plugin_override() {
+    let scratch = Scratch::new();
+    let assets = scratch.0.join("assets");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../skills/.builtin-plugins/browser-use/skills/browser-use-install/SKILL.md");
+    let target = assets.join(".builtin-plugins/browser-use/skills/browser-use-install");
+    fs::create_dir_all(&target).unwrap();
+    fs::write(target.join("SKILL.md"), fs::read(source).unwrap()).unwrap();
+    let mut opts = options(&scratch.0, Some(assets.clone()));
+    opts.builtin_plugins_enabled
+        .insert("windows-skills".into(), false);
+    let runtime = PluginRuntime::new_native_style_only(opts);
+    runtime.refresh().await.unwrap();
+    let skills = runtime.all_skills().await;
+    assert_eq!(skills.len(), 1);
+    assert_eq!(skills[0].name, "browser-use:browser-use-install");
+    assert!(skills[0].content.contains("# Browser-Use Install"));
+    {
+        use sha2::Digest as _;
+        assert_eq!(
+            format!("{:x}", sha2::Sha256::digest(skills[0].content.as_bytes())),
+            "7f08d42435047c552676a5a03ab92b32696f7ad1e22f574186dcc6567ed0ffd3",
+            "actual fixed TS builtin loadSkillPrompt body"
+        );
+    }
+
+    let servers = runtime.mcp_servers().await;
+    assert!(servers.get_property("browser-use").is_some());
+    assert!(servers.get_property("funasr").is_some());
+    runtime.dispose().await.unwrap();
+    let mut opts = options(&scratch.0, Some(assets.clone()));
+    opts.builtin_plugins_enabled
+        .insert("windows-skills".into(), false);
+    opts.builtin_plugins_enabled
+        .insert("browser-use".into(), false);
+    let runtime = PluginRuntime::new_native_style_only(opts);
+    runtime.refresh().await.unwrap();
+    assert!(runtime.all_skills().await.is_empty());
+    assert!(
+        runtime
+            .mcp_servers()
+            .await
+            .get_property("browser-use")
+            .is_none()
+    );
+    runtime.dispose().await.unwrap();
+    let mut opts = options(&scratch.0, Some(assets.clone()));
+    opts.builtin_plugins_enabled
+        .insert("windows-skills".into(), false);
+    skill(
+        &assets.join("browser-use"),
+        "browser-use",
+        "OVERRIDE BY REAL STANDALONE",
+    );
+    let runtime = PluginRuntime::new_native_style_only(opts);
+    runtime.refresh().await.unwrap();
+    let skills = runtime.all_skills().await;
+    assert_eq!(skills.len(), 1);
+    assert_eq!(skills[0].name, "browser-use");
+    assert!(skills[0].content.contains("OVERRIDE BY REAL STANDALONE"));
+    assert!(
+        runtime
+            .mcp_servers()
+            .await
+            .get_property("browser-use")
+            .is_none()
+    );
+    assert!(runtime.mcp_servers().await.get_property("funasr").is_some());
+    runtime.dispose().await.unwrap();
 }

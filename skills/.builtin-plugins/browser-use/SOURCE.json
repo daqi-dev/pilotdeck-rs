@@ -1,0 +1,13 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "source": "src/extension/plugins/builtin/browser-use/skills/browser-use-install/SKILL.md",
+  "sourceSha256": "f5bbbd426f3e6465578ec12ece1ebd5601568b211e7378cdd7313ec6d49015f7",
+  "license": "AGPL-3.0-only; repository LICENSE; only model-visible skill Markdown, no TS/script code copied",
+  "scope": "actual builtin browser-use-install; not the standalone browser-use replacement",
+  "notCopied": [
+    "scripts/install-browser.mjs"
+  ],
+  "missingBehavior": "installer script referenced by model-visible original text is not copied; native installer handoff remains explicit gap",
+  "licenseFile": "../../../LICENSE",
+  "sourceLicenseSha256": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0"
+}

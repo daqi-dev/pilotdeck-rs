@@ -153,17 +153,44 @@ async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput
     let freshness = ensure_write_snapshot_fresh(context, &resolved.absolute)?;
 
     let message = message_id(context);
-    if let Some(history) = file_history(context) {
-        history
-            .track_edit(&text(&resolved.absolute), &message)
-            .map_err(|error| tool_error("tool_execution_failed", error.to_string()))?;
+    let history = file_history(context);
+    let history_source = if history.is_some_and(|value| value.requires_authorized_source()) {
+        Some(super::authorized_history_source(&resolved, context)?)
+    } else {
+        None
+    };
+    if let Some(history) = history {
+        if let Some(source) = &history_source {
+            history
+                .track_edit_authorized(source, &message)
+                .map_err(|error| tool_error("tool_execution_failed", error.to_string()))?;
+        } else {
+            history
+                .track_edit(&text(&resolved.absolute), &message)
+                .map_err(|error| tool_error("tool_execution_failed", error.to_string()))?;
+        }
     }
 
-    let write = write_text_file(&resolved.absolute, &content)?;
-    if let Some(history) = file_history(context) {
-        history
-            .mark_edit_committed(&text(&resolved.absolute), &message)
-            .map_err(|error| tool_error("tool_execution_failed", error.to_string()))?;
+    let write = if let Some(source) = &history_source {
+        super::write_text_file_authorized(
+            source,
+            &resolved.absolute,
+            freshness.previous_content.as_deref(),
+            &content,
+        )?
+    } else {
+        write_text_file(&resolved.absolute, &content)?
+    };
+    if let Some(history) = history {
+        if let Some(source) = &history_source {
+            history
+                .mark_edit_committed_authorized(source, &message)
+                .map_err(|error| tool_error("tool_execution_failed", error.to_string()))?;
+        } else {
+            history
+                .mark_edit_committed(&text(&resolved.absolute), &message)
+                .map_err(|error| tool_error("tool_execution_failed", error.to_string()))?;
+        }
     }
     super::invalidate_read_file_state(context, &resolved.absolute);
     record_write_snapshot(context, &resolved.absolute, &content, write.mtime_ms, None);

@@ -1295,3 +1295,126 @@ async fn native_file_permission_predicates_preserve_registered_reads_explicit_ru
         ports.tool_execution.wait_closed().await.unwrap();
     }
 }
+
+#[test]
+fn persisted_rules_reload_each_turn_without_leaking_into_session_or_losing_grants() {
+    let base = RuleSetHandle::empty();
+    let (_scratch, tools, recorder, identity) =
+        make_tools(JsObject::new(), Arc::default(), base.clone());
+    let path = tools.options.home.join("permissions.json");
+    std::fs::write(&path,r#"{"allowedTools":["Read"],"disallowedTools":["mcp__funasr__transcribe_audio"],"askTools":["Bash(git:*)"]}"#).unwrap();
+    let first = tools.turn(&identity, recorder.clone(), Cancellation::new());
+    let observed = first.interaction.permission.rules.snapshot();
+    assert_eq!(
+        observed.allow,
+        vec![PermissionRule::new("user", "allow", "read_file")]
+    );
+    assert_eq!(
+        observed.deny,
+        vec![PermissionRule::new(
+            "user",
+            "deny",
+            "mcp__funasr__transcribe_audio"
+        )]
+    );
+    assert_eq!(
+        observed.ask,
+        vec![PermissionRule::new("user", "ask", "bash").with_pattern("git:*")]
+    );
+    assert!(base.snapshot().allow.is_empty());
+    base.update_member("allow", |rules| {
+        rules.push(PermissionRule::new("session", "allow", "write_file").into())
+    });
+    assert_eq!(
+        first.interaction.permission.rules.snapshot().allow[0].source,
+        JsString::from("session")
+    );
+    std::fs::write(&path, r#"{"allowedTools":["WebFetch"]}"#).unwrap();
+    let second = tools.turn(&identity, recorder, Cancellation::new());
+    assert_eq!(
+        second.interaction.permission.rules.snapshot().allow,
+        vec![
+            PermissionRule::new("session", "allow", "write_file"),
+            PermissionRule::new("user", "allow", "web_fetch")
+        ]
+    );
+    assert!(
+        second
+            .interaction
+            .permission
+            .rules
+            .snapshot()
+            .deny
+            .is_empty()
+    );
+    assert_eq!(
+        first.interaction.permission.rules.snapshot().deny.len(),
+        1,
+        "previous turn keeps its admitted deny snapshot"
+    );
+}
+
+#[test]
+fn persisted_skip_is_only_fallback_below_managed_session_and_explicit_turn_modes() {
+    for (managed, stored, requested, skip, expected) in [
+        (None, None, None, true, "bypassPermissions"),
+        (None, None, None, false, "default"),
+        (None, Some("default"), None, true, "default"),
+        (Some("plan"), Some("default"), None, true, "plan"),
+        (Some("plan"), None, Some("default"), true, "default"),
+        (None, None, Some("plan"), true, "plan"),
+    ] {
+        let mut config = JsObject::new();
+        if let Some(mode) = managed {
+            config.insert(
+                "managedPermissions".into(),
+                crate::metadata::object([("defaultMode", JsValue::from(mode))]),
+            );
+        }
+        let (_scratch, tools, recorder, identity) =
+            make_tools(config, Arc::default(), RuleSetHandle::empty());
+        let tools = tools.with_permission_mode_source(Arc::new(move || stored.map(JsString::from)));
+        std::fs::write(
+            tools.options.home.join("permissions.json"),
+            format!("{{\"skipPermissions\":{skip}}}"),
+        )
+        .unwrap();
+        let ports = tools.turn_with_authority(
+            &identity,
+            recorder.clone(),
+            Cancellation::new(),
+            Some(TurnInteractionAuthority {
+                permission_mode: requested.map(JsString::from),
+                base_permission_mode: None,
+                sdk_hooks: None,
+                sdk_permission_mode: None,
+                sdk_models: None,
+                can_prompt: None,
+                policy_can_prompt: None,
+                emit: Arc::new(|_| true),
+            }),
+        );
+        assert!(
+            ports
+                .interaction
+                .permission
+                .context
+                .mode
+                .as_js_string()
+                .equals_str(expected)
+        );
+        if managed.is_none() && stored.is_none() && requested.is_none() && skip {
+            std::fs::write(tools.options.home.join("permissions.json"), "{}").unwrap();
+            let next = tools.turn(&identity, recorder, Cancellation::new());
+            assert!(
+                next.interaction
+                    .permission
+                    .context
+                    .mode
+                    .as_js_string()
+                    .equals_str("default"),
+                "persisted bypass must not become a session selection"
+            );
+        }
+    }
+}

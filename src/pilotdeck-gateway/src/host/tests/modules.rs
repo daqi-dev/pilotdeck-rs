@@ -529,7 +529,11 @@ async fn dropped_execute_joins_callbacks_before_dispose() {
         .unwrap();
     let handler = Handler::new("callback-timeout");
     let task = tokio::spawn(client.execute(request(), handler.clone()));
-    timeout(Duration::from_secs(5), async {
+    // #1891 fix-r2 (review P2): both waits ride real-peer round trips (the
+    // peer's module_call, then the close/dispose it gates), so the anti-hang
+    // bound joins the 60 s liveness margins the spawn above grants instead
+    // of racing loaded-CI scheduling.
+    timeout(Duration::from_secs(60), async {
         while handler.active_calls.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
         }
@@ -538,7 +542,7 @@ async fn dropped_execute_joins_callbacks_before_dispose() {
     .unwrap();
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
-    timeout(Duration::from_secs(5), async {
+    timeout(Duration::from_secs(60), async {
         while handler.disposed.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
         }
@@ -557,7 +561,8 @@ async fn execute_dropped_outside_runtime_still_joins_callbacks_and_disposes_once
         .unwrap();
     let handler = Handler::new("callback-timeout");
     let mut execution = Box::pin(client.execute(request(), handler.clone()));
-    timeout(Duration::from_secs(5), async {
+    // #1891 fix-r2 (review P2): same real-peer waits as the sibling above.
+    timeout(Duration::from_secs(60), async {
         tokio::select! {
             result = &mut execution => panic!("execution finished before drop: {result:?}"),
             () = async {
@@ -575,7 +580,7 @@ async fn execute_dropped_outside_runtime_still_joins_callbacks_and_disposes_once
     })
     .join()
     .unwrap();
-    timeout(Duration::from_secs(5), async {
+    timeout(Duration::from_secs(60), async {
         while handler.disposed.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
         }
@@ -647,8 +652,12 @@ async fn disposer_timeout_rejection_and_panic_keep_the_terminal() {
         // spawn cannot SIGKILL the peer before it persists PASS (#389/#528).
         client.limits.close_timeout = Duration::from_millis(100);
         let handler = DisposeProbe::new(mode);
+        // #1891 fix-r2 (review P2): the spawn is already complete, but the
+        // wrapped execute still consumes the granted execution margin (60 s)
+        // plus the 5 s protocol close grace, so the outer bound takes the
+        // 70 s form instead of racing the margin it grants.
         let result = timeout(
-            Duration::from_secs(5),
+            Duration::from_secs(70),
             client.execute(request(), handler.clone()),
         )
         .await
@@ -668,7 +677,9 @@ async fn dropping_execute_during_dispose_does_not_cancel_or_repeat_cleanup() {
         .unwrap();
     let handler = DisposeProbe::new("wait");
     let task = tokio::spawn(client.execute(request(), handler.clone()));
-    timeout(Duration::from_secs(5), async {
+    // #1891 fix-r2 (review P2): same real-peer waits as the callback tests
+    // above; the 5 s form raced the margins the spawn granted.
+    timeout(Duration::from_secs(60), async {
         while handler.started.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
         }
@@ -679,7 +690,7 @@ async fn dropping_execute_during_dispose_does_not_cancel_or_repeat_cleanup() {
     assert!(task.await.unwrap_err().is_cancelled());
     assert_eq!(handler.finished.load(Ordering::SeqCst), 0);
     handler.release.notify_one();
-    timeout(Duration::from_secs(5), async {
+    timeout(Duration::from_secs(60), async {
         while handler.finished.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
         }

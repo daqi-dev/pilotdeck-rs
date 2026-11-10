@@ -172,6 +172,52 @@ abort、连接、监听器和文件树继续严格比较。96 个有效观察格
 这 2 格的 `recovery.runId` 一个字段，属该登记的预期红格；`comparison.json` 的
 `acceptedDifferences` 不含该条，比较器与金样语义不变）；16 个稳定关闭顺序差异已由 #1260
 按实测 TS 顺序修好（query 连接先于 control，hello-reject 为服务端 4003），修复后不再 FAIL。
+该 2 格红的验收与复核**不只数红格**：`differing surfaces: ["stdout"]` 是整段字节
+比较的单一名，单凭它分不清「仅 runId 不同」与「该两格 stdout 混入其它回归」，
+surface 判据不单独构成放行依据。放行前必须按 `D1-SDK-SIGNAL-RUNID-LITERAL-001`
+「机器判据」的字段级复算执行——登记件与更正件（R1 补分母 96→100；R2 修租约前置
+引用并把复算命令正本迁到本节）只留判据语义与指针，命令正本如下：把该批落盘的
+`evidence/<格>/stdout.bin`（只剥精确 libtest driver 前缀，Rust 侧**不归一化**；
+勿用含 driver 横幅的 `stdout.raw`）中 `recovery.runId` 的 36 字节值替换为金样
+固定 UUID 后与金样 stdout 逐字节比对，相等才在登记范围内，否则红格不得按该登记
+放行（evidence 根目录、source.json 与 cases.json 均显式传参，不依赖 CWD；命令先断言
+该根下的格目录集合恰为 `cases.json` 去掉 6 个 stdin 缺口格后的 100 格（关掉「只跑
+两格/部分批」的口子），再核两格 `comparison.json` 的 `differences` 恰为 `["stdout"]`。
+这两道前置只能把 evidence 根绑到一次**完整跑过本矩阵**的批次，**不能**证明它就是本轮
+刚跑的批次——批次与当前 HEAD 的绑定由本批 cargo 的 `test result` 行与验收现场共同
+保证，勿把命令指向历史根出假放行。原条目 `:86-100` 的内联命令已由 R2 作废、勿照抄；
+同格程序序是先写 `stdout.bin` 再发布 `comparison.json`，故 comparison.json 前置已
+蕴含 `stdout.bin` 写完，不存在批中读到半截文件的口子——但「恰 100 格、失败恰 2 格」
+等分母判据仍须在该批 cargo 进程退出后核）：
+
+```sh
+python3 -I - <evidence-root> <repo>/src/pilotdeck-cli/tests/fixtures/sdk-signals/source.json \
+  <repo>/src/pilotdeck-cli/tests/fixtures/sdk-signals/cases.json <<'PY'
+import json, pathlib, re, sys
+assert len(sys.argv) == 4, 'usage: python3 -I - <evidence-root> <source.json> <cases.json>'
+root, source, cases = (pathlib.Path(arg) for arg in sys.argv[1:4])
+caps = {c['input']['id']: c for c in json.loads(source.read_text(encoding='utf-8'))['captures']}
+expected = {c['id'] for c in json.loads(cases.read_text(encoding='utf-8'))
+             if 'stdin' not in c['id']}
+actual = {p.name for p in root.iterdir() if p.is_dir()}
+assert actual == expected, 'evidence root is not a complete matrix batch: missing ' \
+    + str(sorted(expected - actual)[:3]) + ', extra ' + str(sorted(actual - expected)[:3])
+for cid in ('run--unknown-cleanup', 'resume--unknown-cleanup'):
+    comp = json.loads((root / cid / 'comparison.json').read_text(encoding='utf-8'))
+    assert comp.get('id') == cid and comp.get('differences') == ['stdout'], \
+        f'{cid}: replay comparison.json missing or not stdout-only — wrong evidence root?'
+    g = caps[cid]['stdout'].encode()
+    a = (root / cid / 'stdout.bin').read_bytes()
+    ar = re.search(rb'"runId":"([0-9a-f-]{36})"', a)
+    gr = re.search(rb'"runId":"([0-9a-f-]{36})"', g)
+    assert ar is not None, f'{cid}: actual stdout has no 36-byte runId literal'
+    assert gr is not None, f'{cid}: golden stdout has no 36-byte runId literal'
+    assert a.count(ar.group(1)) == 1, f'{cid}: actual runId literal not unique'
+    assert g.count(gr.group(1)) == 1, f'{cid}: golden runId literal not unique'
+    assert a.replace(ar.group(1), gr.group(1)) == g, f'{cid}: runId-substituted stdout differs'
+    print(f'{cid}: runId {ar.group(1).decode()} -> {gr.group(1).decode()}, substituted stdout byte-equal')
+PY
+```
 `signal_replay::comparison_tests::stable_query_before_control_cells_keep_concrete_order`
 逐格钉住这 16 格的 `(2, 1006|4003)` / `(1, 1005)` 具体先后，并断言反序必被比较器拒绝；
 该名单还与 source.json 里呈同一形状的格集合逐集合相等（防丢格、防新增同形格；
@@ -196,16 +242,40 @@ trace 位置与 dispatched abort 的先后、reset 之后无 wire 事件；再�
 所有窗口格断言 12 秒内没有自然退出，再由本测试 SIGKILL 并在 3 秒内回收。
 
 整批执行须独占 28999 mock 端口车道：批内只有进程内 `SERIAL` 互斥（`signal_replay.rs:34`），
-跨进程无互斥，与同机任何绑定 `127.0.0.1:28999` 的测试 / 脚本须串行（名单用
-`grep -rl 28999 src/pilotdeck-cli src/pilotdeck-gateway/tests scripts` 现取：
-覆盖 `tests/common/`、fixtures 脚本与 `src/`，含仅引用不绑定者，宁多勿漏，
-不在此维护名单）——宿主先取 `/tmp/pdrs-parity.lock` 目录租约，再执行本文件任何
-绑 28999 的命令块（本节 100 格矩阵与下方 pending_abort 单测两处；取不到租约即
-退出稍后重跑，不是自动排队），批期间不得并行任何绑 28999 的套件；锁的形态、
-回收与残留处置不自创，以 `scripts/cli-parity/README.md`「锁被保留时怎么解」节
-为正本（`owner.json` + guard 互斥，空目录不等于残留）。否则
-`TcpListener::bind` 在比较阶段之前直接 panic（该格没有 `differing surfaces`
-行），不再满足「失败恰为 2 格且两格均为 stdout 单面」。
+跨进程无互斥，与同机任何绑定 `127.0.0.1:28999` 的测试 / 脚本须串行。名单是活口径，
+不在本文件维护固定枚举：直接绑定者以
+`grep -rl 28999 src/pilotdeck-cli src/pilotdeck-gateway/src src/pilotdeck-gateway/tests scripts`
+现跑为准（覆盖 `tests/common/`、fixtures 脚本与两侧 `src/`，含仅引用不绑定者，
+宁多勿漏）；间接绑定者不含 28999 字面量、grep 抓不到，判定口径是「执行路径会真实
+到达 `TcpListener::bind("127.0.0.1:28999")`（mock 端口）的入口都算」——不含字面量
+的调用方顺着 `--test sdk_signal_exit` / `signal_cases::` 这类测试选择器找，现知一处：
+`src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py`（自身不取
+parity 锁，内部 cargo test 选 `signal_cases::*` / `pending_abort_*` 真 bind 28999，
+与本节矩阵同样须宿主先持租约再跑）。**自取租约者是例外，宿主不要为它们预持**：重采块
+`capture.py:45`（cli-parity 的 `parity_lock()`；`probe.mjs:17-18` 断言 owner.pid 是
+capture.py 自己，预持即 `Blocked`）；D0 Rust 家族——名单以
+`grep -l 'ParityLock::acquire' src/pilotdeck-cli/tests/*.rs` 现跑为准（当前恰六个
+文件：`sdk_{run,resume,format,settings,sessions_list,sessions_messages}_exit.rs`），
+各自取同一把锁（180 s 上限后 `.expect` panic），宿主预持即
+整族假 FAIL，它们自己就是取锁者；新增自取锁文件时名单随 grep 现跑更新，不靠本段
+枚举。本矩阵（`sdk_signal_exit`）不自取锁（只有进程内
+`SERIAL` 互斥），故须宿主预持。除上述自取者外，宿主先取 `/tmp/pdrs-parity.lock`
+目录租约再执行任何绑 28999 的命令块（以 grep 现跑加间接判定口径为准；取不到租约即
+退出稍后重跑，不是自动排队），批期间不得并行任何绑 28999 的套件。取锁/释放的
+**形态与片段正本**（含失败路径的 trap 释放与「取不到即退出」）在
+`scripts/cli-parity/README.md`「锁被保留时怎么解」节，此处不复写；接管阈值与带接管
+装置名单同以该节为准。28999 车道特有的约束：矩阵全批兜底上界按
+`选择格数 × (2×12 + 5×3) + 30` 秒保守推导（100 格为 3930 s，公式同 `capture.py:44`），
+远超 2400 s 接管阈值，且宿主块没有装置内的硬截止闹钟（cli-parity `run_round.py` 的
+2280 s `signal.alarm` 是调用方闹钟，不是租约属性）——宿主持锁**一律发布
+`cleanupPending: true`**。重采块自取的恰是**无** `cleanupPending` 的 cli-parity
+租约，无格参数全量重采按 `cases.json` 106 格计（106×39+30=4164 s；probe 实跑跳过
+stdin 缺口格）同样可超 2400 s，属可被接管的形态（owner 进程死即 `dead_pid` **即刻**
+接管、与锁龄无关；或锁龄超 2400 s 按 `expired`）——补发布属代码改动且
+capture.py 字节被金样测试 SHA 锚定，跟进单 #2784；重采期间同机不得并行任何带接管
+逻辑的装置取这把锁。被接管/双批并行的后果：`TcpListener::bind` 在比较阶段之前直接
+panic（该格没有 `differing surfaces` 行），不再满足「失败恰为 2 格且两格均为
+stdout 单面」。
 
 ```sh
 scripts/cargo-slots.sh

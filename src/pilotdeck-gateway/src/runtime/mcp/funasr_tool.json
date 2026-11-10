@@ -1,0 +1,25 @@
+{
+  "name": "transcribe_audio",
+  "description": "Transcribe a project-local audio file with the local FunASR SenseVoice runtime. Returns transcript text and timestamped segments.",
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "audio_path"
+    ],
+    "properties": {
+      "audio_path": {
+        "type": "string",
+        "description": "Absolute or project-relative path to an audio file inside the current project."
+      },
+      "language": {
+        "type": "string",
+        "enum": [
+          "auto"
+        ],
+        "default": "auto",
+        "description": "SenseVoice local CLI detects language automatically."
+      }
+    }
+  }
+}

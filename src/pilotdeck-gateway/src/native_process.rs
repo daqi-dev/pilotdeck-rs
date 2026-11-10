@@ -87,6 +87,7 @@ mod switch_wiring;
 #[cfg(test)]
 mod switch_wiring_tests;
 pub use session_overrides::SessionOverrides;
+mod persisted_permissions;
 mod sdk_ephemeral;
 mod sdk_permission;
 mod sdk_tool_policy;

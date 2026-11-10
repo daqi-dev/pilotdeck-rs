@@ -28,14 +28,11 @@ from negative_suite import Case, classify, invalidate_completed, passed, publish
 ROOT = Path(__file__).resolve().parents[5]
 CONFIG = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/config.rs'
 SESSION_DIR = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/session_dir.rs'
-# #2272/#2564: nullish admission now lives in shared project selection.
-# The regression controls reject explicit null before selection, while every
-# existing per-method assertion and negative slot remains in place.
-# The former isolated-project admission source is retired. The row below mutates it while
+# #2272: the isolated-project admission source. The row below mutates it while
 # its bound assertion lives in the session directory's gate-order tests — the
 # #1864 read-side precedent (mutate the writer, assert on the reader) — so the
 # path joins SOURCE_TEXTS / LITERAL_ANCHORS below like LIVE and TOOLS did.
-PROJECT_SCOPE = ROOT / 'src/pilotdeck-gateway/src/native_process/project_scope.rs'
+REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
 # #2562: the submit path's projectKey gate (SubmitHostServices::workspace_id in
 # services.rs) — the same nullish read #2272 gave the admission source above.
 # SERVICES joins SOURCE_TEXTS as a mutation source; MANAGEMENT_TESTS joins it
@@ -55,6 +52,12 @@ ASSEMBLY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
 # span both. FACTORY_TESTS carries the message the bound test asserts on.
 FACTORY = ROOT / 'src/pilotdeck-gateway/src/runtime/session/factory.rs'
 FACTORY_TESTS = ROOT / 'src/pilotdeck-gateway/src/runtime/session/factory_tests.rs'
+# #1874: the three-segment cold-write protocol the config, rename and status
+# callers share now lives in the runtime's transcript locks — each caller
+# passes its own live/cold closures in — so the lease-skip mutant anchors on
+# the helper every caller goes through. TRANSCRIPT_LOCKS joins SOURCE_TEXTS
+# below.
+TRANSCRIPT_LOCKS = ROOT / 'src/pilotdeck-gateway/src/runtime/session/transcript_locks.rs'
 LIVE = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
 # #1864 fix-r2: the host session tools' admission source — `turn()` writes
 # the stored selection back into `Permissions` *and* this turn's local
@@ -72,342 +75,335 @@ REVIEW_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/review_tests.rs'
 # the mutated source, CRON_TESTS carries the bound assertion literal (#2065).
 CRON = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/cron.rs'
 CRON_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/cron/cron_tests.rs'
+PROJECT_SCOPE = ROOT / 'src/pilotdeck-gateway/src/native_process/project_scope.rs'
 CFG = 'native_process::methods::config::tests::'
 FT = 'runtime::session::factory::tests::'
 DIR = 'native_process::methods::session_dir::tests::'
 mutations = [
-    # ── stub reverts: the dispatch arm returns the pre-#1457 capability
-    # terminal; the method's positive test must die.
     ('set-stub-revert', CONFIG,
      '"session_model_set" => self.session_model_set(&params).await,',
      '"session_model_set" => Err(gateway_error("CAPABILITY_UNAVAILABLE", "session_model_set is unavailable.")),',
-     CFG + 'session_model_set_saves_selection_and_appends_transcript',
+     'native_process::methods::config::tests::session_model_set_saves_selection_and_appends_transcript',
      '#1457 session_model_set accepts the fixture selection'),
     ('clear-stub-revert', CONFIG,
      '"session_model_clear" => self.session_model_clear(&params).await,',
      '"session_model_clear" => Err(gateway_error("CAPABILITY_UNAVAILABLE", "session_model_clear is unavailable.")),',
-     CFG + 'session_model_clear_appends_transcript_and_returns_null',
+     'native_process::methods::config::tests::session_model_clear_appends_transcript_and_returns_null',
      '#1457 session_model_clear succeeds'),
     ('permission-stub-revert', CONFIG,
      '"set_permission_mode" => self.set_permission_mode(&params).await,',
      '"set_permission_mode" => Err(gateway_error("CAPABILITY_UNAVAILABLE", "set_permission_mode is unavailable.")),',
-     CFG + 'set_permission_mode_applies_and_validates',
+     'native_process::methods::config::tests::set_permission_mode_applies_and_validates',
      '#1864 set_permission_mode applies the fixture mode'),
     ('thinking-stub-revert', CONFIG,
      '"set_session_thinking" => self.set_session_thinking(&params).await,',
      '"set_session_thinking" => Err(gateway_error("CAPABILITY_UNAVAILABLE", "set_session_thinking is unavailable.")),',
-     CFG + 'set_session_thinking_applies_and_validates',
+     'native_process::methods::config::tests::set_session_thinking_applies_and_validates',
      '#1864 set_session_thinking stores the mode object'),
     ('styles-list-stub-revert', CONFIG,
      '"output_styles_list" => self.output_styles_list(&params).await,',
      '"output_styles_list" => Err(gateway_error("CAPABILITY_UNAVAILABLE", "output_styles_list is unavailable.")),',
-     CFG + 'output_styles_list_reports_project_styles',
+     'native_process::methods::config::tests::output_styles_list_reports_project_styles',
      '#1457 output_styles_list without a plugin'),
     ('styles-set-stub-revert', CONFIG,
      '"set_output_style" => self.set_output_style(&params).await,',
      '"set_output_style" => Err(gateway_error("CAPABILITY_UNAVAILABLE", "set_output_style is unavailable.")),',
-     CFG + 'set_output_style_validates_names_and_key',
+     'native_process::methods::config::tests::set_output_style_validates_names_and_key',
      '#1864 set_output_style applies the probe style'),
     ('seed-stub-revert', CONFIG,
      '"seed_read_state" => self.seed_read_state(&params).await,',
      '"seed_read_state" => Err(gateway_error("CAPABILITY_UNAVAILABLE", "seed_read_state is unavailable.")),',
-     CFG + 'seed_read_state_applies_and_validates',
+     'native_process::methods::config::tests::seed_read_state_applies_and_validates',
      '#1457 seed_read_state with the exact mtime'),
-    # ── gate mutants over the real wiring.
     ('selection-shape-gate-removed', CONFIG,
      'if !matches!(selection, JsValue::Object(_) | JsValue::Array(_)) {',
      'if false {',
-     CFG + 'session_model_set_gate_order_matches_the_ts_chain',
+     'native_process::methods::config::tests::session_model_set_gate_order_matches_the_ts_chain',
      '#1457 missing selection message'),
     ('session-key-gate-code', CONFIG,
      '"INVALID_SESSION_KEY",\n        "sessionKey is required.",\n    )',
      '"INVALID_REQUEST",\n        "sessionKey is required.",\n    )',
-     CFG + 'set_permission_mode_applies_and_validates',
+     'native_process::methods::config::tests::set_permission_mode_applies_and_validates',
      '#1457 missing sessionKey code'),
     ('permission-mode-gate-removed', CONFIG,
      'if !mode_ok {',
      'if !mode_ok && false {',
-     CFG + 'set_permission_mode_applies_and_validates',
-     # #2065: the panic rides a literal `expect_err`, so the payload keeps the
-     # source's `{label}` verbatim. The prefix stops before it on purpose: it
-     # matches both today's un-interpolated payload and the interpolated text
-     # #1864 would produce, so the anchor survives either decision there.
+     'native_process::methods::config::tests::set_permission_mode_applies_and_validates',
      '#1457 set_permission_mode rejects '),
     ('mode-whitelist-narrowed', CONFIG,
      'PERMISSION_MODES\n                .iter()\n                .any(|allowed| m.equals_str(allowed))',
      'PERMISSION_MODES\n                .iter()\n                .any(|allowed| *allowed != "default" && m.equals_str(allowed))',
-     CFG + 'set_permission_mode_applies_and_validates',
+     'native_process::methods::config::tests::set_permission_mode_applies_and_validates',
      '#1864 set_permission_mode applies the fixture mode'),
     ('thinking-shape-message', CONFIG,
      '            "INVALID_THINKING_CONFIG",\n            "thinking must be null or an object with an enabled boolean.",',
      '            "INVALID_THINKING_CONFIG",\n            "thinking must be null or an object with an enabled flag.",',
-     CFG + 'set_session_thinking_applies_and_validates',
+     'native_process::methods::config::tests::set_session_thinking_applies_and_validates',
      '#1457 non-object thinking message'),
     ('seed-mtime-boundary', CONFIG,
      'n.is_finite() && n.fract() == 0.0 && *n >= 0.0',
      'n.is_finite() && n.fract() == 0.0 && *n > 0.0',
-     CFG + 'seed_read_state_applies_and_validates',
+     'native_process::methods::config::tests::seed_read_state_applies_and_validates',
      '#1457 seed_read_state returns the stale outcome'),
     ('seed-path-gate-code', CONFIG,
      '"INVALID_FILE_PATH", "path is required."',
      '"INVALID_REQUEST", "path is required."',
-     CFG + 'seed_read_state_applies_and_validates',
+     'native_process::methods::config::tests::seed_read_state_applies_and_validates',
      '#1457 absent path code'),
     ('transcript-clear-null', CONFIG,
      'selection.cloned().unwrap_or(JsValue::Null),',
      'selection.cloned().unwrap_or(JsValue::Undefined),',
-     CFG + 'session_model_clear_appends_transcript_and_returns_null',
+     'native_process::methods::config::tests::session_model_clear_appends_transcript_and_returns_null',
      '#1457 clear entry nulls the model selection'),
-    # ── fix-r1 P0: the per-session single-writer fence. Dropping either side
-    # puts two fresh writers back on the same tail, so the concurrent case must
-    # see a duplicate `sequence` and a transcript the next restore() rejects.
     ('transcript-fence-removed-config', CONFIG,
      '        let write_fence = transcript_locks::acquire(&fence_path).await?;',
      '        let write_fence = ();',
-     CFG + 'concurrent_transcript_writers_keep_the_chain_loadable',
+     'native_process::methods::config::tests::concurrent_transcript_writers_keep_the_chain_loadable',
      '#1457 transcript sequences strictly increase'),
     ('transcript-fence-removed-rename', SESSION_DIR,
-     '        let fence_path = chat_dir.join(format!(\n'
-     '            "{}.jsonl",\n'
-     '            crate::storage::sanitize_session_id(&key)\n'
-     '        ));\n'
-     '        let write_fence = transcript_locks::acquire(&fence_path).await?;',
-     '        let fence_path = chat_dir.join(format!(\n'
-     '            "{}.jsonl",\n'
-     '            crate::storage::sanitize_session_id(&key)\n'
-     '        ));\n'
-     '        let write_fence = ();',
-     CFG + 'concurrent_transcript_writers_keep_the_chain_loadable',
+     '        let fence_path = chat_dir.join(format!(\n            "{}.jsonl",\n            crate::storage::sanitize_session_id(&key)\n        ));\n        let write_fence = transcript_locks::acquire(&fence_path).await?;',
+     '        let fence_path = chat_dir.join(format!(\n            "{}.jsonl",\n            crate::storage::sanitize_session_id(&key)\n        ));\n        let write_fence = ();',
+     'native_process::methods::config::tests::concurrent_transcript_writers_keep_the_chain_loadable',
      '#1457 transcript sequences strictly increase'),
-    # ── fix-r2 P0: a loaded session must be written *through* its recorder.
-    # Bypassing the lookup sends the entry to a fresh writer on the same tail;
-    # the loaded writer's next append then duplicates `sequence + 1` and the
-    # bound test's chain assertion must catch it.
     ('transcript-live-bypass-config', CONFIG,
-     '            if let Some((owner, recorder)) = super::super::assembly::live_recorder(&recorders, &key)\n'
-     '            {',
-     '            if let Some((owner, recorder)) = None::<(JsString, Arc<crate::storage::recorder::Recorder>)>\n'
-     '            {',
-     CFG + 'model_set_appends_through_the_loaded_writer',
+     '                    super::super::assembly::live_recorder(&recorders, &key)',
+     '                    None::<(pilotdeck_protocol::JsString, std::sync::Arc<crate::storage::recorder::Recorder>)>',
+     'native_process::methods::config::tests::model_set_appends_through_the_loaded_writer',
      '#1457 the transcript still loads'),
     ('transcript-live-bypass-rename', SESSION_DIR,
-     '            if let Some((_owner, recorder)) = live {',
-     '            if let Some((_owner, recorder)) = None::<(JsString, Arc<crate::storage::recorder::Recorder>)> {',
-     DIR + 'rename_appends_through_the_loaded_writer',
+     '                    super::super::assembly::live_recorder(&recorders, &key_clone)',
+     '                    None::<(pilotdeck_protocol::JsString, std::sync::Arc<crate::storage::recorder::Recorder>)>',
+     'native_process::methods::session_dir::tests::rename_appends_through_the_loaded_writer',
      '#1457 the transcript still loads'),
-    # ── fix-r3: the status live branch and the cold writer lease.
     ('transcript-live-bypass-status', SESSION_DIR,
-     '        if let Some((_owner, recorder)) = live_recorder {',
-     '        if let Some((_owner, recorder)) =\n'
-     '            None::<(JsString, Arc<crate::storage::recorder::Recorder>)>\n'
-     '        {',
-     DIR + 'status_appends_through_the_loaded_writer',
+     '                    super::super::assembly::live_recorder(&recorders, &session_key)',
+     '                    None::<(pilotdeck_protocol::JsString, std::sync::Arc<crate::storage::recorder::Recorder>)>',
+     'native_process::methods::session_dir::tests::status_appends_through_the_loaded_writer',
      '#1457 the transcript still loads'),
-    # ── #1860: hydration itself must hold the fence across
-    # `restore()` → publish-recorder. Dropping it right after acquisition is
-    # exactly the pre-fix shape, and the bound test's waiter then gets the
-    # fence while the hydrate is still parked.
     ('transcript-hydrate-fence-removed', FACTORY,
-     '            let _write_fence = super::transcript_locks::acquire(&fence_path)\n'
-     '                .await\n'
-     '                .map_err(|error| {\n'
-     '                    RuntimeError::new(String::from_utf16_lossy(error.message.units()))\n'
-     '                })?;',
-     '            let _write_fence = super::transcript_locks::acquire(&fence_path)\n'
-     '                .await\n'
-     '                .map_err(|error| {\n'
-     '                    RuntimeError::new(String::from_utf16_lossy(error.message.units()))\n'
-     '                })?;\n'
-     '            drop(_write_fence);',
-     FT + 'hydration_holds_the_transcript_fence_until_the_recorder_is_published',
+     '            let _write_fence = super::transcript_locks::acquire(&fence_path)\n                .await\n                .map_err(|error| {\n                    RuntimeError::new(String::from_utf16_lossy(error.message.units()))\n                })?;',
+     '            let _write_fence = super::transcript_locks::acquire(&fence_path)\n                .await\n                .map_err(|error| {\n                    RuntimeError::new(String::from_utf16_lossy(error.message.units()))\n                })?;\n            drop(_write_fence);',
+     'runtime::session::factory::tests::hydration_holds_the_transcript_fence_until_the_recorder_is_published',
      '#1860 hydrate holds the transcript fence until the recorder is published'),
-    ('transcript-cold-lease-skipped', SESSION_DIR,
-     '            let Some(_lease) = transcript_locks::cold_write_lease(&storage.transcript_path) else {\n'
-     '                // #1457 fix-r3: a session claimed the transcript after the',
-     '            let Some(_lease) = Some::<()>(()) else {\n'
-     '                // #1457 fix-r3: a session claimed the transcript after the',
-     DIR + 'cold_metadata_write_reports_busy_while_a_session_holds_the_lease',
+    ('transcript-cold-lease-skipped', TRANSCRIPT_LOCKS,
+     '    let Some(_lease) = cold_write_lease(&storage.transcript_path)? else {\n        return live()?.map(Some).ok_or_else(writer_busy_error);',
+     '    let Some(_lease) = Ok::<_, RequestError>(Some::<()>(()))? else {\n        return live()?.map(Some).ok_or_else(writer_busy_error);',
+     'native_process::methods::session_dir::tests::cold_metadata_write_reports_busy_while_a_session_holds_the_lease',
      '#1457 a cold append must not run beside a session that owns the writer'),
+    ('transcript-cold-lease-skipped-status', TRANSCRIPT_LOCKS,
+     '    let Some(_lease) = cold_write_lease(&storage.transcript_path)? else {\n        return live()?.map(Some).ok_or_else(writer_busy_error);',
+     '    let Some(_lease) = Ok::<_, RequestError>(Some::<()>(()))? else {\n        return live()?.map(Some).ok_or_else(writer_busy_error);',
+     'native_process::methods::session_dir::tests::status_cold_write_reports_busy_while_a_session_holds_the_lease',
+     '#1873 a cold status append must not run beside a session that owns the writer'),
+    ('transcript-cold-lease-skipped-config', TRANSCRIPT_LOCKS,
+     '    let Some(_lease) = cold_write_lease(&storage.transcript_path)? else {\n        return live()?.map(Some).ok_or_else(writer_busy_error);',
+     '    let Some(_lease) = Ok::<_, RequestError>(Some::<()>(()))? else {\n        return live()?.map(Some).ok_or_else(writer_busy_error);',
+     'native_process::methods::config::tests::model_set_cold_write_reports_busy_while_a_session_holds_the_lease',
+     '#1874 a cold model-set append must not run beside a session that owns the writer'),
+    ('model-set-checked-append-reverted', CONFIG,
+     '                    .record_session_metadata_checked(&key, &turn, entry.clone())',
+     '                    .record_session_metadata(&key, &turn, entry.clone())',
+     'native_process::methods::config::tests::model_set_reports_a_closed_writer_as_an_error',
+     '#1874 a closed session writer is an error, not a silent save'),
+    ('rename-checked-append-reverted', SESSION_DIR,
+     '                    .record_session_metadata_checked(&key_clone, &turn_id, entry.clone())',
+     '                    .record_session_metadata(&key_clone, &turn_id, entry.clone())',
+     'native_process::methods::session_dir::tests::rename_reports_a_closed_writer_as_an_error',
+     '#1874 a closed session writer is an error, not a silent rename'),
+    ('status-checked-append-reverted', SESSION_DIR,
+     '                    .record_agent_status_message_checked(&session_key, &turn_id, &status)',
+     '                    .record_agent_status_message(&session_key, &turn_id, &status)',
+     'native_process::methods::session_dir::tests::status_reports_a_closed_writer_as_an_error',
+     '#1874 a closed session writer is an error, not a recorded status'),
+    ('writer-lease-folded-to-busy', FACTORY,
+     '        Err(crate::storage::LedgerError::Io(ref error))\n            if error.kind() == std::io::ErrorKind::WouldBlock =>\n        {\n            return Ok(None);\n        }\n        Err(error) => return Err(RuntimeError::new(error.to_string())),',
+     '        Err(crate::storage::LedgerError::Io(ref error))\n            if error.kind() == std::io::ErrorKind::WouldBlock =>\n        {\n            return Ok(None);\n        }\n        Err(_) => return Ok(None),',
+     'native_process::methods::session_dir::tests::status_cold_write_surfaces_a_broken_lock_file_as_an_error',
+     '#1873 a broken lock file is a storage error, not the retryable busy answer'),
+    ('set-alias-owner-busy-removed', CONFIG,
+     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n            && (self.owner.has_active_turn(key)\n                || trimmed_string_is_non_empty(key)\n                    && owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n        {',
+     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n            && self.owner.has_active_turn(key)\n        {',
+     'native_process::methods::config::tests::session_model_set_rejects_active_turn_on_alias_owner',
+     '#1872 session_model_set is busy on the alias owner'),
+    ('set-busy-gate-blank-key-guard-removed', CONFIG,
+     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n            && (self.owner.has_active_turn(key)\n                || trimmed_string_is_non_empty(key)\n                    && owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n        {',
+     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n            && (self.owner.has_active_turn(key)\n                || owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n        {',
+     'native_process::methods::config::tests::session_model_set_blank_key_answers_the_session_key_gate',
+     '#1872 the blank key is a sessionKey error'),
+    ('set-blank-key-busy-reverted-to-gate-skip', CONFIG,
+     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n            && (self.owner.has_active_turn(key)\n                || trimmed_string_is_non_empty(key)\n                    && owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n        {',
+     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n            && trimmed_string_is_non_empty(key)\n            && (self.owner.has_active_turn(key)\n                || owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n        {',
+     'native_process::methods::config::tests::session_model_set_reports_busy_for_a_turn_held_on_the_blank_key',
+     '#1872 the blank key answers busy'),
+    ('permission-blank-key-busy-skipped', CONFIG,
+     '        if let Some(JsValue::String(key)) = params.get("sessionKey")\n            && self.owner.has_active_turn(key)\n        {\n            return Err(gateway_error(\n                "SESSION_BUSY",\n                "Cannot change permission mode during an active turn.",\n            ));\n        }',
+     '        if let Some(JsValue::String(key)) = params.get("sessionKey")\n            && trimmed_string_is_non_empty(key)\n            && self.owner.has_active_turn(key)\n        {\n            return Err(gateway_error(\n                "SESSION_BUSY",\n                "Cannot change permission mode during an active turn.",\n            ));\n        }',
+     'native_process::methods::config::tests::set_permission_mode_reports_busy_for_a_turn_held_on_the_blank_key',
+     '#1872 the blank key answers busy for permission'),
+    ('clear-blank-key-require-weakened', CONFIG,
+     '        let session_key = require_session_key(params)?;\n        if self.owner.has_active_turn(&session_key)\n            || owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n        {',
+     '        let session_key = require_session_key(params).unwrap_or_default();\n        if self.owner.has_active_turn(&session_key)\n            || owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n        {',
+     'native_process::methods::config::tests::session_model_clear_blank_key_answers_the_session_key_gate',
+     '#1872 the blank key is a sessionKey error on clear'),
+    ('set-blank-key-owner-reservation-restored', CONFIG,
+     '        if let (Some(owner), Some(key)) = (&owner, reserved)\n            && owner != key\n            && trimmed_string_is_non_empty(key)\n        {\n            reservations.push(requests.reserve_model_write(owner, "change the session model")?);\n        }',
+     '        if let (Some(owner), Some(key)) = (&owner, reserved)\n            && owner != key\n        {\n            reservations.push(requests.reserve_model_write(owner, "change the session model")?);\n        }',
+     'native_process::methods::config::tests::session_model_set_blank_key_ignores_a_busy_owner_reservation',
+     '#1872 the blank key is a sessionKey error despite a busy owner reservation'),
+    ('clear-blank-key-owner-reservation-restored', CONFIG,
+     '        if let (Some(owner), Some(key)) = (&owner, reserved)\n            && owner != key\n            && trimmed_string_is_non_empty(key)\n        {\n            reservations.push(requests.reserve_model_write(owner, "clear the session model")?);\n        }',
+     '        if let (Some(owner), Some(key)) = (&owner, reserved)\n            && owner != key\n        {\n            reservations.push(requests.reserve_model_write(owner, "clear the session model")?);\n        }',
+     'native_process::methods::config::tests::session_model_clear_blank_key_ignores_a_busy_owner_reservation',
+     '#1872 the blank key is a sessionKey error on clear despite a busy owner reservation'),
+    ('permission-blank-key-require-weakened', CONFIG,
+     '        let session_key = require_session_key(params)?;\n        let mode = match mode.as_string() {',
+     '        let session_key = require_session_key(params).unwrap_or_default();\n        let mode = match mode.as_string() {',
+     'native_process::methods::config::tests::set_permission_mode_blank_key_answers_the_session_key_gate',
+     '#1872 the blank key is a sessionKey error for permission'),
+    ('clear-alias-owner-busy-removed', CONFIG,
+     '        if self.owner.has_active_turn(&session_key)\n            || owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n        {',
+     '        if self.owner.has_active_turn(&session_key) {',
+     'native_process::methods::config::tests::session_model_clear_rejects_active_turn_on_alias_owner',
+     '#1872 session_model_clear is busy on the alias owner'),
+    ('set-alias-owner-reservation-skipped', CONFIG,
+     '        if let (Some(owner), Some(key)) = (&owner, reserved)\n            && owner != key\n            && trimmed_string_is_non_empty(key)\n        {\n            reservations.push(requests.reserve_model_write(owner, "change the session model")?);\n        }',
+     '        if let (Some(owner), Some(key)) = (&owner, reserved)\n            && owner != key && false\n            && trimmed_string_is_non_empty(key)\n        {\n            reservations.push(requests.reserve_model_write(owner, "change the session model")?);\n        }',
+     'native_process::methods::config::tests::session_model_set_holds_the_owner_reservation_through_the_write',
+     '#1872 the owner and alias reservations are held while the write is parked'),
+    ('clear-alias-owner-reservation-skipped', CONFIG,
+     '        if let (Some(owner), Some(key)) = (&owner, reserved)\n            && owner != key\n            && trimmed_string_is_non_empty(key)\n        {\n            reservations.push(requests.reserve_model_write(owner, "clear the session model")?);\n        }',
+     '        if let (Some(owner), Some(key)) = (&owner, reserved)\n            && owner != key && false\n            && trimmed_string_is_non_empty(key)\n        {\n            reservations.push(requests.reserve_model_write(owner, "clear the session model")?);\n        }',
+     'native_process::methods::config::tests::session_model_clear_holds_the_owner_reservation_through_the_write',
+     '#1872 the clear-side owner and alias reservations are held while the write is parked'),
+    ('close-owner-fallback-busy-skipped', CONFIG,
+     '        if self.owner.has_active_turn(target) {\n            return Err(gateway_error("SESSION_BUSY", busy_message));\n        }',
+     '        if false {\n            return Err(gateway_error("SESSION_BUSY", busy_message));\n        }',
+     'native_process::methods::config::tests::close_model_selection_owner_reports_busy_for_an_owner_seen_by_the_append',
+     '#1872 the fallback reports the admitted turn as busy'),
+    ('set-closes-owner-target-reverted', CONFIG,
+     '        let target = loaded.unwrap_or(session_key);',
+     '        let target = session_key;',
+     'native_process::methods::config::tests::model_set_closes_the_owner_spelling_of_an_alias_request',
+     '#1872 the close targeted the owner spelling, not the request spelling'),
     ('seed-mtime-wiring', CONFIG,
      '.seed_read_state(&path, mtime)',
      '.seed_read_state(&path, 0.0)',
-     CFG + 'seed_read_state_applies_and_validates',
+     'native_process::methods::config::tests::seed_read_state_applies_and_validates',
      '#1457 exact mtime applies'),
     ('set-busy-message', CONFIG,
      '"SESSION_BUSY",\n                "Cannot change the model during an active turn.",',
      '"SESSION_BUSY",\n                "Cannot change the model while a turn is active.",',
-     CFG + 'session_model_set_rejects_active_turn',
+     'native_process::methods::config::tests::session_model_set_rejects_active_turn',
      '#1457 busy message'),
     ('clear-busy-message', CONFIG,
      '"SESSION_BUSY",\n                "Cannot clear the model during an active turn.",',
      '"SESSION_BUSY",\n                "Cannot clear the model while a turn is active.",',
-     CFG + 'session_model_clear_gates_key_and_busy',
+     'native_process::methods::config::tests::session_model_clear_gates_key_and_busy',
      '#1457 clear busy message'),
     ('permission-busy-message', CONFIG,
      '"SESSION_BUSY",\n                "Cannot change permission mode during an active turn.",',
      '"SESSION_BUSY",\n                "Cannot change permission mode while a turn is active.",',
-     CFG + 'set_permission_mode_applies_and_validates',
+     'native_process::methods::config::tests::set_permission_mode_applies_and_validates',
      '#1457 pm busy message'),
     ('thinking-busy-message', CONFIG,
      '"SESSION_BUSY",\n                "Cannot change thinking while a turn is active.",',
      '"SESSION_BUSY",\n                "Cannot change thinking during an active turn.",',
-     CFG + 'set_session_thinking_applies_and_validates',
+     'native_process::methods::config::tests::set_session_thinking_applies_and_validates',
      '#1457 th busy message'),
     ('style-busy-message', CONFIG,
      '"SESSION_BUSY",\n                "Cannot change output style during an active turn.",',
      '"SESSION_BUSY",\n                "Cannot change output style while a turn is active.",',
-     CFG + 'set_output_style_validates_names_and_key',
+     'native_process::methods::config::tests::set_output_style_validates_names_and_key',
      '#1457 style busy message'),
     ('seed-busy-message', CONFIG,
      '"SESSION_BUSY",\n                "Cannot seed file read state while a turn is active.",',
      '"SESSION_BUSY",\n                "Cannot seed file read state during an active turn.",',
-     CFG + 'seed_read_state_applies_and_validates',
+     'native_process::methods::config::tests::seed_read_state_applies_and_validates',
      '#1457 seed busy message'),
-    # ── cross-family: the shared trim helper the session directory reuses.
     ('shared-trim-dropped', CONFIG,
      '!crate::metadata::js_trim(&String::from_utf16_lossy(value.units())).is_empty()',
      '!String::from_utf16_lossy(value.units()).is_empty()',
-     CFG + 'set_output_style_validates_names_and_key',
+     'native_process::methods::config::tests::set_output_style_validates_names_and_key',
      '#1457 blank name code'),
-    # #1604: the session directory now delegates to the shared `require_text`
-    # guard instead of keeping its own `?.trim()` chain, so these two mutants
-    # move to the guard they are meant to kill. Bound tests are unchanged.
     ('session-dir-blank-gate-removed', METHODS_MOD,
-     '            if crate::metadata::js_trim(&text).is_empty() {\n'
-     '                Ok(TrimGuard::Missing)',
-     '            if false {\n'
-     '                Ok(TrimGuard::Missing)',
-     DIR + 'resume_session_rejects_blank_session_key',
+     '            if crate::metadata::js_trim(&text).is_empty() {\n                Ok(TrimGuard::Missing)',
+     '            if false {\n                Ok(TrimGuard::Missing)',
+     'native_process::methods::session_dir::tests::resume_session_rejects_blank_session_key',
      '#1455 resume_session rejects the blank key'),
     ('session-dir-surrogate-rejected', METHODS_MOD,
      '            if crate::metadata::js_trim(&text).is_empty() {',
      '            if value.to_utf8().is_err() || crate::metadata::js_trim(&text).is_empty() {',
-     DIR + 'resume_session_accepts_lone_surrogate_session_key',
+     'native_process::methods::session_dir::tests::resume_session_accepts_lone_surrogate_session_key',
      '#1455 resume_session accepts the surrogate key'),
-    # #1604: `close_project_sessions` keeps TS's plain `Error` shape on the
-    # missing/blank branch; this mutant rewords the domain message so that
-    # branch's test is the one that has to die.
     ('session-dir-project-key-domain-message', SESSION_DIR,
-     '            "projectKey is required.",\n'
-     '        )?;',
-     '            "projectKey is missing.",\n'
-     '        )?;',
-     DIR + 'close_project_sessions_blank_project_key_is_the_domain_error',
+     '            "projectKey is required.",\n        )?;',
+     '            "projectKey is missing.",\n        )?;',
+     'native_process::methods::session_dir::tests::close_project_sessions_blank_project_key_is_the_domain_error',
      '#1604 the blank projectKey keeps the domain message'),
-    # #2083: a surviving lone surrogate must not become U+FFFD and alias
-    # a filesystem project. Keep the registered nonce and kill on the actual
-    # native project identity boundary.
     ('session-dir-project-key-surrogate-rejected', SESSION_DIR,
      '        let selected = super::super::project_scope::resolve(&project_key)?;',
-     '        let project_key = JsString::from(String::from_utf16_lossy(project_key.units()).as_str());\n'
-     '        let selected = super::super::project_scope::resolve(&project_key)?;',
-     DIR + 'close_project_sessions_surrogate_project_key_reaches_the_capability_gate',
+     '        let project_key = JsString::from(String::from_utf16_lossy(project_key.units()).as_str());\n        let selected = super::super::project_scope::resolve(&project_key)?;',
+     'native_process::methods::session_dir::tests::close_project_sessions_surrogate_project_key_reaches_the_capability_gate',
      '#2083 the surrogate projectKey reaches the capability gate'),
-    # ── #2272: the admission filter skips `undefined` AND `null` (the TS
-    # nullish read `input.projectKey ?? fallback`, createLocalGateway.ts).
-    # Dropping the null arm restores the pre-#2272 shape where an explicit
-    # null was refused as an unserved project even with a valid sessionKey,
-    # so the session directory's null-cell gate-order expectations must die.
-    # The bound test fails first at its blank-key null cell, before the
-    # per-method valid-key cells that follow it.
     ('admission-null-refused', PROJECT_SCOPE,
      '    let requested = params',
      '    if matches!(params.get("projectKey"), Some(JsValue::Null)) {\n        return Err(RequestError::new("null projectKey refused"));\n    }\n    let requested = params',
-     DIR + 'resume_session_blank_key_gate_order',
+     'native_process::methods::session_dir::tests::resume_session_blank_key_gate_order',
      '#2272 a null projectKey falls back like a missing one, so the sessionKey gate answers the blank key'),
-    # ── #2562: the submit path's gate is the same nullish read (the TS submit
-    # source is `workspaceIdResolver(input.projectKey)` →
-    # `resolveProjectStorageId(requestedProjectKey ?? fallbackProjectRoot)`,
-    # probes `_tmp/20261026-issue-2562/ts-probe/`). Dropping the null arm
-    # restores the pre-#2562 shape where an explicit null was answered the
-    # `projectKey must be a valid path string.` type error instead of falling
-    # back to the configured project, so the recorder-on null cell must die.
     ('submit-null-refused', SERVICES,
-     '        if let Some(project) = input\n'
-     '            .get("projectKey")\n'
-     '            .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))\n'
-     '        {',
+     '        if let Some(project) = input\n            .get("projectKey")\n            .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))\n        {',
      '        if let Some(project) = input.get("projectKey").filter(|v| !v.is_undefined()) {',
      'native_process::management_tests::submit_workspace_id_treats_an_explicit_null_project_key_as_not_provided',
      '#2562 explicit null is not an error with the recorder on'),
-    # ── #2564: the #2272 admission mutant re-bound to the close_project_sessions
-    # path — with the null arm dropped the admission refusal (isolated-project
-    # message) answers before the method's own `?.trim()` gate, so the null
-    # cell's domain-message assertion must die. Same mutant text as
-    # `admission-null-refused` above: one code point, four bound tests.
     ('admission-null-refused-close-project', PROJECT_SCOPE,
      '    let requested = params',
      '    if matches!(params.get("projectKey"), Some(JsValue::Null)) {\n        return Err(RequestError::new("null projectKey refused"));\n    }\n    let requested = params',
-     DIR + 'close_project_sessions_null_project_key_is_the_domain_error',
+     'native_process::methods::session_dir::tests::close_project_sessions_null_project_key_is_the_domain_error',
      '#2564 a null projectKey keeps the domain message'),
-    # ── #2564 fix-r1 (harvest reviews: DS sibling#2 + anthropic boundary#2,
-    # two lineages hit the same gap): the same admission mutant re-bound to the
-    # list/new null cells. With the null arm dropped the admission refusal
-    # (isolated-project message) answers before each method's own nullish read,
-    # so the cell's `.expect` must die at its own message — without these rows
-    # the two cells were guarded only by their positive assertions.
     ('admission-null-refused-list-sessions', PROJECT_SCOPE,
      '    let requested = params',
      '    if matches!(params.get("projectKey"), Some(JsValue::Null)) {\n        return Err(RequestError::new("null projectKey refused"));\n    }\n    let requested = params',
-     DIR + 'list_sessions_null_project_key_lists_the_configured_project',
+     'native_process::methods::session_dir::tests::list_sessions_null_project_key_lists_the_configured_project',
      '#2564 a null projectKey lists the configured project'),
     ('admission-null-refused-new-session', PROJECT_SCOPE,
      '    let requested = params',
      '    if matches!(params.get("projectKey"), Some(JsValue::Null)) {\n        return Err(RequestError::new("null projectKey refused"));\n    }\n    let requested = params',
-     DIR + 'new_session_null_project_key_omits_the_project_prefix',
+     'native_process::methods::session_dir::tests::new_session_null_project_key_omits_the_project_prefix',
      '#2564 a null projectKey generates a session key'),
-    ('session-dir-unknown-project-write', SESSION_DIR,
-     '    async fn session_delete(&self, params: &JsValue) -> Result<JsValue, RequestError> {\n'
-     '        let project_root = resolve_project(self, params).await?;',
-     '    async fn session_delete(&self, params: &JsValue) -> Result<JsValue, RequestError> {\n'
-     '        let project_root = self.options.project.clone();',
-     DIR + 'unregistered_project_never_creates_session_storage',
-     '#2090 unknown project cannot create session storage'),
-    # ── #1864: the three selectors now have a reader. Each write site
-    # (permission, thinking, output style), each compose-step read leg
-    # (permission, thinking, style merge), the live adapter's per-turn source
-    # and the `output_styles_list` selected echo get a function-internal
-    # mutant, so a store that is written but never read (the -R4 defect)
-    # turns the bound positive red instead of passing.
     ('permission-store-write-removed', CONFIG,
-     '        self.session_overrides\n'
-     '            .set_permission_mode(&session_key, mode);',
+     '        self.session_overrides\n            .set_permission_mode(&session_key, mode);',
      '        let _ = (&session_key, &mode);',
-     CFG + 'set_permission_mode_applies_and_validates',
+     'native_process::methods::config::tests::set_permission_mode_applies_and_validates',
      '#1864 the plan selection is stored for the next run to read'),
     ('thinking-store-write-removed', CONFIG,
-     '            thinking => self\n'
-     '                .session_overrides\n'
-     '                .set_thinking(&session_key, thinking.clone()),',
-     '            thinking => {\n'
-     '                let _ = thinking;\n'
-     '            }',
-     CFG + 'set_session_thinking_applies_and_validates',
+     '            thinking => self\n                .session_overrides\n                .set_thinking(&session_key, thinking.clone()),',
+     '            thinking => {\n                let _ = thinking;\n            }',
+     'native_process::methods::config::tests::set_session_thinking_applies_and_validates',
      '#1864 the mode object is stored'),
     ('style-store-write-removed', CONFIG,
      '        self.session_overrides\n            .select_output_style(\n                &session_key,\n                &JsString::from(project.to_string_lossy().into_owned()),\n                name.clone(),\n            )\n            .await\n            .map_err(sdk_selection_error)?;',
      '        let _ = (&session_key, &name);',
-     CFG + 'set_output_style_validates_names_and_key',
+     'native_process::methods::config::tests::set_output_style_validates_names_and_key',
      '#1864 set_output_style applies the probe style'),
     ('compose-permission-readback-removed', ASSEMBLY,
      '    let mode = effective_permission_mode(config, stored_permission_mode.cloned());',
      '    let mode = effective_permission_mode(config, None);',
-     CFG + 'selector_writes_reach_the_compose_step',
+     'native_process::methods::config::tests::selector_writes_reach_the_compose_step',
      '#1864 the stored permission mode reaches the agent config'),
     ('compose-thinking-readback-removed', ASSEMBLY,
      '    if let Some(thinking) = stored_thinking {',
      '    if let Some(thinking) = None::<&JsValue> {',
-     CFG + 'selector_writes_reach_the_compose_step',
+     'native_process::methods::config::tests::selector_writes_reach_the_compose_step',
      '#1864 the stored thinking reaches the agent config'),
     ('compose-style-merge-removed', ASSEMBLY,
      '    if let Some(content) = style_content {',
      '    if let Some(content) = None::<&str> {',
-     CFG + 'apply_session_overrides_composes_the_selections',
+     'native_process::methods::config::tests::apply_session_overrides_composes_the_selections',
      '#1864 the style content joins the existing prompt'),
     ('styles-list-selected-removed', CONFIG,
      '            && let Some(selected) = self\n                .session_overrides\n                .effective_output_style(key)\n                .await\n                .map_err(sdk_selection_error)?',
      '            && let Some(selected) = None::<JsString>',
-     CFG + 'output_styles_list_reports_project_styles',
+     'native_process::methods::config::tests::output_styles_list_reports_project_styles',
      '#1864 the list echoes the stored selection for the session'),
     ('submit-permission-source-removed', LIVE,
      '            if let Some(source) = &self.permission_mode_source',
@@ -419,10 +415,6 @@ mutations = [
      '            if let Some(mode) = None::<JsString> {',
      'native_process::tests::review::session_tools_admission_mode_follows_the_store_each_turn',
      '#1864 the stored mode reaches the host admission context'),
-    # ── #2146: the two #1429 acquire-path rulers had no mutants of their own.
-    # Skipping the sync on acquire and dropping the once-per-assembly report
-    # dedup both left the review tests green, so each rule gets a row bound to
-    # the test that states it.
     ('acquire-ask-sync-removed', ASSEMBLY,
      'if !sync_acquired_ask_rules(',
      'if true || !sync_acquired_ask_rules(',
@@ -433,36 +425,16 @@ mutations = [
      'if true {',
      'native_process::tests::review::acquiring_a_session_reports_the_skipped_mcp_ask_sync',
      '#2146 the second acquire reports nothing: one miss report per assembly'),
-    # ── #2195 (P2-跟进 #1509): the cron dispatch's blocking-pool handoff was
-    # pinned only by the structural positive control — no mutant proved that
-    # control could go red. This row inlines the dispatch onto the async
-    # worker (the management family's `memory-inline-sync` shape, #1322): on
-    # the single-threaded runtime the `join!` polls `create` to completion on
-    # its first poll, the sibling never runs in between, and `ran_before`
-    # stays false at the bound assertion. The `Ok::<_, JoinError>` pin keeps
-    # the value's type identical to the `spawn_blocking` form — plain `Ok(...)`
-    # leaves the error type uninferred (E0282, cb8 r1 compile log in
-    # _tmp/20261026-issue-2195/review-r1/); the issue's recipe said the bare
-    # form compiled, which the first host run disproved.
-    # Re-anchored after #2641 merged: the closure body is now
-    # `dispatch_under_management_gate(&cron, ...)` — same handoff. The
-    # mutant inlines the underlying `cron::dispatch`, not the gate wrapper:
-    # the wrapper's `enter_dispatch()` is a blocking-only API (`blocking_read`
-    # panics "Cannot block the current thread from within a runtime" when run
-    # on the async worker — cb8 r4 judged that shape INVALID as a wrong panic,
-    # `_tmp/20261026-issue-2195/review-r4/`), and a mutant is already-broken
-    # code whose only contract is failing the bound test at its bound
-    # assertion; the gate also has its own race test in `switch_tests.rs`, so
-    # bypassing it here leaves no dead code (turbofish kept for the same
-    # E0282 reason as above).
     ('cron-inline-sync', CRON,
-     '            let dispatched = tokio::task::spawn_blocking(move || {\n'
-     '                dispatch_under_management_gate(&cron, &dispatch_method, &params)\n'
-     '            })\n'
-     '            .await;',
+     '            let dispatched = tokio::task::spawn_blocking(move || {\n                dispatch_under_management_gate(&cron, &dispatch_method, &params)\n            })\n            .await;',
      '            let dispatched = Ok::<_, tokio::task::JoinError>(cron::dispatch(cron.as_deref(), &dispatch_method, &params));',
      'native_process::methods::cron::cron_tests::cron_request_dispatches_off_the_async_worker',
      '#1509 cron dispatch must yield the async worker before answering'),
+    ('session-dir-unknown-project-write', SESSION_DIR,
+     '    async fn session_delete(&self, params: &JsValue) -> Result<JsValue, RequestError> {\n        let project_root = resolve_project(self, params).await?;',
+     '    async fn session_delete(&self, params: &JsValue) -> Result<JsValue, RequestError> {\n        let project_root = self.options.project.clone();',
+     'native_process::methods::session_dir::tests::unregistered_project_never_creates_session_storage',
+     '#2090 unknown project cannot create session storage'),
 ]
 
 
@@ -518,6 +490,19 @@ LITERAL_ANCHORS = [
     (CONFIG, '#1457 exact mtime applies'),
     (CONFIG, '#1457 busy message'),
     (CONFIG, '#1457 clear busy message'),
+    (CONFIG, '#1872 session_model_set is busy on the alias owner'),
+    (CONFIG, '#1872 session_model_clear is busy on the alias owner'),
+    (CONFIG, '#1872 the owner and alias reservations are held while the write is parked'),
+    (CONFIG, '#1872 the clear-side owner and alias reservations are held while the write is parked'),
+    (CONFIG, '#1872 the blank key is a sessionKey error'),
+    (CONFIG, '#1872 the blank key answers busy'),
+    (CONFIG, '#1872 the blank key answers busy for permission'),
+    (CONFIG, '#1872 the blank key is a sessionKey error on clear'),
+    (CONFIG, '#1872 the blank key is a sessionKey error despite a busy owner reservation'),
+    (CONFIG, '#1872 the blank key is a sessionKey error on clear despite a busy owner reservation'),
+    (CONFIG, '#1872 the blank key is a sessionKey error for permission'),
+    (CONFIG, '#1872 the fallback reports the admitted turn as busy'),
+    (CONFIG, '#1872 the close targeted the owner spelling, not the request spelling'),
     (CONFIG, '#1457 pm busy message'),
     (CONFIG, '#1457 th busy message'),
     (CONFIG, '#1457 style busy message'),
@@ -530,23 +515,27 @@ LITERAL_ANCHORS = [
     (CONFIG, '#1864 the list echoes the stored selection for the session'),
     (SESSION_DIR, '#1457 the transcript still loads'),
     (SESSION_DIR, '#1457 a cold append must not run beside a session that owns the writer'),
+    (SESSION_DIR, '#1873 a cold status append must not run beside a session that owns the writer'),
+    (CONFIG, '#1874 a cold model-set append must not run beside a session that owns the writer'),
+    (CONFIG, '#1874 a closed session writer is an error, not a silent save'),
+    (SESSION_DIR, '#1874 a closed session writer is an error, not a silent rename'),
+    (SESSION_DIR, '#1874 a closed session writer is an error, not a recorded status'),
+    (SESSION_DIR, '#1873 a broken lock file is a storage error, not the retryable busy answer'),
     (SESSION_DIR, '#1455 resume_session rejects the blank key'),
     (SESSION_DIR, '#1455 resume_session accepts the surrogate key'),
     (SESSION_DIR, '#2083 the surrogate projectKey reaches the capability gate'),
-    (SESSION_DIR, '#2272 a null projectKey falls back like a missing one, '
-                  'so the sessionKey gate answers the blank key'),
+    (SESSION_DIR, '#2272 a null projectKey falls back like a missing one, so the sessionKey gate answers the blank key'),
     (SESSION_DIR, '#2564 a null projectKey keeps the domain message'),
     (SESSION_DIR, '#2564 a null projectKey lists the configured project'),
     (SESSION_DIR, '#2564 a null projectKey generates a session key'),
     (MANAGEMENT_TESTS, '#2562 explicit null is not an error with the recorder on'),
-    (SESSION_DIR, '#2090 unknown project cannot create session storage'),
     (LIVE_TESTS, "#1864 the stored mode reaches the live session's next turn"),
-    (FACTORY_TESTS,
-     '#1860 hydrate holds the transcript fence until the recorder is published'),
+    (FACTORY_TESTS, '#1860 hydrate holds the transcript fence until the recorder is published'),
     (REVIEW_TESTS, '#1864 the stored mode reaches the host admission context'),
     (REVIEW_TESTS, '#1429 the acquire path restores the generated ask rule'),
     (REVIEW_TESTS, '#2146 the second acquire reports nothing: one miss report per assembly'),
     (CRON_TESTS, '#1509 cron dispatch must yield the async worker before answering'),
+    (SESSION_DIR, '#2090 unknown project cannot create session storage'),
 ]
 
 # Where an assertion can live: the mutated sources, the read-side files the
@@ -554,9 +543,25 @@ LITERAL_ANCHORS = [
 # mutates `factory.rs` but asserts on a message in `factory_tests.rs`). A pin may
 # not name a path outside this tuple (checked below) -- a pin the completeness
 # scan does not read would be a guard with a blind spot.
-SOURCE_TEXTS = (CONFIG, SESSION_DIR, METHODS_MOD, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS,
-                REVIEW_TESTS, FACTORY, FACTORY_TESTS, PROJECT_SCOPE, SERVICES,
-                MANAGEMENT_TESTS, CRON, CRON_TESTS)
+SOURCE_TEXTS = (
+    CONFIG,
+    SESSION_DIR,
+    METHODS_MOD,
+    ASSEMBLY,
+    LIVE,
+    TOOLS,
+    LIVE_TESTS,
+    REVIEW_TESTS,
+    FACTORY,
+    FACTORY_TESTS,
+    REQUESTS,
+    SERVICES,
+    MANAGEMENT_TESTS,
+    CRON,
+    CRON_TESTS,
+    TRANSCRIPT_LOCKS,
+    PROJECT_SCOPE,
+)
 
 
 def _assertions(case):

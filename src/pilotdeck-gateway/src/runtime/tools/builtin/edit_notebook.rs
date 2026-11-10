@@ -207,10 +207,22 @@ async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput
     }
     let freshness = ensure_write_snapshot_fresh(context, &resolved.absolute)?;
     let message = message_id(context);
-    if let Some(history) = file_history(context) {
-        history
-            .track_edit(&text(&resolved.absolute), &message)
-            .map_err(|error| tool_error("tool_execution_failed", error.to_string()))?;
+    let history = file_history(context);
+    let history_source = if history.is_some_and(|value| value.requires_authorized_source()) {
+        Some(super::authorized_history_source(&resolved, context)?)
+    } else {
+        None
+    };
+    if let Some(history) = history {
+        if let Some(source) = &history_source {
+            history
+                .track_edit_authorized(source, &message)
+                .map_err(|error| tool_error("tool_execution_failed", error.to_string()))?;
+        } else {
+            history
+                .track_edit(&text(&resolved.absolute), &message)
+                .map_err(|error| tool_error("tool_execution_failed", error.to_string()))?;
+        }
     }
     let created_for_notice = freshness.previous_content.is_none();
     let original_content = match freshness.previous_content {
@@ -297,11 +309,26 @@ async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput
 
     notebook.insert("cells".into(), JsValue::Array(cells.clone()));
     let updated_content = format!("{}\n", pretty_json(&JsValue::Object(notebook.clone())));
-    let write = write_text_file(&resolved.absolute, &updated_content)?;
-    if let Some(history) = file_history(context) {
-        history
-            .mark_edit_committed(&text(&resolved.absolute), &message)
-            .map_err(|error| tool_error("tool_execution_failed", error.to_string()))?;
+    let write = if let Some(source) = &history_source {
+        super::write_text_file_authorized(
+            source,
+            &resolved.absolute,
+            Some(original_content.as_str()),
+            &updated_content,
+        )?
+    } else {
+        write_text_file(&resolved.absolute, &updated_content)?
+    };
+    if let Some(history) = history {
+        if let Some(source) = &history_source {
+            history
+                .mark_edit_committed_authorized(source, &message)
+                .map_err(|error| tool_error("tool_execution_failed", error.to_string()))?;
+        } else {
+            history
+                .mark_edit_committed(&text(&resolved.absolute), &message)
+                .map_err(|error| tool_error("tool_execution_failed", error.to_string()))?;
+        }
     }
     super::invalidate_read_file_state(context, &resolved.absolute);
     record_write_snapshot(

@@ -1365,19 +1365,22 @@ async fn start_assembly(
                         let ports = ports
                             .with_background_tasks(background_tasks)
                             .with_native_sandbox(native_sandbox);
-                        let factory=TurnHostFactory::new_with_authority(
+                        let ports = Arc::new(ports);
+                        let factory=TurnHostFactory::new_with_async_authority(
                             project,
                             deployment,
                             native_host_limits(options.drain_budget),
                             Some("pilotdeck-agent-loop".into()),
-                            move |identity, recorder, signal, authority| match authority {
-                                Some(authority) => ports.turn_with_authority(
-                                    identity,
-                                    recorder,
-                                    signal,
-                                    Some(authority),
-                                ),
-                                None => turn_ports(&ports, identity, recorder, signal),
+                            move |identity, recorder, signal, authority| {
+                                let ports = ports.clone();
+                                let identity = identity.clone();
+                                Box::pin(async move {
+                                    let settings = match ports.persisted_permissions_home() {
+                                        Some(home) => super::persisted_permissions::read_async(home).await?,
+                                        None => super::persisted_permissions::Settings::default(),
+                                    };
+                                    Ok(ports.turn_with_authority_and_settings(&identity, recorder, signal, authority, settings))
+                                })
                             },
                         )
                         .with_pinned_generation(pinned_generation)
@@ -2547,6 +2550,7 @@ pub fn value<const N: usize>(entries: [(&'static str, JsValue); N]) -> JsObject 
         .clone()
 }
 
+#[cfg(test)]
 pub(super) fn turn_ports(
     ports: &super::tools::SessionTools,
     identity: &pilotdeck_protocol::admission::ExecutionIdentity,

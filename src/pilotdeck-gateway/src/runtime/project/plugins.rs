@@ -91,6 +91,17 @@ impl ResourceFamilySource for NativeStylePluginFamilySource {
 mod native_style_tests {
     use super::*;
     use std::{collections::HashMap, fs, path::PathBuf};
+    // Keep disk-plugin generation assertions isolated from real first-party
+    // builtins; builtin priority and default loading have dedicated tests.
+    fn isolated_builtin_switches() -> HashMap<String, bool> {
+        [
+            ("browser-use".into(), false),
+            ("funasr".into(), false),
+            ("windows-skills".into(), false),
+        ]
+        .into_iter()
+        .collect()
+    }
     struct Scratch(PathBuf);
     impl Drop for Scratch {
         fn drop(&mut self) {
@@ -114,7 +125,7 @@ mod native_style_tests {
             pilot_home: home,
             builtin_skills_root: None,
             builtin_plugins: vec![],
-            builtin_plugins_enabled: HashMap::new(),
+            builtin_plugins_enabled: isolated_builtin_switches(),
         });
         runtime.refresh().await.unwrap();
         assert_eq!(runtime.generation().await, 1);
@@ -186,7 +197,7 @@ mod native_style_tests {
             pilot_home: home,
             builtin_skills_root: None,
             builtin_plugins: vec![],
-            builtin_plugins_enabled: HashMap::new(),
+            builtin_plugins_enabled: isolated_builtin_switches(),
         });
         for (generation, raw) in [
             (1_u64, r#"{"name":"p","hooks":{}}"#),
@@ -264,7 +275,7 @@ mod native_style_tests {
             pilot_home: home,
             builtin_skills_root: None,
             builtin_plugins: vec![],
-            builtin_plugins_enabled: HashMap::new(),
+            builtin_plugins_enabled: isolated_builtin_switches(),
         });
         runtime.refresh().await.unwrap();
         let mut old = runtime.acquire_contribution_snapshot().await.unwrap();

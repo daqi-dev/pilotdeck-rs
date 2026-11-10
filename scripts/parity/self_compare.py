@@ -136,10 +136,10 @@ def main():
     except (OSError, ValueError, TypeError, KeyError) as error:
         print(json.dumps({'valid_calibration': False, 'error': str(error)}, ensure_ascii=False))
         return 1
-    for path in (args.json, args.markdown):
-        path.parent.mkdir(parents=True, exist_ok=True)
-    args.json.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')
-    args.markdown.write_text(markdown(result))
+    # #2398 fix-r1: json and markdown are one unit — both are published or
+    # neither is, so a retry can never pair a fresh json with a stale markdown.
+    G.write_results_exclusive([(args.json, json.dumps(result, ensure_ascii=False, indent=2) + '\n'),
+                                (args.markdown, markdown(result))])
     print(json.dumps({k: result[k] for k in ('valid_calibration', 'k', 'S_size', 'excluded', 'alternatives')}, ensure_ascii=False))
     return 0 if result['valid_calibration'] and result['S_size'] >= 45 else 1
 

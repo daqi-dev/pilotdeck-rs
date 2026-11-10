@@ -10,10 +10,25 @@ impl HostHandler for Handler {
         Box::pin(async { Ok(()) })
     }
 }
+/// #1891: every await this file wraps is driven by the real `peer.py`
+/// (`live-tail` mode) — the stream frames, the suggestion-gated terminal, and
+/// the final `session.dispose()` that waits for the child to exit. The old
+/// 5 s whole-test bound capped all of them at once; it is the verbatim
+/// sibling of the liveness watchdogs #978 measured reddening on a host
+/// running eight concurrent lib suites, so it gets the same margin. This is a
+/// watchdog, not an assertion: the frame sequence and the durable-write
+/// boundaries below are unchanged, and a sidecar that truly hangs still reds.
 async fn bounded<T>(future: impl std::future::Future<Output = T>) -> T {
-    tokio::time::timeout(Duration::from_secs(5), future)
-        .await
-        .expect("#742 live tail bounded")
+    match tokio::time::timeout(Duration::from_secs(60), future).await {
+        Ok(value) => value,
+        Err(_elapsed) => {
+            // #1891: receipt-wired watchdog failure; the panic text is the
+            // same expect message, only the negative-control protocol sees
+            // the extra step.
+            crate::test_negative_receipt::record_failure("#742 live tail bounded");
+            panic!("#742 live tail bounded")
+        }
+    }
 }
 fn options(turn: &str) -> JsValue {
     crate::metadata::object([
@@ -108,8 +123,13 @@ fn setup() -> (
                 HostClient::spawn(
                     &mut command,
                     Some(&"fixture".into()),
+                    // #1891: liveness margins for the real `peer.py` spawn, not
+                    // limits under test — same-source sibling of the #978
+                    // sites; the tail's observable ordering below is unchanged.
                     crate::host::Limits {
-                        execution_timeout: Some(Duration::from_secs(5)),
+                        handshake_timeout: Duration::from_secs(60),
+                        execution_timeout: Some(Duration::from_secs(60)),
+                        io_timeout: Duration::from_secs(60),
                         ..Default::default()
                     },
                 )

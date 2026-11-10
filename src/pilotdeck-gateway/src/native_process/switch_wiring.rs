@@ -206,6 +206,23 @@ impl ProductionFaces {
             Ok(Ok(())) => {}
             Ok(Err(error)) => failures.push(error.to_string()),
             Err(_) => {
+                // #2557: the final-cancellation cell. The shared deadline
+                // dropped the first `finish()` mid-body, the walk returns on
+                // this timeout and the process exits, so no revisit is
+                // coming to re-issue the teardown request — the cancelled
+                // half may have died inside the close-notice window, before
+                // its own request below `finish()`'s window ever fired,
+                // which would leave the teardown to the unawaited `StopHost`
+                // drop request. Synchronous and idempotent, so a no-op when
+                // the cancelled run (or the drain) already sent it; the
+                // normal completion path is untouched — the window still
+                // closes before the request, the shutdown is not moved up.
+                // `switch-halt-owner-skip-reissue` (negative control,
+                // #2557): the re-issue deleted, so the cell regresses to the
+                // unawaited backstop alone.
+                if !crate::mutants::on("switch-halt-owner-skip-reissue") {
+                    self.phased.request_host_shutdown();
+                }
                 // `switch-halt-owner-swallowed` (negative control, #2363):
                 // this branch's failure report deleted, so the hung owner
                 // finish is no longer surfaced by the halt walk.

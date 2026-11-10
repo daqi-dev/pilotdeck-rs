@@ -331,8 +331,11 @@ async fn concurrent_emits_reach_the_sink_in_arrival_order() {
         event: Handler::new(TurnIdentity::new("session", "turn"), sink.clone()),
         ..ModuleRouter::default()
     });
+    // #1891 fix-r2 (review P2): the spawn is complete, but the wrapped
+    // execute consumes the granted 60 s execution margin plus teardown on a
+    // loaded host; the old 10 s outer bound raced the margin it granted.
     let result = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(70),
         client.execute(super::request(), router),
     )
     .await

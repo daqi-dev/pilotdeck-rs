@@ -446,14 +446,13 @@ pub(crate) async fn restore_guarded<G: Send + 'static>(
         validate_archive(&archive)?;
         let path =
             super::reader::history_path(&check_files, &check_session).map_err(RequestError::new)?;
-        let lease = crate::runtime::session::transcript_locks::cold_write_lease(&path).ok_or_else(
-            || {
+        let lease = crate::runtime::session::transcript_locks::cold_write_lease(&path)?
+            .ok_or_else(|| {
                 domain(
                     "SESSION_BUSY",
                     "Cannot restore over an active Gateway session.",
                 )
-            },
-        )?;
+            })?;
         Ok::<_, RequestError>((path, lease, archive, permit, guard))
     })
     .await
