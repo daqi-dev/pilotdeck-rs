@@ -125,7 +125,10 @@
 `EXPECTED_NAMES` + `claim_dir` + `verdict_exit`，`--check` 进 CI）、
 `manager-gateway`（#2309 fix-r2 起完整落形：`EXPECTED_NAMES` + `registered` + `select` +
 `claim_dir` + `missing_target`/`refuse_unusable_target` + `verdict_exit`，case 循环自管、
-先核对 verdict 名册后发布，进 `test_negative_optimize_guards.py` 拒跑矩阵）。**其余同族入口尚未迁移**，
+先核对 verdict 名册后发布，进 `test_negative_optimize_guards.py` 拒跑矩阵；fix-r3 起硬化：
+变异写入与逐项恢复走 `write_source_atomic`、自持窗口装 SIGTERM/SIGHUP/SIGQUIT 还原处理器、
+`pending.for_script` 以入口自身路径为身份键且作为启动前置、summary 载荷记 `selected` 执行集、
+名册防线由 `test_negative_roster_guards.py` 机检并进 CI）。**其余同族入口尚未迁移**，
 由 #1666 按目录分批推进，名单是机器可检的：`tests/fixtures/test_negative_optimize_guards.py`
 的 `PENDING_BARE_ASSERTS` 登记每个仍含裸 `assert` 的 `*/negative_controls.py` 及理由，
 该表只减不增——新脚本带裸 `assert` 会让 CI 红，迁移一个就在同一次改动里删掉它的条目。

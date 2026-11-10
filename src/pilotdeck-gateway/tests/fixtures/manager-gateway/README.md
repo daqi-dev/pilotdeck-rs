@@ -121,5 +121,13 @@ summary）：逐项正控 → 变异 → 判杀 → byte 恢复 → 恢复后正
 verdict 名单与名册（不符 → 原子写 `roster-mismatch.json`、rc 1、不发布
 `summary.json` 也不打印绿色计数行），**后**才发布 `summary.json`、打印计数行、
 `verdict_exit` 收尾（memory-gateway / snapshot-projection 的 r5/r6 先核对后发布次序）。
+fix-r3 起硬化：变异写入与逐项恢复都走 `negative_process.write_source_atomic`（一次改名，
+永不截断原地写，#1903）；自持窗口（36 案 × 3 次 cargo，可达数小时）装
+SIGTERM/SIGHUP/SIGQUIT 处理器，收到信号先走还原路径再退（mode-routing 先例）；
+`pending.for_script` 以入口自身路径为身份键并作为启动前置（注册表不可用 → rc 2，
+不领证据目录）；`summary.json` 载荷带 `selected`（本次执行集，表序）——子集运行的
+绿 summary 由此可审计「跑的是哪些、没跑的是哪些」；名册防线由
+`tests/fixtures/test_negative_roster_guards.py` 机检（驱动真实 `main()`，仅桩 cargo
+与源守卫窗口；CI 已接）。
 新增产品文件在提交前不在 HEAD，`mutating_sources` 会拒绝；提交后由协调者运行。
 `--audit` 只核对锚点（名册漂移与非法选择同样先拒）。

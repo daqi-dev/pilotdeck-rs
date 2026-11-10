@@ -119,6 +119,29 @@ TARGET_OPTIONAL = {
         ('never compiles Cargo, so it has no target guard', None, MODES),
 }
 
+# #2309 fix-r3 (MM sibling P2): the entries that refuse an empty or blank
+# ``PDRS_BASELINE`` before claiming their evidence directory. The matrix used
+# to hardcode the one entry that carried the guard when it was written
+# (project-files-linux-dirent); manager-gateway grew the same
+# ``(os.environ.get('PDRS_BASELINE') or '').strip()`` refusal without joining
+# the denominator, so reverting its guard would not have failed anything. A
+# future entry with the same guard must join this list in the same change.
+BASELINE_GUARDED = (
+    'project-files-linux-dirent/negative_controls.py',
+    'manager-gateway/negative_controls.py',
+)
+
+# Any read of the baseline variable is the guard's subject. Matching the call
+# shapes (not one spelling) keeps the register honest the same way
+# ``TARGET_READ`` does for the target guard above.
+_BASELINE_NAME = r"""f?['"]PDRS_BASELINE['"]"""
+BASELINE_READ = re.compile(
+    r'\w+\.environ\s*\[\s*' + _BASELINE_NAME + r'\s*\]'
+    + r'| \w+\.(?:get|setdefault|pop)\s*\(\s*' + _BASELINE_NAME
+    + r'| \w+\s*\[\s*' + _BASELINE_NAME + r'\s*\]'
+    + r'| \w*getenv\s*\(\s*' + _BASELINE_NAME,
+    re.X)
+
 # Any read of the target variable is a target guard. Matching the call shapes
 # (not one spelling) keeps the exemption honest when a guard is reintroduced
 # with double quotes, `os.getenv`, an alias (`env = os.environ.copy()` then
@@ -451,20 +474,27 @@ class UnknownControlIsRefused(unittest.TestCase):
         The guard became ``(value or '').strip()`` in fix-r8, but this
         harness always supplies a real baseline path, so reverting it to a
         presence-only check would not have failed anything (#1666 fix-r9).
+        Every entry that carries the guard is in ``BASELINE_GUARDED`` (the
+        register itself stays honest: a listed entry really reads the
+        variable, so the list cannot grow a name whose guard disappeared).
         """
-        script = 'project-files-linux-dirent/negative_controls.py'
-        for name, value in (('empty', ''), ('blank', '   ')):
-            with self.subTest(mode=name):
-                result, out = run(script, [], optimize=True, base=self.base,
-                                  baseline=value)
-                self.assertEqual(
-                    result.returncode, 2,
-                    f'{script} must refuse a {name} PDRS_BASELINE: '
-                    f'stdout={result.stdout!r} stderr={result.stderr!r}')
-                self.assertIn('PDRS_BASELINE', result.stderr,
-                              f'{script} must name the unusable variable on stderr')
-                self.assertFalse(out.exists(),
-                                 f'{script} refused but still created {out}')
+        for script in BASELINE_GUARDED:
+            source = (FIXTURES / script).read_text()
+            self.assertTrue(BASELINE_READ.search(source) is not None,
+                            f'{script} is registered as baseline-guarded but '
+                            'no longer reads PDRS_BASELINE itself')
+            for name, value in (('empty', ''), ('blank', '   ')):
+                with self.subTest(script=script, mode=name):
+                    result, out = run(script, [], optimize=True, base=self.base,
+                                      baseline=value)
+                    self.assertEqual(
+                        result.returncode, 2,
+                        f'{script} must refuse a {name} PDRS_BASELINE: '
+                        f'stdout={result.stdout!r} stderr={result.stderr!r}')
+                    self.assertIn('PDRS_BASELINE', result.stderr,
+                                  f'{script} must name the unusable variable on stderr')
+                    self.assertFalse(out.exists(),
+                                     f'{script} refused but still created {out}')
 
     def test_optimize_and_plain_agree(self):
         # The point of the issue: the verdict must not depend on -O.
@@ -478,7 +508,7 @@ class UnknownControlIsRefused(unittest.TestCase):
 class BareAssertInventory(unittest.TestCase):
     """The class invariant has an explicit, shrink-only register (#1666).
 
-    The twenty-five entries migrated so far (twenty-four fixture directories;
+    The twenty-six entries migrated so far (twenty-five fixture directories;
     ``network-timing`` counts two scripts) are not the whole family. Rather than
     let a hand-written list look like a closed set, the remaining debt is named
     here: a file in ``scanned_entries()`` that is not in

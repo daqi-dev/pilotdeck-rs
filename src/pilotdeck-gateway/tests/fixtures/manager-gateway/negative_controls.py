@@ -22,13 +22,20 @@ roster is re-checked *before* anything that reads as success is published: a
 run whose recorded verdicts do not match the roster writes
 `roster-mismatch.json` instead of `summary.json` and exits 1, so no green
 summary or green count line ever exists for a shrunken run (#1666, the
-memory-gateway / snapshot-projection r5/r6 ordering). The loop is owned here,
-not delegated to `negative_suite.run_cases`, because that shared runner
-publishes its summary before control returns to the caller.
+memory-gateway / snapshot-projection r5/r6 ordering). The published summary
+records the run's selection (`selected`, the executed set in table order), so
+a subset run's green artifact is auditable for what ran and what did not. The
+loop is owned here, not delegated to `negative_suite.run_cases`, because that
+shared runner publishes its summary before control returns to the caller.
+The window is self-held for hours, so SIGTERM/SIGHUP/SIGQUIT unwind through
+the restore path instead of leaving a mutant in the tree, and every write to
+a shared product source is one atomic rename (never a truncating in-place
+write).
 """
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 
@@ -39,12 +46,13 @@ sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
 # and the judging/publishing helpers; no local backup/restore or alternate
 # baseline is permitted here.
 import pending_reanchor as pending
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (defer_signal_exit, mutating_sources, run_owned,
+                              wait_for_slot, write_source_atomic)
 from negative_selection import (claim_dir, missing_target,
                                  refuse_unusable_target, registered, select,
                                  verdict_exit)
 from negative_suite import (Case, case_labels, classify, invalidate_completed,
-                            passed, publish_summary, _publish_json)
+                            passed, _publish_json)
 from _negative_common import mutate
 
 catalog = root / 'src/pilotdeck-gateway/src/runtime/manager/catalog.rs'
@@ -396,6 +404,23 @@ EXPECTED_NAMES = (
     'error-mapped-to-response',
 )
 
+def terminate_cleanly(signum, _frame):
+    """Unwind on SIGTERM/SIGHUP/SIGQUIT so the finally blocks restore the
+    sources; the default disposition would leave a mutant in the tree
+    (#2309 fix-r3, mirror of mode-routing's handler)."""
+    if defer_signal_exit(signum):
+        return
+    raise SystemExit(128 + signum)
+
+
+def install_terminate_handlers():
+    signal.signal(signal.SIGTERM, terminate_cleanly)
+    if hasattr(signal, 'SIGHUP'):
+        signal.signal(signal.SIGHUP, terminate_cleanly)
+    if hasattr(signal, 'SIGQUIT'):
+        signal.signal(signal.SIGQUIT, terminate_cleanly)
+
+
 def main():
     args = sys.argv[1:]
     only = None
@@ -455,7 +480,25 @@ def main():
     if not (os.environ.get('PDRS_BASELINE') or '').strip():
         print('PDRS_BASELINE must be set by the caller', file=sys.stderr)
         return 2
+    # #2309 fix-r3 (MM concurrency P2): the shared registry's identity key is
+    # this entry's own path, never `sys.argv[0]` — a wrapper or symlink launch
+    # resolves argv[0] outside the fixtures tree and `for_script` raises
+    # `ValueError`. That call used to sit inside the guarded window, where the
+    # except arm published a 36-row all-INVALID summary that reads as "it ran
+    # and did not pass"; reading the registry is a startup precondition, so it
+    # runs before the evidence directory is claimed and a refusal is rc 2
+    # with no out/ behind (the http-store-park / negative_suite.matrix_main
+    # shape of an explicit `script=`).
+    try:
+        registrations = pending.for_script(root, Path(__file__).resolve())
+    except ValueError as error:
+        print(f'pending-reanchor registry is not usable: {error}', file=sys.stderr)
+        return 2
     out = claim_dir(args[0])
+    # The guarded window below is self-held for hours; a termination signal
+    # must unwind through the restore path, not kill the process over a
+    # mutant source (#2309 fix-r3, the family's mode-routing precedent).
+    install_terminate_handlers()
     env = os.environ.copy()
     env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only',
                CARGO_PROFILE_TEST_DEBUG='line-tables-only', CARGO_TERM_QUIET='false')
@@ -498,6 +541,21 @@ def main():
                         'assertion': case.assertion, 'status': status, 'reason': reason})
         print(f'{stem(case)}: {status}: {reason}', flush=True)
 
+    def publish_run_summary():
+        # #2309 fix-r3 (DS/MM boundary P2): the summary records this run's
+        # selection, so a subset run's green artifact is auditable for what
+        # ran and what did not -- `selected` is the executed set in table
+        # order, and a full run lists every roster name. The payload is the
+        # shared publish_summary shape plus that one key; negative_suite is
+        # M6-owned (#1099), so the enriched summary rides the same atomic
+        # `_publish_json` publication here instead of widening the shared
+        # helper.
+        _publish_json(out / 'summary.json',
+                      {'controls': results,
+                       'counts': pending.counts(results),
+                       'selected': [case.mutation for case in selected_cases]},
+                      overwrite=True)
+
     # Where the guarded window raised, for the three-state exit contract:
     # 'enter' is a refusal to run (HEAD/baseline mismatch, busy lock) and keeps
     # the historical rc=1; 'restore'/'exit' are unverified restores and must
@@ -509,7 +567,6 @@ def main():
     phase = 'enter'
     body_error = None
     try:
-        registrations = pending.for_script(root)
         paths = list(dict.fromkeys(case.path for case in selected_cases))
         if registrations:
             paths.append(root / pending.FIXTURES / pending.REGISTRY)
@@ -530,16 +587,22 @@ def main():
                             reason = 'positive control did not pass the bound test'
                         else:
                             stage = 'negative'
-                            case.path.write_text(changed)
+                            # One atomic rename, never a truncating in-place
+                            # write: a SIGKILL in the write-back window must
+                            # not leave a half-written source behind (#1903,
+                            # the mode-routing precedent).
+                            write_source_atomic(root, case.path, changed.encode())
                             status, reason = classify(run(stem(case) + '-negative', case.test), case)
                     except Exception as error:
                         status, reason = 'INVALID', f'{stage}: {type(error).__name__}: {error}'
                     finally:
                         # Restore before every successor, also on timeout or bad
                         # anchors. The enclosing guard independently restores
-                        # and verifies on exit.
+                        # and verifies on exit. Atomic for the same #1903
+                        # reason as the mutant write above: the restore window
+                        # must not leave a truncated original behind either.
                         phase = 'restore'
-                        case.path.write_bytes(originals[case.path])
+                        write_source_atomic(root, case.path, originals[case.path])
                         if case.path.read_bytes() != originals[case.path]:
                             raise RuntimeError(f'byte restoration failed: {case.path}')
                         phase = 'body'
@@ -569,7 +632,7 @@ def main():
         invalidate_completed(results, reason)
         for case in selected_cases[len(results):]:
             record(case, 'INVALID', reason)
-        publish_summary(out, results)
+        publish_run_summary()
         # A raw SystemExit code must not decide the process status: 256/-256
         # truncate to zero on POSIX and a string code exits 1. Re-raise the
         # normalized code; a KeyboardInterrupt returns 2.
@@ -599,7 +662,7 @@ def main():
                        'recorded': recorded, 'rows': results},
                       overwrite=True)
         return 1
-    publish_summary(out, results)
+    publish_run_summary()
     counts = pending.counts(results)
     print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
     # Every row must be KILLED and at least one row must exist: an empty run or
