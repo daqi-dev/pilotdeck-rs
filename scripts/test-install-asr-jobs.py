@@ -28,5 +28,6 @@ exit 0
    received=args.read_text().splitlines();index=received.index('--parallel')
    assert received[index+1]==jobs,(jobs,received)
   else:assert not args.exists(),(jobs,'builder invoked before admission')
-  if not allowed:assert not (home/'funasr/.source-install.lock').exists(),jobs
+  assert not (home/'funasr/.source-install.lock').exists(),jobs
+  assert not list((home/'funasr').glob('.source-build.*')),jobs
  print('jobs 1/128 reach mock builder; 129/huge/0/leading-zero/non-digit rejected before lease')

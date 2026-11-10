@@ -46,6 +46,6 @@ debug_assert_with_mut_call = "warn"
 icu_collator_data = { path = "data/icu_collator_data" }
 icu_collator = { path = "vendor/icu_collator" }
 # Same upstream MuPDF sources, with a narrow safe JPEG-80 output adapter.
-# Source/archive hashes and the two changed paths: vendor/mupdf-source.json.
+# Source/archive hashes and the reviewed changes: vendor/mupdf-source.json.
 mupdf = { path = "vendor/mupdf" }
 mupdf-sys = { path = "vendor/mupdf-sys" }

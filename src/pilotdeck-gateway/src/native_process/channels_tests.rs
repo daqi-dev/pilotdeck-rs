@@ -1052,7 +1052,14 @@ fn child_probe_token(mode: &str) -> Option<String> {
 /// still write their receipts under this test's identity — plus this spawn's
 /// token pair.
 fn probe_child_env(mode: &str, token: &str) -> Vec<(String, String)> {
-    let mut env: Vec<(String, String)> = std::env::vars().collect();
+    let mut env: Vec<(String, String)> = std::env::vars_os()
+        .map(|(key, value)| {
+            (
+                key.to_string_lossy().into_owned(),
+                value.to_string_lossy().into_owned(),
+            )
+        })
+        .collect();
     crate::test_negative_receipt::forward_to_worker(&mut env);
     env.retain(|(key, _)| key != CHILD_PROBE_ENV);
     env.push((CHILD_PROBE_ENV.to_owned(), format!("{mode}:{token}")));

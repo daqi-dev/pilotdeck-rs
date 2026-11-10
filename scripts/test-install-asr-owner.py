@@ -29,6 +29,19 @@ exec /bin/date "$@"
  assert b'unexpected_builder' not in result.stderr,result.stderr
  assert not lock.exists() and not lock.is_symlink(), ('failed owner write left lease',result.stderr)
  assert not list((home/'funasr').glob('.source-build.*'))
+ # With no ownership marker, preserve the uncertain lease and refuse a build.
+ for tool,diagnostic in [('stat',b'Cannot establish ownership'),('mktemp',b'Cannot mark ownership')]:
+  mock=bins/tool;mock.write_text('#!/bin/sh\nexit 9\n');mock.chmod(0o700)
+  try:
+   result=subprocess.run(['/bin/sh',str(script)],env=env,capture_output=True,timeout=15)
+   assert result.returncode!=0 and diagnostic in result.stderr,(tool,result.stderr)
+   assert b'No build started.' in result.stderr and b'unexpected_builder' not in result.stderr
+   assert lock.is_dir() and not (lock/'owner.txt').exists(),tool
+   assert not list((home/'funasr').glob('.source-build.*')),tool
+  finally:
+   mock.unlink()
+   # Only this fixture's completed, private invocation can own this directory.
+   if lock.exists():shutil.rmtree(lock)
  # The next attempt must never remove a lease that predates it.
  lock.mkdir();(lock/'owner.txt').write_text('other owner\n')
  result=subprocess.run(['/bin/sh',str(script)],env=env,capture_output=True,timeout=15)
@@ -37,7 +50,7 @@ exec /bin/date "$@"
  # Recreate a private lease only inside this fixture; old process must not remove it.
  shutil.rmtree(lock)
  (bins/'date').write_text('#!/bin/sh\nexec /bin/date "$@"\n'); (bins/'date').chmod(0o700)
- (bins/'cmake').write_text('#!/bin/sh\ntouch "$FIXTURE_GATE/ready"\nwhile [ ! -f "$FIXTURE_GATE/release" ]; do /bin/sleep 0.02; done\nexit 9\n'); (bins/'cmake').chmod(0o700)
+ (bins/'cmake').write_text('#!/bin/sh\ntouch "$FIXTURE_GATE/ready"\ni=0\nwhile [ ! -f "$FIXTURE_GATE/release" ] && [ "$i" -lt 500 ]; do /bin/sleep 0.02; i=$((i+1)); done\nexit 9\n'); (bins/'cmake').chmod(0o700)
  env['FIXTURE_GATE']=str(root)
  proc=subprocess.Popen(['/bin/sh',str(script)],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
  try:
@@ -50,5 +63,8 @@ exec /bin/date "$@"
   assert proc.returncode!=0
   assert (lock/'owner.txt').read_text()=='replacement owner\n', (stdout,stderr)
  finally:
+  # Release the bounded mock before stopping its shell, including on assertion
+  # failure; a surviving mock must not hold stdout/stderr open indefinitely.
+  (root/'release').touch()
   if proc.poll() is None:proc.kill();proc.communicate(timeout=5)
  print('owner-write failure cleaned own lease; pre-existing and replacement leases preserved')

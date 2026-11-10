@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import signal
 import subprocess
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -52,8 +53,13 @@ for name, context_text, pixmap_text, succeeds in cases:
         with (folder / 'run.log').open('x') as log:
             code = subprocess.run([str(folder / 'probe')], stdout=log,
                                   stderr=subprocess.STDOUT, timeout=30).returncode
-    passed = built == 0 and code is not None and ((code == 0) if succeeds else (code != 0))
-    results.append({'name': name, 'buildCode': built, 'runCode': code, 'passed': passed})
+    rejection = {'missing-initialization-return': 'mupdf_new_base_context() == NULL',
+                 'missing-error-buffer-drop': 'created_buffers - destroyed_buffers == retained_before_encoding'}.get(name)
+    log = (folder / 'run.log').read_text(errors='replace') if code is not None else ''
+    passed = built == 0 and code is not None and (
+        (code == 0) if succeeds else (code == -signal.SIGABRT and rejection in log))
+    results.append({'name': name, 'buildCode': built, 'runCode': code,
+                    'expectedRejection': rejection, 'passed': passed})
     print(results[-1], flush=True)
 stable = all(hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest
              for path, digest in manifest.items())

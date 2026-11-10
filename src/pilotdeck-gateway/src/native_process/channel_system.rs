@@ -289,18 +289,19 @@ mod tests {
             "#!/bin/sh\necho $$ > leader.pid\ntrap 'exit 3' TERM\nwhile :; do sleep 0.1; done\n",
         );
         let request = f.system.run(true);
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            while !f.root.join("leader.pid").exists() {
+        let pid = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Ok(text) = std::fs::read_to_string(f.root.join("leader.pid"))
+                    && text.ends_with('\n')
+                    && let Ok(pid) = text.trim().parse::<i32>()
+                {
+                    break pid;
+                }
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
         })
         .await
         .unwrap();
-        let pid: i32 = std::fs::read_to_string(f.root.join("leader.pid"))
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
         drop(request);
         tokio::time::timeout(std::time::Duration::from_secs(10), f.system.stop())
             .await

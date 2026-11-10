@@ -2290,6 +2290,58 @@ mod vendored_edge_negative_controls {
     }
 
     #[test]
+    #[cfg(unix)]
+    fn native_sys_build_target_version_and_symlink_are_rejected() {
+        let fixture = Fixture::new();
+        let original = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("vendor");
+        let vendor = fixture.root.join("vendor");
+        let package = vendor.join("mupdf-sys");
+        fs::create_dir_all(&package).unwrap();
+        let manifest = fs::read(original.join("mupdf-source.json")).unwrap();
+        fs::write(vendor.join("mupdf-source.json"), &manifest).unwrap();
+        let document: Value = serde_json::from_slice(&manifest).unwrap();
+        for row in document["files"].as_array().unwrap() {
+            if row["crate"] != "mupdf-sys-0.8.0" {
+                continue;
+            }
+            let relative = row["path"].as_str().unwrap();
+            let destination = package.join(relative);
+            fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            fs::copy(original.join("mupdf-sys").join(relative), destination).unwrap();
+        }
+        let metadata = serde_json::json!({
+            "name":"mupdf-sys", "version":"0.8.0", "dependencies":[],
+            "targets":[{"kind":["lib"],"src_path":package.join("src/lib.rs")},
+                {"kind":["custom-build"],"src_path":package.join("build.rs")}],
+        });
+        vendored_boundary(&package, &metadata);
+        let mut changed = metadata.clone();
+        changed["targets"][1]["src_path"] = serde_json::json!(package.join("other-build.rs"));
+        assert!(std::panic::catch_unwind(|| vendored_boundary(&package, &changed)).is_err());
+        changed = metadata.clone();
+        changed["version"] = serde_json::json!("0.9.0");
+        assert!(
+            rejection(|| vendored_boundary(&package, &changed)).contains("pinned native version")
+        );
+        let target = package.join("src/lib.rs");
+        let bytes = fs::read(&target).unwrap();
+        let outside = fixture.root.join("source-copy.rs");
+        fs::write(&outside, &bytes).unwrap();
+        fs::remove_file(&target).unwrap();
+        std::os::unix::fs::symlink(&outside, &target).unwrap();
+        assert!(
+            rejection(|| vendored_boundary(&package, &metadata))
+                .contains("native source must be a regular file")
+        );
+        fs::remove_file(&target).unwrap();
+        fs::write(target, bytes).unwrap();
+        vendored_boundary(&package, &metadata);
+    }
+
+    #[test]
     fn vendored_non_lib_targets_are_rejected() {
         let fixture = Fixture::new();
         let lib = fixture.source("lib.rs", "// lib\n");

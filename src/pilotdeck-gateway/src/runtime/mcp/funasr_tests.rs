@@ -437,6 +437,7 @@ async fn cancellation_reaps_a_non_exec_wrapper_worker() {
         loop {
             if started.exists()
                 && let Ok(text) = std::fs::read_to_string(&worker)
+                && text.ends_with('\n')
                 && let Ok(pid) = text.trim().parse::<i32>()
             {
                 break pid;

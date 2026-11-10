@@ -74,7 +74,8 @@ int main(void)
     assert(buffer != NULL && error == NULL);
     unsigned char *bytes = NULL;
     size_t length = fz_buffer_storage(ctx, buffer, &bytes);
-    assert(length > 4 && bytes[0] == 0xff && bytes[1] == 0xd8);
+    assert(length > 4 && bytes[0] == 0xff && bytes[1] == 0xd8
+           && bytes[length - 2] == 0xff && bytes[length - 1] == 0xd9);
     fz_drop_buffer(ctx, buffer);
     assert(created_buffers - destroyed_buffers == retained_before_encoding);
     fz_drop_pixmap(ctx, pixmap);
