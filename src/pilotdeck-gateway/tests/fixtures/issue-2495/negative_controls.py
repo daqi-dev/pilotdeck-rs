@@ -45,7 +45,8 @@ from fix-r3, its lock timeout, both the same "never
 started" rc 2 refusal the guard already produces (fix-r3b scopes the refusal
 to the acquisition phase and withdraws the empty evidence directory; anything
 that fails after the acquisition is a red run: INVALID rows, published
-summary, rc 1 — signals excepted, 128+signum per the README rc table). A
+summary, rc 1 — signals excepted, 128+signum per the README signal
+paragraph). A
 bound assertion containing `{` / `}` is
 refused up front (#2590 item 3): the receipt protocol compares the runtime
 `format!` result byte-for-byte, so a template can never match and the row
@@ -390,28 +391,38 @@ def main():
                 # （rc 2，非 traceback）" carries no stage qualifier).
                 # fix-r3b (DS r3 concurrency#1 P1 / boundary#2 P3 + MM r3
                 # boundary#2 P2a, 实测 TimeoutError ⊂ OSError 且
-                # errno.ETIMEDOUT 映射到它): the catch is scoped by PHASE,
-                # not by exception type — it wraps only the acquisition
-                # (enter_context: the tree-lock wait, the pristine checks
-                # and the snapshot reads), where nothing has been mutated
-                # yet. Once enter_context returns, every TimeoutError —
-                # including an ETIMEDOUT on the restore write-back — falls
-                # to the generic handler below: the round did run, rows may
-                # be INVALID and the tree may be mid-restore, so it must
-                # invalidate, publish and exit 1, never a "never started"
-                # refusal. Per-row timeouts (run_owned's 900 s,
-                # wait_for_slot's 600 s) are subprocess.TimeoutExpired and
-                # are caught by the inner per-row handler either way.
-                # fix-r3b2 (DS r3b review, 四角色撞条): within the
-                # acquisition phase the refusal still maps only these two
-                # exception types — a git RuntimeError, a scanner
-                # subprocess error or an OSError snapshot read inside the
-                # acquisition also falls to the red-run handler below
-                # (fail-closed, never a false green; the started-flag
-                # shape that refuses the whole acquisition phase is
-                # follow-up entry 23 on #2590, same-json-surfaces /
-                # utf16-residual-sort precedent). Signals are outside this
-                # table entirely: 128+signum per the README preamble.
+                # errno.ETIMEDOUT 映射到它): the catch is scoped by PHASE
+                # (it wraps only the acquisition — enter_context: the
+                # tree-lock wait, the pristine checks and the snapshot
+                # reads, where nothing has been mutated yet), and within
+                # that phase to these two exception types, not to every
+                # exception the phase can raise. Once enter_context
+                # returns, every TimeoutError — including an ETIMEDOUT on
+                # the restore write-back — falls to the generic handler
+                # below: the round did run, rows may be INVALID and the
+                # tree may be mid-restore, so it must invalidate, publish
+                # and exit 1, never a "never started" refusal. Per-row
+                # timeouts (run_owned's 900 s, wait_for_slot's 600 s) are
+                # subprocess.TimeoutExpired and are caught by the inner
+                # per-row handler either way.
+                # fix-r3b2 (DS r3b review, 四角色撞条; fix-r3b3 精化 by
+                # final DS boundary#1/sib#3): within the acquisition phase
+                # the refusal still maps only these two exception types —
+                # the RAW acquisition failures fall to the red-run handler
+                # below: a bare `_git` RuntimeError from the preflight
+                # diff/ls-files calls, a cold-boot cargo failure in
+                # `_ensure_workspace_scanner`, or a bare read_bytes/stat
+                # OSError on a guarded file (fail-closed, never a false
+                # green; git failures via `_head_bytes` and scanner-run
+                # `(ValueError, OSError, SubprocessError)` via
+                # `_workspace_literal_inputs` are already wrapped into
+                # SourceBaselineError, so they DO reach rc 2 — pinned by
+                # test_acquisition_phase_raw_failure_is_a_red_run; the
+                # started-flag shape that refuses the whole acquisition
+                # phase is follow-up entry 22 on #2590, same-json-surfaces
+                # / utf16-residual-sort precedent). Signals are outside
+                # this table entirely: 128+signum per the README signal
+                # paragraph.
                 # fix-r3b (MM r3 concurrency#1 P2a): SourceBaselineError at
                 # entry is the same never-started phase — a sibling round
                 # SIGKILLed mid-mutation leaves its mutant on disk and this
