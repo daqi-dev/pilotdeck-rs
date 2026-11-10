@@ -54,6 +54,13 @@ fn assert_failure_contract(result: &CompactionResult, id: &str) {
         .iter()
         .find(|case| case.get("id") == Some(&id.into()))
         .unwrap();
+    // This is a TS object-identity observation, not a wire contract. Native
+    // compaction owns a child signal so its failure cannot cancel the turn;
+    // the tests below exercise both parent forwarding and child isolation.
+    assert_eq!(
+        case.get("providerSignalIsParent"),
+        Some(&JsValue::Bool(true))
+    );
     assert_eq!(
         Some(JsValue::Bool(result.summary_generated)),
         case.get("summaryGenerated").cloned()

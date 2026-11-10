@@ -339,6 +339,8 @@ mod tests {
                 assert_eq!(std::fs::read(p).unwrap(), b"precious backup");
             }
         }
+        // FIFO is an existing nonregular leaf too; its worker has a hard5s bound.
+        bounded_fifo_current_cleanup();
     }
     #[test]
     fn unsafe_or_invalid_parent_is_not_absence() {
@@ -357,5 +359,84 @@ mod tests {
         for p in artifacts {
             assert_eq!(std::fs::read(p).unwrap(), b"keep");
         }
+    }
+
+    #[test]
+    #[ignore = "only launched by bounded parent"]
+    fn fifo_current_cleanup_worker() {
+        use std::os::unix::fs::{FileTypeExt, MetadataExt};
+        let s = Scratch::new();
+        let path = s.0.join("session.jsonl");
+        assert!(
+            std::process::Command::new("/usr/bin/mkfifo")
+                .args(["-m", "600"])
+                .arg(&path)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let before = std::fs::symlink_metadata(&path).unwrap();
+        let artifacts = s.sidecars();
+        for artifact in &artifacts {
+            std::fs::write(artifact, b"precious backup").unwrap();
+        }
+        assert!(
+            !cleanup_if_missing(&path).unwrap(),
+            "existing FIFO is not missing"
+        );
+        for artifact in &artifacts {
+            assert_eq!(std::fs::read(artifact).unwrap(), b"precious backup");
+        }
+        let after = std::fs::symlink_metadata(&path).unwrap();
+        assert!(after.file_type().is_fifo());
+        assert_eq!((after.dev(), after.ino()), (before.dev(), before.ino()));
+        assert_eq!(
+            std::fs::read_dir(&s.0).unwrap().count(),
+            3,
+            "no quarantine or duplicate artifacts"
+        );
+        println!("PDRS_FIFO_CLEANUP_OK");
+    }
+    fn bounded_fifo_current_cleanup() {
+        use std::{
+            process::{Command, Stdio},
+            time::{Duration, Instant},
+        };
+        let module = module_path!().split_once("::").unwrap().1;
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                &format!("{module}::fifo_current_cleanup_worker"),
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while child.try_wait().unwrap().is_none() {
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                let output = child.wait_with_output().unwrap();
+                panic!(
+                    "cleanup FIFO exceeded5s: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("PDRS_FIFO_CLEANUP_OK"),
+            "worker must actually run"
+        );
     }
 }

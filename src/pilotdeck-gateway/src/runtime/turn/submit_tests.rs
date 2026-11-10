@@ -662,15 +662,57 @@ struct Registry {
 }
 impl Registry {
     fn track<T: Send + 'static>(&self, future: RegistryFuture<T>) -> RegistryFuture<T> {
+        // Count wrapper future ownership, including cancellation before its
+        // first poll. The actual registry worker independently owns queued IO.
+        struct Pending(Arc<AtomicUsize>);
+        impl Drop for Pending {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
         let pending = self.pending.clone();
         pending.fetch_add(1, Ordering::SeqCst);
+        let pending = Pending(pending);
         Box::pin(async move {
-            let result = future.await;
-            pending.fetch_sub(1, Ordering::SeqCst);
-            result
+            let _pending = pending;
+            future.await
         })
     }
 }
+#[test]
+fn registry_tracking_releases_an_unpolled_future_on_drop() {
+    let root = std::env::temp_dir().join(format!("pdrs-submit-track-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let pending = Arc::new(AtomicUsize::new(0));
+    let polled = Arc::new(AtomicBool::new(false));
+    let registry = Registry {
+        port: FileRegistry::new(FileRunRegistry::open(root.join("registry.json")).unwrap())
+            .unwrap(),
+        log: Arc::new(Log::default()),
+        setup: json!({}),
+        pending: pending.clone(),
+        append_gate: Gate::new(),
+    };
+    let observed = polled.clone();
+    let future = registry.track(Box::pin(async move {
+        observed.store(true, Ordering::SeqCst);
+        Ok(())
+    }));
+    assert_eq!(pending.load(Ordering::SeqCst), 1);
+    drop(future);
+    assert!(
+        !polled.load(Ordering::SeqCst),
+        "drop must not poll the wrapped future"
+    );
+    assert_eq!(
+        pending.load(Ordering::SeqCst),
+        0,
+        "unpolled drop must release wrapper ownership"
+    );
+    drop(registry);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 impl TurnRunRegistry for Registry {
     fn accept(&self, input: &RunAcceptInput) -> RegistryFuture<bool> {
         self.log

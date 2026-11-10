@@ -3085,11 +3085,9 @@ fn timed_out_unknown(
     let (Some(run_id), Some(cancel)) = (run_id, cancel) else {
         return false;
     };
-    let mut units = "timeout:".encode_utf16().collect::<Vec<_>>();
-    units.extend_from_slice(run_id.units());
     cancel
         .reason()
-        .is_some_and(|reason| reason.units() == units)
+        .is_some_and(|reason| super::is_timeout_reason(&reason, run_id))
 }
 
 #[cfg(test)]

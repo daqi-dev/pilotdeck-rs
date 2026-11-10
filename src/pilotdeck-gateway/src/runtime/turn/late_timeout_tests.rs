@@ -17,6 +17,34 @@ fn typed_unknown_after_exact_execution_timeout_rethrows_without_turn_failure() {
 }
 
 #[test]
+fn internal_timeout_reason_preserves_all_utf16_units() {
+    // The public Gateway rejects non-ASCII run ids before admission. Internal
+    // typed callers still share the exact constructor used by both timers.
+    let run = JsString::from_utf16(vec![0x67, 0xd800, 0x62, 0xdfff]);
+    let reason = crate::runtime::turn::timeout_reason(&run);
+    let expected = JsString::from_utf16(
+        "timeout:"
+            .encode_utf16()
+            .chain(run.units().iter().copied())
+            .collect(),
+    );
+    assert_eq!(reason, expected);
+    let cancel = Cancellation::default();
+    cancel.cancel(Some(reason));
+    assert!(timed_out_unknown(
+        &error(HostErrorKind::ResultUnknown),
+        Some(&run),
+        Some(&cancel)
+    ));
+    let lossy = JsString::from(String::from_utf16_lossy(run.units()));
+    assert!(!timed_out_unknown(
+        &error(HostErrorKind::ResultUnknown),
+        Some(&lossy),
+        Some(&cancel)
+    ));
+}
+
+#[test]
 fn unknown_first_and_ordinary_abort_remain_failures() {
     let run: JsString = "gateway-run".into();
     let not_aborted = Cancellation::default();

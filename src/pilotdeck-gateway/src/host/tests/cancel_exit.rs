@@ -643,3 +643,47 @@ async fn completed_application_is_collected_before_the_deadline_exit() {
     receipt.assert_pass("terminal-ack-stall");
     assert_peer_reaped(&receipt).await;
 }
+
+#[tokio::test]
+async fn network_parent_link_is_one_way_and_parent_abort_has_no_local_reason() {
+    let parent = crate::runtime::network::Cancellation::new();
+    let child = Cancellation::from_network_parent(parent.clone());
+    child.cancel(Some("child-only".into()));
+    timeout(Duration::from_secs(1), child.cancelled())
+        .await
+        .unwrap();
+    assert!(child.is_cancelled());
+    assert_eq!(child.reason(), Some("child-only".into()));
+    assert!(
+        !parent.is_cancelled(),
+        "local child cancellation must not abort its parent"
+    );
+    assert!(
+        timeout(Duration::from_millis(20), parent.cancelled())
+            .await
+            .is_err()
+    );
+
+    // Use an independent link: the first child's retained local reason must
+    // not hide whether the parent's signal wakes a fresh child's waiter.
+    let parent = crate::runtime::network::Cancellation::new();
+    let child = Cancellation::from_network_parent(parent.clone());
+    assert!(!child.is_cancelled());
+    assert_eq!(child.reason(), None);
+    let waiter = child.cancelled();
+    tokio::pin!(waiter);
+    tokio::select! {
+        biased;
+        _ = &mut waiter => panic!("uncancelled child waiter resolved"),
+        _ = std::future::ready(()) => {}
+    }
+    parent.abort();
+    timeout(Duration::from_secs(1), &mut waiter).await.unwrap();
+    assert!(parent.is_cancelled());
+    assert!(child.is_cancelled());
+    assert_eq!(
+        child.reason(),
+        None,
+        "parent abort must not fabricate a local reason"
+    );
+}

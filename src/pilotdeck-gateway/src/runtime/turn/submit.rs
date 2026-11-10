@@ -880,7 +880,7 @@ impl TurnSubmitter {
                     let message = format!("Turn exceeded the {}ms timeout.", crate::js_value::number_string(ms));
                     let hint = "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.";
                     let _ = self.host.reject_pending(&run.session_key, "turn_timeout");
-                    let _ = handle.abort(&format!("timeout:{}", display(&run.run_id)).into());
+                    let _ = handle.abort(&super::timeout_reason(&run.run_id));
                     if owns_terminal {
                         let mut failure = status("turn_timeout", &message, hint, "turn");
                         let mut detail = field(&failure, "detail").clone();

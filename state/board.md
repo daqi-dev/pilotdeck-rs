@@ -5537,3 +5537,8 @@ main 已逐块整合至51844eaa0，提交8545768da保留双方增量；Draft #27
 ### 2026-11-10 · r59 原生终态与权限结构修复接续（未收口）
 
 r55完整Gateway/CLI回归已结束：7845运行、7841通过、4失败、771跳过；3条旧断言已在r57定向通过，第四条为原有装置pyc污染，原缓存清单SHA保全移出后Python3.15隔离重跑4个离线fixture全过，原r55失败不改写。r57严格clippy/四bin通过，105定向103过2旧AO前缀失败已修；r58新取消适配遗漏旧字段访问在编译期暴露，现已接到真实parent wake及重连清理。r59源码清单8cb8586b在mbp2通过严格clippy/四bin，新增定向与context测试仍跑；已接native模式关闭通知预算（普通completion无新时限）、permission_list去重复payload、disabled search的Python导出和RPC双门、FIFO真实负例、328固定TS动态prompt边界与14工具构造oracle。r57实际AO六条模型请求30工具定义逐项相同，discovery两token差已定位真实UUID/时间；SOP一成功四预算拒绝双端相同，不称五成功。正式host/session/retirement仍未通过；main新增至cc85b315f待本批稳定后合入，冻结#1355车道r29独占不并写。未迁移正本/旧树/前端快照，未本机构建。下一步新bin真实WS权限和timeout复验、两家增量审阅、同步main与同头全域验收。
+
+
+### 2026-11-10 · r61 真实提交全回归与消费者差异接续（未收口）
+
+共同候选已逐块接 main 至 cc85b315f，本批固定该 main；Draft #2786 已推 cdc7aa735，最新本地 2b9d016be 的 r61 输入清单 9f1412a1 与 5169 个提交文件逐项相同。r60 严格检查/四 bin、199 定向及7 context、2 skills通过；r61 严格检查/四 bin、59 定向及7 context通过，各批不相加为完整成绩。mbp2 checks-r24 原源码、未知文件与完整 Git 已归档逐项校验，旧 main 原封保留，新分支真实检出2b9并启动 Gateway+CLI完整回归；probe继续修复，未新建树/未迁规范目录。本轮20个formal候选原函数8PASS/12FAIL/52NOT_RUN，但fast producer实证在final后才释放，8项不可认正式fast通过；4项registry late/pending实发S/E违反冻结合同，正修生产causal close，未改评分。2项真实ModelPort采集的provider见证通过而事件判据仍失败，原件保留；cb8不可达故Linux见证BLOCKED。真实SDK seed四格通过；文件rewind真实写入后无checkpoint已定位native工具未接FileHistoryStore，正补消费者。cwd会影响工具授权根的候选暂不收。本机无Rust构建，CLI/app/GPUI/file_edit及旧快照未动。下一步同源P2保护回归、真实关闭时序与rewind闭环修复、双谱系复核；完整host/session/retirement和最终实效仍未完成。证据主仓 _tmp/20261110-gateway-integration/。

@@ -282,9 +282,7 @@ impl GatewaySubmitAdmission {
         // spawned timer can never outlive the compaction await.
         let timer = timeout.map(|ms| {
             let abort = abort.clone();
-            let mut reason: Vec<u16> = "timeout:".encode_utf16().collect();
-            reason.extend_from_slice(run.units());
-            let reason = JsString::from_utf16(reason);
+            let reason = super::timeout_reason(&run);
             TimerGuard(Some(tokio::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
                 abort.abort(reason);

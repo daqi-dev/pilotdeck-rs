@@ -517,18 +517,12 @@ fn write_and_read_refuse_symlink_ancestor_without_touching_outside() {
     assert!(read_bytes(&scratch.0.join("alias/original")).is_err());
 }
 
+#[cfg(unix)]
 #[test]
 fn unreadable_journal_preserves_transcript_and_every_sidecar() {
-    let scratch = Scratch::new();
-    let (path, backup, journal) = transaction(&scratch.0, b"original", b"current", None);
-    fs::remove_file(&journal).unwrap();
-    fs::create_dir(&journal).unwrap(); // EISDIR cannot be treated as a missing journal.
-    let report = recover_chats(std::slice::from_ref(&scratch.0));
-    assert_eq!(report.failures.len(), 1);
-    assert_eq!(report.rolled_back, 0);
-    assert_eq!(fs::read(path).unwrap(), b"current");
-    assert_eq!(fs::read(backup).unwrap(), b"original");
-    assert!(journal.is_dir());
+    for kind in ["directory", "symlink", "fifo"] {
+        bounded_nonregular_case(&format!("journal:{kind}"));
+    }
 }
 
 fn accepted_line(session: &str) -> Vec<u8> {
@@ -745,4 +739,208 @@ async fn source_fork_waits_for_the_canonical_transcript_fence() {
         .unwrap();
     requests.project.dispose().await.unwrap();
     requests.owner.shutdown().await.unwrap();
+}
+
+#[cfg(unix)]
+fn bounded_nonregular_case(case: &str) {
+    use std::{
+        process::{Command, Stdio},
+        time::{Duration, Instant},
+    };
+    let module = module_path!().split_once("::").unwrap().1;
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            &format!("{module}::nonregular_artifact_worker"),
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env("PDRS_HISTORY_NONREGULAR_CASE", case)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while child.try_wait().unwrap().is_none() {
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            let output = child.wait_with_output().unwrap();
+            panic!(
+                "nonregular case {case} exceeded5s: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "case {case}: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("PDRS_NONREGULAR_CASE_OK"),
+        "worker must actually run, not zero selected tests"
+    );
+}
+#[cfg(unix)]
+#[test]
+fn recovery_rejects_nonregular_current_without_consuming_sidecars() {
+    for kind in ["directory", "symlink", "fifo"] {
+        bounded_nonregular_case(&format!("recovery-current:{kind}"));
+    }
+}
+#[cfg(unix)]
+#[test]
+fn replace_fifo_leaf_and_private_artifact_read_preserve_all_material() {
+    bounded_nonregular_case("replace-fifo:fifo");
+}
+#[cfg(unix)]
+#[test]
+#[ignore = "only launched by bounded parent with a concrete case"]
+fn nonregular_artifact_worker() {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    let case = std::env::var("PDRS_HISTORY_NONREGULAR_CASE").unwrap();
+    let (operation, kind) = case.split_once(':').unwrap();
+    assert!(["recovery-current", "journal", "replace-fifo"].contains(&operation));
+    assert!(["directory", "symlink", "fifo"].contains(&kind));
+    let scratch = Scratch::new();
+    let original = accepted_line("session");
+    let current = b"{\"type\":\"accepted_input\",\"turnId\":\"new-turn\"}\n";
+    let (path, backup, journal) = transaction(&scratch.0, &original, current, None);
+    let journal_bytes = fs::read(&journal).unwrap();
+    let leaf = if operation == "journal" {
+        &journal
+    } else {
+        &path
+    };
+    fs::remove_file(leaf).unwrap();
+    let sentinel = scratch.0.join("outside-sentinel");
+    fs::write(
+        &sentinel,
+        if operation == "journal" {
+            journal_bytes.as_slice()
+        } else {
+            original.as_slice()
+        },
+    )
+    .unwrap();
+    match kind {
+        "directory" => {
+            fs::create_dir(leaf).unwrap();
+            fs::write(leaf.join("keep"), b"directory material").unwrap();
+        }
+        "symlink" => std::os::unix::fs::symlink(&sentinel, leaf).unwrap(),
+        "fifo" => assert!(
+            std::process::Command::new("/usr/bin/mkfifo")
+                .args(["-m", "600"])
+                .arg(leaf)
+                .status()
+                .unwrap()
+                .success()
+        ),
+        _ => unreachable!(),
+    }
+    let identity = fs::symlink_metadata(leaf).unwrap();
+    let names = || {
+        let mut names: Vec<_> = fs::read_dir(&scratch.0)
+            .unwrap()
+            .map(|row| row.unwrap().file_name())
+            .collect();
+        names.sort();
+        names
+    };
+    let before_names = names();
+    if operation == "replace-fifo" {
+        assert_eq!(kind, "fifo");
+        // This calls the actual inner read_open_artifact guard, with no
+        // require_current_transcript or storage::read_open_transcript gate.
+        let inner = read_bytes(&path).expect_err("FIFO artifact is not regular");
+        assert_eq!(
+            inner.message,
+            JsString::from("Transcript artifact must be a regular file.")
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (_unused, requests) = super::super::management_tests::setup();
+            let state = State {
+                home: scratch.0.clone(),
+                fallback: scratch.0.clone(),
+                owner: requests.owner.clone(),
+                instance: uuid(),
+            };
+            let input = object([
+                ("sessionKey", string("session")),
+                ("expectedTurnId", string("old")),
+                ("replacementTurnId", string("replacement-fifo")),
+            ]);
+            // The public replace implementation first reaches the separate
+            // storage transcript gate. Do not claim this reaches line483.
+            let error = replace(&state, &input, &scratch.0, &path)
+                .expect_err("replace must reject leaf FIFO");
+            assert!(
+                error
+                    .message
+                    .to_utf8()
+                    .unwrap()
+                    .contains("not a regular file")
+            );
+            drop(state);
+            requests.owner.shutdown().await.unwrap();
+            requests.project.dispose().await.unwrap();
+        });
+    } else {
+        let report = recover_chats(std::slice::from_ref(&scratch.0));
+        assert_eq!(
+            report.failures.len(),
+            1,
+            "read failure must not become absent data"
+        );
+        assert_eq!(report.rolled_back, 0);
+        assert_eq!(report.committed, 0);
+        assert_eq!(report.cleaned, 0);
+        if kind == "fifo" {
+            assert!(
+                report.failures[0]
+                    .message
+                    .contains("Transcript artifact must be a regular file."),
+                "FIFO must reach read_open_artifact, not a preceding unrelated gate"
+            );
+        }
+    }
+    assert_eq!(names(), before_names, "no backup/journal/publish pollution");
+    assert_eq!(fs::read(&backup).unwrap(), original);
+    if operation == "journal" {
+        assert_eq!(fs::read(&path).unwrap(), current);
+    } else {
+        assert_eq!(fs::read(&journal).unwrap(), journal_bytes);
+    }
+    let after = fs::symlink_metadata(leaf).unwrap();
+    assert_eq!((after.dev(), after.ino()), (identity.dev(), identity.ino()));
+    match kind {
+        "directory" => {
+            assert!(after.is_dir());
+            assert_eq!(fs::read(leaf.join("keep")).unwrap(), b"directory material");
+        }
+        "symlink" => {
+            assert!(after.file_type().is_symlink());
+            assert_eq!(fs::read_link(leaf).unwrap(), sentinel);
+        }
+        "fifo" => assert!(after.file_type().is_fifo()),
+        _ => unreachable!(),
+    }
+    assert_eq!(
+        fs::read(&sentinel).unwrap(),
+        if operation == "journal" {
+            journal_bytes
+        } else {
+            original
+        }
+    );
+    println!("PDRS_NONREGULAR_CASE_OK");
 }
