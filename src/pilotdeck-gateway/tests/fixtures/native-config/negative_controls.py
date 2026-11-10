@@ -387,46 +387,62 @@ mutations = [
     # INVALID_SESSION_KEY, so a busy reservation under that owner answers
     # SESSION_BUSY and the bound test dies on the sessionKey-gate assert.
     ('set-blank-key-owner-reservation-restored', CONFIG,
-     '        let owner = reserved.and_then(|key| self.live_transcript_owner(Some(key)));\n'
+     '        let reserved_key = params.get("sessionKey").and_then(JsValue::as_string);\n'
+     '        let owner = self.live_transcript_owner(reserved_key);\n'
      '        let owner_reserved = matches!(\n'
-     '            (&owner, reserved),\n'
+     '            (&owner, reserved_key),\n'
      '            (Some(owner), Some(key)) if owner != key && trimmed_string_is_non_empty(key)\n'
      '        );\n'
-     '        if owner_reserved\n'
-     '            && let Err(error) = self\n'
-     '                .replacement\n'
-     '                .reserve_transcript_write(owner.as_ref().unwrap(), "change the session model")',
-     '        let owner = reserved.and_then(|key| self.live_transcript_owner(Some(key)));\n'
+     '        let owner_guard = self\n'
+     '            .replacement\n'
+     '            .reserve_transcript_write_held(\n'
+     '                if owner_reserved { owner.as_ref() } else { None },\n'
+     '                "change the session model",\n'
+     '            )\n'
+     '            .map_err(replacement_error)?;',
+     '        let reserved_key = params.get("sessionKey").and_then(JsValue::as_string);\n'
+     '        let owner = self.live_transcript_owner(reserved_key);\n'
      '        let owner_reserved = matches!(\n'
-     '            (&owner, reserved),\n'
+     '            (&owner, reserved_key),\n'
      '            (Some(owner), Some(key)) if owner != key\n'
      '        );\n'
-     '        if owner_reserved\n'
-     '            && let Err(error) = self\n'
-     '                .replacement\n'
-     '                .reserve_transcript_write(owner.as_ref().unwrap(), "change the session model")',
+     '        let owner_guard = self\n'
+     '            .replacement\n'
+     '            .reserve_transcript_write_held(\n'
+     '                if owner_reserved { owner.as_ref() } else { None },\n'
+     '                "change the session model",\n'
+     '            )\n'
+     '            .map_err(replacement_error)?;',
      CFG + 'session_model_set_blank_key_ignores_a_busy_owner_reservation',
      '#1872 the blank key is a sessionKey error despite a busy owner reservation'),
     # ── #1872 fix-r4: the clear twin of the owner-reservation skip.
     ('clear-blank-key-owner-reservation-restored', CONFIG,
-     '        let owner = reserved.and_then(|key| self.live_transcript_owner(Some(key)));\n'
+     '        let reserved_key = params.get("sessionKey").and_then(JsValue::as_string);\n'
+     '        let owner = self.live_transcript_owner(reserved_key);\n'
      '        let owner_reserved = matches!(\n'
-     '            (&owner, reserved),\n'
+     '            (&owner, reserved_key),\n'
      '            (Some(owner), Some(key)) if owner != key && trimmed_string_is_non_empty(key)\n'
      '        );\n'
-     '        if owner_reserved\n'
-     '            && let Err(error) = self\n'
-     '                .replacement\n'
-     '                .reserve_transcript_write(owner.as_ref().unwrap(), "clear the session model")',
-     '        let owner = reserved.and_then(|key| self.live_transcript_owner(Some(key)));\n'
+     '        let owner_guard = self\n'
+     '            .replacement\n'
+     '            .reserve_transcript_write_held(\n'
+     '                if owner_reserved { owner.as_ref() } else { None },\n'
+     '                "clear the session model",\n'
+     '            )\n'
+     '            .map_err(replacement_error)?;',
+     '        let reserved_key = params.get("sessionKey").and_then(JsValue::as_string);\n'
+     '        let owner = self.live_transcript_owner(reserved_key);\n'
      '        let owner_reserved = matches!(\n'
-     '            (&owner, reserved),\n'
+     '            (&owner, reserved_key),\n'
      '            (Some(owner), Some(key)) if owner != key\n'
      '        );\n'
-     '        if owner_reserved\n'
-     '            && let Err(error) = self\n'
-     '                .replacement\n'
-     '                .reserve_transcript_write(owner.as_ref().unwrap(), "clear the session model")',
+     '        let owner_guard = self\n'
+     '            .replacement\n'
+     '            .reserve_transcript_write_held(\n'
+     '                if owner_reserved { owner.as_ref() } else { None },\n'
+     '                "clear the session model",\n'
+     '            )\n'
+     '            .map_err(replacement_error)?;',
      CFG + 'session_model_clear_blank_key_ignores_a_busy_owner_reservation',
      '#1872 the blank key is a sessionKey error on clear despite a busy owner reservation'),
     # ── #1872 fix-r4: permission's blank key with no turn must reach the
@@ -453,25 +469,37 @@ mutations = [
     # the bound test polls the reservation table while the request is parked
     # on the transcript fence and dies when the owner's key never shows up.
     ('set-alias-owner-reservation-skipped', CONFIG,
-     '        if owner_reserved\n'
-     '            && let Err(error) = self\n'
-     '                .replacement\n'
-     '                .reserve_transcript_write(owner.as_ref().unwrap(), "change the session model")',
-     '        if false\n'
-     '            && let Err(error) = self\n'
-     '                .replacement\n'
-     '                .reserve_transcript_write(owner.as_ref().unwrap(), "change the session model")',
+     '        let owner_guard = self\n'
+     '            .replacement\n'
+     '            .reserve_transcript_write_held(\n'
+     '                if owner_reserved { owner.as_ref() } else { None },\n'
+     '                "change the session model",\n'
+     '            )\n'
+     '            .map_err(replacement_error)?;',
+     '        let owner_guard = self\n'
+     '            .replacement\n'
+     '            .reserve_transcript_write_held(\n'
+     '                if false { owner.as_ref() } else { None },\n'
+     '                "change the session model",\n'
+     '            )\n'
+     '            .map_err(replacement_error)?;',
      CFG + 'session_model_set_holds_the_owner_reservation_through_the_write',
      '#1872 the owner and alias reservations are held while the write is parked'),
     ('clear-alias-owner-reservation-skipped', CONFIG,
-     '        if owner_reserved\n'
-     '            && let Err(error) = self\n'
-     '                .replacement\n'
-     '                .reserve_transcript_write(owner.as_ref().unwrap(), "clear the session model")',
-     '        if false\n'
-     '            && let Err(error) = self\n'
-     '                .replacement\n'
-     '                .reserve_transcript_write(owner.as_ref().unwrap(), "clear the session model")',
+     '        let owner_guard = self\n'
+     '            .replacement\n'
+     '            .reserve_transcript_write_held(\n'
+     '                if owner_reserved { owner.as_ref() } else { None },\n'
+     '                "clear the session model",\n'
+     '            )\n'
+     '            .map_err(replacement_error)?;',
+     '        let owner_guard = self\n'
+     '            .replacement\n'
+     '            .reserve_transcript_write_held(\n'
+     '                if false { owner.as_ref() } else { None },\n'
+     '                "clear the session model",\n'
+     '            )\n'
+     '            .map_err(replacement_error)?;',
      CFG + 'session_model_clear_holds_the_owner_reservation_through_the_write',
      '#1872 the clear-side owner and alias reservations are held while the write is parked'),
     # ── #1872: the fallback arm of close_model_selection_owner — the owner
