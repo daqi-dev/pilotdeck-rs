@@ -3163,10 +3163,12 @@ async fn a_cancelled_owner_finish_still_requests_the_host_teardown() {
                 .contains("native WS owner finish was interrupted")),
             "#2557 the revisit records the interrupted verdict"
         );
-        // The #2557 negative-control anchor (the revisit branch's re-issue
-        // deleted): with it gone, no request ever goes out — the first run
-        // died inside the window and the unawaited `StopHost` drop request
-        // is all that is left while the phased run is alive.
+        // The #2557 direct-deletion witness (the revisit branch's re-issue
+        // deleted — no optional switch here, per the #2363 fix-r2 R2 ledger
+        // entry these two re-issue sites carry no fixture row): with it
+        // gone, no request ever goes out — the first run died inside the
+        // window and the unawaited `StopHost` drop request is all that is
+        // left while the phased run is alive.
         negative_assert!(
             matches!(timeout(DEADLINE, entered_rx).await, Ok(Ok(()))),
             "#2557 the revisit re-issue requests the host teardown"
@@ -3231,10 +3233,12 @@ async fn a_cancelled_owner_finish_still_requests_the_host_teardown() {
             poll_request(first.as_mut()).is_pending(),
             "#2557 the first finish parks in the abort join past the request"
         );
-        // The #2557 negative-control anchor (the first run's re-issue
-        // deleted): with it gone, no request has gone out — the half was
-        // cut before `host.shutdown`'s own request was reached, and the
-        // revisit below is what would have sent one. Anchored before that.
+        // The #2557 direct-deletion witness (the first run's re-issue
+        // deleted — no optional switch here, per the #2363 fix-r2 R2 ledger
+        // entry these two re-issue sites carry no fixture row): with it
+        // gone, no request has gone out — the half was cut before
+        // `host.shutdown`'s own request was reached, and the revisit below
+        // is what would have sent one. Anchored before that.
         negative_assert!(
             matches!(timeout(DEADLINE, entered_rx).await, Ok(Ok(()))),
             "#2557 the pre-join re-issue requests the host teardown"
