@@ -85,13 +85,13 @@ impl Storage {
         write(&self.home.join("weixin-credentials.json"), &to_save)
     }
 
+    /// TS WeixinChannel.ts:990-997 saveCredentials():
+    /// Persists credentials (baseUrl, botToken, accountId, optional cursor) to weixin-credentials.json
+    /// with 0o600 permissions under the credential_owner lock, overwriting any previous
+    /// credentials so new logins from QR confirmation are not discarded.
     pub fn save_login(&self, value: Value) -> Result<Value> {
         let owner = self.credential_owner();
         let _guard = owner.lock().unwrap();
-        // A login already saved by this owner takes precedence over QR completion.
-        if let Some(current) = self.credentials()? {
-            return Ok(current);
-        }
         self.save_credentials_locked(&value)?;
         Ok(value)
     }
@@ -512,5 +512,125 @@ mod tests {
 
         // Advance cursor fails with None when expected generation does not match (cursor mismatch)
         assert_eq!(store.advance_cursor(&a, "cur-3").unwrap(), None);
+    }
+
+    #[test]
+    fn test_save_login_overwrites_existing_credentials() {
+        let home = TestHome::new();
+        let store = Storage::new(home.0.clone());
+        let old_creds = json!({
+            "baseUrl": "https://old.example.com",
+            "botToken": "old-token-123",
+            "accountId": "old-acc-456",
+            "cursor": "old-cur-789"
+        });
+        store.save_credentials(&old_creds).unwrap();
+
+        let initial_on_disk = store.credentials().unwrap().expect("old creds must exist");
+        assert_eq!(initial_on_disk["botToken"], "old-token-123");
+        assert_eq!(initial_on_disk["cursor"], "old-cur-789");
+
+        // Aligns with TS WeixinChannel.ts:990-997 (ts-align item 47):
+        // QR login confirmation persists the new credentials and overwrites stale ones.
+        let new_login = json!({
+            "baseUrl": "https://new.example.com",
+            "botToken": "new-token-abc",
+            "accountId": "new-acc-def"
+        });
+        let result = store.save_login(new_login).unwrap();
+        assert_eq!(result["baseUrl"], "https://new.example.com");
+        assert_eq!(result["botToken"], "new-token-abc");
+        assert_eq!(result["accountId"], "new-acc-def");
+
+        let reloaded = store.credentials().unwrap().expect("new creds must exist");
+        assert_eq!(reloaded["baseUrl"], "https://new.example.com");
+        assert_eq!(reloaded["botToken"], "new-token-abc");
+        assert_eq!(reloaded["accountId"], "new-acc-def");
+        // Fresh QR login without cursor removes old cursor
+        assert!(reloaded.get("cursor").is_none());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let meta = fs::metadata(home.0.join("weixin-credentials.json")).unwrap();
+            assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        }
+    }
+
+    #[test]
+    fn test_save_cursor_empty_does_not_modify_disk_and_does_not_lock() {
+        // Aligns with TS WeixinChannel.ts:1000-1007 (ts-align item 48):
+        // Empty buf / empty cursor directly returns without writing to disk or locking.
+        let home = TestHome::new();
+        let store = Storage::new(home.0.clone());
+        let initial = json!({
+            "baseUrl": "https://ilink.example.com",
+            "botToken": "tok",
+            "accountId": "acc",
+            "cursor": "c1"
+        });
+        store.save_credentials(&initial).unwrap();
+
+        // Hold the credential_owner lock in this thread.
+        // If save_cursor("") attempted to acquire the mutex, it would deadlock.
+        let owner = store.credential_owner();
+        let _guard = owner.lock().unwrap();
+
+        let res = store.save_cursor("").unwrap();
+        assert!(res.is_some());
+        assert_eq!(res.unwrap()["cursor"], "c1");
+
+        let on_disk = store.load_credentials().unwrap();
+        assert_eq!(on_disk["cursor"], "c1");
+    }
+
+    #[test]
+    fn test_save_cursor_non_empty_acquires_credential_owner_lock() {
+        let home = TestHome::new();
+        let store = Storage::new(home.0.clone());
+        let initial = json!({
+            "baseUrl": "https://ilink.example.com",
+            "botToken": "tok",
+            "accountId": "acc",
+            "cursor": "c1"
+        });
+        store.save_credentials(&initial).unwrap();
+
+        let owner = store.credential_owner();
+        let (acquired_tx, acquired_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+
+        let owner_clone = owner.clone();
+        let blocker = std::thread::spawn(move || {
+            let _guard = owner_clone.lock().unwrap();
+            acquired_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+
+        acquired_rx.recv().unwrap();
+
+        let store_clone = store.clone();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let updater = std::thread::spawn(move || {
+            let res = store_clone.save_cursor("c2").unwrap();
+            done_tx.send(res).unwrap();
+        });
+
+        // Ensure updater is blocked while lock is held
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(done_rx.try_recv().is_err());
+
+        // Release the lock
+        release_tx.send(()).unwrap();
+        blocker.join().unwrap();
+
+        let result = done_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("updater should finish after lock release");
+        assert_eq!(result.unwrap()["cursor"], "c2");
+        updater.join().unwrap();
+
+        let reloaded = store.credentials().unwrap().unwrap();
+        assert_eq!(reloaded["cursor"], "c2");
     }
 }

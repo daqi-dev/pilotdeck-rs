@@ -103,22 +103,90 @@ impl WeixinDelivery {
 
 pub(crate) struct ChatActiveGuard {
     delivery: Arc<WeixinDelivery>,
-    chat: Option<String>,
+    chats: Vec<String>,
 }
 
 impl ChatActiveGuard {
     pub(crate) fn new(delivery: Arc<WeixinDelivery>, chat: Option<String>) -> Self {
-        if let Some(ref c) = chat {
-            delivery.mark_chat_active(c);
+        let chats = if let Some(c) = chat {
+            if !c.is_empty() {
+                delivery.mark_chat_active(&c);
+                vec![c]
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+        Self { delivery, chats }
+    }
+
+    pub(crate) fn new_many(
+        delivery: Arc<WeixinDelivery>,
+        users: impl IntoIterator<Item = String>,
+    ) -> Self {
+        let mut seen = HashSet::new();
+        let mut chats = Vec::new();
+        for u in users {
+            if !u.is_empty() && seen.insert(u.clone()) {
+                delivery.mark_chat_active(&u);
+                chats.push(u);
+            }
         }
-        Self { delivery, chat }
+        Self { delivery, chats }
+    }
+
+    pub(crate) fn from_batch(delivery: Arc<WeixinDelivery>, batch: &Value) -> Self {
+        let users = batch
+            .get("messages")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|m| text(m, "from_user_id"))
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        Self::new_many(delivery, users)
     }
 }
 
 impl Drop for ChatActiveGuard {
     fn drop(&mut self) {
-        if let Some(ref c) = self.chat {
+        for c in &self.chats {
             self.delivery.mark_chat_inactive(c);
+        }
+    }
+}
+
+pub fn is_js_truthy(val: &Value) -> bool {
+    match val {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                i != 0
+            } else if let Some(u) = n.as_u64() {
+                u != 0
+            } else if let Some(f) = n.as_f64() {
+                f != 0.0 && !f.is_nan()
+            } else {
+                false
+            }
+        }
+        Value::String(s) => !s.is_empty(),
+        Value::Array(_) => true,
+        Value::Object(_) => true,
+    }
+}
+
+pub fn origin_channel_matches_weixin(origin: Option<&Value>) -> bool {
+    match origin {
+        None => true,
+        Some(v) => {
+            if !is_js_truthy(v) {
+                true
+            } else {
+                v.as_str() == Some("weixin")
+            }
         }
     }
 }
@@ -127,11 +195,7 @@ impl WeixinDelivery {
 
     pub async fn deliver(&self, delivery: &Value) -> Result<bool> {
         use crate::config::routes::im_cron::{parse_chat_id, session_field};
-        if delivery
-            .get("originChannelKey")
-            .and_then(|v| v.as_str())
-            .is_some_and(|key| !key.is_empty() && key != "weixin")
-        {
+        if !origin_channel_matches_weixin(delivery.get("originChannelKey")) {
             return Ok(false);
         }
         let Some(session) = session_field(delivery) else {
@@ -296,12 +360,17 @@ pub fn format_elapsed(elapsed_ms: u64) -> String {
 }
 
 pub fn is_recoverable_poll_error(error: &crate::config::routes::RouteError) -> bool {
-    is_recoverable_poll_error_str(&error.code) || is_recoverable_poll_error_str(&error.message)
+    let formatted = super::media::format_weixin_error(error);
+    is_recoverable_poll_error_str(&formatted)
+        || is_recoverable_poll_error_str(&error.code)
+        || is_recoverable_poll_error_str(&error.message)
 }
 
 pub fn is_recoverable_poll_error_str(detail: &str) -> bool {
     let lower = detail.to_ascii_lowercase();
     lower.contains("fetch failed")
+        || lower.contains("transport failed")
+        || lower.contains("response interrupted")
         || lower.contains("econnreset")
         || lower.contains("enet")
         || lower.contains("etimedout")
@@ -430,13 +499,18 @@ pub async fn notify_active_chats(
             .unwrap_or_else(|p| p.into_inner())
             .get(chat)
             .cloned();
-        if let Some(context) = context {
-            if send_reply(storage, http, credentials, chat, Some(&context), text)
-                .await
-                .is_ok()
-            {
-                delivered.insert(chat.clone());
-            }
+        if send_reply(
+            storage,
+            http,
+            credentials,
+            chat,
+            context.as_deref(),
+            text,
+        )
+        .await
+        .is_ok()
+        {
+            delivered.insert(chat.clone());
         }
     }
     delivered
@@ -493,9 +567,15 @@ pub async fn notify_connection_recovered(
             .unwrap_or_else(|p| p.into_inner())
             .get(chat)
             .cloned();
-        if let Some(context) = context {
-            let _ = send_reply(storage, http, credentials, chat, Some(&context), text).await;
-        }
+        let _ = send_reply(
+            storage,
+            http,
+            credentials,
+            chat,
+            context.as_deref(),
+            text,
+        )
+        .await;
     }
     state.connection_issue_chats.clear();
     state.connection_lost_notice_delivered_chats.clear();
@@ -701,8 +781,9 @@ async fn run_qr_login(
             if is_stale_generation(*abort_rx.borrow(), start_generation.load(Ordering::SeqCst), generation) {
                 return Ok(());
             }
+            let err_formatted = super::media::format_weixin_error(&err);
             eprintln!("[weixin] 登录失败: {err}");
-            storage.status("failed", "weixin: QR login failed", json!({"error": err.message}))?;
+            storage.status("failed", "weixin: QR login failed", json!({"error": err_formatted}))?;
             watch_credentials_for_login_recovery(
                 storage,
                 http,
@@ -751,7 +832,33 @@ async fn watch_credentials_for_login_recovery(
     }
     Ok(())
 }
-async fn qr(storage: &Storage, http: &Http, base: &str) -> Result<String> {
+
+pub fn qr_status_label(status: &str) -> &'static str {
+    match status {
+        "waiting" => "等待扫码...",
+        "scanned" => "已扫码，等待确认...",
+        "expired" => "二维码已过期，正在刷新...",
+        "refreshing" => "刷新中...",
+        _ => "",
+    }
+}
+
+pub fn report_qr_status(storage: &Storage, status: &str, qr_url: Option<&str>) -> Result<()> {
+    let label = qr_status_label(status);
+    let display = if label.is_empty() { status } else { label };
+    println!("[weixin] {display}");
+    if status == "waiting" || status == "scanned" || status == "refreshing" {
+        let details = if let Some(url) = qr_url {
+            json!({ "qrUrl": url })
+        } else {
+            json!({})
+        };
+        storage.status("waiting_for_login", &format!("weixin: {display}"), details)?;
+    }
+    Ok(())
+}
+
+async fn qr(storage: &Storage, http: &Http, base: &str) -> Result<(String, String)> {
     let result = http
         .json(base, "ilink/bot/get_bot_qrcode?bot_type=3", None, None)
         .await?;
@@ -760,10 +867,11 @@ async fn qr(storage: &Storage, http: &Http, base: &str) -> Result<String> {
         .ok_or_else(|| failure("QR response missing image URL"))?;
     storage.status("waiting_for_login", "微信等待扫码登录", json!({"qrUrl":url}))?;
     println!("[weixin] 扫码登录链接:\n{url}\n");
-    Ok(code.into())
+    Ok((code.into(), url.into()))
 }
 async fn login(storage: &Storage, http: &Http, base: &str) -> Result<Value> {
-    let mut code = qr(storage, http, base).await?;
+    let (mut code, mut qr_url) = qr(storage, http, base).await?;
+    report_qr_status(storage, "waiting", Some(&qr_url))?;
     let mut refreshes = 1;
     let deadline = Instant::now() + Duration::from_secs(480);
     while Instant::now() < deadline {
@@ -781,27 +889,21 @@ async fn login(storage: &Storage, http: &Http, base: &str) -> Result<Value> {
             other => other?,
         };
         match text(&response, "status") {
+            Some("wait") => {}
             Some("scaned") => {
-                // Preserve the displayed QR across progress updates, as TS does.
-                let status = std::fs::read(storage.home.join("channels/runtime-status.json"))
-                    .ok()
-                    .and_then(|b| serde_json::from_slice::<Value>(&b).ok());
-                let details = status
-                    .and_then(|s| {
-                        s["channels"]["weixin"]["qrUrl"]
-                            .as_str()
-                            .map(|q| json!({"qrUrl":q}))
-                    })
-                    .unwrap_or_else(|| json!({}));
-                storage.status("waiting_for_login", "weixin: 已扫码，等待确认...", details)?;
+                report_qr_status(storage, "scanned", Some(&qr_url))?;
             }
             Some("expired") => {
                 refreshes += 1;
                 if refreshes > 3 {
                     return Err(failure("QR code expired too many times"));
                 }
-                storage.status("waiting_for_login", "weixin: 二维码已过期，正在刷新...", json!({}))?;
-                code = qr(storage, http, base).await?;
+                println!("[weixin] {}", qr_status_label("expired"));
+                report_qr_status(storage, "refreshing", Some(&qr_url))?;
+                let (new_code, new_url) = qr(storage, http, base).await?;
+                code = new_code;
+                qr_url = new_url;
+                report_qr_status(storage, "waiting", Some(&qr_url))?;
             }
             Some("confirmed") => {
                 let token = text(&response, "bot_token")
@@ -890,13 +992,7 @@ async fn connected(
                     let live = live.clone();
                     let batch = batch.clone();
                     let credentials = credentials.clone();
-                    let from_user = batch
-                        .get("messages")
-                        .and_then(Value::as_array)
-                        .and_then(|msgs| msgs.first())
-                        .and_then(|m| text(m, "from_user_id"))
-                        .map(|s| s.to_string());
-                    let guard = ChatActiveGuard::new(delivery.clone(), from_user);
+                    let guard = ChatActiveGuard::from_batch(delivery.clone(), &batch);
                     workers.spawn(async move {
                         let _guard = guard;
                         let result = live.process_batch(&credentials, batch).await;
@@ -1060,13 +1156,7 @@ async fn connected(
                             let live = live.clone();
                             let credentials = credentials.clone();
                             let id = batch.clone();
-                            let from_user = saved
-                                .get("messages")
-                                .and_then(Value::as_array)
-                                .and_then(|msgs| msgs.first())
-                                .and_then(|m| text(m, "from_user_id"))
-                                .map(|s| s.to_string());
-                            let guard = ChatActiveGuard::new(delivery.clone(), from_user);
+                            let guard = ChatActiveGuard::from_batch(delivery.clone(), &saved);
                             workers.spawn(async move {
                                 let _guard = guard;
                                 let result = live.process_batch(&credentials, saved).await;
@@ -1395,6 +1485,17 @@ pub(crate) async fn send_reply_with_queue(
     .await
 }
 
+pub fn generate_client_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let bytes = &uuid::Uuid::new_v4().into_bytes()[..6];
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    format!("ilink-{now_ms}-{hex}")
+}
+
 async fn send_reply(
     storage: &Storage,
     http: &Http,
@@ -1403,7 +1504,10 @@ async fn send_reply(
     context: Option<&str>,
     reply: &str,
 ) -> Result<()> {
-    let context = context.ok_or_else(|| failure("Weixin reply has no context token"))?;
+    let Some(context) = context else {
+        eprintln!("weixin: no context_token for {chat}, cannot send");
+        return Err(failure("Weixin reply has no context token"));
+    };
     if !storage
         .credentials()?
         .as_ref()
@@ -1414,7 +1518,27 @@ async fn send_reply(
     // Preserve the SDK's 2000 UTF-16 unit chunk limit without splitting a Rust
     // scalar; each outbound call still carries the original context token.
     for chunk in weixin_text_chunks(reply) {
-        let response = http.json(text(credentials,"baseUrl").unwrap(),"ilink/bot/sendmessage",text(credentials,"botToken"),Some(json!({"msg":{"from_user_id":"","to_user_id":chat,"client_id":uuid::Uuid::new_v4().to_string(),"message_type":2,"message_state":2,"context_token":context,"item_list":[{"type":1,"text_item":{"text":chunk}}]}}))).await?;
+        let response = http
+            .json(
+                text(credentials, "baseUrl").unwrap(),
+                "ilink/bot/sendmessage",
+                text(credentials, "botToken"),
+                Some(json!({
+                    "msg": {
+                        "from_user_id": "",
+                        "to_user_id": chat,
+                        "client_id": generate_client_id(),
+                        "message_type": 2,
+                        "message_state": 2,
+                        "context_token": context,
+                        "item_list": [{
+                            "type": 1,
+                            "text_item": { "text": chunk }
+                        }]
+                    }
+                })),
+            )
+            .await?;
         if response.get("ret").is_some_and(|ret| ret != 0)
             || response.get("errcode").is_some_and(|code| code != 0)
         {
@@ -1641,7 +1765,7 @@ mod native_poll_alignment_tests {
     #[tokio::test]
     async fn test_start_generation_and_stop_lifecycle() {
         let temp = std::env::temp_dir().join(format!("wx-life-test-{}", uuid::Uuid::new_v4()));
-        let storage = Storage::new(temp.clone());
+        let _storage = Storage::new(temp.clone());
         std::fs::create_dir_all(&temp).unwrap();
         std::fs::write(
             temp.join("weixin-credentials.json"),
@@ -1699,6 +1823,130 @@ mod native_poll_alignment_tests {
     }
 
     #[test]
+    fn test_chat_active_guard_from_batch_multiple_users() {
+        let temp = std::env::temp_dir().join(format!("wx-guard-batch-{}", uuid::Uuid::new_v4()));
+        let storage = Storage::new(temp.clone());
+        let delivery = Arc::new(WeixinDelivery {
+            storage: storage.clone(),
+            http: Http::new(),
+            contexts: Default::default(),
+            pending_replies: Default::default(),
+            active_chats: Default::default(),
+        });
+
+        let batch = json!({
+            "id": "batch_123",
+            "messages": [
+                { "from_user_id": "user_alpha", "text": "hello" },
+                { "from_user_id": "", "text": "empty user" },
+                { "text": "missing user" },
+                { "from_user_id": "user_beta", "text": "world" },
+                { "from_user_id": "user_alpha", "text": "repeat alpha" }
+            ]
+        });
+
+        assert!(delivery.active_chats().is_empty());
+        {
+            let _guard = ChatActiveGuard::from_batch(delivery.clone(), &batch);
+            let active = delivery.active_chats();
+            assert_eq!(active.len(), 2);
+            assert!(active.contains("user_alpha"));
+            assert!(active.contains("user_beta"));
+            assert!(!active.contains(""));
+        }
+        assert!(delivery.active_chats().is_empty());
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn test_origin_channel_matches_weixin_full_matrix() {
+        // Aligns with TS WeixinChannel.ts:189-192 & ImCronDelivery.ts:22
+        // delivery.originChannelKey && delivery.originChannelKey !== channelKey
+
+        // Missing field (None) -> continues (true)
+        assert!(origin_channel_matches_weixin(None));
+
+        // JS falsy values -> continue delivery (true)
+        assert!(origin_channel_matches_weixin(Some(&Value::Null)));
+        assert!(origin_channel_matches_weixin(Some(&json!(""))));
+        assert!(origin_channel_matches_weixin(Some(&json!(0))));
+        assert!(origin_channel_matches_weixin(Some(&json!(0.0))));
+        assert!(origin_channel_matches_weixin(Some(&json!(false))));
+
+        // Matching channel -> continues delivery (true)
+        assert!(origin_channel_matches_weixin(Some(&json!("weixin"))));
+
+        // Different channel string -> rejected (false)
+        assert!(!origin_channel_matches_weixin(Some(&json!("telegram"))));
+        assert!(!origin_channel_matches_weixin(Some(&json!("discord"))));
+
+        // JS truthy non-strings (!== "weixin") -> rejected (false)
+        assert!(!origin_channel_matches_weixin(Some(&json!(true))));
+        assert!(!origin_channel_matches_weixin(Some(&json!(1))));
+        assert!(!origin_channel_matches_weixin(Some(&json!(-1))));
+        assert!(!origin_channel_matches_weixin(Some(&json!({"channel": "weixin"}))));
+        assert!(!origin_channel_matches_weixin(Some(&json!(["weixin"]))));
+    }
+
+    #[test]
+    fn test_qr_status_labels_and_reporting_ts_align() {
+        // Aligns with WeixinChannel.ts:300-312
+        assert_eq!(qr_status_label("waiting"), "等待扫码...");
+        assert_eq!(qr_status_label("scanned"), "已扫码，等待确认...");
+        assert_eq!(qr_status_label("expired"), "二维码已过期，正在刷新...");
+        assert_eq!(qr_status_label("refreshing"), "刷新中...");
+
+        let temp = std::env::temp_dir().join(format!("wx-qr-test-{}", uuid::Uuid::new_v4()));
+        let storage = Storage::new(temp.clone());
+        std::fs::create_dir_all(temp.join("channels")).unwrap();
+
+        // 1. waiting reports waiting_for_login
+        report_qr_status(&storage, "waiting", Some("https://example.com/qr1")).unwrap();
+        let status = std::fs::read(temp.join("channels/runtime-status.json")).unwrap();
+        let val: Value = serde_json::from_slice(&status).unwrap();
+        assert_eq!(val["channels"]["weixin"]["state"], "waiting_for_login");
+        assert_eq!(val["channels"]["weixin"]["message"], "weixin: 等待扫码...");
+        assert_eq!(val["channels"]["weixin"]["qrUrl"], "https://example.com/qr1");
+
+        // 2. scanned reports waiting_for_login
+        report_qr_status(&storage, "scanned", Some("https://example.com/qr1")).unwrap();
+        let status = std::fs::read(temp.join("channels/runtime-status.json")).unwrap();
+        let val: Value = serde_json::from_slice(&status).unwrap();
+        assert_eq!(val["channels"]["weixin"]["state"], "waiting_for_login");
+        assert_eq!(val["channels"]["weixin"]["message"], "weixin: 已扫码，等待确认...");
+
+        // 3. refreshing reports waiting_for_login
+        report_qr_status(&storage, "refreshing", Some("https://example.com/qr1")).unwrap();
+        let status = std::fs::read(temp.join("channels/runtime-status.json")).unwrap();
+        let val: Value = serde_json::from_slice(&status).unwrap();
+        assert_eq!(val["channels"]["weixin"]["state"], "waiting_for_login");
+        assert_eq!(val["channels"]["weixin"]["message"], "weixin: 刷新中...");
+
+        // 4. expired does NOT call reportStatus in TS (only console.log)
+        // Reset status to "custom_state" first
+        storage.status("custom_state", "keep", json!({})).unwrap();
+        report_qr_status(&storage, "expired", Some("https://example.com/qr1")).unwrap();
+        let status = std::fs::read(temp.join("channels/runtime-status.json")).unwrap();
+        let val: Value = serde_json::from_slice(&status).unwrap();
+        assert_eq!(val["channels"]["weixin"]["state"], "custom_state");
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn test_generate_client_id_format() {
+        let id = generate_client_id();
+        assert!(id.starts_with("ilink-"));
+        let parts: Vec<&str> = id.split('-').collect();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0], "ilink");
+        assert!(parts[1].parse::<u128>().is_ok());
+        assert_eq!(parts[2].len(), 12); // 6 bytes in hex = 12 hex chars
+        assert!(parts[2].chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
     fn test_is_recoverable_poll_error_aligns_with_ts() {
         // Aligns with WeixinChannel.ts:1020-1033 isRecoverablePollError
         use crate::config::routes::RouteError;
@@ -1711,5 +1959,73 @@ mod native_poll_alignment_tests {
         assert!(is_recoverable_poll_error(&err2));
         assert!(is_recoverable_poll_error(&err3));
         assert!(!is_recoverable_poll_error(&err4));
+
+        // Hyper transport / stream interrupted errors from http.rs
+        let err_transport = RouteError::new("gateway_request_failed", "iLink HTTP transport failed");
+        let err_response = RouteError::new("gateway_request_failed", "iLink response interrupted");
+        assert!(is_recoverable_poll_error(&err_transport));
+        assert!(is_recoverable_poll_error(&err_response));
+    }
+
+    #[tokio::test]
+    async fn test_notify_connection_recovered_and_active_chats_alignment() {
+        let temp = std::env::temp_dir().join(format!("wx-notify-test-{}", uuid::Uuid::new_v4()));
+        let storage = Storage::new(temp.clone());
+        let http = Http::new();
+        let delivery = WeixinDelivery {
+            storage: storage.clone(),
+            http: http.clone(),
+            contexts: Default::default(),
+            pending_replies: Default::default(),
+            active_chats: Default::default(),
+        };
+
+        // Context only exists for "user1"
+        delivery.test_seed_context("user1", "ctx1");
+
+        let mut active = HashSet::new();
+        active.insert("user1".to_string());
+        active.insert("user2".to_string()); // no context token
+
+        let credentials = json!({
+            "baseUrl": "http://127.0.0.1:9999",
+            "botToken": "tok",
+            "accountId": "acc"
+        });
+
+        // notify_active_chats attempts send_reply for both user1 and user2 without panic
+        let delivered = notify_active_chats(
+            &delivery,
+            &storage,
+            &http,
+            &credentials,
+            &active,
+            "test_message",
+        )
+        .await;
+        // user2 had no context token, so cannot be delivered
+        assert!(!delivered.contains("user2"));
+
+        // notify_connection_recovered union handling:
+        let mut conn_state = WeixinConnectionState::default();
+        conn_state.connection_issue_notified = true;
+        conn_state.connection_issue_chats.insert("user_lost".to_string());
+        conn_state.connection_lost_notice_delivered_chats.insert("user1".to_string());
+
+        notify_connection_recovered(
+            &mut conn_state,
+            &delivery,
+            &storage,
+            &http,
+            &credentials,
+            &active,
+        )
+        .await;
+
+        assert!(!conn_state.connection_issue_notified);
+        assert!(conn_state.connection_issue_chats.is_empty());
+        assert!(conn_state.connection_lost_notice_delivered_chats.is_empty());
+
+        let _ = std::fs::remove_dir_all(&temp);
     }
 }

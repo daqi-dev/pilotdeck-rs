@@ -15,6 +15,10 @@ use std::time::Duration;
 /// Aligned with TS dist `api.js:49-60`.
 pub const DEFAULT_LONG_POLL_TIMEOUT_MS: u64 = 35_000;
 
+/// Default timeout for QR code status polling (`ilink/bot/get_qrcode_status`): 35 seconds (35,000 ms).
+/// Aligned with TS `auth.js` `QR_POLL_TIMEOUT_MS=35000`.
+pub const DEFAULT_QR_POLL_TIMEOUT_MS: u64 = 35_000;
+
 /// Default timeout for standard API requests (sendmessage, sendtyping, getconfig, getuploadurl): 15 seconds (15,000 ms).
 /// Aligned with TS dist `api.js:68-75`.
 pub const DEFAULT_API_TIMEOUT_MS: u64 = 15_000;
@@ -24,7 +28,8 @@ static ILINK_FETCH_COMPATIBILITY_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 /// `WeixinChannel.ts:1315-1331` (`installIlinkFetchCompatibility`).
 /// Global idempotent installation of iLink fetch compatibility shim.
-/// Intercepts requests to `/ilink/bot/` and strips Content-Length header.
+/// When installed, requests targeting `/ilink/bot/` (and all iLink HTTP client calls)
+/// have their Content-Length header stripped.
 pub fn install_ilink_fetch_compatibility() {
     ILINK_FETCH_COMPATIBILITY_INSTALLED.store(true, Ordering::SeqCst);
 }
@@ -34,11 +39,36 @@ pub fn is_ilink_fetch_compatibility_installed() -> bool {
     ILINK_FETCH_COMPATIBILITY_INSTALLED.load(Ordering::SeqCst)
 }
 
+/// `WeixinChannel.ts:1315-1331` (`installIlinkFetchCompatibility` fetch wrapper logic).
+/// Inspects target URL and conditionally strips Content-Length header if the URL
+/// contains `/ilink/bot/` or if the compatibility shim is active.
+pub fn apply_ilink_fetch_compatibility(url: &str, headers: &mut HeaderMap) -> bool {
+    if url.contains("/ilink/bot/") || is_ilink_fetch_compatibility_installed() {
+        strip_content_length_header(headers);
+        true
+    } else {
+        false
+    }
+}
+
+/// `WeixinChannel.ts:1315-1331` (`installIlinkFetchCompatibility` generic wrapper logic).
+/// Given any target URL and header collection supporting `StripContentLengthHeader`,
+/// returns stripped headers if URL contains `/ilink/bot/` or compatibility shim is active.
+pub fn intercept_ilink_request<H: StripContentLengthHeader>(url: &str, headers: &H) -> Option<H::Output> {
+    if url.contains("/ilink/bot/") || is_ilink_fetch_compatibility_installed() {
+        Some(headers.strip_content_length_header())
+    } else {
+        None
+    }
+}
+
 /// `WeixinChannel.ts:1333-1340` (`stripContentLengthHeader` for Headers / HeaderMap).
 /// Strips Content-Length header in-place from a `HeaderMap`.
-pub(crate) fn strip_content_length_header(headers: &mut HeaderMap) {
+pub fn strip_content_length_header(headers: &mut HeaderMap) {
     headers.remove(CONTENT_LENGTH);
     headers.remove("content-length");
+    headers.remove("Content-Length");
+    headers.remove("CONTENT-LENGTH");
 }
 
 /// `WeixinChannel.ts:1333-1340` (`stripContentLengthHeader` returning a cloned HeaderMap).
@@ -109,14 +139,30 @@ impl StripContentLengthHeader for HashMap<String, String> {
 
 /// Returns true if the endpoint is a long-polling updates endpoint (`ilink/bot/getupdates`).
 pub fn is_long_poll_endpoint(endpoint: &str) -> bool {
-    endpoint.ends_with("getupdates") || endpoint.contains("getupdates")
+    let path = endpoint.split('?').next().unwrap_or(endpoint);
+    path.ends_with("/getupdates")
+        || path == "getupdates"
+        || path.ends_with("ilink/bot/getupdates")
+        || path.split('/').any(|seg| seg == "getupdates")
+}
+
+/// Returns true if the endpoint is a QR code polling endpoint (`ilink/bot/get_qrcode_status`).
+/// Aligned with TS `auth.js` `QR_POLL_TIMEOUT_MS=35000`.
+pub fn is_qr_poll_endpoint(endpoint: &str) -> bool {
+    let path = endpoint.split('?').next().unwrap_or(endpoint);
+    path.ends_with("/get_qrcode_status")
+        || path == "get_qrcode_status"
+        || path.ends_with("ilink/bot/get_qrcode_status")
+        || path.split('/').any(|seg| seg == "get_qrcode_status")
 }
 
 /// Returns the timeout duration appropriate for the given endpoint.
-/// 35s for getupdates (long-poll), 15s for other API calls.
+/// 35s for getupdates (long-poll) and get_qrcode_status (QR poll), 15s for other API calls.
 pub fn timeout_for_endpoint(endpoint: &str) -> Duration {
     if is_long_poll_endpoint(endpoint) {
         Duration::from_millis(DEFAULT_LONG_POLL_TIMEOUT_MS)
+    } else if is_qr_poll_endpoint(endpoint) {
+        Duration::from_millis(DEFAULT_QR_POLL_TIMEOUT_MS)
     } else {
         Duration::from_millis(DEFAULT_API_TIMEOUT_MS)
     }
@@ -128,6 +174,34 @@ pub fn empty_poll_response() -> Value {
         "ret": 0,
         "msgs": []
     })
+}
+
+/// Helper to construct a RouteError for HTTP transport failures.
+/// Aligns with TS `WeixinChannel.ts:961-976` & `:1020-1031` (`formatWeixinError` / `isRecoverablePollError`).
+/// Recognizes underlying network errors such as ECONNRESET, ETIMEDOUT, socket errors, and formats
+/// the error with `fetch failed` and appropriate error code so that `is_recoverable_poll_error` recognizes it.
+pub fn make_transport_error<E: std::fmt::Display>(err: E) -> RouteError {
+    let err_str = err.to_string();
+    let lower = err_str.to_ascii_lowercase();
+
+    let code = if lower.contains("econnreset") || lower.contains("connection reset") {
+        "ECONNRESET"
+    } else if lower.contains("etimedout") || lower.contains("timed out") || lower.contains("timeout") {
+        "ETIMEDOUT"
+    } else if lower.contains("econnrefused") || lower.contains("connection refused") {
+        "ECONNREFUSED"
+    } else if lower.contains("enetunreach") || lower.contains("network unreachable") || lower.contains("enet") {
+        "ENETUNREACH"
+    } else if lower.contains("und_err") {
+        "UND_ERR_CONNECT_TIMEOUT"
+    } else if lower.contains("socket") {
+        "ECONNRESET"
+    } else {
+        "fetch_failed"
+    };
+
+    let message = format!("fetch failed: iLink HTTP transport error ({code}): {err_str}");
+    RouteError::new(code, message)
 }
 
 #[derive(Clone)]
@@ -151,7 +225,7 @@ impl Http {
     }
 
     /// Send a JSON request with the default timeout for the endpoint:
-    /// 35s for `ilink/bot/getupdates`, 15s for other endpoints (`sendmessage`, `sendtyping`, etc.).
+    /// 35s for `ilink/bot/getupdates` and `get_qrcode_status`, 15s for other endpoints (`sendmessage`, `sendtyping`, etc.).
     pub async fn json(
         &self,
         base: &str,
@@ -160,6 +234,30 @@ impl Http {
         body: Option<Value>,
     ) -> Result<Value> {
         let timeout = timeout_for_endpoint(endpoint);
+        self.json_with_timeout(base, endpoint, token, body, timeout).await
+    }
+
+    /// Send an HTTP POST JSON request, aligning with TS fetch wrapper for iLink endpoints.
+    /// Intercepts `/ilink/bot/` requests and strips Content-Length header.
+    pub async fn post(
+        &self,
+        base: &str,
+        endpoint: &str,
+        token: Option<&str>,
+        body: Option<Value>,
+    ) -> Result<Value> {
+        self.json(base, endpoint, token, body).await
+    }
+
+    /// Send an HTTP POST JSON request with explicit timeout.
+    pub async fn post_with_timeout(
+        &self,
+        base: &str,
+        endpoint: &str,
+        token: Option<&str>,
+        body: Option<Value>,
+        timeout: Duration,
+    ) -> Result<Value> {
         self.json_with_timeout(base, endpoint, token, body, timeout).await
     }
 
@@ -208,9 +306,12 @@ impl Http {
             .map_err(|_| failure("Invalid iLink request"))?;
 
         // WeixinChannel.ts:1315-1331: Intercept /ilink/bot/ requests and strip Content-Length header.
-        if endpoint.starts_with("ilink/bot/")
+        // Aligned with TS installIlinkFetchCompatibility: any request to /ilink/bot/
+        // or any request when install_ilink_fetch_compatibility() is active strips Content-Length.
+        let url_str = url.as_str();
+        if url_str.contains("/ilink/bot/")
             || endpoint.contains("/ilink/bot/")
-            || url.as_str().contains("/ilink/bot/")
+            || endpoint.starts_with("ilink/bot/")
             || is_ilink_fetch_compatibility_installed()
         {
             strip_content_length_header(request.headers_mut());
@@ -222,17 +323,19 @@ impl Http {
                 .client
                 .request(request)
                 .await
-                .map_err(|_| failure("iLink HTTP transport failed"))?;
+                .map_err(|err| make_transport_error(format!("iLink HTTP transport failed: {err}")))?;
             if !response.status().is_success() {
-                return Err(failure(&format!(
-                    "iLink HTTP status {}",
-                    response.status().as_u16()
-                )));
+                return Err(RouteError::new(
+                    "gateway_request_failed",
+                    format!("iLink HTTP status {}", response.status().as_u16()),
+                ));
             }
             let mut body = response.into_body();
             let mut bytes = Vec::new();
             while let Some(frame) = body.frame().await {
-                let frame = frame.map_err(|_| failure("iLink response interrupted"))?;
+                let frame = frame.map_err(|err| {
+                    make_transport_error(format!("iLink response interrupted: {err}"))
+                })?;
                 if let Ok(data) = frame.into_data() {
                     if bytes.len() + data.len() > 4 * 1024 * 1024 {
                         return Err(failure("iLink response too large"));
@@ -240,7 +343,9 @@ impl Http {
                     bytes.extend_from_slice(&data);
                 }
             }
-            serde_json::from_slice(&bytes).map_err(|_| failure("Invalid iLink JSON response"))
+            serde_json::from_slice(&bytes).map_err(|e| {
+                failure(&format!("Invalid iLink JSON response: {e}"))
+            })
         };
 
         match tokio::time::timeout(timeout, work).await {
@@ -379,17 +484,56 @@ mod tests {
     }
 
     #[test]
+    fn test_apply_ilink_fetch_compatibility_and_intercept() {
+        // URL containing /ilink/bot/ strips Content-Length
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_LENGTH, HeaderValue::from_static("42"));
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        let modified = apply_ilink_fetch_compatibility("https://api.weixin.qq.com/ilink/bot/sendmessage", &mut headers);
+        assert!(modified);
+        assert!(!headers.contains_key(CONTENT_LENGTH));
+        assert_eq!(headers.get(CONTENT_TYPE).unwrap(), "application/json");
+
+        // intercept_ilink_request with Vec headers
+        let vec_headers = vec![
+            ("Content-Length".to_string(), "100".to_string()),
+            ("Authorization".to_string(), "Bearer test".to_string()),
+        ];
+        let stripped = intercept_ilink_request("https://example.com/ilink/bot/getupdates", &vec_headers);
+        assert!(stripped.is_some());
+        let stripped = stripped.unwrap();
+        assert_eq!(stripped.len(), 1);
+        assert_eq!(stripped[0].0, "Authorization");
+
+        // Non-ilink URL when compatibility installed still applies stripping
+        let mut h2 = HeaderMap::new();
+        h2.insert(CONTENT_LENGTH, HeaderValue::from_static("99"));
+        assert!(apply_ilink_fetch_compatibility("https://example.com/other", &mut h2));
+        assert!(!h2.contains_key(CONTENT_LENGTH));
+    }
+
+    #[test]
     fn test_timeout_configuration() {
-        // Long poll vs API timeout constants
+        // Long poll, QR poll, and API timeout constants
         assert_eq!(DEFAULT_LONG_POLL_TIMEOUT_MS, 35_000);
+        assert_eq!(DEFAULT_QR_POLL_TIMEOUT_MS, 35_000);
         assert_eq!(DEFAULT_API_TIMEOUT_MS, 15_000);
 
         // Long poll endpoint gets 35s
         assert!(is_long_poll_endpoint("ilink/bot/getupdates"));
         assert!(is_long_poll_endpoint("/ilink/bot/getupdates"));
+        assert!(is_long_poll_endpoint("https://api.weixin.qq.com/ilink/bot/getupdates?cursor=abc"));
         assert_eq!(
             timeout_for_endpoint("ilink/bot/getupdates"),
             Duration::from_millis(DEFAULT_LONG_POLL_TIMEOUT_MS)
+        );
+
+        // QR poll endpoint gets 35s (aligned with auth.js QR_POLL_TIMEOUT_MS=35000)
+        assert!(is_qr_poll_endpoint("ilink/bot/get_qrcode_status"));
+        assert!(is_qr_poll_endpoint("ilink/bot/get_qrcode_status?qrcode=xyz"));
+        assert_eq!(
+            timeout_for_endpoint("ilink/bot/get_qrcode_status?qrcode=xyz"),
+            Duration::from_millis(DEFAULT_QR_POLL_TIMEOUT_MS)
         );
 
         // Other endpoints get 15s (sendtyping, sendmessage, getconfig, getuploadurl, etc.)
@@ -419,6 +563,43 @@ mod tests {
         let empty = empty_poll_response();
         assert_eq!(empty["ret"], 0);
         assert_eq!(empty["msgs"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn test_is_long_poll_endpoint_precision() {
+        assert!(is_long_poll_endpoint("ilink/bot/getupdates"));
+        assert!(is_long_poll_endpoint("/ilink/bot/getupdates"));
+        assert!(is_long_poll_endpoint("getupdates"));
+        assert!(is_long_poll_endpoint("ilink/bot/getupdates?buf=123"));
+
+        // Does not falsely match unrelated names
+        assert!(!is_long_poll_endpoint("fake_getupdates_action"));
+        assert!(!is_long_poll_endpoint("ilink/bot/get_qrcode_status"));
+        assert!(!is_long_poll_endpoint("ilink/bot/sendmessage"));
+    }
+
+    #[test]
+    fn test_make_transport_error_recognizes_codes() {
+        let err_reset = make_transport_error("connection reset by peer (os error 54)");
+        assert_eq!(err_reset.code, "ECONNRESET");
+        assert!(err_reset.message.contains("fetch failed"));
+        assert!(err_reset.message.contains("ECONNRESET"));
+
+        let err_timeout = make_transport_error("operation timed out");
+        assert_eq!(err_timeout.code, "ETIMEDOUT");
+        assert!(err_timeout.message.contains("fetch failed"));
+
+        let err_refused = make_transport_error("connection refused");
+        assert_eq!(err_refused.code, "ECONNREFUSED");
+        assert!(err_refused.message.contains("fetch failed"));
+
+        let err_net = make_transport_error("network unreachable");
+        assert_eq!(err_net.code, "ENETUNREACH");
+        assert!(err_net.message.contains("fetch failed"));
+
+        let err_general = make_transport_error("unexpected EOF");
+        assert_eq!(err_general.code, "fetch_failed");
+        assert!(err_general.message.contains("fetch failed"));
     }
 
     #[tokio::test]
@@ -529,6 +710,47 @@ mod tests {
         let val = res.unwrap();
         assert_eq!(val["ret"], 0);
         assert_eq!(val["msg_id"], "m123");
+    }
+
+    #[tokio::test]
+    async fn test_http_post_method() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let base = format!("http://127.0.0.1:{port}");
+
+        let server = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 2048];
+                let n = socket.read(&mut buf).await.unwrap();
+                let req_text = String::from_utf8_lossy(&buf[..n]);
+                assert!(req_text.contains("POST /ilink/bot/sendmessage HTTP/1.1"));
+
+                let body = r#"{"ret":0,"post_ok":true}"#;
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = socket.write_all(reply.as_bytes()).await;
+            }
+        });
+
+        let http = Http::new();
+        let res = http
+            .post(
+                &base,
+                "ilink/bot/sendmessage",
+                Some("post-tok"),
+                Some(serde_json::json!({"test": 1})),
+            )
+            .await;
+
+        let _ = server.await;
+
+        assert!(res.is_ok());
+        let val = res.unwrap();
+        assert_eq!(val["ret"], 0);
+        assert_eq!(val["post_ok"], true);
     }
 
     #[tokio::test]

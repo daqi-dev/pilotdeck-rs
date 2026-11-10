@@ -284,29 +284,14 @@ impl WebhookChannel {
         }
     }
     pub async fn deliver(&self, delivery: &Value) -> Result<bool> {
-        use crate::config::routes::im_cron::origin_channel_matches;
+        use crate::config::routes::im_cron::{origin_channel_matches, parse_chat_id, session_field};
         if !origin_channel_matches(delivery, "webhook") {
             return Ok(false);
         }
-        let Some(session) = delivery["originSessionKey"]
-            .as_str()
-            .or_else(|| delivery["sessionKey"].as_str())
-        else {
+        let Some(session) = session_field(delivery) else {
             return Ok(false);
         };
-        let Some((chat, suffix)) = session
-            .strip_prefix("webhook:chat=")
-            .and_then(|rest| rest.rsplit_once(':'))
-        else {
-            return Ok(false);
-        };
-        if chat.is_empty()
-            || chat.contains(['\n', '\r', '\u{2028}', '\u{2029}'])
-            || !(suffix == "general"
-                || suffix.strip_prefix("s_").is_some_and(|id| {
-                    id.len() == 36 && id.bytes().all(|ch| ch.is_ascii_hexdigit() || ch == b'-')
-                }))
-        {
+        let Some(chat) = parse_chat_id(session, "webhook") else {
             return Ok(false);
         };
         Ok(self.reply(chat, delivery["text"].as_str().unwrap_or("")))
@@ -534,4 +519,130 @@ pub(super) fn verify_hmac(body: &str, secret: &str, signature: &str) -> bool {
         })
         .collect::<Vec<_>>();
     constant_equal(&decoded, &hmac(body, secret))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct MockGateway;
+    impl ChannelGateway for MockGateway {
+        fn request<'a>(&'a self, _: &'a str, _: Value) -> ChannelCall<'a, Value> {
+            Box::pin(async { Ok(json!({})) })
+        }
+        fn turn(&self, _: Value) -> ChannelCall<'_, Vec<Value>> {
+            Box::pin(async { Ok(vec![]) })
+        }
+    }
+
+    #[tokio::test]
+    async fn webhook_deliver_allows_empty_and_matching_origin_and_rejects_mismatch() {
+        let channel = WebhookChannel::new(WebhookOptions::default(), Arc::new(MockGateway));
+
+        // Empty originChannelKey continues delivery
+        let result = channel
+            .deliver(&json!({
+                "originChannelKey": "",
+                "originSessionKey": "webhook:chat=webhook:route:delivery:general",
+                "text": "cron msg"
+            }))
+            .await
+            .unwrap();
+        assert!(result);
+
+        // None / omitted originChannelKey continues delivery
+        let result = channel
+            .deliver(&json!({
+                "originSessionKey": "webhook:chat=webhook:route:delivery:general",
+                "text": "cron msg"
+            }))
+            .await
+            .unwrap();
+        assert!(result);
+
+        // Null originChannelKey continues delivery
+        let result = channel
+            .deliver(&json!({
+                "originChannelKey": null,
+                "originSessionKey": "webhook:chat=webhook:route:delivery:general",
+                "text": "cron msg"
+            }))
+            .await
+            .unwrap();
+        assert!(result);
+
+        // Matching originChannelKey continues delivery
+        let result = channel
+            .deliver(&json!({
+                "originChannelKey": "webhook",
+                "originSessionKey": "webhook:chat=webhook:route:delivery:general",
+                "text": "cron msg"
+            }))
+            .await
+            .unwrap();
+        assert!(result);
+
+        // Mismatched originChannelKey is rejected
+        let result = channel
+            .deliver(&json!({
+                "originChannelKey": "telegram",
+                "originSessionKey": "webhook:chat=webhook:route:delivery:general",
+                "text": "cron msg"
+            }))
+            .await
+            .unwrap();
+        assert!(!result);
+
+        // Falsy non-string (false, 0) continues delivery
+        let result = channel
+            .deliver(&json!({
+                "originChannelKey": false,
+                "originSessionKey": "webhook:chat=webhook:route:delivery:general",
+                "text": "cron msg"
+            }))
+            .await
+            .unwrap();
+        assert!(result);
+
+        let result = channel
+            .deliver(&json!({
+                "originChannelKey": 0,
+                "originSessionKey": "webhook:chat=webhook:route:delivery:general",
+                "text": "cron msg"
+            }))
+            .await
+            .unwrap();
+        assert!(result);
+
+        // Truthy non-string (true, 123) is rejected
+        let result = channel
+            .deliver(&json!({
+                "originChannelKey": true,
+                "originSessionKey": "webhook:chat=webhook:route:delivery:general",
+                "text": "cron msg"
+            }))
+            .await
+            .unwrap();
+        assert!(!result);
+
+        // Fallback to sessionKey when originSessionKey is absent
+        let result = channel
+            .deliver(&json!({
+                "sessionKey": "webhook:chat=webhook:route:delivery:general",
+                "text": "cron msg"
+            }))
+            .await
+            .unwrap();
+        assert!(result);
+
+        // Rejection when session has newline in chat id
+        let result = channel
+            .deliver(&json!({
+                "originSessionKey": "webhook:chat=webhook:route\nline:general",
+                "text": "cron msg"
+            }))
+            .await
+            .unwrap();
+        assert!(!result);
+    }
 }

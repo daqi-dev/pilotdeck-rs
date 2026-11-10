@@ -26,8 +26,11 @@ pub fn cron_protocol_channel_key(key: &str) -> &str {
 pub fn origin_channel_matches(delivery: &Value, channel: &str) -> bool {
     match delivery.get("originChannelKey") {
         None | Some(Value::Null) => true,
-        Some(Value::String(key)) if key.is_empty() => false,
-        Some(Value::String(key)) => key == channel,
+        Some(Value::String(key)) => key.is_empty() || key == channel,
+        Some(Value::Bool(b)) => !*b,
+        Some(Value::Number(n)) => {
+            n.as_f64() == Some(0.0) || n.as_i64() == Some(0) || n.as_u64() == Some(0)
+        }
         _ => false,
     }
 }
@@ -245,14 +248,18 @@ mod tests {
 
     #[test]
     fn origin_channel_matches_ts_contract() {
-        // Empty string behavior: empty originChannelKey matches no channel
-        assert!(!origin_channel_matches(
+        // Empty string behavior: in TS `originChannelKey && ...` is falsy, does not reject
+        assert!(origin_channel_matches(
             &json!({"originChannelKey": ""}),
             "telegram"
         ));
-        assert!(!origin_channel_matches(
+        assert!(origin_channel_matches(
             &json!({"originChannelKey": ""}),
             "weixin"
+        ));
+        assert!(origin_channel_matches(
+            &json!({"originChannelKey": ""}),
+            "webhook"
         ));
 
         // Missing / None originChannelKey behavior: does not reject
@@ -275,6 +282,10 @@ mod tests {
             &json!({"originChannelKey": null}),
             "weixin"
         ));
+        assert!(origin_channel_matches(
+            &json!({"originChannelKey": null}),
+            "webhook"
+        ));
 
         // Matching channelKey: returns true
         assert!(origin_channel_matches(
@@ -284,6 +295,10 @@ mod tests {
         assert!(origin_channel_matches(
             &json!({"originChannelKey": "weixin"}),
             "weixin"
+        ));
+        assert!(origin_channel_matches(
+            &json!({"originChannelKey": "webhook"}),
+            "webhook"
         ));
 
         // Mismatched channelKey: returns false
@@ -295,18 +310,36 @@ mod tests {
             &json!({"originChannelKey": "discord"}),
             "telegram"
         ));
+        assert!(!origin_channel_matches(
+            &json!({"originChannelKey": "telegram"}),
+            "webhook"
+        ));
 
-        // Non-string originChannelKey: returns false
+        // Falsy non-string originChannelKey: Bool(false) and Number(0) do not reject in TS
+        assert!(origin_channel_matches(
+            &json!({"originChannelKey": false}),
+            "telegram"
+        ));
+        assert!(origin_channel_matches(
+            &json!({"originChannelKey": 0}),
+            "telegram"
+        ));
+        assert!(origin_channel_matches(
+            &json!({"originChannelKey": 0.0}),
+            "telegram"
+        ));
+
+        // Truthy non-string originChannelKey: Bool(true), non-zero Number, Object, Array reject in TS
+        assert!(!origin_channel_matches(
+            &json!({"originChannelKey": true}),
+            "telegram"
+        ));
         assert!(!origin_channel_matches(
             &json!({"originChannelKey": 123}),
             "telegram"
         ));
         assert!(!origin_channel_matches(
-            &json!({"originChannelKey": false}),
-            "telegram"
-        ));
-        assert!(!origin_channel_matches(
-            &json!({"originChannelKey": true}),
+            &json!({"originChannelKey": -1}),
             "telegram"
         ));
         assert!(!origin_channel_matches(
