@@ -171,9 +171,20 @@ fn merge_inbound_and_materialize_into_one_diagnostics_block() {
     fn rejects_path_traversal_in_storage_components() {
         let home = std::env::temp_dir().join(format!("weixin-path-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&home).unwrap();
-        assert!(attachment_store_dir(&home, "../etc", "m1").is_err());
-        assert!(attachment_store_dir(&home, "user", "../../outside").is_err());
-        assert!(attachment_store_dir(&home, "/tmp/abs", "m1").is_err());
+        for (chat, message) in [
+            ("../etc", "m1"),
+            ("user", "../../outside"),
+            ("/tmp/abs", "m1"),
+        ] {
+            let dir = attachment_store_dir(&home, chat, message).unwrap();
+            let canonical = std::fs::canonicalize(home.join("im-attachments/weixin")).unwrap();
+            assert!(
+                dir.starts_with(&canonical),
+                "store path must stay under root: {}",
+                dir.display()
+            );
+            assert!(!dir.starts_with("/etc"));
+        }
         let _ = std::fs::remove_dir_all(home);
     }
 
@@ -274,8 +285,7 @@ fn merge_inbound_and_materialize_into_one_diagnostics_block() {
         assert!(
             diags.iter().any(|line| {
                 line.starts_with("微信附件处理失败：Error: 微信图片解密后仍不是可识别图片（")
-                    && line.contains("; at=")
-                    && line.contains(".rs:")
+                    && line.contains("code=gateway_request_failed")
                     && line.contains("candidates=")
             }),
             "expected TS formatWeixinError diagnostic, got {diags:?}"
@@ -644,7 +654,7 @@ fn merge_inbound_and_materialize_into_one_diagnostics_block() {
     #[tokio::test]
     async fn send_outbound_rejects_local_path_without_grant() {
         let http = Http::new();
-        let err = send_outbound(
+        let ok = send_outbound(
             &http,
             &json!({"baseUrl": "http://127.0.0.1"}),
             "user-1",
@@ -652,13 +662,13 @@ fn merge_inbound_and_materialize_into_one_diagnostics_block() {
             &json!({
                 "type": "file",
                 "name": "secret.pdf",
-                "local_path": "/tmp/secret.pdf"
+                "source": "local_path",
+                "path": "/tmp/secret.pdf"
             }),
         )
         .await
-        .unwrap_err();
-        assert!(err.message.contains("secret.pdf"));
-        assert!(err.message.contains("需要授权后才能发送"));
+        .unwrap();
+        assert!(!ok, "must not upload unauthorized local_path attachment");
     }
 
     #[test]

@@ -69,13 +69,19 @@ fn push_weixin_attachment(
     None
 }
 
+fn json_nonempty_id(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) if !text.trim().is_empty() => Some(text.to_owned()),
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
+}
+
 fn resolve_inbound_attachment_id(message: &Value) -> String {
     message
         .get("message_id")
         .or_else(|| message.get("client_id"))
-        .and_then(Value::as_str)
-        .filter(|id| !id.trim().is_empty())
-        .map(str::to_owned)
+        .and_then(json_nonempty_id)
         .unwrap_or_else(|| {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -295,6 +301,20 @@ mod tests {
         assert_eq!(chunks[1], emoji);
         assert!(!chunks[0].contains('\u{FFFD}'));
         assert!(!chunks[1].contains('\u{FFFD}'));
+    }
+
+    #[test]
+    fn inbound_numeric_message_id_stringifies() {
+        let (_, attachments) = weixin_inbound_text_and_attachments(&json!({
+            "message_type": 1,
+            "message_id": 4242,
+            "item_list": [{
+                "type": 2,
+                "image_item": {"url": "https://cdn.example/x.png"}
+            }]
+        }))
+        .unwrap();
+        assert_eq!(attachments[0]["name"], "image-4242.jpg");
     }
 
     #[test]
