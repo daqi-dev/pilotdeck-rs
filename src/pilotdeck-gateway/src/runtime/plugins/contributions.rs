@@ -4,7 +4,7 @@
 //! via `node_collator`.
 use super::loader::{LoadedPlugin, PluginSource};
 use crate::hooks::protocol::HooksSettings;
-use crate::project_files::{node_collator, node_compare_utf16, node_locale};
+use crate::project_files::{node_collator, node_locale};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::sync::Arc;
 
@@ -613,7 +613,13 @@ pub(super) fn collect_mcp_instructions(
     }
     let locale = node_locale(|k| std::env::var(k).ok());
     if let Ok(collator) = node_collator(&locale) {
-        entries.sort_by(|a, b| node_compare_utf16(&collator, &a.server_name, &b.server_name));
+        entries.sort_by(|a, b| {
+            // #2131: server names are plugin.json object keys, which the
+            // codec keeps as raw UTF-16 units — isolated surrogates must keep
+            // ICU4C's implicit weights instead of folding to U+FFFD.
+            collator
+                .compare_utf16_preserving_surrogates(a.server_name.units(), b.server_name.units())
+        });
     } else {
         entries.sort_by(|a, b| a.server_name.cmp(&b.server_name));
     }

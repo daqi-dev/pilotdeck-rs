@@ -128,7 +128,11 @@
 先核对 verdict 名册后发布，进 `test_negative_optimize_guards.py` 拒跑矩阵；fix-r3 起硬化：
 变异写入与逐项恢复走 `write_source_atomic`、自持窗口装 SIGTERM/SIGHUP/SIGQUIT 还原处理器、
 `pending.for_script` 以入口自身路径为身份键且作为启动前置、summary 载荷记 `selected` 执行集、
-名册防线由 `test_negative_roster_guards.py` 机检并进 CI）。**其余同族入口尚未迁移**，
+名册防线由 `test_negative_roster_guards.py` 机检并进 CI）与
+`utf16-residual-sort`（#2131 起
+同形自管：`EXPECTED_NAMES` 静态名册 + 启动拒跑全走 `refuse()` + 进 `mutating_sources`
+之后的守卫失败作废已跑行、发布 INVALID 后按四分表退 1（延迟信号退 128+signum），
+同批进三条拒跑矩阵）。**其余同族入口尚未迁移**，
 由 #1666 按目录分批推进，名单是机器可检的：`tests/fixtures/test_negative_optimize_guards.py`
 的 `PENDING_BARE_ASSERTS` 登记每个仍含裸 `assert` 的 `*/negative_controls.py` 及理由，
 该表只减不增——新脚本带裸 `assert` 会让 CI 红，迁移一个就在同一次改动里删掉它的条目。
@@ -207,8 +211,10 @@ target、无证据目录，实际可矩阵承载——纳入矩阵待登记表�
 形态，#2552 跟进）、在 cli-parity-mock-gateway 以启动异常逐行收成 INVALID 证据后退 1（证据目录已领，
 留档不撤），均非入口自身的 target 守卫；
 **树脏 / 领锁超时 / oracle 读不了**三条，自管入口里 `settings-gateway`（`entered` 旗标）、
-两个 `issue-297` 入口（编译预检的 `guard_failed` → 2，只覆盖源码守卫、不含 oracle 读取）与
-`same-json-surfaces`（#2422 起的 `started` 旗标，#2431 落了 rc2 回归钉）已实现
+两个 `issue-297` 入口（编译预检的 `guard_failed` → 2，只覆盖源码守卫、不含 oracle 读取）、
+`same-json-surfaces`（#2422 起的 `started` 旗标，#2431 落了 rc2 回归钉）与
+`utf16-residual-sort`（#2131 起的 `started` 旗标 + `startup_refusal` 撤回空证据目录，
+覆盖 enter 两边；无 oracle 读取）已实现
 （`sdk-signals` 的相位路由 #1885 r8 与 `_negkit/contract.py` 的 `entered` 旗标也各自实现；
 本句枚举的是 `test_negative_optimize_guards.py` 登记面，非全集），
 其余脚本是未捕获异常 → 1，仍按「失败关闭」处理（不会假绿），登记在 #1666 的后续批次。

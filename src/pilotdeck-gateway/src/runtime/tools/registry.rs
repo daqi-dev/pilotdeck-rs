@@ -295,7 +295,13 @@ impl ToolRegistry {
         let collator = node_collator(&node_locale(|key| std::env::var(key).ok()))
             .map_err(|(_, message)| error(message))?;
         tools.sort_by(|a, b| {
-            collator.compare_utf16(name(a.as_ref()).units(), name(b.as_ref()).units())
+            // #2131: names are arbitrary JsStrings (TS registers extension
+            // tool names straight from plugin JSON), so isolated surrogates
+            // keep ICU4C's implicit weights instead of folding to U+FFFD.
+            collator.compare_utf16_preserving_surrogates(
+                name(a.as_ref()).units(),
+                name(b.as_ref()).units(),
+            )
         });
         Ok(tools)
     }
@@ -395,7 +401,11 @@ impl ToolRegistry {
         let collator = node_collator(&node_locale(|key| std::env::var(key).ok()))
             .map_err(|(_, message)| error(message))?;
         entries.sort_by(|a, b| {
-            collator.compare_utf16(a.diagnostic.name.units(), b.diagnostic.name.units())
+            // #2131: same JsString name domain as the tool sort above.
+            collator.compare_utf16_preserving_surrogates(
+                a.diagnostic.name.units(),
+                b.diagnostic.name.units(),
+            )
         });
         Ok(entries)
     }

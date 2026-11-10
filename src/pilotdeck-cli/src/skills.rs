@@ -707,23 +707,31 @@ mod tests {
     /// #132 P2-2: the CLI skills collator needs the same fr-CA
     /// backward-secondary repair as gateway `node_collator`. `pairs` records
     /// real Node v22.22.0 / ICU 78.2 `localeCompare` signs under each LANG.
+    ///
+    /// #2140: every failure point below carries this issue's marker (no bare
+    /// unwraps), so the negative controls in
+    /// `../tests/fixtures/skills-fr-ca-probe/negative_controls.py` can bind
+    /// the exact panic that kills each mutant.
     #[test]
     fn fr_ca_secondary_matches_recorded_node_probe() {
         let probe: serde_json::Value =
             serde_json::from_str(include_str!("../tests/fixtures/skills-fr-ca-probe.json"))
-                .unwrap();
-        assert_eq!(probe["node"], "v22.22.0", "#132 probe Node pin");
-        assert_eq!(probe["icu"], "78.2", "#132 probe ICU pin");
-        let cases = probe["cases"].as_array().unwrap();
-        assert!(!cases.is_empty(), "#132 probe records locales");
+                .expect("#2140 probe fixture is valid JSON");
+        assert_eq!(probe["node"], "v22.22.0", "#2140 probe Node pin");
+        assert_eq!(probe["icu"], "78.2", "#2140 probe ICU pin");
+        let cases = probe["cases"]
+            .as_array()
+            .expect("#2140 probe records a cases array");
+        assert!(!cases.is_empty(), "#2140 probe records locales");
         for case in cases {
-            let lang = case["lang"].as_str().unwrap();
-            let collator = collator(&Env::from_pairs(&[("LANG", lang), ("LC_ALL", lang)])).unwrap();
-            let pairs = case["pairs"].as_array().unwrap();
-            assert!(!pairs.is_empty(), "#132 {lang}: probe records pairs");
+            let lang = case["lang"].as_str().expect("#2140 probe case lang");
+            let collator = collator(&Env::from_pairs(&[("LANG", lang), ("LC_ALL", lang)]))
+                .expect("#2140 probe collator loads");
+            let pairs = case["pairs"].as_array().expect("#2140 probe case pairs");
+            assert!(!pairs.is_empty(), "#2140 {lang}: probe records pairs");
             for pair in pairs {
-                let left = pair[0].as_str().unwrap();
-                let right = pair[1].as_str().unwrap();
+                let left = pair[0].as_str().expect("#2140 probe pair left");
+                let right = pair[1].as_str().expect("#2140 probe pair right");
                 let sign = match collator.compare(left, right) {
                     std::cmp::Ordering::Less => -1,
                     std::cmp::Ordering::Equal => 0,
@@ -732,7 +740,7 @@ mod tests {
                 assert_eq!(
                     serde_json::json!(sign),
                     pair[2],
-                    "#132 {lang}: {left:?} vs {right:?}"
+                    "#2140 {lang}: {left:?} vs {right:?}"
                 );
             }
         }

@@ -47,6 +47,23 @@ class ExactLiteralPreflight(unittest.TestCase):
     def test_syntax_whitespace_does_not_hide_a_missing_assert(self):
         self.assertFalse(assertion_message_present('fn other() {}', MESSAGE))
 
+    def test_a_line_commented_out_assertion_is_not_present(self):
+        # #2102 P2-1: the raw-source regex accepted the whole line commented
+        # out. A comment the compiler ignores is not the assertion, and
+        # `squeeze` drops it before the match.
+        commented = (
+            'fn filter_case() {\n'
+            f'    // assert!(selected > 0, "{MESSAGE}");\n'
+            '}\n'
+        )
+        self.assertFalse(assertion_message_present(commented, MESSAGE))
+
+    def test_a_block_commented_out_assertion_is_not_present(self):
+        commented = (
+            f'fn filter_case() {{ /* assert!(selected > 0, "{MESSAGE}"); */ }}\n'
+        )
+        self.assertFalse(assertion_message_present(commented, MESSAGE))
+
 
 class TestBodySegmentation(unittest.TestCase):
     """#1401 review: a needle must be bound to the test that observes it."""

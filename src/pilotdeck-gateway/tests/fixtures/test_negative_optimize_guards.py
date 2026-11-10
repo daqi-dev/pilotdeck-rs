@@ -94,6 +94,10 @@ SCRIPTS = (
     # missing_target/refuse_unusable_target + verdict_exit); its positional
     # names and `--only a,b` both feed the shared selection rule.
     ('manager-gateway/negative_controls.py', (), ()),
+    # #2131 fix-r3: same entry shape after the migration to negative_selection
+    # (registered + select + claim_dir + missing_target/refuse_unusable_target
+    # + verdict_exit).
+    ('utf16-residual-sort/negative_controls.py', (), ()),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption
@@ -530,7 +534,7 @@ class UnknownControlIsRefused(unittest.TestCase):
 class BareAssertInventory(unittest.TestCase):
     """The class invariant has an explicit, shrink-only register (#1666).
 
-    The twenty-six entries migrated so far (twenty-five fixture directories;
+    The twenty-seven entries migrated so far (twenty-six fixture directories;
     ``network-timing`` counts two scripts) are not the whole family. Rather than
     let a hand-written list look like a closed set, the remaining debt is named
     here: a file in ``scanned_entries()`` that is not in

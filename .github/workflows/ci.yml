@@ -127,11 +127,13 @@ jobs:
           # oracle.json 的 cells 数一致、每条变异绑定的测试名经 declares_test 在
           # scheduler_tests.rs 中确实存在（该 README 计数曾漂移过一次，靠 fix-r3 才手工改正）。
           python3 -I src/pilotdeck-gateway/tests/fixtures/cron-scheduler/negative_controls.py --check
-          # #1364 P0-a：闸门自身的负控。这两个脚本清空 mutations 后跑 --check 必须
+          # #1364 P0-a：闸门自身的负控。这些脚本清空 mutations 后跑 --check 必须
           # 非零退出；若有人删掉 fail-closed 分支，--self-check 立即变红。
           # 今后新增带 --check 的脚本按需补同一接口，本步不强制。
+          # #2140 fix-r2：skills-fr-ca-probe 接入同一接口（评审 sibling#1）。
           for script in src/pilotdeck-cli/tests/fixtures/sdk-decode-budget/negative_controls.py \
-                        src/pilotdeck-cli/tests/fixtures/sdk-stdin/negative_controls.py; do
+                        src/pilotdeck-cli/tests/fixtures/sdk-stdin/negative_controls.py \
+                        src/pilotdeck-cli/tests/fixtures/skills-fr-ca-probe/negative_controls.py; do
             python3 -I "$script" --self-check
           done
       # #1595 / #1594：`.gitleaks.toml` 的值级放行必须是 regexTarget="secret" + ^…$ 锚定

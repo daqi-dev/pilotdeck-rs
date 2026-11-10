@@ -110,6 +110,25 @@
 //! at different times, and a match on the first is not evidence the second
 //! saw the same state — so one extra content read lands on the tick after
 //! every reported change.
+//!
+//! #1987 narrows three windows in those rules. The first obscured tick
+//! after a complete one — the transition, with no folded obscured
+//! predecessor — also compares the watched config file itself against its
+//! fingerprint from the last complete sample, so an obstruction starting on
+//! the same tick as a rewrite of that file is reported immediately instead of
+//! after the obstruction clears (the folded chain only covers the later
+//! obscured ticks; every other entry's contribution in an obscured fold is
+//! hashed from failed reads and is not comparable). A mixed tick — the
+//! metadata-only sample failed but the folded one succeeded — is a complete
+//! observation: it is compared against the last complete fingerprint and
+//! committed, not routed through the obscured path (which used to defer the
+//! change a tick and leave a complete folded value as the obscured chain's
+//! baseline, false-reporting on a later readability flap). And the startup
+//! takes one full sample, content included, committing no metadata
+//! shortcut: the first tick re-samples in full (one extra bounded content
+//! read per watched path) so a write landing between the startup samples —
+//! absorbed by the full one while the committed metadata predated it — is
+//! reported instead of never.
 //! Only when metadata changed — or the last sample was incomplete — is up
 //! to [`CONTENT_SAMPLE_LIMIT`] bytes of the watched config file read (the
 //! file itself, or the missing config file's name inside a watched parent
@@ -835,6 +854,11 @@ static CONTENT_READS: Mutex<Option<std::collections::HashMap<PathBuf, usize>>> =
 enum ReadOp {
     Stat,
     ReadDir,
+    /// #1987 B6: one step of a `read_dir` iteration, distinct from opening
+    /// the directory — the iterator can fail mid-listing (EMFILE-class) after
+    /// yielding some entries, and a partial entry list must obscure the
+    /// sample exactly like a failed open.
+    ReadDirEntry,
     Content,
 }
 
@@ -885,16 +909,42 @@ fn stat_path(path: &Path) -> std::io::Result<std::fs::Metadata> {
     std::fs::metadata(path)
 }
 
+/// The `read_dir` iteration of a watched directory (#1987 B6): every step
+/// goes through the failure hook, so an iteration error — not only a failed
+/// open — can be injected for tests. Zero-cost when no failures are armed.
+struct WatchedDirEntries {
+    path: PathBuf,
+    entries: std::fs::ReadDir,
+}
+
+impl Iterator for WatchedDirEntries {
+    type Item = std::io::Result<std::fs::DirEntry>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let entry = self.entries.next()?;
+        if read_should_fail(&self.path, ReadOp::ReadDirEntry) {
+            return Some(Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "#1987 test hook",
+            )));
+        }
+        Some(entry)
+    }
+}
+
 /// Every `read_dir` of a watched directory goes through here, like
-/// [`stat_path`].
-fn read_dir_path(path: &Path) -> std::io::Result<std::fs::ReadDir> {
+/// [`stat_path`]; the returned iterator's steps do too (#1987 B6).
+fn read_dir_path(path: &Path) -> std::io::Result<WatchedDirEntries> {
     if read_should_fail(path, ReadOp::ReadDir) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
             "#1792 test hook",
         ));
     }
-    std::fs::read_dir(path)
+    Ok(WatchedDirEntries {
+        path: path.to_path_buf(),
+        entries: std::fs::read_dir(path)?,
+    })
 }
 
 /// Whether this content read is one of the N armed failures (#1792 test hook).
@@ -934,6 +984,38 @@ fn clear_content_read_failures(path: &Path) {
     clear_read_failures(path, ReadOp::Content);
 }
 
+/// #1987 A2 test hook: a one-shot write injected between the startup samples
+/// of exactly one watched path — with the pre-fix two-sample startup, between
+/// the metadata-only and the full sample, the window a write could land in and
+/// be silently absorbed (the full sample took it in while the committed
+/// metadata pre-dated it). Keyed to the path and consumed on its one fire so
+/// libtest's parallel `sampled()` calls on other tests' paths cannot re-arm
+/// or re-fire it.
+#[cfg(test)]
+static STARTUP_SAMPLE_WRITE: Mutex<Option<(PathBuf, Vec<u8>)>> = Mutex::new(None);
+
+/// Fires [`STARTUP_SAMPLE_WRITE`] if a test armed it for `path` (#1987 test
+/// hook).
+#[cfg(test)]
+fn startup_sample_gate(path: &Path) {
+    let write = {
+        let mut slot = lock(&STARTUP_SAMPLE_WRITE);
+        match slot.clone() {
+            Some((gate_path, bytes)) if gate_path == path => {
+                *slot = None;
+                Some((gate_path, bytes))
+            }
+            _ => None,
+        }
+    };
+    if let Some((gate_path, bytes)) = write {
+        std::fs::write(&gate_path, bytes).expect("#1987 A2 gate write");
+    }
+}
+
+#[cfg(not(test))]
+fn startup_sample_gate(_path: &Path) {}
+
 struct WatchedPath {
     path: PathBuf,
     /// Whether [`path`] is sampled as a directory (by its entries); `None`
@@ -964,6 +1046,16 @@ struct WatchedPath {
     /// into [`Self::fingerprint`], so a delete during an outage cannot be
     /// mistaken for "unchanged".
     obscured_fingerprint: Option<u64>,
+    /// #1987 A1: the watched config file's own fingerprint from the last
+    /// complete sample. The first obscured tick after a complete one has no
+    /// folded obscured predecessor to compare against, so a change landing
+    /// on that same tick — the obstruction starting and the target being
+    /// rewritten together — would wait for the obstruction to clear before
+    /// being reported. Comparing the target against this slot closes that
+    /// window; only the target, because the obscured folded sample hashes
+    /// every other entry from failed reads and is not comparable against the
+    /// complete one. Later obscured ticks are covered by the folded chain.
+    complete_target_fingerprint: Option<u64>,
 }
 
 impl WatchedPath {
@@ -998,20 +1090,25 @@ impl WatchedPath {
     /// A watched path whose startup probe succeeded: sampled immediately,
     /// like every pre-r1 startup.
     fn sampled(path: PathBuf, target: Option<std::ffi::OsString>, directory: bool) -> Self {
-        // #1819: the same metadata is stat-ed twice here (once for the
-        // metadata-only sample, once inside the full sample); reusing it
-        // would mean threading a `Metadata` value through `hash_entry`'s
-        // signature — not worth it for a one-off startup cost per watched
-        // path.
-        let (metadata, metadata_status) = fingerprint(&path, directory, target.as_deref(), false);
-        let (fingerprint, status) = fingerprint(&path, directory, target.as_deref(), true);
-        // #1792: an incomplete startup sample (any stat, `read_dir`, or
-        // content read that failed) commits no metadata fingerprint either;
-        // `None` keeps the next tick re-sampling, so a file that was
-        // unreadable when watching started is still seen once reads recover.
-        let metadata_fingerprint = (metadata_status == SampleStatus::Complete
-            && status == SampleStatus::Complete)
-            .then_some(metadata);
+        // #1987 A2: one sample, content included, and no metadata shortcut.
+        // The startup used to take a metadata-only sample before the full one
+        // and commit the *first* one's fingerprint, so a write landing
+        // between the two was absorbed by the full sample while the committed
+        // metadata kept differing — neither short-circuited around nor
+        // reported, the D11 guard never reached the startup path. With nothing
+        // committed the first tick re-samples in full (one extra bounded
+        // content read per watched path, [`CONTENT_SAMPLE_LIMIT`]) and
+        // compares against this sample, which the write preceded: it
+        // reports. Swapping the two samples instead would leave the mirrored
+        // window open (the write between them would land in the trailing
+        // metadata, and the next tick short-circuits on it), so the commit
+        // has to go regardless — and with it the #1819 double stat.
+        let (fingerprint, status, target_sample) =
+            fingerprint(&path, directory, target.as_deref(), true);
+        // #1987 A2 test hook: fires right after the startup sample. Pre-fix
+        // it fired between the metadata-only and the full sample; the
+        // negative control restores that order around it.
+        startup_sample_gate(&path);
         // #1792 r2: a startup sample that is already obscured commits the
         // folded sample to the obscured slot only, so the first complete
         // sample after recovery reports (there is no trustworthy previous
@@ -1026,8 +1123,18 @@ impl WatchedPath {
             directory: Some(directory),
             target,
             fingerprint,
-            metadata_fingerprint,
+            // #1792 keeps applying: an incomplete startup sample (any stat,
+            // `read_dir`, or content read that failed) commits no metadata
+            // fingerprint, and after #1987 A2 a complete one does not either.
+            metadata_fingerprint: None,
             obscured_fingerprint,
+            // #1987 A1: seed the target comparison slot from a complete
+            // startup sample.
+            complete_target_fingerprint: if status == SampleStatus::Complete {
+                target_sample
+            } else {
+                None
+            },
         }
     }
 
@@ -1041,16 +1148,37 @@ impl WatchedPath {
             fingerprint: None,
             metadata_fingerprint: None,
             obscured_fingerprint: None,
+            complete_target_fingerprint: None,
         }
     }
 
     /// #1792 r2: compares an obscured sample against the last obscured one —
     /// a change among the entries that *are* observable is real even while
     /// another entry stays unreadable. The first obscured tick after a
-    /// complete one reports nothing (there is nothing to compare against).
+    /// complete one has no folded predecessor; for the watched config file
+    /// itself that gap is closed by
+    /// [`Self::observe_target_on_transition`] (#1987 A1).
     fn observe_obscured(&mut self, sample: u64) -> bool {
         let previous = self.obscured_fingerprint.replace(sample);
         previous.is_some_and(|previous| previous != sample)
+    }
+
+    /// #1987 A1: the first obscured sample after a complete one also compares
+    /// the watched config file's own fingerprint against the last complete
+    /// sample's ([`Self::complete_target_fingerprint`]) — the obstruction
+    /// starting and the target changing on the same tick must not defer the
+    /// report until the obstruction clears. Only the target: every other
+    /// entry's contribution in the obscured folded sample is hashed from
+    /// failed reads and is not comparable against the complete one, and
+    /// later obscured ticks are already covered by the folded chain
+    /// ([`Self::observe_obscured`]). A target that was not observed (its own
+    /// stat failed) or a never-seeded slot reports nothing — nothing
+    /// trustworthy was observed either way.
+    fn observe_target_on_transition(&self, sample: Option<u64>) -> bool {
+        match (self.complete_target_fingerprint, sample) {
+            (Some(previous), Some(current)) => previous != current,
+            _ => false,
+        }
     }
 
     fn changed(&mut self) -> bool {
@@ -1065,6 +1193,9 @@ impl WatchedPath {
         {
             self.directory = Some(meta.is_dir());
             self.metadata_fingerprint = None;
+            // #1987 A1: the mode flip changes what the target's fingerprint
+            // covers; a seed sampled in the other mode is not comparable.
+            self.complete_target_fingerprint = None;
         }
         // #1792 r2: a startup probe that failed leaves the mode unknown;
         // re-probe every tick until one classifies it. A `NotFound` here is
@@ -1095,31 +1226,60 @@ impl WatchedPath {
         // gap — a write that leaves every hashed field, ctime included, on
         // the values already sampled — is spelled out in the module note and
         // diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.
-        let (next_metadata, metadata_status) =
+        let (next_metadata, metadata_status, _) =
             fingerprint(&self.path, directory, self.target.as_deref(), false);
-        if metadata_status == SampleStatus::Obscured {
+        let (next, status, target_sample) = if metadata_status == SampleStatus::Obscured {
             // #1792 r2: a failed `stat` or `read_dir` observed nothing
             // trustworthy, so this folded sample is not evidence by itself —
             // but the folded sample of the previous obscured tick is the only
             // thing there is to compare against while the obstruction
             // persists (D16). Never commit it into `fingerprint`: it hashes a
             // failed stat exactly like a missing entry (D9).
-            let (next, _status) = fingerprint(&self.path, directory, self.target.as_deref(), true);
-            self.metadata_fingerprint = None;
-            return self.observe_obscured(next);
-        }
-        if !unclassified
-            && metadata_status == SampleStatus::Complete
-            && self.metadata_fingerprint == Some(next_metadata)
-        {
-            return false;
-        }
-        let (next, status) = fingerprint(&self.path, directory, self.target.as_deref(), true);
+            let (next, status, target_sample) =
+                fingerprint(&self.path, directory, self.target.as_deref(), true);
+            // #1987 A4: a mixed tick — the metadata sample failed but the
+            // folded one succeeded — is a complete observation. Routing it
+            // through the obscured path compared a complete folded sample
+            // against the previous obscured one and left it as the obscured
+            // chain's baseline, decoupling the watch from the last complete
+            // fingerprint; it falls through to the complete path below
+            // instead, compared against [`Self::fingerprint`] and committed
+            // like any other complete sample.
+            if status == SampleStatus::Obscured {
+                self.metadata_fingerprint = None;
+                // #1987 A1: the transition tick — no folded obscured
+                // predecessor — still compares the target against the last
+                // complete sample.
+                let transition = self.obscured_fingerprint.is_none();
+                let mut changed = self.observe_obscured(next);
+                if transition {
+                    changed |= self.observe_target_on_transition(target_sample);
+                }
+                return changed;
+            }
+            (next, status, target_sample)
+        } else {
+            if !unclassified
+                && metadata_status == SampleStatus::Complete
+                && self.metadata_fingerprint == Some(next_metadata)
+            {
+                return false;
+            }
+            fingerprint(&self.path, directory, self.target.as_deref(), true)
+        };
         if status == SampleStatus::Obscured {
             // Same rule as the metadata branch above, reached when the
             // failure landed between the two samples.
             self.metadata_fingerprint = None;
-            return self.observe_obscured(next);
+            // #1987 A1: the transition tick — no folded obscured
+            // predecessor — still compares the target against the last
+            // complete sample.
+            let transition = self.obscured_fingerprint.is_none();
+            let mut changed = self.observe_obscured(next);
+            if transition {
+                changed |= self.observe_target_on_transition(target_sample);
+            }
+            return changed;
         }
         // #1792 r2: the config may have changed while the startup probe (and
         // every sample) was failing, so the first complete sample with no
@@ -1128,6 +1288,11 @@ impl WatchedPath {
         self.obscured_fingerprint = None;
         let previous = self.fingerprint.replace(next);
         let changed = previous != Some(next);
+        // #1987 A1: seed the target comparison slot from every complete
+        // sample, so the next obstruction's transition tick has a baseline.
+        if status == SampleStatus::Complete {
+            self.complete_target_fingerprint = target_sample;
+        }
         // #1792 r2: a sample that reports a change must not also commit the
         // short-circuit metadata — the two samples are taken at different
         // times, and a match on the first is not evidence the second saw the
@@ -1181,23 +1346,30 @@ impl SampleStatus {
 /// Returns how much of this entry's sample was observed; an incomplete
 /// return makes the whole sample incomplete, which [`WatchedPath::changed`]
 /// turns into a next-tick retry (#1792) instead of a committed fingerprint.
-fn hash_entry(path: &Path, hasher: &mut DefaultHasher, read_content: bool) -> SampleStatus {
+///
+/// #1987 A1: when `target_hasher` is set (the watched config file itself),
+/// the same fields — and content, when read — are folded into it in
+/// parallel, building the target's own fingerprint for
+/// [`WatchedPath::observe_target_on_transition`]. A failed stat hashes into
+/// the folded `hasher` only: nothing about the target was observed.
+fn hash_entry(
+    path: &Path,
+    hasher: &mut DefaultHasher,
+    target_hasher: Option<&mut DefaultHasher>,
+    read_content: bool,
+) -> SampleStatus {
     use std::{io::Read, os::unix::fs::MetadataExt};
     match stat_path(path) {
         Ok(meta) => {
-            true.hash(hasher);
-            meta.len().hash(hasher);
-            meta.is_dir().hash(hasher);
-            meta.modified().ok().hash(hasher);
-            // Every write (and `utimes`) bumps ctime, so a same-length rewrite
-            // that restores mtime is normally still seen (a replacing rename
-            // changes the inode too); the tick-granularity gap and the other
-            // fields it needs are in the module note and
-            // diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.
-            (meta.ctime(), meta.ctime_nsec(), meta.ino(), meta.dev()).hash(hasher);
-            if read_content && meta.is_file() && meta.len() <= CONTENT_SAMPLE_LIMIT {
+            // The content read happens before any hashing so both hashers —
+            // the folded one and, when set, the target's own (#1987 A1) — can
+            // be fed the very same fields from the same read.
+            let mut read: Option<Vec<u8>> = None;
+            let read_attempted =
+                read_content && meta.is_file() && meta.len() <= CONTENT_SAMPLE_LIMIT;
+            if read_attempted {
                 let mut content = Vec::new();
-                let read = if content_read_should_fail(path) {
+                read = if content_read_should_fail(path) {
                     // #1792 test hook: emulate a transient read failure
                     // without touching the file's metadata.
                     None
@@ -1217,15 +1389,32 @@ fn hash_entry(path: &Path, hasher: &mut DefaultHasher, read_content: bool) -> Sa
                             .or_insert(1);
                     }
                 }
-                let read_complete = read.is_some();
-                read.hash(hasher);
-                return if read_complete {
-                    SampleStatus::Complete
-                } else {
-                    SampleStatus::ContentUnknown
-                };
             }
-            SampleStatus::Complete
+            let hash_fields = |hasher: &mut DefaultHasher| {
+                true.hash(hasher);
+                meta.len().hash(hasher);
+                meta.is_dir().hash(hasher);
+                meta.modified().ok().hash(hasher);
+                // Every write (and `utimes`) bumps ctime, so a same-length
+                // rewrite that restores mtime is normally still seen (a
+                // replacing rename changes the inode too); the
+                // tick-granularity gap and the other fields it needs are in
+                // the module note and
+                // diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.
+                (meta.ctime(), meta.ctime_nsec(), meta.ino(), meta.dev()).hash(hasher);
+                if read_attempted {
+                    read.hash(hasher);
+                }
+            };
+            hash_fields(hasher);
+            if let Some(target_hasher) = target_hasher {
+                hash_fields(target_hasher);
+            }
+            if read_attempted && read.is_none() {
+                SampleStatus::ContentUnknown
+            } else {
+                SampleStatus::Complete
+            }
         }
         Err(error) => {
             false.hash(hasher);
@@ -1242,20 +1431,32 @@ fn hash_entry(path: &Path, hasher: &mut DefaultHasher, read_content: bool) -> Sa
     }
 }
 
-/// One sample of a watched path. Returns the fingerprint and how much of the
-/// sample was observed; an incomplete sample must not commit a metadata
-/// fingerprint (#1792).
+/// One sample of a watched path. Returns the fingerprint, how much of the
+/// sample was observed (an incomplete sample must not commit a metadata
+/// fingerprint, #1792), and — for a directory watch whose content is sampled
+/// — the watched config file's own fingerprint (#1987 A1). `None` for that
+/// third element when the target was not observed (its read failed, or the
+/// listing itself failed before reaching it) or when only metadata was
+/// sampled; a target absent from a successfully read listing hashes as the
+/// absence it is (a complete observation, like a vanished directory, D17).
 fn fingerprint(
     path: &Path,
     directory: bool,
     target: Option<&std::ffi::OsStr>,
     sample_content: bool,
-) -> (u64, SampleStatus) {
+) -> (u64, SampleStatus, Option<u64>) {
     let mut hasher = DefaultHasher::new();
     let mut status = SampleStatus::Complete;
+    // #1987 A1: the target's own fingerprint is folded in parallel with the
+    // whole-directory one, by the same fields, so the two are comparable.
+    let mut target_hasher = DefaultHasher::new();
+    // `Some` once the target entry itself was sampled — its status decides
+    // whether the parallel fold observed anything trustworthy.
+    let mut target_status: Option<SampleStatus> = None;
+    let mut listing_obscured = false;
     if directory {
         // The directory's own metadata changes on every entry create/delete.
-        status = status.merge(hash_entry(path, &mut hasher, false));
+        status = status.merge(hash_entry(path, &mut hasher, None, false));
         let mut names = Vec::new();
         match read_dir_path(path) {
             Ok(entries) => {
@@ -1263,7 +1464,7 @@ fn fingerprint(
                     match entry {
                         Ok(entry) => names.push(entry.file_name()),
                         // A partial entry list would silently drop names.
-                        Err(_) => status = status.merge(SampleStatus::Obscured),
+                        Err(_) => listing_obscured = true,
                     }
                 }
             }
@@ -1271,20 +1472,49 @@ fn fingerprint(
                 // #1792 r1: a vanished directory is a complete, empty
                 // observation; any other failure hides the entry list.
                 if error.kind() != std::io::ErrorKind::NotFound {
-                    status = status.merge(SampleStatus::Obscured);
+                    listing_obscured = true;
                 }
             }
+        }
+        if listing_obscured {
+            status = status.merge(SampleStatus::Obscured);
         }
         names.sort();
         for name in names {
             name.hash(&mut hasher);
             let read_content = sample_content && target == Some(name.as_os_str());
-            status = status.merge(hash_entry(&path.join(&name), &mut hasher, read_content));
+            let entry_status = if read_content {
+                let status = hash_entry(
+                    &path.join(&name),
+                    &mut hasher,
+                    Some(&mut target_hasher),
+                    true,
+                );
+                target_status = Some(status);
+                status
+            } else {
+                hash_entry(&path.join(&name), &mut hasher, None, false)
+            };
+            status = status.merge(entry_status);
         }
     } else {
-        status = status.merge(hash_entry(path, &mut hasher, sample_content));
+        status = status.merge(hash_entry(path, &mut hasher, None, sample_content));
     }
-    (hasher.finish(), status)
+    // #1987 A1: only a fully observed target — or a fully read listing that
+    // does not contain it — yields a comparable fingerprint. A partial
+    // listing that has not reached the target observed nothing about it, and
+    // an unobserved one (its stat failed) is hashed into the folded sample
+    // exactly like a missing entry there, which is not comparable evidence.
+    let target_sample = if directory && sample_content {
+        match target_status {
+            Some(SampleStatus::Complete) => Some(target_hasher.finish()),
+            None if !listing_obscured => Some(target_hasher.finish()),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    (hasher.finish(), status, target_sample)
 }
 
 async fn watch_loop(

@@ -99,7 +99,7 @@ def shape_needles():
 
 
 def observation_needles():
-    """The observation pin's five branches, each bound as a whole assertion."""
+    """The observation pin's branches, inputs and elapsed bounds, each bound whole."""
     return (
         # The inputs, not only the verdicts: a case whose bytes were trimmed
         # away keeps its assertion green against a different scenario.
@@ -151,6 +151,17 @@ def observation_needles():
         ('assert!(elapsed < std::time::Duration::from_secs(1), '
          '"the total budget ends a talkative child: {elapsed:?}");',
          'total budget elapsed bound'),
+        # The two duration inputs themselves (#2102 P2-2): the elapsed bounds
+        # above keep their word as long as the 1 s check sits far below the
+        # budget, so shrinking `from_secs(5)` to 500 ms leaves every runtime
+        # pin green and `timeout(left, ...)` losing `silence.min(left)` only
+        # ever costs the budget -- the exact drift item 5 guards against.
+        # Bound as the whole `let` statements, so a swapped pair of bounds is
+        # red here too.
+        ('let silence = std::time::Duration::from_millis(50);',
+         'silence bound input'),
+        ('let budget = std::time::Duration::from_secs(5);',
+         'total budget input'),
     )
 
 

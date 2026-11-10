@@ -3,7 +3,7 @@ use super::prepare::{object, stable_serialize};
 use crate::{
     host::{HostError, ModuleError},
     js_value::{MAX_ARRAY_DEPTH, StackOverflow, to_string_units},
-    project_files::{node_collator, node_compare_utf16, node_locale},
+    project_files::{node_collator, node_locale},
 };
 use icu_locale_core::Locale;
 use pilotdeck_protocol::{JsString, JsValue};
@@ -116,8 +116,11 @@ pub(crate) fn cache_plan_identity(
             })?;
             let right_name = to_string_units(&raw_right)
                 .map_err(|_| ModuleError::new(StackOverflow::MESSAGE))?;
+            // #2131: module-supplied tool names are arbitrary JsStrings;
+            // isolated surrogates keep ICU4C's implicit weights, matching the
+            // `left.name.localeCompare(right.name)` TS original.
             let order =
-                node_compare_utf16(&collator, &left_name, &JsString::from_utf16(right_name));
+                collator.compare_utf16_preserving_surrogates(left_name.units(), &right_name);
             if order != Ordering::Equal {
                 return Ok(order);
             }
