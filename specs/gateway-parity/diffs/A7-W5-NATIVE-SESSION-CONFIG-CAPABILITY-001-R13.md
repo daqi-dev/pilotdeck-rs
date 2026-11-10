@@ -100,7 +100,9 @@ path 门，busy-before-mtime 只有 ③ 能杀）；空串 `mode`（`""` / 纯�
   停于 fence（超时 → drop 租约与 fence → 完成且必须 Ok），删锁请求毫秒级以
   `SESSION_WRITER_BUSY` 在窗口内落定（判杀，证据含 busy 原文）；收尾转录级
   不变量（两条 entry、序列严格递增、fresh `restore()`）保留，`#1457 transcript
-  sequences strictly increase` 前缀钉由收尾断言继续承载（该 pin 保留）。
+  sequences strictly increase` 串仍在收尾断言文案里（`config.rs:3593`），
+  LITERAL_ANCHORS 的该 pin 登记已删——换锚后无行再断言该串，保留会被守卫判
+  `unbound to any row`。
 - 静态核 `python3 -I negative_controls.py --check` → `#1457 77 mutation
   anchors OK; #2065 68 literal anchors OK`（R12 记 69/59（彼时 head），rebase
   并入 main 侧行后本批起点 70/60；+4 行（#1651）+3 行（#2703）= 77，锚
