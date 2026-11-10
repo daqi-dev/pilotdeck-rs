@@ -6,26 +6,14 @@
 //! within one store instance (TS `updates: Map<string, Promise>`). Two processes
 //! (or two instances) mutating the same upload concurrently can lose an update,
 //! exactly as in TS; the shared contract is the disk format, not a cross-process
-//! lock. Inside one instance, `complete` and `cancel` judge the record
-//! re-read within that per-id gate, so an interleaved complete/cancel pair
-//! on the same id can no longer both succeed, and a `completed` record's
-//! files survive that racing cancel (#1631) — when that in-gate re-read
-//! succeeds: a record the expiry sweep removed after the outside `get()`
-//! but before that re-read is refused with `UPLOAD_NOT_FOUND` instead of
-//! falling back to the outside snapshot (#2279). A sweep that lands
-//! between the re-read and the metadata write is outside this gate's
-//! scope — the record removals are not themselves gated, so `write` can
-//! still re-create a just-swept task directory (the same mutate-family
-//! rework as #1503, tracked as #2670). A verdict of "no change" — an
-//! already-settled no-op, or a refusal whose closure answers `false` —
-//! writes and emits nothing and leaves `updatedAt` alone, so those
-//! refusals cannot surface as a metadata-write failure instead of their
-//! semantic code (#2275); the manifest-mismatch refusal is a different
-//! shape: it settles the record with a `mark_failed` write on purpose and
-//! answers `true`. The guarantee is scoped to
-//! that pair: a `write_part` in flight does not judge status inside the
-//! gate, so it can still flip a record back to `uploading` after a cancel —
-//! the same-gate rework for `write_part`/`fail`/`remove_tree` is #1503.
+//! lock. Inside one instance, part preparation, metadata commits, cancellation
+//! removal and expiry removal share the same per-id gate (#1503/#2670).
+//! External stream reads remain outside that gate: cancellation never waits
+//! for an untrusted Read. A late stream may finish its already-open inode,
+//! but cannot publish an attachment or change a settled record. No-change
+//! verdicts write and emit nothing (#2275); rejected metadata writes retain
+//! their queue failure as before. These are Native bug fixes over the fixed
+//! TS race, not a claim that its old promise queue serialized the full stream.
 //! Live TS cross-tests are `#[ignore]` (need PDRS_BASELINE); the
 //! non-ignored `upload_golden_bytes_match_ts_fixtures` guards the format in CI.
 mod error;
@@ -94,8 +82,34 @@ impl UploadStoreOptions {
 #[derive(Default)]
 struct UpdateState {
     failure: Option<UploadError>,
+    in_flight_parts: HashSet<JsString>,
 }
 type Updates = HashMap<String, Arc<Mutex<UpdateState>>>;
+/// Owns only a reservation, never the mutex while external Read is pending.
+struct PartReservation<'a> {
+    updates: &'a Mutex<Updates>,
+    gate: Arc<Mutex<UpdateState>>,
+    upload_id: String,
+    client_file_id: JsString,
+}
+impl Drop for PartReservation<'_> {
+    fn drop(&mut self) {
+        let mut state = self.gate.lock().unwrap_or_else(|e| e.into_inner());
+        state.in_flight_parts.remove(&self.client_file_id);
+        let mut updates = self.updates.lock().unwrap_or_else(|e| e.into_inner());
+        if state.failure.is_none()
+            && Arc::strong_count(&self.gate) == 2
+            && updates
+                .get(&self.upload_id)
+                .is_some_and(|gate| Arc::ptr_eq(gate, &self.gate))
+        {
+            updates.remove(&self.upload_id);
+        }
+    }
+}
+
+#[cfg(test)]
+type PhaseHook = Arc<dyn Fn(&str, &str) + Send + Sync>;
 #[derive(Default)]
 struct Listeners {
     next: u64,
@@ -115,6 +129,8 @@ pub struct UploadStore {
     /// caller sets one, and nothing else consults it.
     pre_mutate_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     #[cfg(test)]
+    phase_hook: Mutex<Option<PhaseHook>>,
+    #[cfg(test)]
     faults: Mutex<Vec<(String, i32)>>,
     /// Non-record outcomes of a tolerant sweep (skips, orphan reclaims), so
     /// tests can pin what the log said without capturing stderr.
@@ -129,6 +145,8 @@ impl UploadStore {
             updates: Mutex::new(HashMap::new()),
             listeners: Arc::new(Mutex::new(Listeners::default())),
             pre_mutate_hook: Mutex::new(None),
+            #[cfg(test)]
+            phase_hook: Mutex::new(None),
             #[cfg(test)]
             faults: Mutex::new(vec![]),
             #[cfg(test)]
@@ -271,29 +289,79 @@ impl UploadStore {
     ) -> Result<UploadedAttachment> {
         let client_value = JsValue::String(client_file_id.clone());
         let mut record = self.get(upload_id)?;
-        require_active(&record)?;
-        let expected = array(&record, "manifest")
-            .iter()
-            .find(|m| value(m, "clientFileId") == client_value)
-            .cloned();
-        if expected.is_none() || array(&record, "receivedClientFileIds").contains(&client_value) {
-            return Err(UploadError::dialog(
-                "UPLOAD_MANIFEST_MISMATCH",
-                part_message("Unexpected or duplicate file part: ", client_file_id, ""),
-            ));
-        }
-        let expected = expected.unwrap();
-        // Only the filesystem path crosses a UTF-8 boundary. Honest manifest
-        // ids are ASCII (`safe_id`); a tampered record gets exactly Node's
-        // replacement encoding here, never in a message.
+        self.pre_mutate();
+        self.phase(upload_id, "part-before-prepare");
         let client_path = String::from_utf16_lossy(client_file_id.units());
-        record = self.mutate(&record, |r| {
-            set(r, "status", text("uploading"));
-            true
-        })?;
-        let destination = task_dir(&record).join("files").join(&client_path);
+        let mut prepared = None;
+        let mut refusal = None;
+        let mut in_flight_duplicate = false;
+        let mut reservation = None;
+        record = self.mutate_state_then(
+            &record,
+            |r, state, gate| {
+                if let Err(error) = require_active(r) {
+                    refusal = Some(error);
+                    return false;
+                }
+                let expected = array(r, "manifest")
+                    .iter()
+                    .find(|m| value(m, "clientFileId") == client_value)
+                    .cloned();
+                if expected.is_none() || array(r, "receivedClientFileIds").contains(&client_value) {
+                    refusal = Some(UploadError::dialog(
+                        "UPLOAD_MANIFEST_MISMATCH",
+                        part_message("Unexpected or duplicate file part: ", client_file_id, ""),
+                    ));
+                    return false;
+                }
+                let destination = task_dir(r).join("files").join(&client_path);
+                if state.in_flight_parts.contains(client_file_id) {
+                    // Preserve the wx-open protocol error, but this store knows
+                    // that its first writer still owns the path: do not fail it.
+                    in_flight_duplicate = true;
+                    refusal = Some(UploadError::io(
+                        io::Error::from_raw_os_error(libc::EEXIST),
+                        "open",
+                        Some(&destination),
+                    ));
+                    return false;
+                }
+                match self
+                    .fault("part-open", &destination)
+                    .and_then(|()| open_new(&destination))
+                {
+                    Ok(file) => {
+                        state.in_flight_parts.insert(client_file_id.clone());
+                        reservation = Some(PartReservation {
+                            updates: &self.updates,
+                            gate: gate.clone(),
+                            upload_id: upload_id.to_owned(),
+                            client_file_id: client_file_id.clone(),
+                        });
+                        prepared = Some((expected.unwrap(), destination, file));
+                    }
+                    // No in-flight reservation: a pre-existing/orphan artifact
+                    // keeps the original EEXIST + task-failed contract.
+                    Err(error) => {
+                        refusal = Some(error);
+                        return false;
+                    }
+                }
+                set(r, "status", text("uploading"));
+                true
+            },
+            |_| Ok(()),
+        )?;
+        if let Some(error) = refusal {
+            if !error.dialog && !in_flight_duplicate {
+                let _ = self.fail(upload_id, "UPLOAD_STREAM_INTERRUPTED", &error.message);
+            }
+            return Err(error);
+        }
+        let _reservation = reservation.expect("accepted part has an in-flight reservation");
+        let (expected, destination, mut file) =
+            prepared.expect("accepted part has an open destination");
         let result = (|| {
-            let mut file = open_new(&destination)?;
             let mut digest = Sha256::new();
             let mut bytes = 0_u64;
             let mut pending = 0_u64;
@@ -359,7 +427,13 @@ impl UploadStore {
             set(&mut attachment, "bytes", JsValue::Number(bytes as f64));
             set(&mut attachment, "sha256", text(&digest));
             set(&mut attachment, "path", path_value(&destination));
+            self.phase(upload_id, "part-before-commit");
+            let mut refusal = None;
             self.mutate(&record, |r| {
+                if !active(r) {
+                    refusal = Some(invalid_state(r));
+                    return false;
+                }
                 let mut received = array(r, "receivedClientFileIds").to_vec();
                 received.push(JsValue::String(client_file_id.clone()));
                 set(r, "receivedClientFileIds", JsValue::Array(received));
@@ -368,12 +442,17 @@ impl UploadStore {
                 set(r, "attachments", JsValue::Array(attachments));
                 true
             })?;
+            if let Some(error) = refusal {
+                return Err(error);
+            }
             Ok(attachment)
         })();
         match result {
             Ok(a) => Ok(a),
             Err(e) => {
-                self.fail(
+                // Failure persistence is best effort. A sweep, cancellation
+                // or metadata failure must not replace the stream's own error.
+                let _ = self.fail(
                     upload_id,
                     if e.dialog {
                         &e.code
@@ -381,7 +460,7 @@ impl UploadStore {
                         "UPLOAD_STREAM_INTERRUPTED"
                     },
                     &e.message,
-                )?;
+                );
                 Err(e)
             }
         }
@@ -424,14 +503,11 @@ impl UploadStore {
         }
     }
 
-    /// Same #1631 gate-internal verdict as [`Self::complete`]: only the
-    /// in-gate transition to `cancelled` is followed by `remove_tree`, so a
-    /// `completed` record's files survive a racing cancel. The `remove_tree`
-    /// itself still runs after the gate (the module-doc pair scope and #1503
-    /// cover what a concurrently in-flight `write_part` can interleave).
+    /// Cancellation's durable transition and protected file removal own the
+    /// same gate as part preparation/commit. External Read never owns it.
     ///
     /// #1850: that delete is the fourth removal point on the `chat-uploads`
-    /// tree, and unlike the sweeps it runs after the whole `mutate` rewrite —
+    /// tree, and the deletion follows the metadata write while still owning its gate —
     /// a window wide enough to swap `.tmp` (or the task directory itself) for
     /// a symlink, which `remove_tree` would follow out of the project. The
     /// status transition is already durable at that point, so a refused
@@ -443,66 +519,77 @@ impl UploadStore {
         // #2276/#2279 test rendezvous (see `set_pre_mutate_hook`).
         self.pre_mutate();
         let mut refusal: Option<UploadError> = None;
-        let mut cancelled = false;
-        let updated = self.mutate(&record, |r| {
-            if active(r) {
-                set(r, "status", text("cancelled"));
-                cancelled = true;
-                true
-            } else if status(r) == "completed" {
-                refusal = Some(UploadError::dialog(
-                    "UPLOAD_ALREADY_COMPLETED",
-                    "Completed uploads cannot be cancelled.",
-                ));
-                false
-            } else {
-                // #2275: cancelling a cancelled (or otherwise settled) upload
-                // is a no-op, not a change: nothing to write or emit.
-                false
-            }
-        })?;
-        if let Some(e) = refusal {
-            return Err(e);
-        }
-        if cancelled {
-            let project = PathBuf::from(string(&updated, "projectKey").unwrap_or_default());
-            let dir = task_dir(&updated).join("files");
-            let root_real = match plain_root(&project, "chat-uploads") {
-                PlainRoot::Plain(root) => root,
-                // The record was just read from this tree, so `Missing` means
-                // the whole task directory is gone: the same quiet no-op the
-                // bare `remove_tree` gave.
-                PlainRoot::Missing => return Ok(updated),
-                PlainRoot::Blocked => {
-                    self.log_cleanup(format!(
+        let cancelled = std::cell::Cell::new(false);
+        let updated = self.mutate_then(
+            &record,
+            |r| {
+                if active(r) {
+                    set(r, "status", text("cancelled"));
+                    cancelled.set(true);
+                    true
+                } else if status(r) == "completed" {
+                    refusal = Some(UploadError::dialog(
+                        "UPLOAD_ALREADY_COMPLETED",
+                        "Completed uploads cannot be cancelled.",
+                    ));
+                    false
+                } else {
+                    // #2275: cancelling a cancelled (or otherwise settled) upload
+                    // is a no-op, not a change: nothing to write or emit.
+                    false
+                }
+            },
+            |updated| {
+                if cancelled.get() {
+                    let project = PathBuf::from(string(updated, "projectKey").unwrap_or_default());
+                    let dir = task_dir(updated).join("files");
+                    let root_real = match plain_root(&project, "chat-uploads") {
+                        PlainRoot::Plain(root) => root,
+                        // The record was just read from this tree, so `Missing` means
+                        // the whole task directory is gone: the same quiet no-op the
+                        // bare `remove_tree` gave.
+                        PlainRoot::Missing => return Ok(()),
+                        PlainRoot::Blocked => {
+                            self.log_cleanup(format!(
                         "[uploads] cancel skipped {}: uploads root is not a plain directory",
                         project.join(".tmp/chat-uploads").display()
                     ));
-                    return Ok(updated);
-                }
-            };
-            // fix-r1 (minimax concurrency#2 arbitration): `inside_root` alone
-            // passes a linked `<id>` whose resolution stays inside the root —
-            // a deterministic alias onto another upload. The component walk
-            // `canonical_home` uses for the lease/store roots refuses every
-            // link component down to `files`; the residual between the walk
-            // and `remove_tree` is the instruction-level TOCTOU family the
-            // A8 ledger registers.
-            if canonical_home(&dir, &project, &root_real).is_none() {
-                self.log_cleanup(format!(
+                            return Ok(());
+                        }
+                    };
+                    // fix-r1 (minimax concurrency#2 arbitration): `inside_root` alone
+                    // passes a linked `<id>` whose resolution stays inside the root —
+                    // a deterministic alias onto another upload. The component walk
+                    // `canonical_home` uses for the lease/store roots refuses every
+                    // link component down to `files`; the residual between the walk
+                    // and `remove_tree` is the instruction-level TOCTOU family the
+                    // A8 ledger registers.
+                    if canonical_home(&dir, &project, &root_real).is_none() {
+                        self.log_cleanup(format!(
                     "[uploads] cancel skipped {}: outside the uploads root or a linked task dir",
                     dir.display()
                 ));
-                return Ok(updated);
-            }
-            remove_tree(&dir)?;
+                        return Ok(());
+                    }
+                    remove_tree(&dir)?;
+                }
+                Ok(())
+            },
+        )?;
+        if let Some(e) = refusal {
+            return Err(e);
         }
         Ok(updated)
     }
 
     pub fn fail(&self, upload_id: &str, code: &str, message: &JsString) -> Result<UploadRecord> {
         let record = self.get(upload_id)?;
+        self.pre_mutate();
+        self.phase(upload_id, "fail-before-mutate");
         self.mutate(&record, |r| {
+            if !active(r) {
+                return false;
+            }
             mark_failed(r, code, message);
             true
         })
@@ -592,46 +679,59 @@ impl UploadStore {
         // guard into a no-op for the rest of the round.
         for id in names(&root_real).into_iter().filter(|id| safe_id(id)) {
             let dir = root_real.join(&id);
-            let record = match self.read_at(project, &id) {
-                Ok(Some(record)) => record,
-                // No metadata.json: not a record this round — either crash
-                // debris or a create that has not reached its metadata write
-                // yet. Age decides (see `reclaim_orphan`).
-                Ok(None) => {
-                    self.reclaim_orphan(&root_real, &dir);
-                    continue;
+            self.phase(&id, "sweep-before-gate");
+            let gate = self.update_gate(&id);
+            (|| {
+                let _guard = gate.lock().unwrap();
+                self.phase(&id, "sweep-inside-gate");
+                let record = match self.read_at(project, &id) {
+                    Ok(Some(record)) => record,
+                    // No metadata.json: not a record this round — either crash
+                    // debris or a create that has not reached its metadata write
+                    // yet. Age decides (see `reclaim_orphan`).
+                    Ok(None) => {
+                        self.reclaim_orphan(&root_real, &dir);
+                        return;
+                    }
+                    Err(e) => {
+                        self.skip_record(&dir, &e);
+                        return;
+                    }
+                };
+                match future(&record, "expiresAt", (self.options.now)()) {
+                    Ok(true) => return,
+                    Ok(false) => {}
+                    Err(e) => {
+                        self.skip_record(&dir, &e);
+                        return;
+                    }
                 }
-                Err(e) => {
-                    self.skip_record(&dir, &e);
-                    continue;
+                // The record branch deletes too, so it needs the same guard as the
+                // orphan branch: compare the entry as resolved *now* with the
+                // round-start root snapshot. Without it, a root swapped for a
+                // symlink mid-round turns every remaining record into a delete
+                // outside the project.
+                if !inside_root(&root_real, &dir) {
+                    self.log_cleanup(format!(
+                        "[uploads] cleanup skipped {}: outside the uploads root",
+                        dir.display()
+                    ));
+                    return;
                 }
-            };
-            match future(&record, "expiresAt", (self.options.now)()) {
-                Ok(true) => continue,
-                Ok(false) => {}
-                Err(e) => {
-                    self.skip_record(&dir, &e);
-                    continue;
+                match self
+                    .fault("record-rm", &dir)
+                    .and_then(|()| remove_tree(&dir))
+                {
+                    Ok(()) => *count += 1,
+                    Err(e) => self.skip_record(&dir, &e),
                 }
-            }
-            // The record branch deletes too, so it needs the same guard as the
-            // orphan branch: compare the entry as resolved *now* with the
-            // round-start root snapshot. Without it, a root swapped for a
-            // symlink mid-round turns every remaining record into a delete
-            // outside the project.
-            if !inside_root(&root_real, &dir) {
-                self.log_cleanup(format!(
-                    "[uploads] cleanup skipped {}: outside the uploads root",
-                    dir.display()
-                ));
-                continue;
-            }
-            match self
-                .fault("record-rm", &dir)
-                .and_then(|()| remove_tree(&dir))
-            {
-                Ok(()) => *count += 1,
-                Err(e) => self.skip_record(&dir, &e),
+            })();
+            // Keep rejected mutation queues, but do not accumulate a healthy
+            // map entry for every upload removed by a sweep.
+            let state = gate.lock().unwrap();
+            let mut updates = self.updates.lock().unwrap();
+            if state.failure.is_none() && Arc::strong_count(&gate) == 2 {
+                updates.remove(&id);
             }
         }
     }
@@ -876,6 +976,9 @@ impl UploadStore {
 
     fn progress(&self, record: &UploadRecord, delta: u64) -> Result<UploadRecord> {
         self.mutate(record, |r| {
+            if !active(r) || delta == 0 {
+                return false;
+            }
             set(
                 r,
                 "uploadedBytes",
@@ -900,18 +1003,29 @@ impl UploadStore {
         record: &UploadRecord,
         change: impl FnOnce(&mut UploadRecord) -> bool,
     ) -> Result<UploadRecord> {
+        self.mutate_then(record, change, |_| Ok(()))
+    }
+    fn mutate_then(
+        &self,
+        record: &UploadRecord,
+        change: impl FnOnce(&mut UploadRecord) -> bool,
+        after_write: impl FnOnce(&UploadRecord) -> Result<()>,
+    ) -> Result<UploadRecord> {
+        self.mutate_state_then(record, |record, _, _| change(record), after_write)
+    }
+    fn mutate_state_then(
+        &self,
+        record: &UploadRecord,
+        change: impl FnOnce(&mut UploadRecord, &mut UpdateState, &Arc<Mutex<UpdateState>>) -> bool,
+        after_write: impl FnOnce(&UploadRecord) -> Result<()>,
+    ) -> Result<UploadRecord> {
         let id = string(record, "uploadId").unwrap_or_default();
-        let gate = self
-            .updates
-            .lock()
-            .unwrap()
-            .entry(id.clone())
-            .or_default()
-            .clone();
+        let gate = self.update_gate(&id);
         let mut state = gate.lock().unwrap();
         if let Some(e) = &state.failure {
             return Err(e.clone());
         }
+        let mut side_effect_error = None;
         let result: Result<UploadRecord> = (|| {
             let project = PathBuf::from(string(record, "projectKey").unwrap_or_default());
             // #2279: the sweep (or any remover) can take the whole task
@@ -925,7 +1039,7 @@ impl UploadStore {
             let mut current = self.read_at(&project, &id)?.ok_or_else(|| {
                 UploadError::dialog("UPLOAD_NOT_FOUND", format!("Unknown uploadId: {id}"))
             })?;
-            if !change(&mut current) {
+            if !change(&mut current, &mut state, &gate) {
                 return Ok(current);
             }
             set(
@@ -933,7 +1047,12 @@ impl UploadStore {
                 "updatedAt",
                 text(&format_epoch_iso((self.options.now)())),
             );
+            self.phase(&id, "mutation-before-write");
             self.write(&current)?;
+            // Metadata is already committed. Match the old cancellation
+            // contract: a deletion error is returned without poisoning later
+            // no-op verdicts or suppressing the durable status notification.
+            side_effect_error = after_write(&current).err();
             self.emit(&current);
             Ok(current)
         })();
@@ -946,7 +1065,29 @@ impl UploadStore {
         if result.is_ok() && Arc::strong_count(&gate) == 2 {
             updates.remove(&id);
         }
+        if let Some(error) = side_effect_error {
+            return Err(error);
+        }
         result
+    }
+    fn update_gate(&self, id: &str) -> Arc<Mutex<UpdateState>> {
+        self.updates
+            .lock()
+            .unwrap()
+            .entry(id.to_owned())
+            .or_default()
+            .clone()
+    }
+    fn phase(&self, id: &str, phase: &str) {
+        #[cfg(test)]
+        {
+            let hook = self.phase_hook.lock().unwrap().clone();
+            if let Some(hook) = hook {
+                hook(id, phase);
+            }
+        }
+        #[cfg(not(test))]
+        let _ = (id, phase);
     }
     fn drain_updates(&self, id: &str) -> Result<()> {
         let gate = self.updates.lock().unwrap().get(id).cloned();
@@ -1466,7 +1607,7 @@ fn active(record: &UploadRecord) -> bool {
     matches!(status(record).as_str(), "created" | "uploading")
 }
 /// The `UPLOAD_INVALID_STATE` refusal for a record that left the active set
-/// — one message formula shared by the pre-gate check (`require_active`) and
+/// — one message formula shared by the preparation check (`require_active`) and
 /// the in-gate refusals (#1631).
 fn invalid_state(record: &UploadRecord) -> UploadError {
     UploadError::dialog(

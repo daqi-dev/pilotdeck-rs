@@ -3001,3 +3001,403 @@ fn upload_lease_cleanup_does_not_sweep_through_an_aliased_id_dir() {
         "the skip is logged: {log}"
     );
 }
+
+// #1503/#2670: controlled external Read and exact in-gate checkpoints.
+struct HeldUploadRead {
+    entered: Option<mpsc::Sender<()>>,
+    release: mpsc::Receiver<()>,
+    sent: bool,
+}
+impl Read for HeldUploadRead {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        if self.sent {
+            return Ok(0);
+        }
+        self.sent = true;
+        if let Some(entered) = self.entered.take() {
+            entered.send(()).unwrap();
+        }
+        self.release
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "held upload read timed out"))?;
+        bytes[..5].copy_from_slice(b"hello");
+        Ok(5)
+    }
+}
+
+#[test]
+fn concurrent_part_open_is_a_duplicate_without_failing_the_first_writer() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let store = h.store.clone();
+    let writer = std::thread::spawn(move || {
+        store.write_part(
+            "upload-1",
+            "file-1",
+            HeldUploadRead {
+                entered: Some(entered_tx),
+                release: release_rx,
+                sent: false,
+            },
+        )
+    });
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
+    let (done_tx, done_rx) = mpsc::channel();
+    let store = h.store.clone();
+    let duplicate = std::thread::spawn(move || {
+        done_tx
+            .send(store.write_part("upload-1", "file-1", &b"hello"[..]))
+            .unwrap();
+    });
+    let result = done_rx.recv_timeout(std::time::Duration::from_secs(2));
+    // Always release the external reader before asserting, including regression.
+    release_tx.send(()).unwrap();
+    let first = writer.join().unwrap();
+    duplicate.join().unwrap();
+    assert_eq!(
+        result
+            .expect("duplicate open must not wait for external Read")
+            .unwrap_err()
+            .code,
+        "EEXIST"
+    );
+    first.expect("duplicate must not poison or fail the first writer");
+    let completed = h.store.complete("upload-1").unwrap();
+    assert_eq!(status(&completed), "completed");
+    assert_eq!(
+        fs::read(project.join(".tmp/chat-uploads/upload-1/files/file-1")).unwrap(),
+        b"hello"
+    );
+}
+
+#[test]
+fn cancel_finishes_while_read_is_held_and_late_part_cannot_resurrect() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let store = h.store.clone();
+    let writer = std::thread::spawn(move || {
+        store.write_part(
+            "upload-1",
+            "file-1",
+            HeldUploadRead {
+                entered: Some(entered_tx),
+                release: release_rx,
+                sent: false,
+            },
+        )
+    });
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
+    let (done_tx, done_rx) = mpsc::channel();
+    let store = h.store.clone();
+    let cancel = std::thread::spawn(move || {
+        done_tx.send(store.cancel("upload-1")).unwrap();
+    });
+    let result = done_rx.recv_timeout(std::time::Duration::from_secs(2));
+    let metadata = project.join(".tmp/chat-uploads/upload-1/metadata.json");
+    let cancelled_bytes = fs::read(&metadata).unwrap();
+    release_tx.send(()).unwrap();
+    let part = writer.join().unwrap();
+    cancel.join().unwrap();
+    assert_eq!(
+        status(
+            &result
+                .expect("cancel cannot wait for external Read")
+                .unwrap()
+        ),
+        "cancelled"
+    );
+    assert_eq!(part.unwrap_err().code, "UPLOAD_INVALID_STATE");
+    assert_eq!(status(&h.store.get("upload-1").unwrap()), "cancelled");
+    assert_eq!(
+        fs::read(&metadata).unwrap(),
+        cancelled_bytes,
+        "late progress and finalization must not rewrite cancelled metadata"
+    );
+    assert!(!project.join(".tmp/chat-uploads/upload-1/files").exists());
+    assert_eq!(
+        h.store.complete("upload-1").unwrap_err().code,
+        "UPLOAD_INVALID_STATE"
+    );
+}
+
+#[test]
+fn fail_rechecks_terminal_state_after_complete_and_cancel() {
+    for complete in [true, false] {
+        let scratch = Scratch::new();
+        let project = scratch.dir("p");
+        let h = golden_store(&project);
+        created(&h);
+        h.store
+            .write_part("upload-1", "file-1", &b"hello"[..])
+            .unwrap();
+        let store = h.store.clone();
+        let once = Arc::new(AtomicBool::new(false));
+        let entered = once.clone();
+        *h.store.phase_hook.lock().unwrap() = Some(Arc::new(move |id, phase| {
+            if id == "upload-1"
+                && phase == "fail-before-mutate"
+                && !entered.swap(true, Ordering::SeqCst)
+            {
+                if complete {
+                    store.complete(id).unwrap();
+                } else {
+                    store.cancel(id).unwrap();
+                }
+            }
+        }));
+        let settled = h
+            .store
+            .fail("upload-1", "LATE_FAILURE", &"late".into())
+            .unwrap();
+        *h.store.phase_hook.lock().unwrap() = None;
+        assert!(once.load(Ordering::SeqCst));
+        assert_eq!(
+            status(&settled),
+            if complete { "completed" } else { "cancelled" }
+        );
+        assert!(value(&settled, "errorCode").is_undefined());
+        assert_eq!(
+            project
+                .join(".tmp/chat-uploads/upload-1/files/file-1")
+                .exists(),
+            complete
+        );
+    }
+}
+
+#[test]
+fn part_and_fail_after_outside_snapshot_sweep_do_not_recreate_a_record() {
+    for part in [true, false] {
+        let scratch = Scratch::new();
+        let project = scratch.dir("p");
+        let h = golden_store(&project);
+        created(&h);
+        let (store, clock) = (h.store.clone(), h.now.clone());
+        h.store.set_pre_mutate_hook(Some(Arc::new(move || {
+            clock.store(EPOCH + DAY + 1, Ordering::SeqCst);
+            assert_eq!(store.cleanup_expired().unwrap(), 1);
+        })));
+        let error = if part {
+            h.store
+                .write_part("upload-1", "file-1", &b"hello"[..])
+                .unwrap_err()
+        } else {
+            h.store
+                .fail("upload-1", "FAILURE", &"failure".into())
+                .unwrap_err()
+        };
+        h.store.set_pre_mutate_hook(None);
+        assert_eq!(error.code, "UPLOAD_NOT_FOUND");
+        assert!(!project.join(".tmp/chat-uploads/upload-1").exists());
+    }
+}
+
+#[test]
+fn sweep_waits_for_mutation_write_and_never_resurrects_the_deleted_record() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    h.store
+        .write_part("upload-1", "file-1", &b"hello"[..])
+        .unwrap();
+    let (write_tx, write_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Arc::new(Mutex::new(release_rx));
+    let (sweep_tx, sweep_rx) = mpsc::channel();
+    let once = AtomicBool::new(false);
+    *h.store.phase_hook.lock().unwrap() = Some(Arc::new(move |id, phase| {
+        if id != "upload-1" {
+            return;
+        }
+        if phase == "mutation-before-write" && !once.swap(true, Ordering::SeqCst) {
+            write_tx.send(()).unwrap();
+            release_rx
+                .lock()
+                .unwrap()
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+        }
+        if phase == "sweep-before-gate" {
+            sweep_tx.send(()).unwrap();
+        }
+    }));
+    let store = h.store.clone();
+    let complete = std::thread::spawn(move || store.complete("upload-1"));
+    write_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
+    h.now.store(EPOCH + DAY + 1, Ordering::SeqCst);
+    let (done_tx, done_rx) = mpsc::channel();
+    let store = h.store.clone();
+    let sweep = std::thread::spawn(move || {
+        done_tx.send(store.cleanup_expired()).unwrap();
+    });
+    sweep_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
+    let early = done_rx.recv_timeout(std::time::Duration::from_millis(50));
+    release_tx.send(()).unwrap();
+    let completed = complete.join().unwrap();
+    sweep.join().unwrap();
+    *h.store.phase_hook.lock().unwrap() = None;
+    assert!(
+        early.is_err(),
+        "sweep removal must wait for the mutation's per-id gate"
+    );
+    assert_eq!(status(&completed.unwrap()), "completed");
+    assert_eq!(
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap()
+            .unwrap(),
+        1
+    );
+    assert!(
+        !project.join(".tmp/chat-uploads/upload-1").exists(),
+        "no metadata write may resurrect an already swept record"
+    );
+}
+
+struct SweepThenBadRead {
+    store: Arc<UploadStore>,
+    clock: Arc<AtomicI64>,
+    integrity: bool,
+}
+impl Read for SweepThenBadRead {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        self.clock.store(EPOCH + DAY + 1, Ordering::SeqCst);
+        assert_eq!(self.store.cleanup_expired().unwrap(), 1);
+        if self.integrity {
+            bytes[..6].copy_from_slice(b"hello!");
+            Ok(6)
+        } else {
+            Err(io::Error::from_raw_os_error(libc::EIO))
+        }
+    }
+}
+#[test]
+fn sweep_during_bad_read_preserves_original_integrity_or_stream_error() {
+    for integrity in [true, false] {
+        let scratch = Scratch::new();
+        let project = scratch.dir("p");
+        let h = golden_store(&project);
+        created(&h);
+        let error = h
+            .store
+            .write_part(
+                "upload-1",
+                "file-1",
+                SweepThenBadRead {
+                    store: h.store.clone(),
+                    clock: h.now.clone(),
+                    integrity,
+                },
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.code,
+            if integrity {
+                "UPLOAD_INTEGRITY_MISMATCH"
+            } else {
+                "EIO"
+            },
+            "best-effort fail must not replace the original error with UPLOAD_NOT_FOUND"
+        );
+        assert!(!project.join(".tmp/chat-uploads/upload-1").exists());
+    }
+}
+
+#[test]
+fn part_preparation_rechecks_cancelled_state_after_its_outside_snapshot() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    let store = h.store.clone();
+    let once = Arc::new(AtomicBool::new(false));
+    let entered = once.clone();
+    *h.store.phase_hook.lock().unwrap() = Some(Arc::new(move |id, phase| {
+        if id == "upload-1"
+            && phase == "part-before-prepare"
+            && !entered.swap(true, Ordering::SeqCst)
+        {
+            store.cancel(id).unwrap();
+        }
+    }));
+    let error = h
+        .store
+        .write_part("upload-1", "file-1", &b"hello"[..])
+        .unwrap_err();
+    *h.store.phase_hook.lock().unwrap() = None;
+    assert!(once.load(Ordering::SeqCst));
+    assert_eq!(error.code, "UPLOAD_INVALID_STATE");
+    assert_eq!(status(&h.store.get("upload-1").unwrap()), "cancelled");
+    assert!(!project.join(".tmp/chat-uploads/upload-1/files").exists());
+}
+
+#[test]
+fn nonduplicate_part_open_io_error_records_failure_and_preserves_original_error() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    inject(&h, "part-open", libc::EACCES);
+    let error = h
+        .store
+        .write_part("upload-1", "file-1", &b"hello"[..])
+        .unwrap_err();
+    assert_eq!(error.code, "EACCES");
+    let record = h.store.get("upload-1").unwrap();
+    assert_eq!(status(&record), "failed");
+    assert_eq!(
+        string(&record, "errorCode").as_deref(),
+        Some("UPLOAD_STREAM_INTERRUPTED")
+    );
+    assert!(
+        !project
+            .join(".tmp/chat-uploads/upload-1/files/file-1")
+            .exists()
+    );
+}
+
+#[test]
+fn upload_inflight_reservation_is_released_after_a_stream_error() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    struct FailedRead;
+    impl Read for FailedRead {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::from_raw_os_error(libc::EIO))
+        }
+    }
+    assert_eq!(
+        h.store
+            .write_part("upload-1", "file-1", FailedRead)
+            .unwrap_err()
+            .code,
+        "EIO"
+    );
+    let gate = h.store.updates.lock().unwrap().get("upload-1").cloned();
+    if let Some(gate) = gate {
+        assert!(
+            gate.lock().unwrap().in_flight_parts.is_empty(),
+            "returning stream error must release the per-part reservation"
+        );
+    }
+    assert_eq!(status(&h.store.get("upload-1").unwrap()), "failed");
+}

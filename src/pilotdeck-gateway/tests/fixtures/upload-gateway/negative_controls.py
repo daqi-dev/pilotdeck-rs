@@ -449,27 +449,184 @@ mutations = [
      READ_AT_LINKED_ANCESTOR,
      '#1887 the read side must keep its lexical prefix check'),
     # #1646: sweep robustness — each mutation restores one TS-parity weakness.
-    ('cleanup-bad-record-aborts', STORE, '''                Ok(None) => {
-                    self.reclaim_orphan(&root_real, &dir);
-                    continue;
+    ('cleanup-bad-record-aborts', STORE, r'''    fn sweep_expired_records(&self, project: &Path, count: &mut usize) {
+        // `read_dir` and `remove_dir_all` follow intermediate symlinks, while a
+        // `symlink_metadata` on `root/<id>` does not: with a symlinked root the
+        // orphan branch below would delete directories outside the project.
+        // `read_at`'s containment check never sees those directories (no
+        // metadata.json), so gate the whole record sweep on a plain root.
+        let root_real = match plain_root(project, "chat-uploads") {
+            PlainRoot::Plain(root) => root,
+            // No uploads yet: the ordinary empty state, as silent as the old
+            // `names()` on a missing directory.
+            PlainRoot::Missing => return,
+            PlainRoot::Blocked => {
+                self.log_cleanup(format!(
+                    "[uploads] cleanup skipped {}: uploads root is not a plain directory",
+                    project.join(".tmp/chat-uploads").display()
+                ));
+                return;
+            }
+        };
+        // `root` is already resolved and already checked to be exactly
+        // `<project>/.tmp/chat-uploads`; keep it for the whole round. Every
+        // containment check below compares a *freshly* resolved entry against
+        // it. Re-resolving the root per entry would follow a symlink swapped
+        // in mid-sweep and make both sides of the check agree, turning the
+        // guard into a no-op for the rest of the round.
+        for id in names(&root_real).into_iter().filter(|id| safe_id(id)) {
+            let dir = root_real.join(&id);
+            self.phase(&id, "sweep-before-gate");
+            let gate = self.update_gate(&id);
+            (|| {
+                let _guard = gate.lock().unwrap();
+                self.phase(&id, "sweep-inside-gate");
+                let record = match self.read_at(project, &id) {
+                    Ok(Some(record)) => record,
+                    // No metadata.json: not a record this round — either crash
+                    // debris or a create that has not reached its metadata write
+                    // yet. Age decides (see `reclaim_orphan`).
+                    Ok(None) => {
+                        self.reclaim_orphan(&root_real, &dir);
+                        return;
+                    }
+                    Err(e) => {
+                        self.skip_record(&dir, &e);
+                        return;
+                    }
+                };
+                match future(&record, "expiresAt", (self.options.now)()) {
+                    Ok(true) => return,
+                    Ok(false) => {}
+                    Err(e) => {
+                        self.skip_record(&dir, &e);
+                        return;
+                    }
                 }
-                Err(e) => {
-                    self.skip_record(&dir, &e);
-                    continue;
-                }''', '''                Ok(None) => {
-                    self.reclaim_orphan(&root_real, &dir);
-                    continue;
-                }
-                Err(e) => {
+                // The record branch deletes too, so it needs the same guard as the
+                // orphan branch: compare the entry as resolved *now* with the
+                // round-start root snapshot. Without it, a root swapped for a
+                // symlink mid-round turns every remaining record into a delete
+                // outside the project.
+                if !inside_root(&root_real, &dir) {
+                    self.log_cleanup(format!(
+                        "[uploads] cleanup skipped {}: outside the uploads root",
+                        dir.display()
+                    ));
                     return;
-                }''', SWEEP,
+                }
+                match self
+                    .fault("record-rm", &dir)
+                    .and_then(|()| remove_tree(&dir))
+                {
+                    Ok(()) => *count += 1,
+                    Err(e) => self.skip_record(&dir, &e),
+                }
+            })();
+            // Keep rejected mutation queues, but do not accumulate a healthy
+            // map entry for every upload removed by a sweep.
+            let state = gate.lock().unwrap();
+            let mut updates = self.updates.lock().unwrap();
+            if state.failure.is_none() && Arc::strong_count(&gate) == 2 {
+                updates.remove(&id);
+            }
+        }
+    }
+
+''', r'''    fn sweep_expired_records(&self, project: &Path, count: &mut usize) {
+        // `read_dir` and `remove_dir_all` follow intermediate symlinks, while a
+        // `symlink_metadata` on `root/<id>` does not: with a symlinked root the
+        // orphan branch below would delete directories outside the project.
+        // `read_at`'s containment check never sees those directories (no
+        // metadata.json), so gate the whole record sweep on a plain root.
+        let root_real = match plain_root(project, "chat-uploads") {
+            PlainRoot::Plain(root) => root,
+            // No uploads yet: the ordinary empty state, as silent as the old
+            // `names()` on a missing directory.
+            PlainRoot::Missing => return,
+            PlainRoot::Blocked => {
+                self.log_cleanup(format!(
+                    "[uploads] cleanup skipped {}: uploads root is not a plain directory",
+                    project.join(".tmp/chat-uploads").display()
+                ));
+                return;
+            }
+        };
+        // `root` is already resolved and already checked to be exactly
+        // `<project>/.tmp/chat-uploads`; keep it for the whole round. Every
+        // containment check below compares a *freshly* resolved entry against
+        // it. Re-resolving the root per entry would follow a symlink swapped
+        // in mid-sweep and make both sides of the check agree, turning the
+        // guard into a no-op for the rest of the round.
+        for id in names(&root_real).into_iter().filter(|id| safe_id(id)) {
+            let dir = root_real.join(&id);
+            self.phase(&id, "sweep-before-gate");
+            let gate = self.update_gate(&id);
+            let mut abort_sweep = false;
+            (|| {
+                let _guard = gate.lock().unwrap();
+                self.phase(&id, "sweep-inside-gate");
+                let record = match self.read_at(project, &id) {
+                    Ok(Some(record)) => record,
+                    // No metadata.json: not a record this round — either crash
+                    // debris or a create that has not reached its metadata write
+                    // yet. Age decides (see `reclaim_orphan`).
+                    Ok(None) => {
+                        self.reclaim_orphan(&root_real, &dir);
+                        return;
+                    }
+                    Err(_) => {
+                        abort_sweep = true;
+                        return;
+                    }
+                };
+                match future(&record, "expiresAt", (self.options.now)()) {
+                    Ok(true) => return,
+                    Ok(false) => {}
+                    Err(e) => {
+                        self.skip_record(&dir, &e);
+                        return;
+                    }
+                }
+                // The record branch deletes too, so it needs the same guard as the
+                // orphan branch: compare the entry as resolved *now* with the
+                // round-start root snapshot. Without it, a root swapped for a
+                // symlink mid-round turns every remaining record into a delete
+                // outside the project.
+                if !inside_root(&root_real, &dir) {
+                    self.log_cleanup(format!(
+                        "[uploads] cleanup skipped {}: outside the uploads root",
+                        dir.display()
+                    ));
+                    return;
+                }
+                match self
+                    .fault("record-rm", &dir)
+                    .and_then(|()| remove_tree(&dir))
+                {
+                    Ok(()) => *count += 1,
+                    Err(e) => self.skip_record(&dir, &e),
+                }
+            })();
+            if abort_sweep { return; }
+            // Keep rejected mutation queues, but do not accumulate a healthy
+            // map entry for every upload removed by a sweep.
+            let state = gate.lock().unwrap();
+            let mut updates = self.updates.lock().unwrap();
+            if state.failure.is_none() && Arc::strong_count(&gate) == 2 {
+                updates.remove(&id);
+            }
+        }
+    }
+
+''', SWEEP,
      'bad record aborts the sweep'),
-    ('cleanup-orphan-reclaim-removed', STORE, '''                Ok(None) => {
-                    self.reclaim_orphan(&root_real, &dir);
-                    continue;
-                }''', '''                Ok(None) => {
-                    continue;
-                }''', ORPHAN,
+    ('cleanup-orphan-reclaim-removed', STORE, r'''                    Ok(None) => {
+                        self.reclaim_orphan(&root_real, &dir);
+                        return;
+                    }''', r'''                    Ok(None) => {
+                        return;
+                    }''', ORPHAN,
      'an orphan past the upload retention is reclaimed'),
     ('cleanup-orphan-fresh-deleted', STORE,
      '        if since_epoch.as_millis() as i64 >= (self.options.now)() - self.options.retention_ms {',
@@ -523,19 +680,177 @@ mutations = [
         };''', '''        let root_real =
             fs::canonicalize(project.join(".tmp/chat-uploads")).unwrap_or_default();''', SYMLINK_ROOT,
      'a symlinked uploads root must not be swept'),
-    ('cleanup-record-rm-aborts', STORE, '''            match self
-                .fault("record-rm", &dir)
-                .and_then(|()| remove_tree(&dir))
-            {
-                Ok(()) => *count += 1,
-                Err(e) => self.skip_record(&dir, &e),
-            }''', '''            match self
-                .fault("record-rm", &dir)
-                .and_then(|()| remove_tree(&dir))
-            {
-                Ok(()) => *count += 1,
-                Err(_) => return,
-            }''', RECORD_RM,
+    ('cleanup-record-rm-aborts', STORE, r'''    fn sweep_expired_records(&self, project: &Path, count: &mut usize) {
+        // `read_dir` and `remove_dir_all` follow intermediate symlinks, while a
+        // `symlink_metadata` on `root/<id>` does not: with a symlinked root the
+        // orphan branch below would delete directories outside the project.
+        // `read_at`'s containment check never sees those directories (no
+        // metadata.json), so gate the whole record sweep on a plain root.
+        let root_real = match plain_root(project, "chat-uploads") {
+            PlainRoot::Plain(root) => root,
+            // No uploads yet: the ordinary empty state, as silent as the old
+            // `names()` on a missing directory.
+            PlainRoot::Missing => return,
+            PlainRoot::Blocked => {
+                self.log_cleanup(format!(
+                    "[uploads] cleanup skipped {}: uploads root is not a plain directory",
+                    project.join(".tmp/chat-uploads").display()
+                ));
+                return;
+            }
+        };
+        // `root` is already resolved and already checked to be exactly
+        // `<project>/.tmp/chat-uploads`; keep it for the whole round. Every
+        // containment check below compares a *freshly* resolved entry against
+        // it. Re-resolving the root per entry would follow a symlink swapped
+        // in mid-sweep and make both sides of the check agree, turning the
+        // guard into a no-op for the rest of the round.
+        for id in names(&root_real).into_iter().filter(|id| safe_id(id)) {
+            let dir = root_real.join(&id);
+            self.phase(&id, "sweep-before-gate");
+            let gate = self.update_gate(&id);
+            (|| {
+                let _guard = gate.lock().unwrap();
+                self.phase(&id, "sweep-inside-gate");
+                let record = match self.read_at(project, &id) {
+                    Ok(Some(record)) => record,
+                    // No metadata.json: not a record this round — either crash
+                    // debris or a create that has not reached its metadata write
+                    // yet. Age decides (see `reclaim_orphan`).
+                    Ok(None) => {
+                        self.reclaim_orphan(&root_real, &dir);
+                        return;
+                    }
+                    Err(e) => {
+                        self.skip_record(&dir, &e);
+                        return;
+                    }
+                };
+                match future(&record, "expiresAt", (self.options.now)()) {
+                    Ok(true) => return,
+                    Ok(false) => {}
+                    Err(e) => {
+                        self.skip_record(&dir, &e);
+                        return;
+                    }
+                }
+                // The record branch deletes too, so it needs the same guard as the
+                // orphan branch: compare the entry as resolved *now* with the
+                // round-start root snapshot. Without it, a root swapped for a
+                // symlink mid-round turns every remaining record into a delete
+                // outside the project.
+                if !inside_root(&root_real, &dir) {
+                    self.log_cleanup(format!(
+                        "[uploads] cleanup skipped {}: outside the uploads root",
+                        dir.display()
+                    ));
+                    return;
+                }
+                match self
+                    .fault("record-rm", &dir)
+                    .and_then(|()| remove_tree(&dir))
+                {
+                    Ok(()) => *count += 1,
+                    Err(e) => self.skip_record(&dir, &e),
+                }
+            })();
+            // Keep rejected mutation queues, but do not accumulate a healthy
+            // map entry for every upload removed by a sweep.
+            let state = gate.lock().unwrap();
+            let mut updates = self.updates.lock().unwrap();
+            if state.failure.is_none() && Arc::strong_count(&gate) == 2 {
+                updates.remove(&id);
+            }
+        }
+    }
+
+''', r'''    fn sweep_expired_records(&self, project: &Path, count: &mut usize) {
+        // `read_dir` and `remove_dir_all` follow intermediate symlinks, while a
+        // `symlink_metadata` on `root/<id>` does not: with a symlinked root the
+        // orphan branch below would delete directories outside the project.
+        // `read_at`'s containment check never sees those directories (no
+        // metadata.json), so gate the whole record sweep on a plain root.
+        let root_real = match plain_root(project, "chat-uploads") {
+            PlainRoot::Plain(root) => root,
+            // No uploads yet: the ordinary empty state, as silent as the old
+            // `names()` on a missing directory.
+            PlainRoot::Missing => return,
+            PlainRoot::Blocked => {
+                self.log_cleanup(format!(
+                    "[uploads] cleanup skipped {}: uploads root is not a plain directory",
+                    project.join(".tmp/chat-uploads").display()
+                ));
+                return;
+            }
+        };
+        // `root` is already resolved and already checked to be exactly
+        // `<project>/.tmp/chat-uploads`; keep it for the whole round. Every
+        // containment check below compares a *freshly* resolved entry against
+        // it. Re-resolving the root per entry would follow a symlink swapped
+        // in mid-sweep and make both sides of the check agree, turning the
+        // guard into a no-op for the rest of the round.
+        for id in names(&root_real).into_iter().filter(|id| safe_id(id)) {
+            let dir = root_real.join(&id);
+            self.phase(&id, "sweep-before-gate");
+            let gate = self.update_gate(&id);
+            let mut abort_sweep = false;
+            (|| {
+                let _guard = gate.lock().unwrap();
+                self.phase(&id, "sweep-inside-gate");
+                let record = match self.read_at(project, &id) {
+                    Ok(Some(record)) => record,
+                    // No metadata.json: not a record this round — either crash
+                    // debris or a create that has not reached its metadata write
+                    // yet. Age decides (see `reclaim_orphan`).
+                    Ok(None) => {
+                        self.reclaim_orphan(&root_real, &dir);
+                        return;
+                    }
+                    Err(e) => {
+                        self.skip_record(&dir, &e);
+                        return;
+                    }
+                };
+                match future(&record, "expiresAt", (self.options.now)()) {
+                    Ok(true) => return,
+                    Ok(false) => {}
+                    Err(e) => {
+                        self.skip_record(&dir, &e);
+                        return;
+                    }
+                }
+                // The record branch deletes too, so it needs the same guard as the
+                // orphan branch: compare the entry as resolved *now* with the
+                // round-start root snapshot. Without it, a root swapped for a
+                // symlink mid-round turns every remaining record into a delete
+                // outside the project.
+                if !inside_root(&root_real, &dir) {
+                    self.log_cleanup(format!(
+                        "[uploads] cleanup skipped {}: outside the uploads root",
+                        dir.display()
+                    ));
+                    return;
+                }
+                match self
+                    .fault("record-rm", &dir)
+                    .and_then(|()| remove_tree(&dir))
+                {
+                    Ok(()) => *count += 1,
+                    Err(_) => { abort_sweep = true; },
+                }
+            })();
+            if abort_sweep { return; }
+            // Keep rejected mutation queues, but do not accumulate a healthy
+            // map entry for every upload removed by a sweep.
+            let state = gate.lock().unwrap();
+            let mut updates = self.updates.lock().unwrap();
+            if state.failure.is_none() && Arc::strong_count(&gate) == 2 {
+                updates.remove(&id);
+            }
+        }
+    }
+
+''', RECORD_RM,
      'a failed record removal does not stop the sweep'),
     # #1646 review r2: the plain-root gate only covers the round start; the
     # entry must be measured against the root snapshotted when the round began.
@@ -559,14 +874,14 @@ mutations = [
         };''', '''        let root_real =
             fs::canonicalize(project.join(".tmp/chat-upload-leases")).unwrap_or_default();''', LEASE_SYMLINK,
      'a symlinked leases root must not be swept'),
-    ('cleanup-record-rm-follows-swapped-root', STORE, '''            if !inside_root(&root_real, &dir) {
-                self.log_cleanup(format!(
-                    "[uploads] cleanup skipped {}: outside the uploads root",
-                    dir.display()
-                ));
-                continue;
-            }
-''', '', SWAP_RECORD,
+    ('cleanup-record-rm-follows-swapped-root', STORE, r'''                if !inside_root(&root_real, &dir) {
+                    self.log_cleanup(format!(
+                        "[uploads] cleanup skipped {}: outside the uploads root",
+                        dir.display()
+                    ));
+                    return;
+                }
+''', r'''''', SWAP_RECORD,
      'a record delete must not follow a root swapped mid-round'),
     ('cleanup-lease-entry-symlink-swept', STORE, '''                if canonical_home(&dir, &root_real, &root_real).is_none() {
                     self.log_cleanup(format!(
@@ -664,60 +979,62 @@ mutations = [
     # tree; the mutant is its pre-#1850 shape — the bare `remove_tree` after
     # the in-gate transition, which follows a `.tmp` swapped during cancel's
     # record read / mutate rewrite window.
-    ('cancel-remove-tree-ungated', STORE, '''        if cancelled {
-            let project = PathBuf::from(string(&updated, "projectKey").unwrap_or_default());
-            let dir = task_dir(&updated).join("files");
-            let root_real = match plain_root(&project, "chat-uploads") {
-                PlainRoot::Plain(root) => root,
-                // The record was just read from this tree, so `Missing` means
-                // the whole task directory is gone: the same quiet no-op the
-                // bare `remove_tree` gave.
-                PlainRoot::Missing => return Ok(updated),
-                PlainRoot::Blocked => {
-                    self.log_cleanup(format!(
+    ('cancel-remove-tree-ungated', STORE, r'''                if cancelled.get() {
+                    let project = PathBuf::from(string(updated, "projectKey").unwrap_or_default());
+                    let dir = task_dir(updated).join("files");
+                    let root_real = match plain_root(&project, "chat-uploads") {
+                        PlainRoot::Plain(root) => root,
+                        // The record was just read from this tree, so `Missing` means
+                        // the whole task directory is gone: the same quiet no-op the
+                        // bare `remove_tree` gave.
+                        PlainRoot::Missing => return Ok(()),
+                        PlainRoot::Blocked => {
+                            self.log_cleanup(format!(
                         "[uploads] cancel skipped {}: uploads root is not a plain directory",
                         project.join(".tmp/chat-uploads").display()
                     ));
-                    return Ok(updated);
-                }
-            };
-            // fix-r1 (minimax concurrency#2 arbitration): `inside_root` alone
-            // passes a linked `<id>` whose resolution stays inside the root —
-            // a deterministic alias onto another upload. The component walk
-            // `canonical_home` uses for the lease/store roots refuses every
-            // link component down to `files`; the residual between the walk
-            // and `remove_tree` is the instruction-level TOCTOU family the
-            // A8 ledger registers.
-            if canonical_home(&dir, &project, &root_real).is_none() {
-                self.log_cleanup(format!(
+                            return Ok(());
+                        }
+                    };
+                    // fix-r1 (minimax concurrency#2 arbitration): `inside_root` alone
+                    // passes a linked `<id>` whose resolution stays inside the root —
+                    // a deterministic alias onto another upload. The component walk
+                    // `canonical_home` uses for the lease/store roots refuses every
+                    // link component down to `files`; the residual between the walk
+                    // and `remove_tree` is the instruction-level TOCTOU family the
+                    // A8 ledger registers.
+                    if canonical_home(&dir, &project, &root_real).is_none() {
+                        self.log_cleanup(format!(
                     "[uploads] cancel skipped {}: outside the uploads root or a linked task dir",
                     dir.display()
                 ));
-                return Ok(updated);
-            }
-            remove_tree(&dir)?;
-        }''', '''        if cancelled {
-            remove_tree(&task_dir(&updated).join("files"))?;
-        }''', CANCEL_ROOT_SWAP,
+                        return Ok(());
+                    }
+                    remove_tree(&dir)?;
+                }
+''', r'''                if cancelled.get() {
+                    remove_tree(&task_dir(updated).join("files"))?;
+                }
+''', CANCEL_ROOT_SWAP,
      'a cancel delete must not follow a root swapped mid-mutate'),
     # #1850 + fix-r1: the plain-root gate alone is not enough — the record's
     # task directory itself can be the swapped component, so the delete needs
     # the per-entry gate; the row drops the whole gate block.
-    ('cancel-delete-gate-dropped', STORE, '''            // fix-r1 (minimax concurrency#2 arbitration): `inside_root` alone
-            // passes a linked `<id>` whose resolution stays inside the root —
-            // a deterministic alias onto another upload. The component walk
-            // `canonical_home` uses for the lease/store roots refuses every
-            // link component down to `files`; the residual between the walk
-            // and `remove_tree` is the instruction-level TOCTOU family the
-            // A8 ledger registers.
-            if canonical_home(&dir, &project, &root_real).is_none() {
-                self.log_cleanup(format!(
+    ('cancel-delete-gate-dropped', STORE, r'''                    // fix-r1 (minimax concurrency#2 arbitration): `inside_root` alone
+                    // passes a linked `<id>` whose resolution stays inside the root —
+                    // a deterministic alias onto another upload. The component walk
+                    // `canonical_home` uses for the lease/store roots refuses every
+                    // link component down to `files`; the residual between the walk
+                    // and `remove_tree` is the instruction-level TOCTOU family the
+                    // A8 ledger registers.
+                    if canonical_home(&dir, &project, &root_real).is_none() {
+                        self.log_cleanup(format!(
                     "[uploads] cancel skipped {}: outside the uploads root or a linked task dir",
                     dir.display()
                 ));
-                return Ok(updated);
-            }
-''', '', CANCEL_TASK_SWAP,
+                        return Ok(());
+                    }
+''', r'''''', CANCEL_TASK_SWAP,
      'a cancel delete must not follow a task dir swapped mid-mutate'),
     # fix-r1 (minimax concurrency#2 arbitration): downgrading the component
     # walk back to the containment-only comparison re-opens the deterministic
@@ -818,7 +1135,7 @@ mutations = [
     # schedules 'both callers passed the snapshot, neither entered the gate'.
     # Reverting only one of the two is gate-order-dependent (flaky), so the
     # row reverts the pair together and the kill is deterministic round 1.
-    ('pair-verdicts-outside-gate', STORE, '''    pub fn complete(&self, upload_id: &str) -> Result<UploadRecord> {
+    ('pair-verdicts-outside-gate', STORE, r'''    pub fn complete(&self, upload_id: &str) -> Result<UploadRecord> {
         let record = self.get(upload_id)?;
         // #2276/#2279 test rendezvous (see `set_pre_mutate_hook`).
         self.pre_mutate();
@@ -847,14 +1164,11 @@ mutations = [
         }
     }
 
-    /// Same #1631 gate-internal verdict as [`Self::complete`]: only the
-    /// in-gate transition to `cancelled` is followed by `remove_tree`, so a
-    /// `completed` record's files survive a racing cancel. The `remove_tree`
-    /// itself still runs after the gate (the module-doc pair scope and #1503
-    /// cover what a concurrently in-flight `write_part` can interleave).
+    /// Cancellation's durable transition and protected file removal own the
+    /// same gate as part preparation/commit. External Read never owns it.
     ///
     /// #1850: that delete is the fourth removal point on the `chat-uploads`
-    /// tree, and unlike the sweeps it runs after the whole `mutate` rewrite —
+    /// tree, and the deletion follows the metadata write while still owning its gate —
     /// a window wide enough to swap `.tmp` (or the task directory itself) for
     /// a symlink, which `remove_tree` would follow out of the project. The
     /// status transition is already durable at that point, so a refused
@@ -866,101 +1180,163 @@ mutations = [
         // #2276/#2279 test rendezvous (see `set_pre_mutate_hook`).
         self.pre_mutate();
         let mut refusal: Option<UploadError> = None;
-        let mut cancelled = false;
-        let updated = self.mutate(&record, |r| {
-            if active(r) {
-                set(r, "status", text("cancelled"));
-                cancelled = true;
-                true
-            } else if status(r) == "completed" {
-                refusal = Some(UploadError::dialog(
-                    "UPLOAD_ALREADY_COMPLETED",
-                    "Completed uploads cannot be cancelled.",
-                ));
-                false
-            } else {
-                // #2275: cancelling a cancelled (or otherwise settled) upload
-                // is a no-op, not a change: nothing to write or emit.
-                false
-            }
-        })?;
-        if let Some(e) = refusal {
-            return Err(e);
-        }
-        if cancelled {
-            let project = PathBuf::from(string(&updated, "projectKey").unwrap_or_default());
-            let dir = task_dir(&updated).join("files");
-            let root_real = match plain_root(&project, "chat-uploads") {
-                PlainRoot::Plain(root) => root,
-                // The record was just read from this tree, so `Missing` means
-                // the whole task directory is gone: the same quiet no-op the
-                // bare `remove_tree` gave.
-                PlainRoot::Missing => return Ok(updated),
-                PlainRoot::Blocked => {
-                    self.log_cleanup(format!(
+        let cancelled = std::cell::Cell::new(false);
+        let updated = self.mutate_then(
+            &record,
+            |r| {
+                if active(r) {
+                    set(r, "status", text("cancelled"));
+                    cancelled.set(true);
+                    true
+                } else if status(r) == "completed" {
+                    refusal = Some(UploadError::dialog(
+                        "UPLOAD_ALREADY_COMPLETED",
+                        "Completed uploads cannot be cancelled.",
+                    ));
+                    false
+                } else {
+                    // #2275: cancelling a cancelled (or otherwise settled) upload
+                    // is a no-op, not a change: nothing to write or emit.
+                    false
+                }
+            },
+            |updated| {
+                if cancelled.get() {
+                    let project = PathBuf::from(string(updated, "projectKey").unwrap_or_default());
+                    let dir = task_dir(updated).join("files");
+                    let root_real = match plain_root(&project, "chat-uploads") {
+                        PlainRoot::Plain(root) => root,
+                        // The record was just read from this tree, so `Missing` means
+                        // the whole task directory is gone: the same quiet no-op the
+                        // bare `remove_tree` gave.
+                        PlainRoot::Missing => return Ok(()),
+                        PlainRoot::Blocked => {
+                            self.log_cleanup(format!(
                         "[uploads] cancel skipped {}: uploads root is not a plain directory",
                         project.join(".tmp/chat-uploads").display()
                     ));
-                    return Ok(updated);
-                }
-            };
-            // fix-r1 (minimax concurrency#2 arbitration): `inside_root` alone
-            // passes a linked `<id>` whose resolution stays inside the root —
-            // a deterministic alias onto another upload. The component walk
-            // `canonical_home` uses for the lease/store roots refuses every
-            // link component down to `files`; the residual between the walk
-            // and `remove_tree` is the instruction-level TOCTOU family the
-            // A8 ledger registers.
-            if canonical_home(&dir, &project, &root_real).is_none() {
-                self.log_cleanup(format!(
+                            return Ok(());
+                        }
+                    };
+                    // fix-r1 (minimax concurrency#2 arbitration): `inside_root` alone
+                    // passes a linked `<id>` whose resolution stays inside the root —
+                    // a deterministic alias onto another upload. The component walk
+                    // `canonical_home` uses for the lease/store roots refuses every
+                    // link component down to `files`; the residual between the walk
+                    // and `remove_tree` is the instruction-level TOCTOU family the
+                    // A8 ledger registers.
+                    if canonical_home(&dir, &project, &root_real).is_none() {
+                        self.log_cleanup(format!(
                     "[uploads] cancel skipped {}: outside the uploads root or a linked task dir",
                     dir.display()
                 ));
-                return Ok(updated);
-            }
-            remove_tree(&dir)?;
+                        return Ok(());
+                    }
+                    remove_tree(&dir)?;
+                }
+                Ok(())
+            },
+        )?;
+        if let Some(e) = refusal {
+            return Err(e);
         }
         Ok(updated)
     }
 
-''', '''    pub fn complete(&self, upload_id: &str) -> Result<UploadRecord> {
+''', r'''    pub fn complete(&self, upload_id: &str) -> Result<UploadRecord> {
         let record = self.get(upload_id)?;
         // #2276/#2279 test rendezvous (see `set_pre_mutate_hook`).
         self.pre_mutate();
         require_active(&record)?;
-        if array(&record, "manifest")
-            .iter()
-            .any(|m| !array(&record, "receivedClientFileIds").contains(&value(m, "clientFileId")))
-        {
-            let message = JsString::from("One or more declared files were not uploaded.");
-            self.fail(upload_id, "UPLOAD_MANIFEST_MISMATCH", &message)?;
-            return Err(UploadError::dialog("UPLOAD_MANIFEST_MISMATCH", message));
-        }
-        self.mutate(&record, |r| {
-            set(r, "status", text("completed"));
-            set(r, "uploadedBytes", value(r, "totalBytes"));
+        let mut refusal: Option<UploadError> = None;
+        let updated = self.mutate(&record, |r| {
+            if array(r, "manifest")
+                .iter()
+                .any(|m| !array(r, "receivedClientFileIds").contains(&value(m, "clientFileId")))
+            {
+                let message = JsString::from("One or more declared files were not uploaded.");
+                mark_failed(r, "UPLOAD_MANIFEST_MISMATCH", &message);
+                refusal = Some(UploadError::dialog("UPLOAD_MANIFEST_MISMATCH", message));
+            } else {
+                set(r, "status", text("completed"));
+                set(r, "uploadedBytes", value(r, "totalBytes"));
+            }
             true
-        })
+        })?;
+        match refusal {
+            Some(e) => Err(e),
+            None => Ok(updated),
+        }
     }
 
+    /// Cancellation's durable transition and protected file removal own the
+    /// same gate as part preparation/commit. External Read never owns it.
+    ///
+    /// #1850: that delete is the fourth removal point on the `chat-uploads`
+    /// tree, and the deletion follows the metadata write while still owning its gate —
+    /// a window wide enough to swap `.tmp` (or the task directory itself) for
+    /// a symlink, which `remove_tree` would follow out of the project. The
+    /// status transition is already durable at that point, so a refused
+    /// delete is logged and skipped, never a `cancel` error: the record is
+    /// cancelled either way, and the sweep's "rather not delete" trade-off
+    /// (A8-UPLOAD-CLEANUP-ROBUSTNESS-001) applies unchanged.
     pub fn cancel(&self, upload_id: &str) -> Result<UploadRecord> {
         let record = self.get(upload_id)?;
         // #2276/#2279 test rendezvous (see `set_pre_mutate_hook`).
         self.pre_mutate();
         if status(&record) == "completed" {
-            return Err(UploadError::dialog(
-                "UPLOAD_ALREADY_COMPLETED",
-                "Completed uploads cannot be cancelled.",
-            ));
+            return Err(UploadError::dialog("UPLOAD_ALREADY_COMPLETED", "Completed uploads cannot be cancelled."));
         }
-        if !active(&record) {
-            return Ok(record);
+        if !active(&record) { return Ok(record); }
+        let refusal: Option<UploadError> = None;
+        let cancelled = std::cell::Cell::new(false);
+        let updated = self.mutate_then(
+            &record,
+            |r| {
+                set(r, "status", text("cancelled"));
+                cancelled.set(true);
+                true
+            },
+            |updated| {
+                if cancelled.get() {
+                    let project = PathBuf::from(string(updated, "projectKey").unwrap_or_default());
+                    let dir = task_dir(updated).join("files");
+                    let root_real = match plain_root(&project, "chat-uploads") {
+                        PlainRoot::Plain(root) => root,
+                        // The record was just read from this tree, so `Missing` means
+                        // the whole task directory is gone: the same quiet no-op the
+                        // bare `remove_tree` gave.
+                        PlainRoot::Missing => return Ok(()),
+                        PlainRoot::Blocked => {
+                            self.log_cleanup(format!(
+                        "[uploads] cancel skipped {}: uploads root is not a plain directory",
+                        project.join(".tmp/chat-uploads").display()
+                    ));
+                            return Ok(());
+                        }
+                    };
+                    // fix-r1 (minimax concurrency#2 arbitration): `inside_root` alone
+                    // passes a linked `<id>` whose resolution stays inside the root —
+                    // a deterministic alias onto another upload. The component walk
+                    // `canonical_home` uses for the lease/store roots refuses every
+                    // link component down to `files`; the residual between the walk
+                    // and `remove_tree` is the instruction-level TOCTOU family the
+                    // A8 ledger registers.
+                    if canonical_home(&dir, &project, &root_real).is_none() {
+                        self.log_cleanup(format!(
+                    "[uploads] cancel skipped {}: outside the uploads root or a linked task dir",
+                    dir.display()
+                ));
+                        return Ok(());
+                    }
+                    remove_tree(&dir)?;
+                }
+                Ok(())
+            },
+        )?;
+        if let Some(e) = refusal {
+            return Err(e);
         }
-        let updated = self.mutate(&record, |r| {
-            set(r, "status", text("cancelled"));
-            true
-        })?;
-        remove_tree(&task_dir(&updated).join("files"))?;
         Ok(updated)
     }
 
@@ -971,26 +1347,28 @@ mutations = [
     # it to the pre-fix outside-snapshot fallback (with the pre-#2275
     # unconditional change, the exact pre-batch shape), so a swept record is
     # resurrected and reported completed again.
-    ('mutate-reread-falls-back-to-outside-snapshot', STORE, '''            let mut current = self.read_at(&project, &id)?.ok_or_else(|| {
+    ('mutate-reread-falls-back-to-outside-snapshot', STORE, r'''            let mut current = self.read_at(&project, &id)?.ok_or_else(|| {
                 UploadError::dialog("UPLOAD_NOT_FOUND", format!("Unknown uploadId: {id}"))
             })?;
-            if !change(&mut current) {
+            if !change(&mut current, &mut state, &gate) {
                 return Ok(current);
             }
-''', '''            let mut current = self
+''', r'''            let mut current = self
                 .read_at(&project, &id)?
                 .unwrap_or_else(|| record.clone());
-            change(&mut current);
+            if !change(&mut current, &mut state, &gate) {
+                return Ok(current);
+            }
 ''', 'upload::tests::upload_complete_after_the_sweep_removed_the_record_refuses_without_resurrecting',
      '#2279 complete reported success over a swept record'),
     # #2275 (review fix-r1, same reviewers): the no-change gate is a defense —
     # dropping it restores the pre-fix "every verdict rewrites the record",
     # so an injected metadata-write failure answers in place of the refusal's
     # semantic code.
-    ('mutate-no-change-gate-dropped', STORE, '''            if !change(&mut current) {
+    ('mutate-no-change-gate-dropped', STORE, r'''            if !change(&mut current, &mut state, &gate) {
                 return Ok(current);
             }
-''', '''            change(&mut current);
+''', r'''            change(&mut current, &mut state, &gate);
 ''', 'upload::tests::upload_refusals_write_nothing_emit_nothing_and_do_not_poison_the_gate',
      '#2275 the refusal answers its semantic code, not the injected write fault'),
 ]
