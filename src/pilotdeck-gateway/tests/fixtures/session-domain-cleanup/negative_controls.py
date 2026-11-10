@@ -77,6 +77,7 @@ COMMON_SOURCE = ROOT / 'scripts/gateway-parity/common.py'
 # itself.
 GUARD_SOURCE = ROOT / 'scripts/gateway-parity/_guard.py'
 LINUX_SOURCE = ROOT / 'scripts/gateway-parity/linux_group_cleanup.py'
+LINUX_CHECK = Path(__file__).resolve().with_name('check_linux.py')
 CHECK = Path(__file__).resolve().with_name('check_cleanup.py')
 NEGATIVE = Path(__file__).resolve()
 # #892 fix-r25: the ``rel`` the audit reports for the two fixture files, so a
@@ -1828,6 +1829,35 @@ def controls_nested_same_name(rows):
 # JUDGES below: #820's anchor selfcheck reads literal replacement tables only,
 # so callables stay out of MUTATIONS.
 MUTATIONS = [
+    ('linux-initial-identity-gate-removed', LINUX_SOURCE,
+     "    if held._state() != 'EXITED':\n        result.update(status=not_verified, reason='Linux leader identity was lost before cleanup proof')",
+     "    if False:\n        result.update(status=not_verified, reason='Linux leader identity was lost before cleanup proof')"),
+    ('linux-pre-reap-identity-gate-removed', LINUX_SOURCE,
+     "        if held._state() != 'EXITED':\n            result.update(status=not_verified, reason='Linux leader identity was lost before reap')",
+     "        if False:\n            result.update(status=not_verified, reason='Linux leader identity was lost before reap')"),
+    ('linux-refusal-erases-finding', LINUX_SOURCE,
+     'result.update(status=not_empty, signalRefused=str(detail),',
+     'result.update(status=not_verified, signalRefused=str(detail),'),
+
+    ('linux-empty-group-probe-removed', LINUX_SOURCE,
+     'status=not_empty if finding else verified,',
+     'status=not_empty,'),
+    ('linux-sigterm-removed', LINUX_SOURCE,
+     '            for sig in (signal.SIGTERM, signal.SIGKILL):',
+     '            for sig in (signal.SIGKILL,):'),
+    ('linux-sigkill-escalation-removed', LINUX_SOURCE,
+     '            for sig in (signal.SIGTERM, signal.SIGKILL):',
+     '            for sig in (signal.SIGTERM,):'),
+    ('linux-positive-finding-dropped-on-denial', LINUX_SOURCE,
+     "status=not_empty if finding or state == 'alive' else blocked,",
+     "status=not_empty if state == 'alive' else verified,"),
+    ('linux-unknown-error-means-empty', LINUX_SOURCE,
+     "state, detail = 'unknown', f'{type(error).__name__}: {error}'",
+     "state, detail = 'unknown', f'{type(error).__name__}: {error}'\n                result.update(status=verified, kernelGroupProbe='unknown');return result"),
+    ('linux-controls-summary-forced-pass', LINUX_CHECK,
+     "    status, exit_code = common.aggregate_status('PASS' if healthy else 'FAIL')",
+     "    status, exit_code = 'PASS', 0"),
+
     ('empty-group-probe-removed', SOURCE,
      "    return 'empty', (f'killpg0=EPERM with the unreaped zombie leader present '\n"
      "                     f'and an empty live-member census: {detail}')",
@@ -2643,20 +2673,20 @@ MUTATIONS = [
     # ``def`` shadows the imported proven source for the whole body, but
     # ``_own_nodes`` prunes definition subtrees so ``local_names`` missed it.
     ('calibrate-nested-def-rebind', NEGATIVE,
-     "    _install_terminate_handlers()\n    known = ",
+     "    _install_terminate_handlers()\n    eligible = applicable_mutations(sys.platform)\n    known = ",
      "    _install_terminate_handlers()\n"
      "    def committed_status_contract(*_a, **_k):\n"
      "        from types import SimpleNamespace\n"
      "        return SimpleNamespace(aggregate_status=lambda *a: ('FAIL', 1))\n"
-     "    known = "),
+     "    eligible = applicable_mutations(sys.platform)\n    known = "),
     # #892 fix-r25 (GLM boundary r24 P0-2): a walrus target binds in the
     # enclosing function scope and no ``Assign`` statement records it.
     ('calibrate-walrus-rebind', NEGATIVE,
-     "    _install_terminate_handlers()\n    known = ",
+     "    _install_terminate_handlers()\n    eligible = applicable_mutations(sys.platform)\n    known = ",
      "    _install_terminate_handlers()\n"
      "    if (committed_status_contract := None) is None:\n"
      "        pass\n"
-     "    known = "),
+     "    eligible = applicable_mutations(sys.platform)\n    known = "),
     # #892 fix-r25 (GLM boundary r24 P1-4 / concurrency r24 P2-4): a
     # ``globals()['<registered name>'] = <stub>`` write moves the module
     # binding with no statement the binding graph can see.
@@ -4251,7 +4281,48 @@ def calibrate_builtins_chain_four(rows):
     """#892 fix-r33: builtins chain four."""
     return _unrouted_status(rows, 'calibrate-builtins-chain-four')
 
+def linux_unknown_error_accepted(rows):
+    matched=[row for row in rows if row.get('mode')=='blocked']
+    if len(matched)!=1:return False,'blocked row missing'
+    row=matched[0];observed_cases=row.get('cases') or []
+    ok=(row.get('passed') is False and row.get('error') is None and len(observed_cases)==2
+        and observed_cases[0].get('case')=='permission-denied' and observed_cases[0].get('processTreeCleanup')=='BLOCKED'
+        and observed_cases[1].get('case')=='oserror-denied' and observed_cases[1].get('processTreeCleanup')=='VERIFIED'
+        and observed_cases[1].get('topLevel')=='PASS')
+    return ok,'generic OSError incorrectly became VERIFIED/PASS after permission denial stayed BLOCKED'
+
+
+def linux_summary_forced_pass(rows):
+    ok,detail=match(rows,'aggregation-audit',{'passed':False})
+    if not ok:return ok,detail
+    row,error=_audit_row(rows)
+    if row is None:return False,error
+    failures=row.get('failures') or []
+    prefix='#892 aggregation-audit: src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_linux.py:summarize_controls '
+    if not any(item.startswith(prefix) for item in failures):return False,repr(failures)
+    return True,'the new Linux summary bypass was found at its own registered function'
+
+
+def linux_kernel_regression(rows,case,field,want):
+    matched=[row for row in rows if row.get('mode')=='linux-kernel-controls']
+    if len(matched)!=1 or matched[0].get('passed') is not False:return False,'Linux kernel control must fail'
+    report=json.loads(Path(matched[0]['report']).read_text())
+    found=[row for row in report.get('rows',[])if row.get('case')==case]
+    if len(found)!=1 or dig(found[0],field)!=want:return False,repr(found)
+    if report.get('errors') or not report.get('failures'):return False,'must be a test assertion failure, not a crash'
+    return True,f'{case}: {field}={want!r}, own control assertion failed'
+
+
 JUDGES = {
+    'linux-initial-identity-gate-removed':('linux-kernel-controls',lambda rows:linux_kernel_regression(rows,'helper-initial-identity','observerCalls',1),False,()),
+    'linux-pre-reap-identity-gate-removed':('linux-kernel-controls',lambda rows:linux_kernel_regression(rows,'helper-pre-reap-identity','result.status','VERIFIED'),False,()),
+    'linux-refusal-erases-finding':('linux-kernel-controls',lambda rows:linux_kernel_regression(rows,'signal-refused-positive-finding','result.status','NOT_VERIFIED'),False,()),
+    'linux-empty-group-probe-removed':('clean',lambda rows:match(rows,'clean',{'processTreeCleanup':'GROUP_NOT_EMPTY','probe.status':'GROUP_NOT_EMPTY'}),True,()),
+    'linux-sigterm-removed':('leak',lambda rows:match(rows,'leak',{'processTreeCleanup':'GROUP_NOT_EMPTY','probe.signal':'SIGKILL'}),True,()),
+    'linux-sigkill-escalation-removed':('ignore',lambda rows:match(rows,'ignore',{'processTreeCleanup':'GROUP_NOT_EMPTY','probe.signal':'SIGTERM','probe.emptyAfterSignal':False}),True,()),
+    'linux-positive-finding-dropped-on-denial':('eperm-live-member',lambda rows:match(rows,'eperm-live-member',{'processTreeCleanup':'VERIFIED','topLevel':'PASS'}),False,()),
+    'linux-unknown-error-means-empty':('blocked',linux_unknown_error_accepted,False,()),
+    'linux-controls-summary-forced-pass':('aggregation-audit',linux_summary_forced_pass,False,()),
     'empty-group-probe-removed': (
         'clean',
         lambda rows: match(rows, 'clean', {
@@ -5006,6 +5077,19 @@ def require_restored(source, digest):
         raise RuntimeError(f'source restore hash mismatch: {source.name}')
 
 
+DARWIN_ONLY = frozenset(('empty-group-probe-removed','sigterm-removed',
+    'sigkill-escalation-removed','eperm-census-ignored','blocked-branch-removed'))
+LINUX_ONLY = frozenset(('linux-initial-identity-gate-removed','linux-pre-reap-identity-gate-removed','linux-refusal-erases-finding','linux-empty-group-probe-removed','linux-sigterm-removed',
+    'linux-sigkill-escalation-removed','linux-positive-finding-dropped-on-denial',
+    'linux-unknown-error-means-empty'))
+
+
+def applicable_mutations(platform):
+    return [row for row in MUTATIONS
+            if (row[0] not in DARWIN_ONLY or platform=='darwin')
+            and (row[0] not in LINUX_ONLY or platform=='linux')]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
@@ -5018,12 +5102,13 @@ def main():
     # file that takes a snapshot, because a dynamic attribute lookup could also
     # reach a mutating capability.
     _install_terminate_handlers()
-    known = {row[0] for row in MUTATIONS}
+    eligible = applicable_mutations(sys.platform)
+    known = {row[0] for row in eligible}
     if set(args.only) - known or len(args.only) != len(set(args.only)):
         common = committed_status_contract(ROOT)
         return common.aggregate_status('BLOCKED')[1]
-    selected = ([row for row in MUTATIONS if row[0] in args.only]
-                if args.only else list(MUTATIONS))
+    selected = ([row for row in eligible if row[0] in args.only]
+                if args.only else list(eligible))
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     (output / 'pgrep-before.txt').write_text(pgrep_launcher())
@@ -5154,6 +5239,9 @@ def main():
                                           for source in sources},
                       'baseline': args.baseline,
                       'selected': [row[0] for row in selected],
+                      'declaredCount':len(MUTATIONS),'applicableCount':len(eligible),
+                      'notApplicable':[row[0]for row in MUTATIONS if row not in eligible],
+                      'hostPlatform':sys.platform,
                       'mutations': summary, 'restoredPass': restored_ok,
                       'restoredStatus': (restored_summary.get('status')
                                          if restored_summary is not None else None),

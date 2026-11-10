@@ -312,7 +312,7 @@ class LockReleaseControls(unittest.TestCase):
         with C.parity_lock(timeout=2, lock=self.lock):
             audit = S.run_fixture(folder, ROOT,
                                   command=[sys.executable, '-I', '-c', 'pass'])
-        expected = S.CLEANUP_VERIFIED if sys.platform == 'darwin' else S.CLEANUP_BLOCKED
+        expected = S.CLEANUP_VERIFIED if sys.platform in ('darwin', 'linux') else S.CLEANUP_BLOCKED
         self.assertTrue(audit.get('processTreeCleanup') == expected,
                         '#1221 lease release preserves the host cleanup score')
         self.assertIs(audit.get('allStopped'), True,

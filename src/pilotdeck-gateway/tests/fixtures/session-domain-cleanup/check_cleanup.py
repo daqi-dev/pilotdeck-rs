@@ -862,6 +862,8 @@ def status_controls(md):
 # each registered point's every return path must route its status/exit
 # computation through the shared function (``unshared_status_slots``).
 AGGREGATION_POINTS = {
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_linux.py', 'summarize_controls'): 'linux-controls-summary',
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_linux.py', 'main'): 'linux-controls-main',
     ('scripts/gateway-parity/_guard.py', '_failure'): 'guard-failure',
     ('scripts/gateway-parity/controls/session_domain.py', 'cleanup_controls'): 'controls-cleanup',
     ('scripts/gateway-parity/controls/session_domain.py', 'run_all'): 'controls-run-all',
@@ -7566,7 +7568,7 @@ def batch_aggregation_control(md, output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--mode', choices=('clean', 'leak', 'ignore', 'blocked', 'status',
+    parser.add_argument('--mode', choices=('linux-kernel-controls', 'clean', 'leak', 'ignore', 'blocked', 'status',
                                            'eperm-live-member', 'identity-lost', 'census-unavailable',
                                            'census-snapshot', 'census-descendant', 'census-unstable',
                                            'census-truncated', 'census-enumeration',
@@ -7582,7 +7584,7 @@ def main():
     md = load_session_domain()
     results = []
     modes = ('clean', 'leak', 'ignore') if args.mode == 'all' else (
-        () if args.mode in ('status', 'runtime-negative', 'blocked', 'wiring',
+        () if args.mode in ('linux-kernel-controls', 'status', 'runtime-negative', 'blocked', 'wiring',
                             'batch-aggregation', 'aggregation-audit',
                             'eperm-live-member', 'identity-lost', 'census-unavailable',
                             'census-snapshot', 'census-descendant', 'census-unstable',
@@ -7664,17 +7666,20 @@ def main():
             result = control_failure('batch-aggregation', error)
         results.append(result)
         print(json.dumps(result, ensure_ascii=False), flush=True)
-    if args.mode == 'all' and sys.platform == 'linux':
+    if args.mode in ('linux-kernel-controls', 'all') and sys.platform == 'linux':
         linux_output = output / 'linux-kernel-controls'
-        child = subprocess.run([sys.executable, '-I', '-B',
-                                str(Path(__file__).with_name('check_linux.py')),
-                                '--output', str(linux_output)], capture_output=True, text=True, timeout=45)
-        (output / 'linux-kernel-controls.log').write_text(child.stdout + child.stderr)
-        document = json.loads((linux_output / 'report.json').read_text())
-        result = {'mode': 'linux-kernel-controls', 'passed': bool(
-            child.returncode == 0 and document.get('status') == 'PASS'
-            and document.get('testsRun') == 8 and not document.get('skipped')
-            and document.get('sourceUnchanged') is True), 'report': str(linux_output / 'report.json')}
+        try:
+            child = subprocess.run([sys.executable, '-I', '-B',
+                                    str(Path(__file__).with_name('check_linux.py')),
+                                    '--output', str(linux_output)], capture_output=True, text=True, timeout=90)
+            (output / 'linux-kernel-controls.log').write_text(child.stdout + child.stderr)
+            document = json.loads((linux_output / 'report.json').read_text())
+            result = {'mode': 'linux-kernel-controls', 'passed': bool(
+                child.returncode == 0 and document.get('status') == 'PASS'
+                and document.get('testsRun') == 11 and not document.get('skipped')
+                and document.get('sourceUnchanged') is True), 'report': str(linux_output / 'report.json')}
+        except Exception as error:
+            result = control_failure('linux-kernel-controls', error)
         results.append(result)
         print(json.dumps(result, ensure_ascii=False), flush=True)
     if args.mode in ('aggregation-audit', 'all'):

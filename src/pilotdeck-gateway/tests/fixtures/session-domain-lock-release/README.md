@@ -28,7 +28,7 @@ Each test uses its own temporary lease root, so the real
 `/tmp/pdrs-parity.lock` is never touched.  `run_fixture` is driven with a fake
 child for the failure injections and once with a real empty process group
 (`python3 -I -c pass`) to prove the gate also releases when the host probe
-returns `VERIFIED` on Darwin or retains `BLOCKED` elsewhere. #1221 additionally
+returns `VERIFIED` on Darwin/Linux or retains `BLOCKED` elsewhere. #1221 additionally
 proves lease-only absence with signal 0 returning ESRCH after the held leader
 was reaped; it never sends TERM/KILL after reap. An existing group is polled
 for at most two seconds, and EPERM/errors retain the lease.

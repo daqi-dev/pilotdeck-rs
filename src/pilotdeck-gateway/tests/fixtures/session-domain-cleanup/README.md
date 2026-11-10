@@ -239,10 +239,7 @@ reused. macOS enumerates the group directly with
 `libproc.proc_listpids(PROC_PGRP_ONLY, pgid, ...)`, not a global pid snapshot
 followed by per-pid `getpgid`, so a member that forks a same-group descendant
 and exits between snapshot and query cannot be missed; two complete snapshots
-must agree. Non-darwin has no equivalent completeness proof (`/proc` can be
-filtered by `hidepid`/permissions), so `probe_process_group` reports `BLOCKED`
-before reading a census or sending a signal; `linux-filtered-proc` pins that
-boundary. A libproc return count equal to the capacity is truncation: the
+must agree. Linux `/proc` is only a positive membership observation; filtered or empty visibility never proves absence. Linux requires kernel ESRCH after reaping the held leader, while EPERM/unknown remains unproven; `linux-filtered-proc` tests that boundary. Other platforms remain BLOCKED before signalling. A libproc return count equal to the capacity is truncation: the
 implementation allocates slack and accepts only a strictly short, 4-byte
 aligned write, growing while full; it never returns a partial group. Enumeration
 failure, truncation, a changing group, or a denied leader probe all record
@@ -268,8 +265,8 @@ not claim to detect that escape.
 `negative_controls.py` uses `negative_process.mutating_sources`, so it refuses
 to run until the #164 change is committed and the named sources are byte-identical
 to HEAD. It mutates the named source one anchor at a time (`session_domain.py`,
-`controls/session_domain.py`, this `check_cleanup.py`, or its own
-`negative_controls.py`), requires the
+`controls/session_domain.py`, `linux_group_cleanup.py`, `check_linux.py`, this
+`check_cleanup.py`, or its own `negative_controls.py`), requires the
 behavior check to fail **for that mutation's own expected fields**, restores the
 bytes, and finally requires the restored source to pass. A stale anchor exits 2
 (`ANCHOR_EXPIRED`), never `SURVIVED`. Environment/startup failures are `INVALID`
@@ -282,7 +279,7 @@ before the summary is decided. No cargo is launched.
 The batch top-level status/exit code is the sole
 `common.aggregate_status()` result over all mutants and the restored positive:
 `KILLED -> PASS`, `SURVIVED -> FAIL`, `INVALID -> BLOCKED`, and the restored
-summary status as-is.  A restored `PASS_WITH_SKIPS` (non-Darwin platform skips)
+summary status as-is.  A restored `PASS_WITH_SKIPS` (unsupported-platform skips)
 therefore makes the batch `PASS_WITH_SKIPS` / exit 1, never `PASS` / exit 0.
 
 ```sh
@@ -304,14 +301,17 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 226 mutants:
+`JUDGES`, keyed by the same names. The current table has 237 declared mutants (232 applicable on Linux, 229 on Darwin):
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
 `eperm-census-ignored`, `unavailable-census-as-empty`, `reap-guard-removed`,
 `snapshot-race-accepted`, `unstable-census-accepted`, `truncation-accepted`,
 `enumeration-failure-empty`, `signal-gate-removed`, `pid-blocked-as-gone`,
-`linux-visible-census-trusted`, `batch-status-relaxed`,
+`linux-visible-census-trusted`, `linux-eperm-means-empty`, `linux-no-esrch-needed`,
+`linux-empty-group-probe-removed`, `linux-sigterm-removed`, `linux-sigkill-escalation-removed`,
+`linux-positive-finding-dropped-on-denial`, `linux-unknown-error-means-empty`,
+`linux-controls-summary-forced-pass`, `batch-status-relaxed`,
 `fixture-summary-relaxed`, `calibrate-controls-skip-accepted`,
 `aggregation-exit-bypassed`, `summary-dict-bypass`,
 `aggregation-branch-exit-inline`, `summary-name-bypass`, `bare-exit-zero`,
@@ -1054,4 +1054,6 @@ holds only below the interpreter's recursion limit.
 
 ### #2916 Linux cleanup proof
 
-Linux uses `/proc` and pidfd only to record positive same-group member findings. It never calls that visible set complete. The held leader pins the group before any real signal; after reaping it, only kernel `killpg(pgid, 0)=ESRCH` proves the group absent. EPERM/unknown remain BLOCKED, identity loss remains NOT_VERIFIED, and a recorded GROUP_NOT_EMPTY finding is never erased by remediation. Darwin retains its independent complete-census path. Other platforms remain explicitly unsupported. `check_cleanup.py --mode all` runs the eight `check_linux.py` controls on Linux; visible-set/EPERM mutations target the new helper and must be KILLED. The registered proof concerns this process group, not descendants that escaped it with setsid.
+Linux uses `/proc` and pidfd only to record positive same-group member findings. It never calls that visible set complete. The held leader pins the group before any real signal; after reaping it, only kernel `killpg(pgid, 0)=ESRCH` proves the group absent. EPERM/unknown remain BLOCKED, identity loss without a prior finding remains NOT_VERIFIED; an already recorded positive finding remains GROUP_NOT_EMPTY with signalRefused if a real signal is refused. Remediation never erases that finding. Darwin retains its independent complete-census path. Other platforms remain explicitly unsupported. `check_cleanup.py --mode all` runs the eleven `check_linux.py` controls (the original eight plus both helper identity gates and a refused-signal finding control) on Linux; visible-set/EPERM mutations target the new helper and must be KILLED. The registered proof concerns this process group, not descendants that escaped it with setsid.
+
+#2916 platform-specific source controls: the five Darwin-only signal/census mutants remain unchanged for Darwin; Linux runs five literal helper counterparts against real groups and actual denial/unknown-error branches. Inapplicable explicit --only names are BLOCKED, never KILLED or silently passed. The Linux control summary is a registered shared aggregation point and has its own forced-PASS source mutant. The table has 237 declared rows; Darwin-only and Linux-only mutations are selected explicitly per platform.
