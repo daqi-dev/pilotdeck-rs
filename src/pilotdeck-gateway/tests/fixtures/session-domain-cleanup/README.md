@@ -2957,3 +2957,120 @@ round).
 | **The static starred and qualified spellings register** (false PASS guard): `append(*[handle])`, `operator.setitem`, `operator.iadd` and `builtins.list.append` of a handle -- withdraw. | `... lost a receiver behind a starred-literal append of a handle / an operator.setitem store of a handle / an operator.iadd grow of a handle / a builtins-qualified append of a handle (round 48)` |
 | **The static starred and qualified clean twins stay clean** (false FAIL guard): the same four spellings plus the alias and unbound appends of a clean lambda. | `... withdrew a clean receiver behind a starred-literal append of a clean lambda / an operator.setitem store of a clean lambda / an operator.iadd grow of a clean lambda / a builtins-qualified append of a clean lambda / an alias append of a clean lambda / an unbound append of a clean lambda (round 48)` |
 | **The for-site self-test asserts its sites** (unit): the module call table must still record both `_f` sites with their loop ids. | `... dropped the loop id from a for-target call site (round 47)` |
+
+### Closed by `fix-r1` round 49 (GLM r48 boundary#1 P0 / sibling#1 P1 / sibling#2 P1 / sibling#3..#5 P2; probes 2026-11-10)
+
+Every finding was probe-reproduced against the round-48 committed ruler
+`ae2c8fb0f` before any fix (`probe-r49.log` holds the pre-fix columns --
+the "r47" column there is `ec67bc358`, showing the same miss predates
+r48, the review's own precondition -- and every row carries a runtime
+oracle).  The P0 was confirmed: all four import spellings read R = False
+while their run times poisoned the relay.
+
+The import spellings of the store family (GLM boundary#1, P0 -- the same
+family the r47 keyword-form P0 opened, so this round is *structural* per
+the long-tail closure rule, judgment 1: a second recurrence of the
+escape family must close by one change that kills the family, not by
+another literal addition).  Both gates read the qualified spellings off
+the literal attribute chain -- `callee.value.id == 'operator'` /
+`'builtins'` -- so `import operator as _op; _op.setitem(_items, 1,
+_hs[0])`, `from operator import setitem [as _si]; setitem(...)`,
+`import builtins as _b; _b.list.append(_items, z)` and `from builtins
+import list as _l; _l.append(_items, z)` missed the mutation window
+*and* the registration walk at once: zero events, zero registration, a
+false PASS on the family the round-48 diff claimed closed while its
+residual list only registered the dynamic kwargs/starred forms.  The
+fix reads the import bindings once
+(`_import_binding_origins`: `import x as y` -> module `x`, `from x
+import f [as g]` -> `x.f`, scope subtree plus the module body) and
+feeds both gates from it: the callee's base resolves to the operator
+module / the builtins module / the from-imported type, and a bare-Name
+callee resolves to a from-imported operator store function.  The
+literal names keep their reading (the map only adds spellings), which
+is why every pre-existing audit row is untouched.
+
+The operator word lists consolidated (one place, both gates):
+`_OPERATOR_STORE_FUNCS` (`setitem`/`iadd`/`iconcat`/`ior` plus the
+module's own dunder aliases `__setitem__`/`__iadd__`/`__iconcat__`/
+`__ior__`, verified against `dir(operator)`) with
+`_OPERATOR_DISPLAY_MUTATORS` widening it by the deleters
+(`delitem`/`__delitem__` -- a deletion mutates but never stores a
+handle, so the registration walk does not admit it).
+
+`operator.ior` (GLM sibling#1, P1): the module spelling of `d |= {...}`
+was in none of the three admission points while `__ior__` sat in
+`_MAPPING_METHODS` -- now the mutation window, the registration walk and
+the mapping decoder (`_mapping_method_call`, which names its target
+first the way `operator.setitem` does) all read it.  The in-place dunder
+spellings `_items.__iadd__([...])` / `_d.__ior__({...})` /
+`operator.__setitem__(...)` join `_MUTATING_DISPLAY_ATTRS` /
+`_ELEMENT_STORE_ATTRS` the same way (GLM sibling#3, P2).
+
+The never-matching patterns widened (GLM sibling#2, P1): a constant
+subject also never matches a sequence or mapping pattern (PEP 634 -- a
+constant is never a sequence or a mapping, `str`/`bytes` included) or an
+`or` pattern whose every alternative is unmatchable, so those guards
+ride the case arm instead of the fall-through fork -- the same wash the
+round-48 `c1` probe proved for `MatchValue`.  Class patterns and
+attribute values stay conservative.
+
+The immutable augmented rebind (GLM sibling#4, P2 -- **rejected**,
+`probe-r49c.log`): the review claimed the r48 name-class registration
+poisoned the alias of an immutable `+=` rebind (`_t = (lambda,); _a =
+_t; _t += (_hs[0],)`) as an r48 regression over an "r47-correct"
+plain-`_carry` reading.  The probe shows both of the review's own forms
+disagree with that premise: the iteration form (`for _h in _a:`) is
+clean in r47, r48 and r49 alike, and the subscript form (`_a[0](...)`)
+over-reports in r47 exactly as in r48 -- the conviction there comes
+from the pre-existing window floor (`_display_mutated_between`
+declining a stale selection; "over-report beats a hidden write"), not
+from the registration arm, and an outer-display relay form shows no
+difference between the two readings either.  No narrowing was made --
+an unverifiable change is worse than the documented fail-closed floor;
+the over-report itself is registered as a residual below.
+
+Wording corrections riding the round: the r48 claim "`update` is the
+store family's only kwargs-taking spelling" is wrong (`setdefault`
+takes one too -- the code always merged all keywords, GLM boundary#2),
+and the r48 residual "dynamic starred arguments stay unanalyzable"
+understates the register side: a *tracked container's* dynamic starred
+argument already registers through the `Name` branch (GLM boundary#3)
+-- the residual is now worded to untracked/non-literal dynamic starred
+arguments.
+
+Known residuals (follow-up issue; unchanged from round 48 unless
+noted): the use-in-Assign-target conservative floor, a `Try`
+interrupted mid-body, the not-fork-aware mutator-name conviction, and
+`extend` of an empty literal all over-report; stale container history
+survives a clean rebind; *untracked or non-literal* dynamic
+starred/keyword arguments remain unanalyzable (a tracked container's
+dynamic starred argument registers since r48 -- GLM r48 boundary#3);
+the guardfall fork stays independent of the match fork in the
+combination enumeration (unexecutable combinations can only
+over-report); `_scoped_nodes` class-body walrus, `_name_bindings`
+for-target spellings and the For-only `AsyncFor` walks at the two
+module-table sites remain; an import binding a name later rebinds to
+another object still reads as the module (the registered
+`_name_alias_closure`-style over-approximation, honest spellings pinned
+by the clean twins); the `operator.__setitem__`-on-a-receiver spelling
+in `_mapping_method_call` keeps its pre-r49 target read (not asked, no
+residual registered before); a tuple/str display's `+=` rebind makes a
+*subscript* use of its alias over-report through the window floor (the
+selection declines on the augmented rebind and falls back to the
+whole-display roots -- pre-existing since the floor's introduction,
+probe-r49c, not the registration arm the rejected sibling#4 named); an
+outer display relaying a container grown by ``+=`` through a name
+alias misses the handle (``_t = [..]; _a = _t; _t += [hs]; _outer =
+(_a,); _outer[0][-1](...)`` -- the same shape grown by ``append``
+instead convicts, so the gap is the outer-display element roots not
+reading the AugAssign-registered carrying; pre-existing, probe-r49c
+``s4-list-alias-outer-display-dirty``, r47/r48/r49 read identically).
+
+| Shape | Self-test |
+|---|---|
+| **The import spellings of the store family register** (false PASS guard): `import operator as _op`, `from operator import setitem [as _si]`, `import builtins as _b` and `from builtins import list as _l` storing a handle -- withdraw. | `... lost a receiver behind an import-aliased operator.setitem store of a handle / a from-imported operator.setitem store of a handle / a from-import-aliased operator.setitem store of a handle / an import-aliased builtins-qualified append of a handle / a from-imported type append of a handle (round 49)` |
+| **The import-spelling clean twins stay clean** (false FAIL guard): the same spellings storing a clean lambda. | `... withdrew a clean receiver behind an import-aliased operator.setitem store of a clean lambda / a from-imported operator.setitem store of a clean lambda / an import-aliased builtins-qualified append of a clean lambda / a from-imported type append of a clean lambda (round 49)` |
+| **`operator.ior` and the dunder spellings register** (false PASS guard): `operator.ior(_d, {...})` (plain and import-aliased), `operator.__setitem__`, `_items.__iadd__([...])` and `_d.__ior__({...})` of a handle -- withdraw. | `... lost a receiver behind an operator.ior dict merge of a handle / an import-aliased operator.ior dict merge of a handle / an operator dunder-alias setitem store of a handle / an in-place dunder append of a handle / an in-place dunder dict merge of a handle (round 49)` |
+| **The ior/dunder clean twins stay clean** (false FAIL guard): the same spellings merging a clean lambda. | `... withdrew a clean receiver behind an operator.ior dict merge of a clean lambda / an in-place dunder append of a clean lambda / an in-place dunder dict merge of a clean lambda (round 49)` |
+| **The never-matching sequence / mapping / or guards no longer launder** (false PASS guard / false FAIL guard): the guard's insert cannot cancel the executed pop; the clean fall-through twin stays clean. | `... lost a receiver behind a guard on a never-matching sequence pattern / a guard on a never-matching mapping pattern / a guard on an all-failing or-pattern (round 49)`; `... withdrew a clean receiver behind a never-matching sequence guard with a clean fall-through (round 49)` |
+| **A tuple `+=` rebind's alias stays clean** (false FAIL guard): `_t += (handle,)` rebinds, so iterating the alias reads the old clean object. | `... withdrew a clean receiver behind a clean lambda iterated off a tuple alias after a tuple += (round 49)` |

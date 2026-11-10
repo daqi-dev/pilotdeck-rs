@@ -1423,9 +1423,12 @@ def _case_pattern_unmatchable(subject, pattern):
     PASS; r46 hung the guard on the body arm and never ran it, so
     this is an r47 regression).  Only the statically decidable shape
     answers True: a constant subject against a constant ``MatchValue``
-    or a ``MatchSingleton`` it compares unequal to.  Everything else
-    -- non-constant subjects, sequence/class/mapping/or patterns,
-    attribute values -- keeps the conservative fall-through fork.
+    or a ``MatchSingleton`` it compares unequal to, against a sequence or
+    mapping pattern (PEP 634: a constant is never a sequence or a
+    mapping, r49), or an ``or`` pattern whose every alternative is
+    unmatchable (r49).  Everything else -- non-constant subjects, class
+    patterns, attribute values -- keeps the conservative fall-through
+    fork.
     """
     if not isinstance(subject, ast.Constant):
         return False
@@ -1436,6 +1439,23 @@ def _case_pattern_unmatchable(subject, pattern):
         # ``==`` semantics, matching the interpreter's pattern match:
         # ``match 1:`` does take ``case True``.
         return bool(subject.value != pattern.value)
+    if isinstance(pattern, (ast.MatchSequence, ast.MatchMapping)):
+        # #1953 fix-r1 round 49 (GLM r48 sibling#2, probes
+        # matchseq-nomatch / matchmap-nomatch): PEP 634 -- a sequence or
+        # mapping pattern only matches a sequence / mapping, and a
+        # constant subject never is one (``str``/``bytes`` included,
+        # the spec excludes them from sequence patterns).  The guard
+        # never runs, so hanging it on the fall-through fork ran events
+        # the interpreter cannot reach -- the same wash the c1 probe
+        # proved for MatchValue.
+        return True
+    if isinstance(pattern, ast.MatchOr):
+        # #1953 fix-r1 round 49 (probe matchor-nomatch): every
+        # alternative failing is the only way a MatchOr fails, so an
+        # all-unmatchable ``case 0 | 2`` against ``match 1`` never
+        # evaluates its guard either.
+        return all(_case_pattern_unmatchable(subject, alternative)
+                   for alternative in pattern.patterns)
     return False
 
 
@@ -3873,6 +3893,11 @@ _MUTATING_DISPLAY_ATTRS = frozenset((
     'reverse', 'sort', 'pop', 'popitem', 'insert', 'append', 'appendleft',
     'popleft', 'extend', 'extendleft', 'remove', 'clear', 'update',
     'setdefault', 'add', 'discard', '__setitem__', '__delitem__',
+    # #1953 fix-r1 round 49 (GLM r48 sibling#3, probe
+    # dunder-iadd-store): the method dunders ``items.__iadd__([...])`` /
+    # ``d.__ior__({...})`` are the ``+=`` / ``|=`` spellings behind an
+    # attribute hop -- ``__setitem__``/``__delitem__`` were already in.
+    '__iadd__', '__ior__',
 ))
 
 # #1953 fix-r1 round 47 (anthropic r46 boundary#2/#3/#4, probes p4/p6a/p6b +
@@ -3884,11 +3909,90 @@ _MUTATING_DISPLAY_ATTRS = frozenset((
 _ELEMENT_STORE_ATTRS = frozenset((
     'append', 'appendleft', 'extend', 'extendleft', 'insert', 'add',
     'update', 'setdefault', '__setitem__',
+    # #1953 fix-r1 round 49 (GLM r48 sibling#3, probe dunder-iadd-store):
+    # the in-place grow dunders store their operand's handles the same
+    # way ``items += [...]`` does.
+    '__iadd__', '__ior__',
 ))
+
+# #1953 fix-r1 round 49 (GLM r48 boundary#1 P0, probes b1-operator-*-alias
+# / b1-builtins-*-alias): the qualified store spellings were admitted on
+# the *literal* attribute chain -- ``callee.value.id == 'operator'`` /
+# ``'builtins'`` -- so ``import operator as _op; _op.setitem(...)`` and
+# ``from operator import setitem; setitem(...)`` missed both gates at
+# once (zero events, zero registration, a false PASS on the very family
+# the round claimed closed; the same family recurred across rounds, so
+# this round reads the import *bindings* once instead of adding more
+# literal spellings).  The two tables below keep the operator word lists
+# in one place: the store functions, and the same list widened with the
+# deleters for the mutation window (a deletion mutates but never stores
+# a handle).  ``ior`` is the module spelling of ``d |= {...}`` (GLM r48
+# sibling#1); the ``__``-prefixed names are the operator module's own
+# dunder aliases (verified against ``dir(operator)``).
+_OPERATOR_STORE_FUNCS = frozenset((
+    'setitem', 'iadd', 'iconcat', 'ior',
+    '__setitem__', '__iadd__', '__iconcat__', '__ior__',
+))
+_OPERATOR_DISPLAY_MUTATORS = _OPERATOR_STORE_FUNCS | frozenset((
+    'delitem', '__delitem__',
+))
+# The unbound type spellings ``list.append(items, z)`` name the method on
+# the type and hand the display in as the receiver argument; one list for
+# the mutation window's tail and the registration walk's unbound branch.
+_UNBOUND_TYPE_NAMES = frozenset(('list', 'dict', 'set', 'frozenset'))
+
+
+def _import_binding_origins(scope, tree=None):
+    """Import bindings visible in *scope*, as ``{name: origin}`` (r49).
+
+    ``import x as y`` binds *y* to module *x* -- origin ``('module', x)``;
+    ``from x import f`` and ``from x import f as g`` bind to ``x.f`` --
+    origin ``('from', x, f)``.  The qualified-spelling gates resolve the
+    callee's base through this map, so an alias admits the same store
+    call the literal module name does (the structural r49 fix for the
+    import-alias false-PASS family).  Imports written inside *scope*'s
+    subtree are read whole-scope, the same over-approximation
+    :func:`_name_alias_closure` makes for its bindings -- a name an
+    import rebinds to something else is the registered trade-off, and the
+    clean twins of the battery pin the honest spellings.  When *tree* is
+    handed in and differs from *scope*, the module-level imports join the
+    map (a function sees the imports above it), earlier scope-level
+    entries winning over the module's.  A ``None`` *scope* is the module
+    scope (:func:`_walk_scoped`'s spelling of it) -- only the module
+    body's own imports are visible there, never a function-local
+    ``import``.
+    """
+    origins = {}
+
+    def _collect(nodes, overwrite):
+        for node in nodes:
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    key = alias.asname or alias.name.split('.')[0]
+                    if overwrite or key not in origins:
+                        origins[key] = ('module', alias.name)
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == '*':
+                        continue
+                    key = alias.asname or alias.name
+                    if overwrite or key not in origins:
+                        origins[key] = ('from', node.module or '',
+                                       alias.name)
+
+    if scope is None:
+        if tree is not None:
+            _collect(tree.body, overwrite=True)
+        return origins
+    _collect(ast.walk(scope), overwrite=True)
+    if tree is not None and tree is not scope:
+        _collect(tree.body, overwrite=False)
+    return origins
 
 
 def _display_mutated_between(scope, name, binding_pos, use_pos,
-                             binding_value=None, slices=(), use=None):
+                             binding_value=None, slices=(), use=None,
+                             tree=None):
     """True when a statement between the display binding and the use mutates it.
 
     #1953 fix-r1 round 41 (codex r40 C-P0-8, probe 2026-11-09): a constant
@@ -3992,6 +4096,15 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
     # reads every binding spelling.
     names = _name_alias_closure(scope, {name})
 
+    # #1953 fix-r1 round 49 (GLM r48 boundary#1 P0, probes
+    # b1-operator-as-alias / b1-operator-from-import / b1-builtins-*
+    # alias): the mutation gate read the qualified spellings off the
+    # literal attribute chain, so an ``import ... as`` alias of the
+    # module (or a ``from operator import setitem`` direct take) was no
+    # mutation at all -- zero events, zero registration, the false PASS
+    # the structural fix resolves from the import bindings.
+    import_origins = _import_binding_origins(scope, tree)
+
     def mutates_display(callee, call, price=True):
         """The display mutation *call* makes (r44 event model).
 
@@ -4007,21 +4120,55 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
         composite the simulation refuses (probe b1-loop).
         """
         base = callee.value if isinstance(callee, ast.Attribute) else None
+        if isinstance(callee, ast.Name):
+            # #1953 fix-r1 round 49 (probes b1-operator-from-import /
+            # b1-operator-from-as-alias): ``from operator import setitem``
+            # hands the store function to a bare name -- no attribute
+            # chain ever matched it, so the call was no event at all
+            # while the run time replaced the selected element (a false
+            # PASS, the import-alias family GLM r48 boundary#1 proved).
+            origin = import_origins.get(callee.id)
+            if (origin is not None and origin[0] == 'from'
+                    and origin[1] == 'operator'
+                    and origin[2] in _OPERATOR_DISPLAY_MUTATORS):
+                first = call.args[0] if call.args else None
+                if isinstance(first, ast.Name) and first.id in names:
+                    return True
+            return None
         base_name = None
         if isinstance(base, ast.Name):
             base_name = base.id
+            origin = import_origins.get(base.id)
+            if origin is not None:
+                # #1953 fix-r1 round 49 (probe b1-operator-as-alias):
+                # ``import operator as _op`` -- the module behind an
+                # alias admits the same store calls the literal name
+                # does; ``from builtins import list as _l`` makes the
+                # bare name the type itself (probe
+                # b1-builtins-from-as-alias).  The literal names keep
+                # their reading -- only these two resolutions override.
+                if origin == ('module', 'operator'):
+                    base_name = 'operator'
+                elif (origin[0] == 'from' and origin[1] == 'builtins'
+                        and origin[2] in _UNBOUND_TYPE_NAMES):
+                    base_name = origin[2]
         elif (isinstance(base, ast.Attribute)
                 and isinstance(base.value, ast.Name)
-                and base.value.id == 'builtins'):
+                and (base.value.id == 'builtins'
+                     or import_origins.get(base.value.id)
+                     == ('module', 'builtins'))):
             # #1953 fix-r1 round 48 (probe builtins-qualified-append):
             # ``builtins.list.append(items, z)`` is the unbound
-            # spelling behind one attribute hop.
+            # spelling behind one attribute hop -- r49 also reads it
+            # through ``import builtins as _b`` (probe
+            # b1-builtins-as-alias).
             base_name = base.attr
+        # The r48 isinstance guard stays: a Subscript callee
+        # (``_items[1](...)``) is a read, not an attribute mutation.
         if not (isinstance(callee, ast.Attribute)
                 and (callee.attr in _MUTATING_DISPLAY_ATTRS
                      or (base_name == 'operator'
-                         and callee.attr in ('setitem', 'delitem',
-                                             'iadd', 'iconcat')))):
+                         and callee.attr in _OPERATOR_DISPLAY_MUTATORS))):
             return None
         if isinstance(callee.value, ast.Name) and callee.value.id in names:
             if (callee.attr in ('pop', 'insert', 'append', 'extend')
@@ -4068,10 +4215,9 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
         # ``operator.setitem(items, 1, hs[0])`` /
         # ``operator.iadd(items, [hs[0]])`` -- so they join the bare
         # type names here and in the registration walk.
-        if (base_name in ('list', 'dict', 'set', 'frozenset')
+        if (base_name in _UNBOUND_TYPE_NAMES
                 or (base_name == 'operator'
-                    and callee.attr in ('setitem', 'delitem',
-                                         'iadd', 'iconcat'))):
+                    and callee.attr in _OPERATOR_DISPLAY_MUTATORS)):
             first = call.args[0] if call.args else None
             if isinstance(first, ast.Name) and first.id in names:
                 return True
@@ -4571,7 +4717,13 @@ def _setattr_arguments(node, kinds):
 # is the builtin's.  r28 read only the bound ``receiver.method(...)`` spelling.
 _BUILTIN_TYPES = ('dict', 'type', 'object', 'list', 'set', 'str', 'bytes')
 _MAPPING_METHODS = ('update', 'setdefault', 'pop', 'popitem', 'clear', '__ior__',
-                    '__setitem__', 'setitem')
+                    '__setitem__', 'setitem',
+                    # #1953 fix-r1 round 49 (GLM r48 sibling#5): the
+                    # unbound module spelling of the in-place merge --
+                    # ``operator.ior(md.__dict__, {...})`` is the same
+                    # write the bound ``__ior__`` spelling already
+                    # counts.
+                    'ior')
 
 
 def _builtin_type_name(node, kinds):
@@ -4623,15 +4775,20 @@ def _mapping_method_call(node, kinds, tree):
     if attr not in _MAPPING_METHODS:
         return None
     receiver = func.value
-    if attr == 'setitem' or _builtin_type_name(receiver, kinds) is not None:
+    if (attr in ('setitem', 'ior')
+            or _builtin_type_name(receiver, kinds) is not None):
         # #892 r30: ``operator.setitem(mapping, key, value)`` names its target
         # first, like the unbound ``dict.__setitem__`` form.
+        # #1953 fix-r1 round 49 (GLM r48 sibling#5): ``operator.ior(mapping,
+        # {...})`` is the module spelling of the in-place merge and names its
+        # target first the same way (a mapping has no ``ior`` method, so the
+        # spelling is the operator's -- the r30 setitem reading).
         if not node.args:
             return None
         target, args, keywords = node.args[0], node.args[1:], node.keywords
     else:
         target, args, keywords = receiver, node.args, node.keywords
-    if attr == 'update':
+    if attr in ('update', 'ior'):
         keys = {key for key, _value in _updated_items_parts(args, keywords)}
     elif attr in ('setdefault', 'pop', '__setitem__', 'setitem'):
         keys = _write_key_names(args[0], tree) if args else {'*'}
@@ -6757,6 +6914,18 @@ def _receiver_attribute_writes(tree, receivers, shared):
             scope_slots[scope] = _scope_block_slots(scope)
         return scope_slots[scope]
 
+    scope_imports = {}
+
+    def _scope_import_origins(scope):
+        """Import bindings visible in *scope* (r49, cached per scope).
+
+        The registration walk asks every node, so the module-plus-scope
+        walk runs once per scope and is shared by every call in it.
+        """
+        if scope not in scope_imports:
+            scope_imports[scope] = _import_binding_origins(scope, tree)
+        return scope_imports[scope]
+
     def _carried_container(name, scope):
         """Roots the name *name* carries as a handle container, or ``None``.
 
@@ -7441,46 +7610,86 @@ def _receiver_attribute_writes(tree, receivers, shared):
         """
         if isinstance(node, ast.Call):
             callee = _callee_expr(node)
-            if not isinstance(callee, ast.Attribute):
-                return False
-            attr = callee.attr
-            operator_store = (isinstance(callee.value, ast.Name)
-                              and callee.value.id == 'operator'
-                              and attr in ('setitem', 'iadd', 'iconcat'))
-            if not (attr in _ELEMENT_STORE_ATTRS or operator_store):
-                return False
-            args = list(node.args)
-            unbound = (isinstance(callee.value, ast.Name)
-                       and (callee.value.id in ('list', 'dict', 'set',
-                                                'frozenset')
-                            or operator_store))
-            if (not unbound
-                    and isinstance(callee.value, ast.Attribute)
-                    and isinstance(callee.value.value, ast.Name)
-                    and callee.value.value.id == 'builtins'):
-                # #1953 fix-r1 round 48 (probe
-                # builtins-qualified-append): ``builtins.list.append(
-                # items, z)`` is the unbound spelling behind one
-                # attribute hop.
-                unbound = True
-            if unbound:
-                # The unbound spellings hand the receiver in as the first
-                # argument: ``list.append(items, z)`` /
-                # ``operator.setitem(items, 1, z)``.
-                if not args:
+            # #1953 fix-r1 round 49 (GLM r48 boundary#1 P0, probes
+            # b1-operator-*-alias / b1-builtins-*-alias): the admission
+            # keys read the *literal* attribute chain, so the import
+            # spellings -- ``import operator as _op``, ``from operator
+            # import setitem``, ``import builtins as _b``,
+            # ``from builtins import list as _l`` -- missed the gate
+            # with zero registration while the run time stored the
+            # handle (a false PASS on the family this walk claims to
+            # read).  The callee now resolves through the scope's import
+            # bindings, so every alias spelling joins the spelling its
+            # origin names.
+            origins = _scope_import_origins(scope)
+            receiver = None
+            args = []
+            if isinstance(callee, ast.Name):
+                origin = origins.get(callee.id)
+                if not (origin is not None and origin[0] == 'from'
+                        and origin[1] == 'operator'
+                        and origin[2] in _OPERATOR_STORE_FUNCS):
                     return False
-                receiver = args[0]
-                args = args[1:]
+                # ``from operator import setitem; setitem(items, 1, z)``
+                # names the display first, exactly the module spelling.
+                if not node.args:
+                    return False
+                receiver, args = node.args[0], list(node.args[1:])
+            elif isinstance(callee, ast.Attribute):
+                attr = callee.attr
+                base_origin = (origins.get(callee.value.id)
+                               if isinstance(callee.value, ast.Name)
+                               else None)
+                operator_store = (
+                    isinstance(callee.value, ast.Name)
+                    and (callee.value.id == 'operator'
+                         or base_origin == ('module', 'operator'))
+                    and attr in _OPERATOR_STORE_FUNCS)
+                if not (attr in _ELEMENT_STORE_ATTRS or operator_store):
+                    return False
+                args = list(node.args)
+                unbound = (isinstance(callee.value, ast.Name)
+                           and (callee.value.id in _UNBOUND_TYPE_NAMES
+                                or operator_store
+                                or (base_origin is not None
+                                    and base_origin[0] == 'from'
+                                    and base_origin[1] == 'builtins'
+                                    and base_origin[2]
+                                    in _UNBOUND_TYPE_NAMES)))
+                if (not unbound
+                        and isinstance(callee.value, ast.Attribute)
+                        and isinstance(callee.value.value, ast.Name)
+                        and (callee.value.value.id == 'builtins'
+                             or origins.get(callee.value.value.id)
+                             == ('module', 'builtins'))):
+                    # #1953 fix-r1 round 48 (probe
+                    # builtins-qualified-append):
+                    # ``builtins.list.append(items, z)`` is the unbound
+                    # spelling behind one attribute hop -- r49 also
+                    # reads it through ``import builtins as _b``.
+                    unbound = True
+                if unbound:
+                    # The unbound spellings hand the receiver in as the
+                    # first argument: ``list.append(items, z)`` /
+                    # ``operator.setitem(items, 1, z)``.
+                    if not args:
+                        return False
+                    receiver = args[0]
+                    args = args[1:]
+                else:
+                    receiver = callee.value
             else:
-                receiver = callee.value
+                return False
             if not isinstance(receiver, ast.Name):
                 return False
             carried = []
             for argument in args + [keyword.value
                                     for keyword in node.keywords]:
                 # r48: the keyword values join the positional ones --
-                # ``update`` is the store family's only kwargs-taking
-                # spelling, and its keywords are the values it merges in.
+                # every spelling of the family merges its keyword values
+                # in (``update`` and ``setdefault`` both take them), so
+                # the keywords are the values it merges in (r49 wording:
+                # the setdefault row GLM r48 boundary#2).
                 carried.extend(root for root in
                                _carried_handle_roots(argument, scope)
                                if root not in carried)
@@ -7539,7 +7748,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
         if not _certain_before(slots, parents, last[0], use):
             return None
         if _display_mutated_between(scope, node.id, latest, limit,
-                                    last[0], slices, use):
+                                    last[0], slices, use, tree=tree):
             return None
         element = _select_display_path(last[0], slices)
         if element is None:
@@ -7569,6 +7778,20 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 # ``_a = items; _a += [hs[0]]`` registering only ``_a``
                 # while the caller's fallback looks ``items`` up and
                 # stays empty.
+                # #1953 fix-r1 round 49 (GLM r48 sibling#4 -- REJECTED,
+                # probe-r49c): the review claimed the whole-class
+                # registration over-reported an immutable display's
+                # alias (``_t = (...,); _a = _t; _t += (hs,); ... _a
+                # ...``), as an r48 regression over r47's plain
+                # ``_carry``.  The probe shows r47 reporting the same
+                # on both of the review's own forms: the iteration form
+                # is clean in r47, r48 and r49 alike, and the subscript
+                # form's over-report is the pre-existing window floor
+                # (``_display_mutated_between`` declining a stale
+                # selection, "over-report beats a hidden write"), not
+                # the registration arm.  No narrowing here -- an
+                # unverifiable change is worse than the documented
+                # fail-closed floor.
                 carried = _carried_handle_roots(node.value, scope)
                 if carried:
                     if isinstance(node.target, ast.Name):
@@ -20351,6 +20574,176 @@ def aggregation_audit():
             failures.append('#1953 aggregation-audit: detector self-test '
                             'withdrew a clean receiver behind ' + _m48_kind
                             + ' (round 48)')
+    # #1953 fix-r1 round 49 (GLM r48 boundary#1 P0, probes
+    # b1-operator-as-alias / b1-operator-from-import /
+    # b1-operator-from-as-alias / b1-builtins-as-alias /
+    # b1-builtins-from-as-alias, 2026-11-10): the store family's
+    # import spellings -- ``import operator as _op``, ``from operator
+    # import setitem [as _si]``, ``import builtins as _b``,
+    # ``from builtins import list as _l`` -- each missed both gates at
+    # once (zero events, zero registration) while the run time stored
+    # the handle, the same family recurring after the r47 keyword-form
+    # P0; the round resolves the callee through the scope's import
+    # bindings (structural: one binding walk feeds every admission
+    # point) so each alias joins the spelling its origin names.  GLM
+    # r48 sibling#1 (operator.ior, the module spelling of ``|=``),
+    # sibling#2 (a never-matching sequence / mapping / all-failing ``or``
+    # pattern never evaluates its guard either) and sibling#3 (the
+    # in-place dunder spellings ``__iadd__`` / ``__ior__`` / the
+    # operator dunder aliases) close with the same walk; sibling#4's
+    # claimed immutable ``+=`` regression was probe-rejected (both of
+    # the review's forms read identically in r47 -- the clean-twin row
+    # below guards the iteration form).
+    for _m49_kind, _m49_src in (
+            ("an import-aliased operator.setitem store of a handle",
+             "    import operator as _op\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _op.setitem(_items, 1, _hs[0])\n"
+             "    _items[1]('common', object())\n"),
+            ("a from-imported operator.setitem store of a handle",
+             "    from operator import setitem\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    setitem(_items, 1, _hs[0])\n"
+             "    _items[1]('common', object())\n"),
+            ("a from-import-aliased operator.setitem store of a handle",
+             "    from operator import setitem as _si\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _si(_items, 1, _hs[0])\n"
+             "    _items[1]('common', object())\n"),
+            ("an import-aliased builtins-qualified append of a handle",
+             "    import builtins as _b\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _z = _hs[0]\n"
+             "    _b.list.append(_items, _z)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a from-imported type append of a handle",
+             "    from builtins import list as _l\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _z = _hs[0]\n"
+             "    _l.append(_items, _z)\n"
+             "    _items[-1]('common', object())\n"),
+            ("an operator.ior dict merge of a handle",
+             "    import operator\n"
+             "    _d = {'common': lambda *a: None}\n"
+             "    operator.ior(_d, {'common': _hs[0]})\n"
+             "    _d['common']('common', object())\n"),
+            ("an import-aliased operator.ior dict merge of a handle",
+             "    import operator as _op\n"
+             "    _d = {'common': lambda *a: None}\n"
+             "    _op.ior(_d, {'common': _hs[0]})\n"
+             "    _d['common']('common', object())\n"),
+            ("an operator dunder-alias setitem store of a handle",
+             "    import operator\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    operator.__setitem__(_items, 1, _hs[0])\n"
+             "    _items[1]('common', object())\n"),
+            ("an in-place dunder append of a handle",
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _items.__iadd__([_hs[0]])\n"
+             "    _items[-1]('common', object())\n"),
+            ("an in-place dunder dict merge of a handle",
+             "    _d = {'common': lambda *a: None}\n"
+             "    _d.__ior__({'common': _hs[0]})\n"
+             "    _d['common']('common', object())\n"),
+            # GLM r48 sibling#5: the mapping decoder's operator.ior -- no
+            # clean twin: writing the tracked key itself is the flagged
+            # write (the r30 ``operator.setitem(md.__dict__, 'common',
+            # None)`` corpus precedent is value-agnostic).
+            ("an operator.ior mapping write of a handle",
+             "    import operator\n"
+             "    operator.ior(md.__dict__, {'common': _hs[0]})\n"),
+            ("a guard on a never-matching sequence pattern",
+             "    _items = [_hs[0], lambda *a: None]\n"
+             "    match 1:\n"
+             "        case [_x] if _items.insert(1, 0):\n"
+             "            pass\n"
+             "        case _:\n"
+             "            _items.pop(1)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a guard on a never-matching mapping pattern",
+             "    _items = [_hs[0], lambda *a: None]\n"
+             "    match 1:\n"
+             "        case {'k': _x} if _items.insert(1, 0):\n"
+             "            pass\n"
+             "        case _:\n"
+             "            _items.pop(1)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a guard on an all-failing or-pattern",
+             "    _items = [_hs[0], lambda *a: None]\n"
+             "    match 1:\n"
+             "        case 0 | 2 if _items.insert(1, 0):\n"
+             "            pass\n"
+             "        case _:\n"
+             "            _items.pop(1)\n"
+             "    _items[-1]('common', object())\n")):
+        _m49_display = ast.parse(
+            "def _m49a(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m49_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' not in _withdrawn_receivers(_m49_display):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost a receiver behind ' + _m49_kind
+                            + ' (round 49)')
+    for _m49_kind, _m49_src in (
+            ("an import-aliased operator.setitem store of a clean lambda",
+             "    import operator as _op\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _op.setitem(_items, 1, lambda *a: None)\n"
+             "    _items[1]('common', object())\n"),
+            ("a from-imported operator.setitem store of a clean lambda",
+             "    from operator import setitem\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    setitem(_items, 1, lambda *a: None)\n"
+             "    _items[1]('common', object())\n"),
+            ("an import-aliased builtins-qualified append of a clean lambda",
+             "    import builtins as _b\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _z = lambda *a: None\n"
+             "    _b.list.append(_items, _z)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a from-imported type append of a clean lambda",
+             "    from builtins import list as _l\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _z = lambda *a: None\n"
+             "    _l.append(_items, _z)\n"
+             "    _items[-1]('common', object())\n"),
+            ("an operator.ior dict merge of a clean lambda",
+             "    import operator\n"
+             "    _d = {'common': lambda *a: None}\n"
+             "    operator.ior(_d, {'common': lambda *a: None})\n"
+             "    _d['common']('common', object())\n"),
+            ("an in-place dunder append of a clean lambda",
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _items.__iadd__([lambda *a: None])\n"
+             "    _items[-1]('common', object())\n"),
+            ("an in-place dunder dict merge of a clean lambda",
+             "    _d = {'common': lambda *a: None}\n"
+             "    _d.__ior__({'common': lambda *a: None})\n"
+             "    _d['common']('common', object())\n"),
+            ("a never-matching sequence guard with a clean fall-through",
+             "    _items = [_hs[0], lambda *a: None]\n"
+             "    match 1:\n"
+             "        case [_x] if _items.insert(1, 0):\n"
+             "            pass\n"
+             "        case _:\n"
+             "            pass\n"
+             "    _items[-1]('common', object())\n"),
+            ("a clean lambda iterated off a tuple alias after a tuple +=",
+             "    _t = (lambda *a: None,)\n"
+             "    _a = _t\n"
+             "    _t += (_hs[0],)\n"
+             "    for _h in _a:\n"
+             "        _h('common', object())\n")):
+        _m49_clean = ast.parse(
+            "def _m49b(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m49_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' in _withdrawn_receivers(_m49_clean):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'withdrew a clean receiver behind ' + _m49_kind
+                            + ' (round 49)')
     # #1953 fix-r1 round 47 (GLM r46 sibling#2/#3, unit probes u-class-site/
     # u-fortarget-loops): the module call tables record a class-body call at
     # its class statement and carry the loop id on a for-target call.
