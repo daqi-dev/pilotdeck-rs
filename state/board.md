@@ -3307,6 +3307,11 @@ updated: 2026-11-05 13:4x · by Claude Code 协调者（13:4x 交接：#1419 合
 - `formatWeixinError` 全文；纯 `/new` 不入队；权限/elicitation/outbox 多段 TS 控制流；入出站 FILE=4；`image-{id}.jpg`；FIFO；`native_tests` 拆分。
 - **全量 lib** 4290/0；`r19/TS对照表.md`、`r19/最终报告.md`、`r19/logs/lib-full-r19.log`；未 push。
 
+### 2026-11-10 pdrs-daqi-b-channels r20-merge（A+C+B 线性 cherry-pick）
+
+- `f46a141`→poll 三提交→`301f961` live→`9ac1a83` `clear_pending_turns` 接线；无 merge commit。
+- **全量 lib** 4367/0/207；证据 `pdrs-ext/…/r20-split/merge-cursor/`；未 push。
+
 ### 2026-11-10 pdrs-daqi-b-channels r20-A（Grok r19 附件块 83–109）
 
 - Cursor 附件/媒体：`format_weixin_error` 真栈、`encodeURIComponent`、mime/魔数扩展名、入站 metadata 脱敏、`local_path` 授权句、下载 60s/HTTP 码、`path_part`→`unknown`、ilink 去 Content-Length。
