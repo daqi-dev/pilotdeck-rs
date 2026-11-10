@@ -50,7 +50,9 @@ verdict the static roster no longer knows, the same ``recorded != expected``
 predicate the guard exists to enforce. Every family also carries the
 same-length form (``renamed=True``: the last roster name is changed in
 place, so the recorded and expected lists disagree without any length
-difference), because the entries' predicate compares names, not counts.
+difference) and the same-multiset form (``reordered=True``: the roster
+keeps every name and only their order rotates), because the entries'
+predicate compares the ordered list of names, not counts and not sets.
 
 The kill variants this register is designed to catch, each demonstrated
 red/green in the delivery evidence: replacing ``if recorded != expected:``
@@ -60,7 +62,9 @@ no evidence directory), deleting the whole mismatch branch (a mismatched
 run publishes summary.json and exits 0), deleting one register row (the
 scan below finds the unregistered defence and fails), and weakening the
 predicate to a length comparison (the rename case above survives it, so
-the rename case must exit 1).
+the rename case must exit 1), and weakening it to a sorted or set
+comparison (the reorder case above survives it, so the reorder case must
+exit 1).
 
 Run from this directory: ``python3 -m unittest test_negative_roster_guards``.
 """
@@ -210,7 +214,7 @@ def _shadowed_source_writes(guarded, writes, phase):
 
 
 def _drive_manager(testcase, argv, *, drop_last=False, renamed=False,
-                   shrink_roster=False, registry=None):
+                   reordered=False, shrink_roster=False, registry=None):
     """Run manager-gateway's real ``main()``; return the Drive of that run."""
     module = load_entry(MANAGER_SCRIPT)
     base = Path(tempfile.mkdtemp(prefix='negctl-2804-'))
@@ -233,6 +237,12 @@ def _drive_manager(testcase, argv, *, drop_last=False, renamed=False,
             rows = list(rows)
             last = rows[-1]
             rows[-1] = (last[0] + '-renamed',) + last[1:]
+        if reordered and rows:
+            # The injected reorder: the rows keep their names and count, so
+            # a re-check that compared sorted lists or sets would wave this
+            # through; the entries' predicate compares the list in order.
+            rows = list(rows)
+            rows[0], rows[-1] = rows[-1], rows[0]
         return rows
 
     def fake_write_atomic(root, path, data, *, mode=None):
@@ -298,8 +308,14 @@ def _rename_roster(names):
     return tuple(renamed)
 
 
+def _reorder_roster(names):
+    """The same-multiset drift: the roster keeps every name and its length,
+    not their order (the last name rotates to the front)."""
+    return tuple(names[-1:]) + tuple(names[:-1])
+
+
 def _drive_memory(testcase, *, perturbed=False, renamed=False,
-                  shrink_roster=False, argv=()):
+                  reordered=False, shrink_roster=False, argv=()):
     """Run memory-gateway's real ``main()``; return the Drive of that run."""
     module = load_entry('memory-gateway/negative_controls.py')
     base = Path(tempfile.mkdtemp(prefix='negctl-2804-'))
@@ -320,15 +336,18 @@ def _drive_memory(testcase, *, perturbed=False, renamed=False,
         yield {path: path.read_bytes() for path in paths}
 
     def fake_run_bound(test):
-        if (perturbed or renamed) and not drifted[0]:
+        if (perturbed or renamed or reordered) and not drifted[0]:
             # The injected drift: after the startup checks, the static
-            # roster either loses its last name or keeps its length but
-            # not that name, so the run records verdicts the roster no
-            # longer pins -- the same recorded != expected predicate, at
-            # the only seam a driver can reach.
+            # roster loses its last name, keeps its length but not that
+            # name, or keeps every name and only their order -- so the run
+            # records verdicts the roster no longer pins, the same
+            # recorded != expected predicate, at the only seam a driver
+            # can reach.
             drifted[0] = True
             module.EXPECTED_NAMES = (_rename_roster(module.EXPECTED_NAMES)
                                      if renamed
+                                     else _reorder_roster(module.EXPECTED_NAMES)
+                                     if reordered
                                      else module.EXPECTED_NAMES[:-1])
         if phase[0] == 'mutant':
             return subprocess.CompletedProcess(
@@ -359,7 +378,7 @@ def _drive_memory(testcase, *, perturbed=False, renamed=False,
 
 
 def _drive_snapshot(testcase, *, perturbed=False, renamed=False,
-                    shrink_roster=False, argv=()):
+                    reordered=False, shrink_roster=False, argv=()):
     """Run snapshot-projection's real ``main()``; return the Drive of that run."""
     module = load_entry('snapshot-projection/negative_controls.py')
     base = Path(tempfile.mkdtemp(prefix='negctl-2804-'))
@@ -377,10 +396,12 @@ def _drive_snapshot(testcase, *, perturbed=False, renamed=False,
         yield {path: path.read_bytes() for path in paths}
 
     def fake_run(target, test, env):
-        if (perturbed or renamed) and not drifted[0]:
+        if (perturbed or renamed or reordered) and not drifted[0]:
             drifted[0] = True
             module.EXPECTED_NAMES = (_rename_roster(module.EXPECTED_NAMES)
                                      if renamed
+                                     else _reorder_roster(module.EXPECTED_NAMES)
+                                     if reordered
                                      else module.EXPECTED_NAMES[:-1])
         if phase[0] == 'mutant':
             return subprocess.CompletedProcess(
@@ -426,7 +447,7 @@ def _drive_snapshot(testcase, *, perturbed=False, renamed=False,
 
 
 def _drive_sdk(testcase, *, perturbed=False, renamed=False,
-              shrink_roster=False, argv=()):
+              reordered=False, shrink_roster=False, argv=()):
     """Run sdk-mcp-session-tools' real ``main()``; return the Drive of that run."""
     module = load_entry('sdk-mcp-session-tools/negative_controls.py')
     base = Path(tempfile.mkdtemp(prefix='negctl-2804-'))
@@ -442,10 +463,12 @@ def _drive_sdk(testcase, *, perturbed=False, renamed=False,
         return subprocess.CompletedProcess([], 0, '', '')
 
     def fake_run_owned(command, **kwargs):
-        if (perturbed or renamed) and not drifted[0]:
+        if (perturbed or renamed or reordered) and not drifted[0]:
             drifted[0] = True
             module.EXPECTED_NAMES = (_rename_roster(module.EXPECTED_NAMES)
                                      if renamed
+                                     else _reorder_roster(module.EXPECTED_NAMES)
+                                     if reordered
                                      else module.EXPECTED_NAMES[:-1])
         test = command[-4]
         return subprocess.CompletedProcess(
@@ -475,12 +498,13 @@ def _drive_sdk(testcase, *, perturbed=False, renamed=False,
 
 
 def _drive_manager_entry(testcase, *, perturbed=False, renamed=False,
-                         shrink_roster=False, argv=()):
-    """The register's manager-gateway row: the perturbation is the lost
-    or renamed row (``perturbed`` drops the last selected row through
-    ``select``; ``renamed`` keeps the row but changes its name)."""
+                         reordered=False, shrink_roster=False, argv=()):
+    """The register's manager-gateway row: the perturbation is the lost,
+    renamed or reordered row (``perturbed`` drops the last selected row
+    through ``select``; ``renamed`` keeps the row but changes its name;
+    ``reordered`` swaps the first and last selected rows)."""
     return _drive_manager(testcase, argv, drop_last=perturbed, renamed=renamed,
-                          shrink_roster=shrink_roster)
+                          reordered=reordered, shrink_roster=shrink_roster)
 
 
 # #2804: the entries whose main() re-checks the recorded verdict roster
@@ -529,6 +553,22 @@ class RegisteredEntryRosterGuard(unittest.TestCase):
             with self.subTest(script=script):
                 self.assertTrue((FIXTURES / script).is_file(),
                                 f'#2804 {script} is registered but does not exist')
+        # r3: the green-line register must not silently disarm itself. A
+        # row with an empty tuple (or a missing row, or an empty-string
+        # marker) would pass every positive and negative marker assertion
+        # vacuously -- exactly the shape this file exists to refuse.
+        self.assertTrue(set(SUCCESS_LINE) == set(ROSTER_GUARDED),
+                        '#2804 SUCCESS_LINE must cover exactly the register '
+                        f'(extra={sorted(set(SUCCESS_LINE) - set(ROSTER_GUARDED))} '
+                        f'missing={sorted(set(ROSTER_GUARDED) - set(SUCCESS_LINE))})')
+        for script, markers in SUCCESS_LINE.items():
+            with self.subTest(script=script):
+                self.assertTrue(len(markers) > 0,
+                                f'#2804 {script}: SUCCESS_LINE must not be empty')
+                for marker in markers:
+                    self.assertTrue(marker,
+                                    f'#2804 {script}: an empty-string marker '
+                                    'asserts vacuously')
 
     def test_every_roster_guard_entry_is_registered(self):
         found = {str(path.relative_to(FIXTURES))
@@ -633,6 +673,46 @@ class RegisteredEntryRosterGuard(unittest.TestCase):
                                     f'not print its green line ({marker!r}): '
                                     f'{run.stdout!r}')
 
+    def test_a_same_length_reorder_is_still_a_mismatch(self):
+        # The recorded roster keeps every name and its length and only the
+        # order changes, so a re-check that compared sorted lists or sets
+        # would wave it through; the entries' recorded != expected compares
+        # the list in order (r3, sibling P2 / boundary P2).
+        for script, driver in ROSTER_GUARDED.items():
+            with self.subTest(script=script):
+                run = driver(self, reordered=True)
+                self.assertTrue(run.code == 1,
+                                f'#2804 {script}: a run whose recorded order '
+                                f'disagrees with the roster must exit 1, got '
+                                f'{run.code}')
+                self.assertTrue(not (run.out / 'summary.json').exists(),
+                                f'#2804 {script}: a mismatched run must not publish '
+                                f'summary.json')
+                mismatch = json.loads((run.out / 'roster-mismatch.json').read_text())
+                self.assertTrue(mismatch.get('verdict') == 'ROSTER_MISMATCH',
+                                f'#2804 {script}: the mismatch artifact must carry '
+                                f'the verdict: {mismatch!r}')
+                expected, recorded = mismatch['expected'], mismatch['recorded']
+                self.assertTrue(len(expected) == len(recorded),
+                                f'#2804 {script}: the reorder keeps the roster '
+                                f'length, so the artifact must show two '
+                                f'same-length lists: {mismatch!r}')
+                self.assertTrue(set(expected) == set(recorded),
+                                f'#2804 {script}: the reorder keeps every name, '
+                                f'so the artifact must show two same-name '
+                                f'collections: {mismatch!r}')
+                self.assertTrue(list(expected) != list(recorded),
+                                f'#2804 {script}: the artifact must show the '
+                                f'order disagreement: {mismatch!r}')
+                self.assertTrue('verdict roster mismatch' in run.stderr,
+                                f'#2804 {script}: the refusal must name the '
+                                f'mismatch: {run.stderr!r}')
+                for marker in SUCCESS_LINE[script]:
+                    self.assertTrue(marker not in run.stdout,
+                                    f'#2804 {script}: a mismatched run must '
+                                    f'not print its green line ({marker!r}): '
+                                    f'{run.stdout!r}')
+
     def test_a_drifted_roster_never_starts(self):
         for script, driver in ROSTER_GUARDED.items():
             with self.subTest(script=script):
@@ -673,8 +753,10 @@ class ManagerRosterGuard(unittest.TestCase):
                         '#2309 a full run must record the whole roster as selected')
         self.assertTrue(not (run.out / 'roster-mismatch.json').exists(),
                         '#2309 a matching roster must not leave roster-mismatch.json')
-        self.assertTrue('summary: ' in run.stdout,
-                        '#2309 the green count line must follow the re-check')
+        for marker in SUCCESS_LINE[MANAGER_SCRIPT]:
+            self.assertIn(marker, run.stdout,
+                          '#2309 the green line must follow the re-check '
+                          f'({marker!r})')
         # Every write to a shared product source must go through the atomic
         # writer -- a truncating write_text/write_bytes mutant publish or
         # restore is the review's SIGKILL half-file hazard. The stub records
@@ -699,8 +781,10 @@ class ManagerRosterGuard(unittest.TestCase):
                         f'#2309 a run that lost a row must exit 1, got {run.code}')
         self.assertTrue(not (run.out / 'summary.json').exists(),
                         '#2309 a shrunken run must not publish summary.json')
-        self.assertTrue('summary: ' not in run.stdout,
-                        '#2309 a shrunken run must not print a green count line')
+        for marker in SUCCESS_LINE[MANAGER_SCRIPT]:
+            self.assertNotIn(marker, run.stdout,
+                             '#2309 a shrunken run must not print its green '
+                             f'line ({marker!r})')
         self.assertTrue('verdict roster mismatch' in run.stderr,
                         f'#2309 the refusal must name the mismatch: {run.stderr!r}')
         mismatch = json.loads((run.out / 'roster-mismatch.json').read_text())
