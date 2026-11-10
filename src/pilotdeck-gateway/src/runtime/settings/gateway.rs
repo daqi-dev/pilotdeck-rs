@@ -5,6 +5,7 @@ use crate::config::{
     store::{ConfigStore, ReloadEvent, Subscription},
 };
 use crate::js_value;
+use crate::runtime::permission::is_permission_mode;
 use crate::runtime::refresh::{ExtensionsReload, RefreshBundle, ReloadOutcome};
 use crate::runtime::session::SessionOwner;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
@@ -596,12 +597,12 @@ fn validate_sdk_flag_settings(settings: &JsValue) -> Result<(), SettingsError> {
                         JsString::from_utf16(units),
                     ));
                 }
+                // #1651: the accepted `defaultMode` values are the same
+                // `PERMISSION_MODES` the session-config gate checks — one
+                // constant, not a second hand-copied triple here (null keeps
+                // meaning "unset" on top of it).
                 let mode_ok = matches!(&permission_value, JsValue::Null)
-                    || permission_value.as_string().is_some_and(|mode| {
-                        mode.equals_str("default")
-                            || mode.equals_str("plan")
-                            || mode.equals_str("bypassPermissions")
-                    });
+                    || is_permission_mode(&permission_value);
                 if !mode_ok {
                     let text = js_value::to_string_units_checked(&permission_value)
                         .map_err(to_string_throw)?;

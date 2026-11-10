@@ -127,6 +127,30 @@ class LiteralAnchorGuard(unittest.TestCase):
         self.assertEqual([case.mutation for case in seen['cases']], [BAD_ROW])
         self.assertEqual(len(seen['bound']), len(ROWS))
 
+    def test_main_refuses_the_repository_shared_target(self):
+        # #1651: `CARGO_TARGET_DIR` equal to the repository's shared in-tree
+        # `_build/cargo-target` is an isolation failure — this runner assumes a
+        # caller-owned tree-external target — and must be refused before the
+        # evidence directory is claimed. A tree-external value proceeds past
+        # the check, which `test_main_binds_a_targeted_run_to_the_whole_table`
+        # already proves with `/tmp/never-target`.
+        saved_argv = sys.argv
+        saved_target = os.environ.get('CARGO_TARGET_DIR')
+        try:
+            sys.argv = ['negative_controls.py', '/tmp/never-created-target-refusal',
+                        BAD_ROW]
+            os.environ['CARGO_TARGET_DIR'] = str(nc.ROOT / '_build' / 'cargo-target')
+            with self.assertRaises(SystemExit) as caught:
+                nc.main()
+            self.assertIn('repository-shared', str(caught.exception))
+            self.assertFalse(Path('/tmp/never-created-target-refusal').exists())
+        finally:
+            sys.argv = saved_argv
+            if saved_target is None:
+                os.environ.pop('CARGO_TARGET_DIR', None)
+            else:
+                os.environ['CARGO_TARGET_DIR'] = saved_target
+
 
 if __name__ == '__main__':
     unittest.main()
