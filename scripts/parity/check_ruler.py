@@ -62,7 +62,7 @@ check_frozen = _load('check_frozen', _HERE / 'check_frozen.py').check
 
 # #2245 fix-r7 (r6 reviews, both families — structural redesign per the
 # 2026-11-10 coordinator ruling; round history: specs/parity/frozen/
-# 20261109-2245.md through 20261110-2245-r15.md). Six patch rounds proved
+# 20261109-2245.md through 20261111-2245-r18.md). Six patch rounds proved
 # lexical enumeration does not converge, so verdicts now derive structurally:
 #   1. every 处理/处置 cell is judged on its own copy, never concatenated —
 #      a row closes only when each cell names a closure and none is pending;
@@ -184,19 +184,25 @@ _CJK_CLOSURE_RE = re.compile('|'.join(
 # _handling_closed('accepted【risk noted】') was True — the CJK brackets
 # glued risk into a word unit the window could not see, the THIRD
 # same-shape miss on this family in a row (r14 passed/accepted desync,
-# r15 missed .!?/-, r16 missed 【】「」（）), so the class is now spelled
-# ONCE and every guard copy derives from it. The control side cross-walks
-# it against the CJK clause-break family (review_r1.py,
-# en-closure-sep-matches-cjk-breaks): the English closure family is the
-# CJK breaks plus the hyphen, so the two sides can no longer drift apart
-# either (the r14/r15/r16 misses were all drift between hand copies).
-# The hyphen is LAST in the class — a bare '-' between two members is a
-# RANGE operator, and '\]-【' silently swallows every ASCII letter into
-# the separator class (the same silent-mangling trap the r15 ']'-escape
-# note on _CJK_CLAUSE_BREAKS warns about; caught live by the r16 probe).
-_EN_CLOSURE_SEP_CHARS = r'\s,;:，。、；：！？.!?/()\[\]【】「」（）-'
-_EN_CLOSURE_SEP = '[' + _EN_CLOSURE_SEP_CHARS + ']'
-_EN_CLOSURE_NOTSEP = '[^' + _EN_CLOSURE_SEP_CHARS + ']'
+# r15 missed .!?/-, r16 missed 【】「」（）), so the class was consolidated
+# into a single constant. The control side cross-walks it against the
+# CJK clause-break family (review_r1.py, en-closure-sep-matches-cjk-breaks).
+# r17 (DS r16 boundary#1 P0 / sibling#1 P1, both measured live in
+# _tmp/20261110-issue-2245-closure/rev-r16-ds-probe/probe.out): the
+# consolidation kept a HAND-ENUMERATED member list, and the FOURTH
+# same-shape miss arrived on cue — quotes (“”"'‘’), book-title marks
+# (《》〈〉『』〔〕〖〗) and dashes (—–) glued the risk window shut, so
+# accepted "risk noted" / accepted—risk noted / passed "to next round"
+# all read CLOSED (false PASS). Per the >2-round rule the enumeration is
+# GONE: a separator is now ANY non-word character ([^\w] — whitespace,
+# punctuation and symbols of every script, present and future; \w keeps
+# letters/digits/underscore incl. CJK as word units). No member list
+# remains to miss a family on; the cross-walk shrinks to checking that
+# every CJK break character is indeed non-word. The r16 hyphen-placement
+# trap (a bare '-' between members is a RANGE operator) is structurally
+# retired with the list it lived in.
+_EN_CLOSURE_SEP = r'[^\w]'
+_EN_CLOSURE_NOTSEP = r'[\w]'
 _EN_CLOSURE_GUARDS = {
     'passed': (r'(?!' + _EN_CLOSURE_SEP + r'*+'
                r'(?:(?:on(?:\s+to)?|onto|to)\b|for\s+now\b))'),
@@ -305,7 +311,16 @@ _CJK_GUARDED_SECONDS = tuple(rule[0] for rule in _CJK_COMPOUND_RULES
 # 已修复中断【回归通过】) kept the hit alive and read pending (false FAIL)
 # while the round-bracket twin closed. The square-bracket family joins
 # ([]【】, and 「」 rides along — same clause-boundary role, defense only).
-_CJK_CLAUSE_BREAKS = '，。、；：！？,;:!? \t.()（）/[]【】「」'
+# r17 (DS r16 boundary#1 P0, reverse direction, measured live in
+# rev-r16-ds-probe/probe.out): the quote/book-title/dash family was missing
+# here too — 已修复中断“回归通过” / 已修复中断"回归通过" / 已修复中断'回归
+# 通过' kept the hit alive and read pending (false FAIL) while the 【】 twin
+# closed. The family joins (“”‘’"'《》〈〉『』〔〕〖〗—–), mirroring the r17
+# English side where the SAME family caused the false-PASS hole; the EN
+# separator is now the structural complement [^\w], and the cross-walk
+# (review_r1.py) asserts every char here is non-word, so neither side can
+# miss a family the other has.
+_CJK_CLAUSE_BREAKS = '，。、；：！？,;:!? \t.()（）/[]【】「」“”‘’"\'《》〈〉〔〕〖〗—–'
 # r14 (DS r13 boundary#7 P2 / MM sibling#5 P2 / DS sibling#3 P2, one code
 # site): the disposal verb check walked _CJK_LONG_VERBS with an IMMEDIATE
 # 已+verb adjacency — the single-char verbs (已修中断), a 了 after the verb
@@ -327,11 +342,16 @@ _CJK_CLAUSE_BREAKS = '，。、；：！？,;:!? \t.()（）/[]【】「」'
 _DISPOSED_VERB_BEFORE = re.compile(
     '已(?:(?!' + '|'.join(_longest_first(_CJK_GATE_VERBS)) + r')[^'
     + _CJK_CLAUSE_BREAKS.replace('\\', '\\\\').replace(']', '\\]')
+        .replace('-', '\\-').replace('^', '\\^')
     + r'])*(?:'
     + '|'.join(_longest_first(_CJK_GATE_VERBS)) + r')了?$')
 # (the break family's ] is escaped for the character class — r15 added it
-# and an unescaped ] would close the class early, silently mangling the
-# filter the way a malformed regex never announces.)
+# and an unescaped ] would close the class early; r17 (DS r16 sibling#3)
+# also escapes '-' and '^': a '-' landing mid-class is the RANGE operator
+# that silently swallows every letter between its neighbours — the same
+# trap the r16 EN class comment records catching live — and '^' must not
+# ever reach the class head. No member of the current family triggers
+# either escape; they are hardening for the next family that joins.)
 
 
 def _cjk_in_progress(handling):
@@ -456,7 +476,13 @@ _EN_PARTIAL_RE = re.compile('|'.join(
 # now read CLOSED — 'for now' pended only after the closure verbs r15 had
 # happened to guard one at a time): the deferral is an explicit pending
 # word here — ANY closure verb plus the deferral pends, one place, no
-# verb list to keep in step. The awaiting / waiting family has NO closed
+# verb list to keep in step. (r17 note, DS r16 simplify#5: this regex is
+# the FINAL verdict — :824 runs it before _handling_closed, so any cell
+# carrying 'for now' never reaches the closure read. The for-now branches
+# inside the passed/accepted guards are deliberate DUAL coverage: they
+# serve the direct _handling_closed calls and the r10/r16 frozen guard
+# literals, and deleting them must sync review_r1.py's guard pins.)
+# The awaiting / waiting family has NO closed
 # polarity anywhere by design — no attested closed shape carries the
 # words (the Chinese mirror 等待回归 alike), so every occurrence pends:
 # the known fail-closed boundary.

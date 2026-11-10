@@ -1352,6 +1352,46 @@ class ReviewControls(unittest.TestCase):
             ('open-fixed, unfinished work',
              '| 1 | DS | P1: foo | fixed, unfinished work |\n', False),
         ]
+        row_cases_r17 = [
+            # A. the FOURTH same-shape family miss (DS boundary#1 P0 +
+            #    sibling#1 P1, both measured live in
+            #    _tmp/20261110-issue-2245-closure/rev-r16-ds-probe/): the
+            #    quote / book-title / dash family glued the guarded window
+            #    shut — every form below read CLOSED before the r17
+            #    structural fix (the separator is now the [^\w] complement
+            #    class; no member list remains to miss a family on).
+            ('open-accepted "risk noted"',
+             '| 1 | DS | P1: foo | accepted "risk noted" |\n', False),
+            ('open-accepted “risk noted”',
+             '| 1 | DS | P1: foo | accepted “risk noted” |\n', False),
+            ('open-accepted《risk noted》',
+             '| 1 | DS | P1: foo | accepted《risk noted》 |\n', False),
+            ('open-accepted〔risk noted〕',
+             '| 1 | DS | P1: foo | accepted〔risk noted〕 |\n', False),
+            ('open-accepted『risk noted』',
+             '| 1 | DS | P1: foo | accepted『risk noted』 |\n', False),
+            ('open-passed "to next round"',
+             '| 1 | DS | P1: foo | passed "to next round" |\n', False),
+            ('open-passed — to next round',
+             '| 1 | DS | P1: foo | passed — to next round |\n', False),
+            ('open-passed —to next round',
+             '| 1 | DS | P1: foo | passed —to next round |\n', False),
+            ('open-accepted—risk noted',
+             '| 1 | DS | P1: foo | accepted—risk noted |\n', False),
+            ('open-accepted –risk noted',
+             '| 1 | DS | P1: foo | accepted –risk noted |\n', False),
+            # B. the reverse direction on the CJK side (same finding):
+            #    the quote family kept the in-progress hit alive —
+            #    已修复中断“回归通过” read pending (false FAIL) while the
+            #    【】 twin closed; the family joins _CJK_CLAUSE_BREAKS.
+            ('closed-已修复中断“回归通过”',
+             '| 1 | DS | P1：foo | 已修复中断“回归通过” |\n', True),
+            ('closed-已修复中断"回归通过"',
+             '| 1 | DS | P1：foo | 已修复中断"回归通过" |\n', True),
+            ('closed-已修复中断\'回归通过\'',
+             '| 1 | DS | P1：foo | 已修复中断\'回归通过\' |\n', True),
+        ]
+        assert_rows('r17', row_cases_r17)
         assert_rows('r16', row_cases_r16)
         assert_rows('r15', row_cases_r15)
         assert_rows('r14', row_cases_r14)
@@ -1799,34 +1839,50 @@ class ReviewControls(unittest.TestCase):
         # quadratic split tree — measured 9.1 s at 20000 commas).
         # r16 (DS r15 boundary#1 P0, measured live): the class takes the
         # CJK bracket members and is spelled ONCE — every guard copy
-        # derives from _EN_CLOSURE_SEP_CHARS (the hyphen stays LAST in
-        # the class; a bare '-' between two members is a range operator).
+        # derives from the separator constant.
+        # r17 (DS r16 boundary#1 P0 / sibling#1 P1, both measured live in
+        # rev-r16-ds-probe/): the FOURTH same-shape miss (quotes / book
+        # title marks / dashes glued the window shut) retired the member
+        # list — the separator is the structural COMPLEMENT [^\w] and the
+        # word unit is [\w]; the literals below re-attest the whole shape
+        # (an enum regression, a lost possessive or a shrunk window all
+        # resurface here, not in a future review).
         self.assertEqual(check_ruler._EN_CLOSURE_GUARDS['accepted'],
-                         r'(?![\s,;:，。、；：！？.!?/()\[\]【】「」（）-]*+(?:'
-                         r'(?:[^\s,;:，。、；：！？.!?/()\[\]【】「」（）-]+'
-                         r'[\s,;:，。、；：！？.!?/()\[\]【】「」（）-]++)*'
-                         r'[\s,;:，。、；：！？.!?/()\[\]【】「」（）-]*+risks?\b'
+                         r'(?![^\w]*+(?:'
+                         r'(?:[\w]+[^\w]++)*'
+                         r'[^\w]*+risks?\b'
                          r'|for\s+now\b))',
-                         '#2245-r16 accepted-guard-window-frozen')
+                         '#2245-r17 accepted-guard-window-frozen')
         # r15 (DS r14 sibling#1 P1, MM r13 boundary#6 P2): 'passed' gains the
         # for-now deferral branch on the same possessive separator family.
         self.assertEqual(check_ruler._EN_CLOSURE_GUARDS['passed'],
-                         r'(?![\s,;:，。、；：！？.!?/()\[\]【】「」（）-]*+'
+                         r'(?![^\w]*+'
                          r'(?:(?:on(?:\s+to)?|onto|to)\b|for\s+now\b))',
-                         '#2245-r16 passed-guard-deferral-frozen')
-        # r16 (DS r15 boundary#1 P0 + simplify#1 P2): the separator class
-        # is one module constant composed into every guard copy, and it
-        # is cross-walked against the CJK clause-break family — the
-        # English closure family is the CJK breaks plus the hyphen (\s
-        # stands for the whitespace members), so neither side can gain a
-        # member the other lacks; the r14/r15/r16 misses were all drift
-        # between hand copies of the same family.
-        self.assertGreaterEqual(
-            set(check_ruler._EN_CLOSURE_SEP_CHARS
-                .replace(r'\s', ' \t\n\r\x0b\x0c')
-                .replace(r'\[', '[').replace(r'\]', ']')),
-            set(check_ruler._CJK_CLAUSE_BREAKS) | {'-'},
-            '#2245-r16 en-closure-sep-matches-cjk-breaks')
+                         '#2245-r17 passed-guard-deferral-frozen')
+        # r17 (DS r16 boundary#1 + sibling#1 + simplify#3, consumed): the
+        # separator spellings are pinned as literals — [^\w]/[\w] are
+        # complements BY SPELLING, so the classes cannot desynchronize,
+        # and the r14–r17 same-shape family (member-list drift) has no
+        # members left to drift.
+        self.assertEqual((check_ruler._EN_CLOSURE_SEP,
+                          check_ruler._EN_CLOSURE_NOTSEP),
+                         (r'[^\w]', r'[\w]'),
+                         '#2245-r17 en-closure-sep-spelling-frozen')
+        # r17 cross-walk, rewritten per DS r16 simplify#3 (the r16 walk
+        # hand-decoded regex escapes and was one-way): the English family
+        # is structurally complete over non-word characters, so the walk
+        # COMPILES it and requires every CJK break character (and the
+        # hyphen) to be a separator — a CJK break that is a word
+        # character (a letter sneaking into the break family) fails here.
+        # The quote / book-title / dash family of the round is pinned as
+        # the behavioral sample: each member must be a separator.
+        _en_sep = re.compile(check_ruler._EN_CLOSURE_SEP)
+        self.assertEqual(
+            {ch for ch in check_ruler._CJK_CLAUSE_BREAKS + '-'
+             + "“”‘’\"'《》〈〉『』〔〕〖〗—–"
+             if not _en_sep.fullmatch(ch)},
+            set(),
+            '#2245-r17 en-closure-sep-matches-cjk-breaks')
         # r16 (DS r15 sibling#1 P1, measured): 'for now' is an explicit
         # pending word — the deferral no longer rides the closure-guard
         # verb table (fixed / verified for now read CLOSED on the r15
@@ -1852,9 +1908,13 @@ class ReviewControls(unittest.TestCase):
         # b#4 disposal shapes. r14 (DS b#5 / MM b#3 P1): the family takes
         # brackets, ASCII period and slash. r15 (DS r14 boundary#2 P1): the
         # square-bracket family joins (已修复中断[回归通过] was a false FAIL).
+        # r17 (DS r16 boundary#1 P0, reverse direction): the quote /
+        # book-title / dash family joins (已修复中断“回归通过” was a false
+        # FAIL while the 【】 twin closed).
         self.assertEqual(check_ruler._CJK_CLAUSE_BREAKS,
-                         '，。、；：！？,;:!? \t.()（）/[]【】「」',
-                         '#2245-r15 clause-breaks-frozen')
+                         '，。、；：！？,;:!? \t.()（）/[]【】「」“”‘’"\''
+                         '《》〈〉〔〕〖〗—–',
+                         '#2245-r17 clause-breaks-frozen')
         self.assertEqual(set(check_ruler._PARTIAL_LEFT_GUARDS),
                          {'部分', '局部', '过半', '一半', '阶段性', '未完全'},
                          '#2245-r14 partial-left-guard-keys-frozen')
@@ -2057,15 +2117,16 @@ class ReviewControls(unittest.TestCase):
                             '#2245-r14 en-closure-guard-family:' + form)
 
     @unittest.skipUnless(
-        sys.version_info >= (3, 14),
-        '#2245-r16 (DS r15 concurrency#1 P2): the SIGALRM interrupt of '
-        'the C-level backtrack loop is verified on CPython 3.14.3 only '
-        '(r15 probe: TimeoutError after 0.303 s mid-backtrack); the '
-        'apparatus itself requires just >= 3.11, and an interpreter that '
-        'does not return to the eval loop mid-backtrack would leave this '
-        'control hanging for hours instead of failing at 5 s. The '
-        'structural fix (subprocess isolation with an outside-the-'
-        'interpreter hard kill) is tracked as a follow-up — see the r17 '
+        sys.version_info >= (3, 14, 3),
+        '#2245-r16 (DS r15 concurrency#1 P2; gate tightened to the exact '
+        'verified minor+patch by r17 / DS r16 boundary#2): the SIGALRM '
+        'interrupt of the C-level backtrack loop is verified on CPython '
+        '3.14.3 only (r15 probe: TimeoutError after 0.303 s mid-backtrack); the '
+        'apparatus itself requires just >= 3.11, and the gate pins the exact '
+        'verified minor+patch (3.14.3 — 3.14.0/3.14.1/3.14.2 and later majors '
+        'are untested and skip; an interpreter that does not return to the '
+        'eval loop mid-backtrack would leave this control hanging for hours '
+        'instead of failing at 5 s) is tracked as a follow-up — see the r18 '
         'event file.')
     def test_pct_gap_backtracks_linearly(self):
         """#2245 r14 (DS r13 concurrency#1 + MM r13 concurrency#1, both
@@ -2147,11 +2208,13 @@ class ReviewControls(unittest.TestCase):
         self.assertLess(elapsed3, 1.0, '#2245-r15 pct-gap-unicode-nd')
 
     @unittest.skipUnless(
-        sys.version_info >= (3, 14),
-        '#2245-r16 (DS r15 concurrency#1 P2): the SIGALRM interrupt of '
-        'the C-level backtrack loop is verified on CPython 3.14.3 only; '
-        'below 3.14 this control could hang for hours instead of failing '
-        'at 5 s — see the pct control above and the r17 event file.')
+        sys.version_info >= (3, 14, 3),
+        '#2245-r16 (DS r15 concurrency#1 P2; gate tightened to the exact '
+        'verified minor+patch by r17 / DS r16 boundary#2): the SIGALRM '
+        'interrupt of the C-level backtrack loop is verified on CPython '
+        '3.14.3 only; below it this control could hang for hours instead '
+        'of failing at 5 s — see the pct control above and the r18 event '
+        'file.')
     def test_separator_runs_backtrack_linearly(self):
         """#2245 r15 (DS r14 concurrency#3 P2 + sibling#5 P1 / boundary#2
         P2, all measured live on 87871a970, raw output in
