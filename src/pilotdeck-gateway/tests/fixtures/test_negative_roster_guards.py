@@ -21,8 +21,8 @@ a listed entry must really exist), and the same kill set runs per entry.
 Each driver loads the real entry source (never a copy) and runs its real
 ``main()`` with only the executor layer stubbed. Two families exist:
 
-* manager-gateway / sdk-mcp-session-tools mutate through the shared
-  ``mutating_sources`` window and ``write_source_atomic`` -- those, plus
+* manager-gateway / sdk-mcp-session-tools / issue-2495 mutate through the
+  shared ``mutating_sources`` window and ``write_source_atomic`` -- those, plus
   ``wait_for_slot`` / ``run_owned`` and the pass/kill judges, are stubbed;
   ``registered`` / selection, the real anchors, the roster re-check and
   every publish go through the entry's real code.
@@ -497,6 +497,70 @@ def _drive_sdk(testcase, *, perturbed=False, renamed=False,
     return Drive(module, code, out, stdout.getvalue(), stderr.getvalue(), writes, None)
 
 
+def _drive_2495(testcase, *, perturbed=False, renamed=False,
+               reordered=False, shrink_roster=False, argv=()):
+    """Run issue-2495's real ``main()``; return the Drive of that run.
+
+    The #2590 migrated-family row (#1433 sdk shape): same executor seams as
+    the sdk driver. What differs from sdk and stays real here on purpose:
+    the startup target guards (``missing_target`` / ``refuse_unusable_target``
+    read ``_environment``'s temp ``CARGO_TARGET_DIR``, admitted by the one
+    shared rule), the ``tree_lock`` + ``stale_names()`` anchor scan (the lock
+    file is gitignored and the anchors are the tree's real bytes), and the
+    ``--check`` / argv-contract refusals — all before any evidence directory
+    is claimed, all exercised as the entry's own code.
+    """
+    module = load_entry('issue-2495/negative_controls.py')
+    base = Path(tempfile.mkdtemp(prefix='negctl-2804-'))
+    testcase.addCleanup(shutil.rmtree, base, ignore_errors=True)
+    out = base / 'out'
+    writes = []
+    drifted = [False]
+
+    def fake_write_atomic(root, path, data, *, mode=None):
+        writes.append((Path(path), bytes(data)))
+
+    def fake_slot(script, **kwargs):
+        return subprocess.CompletedProcess([], 0, '', '')
+
+    def fake_run_owned(command, **kwargs):
+        if (perturbed or renamed or reordered) and not drifted[0]:
+            drifted[0] = True
+            module.EXPECTED_NAMES = (_rename_roster(module.EXPECTED_NAMES)
+                                     if renamed
+                                     else _reorder_roster(module.EXPECTED_NAMES)
+                                     if reordered
+                                     else module.EXPECTED_NAMES[:-1])
+        # The non-compile command ends with ``test -- --exact
+        # --include-ignored`` (test at -4); the compile-only one ends with
+        # ``--no-run`` and carries no test name.
+        test = command[-4] if '--no-run' not in command else 'compile-check'
+        return subprocess.CompletedProcess(
+            command, 0,
+            f'test {test} ... ok\ntest result: ok. 1 passed; 0 failed;\n', '')
+
+    def fake_judge(result, raw, targets, receipt):
+        return 'KILLED', 'bound test failed at its assertion', []
+
+    stdout, stderr = io.StringIO(), io.StringIO()
+    wrapper = base / 'wrapper-launch.py'
+    with patch.dict(os.environ, _environment(base)), \
+         patch.object(module, 'mutating_sources', stubbed_window), \
+         patch.object(module, 'write_source_atomic', fake_write_atomic), \
+         patch.object(module, 'wait_for_slot', fake_slot), \
+         patch.object(module, 'run_owned', fake_run_owned), \
+         patch.object(module, 'passed', lambda result, test: True), \
+         patch.object(module, 'judge', fake_judge), \
+         patch.object(module, 'EXPECTED_NAMES',
+                      _shrunk(module.EXPECTED_NAMES) if shrink_roster
+                      else module.EXPECTED_NAMES), \
+         patch('sys.argv', [str(wrapper), str(out), *argv]), \
+         contextlib.redirect_stdout(stdout), \
+         contextlib.redirect_stderr(stderr):
+        code = _call_main(module)
+    return Drive(module, code, out, stdout.getvalue(), stderr.getvalue(), writes, None)
+
+
 def _drive_manager_entry(testcase, *, perturbed=False, renamed=False,
                          reordered=False, shrink_roster=False, argv=()):
     """The register's manager-gateway row: the perturbation is the lost,
@@ -522,6 +586,11 @@ ROSTER_GUARDED = {
     'memory-gateway/negative_controls.py': _drive_memory,
     'snapshot-projection/negative_controls.py': _drive_snapshot,
     'sdk-mcp-session-tools/negative_controls.py': _drive_sdk,
+    # #2860 fix-r4: issue-2495 grew the same defence through #2590 fix-r3b4
+    # (the roster-mismatch.json write landed on main after this branch's
+    # base), so the fail-closed scan below turned red on main's own CI shape
+    # until the row joined here in the same change.
+    'issue-2495/negative_controls.py': _drive_2495,
 }
 
 # The lines each entry prints on its way out of a *clean* run. A mismatched
@@ -535,6 +604,7 @@ SUCCESS_LINE = {
     'memory-gateway/negative_controls.py': ('summary:', ' killed; '),
     'snapshot-projection/negative_controls.py': (' KILLED; see ',),
     'sdk-mcp-session-tools/negative_controls.py': ('"controls"',),
+    'issue-2495/negative_controls.py': ('summary:',),
 }
 
 
