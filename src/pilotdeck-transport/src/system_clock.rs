@@ -374,10 +374,64 @@ fn parse_offset_timezone(value: &str) -> Option<i32> {
 /// are case-insensitive), and the final real path must remain under the root.
 #[allow(dead_code)] // called from main crate; flagged dead in test-only #[path] include
 fn timezone_tzif(name: &str) -> Option<Vec<u8>> {
-    if name.is_empty() || name.starts_with('/') || name.contains('\0') {
+    timezone_tzif_at(std::path::Path::new("/usr/share/zoneinfo"), name)
+}
+
+fn valid_zone_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains('\0')
+        && name
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
+/// Some distributions omit backward-link files while retaining those same
+/// links in their installed tzdata.zi source. Resolve only that host's declared
+/// Link/L rows to a real, bounded TZif beneath the same root. No embedded rules,
+/// network lookup, UTC substitution, or guessed aliases are involved.
+fn timezone_tzif_at(root: &std::path::Path, name: &str) -> Option<Vec<u8>> {
+    if !valid_zone_name(name) {
         return None;
     }
-    let root = std::path::Path::new("/usr/share/zoneinfo");
+    let mut selected = name.to_owned();
+    let mut visited = std::collections::BTreeSet::new();
+    let mut source = None;
+    for _ in 0..32 {
+        if !visited.insert(selected.to_ascii_lowercase()) {
+            return None;
+        }
+        if let Some(bytes) = timezone_file_at(root, &selected) {
+            return Some(bytes);
+        }
+        if source.is_none() {
+            source = Some(String::from_utf8(timezone_file_at(root, "tzdata.zi")?).ok()?);
+        }
+        let mut target: Option<&str> = None;
+        for line in source.as_deref()?.lines() {
+            let mut fields = line.split('#').next()?.split_whitespace();
+            if !matches!(fields.next(), Some("L" | "Link")) {
+                continue;
+            }
+            let (Some(destination), Some(alias)) = (fields.next(), fields.next()) else {
+                continue;
+            };
+            if !alias.eq_ignore_ascii_case(&selected) {
+                continue;
+            }
+            if fields.next().is_some() || !valid_zone_name(destination) {
+                return None;
+            }
+            if target.is_some_and(|previous| !previous.eq_ignore_ascii_case(destination)) {
+                return None;
+            }
+            target = Some(destination);
+        }
+        selected = target?.to_owned();
+    }
+    None
+}
+
+fn timezone_file_at(root: &std::path::Path, name: &str) -> Option<Vec<u8>> {
     let mut path = root.to_path_buf();
     for component in name.split('/') {
         if component.is_empty() || component == "." || component == ".." {
@@ -425,6 +479,82 @@ pub fn bounded_zone_read(path: &std::path::Path) -> Option<Vec<u8>> {
         .read_to_end(&mut bytes)
         .ok()?;
     (bytes.len() <= 1_048_576).then_some(bytes)
+}
+
+#[cfg(test)]
+mod installed_alias_tests {
+    use super::*;
+
+    struct Root(std::path::PathBuf);
+    impl Root {
+        fn new(source: &str) -> Self {
+            let root =
+                std::env::temp_dir().join(format!("pdrs-zone-alias-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(root.join("Area")).unwrap();
+            std::fs::write(root.join("Area/City"), b"TZif test data").unwrap();
+            std::fs::write(root.join("tzdata.zi"), source).unwrap();
+            Self(root)
+        }
+    }
+    impl Drop for Root {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    #[test]
+    fn compact_and_full_links_resolve_missing_files_without_rewriting_zone_names() {
+        let root = Root::new(
+            "# source owned by the installed profile\nL Area/City Old/Zone\nLink Old/Zone Older/Zone # comment\n",
+        );
+        for name in ["Area/City", "old/ZONE", "Older/Zone"] {
+            assert_eq!(timezone_tzif_at(&root.0, name).unwrap(), b"TZif test data");
+        }
+        assert!(!root.0.join("Old").exists());
+        assert_eq!(timezone_tzif_at(&root.0, "Missing/Zone"), None);
+    }
+
+    #[test]
+    fn malformed_ambiguous_cyclic_and_escaping_links_fail_closed() {
+        for source in [
+            "L Other/Missing Old/Zone\n",
+            "L Old/Zone Old/Zone\n",
+            "L Next/Zone Old/Zone\nL Old/Zone Next/Zone\n",
+            "L Area/City Old/Zone\nL Other/City Old/Zone\n",
+            "L ../Area/City Old/Zone\n",
+            "L /Area/City Old/Zone\n",
+            "L Area/City Old/Zone trailing\n",
+        ] {
+            let root = Root::new(source);
+            assert_eq!(timezone_tzif_at(&root.0, "Old/Zone"), None, "{source}");
+        }
+        let root = Root::new("L Area/City Old/Zone\n");
+        for name in [
+            "",
+            "/Area/City",
+            "Area//City",
+            "../Area/City",
+            "Area/../City",
+            "Area/City\0",
+        ] {
+            assert_eq!(timezone_tzif_at(&root.0, name), None);
+        }
+        std::fs::write(root.0.join("tzdata.zi"), vec![b'x'; 1_048_577]).unwrap();
+        assert_eq!(timezone_tzif_at(&root.0, "Old/Zone"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn alias_metadata_and_destination_cannot_escape_the_system_root() {
+        let root = Root::new("L Outside Old/Zone\n");
+        let external = Root::new("");
+        std::os::unix::fs::symlink(external.0.join("Area/City"), root.0.join("Outside")).unwrap();
+        assert_eq!(timezone_tzif_at(&root.0, "Old/Zone"), None);
+        std::fs::remove_file(root.0.join("tzdata.zi")).unwrap();
+        std::fs::write(external.0.join("tzdata.zi"), "L Area/City Old/Zone\n").unwrap();
+        std::os::unix::fs::symlink(external.0.join("tzdata.zi"), root.0.join("tzdata.zi")).unwrap();
+        assert_eq!(timezone_tzif_at(&root.0, "Old/Zone"), None);
+    }
 }
 
 fn days_from_civil(year: i32, month: i32, day: i32) -> i64 {
