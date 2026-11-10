@@ -286,3 +286,159 @@ fn builtin_family_registers_as_read_only_catalog_entries() {
         );
     }
 }
+
+fn tiny_pdf(pages: &[&str]) -> Vec<u8> {
+    let font = 3 + pages.len() * 2;
+    let kids = (0..pages.len())
+        .map(|i| format!("{} 0 R", 3 + i * 2))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        format!("<< /Type /Pages /Count {} /Kids [{kids}] >>", pages.len()),
+    ];
+    for (i, text) in pages.iter().enumerate() {
+        let content = 4 + i * 2;
+        let stream = format!("BT /F1 12 Tf 40 700 Td ({text}) Tj ET");
+        objects.push(format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 {font} 0 R >> >> /Contents {content} 0 R >>"));
+        objects.push(format!(
+            "<< /Length {} >>\nstream\n{stream}\nendstream",
+            stream.len()
+        ));
+    }
+    if !pages.is_empty() {
+        objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned());
+    }
+    let mut out = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n".to_vec();
+    let mut offsets = vec![0usize];
+    for (i, object) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref = out.len();
+    out.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", offsets.len()).as_bytes());
+    for offset in &offsets[1..] {
+        out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            offsets.len()
+        )
+        .as_bytes(),
+    );
+    out
+}
+
+#[test]
+fn read_file_real_pdf_page_count_and_range_contract() {
+    let scratch = Scratch::new();
+    for n in [0usize, 1, 2, 10, 11] {
+        let pages = vec!["fixture page"; n];
+        fs::write(scratch.root.join(format!("{n}.pdf")), tiny_pdf(&pages)).unwrap();
+    }
+    fs::write(scratch.root.join("bad.pdf"), b"not a pdf").unwrap();
+    let run = |name: &str, modalities: &[&str], pages: Option<&str>| {
+        let mut replay = ReplayContext::new(&scratch, &scratch.root);
+        replay
+            .context
+            .fields
+            .insert("modelMultimodal".into(), multimodal(modalities, None));
+        let mut input = object([("file_path", JsValue::from(name))]);
+        if let Some(pages) = pages {
+            input.insert("pages".into(), JsValue::from(pages));
+        }
+        futures_block(ReadFileTool::new().execute(JsValue::Object(input), replay.context))
+    };
+    for n in [1usize, 10] {
+        let name = format!("{n}.pdf");
+        let output = run(&name, &["pdf"], None).unwrap();
+        let data = output.data.unwrap();
+        assert_eq!(field(&data, "pageCount"), &JsValue::Number(n as f64));
+        let supplemental = output.supplemental_messages.unwrap();
+        let document = &array(field(&supplemental[0], "content"))[0];
+        assert_eq!(field(document, "pages"), &JsValue::Number(n as f64));
+        assert_eq!(
+            text(field(document, "data")),
+            BASE64.encode(fs::read(scratch.root.join(name)).unwrap())
+        );
+    }
+    let error = match run("11.pdf", &["pdf"], None) {
+        Err(error) => error,
+        Ok(_) => panic!("11 pages must be rejected"),
+    };
+    assert_eq!(error.code, "invalid_tool_input");
+    assert!(
+        error
+            .message
+            .to_utf8()
+            .unwrap()
+            .contains("This PDF has 11 pages")
+    );
+    let error = match run("2.pdf", &[], Some("3")) {
+        Err(error) => error,
+        Ok(_) => panic!("range must be rejected before modality"),
+    };
+    assert_eq!(error.code, "invalid_tool_input");
+    assert!(
+        error
+            .message
+            .to_utf8()
+            .unwrap()
+            .contains("exceeds the detected page count (2)")
+    );
+    let no_image = run("2.pdf", &[], Some("1-2")).unwrap();
+    assert_eq!(
+        field(&no_image.data.unwrap(), "pageCount"),
+        &JsValue::Number(2.0)
+    );
+    for name in ["0.pdf", "bad.pdf"] {
+        let output = run(name, &["pdf"], None).unwrap();
+        assert!(field(&output.data.unwrap(), "pageCount").is_undefined());
+        let message = output.supplemental_messages.unwrap();
+        assert!(field(&array(field(&message[0], "content"))[0], "pages").is_undefined());
+    }
+}
+
+#[test]
+fn read_file_pdf_renders_fixed_ts_jpeg_pages_and_metadata() {
+    use sha2::{Digest, Sha256};
+    let scratch = Scratch::new();
+    let pdf = tiny_pdf(&["PAGE 1", "PAGE 2"]);
+    fs::write(scratch.root.join("two.pdf"), pdf).unwrap();
+    let mut replay = ReplayContext::new(&scratch, &scratch.root);
+    replay.context.fields.insert(
+        "modelMultimodal".into(),
+        multimodal(&["image"], Some("high")),
+    );
+    let output = futures_block(ReadFileTool::new().execute(
+        JsValue::Object(object([
+            ("file_path", JsValue::from("two.pdf")),
+            ("pages", JsValue::from("1-2")),
+        ])),
+        replay.context,
+    ))
+    .unwrap();
+    let data = output.data.unwrap();
+    assert_eq!(field(&data, "pageCount"), &JsValue::Number(2.0));
+    assert_eq!(text(field(&data, "requestedPages")), "1-2");
+    assert_eq!(field(&data, "pdfPagesRendered"), &JsValue::Bool(true));
+    assert_eq!(
+        output.metadata.unwrap().get("truncated"),
+        Some(&JsValue::Bool(false))
+    );
+    let messages = output.supplemental_messages.unwrap();
+    let images = array(field(&messages[0], "content"));
+    assert_eq!(images.len(), 2);
+    for (image, expected) in images.iter().zip([
+        "09d9e2bbd72719c52482dfc8a25d447632584db63ae80f1f8e4200681d9d3340",
+        "a690bb8c5a3a2c76259d58bcfa4ef0c467e351efa1cfefabeaf6181953cb6492",
+    ]) {
+        assert_eq!(text(field(image, "type")), "image");
+        assert_eq!(text(field(image, "mimeType")), "image/jpeg");
+        assert_eq!(text(field(image, "detail")), "high");
+        let bytes = BASE64.decode(text(field(image, "data"))).unwrap();
+        assert_eq!(format!("{:x}", Sha256::digest(&bytes)), expected);
+        assert_eq!(field(image, "bytes"), &JsValue::Number(bytes.len() as f64));
+    }
+}

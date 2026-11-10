@@ -1,9 +1,7 @@
 //! `read_file` (baseline `tool/builtin/readFile.ts`): text pagination,
 //! line numbers, plan/BOM handling, notebook rendering, binary and image/PDF
-//! classification, dedup state and write snapshots. Image and PDF attachment
-//! require the host's multimodal encoder, which this read-only slice never
-//! fabricates; without a multimodal declaration the baseline itself returns a
-//! text notice, and that branch is implemented here verbatim.
+//! classification, dedup state and write snapshots. PDF page rendering uses
+//! the same MuPDF JPEG settings as the fixed TS implementation.
 use super::{
     ResolvedPath, StatKind, cwd as context_cwd, extname, failed, field, is_absolute, join,
     js_value_string, lower, normalize, number, object, os_path, read_file_bytes,
@@ -586,6 +584,71 @@ fn image(
     })
 }
 
+// The fixed TS countPdfPages treats malformed and zero-page documents as unknown.
+fn pdf_page_count(bytes: &[u8]) -> Option<i32> {
+    mupdf::Document::from_bytes(bytes, "application/pdf")
+        .and_then(|doc| doc.page_count())
+        .ok()
+        .filter(|count| *count > 0)
+}
+
+fn pdf_render_error(error: mupdf::Error) -> String {
+    match error {
+        // The TS binding exposes the original MuPDF message, without the
+        // Rust wrapper's numeric-code prefix.
+        mupdf::Error::MuPdf(error) => error.message,
+        error => error.to_string(),
+    }
+}
+
+// MuPDF rendering follows the fixed TS 100 DPI / RGB / quality-80 path.
+// The source-patched safe MuPDF wrapper owns the JPEG encoding and error catch.
+fn render_pdf_pages(
+    bytes: &[u8],
+    first: i32,
+    last: i32,
+    max_bytes: f64,
+    detail: Option<JsString>,
+) -> Result<Vec<JsValue>, String> {
+    let document =
+        mupdf::Document::from_bytes(bytes, "application/pdf").map_err(pdf_render_error)?;
+    let mut images = Vec::new();
+    for index in (first - 1)..last {
+        let page = document.load_page(index).map_err(pdf_render_error)?;
+        let pixmap = page
+            .to_pixmap(
+                &mupdf::Matrix::new_scale(100.0 / 72.0, 100.0 / 72.0),
+                &mupdf::Colorspace::device_rgb(),
+                false,
+                true,
+            )
+            .map_err(pdf_render_error)?;
+        let mut jpeg = Vec::new();
+        pixmap
+            .write_jpeg80_to(&mut jpeg)
+            .map_err(pdf_render_error)?;
+        // The TS sharp re-encoding path for an image over budget is not yet
+        // available here; fail rather than return an over-budget attachment.
+        if jpeg.len() as f64 > max_bytes {
+            return Err("Image content exceeds the read_file byte budget after compression attempts (image/jpeg).".into());
+        }
+        let mut image = object([
+            ("type", string("image")),
+            ("mimeType", string("image/jpeg")),
+            ("data", string(BASE64.encode(&jpeg))),
+            ("bytes", JsValue::Number(jpeg.len() as f64)),
+        ]);
+        if let Some(detail) = &detail {
+            image.insert("detail".into(), JsValue::String(detail.clone()));
+        }
+        images.push(JsValue::Object(image));
+    }
+    if images.is_empty() {
+        return Err("mupdf produced no page images".into());
+    }
+    Ok(images)
+}
+
 fn pdf(
     input: &JsValue,
     context: &ToolRunContext,
@@ -619,35 +682,55 @@ fn pdf(
             format!("Invalid PDF page range: {value}."),
         ));
     }
-    let page_suffix = "";
-    if let Some(_value) = &pages {
-        if !supports_image {
-            return Ok(ToolOutput {
-                content: vec![JsValue::Object(object([
-                    ("type", string("text")),
-                    (
-                        "text",
-                        string(format!(
-                            "[PDF file: {}, {} bytes{page_suffix}. Current model does not support image input; cannot render requested pages.]",
-                            text(&resolved.relative),
-                            context_stat.size
-                        )),
-                    ),
-                ]))],
-                data: Some(JsValue::Object(object([
-                    ("filePath", string(resolved.relative.clone())),
-                    ("kind", string("pdf")),
-                    ("modelSupportsImage", JsValue::Bool(false)),
-                ]))),
-                ..ToolOutput::default()
-            });
-        }
+    // TS reads and counts before modality checks, including requests for a
+    // range that the current model cannot render.
+    let bytes = std::fs::read(os_path(&resolved.absolute))
+        .map_err(|error| failed(error, "open", &resolved.absolute))?;
+    let page_count = pdf_page_count(&bytes);
+    let page_value = page_count.map_or(JsValue::Undefined, |count| JsValue::Number(count as f64));
+    let page_suffix = page_count.map_or_else(String::new, |count| format!(", {count} pages"));
+    if let Some(value) = &pages
+        && let Some(count) = page_count
+        && parse_pdf_page_range(value).is_some_and(|(_, last)| last > f64::from(count))
+    {
         return Err(tool_error(
-            "result_too_large",
-            "PDF page rendering is not available in this runtime.",
+            "invalid_tool_input",
+            format!("PDF page range {value} exceeds the detected page count ({count})."),
         ));
     }
-    if !supports_pdf || context_stat.size > PDF_EXTRACT_SIZE_THRESHOLD {
+    if pages.is_some() && !supports_image {
+        return Ok(ToolOutput {
+            content: vec![JsValue::Object(object([
+                ("type", string("text")),
+                (
+                    "text",
+                    string(format!(
+                        "[PDF file: {}, {} bytes{page_suffix}. Current model does not support image input; cannot render requested pages.]",
+                        text(&resolved.relative),
+                        context_stat.size
+                    )),
+                ),
+            ]))],
+            data: Some(JsValue::Object(object([
+                ("filePath", string(resolved.relative.clone())),
+                ("kind", string("pdf")),
+                ("modelSupportsImage", JsValue::Bool(false)),
+                ("pageCount", page_value.clone()),
+            ]))),
+            ..ToolOutput::default()
+        });
+    }
+    if pages.is_none()
+        && let Some(count) = page_count.filter(|count| *count > 10)
+    {
+        return Err(tool_error(
+            "invalid_tool_input",
+            format!(
+                "This PDF has {count} pages, which is too many to read at once. Use the pages parameter to read specific page ranges (e.g., pages: \"1-5\"). Maximum {MAX_PDF_PAGES_PER_REQUEST} pages per request."
+            ),
+        ));
+    }
+    if pages.is_some() || !supports_pdf || context_stat.size > PDF_EXTRACT_SIZE_THRESHOLD {
         if !supports_image {
             return Ok(ToolOutput {
                 content: vec![JsValue::Object(object([
@@ -666,20 +749,124 @@ fn pdf(
                     ("kind", string("pdf")),
                     ("modelSupportsPdf", JsValue::Bool(false)),
                     ("modelSupportsImage", JsValue::Bool(false)),
+                    ("pageCount", page_value.clone()),
                 ]))),
                 ..ToolOutput::default()
             });
         }
-        return Err(tool_error(
-            "result_too_large",
-            "PDF page rendering is not available in this runtime.",
-        ));
+        let (first, last) = pages.as_deref().and_then(parse_pdf_page_range).map_or(
+            (
+                1,
+                page_count
+                    .unwrap_or(MAX_PDF_PAGES_PER_REQUEST as i32)
+                    .min(MAX_PDF_PAGES_PER_REQUEST as i32),
+            ),
+            |(first, last)| (first as i32, last as i32),
+        );
+        let truncated = pages.is_none() && page_count.is_some_and(|count| count > last);
+        let max_bytes = multimodal
+            .and_then(|v| v.get("maxImageBytes"))
+            .and_then(JsValue::as_number)
+            .unwrap_or(MAX_IMAGE_BYTES as f64)
+            .min(MAX_IMAGE_BYTES as f64);
+        let detail = multimodal
+            .and_then(|v| v.get("imageDetail"))
+            .and_then(JsValue::as_string)
+            .cloned();
+        let rendered = render_pdf_pages(&bytes, first, last, max_bytes, detail);
+        let images = match rendered {
+            Ok(images) => images,
+            Err(error) => {
+                let notice = if pages.is_some() {
+                    format!(
+                        "[PDF file: {}. PDF page rendering failed: {error}]",
+                        text(&resolved.relative)
+                    )
+                } else {
+                    format!(
+                        "[PDF file: {}, {} bytes{page_suffix}. PDF page rendering failed: {error}]",
+                        text(&resolved.relative),
+                        context_stat.size
+                    )
+                };
+                let mut data = object([
+                    ("filePath", string(resolved.relative.clone())),
+                    ("kind", string("pdf")),
+                    ("pageCount", page_value.clone()),
+                    ("renderError", string(error)),
+                ]);
+                if pages.is_none() {
+                    data.insert("modelSupportsPdf".into(), JsValue::Bool(supports_pdf));
+                }
+                return Ok(ToolOutput {
+                    content: vec![JsValue::Object(object([
+                        ("type", string("text")),
+                        ("text", string(notice)),
+                    ]))],
+                    data: Some(JsValue::Object(data)),
+                    ..ToolOutput::default()
+                });
+            }
+        };
+        read_state_set(
+            context,
+            read_state_key.clone(),
+            read_state_value(context_stat.mtime_ms, ReadKind::Pdf, input),
+        );
+        let of_pages = page_count.map_or_else(String::new, |count| format!(" of {count}"));
+        let range = JsValue::Object(object([
+            ("firstPage", JsValue::Number(first as f64)),
+            ("lastPage", JsValue::Number(last as f64)),
+        ]));
+        let mut data = object([
+            ("filePath", string(resolved.relative.clone())),
+            ("kind", string("pdf")),
+            ("pdfPagesRendered", JsValue::Bool(true)),
+            ("pageCount", page_value.clone()),
+            ("renderedPages", range),
+            ("truncated", JsValue::Bool(truncated)),
+        ]);
+        let notice = if let Some(requested) = &pages {
+            data.insert("requestedPages".into(), string(requested.as_str()));
+            format!(
+                "PDF pages extracted: {} page(s) from {} (pages {first}-{last}{of_pages}).",
+                last - first + 1,
+                text(&resolved.relative)
+            )
+        } else {
+            let reason = if !supports_pdf {
+                "model does not support PDF input"
+            } else {
+                "file exceeds 3MB threshold"
+            };
+            data.insert("modelSupportsPdf".into(), JsValue::Bool(supports_pdf));
+            data.insert("degradeReason".into(), string(reason));
+            let mut notice = format!(
+                "[PDF pages rendered from {}: {first}-{last}{of_pages} ({reason}).]",
+                text(&resolved.relative)
+            );
+            if truncated {
+                notice.push_str(
+                    "\n[PDF truncated to 20 pages; use the pages parameter to read another range.]",
+                );
+            }
+            notice
+        };
+        return Ok(ToolOutput {
+            content: vec![JsValue::Object(object([
+                ("type", string("text")),
+                ("text", string(notice)),
+            ]))],
+            supplemental_messages: Some(vec![JsValue::Object(object([
+                ("role", string("user")),
+                ("content", JsValue::Array(images)),
+                ("isMeta", JsValue::Bool(true)),
+            ]))]),
+            data: Some(JsValue::Object(data)),
+            metadata: Some(object([("truncated", JsValue::Bool(truncated))])),
+        });
     }
-    // Model supports PDF and the file is small enough. mupdf is not in the
-    // dependency set, so page counting/rendering stays unavailable; the
-    // document-block path itself only needs the raw bytes.
-    let bytes = std::fs::read(os_path(&resolved.absolute))
-        .map_err(|error| failed(error, "open", &resolved.absolute))?;
+    // Preserve the original bytes in the model-visible PDF document block.
     read_state_set(
         context,
         read_state_key.clone(),
@@ -691,7 +878,7 @@ fn pdf(
             (
                 "text",
                 string(format!(
-                    "PDF file read: {} ({} bytes)",
+                    "PDF file read: {} ({} bytes{page_suffix})",
                     text(&resolved.relative),
                     context_stat.size
                 )),
@@ -706,6 +893,7 @@ fn pdf(
                     ("mimeType", string("application/pdf")),
                     ("data", string(BASE64.encode(&bytes))),
                     ("bytes", JsValue::Number(bytes.len() as f64)),
+                    ("pages", page_value.clone()),
                 ]))]),
             ),
             ("isMeta", JsValue::Bool(true)),
@@ -714,6 +902,7 @@ fn pdf(
             ("filePath", string(resolved.relative.clone())),
             ("kind", string("pdf")),
             ("bytes", JsValue::Number(bytes.len() as f64)),
+            ("pageCount", page_value),
         ]))),
         metadata: None,
     })

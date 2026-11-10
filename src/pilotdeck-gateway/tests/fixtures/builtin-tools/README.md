@@ -32,16 +32,19 @@ spawn 错误和超时仍抛出，未吞错误。PDF 的 mupdf 解析保持原样
 ## 已知边界
 
 - **模型支持图片/PDF 时的附件路径**：TS 用 `sharp`/`mupdf` 解码并压缩成
-  model-visible content；本运行时没有这两个编码器，也不允许新增 crate。没有
+  model-visible content；PDF 已接入源码编译的 MuPDF，图片的 sharp/libvips
+  解码与多轮预算压缩仍待补齐。没有
   multimodal 声明时 TS 本身返回文本提示，夹具覆盖该分支。声明支持时：
   - 完整 JPEG（EOI 且 >1 KiB、未超字节预算）的 fast path 不需要 sharp，已按 TS
     原样实现并用真实 TS 夹具覆盖；
   - 非 JPEG 解码、JPEG 修复/压缩仍需要 sharp，返回同形状的 decode-failure 文本；
   - PDF 原始字节的 document block 不需要解码器，已实现并覆盖；PDF 页数统计与
-    `pages` 的 mupdf 渲染仍不可用（没有 mupdf，也没有新增 PDF 解析 crate）。
+    `pages` 的 MuPDF JPEG 渲染已有真实 PDF 消费者与同引擎编码字节对照，
+    但超图片预算后的 sharp 压缩仍是明确缺口，不能计为完整通过。
 - **PDF 页数**：夹具用非 PDF 字节的 `.pdf`，TS 的 `countPdfPages` 返回
-  `undefined`，因此两边都不带 `, N pages` 后缀。本实现始终不统计页数，所以真实
-  PDF 的页数后缀与 `>10 pages` 拒绝分支仍是已知偏离。
+  `undefined`，因此两边都不带 `, N pages` 后缀。新增真实 0/1/2/10/11 页消费者
+  对应 `builtin_tools.rs::read_file_real_pdf_page_count_and_range_contract`；
+  实现已恢复真实页数、越界优先级与 `>10 pages` 拒绝，新候选验证独立报告。
 - **无 limit 的尾随孤立 CR**：TS `split(/\r?\n/)` 只在 `\r` 后跟 `\n` 时剥除；
   `read-text-eof-lone-cr` 钉住 `abc\r` 保留 CR 的行为。有 limit 的 readline 仍把
   孤立 CR 当行终止符（`read-text-lone-cr-with-limit`）。
