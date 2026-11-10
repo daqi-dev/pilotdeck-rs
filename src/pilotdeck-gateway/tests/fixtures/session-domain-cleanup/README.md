@@ -2767,3 +2767,103 @@ two-pass walk merge, `_body_mutates` layering) is unchanged.
 | **A sub-pattern `as` capture binds the whole subject** (false PASS guard): `case [*_] as _n2: _n2.reverse()`, a `MatchOr` arm capture, and a sub-pattern match-capture mutator alias call -- withdraw; the capture used only to read stays clean. | `... lost a receiver behind a sub-pattern whole-subject match capture mutation / a MatchOr whole-subject capture mutation / a sub-pattern match-capture mutator alias call (round 46)`; `... withdrew a clean receiver behind a sub-pattern match capture used only to read (round 46)` |
 | **A class-body match capture and a header walrus bind `__new__`** (false PASS guard): `match staticmethod(_mk): case __new__:` and `def f(x=(__new__ := staticmethod(...)))` keep the import standing; the plain-attribute controls do not. | `... dropped the import standing behind a match-captured __new__ / a walrus-default __new__ in a class-body def header (round 46)`; `... kept the import standing behind a match capture on a plain attribute / a walrus default on a plain attribute (round 46)` |
 | **The last two helper sites unwrap a walrus callee** (false FAIL guard): `(_g := sys.modules.get)('_guard')` stays a proven load; `(_d := d.keys)()` reads the dict's keys. | `... lost a proven module load behind a walrus callee / withdrew dict keys behind a walrus callee (round 46)` |
+
+### Closed by `fix-r1` round 47 (GLM r46 boundary#1/#2 / concurrency#1/#2 / sibling#1/#2/#3; anthropic r46 boundary#1..#6; probes 2026-11-10)
+
+Every finding was probe-reproduced against the round-46 committed ruler
+before any fix (frozen procedure: `probe-r47.log` holds the pre-fix
+columns -- the "r46" column there is the round-46 commit `acfd050dc`,
+the "r45" column the round-45 commit `c0f24ca86`, and every dirty row
+carries a runtime oracle; `probe-r47-final.log` holds the post-fix
+state, re-run after the battery caught a regression mid-round, below).
+One reviewer claim did not reproduce and was rejected *with* that probe
+evidence: the use-in-an-Assign-target shape (`_d[_items[-1](...)] =
+_items.insert(3, _hs[0])`, GLM boundary#1 + anthropic boundary#1)
+already convicts at round 46 -- an Assign whose *target* holds the use
+rides the registered conservative target-subscript floor (the target
+store is itself a display mutation, so the selection declines before the
+window is ever consulted), and the claim's premise (the window's
+after-use filter decides the shape) was wrong; its clean twin's
+over-report is the same standing floor, present since round 45.
+
+The element-store registration family (the false PASS under every
+insertion spelling).  The container fixpoint registered
+`handle_containers` only from *binding values* -- `items = [hs[0], L]`
+-- so a container bound clean that later *grows* a handle through
+`items.append(z)` / `insert` / a subscript store `items[k] = z` / a
+For-target write `for items[k] in hs:` / `items += [z]` / `extend`
+stayed invisible forever: when a window mutation later made the
+selection decline, the whole-display fallback was empty and the receiver
+walked clean (all four conditional findings traced here, not to the
+fork model).  `_register_element_stores` registers each such store the
+way a binding of the same value would, through `_carried_handle_roots`
+(the shared chain a *value* carries), `_store_base_names` (the base
+names a subscript store writes through) and `_store_receiver_names`
+(the symmetric name class: `_name_alias_closure` follows value hops
+forward only, so a store through `_a` after `_a = items` never reached
+`items`; the union over the scope's bare-name binding pairs answers
+both directions).
+
+The fork family, second wave (anthropic boundary#2/#3/#4).  The round-46
+replay ran Try arms together (an unexecuted handler's `pop` cancelled
+the executed body's `append`), put a failed match guard's pop on its
+own arm so no path saw guard(i) + body(j>i) -- the fall-through both
+run -- and knew neither the chained-comparison tail (`1 > 2 <
+items.pop()`, the pop never runs) nor the assert message (it only runs
+on failure).  A `Try` body and `finally` always run while at most one
+handler -- or the `else` block, on the no-arm choice -- joins them; a
+guard rides its own fall-through fork keyed apart from the body fork;
+a comparison with *n* ops forks like a `BoolOp` (comparator *i* runs
+for choice >= i); an `assert` forks its message on the test failing.
+
+The evaluation-order after-use cut (anthropic boundary#6, probe
+p1b-reverse; keyword-then-starred, probe p1c-info).  Source position is
+not execution order inside one statement: an Assign target evaluates
+after its value, and a keyword argument written before a starred
+argument evaluates after it.  When the use itself lives in the priced
+statement the cut compares eval-order indices; the direct convictions
+(mutator-name calls, unpriceable mutations) take the same cut (GLM
+concurrency#2, probe p7-direct: a `_mut()` call after the use inside
+its arm cannot move what the use reads).
+
+The remaining spellings: a one-element tuple/list iterable whose only
+element is `Starred` (`for _d[items.pop(1)] in (*_src,)`) iterates an
+unknown number of times, so the target re-runs (GLM boundary#2 +
+anthropic boundary#5, probe p2-starred); a `del a[1], a[1]` keys its
+`priced` dedup on the *target*, not the Delete statement, so the second
+removal priced (GLM concurrency#1, probe p3-del-multi); a class body
+inside a loop re-runs its statements (GLM sibling#1, probe
+p8-class-loop) and the module call tables now record a class-body call
+at its `class` statement and carry the loop id on a for-target call
+(GLM sibling#2/#3, unit probes u-class-site/u-fortarget-loops).
+
+The mid-round regression the battery caught before commit: the first
+draft of the after-use gate hoisted the `repeated` check above the
+mutation determination, so *any* call inside a loop -- including the
+round-46 clean twin's for-target bound to a clean reader lambda --
+convicted without ever being a mutation.  The `repeated`/`after_use`
+pair now sits inside every mutation path (mutator-name, unpriceable,
+priced) and a call that mutates nothing falls through untouched.
+
+Known residuals (follow-up issue): the use-in-Assign-target shape keeps
+its registered conservative floor (over-report direction only); a
+`Try` interrupted mid-body (the body ran half its events before the
+handler) over-reports; the mutator-name conviction is not fork-aware
+(a mutator call on an unexecuted arm convicts -- over-report
+direction); `extend` of an empty literal over-reports (the pre-existing
+pricing quirk); a clean rebind leaves stale container history that a
+later dynamic path still reads conservatively; starred/keyword
+*dynamic* arguments (`items.append(*args)`) are not statically
+analyzable; `_flow_marks` still pushes a plain for-target without the
+loop's flow mark (unchanged from round 46).
+
+| Shape | Self-test |
+|---|---|
+| **Element stores register the container** (false PASS guard): an append of a bound handle, an append through an alias, an unbound `list.append`, an insert, a subscript store, a for-target write, an augmented append, an extend of a tracked container -- all into a clean-bound container -- withdraw. | `... lost a receiver behind an append of a bound handle into a clean container / an append through an alias of the container / an unbound list.append store / an insert of a handle into a clean container / a subscript store of a handle into a clean container / a for-target write of a handle into a clean container / an augmented append of a handle into a clean container / an extend of a tracked container into a clean container (round 47)` |
+| **The element-store clean twins stay clean** (false FAIL guard): an append/insert/subscript store/for-target write/augmented append of a clean lambda, and a handle append narrowed to a clean leading element. | `... withdrew a clean receiver behind an append of a clean lambda / a handle append narrowed to a clean leading element / an insert of a clean lambda / a subscript store of a clean lambda / a for-target write over a clean literal / an augmented append of a clean lambda (round 47)` |
+| **Forked tails no longer cancel** (false PASS guard): a try-body append cancelled by an unexecuted handler pop, a comparison tail pop that short-circuits away, an assert message pop that never runs, and a match guard fall-through composite -- withdraw. | `... lost a receiver behind a try body append cancelled by an unexecuted handler pop / a comparison tail pop that short-circuits away / an assert message pop that never runs / a match guard fall-through composite (round 47)` |
+| **The fork clean twins stay clean** (false FAIL guard): try arms each pricing safe alone, a comparison tail pop after a safe insert, an assert message pop after a safe insert, and a match guard with two head pops. | `... withdrew a clean receiver behind try arms each pricing safe alone / a comparison tail pop after a safe insert / an assert message pop after a safe insert / a match guard with two head pops (round 47)` |
+| **Evaluation order inside one statement** (false PASS guard / false FAIL guard): a keyword-then-starred pair convicts (the starred insert runs first); a mirror value-side use after a target-side insert stays clean. | `... lost a receiver behind a keyword-then-starred evaluation-order pair (round 47)`; `... withdrew a clean receiver behind a mirror value-side use after a target-side insert (round 47)` |
+| **The remaining spellings** (false PASS guard): a starred one-element for-iterable double pop, a del statement's second same-index target, and a class body re-run inside a loop -- withdraw; a mutator call after the use inside its arm stays clean (the after-use cut gates the direct convictions). | `... lost a receiver behind a starred one-element for-iterable double pop / a del statement's second same-index target / a class body re-run inside a loop (round 47)`; `... withdrew a clean receiver behind a mutator call after the use inside its arm (round 47)` |
+| **A del statement's second head-index target stays clean** (false FAIL guard): `del _items[0], _items[0]` keeps the trailing element a lambda, and a class body outside any loop prices once. | `... withdrew a clean receiver behind a del statement's second head-index target / a class body outside any loop (round 47)` |
+| **The module call tables carry class-body and for-target sites** (unit): a class-body call records its `(3, 4)` position with no loop id; a for-target call inside a module loop carries the loop id. | `... dropped the class-body call site from the position table / dropped the loop id from a for-target call site (round 47)` |
