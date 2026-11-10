@@ -912,8 +912,11 @@ fn fr_ca_script_tag_follows_the_default_spelling_not_the_explicit_one() {
     // #2170 (DS r1 sibling#3 / minimax boundary#5): pin the explicit spelling
     // on the same measured signs — `new Intl.Collator("fr-Cyrl-CA")` resolves
     // `fr` and orders these pairs like generic fr (measured v22.22.0 /
-    // ICU 78.2, `_tmp/20261109-issue-2140-2170/r1/round/S2-RESULT.md`), so a
-    // mutant repairing the explicit spelling goes red here too.
+    // ICU 78.2, `_tmp/20261109-issue-2140-2170/r1/round/S2-RESULT.md`).
+    // fix-r5 (DS r6 sibling#1): no mutation row binds this assertion yet —
+    // its kill evidence is only indirect (the matrix `fr-Latn-CA` row plus
+    // `french-script-widened`); the paired gateway-side mutation is tracked
+    // as a P2 follow-up, so this comment claims no direct mutant kill.
     let explicit_cyrillic = node_explicit_collator(&cyrillic).unwrap();
     for (left, right, node_sign) in [
         ("coté", "côte", std::cmp::Ordering::Less),
