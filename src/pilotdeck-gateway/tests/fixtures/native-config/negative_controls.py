@@ -411,7 +411,7 @@ mutations = [
      'runtime::turn::live::stream_tests::permission_mode_source_rewrites_the_agent_config_each_turn',
      "#1864 the stored mode reaches the live session's next turn"),
     ('tools-admission-source-removed', TOOLS,
-     '            if let Some(mode) = permission::configured_permission_mode(&self.config).or_else(|| {\n                self.permission_mode_source\n                    .as_ref()\n                    .and_then(|source| source())\n            }) {',
+     '            if let Some(mode) = permission::configured_permission_mode(&self.config)\n                .or_else(|| {\n                    self.permission_mode_source\n                        .as_ref()\n                        .and_then(|source| source())\n                })\n                .or_else(|| {\n                    // Host default applies only below managed and stored selections.\n                    // Re-reading false resets a previous persisted bypass on next turn.\n                    (self.permission_mode_source.is_some() && self.fork_scope.is_none()).then(\n                        || {\n                            if persisted_skip {\n                                "bypassPermissions".into()\n                            } else {\n                                "default".into()\n                            }\n                        },\n                    )\n                })\n            {',
      '            if let Some(mode) = None::<JsString> {',
      'native_process::tests::review::session_tools_admission_mode_follows_the_store_each_turn',
      '#1864 the stored mode reaches the host admission context'),

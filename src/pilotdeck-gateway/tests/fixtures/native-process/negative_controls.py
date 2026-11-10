@@ -261,8 +261,8 @@ impl Clone for ReplacementCoordinator {
      'native_process::tests::explicit_options_and_environment', '#1071 non UTF-8 environment does not panic'),
     ('configured-modules', ASSEMBLY, '        .and_then(|v| v.get("modules"))\n        .and_then(JsValue::as_object)', '        .and_then(|v| v.get("unusedModules"))\n        .and_then(JsValue::as_object)', 'native_process::tests::production_profile_and_registration', '#1071 unsupported module bindings refused'),
     ('disconnected-cancel-signal', ASSEMBLY,
-     'ports.turn(identity, recorder, signal)',
-     'ports.turn(identity, recorder, { let _ = signal; crate::runtime::hooks::Cancellation::new() })',
+     '        signal,\n        authority,\n        settings,',
+     '        { let _ = signal; crate::runtime::hooks::Cancellation::new() },\n        authority,\n        settings,',
      'native_process::tests::review::production_turn_ports_share_cancellation', '#1071 production turn ports share cancellation'),
     # #1354 re-anchored: the single opt-in line grew into the entry's
     # routing region (explicit `--native` flag plus the config item). The

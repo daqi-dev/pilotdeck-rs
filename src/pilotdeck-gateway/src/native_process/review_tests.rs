@@ -18,8 +18,8 @@ async fn isolated_entry_rejects_js_blank_token_before_environment_or_host_start(
     }
 }
 
-#[test]
-fn production_turn_ports_share_cancellation() {
+#[tokio::test]
+async fn production_turn_ports_share_cancellation() {
     use crate::host::modules::tool_context::HostToolCheckpoint;
     use crate::runtime::{
         hooks::Cancellation,
@@ -65,7 +65,10 @@ fn production_turn_ports_share_cancellation() {
         },
         recorder,
         signal.clone(),
-    );
+        None,
+    )
+    .await
+    .expect("production turn ports");
     negative_assert!(
         !ports.interaction.signal.is_cancelled(),
         "#1071 production port starts uncancelled"
@@ -87,8 +90,8 @@ fn production_turn_ports_share_cancellation() {
 /// native tool admission. What is pinned is the contexts, not the
 /// decisions: the registry only carries read-only tools, which `decide`
 /// allows under all three modes.
-#[test]
-fn session_tools_admission_mode_follows_the_store_each_turn() {
+#[tokio::test]
+async fn session_tools_admission_mode_follows_the_store_each_turn() {
     use crate::host::modules::tool_context::HostToolCheckpoint;
     use crate::runtime::{
         hooks::Cancellation,
@@ -163,7 +166,15 @@ fn session_tools_admission_mode_follows_the_store_each_turn() {
             .and_then(JsValue::as_string)
             .cloned()
     };
-    let ports = assembly::turn_ports(&tools, &identity, recorder.clone(), Cancellation::new());
+    let ports = assembly::turn_ports(
+        &tools,
+        &identity,
+        recorder.clone(),
+        Cancellation::new(),
+        None,
+    )
+    .await
+    .expect("production turn ports");
     negative_assert_eq!(
         admission_context_mode(&ports),
         JsString::from("default"),
@@ -182,7 +193,15 @@ fn session_tools_admission_mode_follows_the_store_each_turn() {
     // The selector's write: the next turn's admission context, emitted
     // permissionContext and turn config all carry the stored mode.
     overrides.set_permission_mode(&key, "plan".into());
-    let ports = assembly::turn_ports(&tools, &identity, recorder.clone(), Cancellation::new());
+    let ports = assembly::turn_ports(
+        &tools,
+        &identity,
+        recorder.clone(),
+        Cancellation::new(),
+        None,
+    )
+    .await
+    .expect("production turn ports");
     negative_assert_eq!(
         admission_context_mode(&ports),
         JsString::from("plan"),
@@ -225,7 +244,9 @@ fn session_tools_admission_mode_follows_the_store_each_turn() {
         let key = key.clone();
         move || overrides.permission_mode(&key)
     }));
-    let ports = assembly::turn_ports(&tools, &identity, recorder, Cancellation::new());
+    let ports = assembly::turn_ports(&tools, &identity, recorder, Cancellation::new(), None)
+        .await
+        .expect("production turn ports");
     negative_assert_eq!(
         admission_context_mode(&ports),
         JsString::from("bypassPermissions"),
@@ -517,7 +538,10 @@ async fn top_level_hooks_are_ignored_like_ts() {
             &identity,
             recorder,
             crate::runtime::hooks::Cancellation::new(),
-        );
+            None,
+        )
+        .await
+        .expect("production turn ports");
         negative_assert!(
             ports.interaction.hooks.is_empty()
                 && ports

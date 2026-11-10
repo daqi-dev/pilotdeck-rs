@@ -1375,11 +1375,7 @@ async fn start_assembly(
                                 let ports = ports.clone();
                                 let identity = identity.clone();
                                 Box::pin(async move {
-                                    let settings = match ports.persisted_permissions_home() {
-                                        Some(home) => super::persisted_permissions::read_async(home).await?,
-                                        None => super::persisted_permissions::Settings::default(),
-                                    };
-                                    Ok(ports.turn_with_authority_and_settings(&identity, recorder, signal, authority, settings))
+                                    turn_ports(&ports, &identity, recorder, signal, authority).await
                                 })
                             },
                         )
@@ -2550,14 +2546,20 @@ pub fn value<const N: usize>(entries: [(&'static str, JsValue); N]) -> JsObject 
         .clone()
 }
 
-#[cfg(test)]
-pub(super) fn turn_ports(
+// The production async factory and its cancellation control share this exact
+// assembly path, including the per-turn persisted-settings read.
+pub(super) async fn turn_ports(
     ports: &super::tools::SessionTools,
     identity: &pilotdeck_protocol::admission::ExecutionIdentity,
     recorder: Arc<Recorder>,
     signal: crate::runtime::hooks::Cancellation,
-) -> crate::runtime::turn::host_factory::SessionPorts {
-    ports.turn(identity, recorder, signal)
+    authority: Option<crate::runtime::turn::interaction::TurnInteractionAuthority>,
+) -> Result<crate::runtime::turn::host_factory::SessionPorts, crate::host::HostError> {
+    let settings = match ports.persisted_permissions_home() {
+        Some(home) => super::persisted_permissions::read_async(home).await?,
+        None => super::persisted_permissions::Settings::default(),
+    };
+    Ok(ports.turn_with_authority_and_settings(identity, recorder, signal, authority, settings))
 }
 
 // LocalGatewayBootConfig resolves explicit env first, then install-adjacent
