@@ -19,8 +19,11 @@ the deterministic lease_count claim that runs right after the invalidate, ahead
 of the 500 ms window and of the refresh, so the verdict cannot drift with the
 cleanup task's scheduling. CARGO_TARGET_DIR must be supplied and pass the
 shared #1166 target rule (unset, blank, whitespace, dot, filesystem or
-repository root, and inside src are refused with rc 2). Use --check for a
-read-only anchor preflight, or NEW_OUTPUT_DIR [switch ...].
+repository root, and inside src are refused with rc 2); the admitted target is
+normalized to its repo-root-anchored absolute value and written back before
+the run, so the shared artifact() judge reads the directory cargo actually
+built in. Use --check for a read-only anchor preflight, or NEW_OUTPUT_DIR
+[switch ...].
 """
 import argparse
 import os
@@ -55,6 +58,16 @@ GUARDED = [
     ROOT / 'src/pilotdeck-gateway/src/runtime/plugins.rs',
     ROOT / 'src/pilotdeck-gateway/src/runtime/mcp/sdk.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_process.rs',
+    # The guarded files' declarators and remaining judgement-chain members:
+    # runtime/mod.rs declares mcp / plugins / project, runtime/mcp/mod.rs
+    # declares sdk, project/plugins.rs is the PluginResources the awaited
+    # disposal resolves through, and cleanup_task.rs hosts the wait_disposed
+    # completion semantics, capping the chain at the declarator depth the
+    # host-factory precedent registers.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/mod.rs',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/mcp/mod.rs',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/project/plugins.rs',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/cleanup_task.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs',
     # Workers are re-executed with env_clear; the selector forwarding and the
     # receipt recording live here and must not change under a running suite.
@@ -92,9 +105,14 @@ def main():
         # Shared #1166 target rule, checked before the evidence directory is
         # claimed: dot / filesystem root / repository root / inside-src (and
         # whitespace-only) targets are refused with rc 2. The shared executor
-        # itself never re-validates the target directory.
+        # itself never re-validates the target directory, and its artifact()
+        # judge resolves CARGO_TARGET_DIR against this process's cwd while
+        # cargo resolves it against the repo root - so the normalized absolute
+        # value is written back before the run, keeping admission and judging
+        # on one target instead of handing the raw relative string on.
         try:
-            negative_process.target_environment(ROOT, os.environ)
+            os.environ['CARGO_TARGET_DIR'] = negative_process.target_environment(
+                ROOT, os.environ)['CARGO_TARGET_DIR']
         except RuntimeError as error:
             raise ValueError(str(error)) from error
         output = Path(args.output).resolve()
