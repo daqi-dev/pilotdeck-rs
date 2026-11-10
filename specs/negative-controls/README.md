@@ -174,10 +174,15 @@ utf16 `startup_refusal` 先例，证据目录既不发 summary 也不留认领�
 | 42 | 全杀但基线不是 HEAD，只是非宿主证据（用到的脚本按自身规约） |
 
 分界判据是「有没有真的开始变异」：`mutating_sources` 的取得阶段（领锁等待、洁净检查、
-快照读——任何变异字节落盘之前）返回的都算 2，取得之后（含 `__exit__` 还原窗口）被打断的算 1
-（#2590 fix-r3b：issue-2495 以 `TimeoutError`/`SourceBaselineError` 只包取得段实现，
-异常类型不参与分界——`TimeoutError` ⊂ `OSError` 且是 `errno.ETIMEDOUT` 的标准映射，
-还原窗口抛它同样作废已跑行并退 1）。
+快照读——任何变异字节落盘之前）返回的都算 2，取得之后（含 `__exit__` 还原窗口）被打断的算 1。
+分界的结构形态是取得旗标（`same-json-surfaces` / `utf16-residual-sort` 的 `started`），
+不由异常类型白名单保证——#2590 fix-r3 实测教训：`TimeoutError` ⊂ `OSError` 且是
+`errno.ETIMEDOUT` 的标准映射（PEP 3151），按类型把取得段超时收进拒跑的同时也会把
+还原窗口的超时误收（fix-r3b 已修）。issue-2495 当前实现：只把取得段的 `TimeoutError`
+（领锁超时）与 `SourceBaselineError`（树脏 / oracle 不可读）映射为 2，取得段其余异常
+（git `RuntimeError`、scanner 子进程错误、快照读 `OSError`）仍按失败关闭落 1——不会假绿，
+全取得段覆盖与同族入口旗标化见 #2590 跟进（条目 23）；信号不走此表（128+signum，
+还原窗口的 SIGTERM 不发 summary，见下）。
 被信号直接杀死（SIGKILL 137）不在表内，看证据是否完整；以下退出码都以前台、未继承
 SIG_IGN 为前提（nohup / 后台链式宿主把 SIGINT / SIGTERM 设成 SIG_IGN 传给子进程时，
 信号被静默吞掉，进程既不退、证据也不终止，宿主需 SIGKILL / 超时兜底；实测：SIG_IGN
@@ -232,12 +237,16 @@ target、无证据目录，实际可矩阵承载——纳入矩阵待登记表�
 覆盖 enter 两边；无 oracle 读取）已实现
 （`sdk-signals` 的相位路由 #1885 r8 与 `_negkit/contract.py` 的 `entered` 旗标也各自实现；
 #2590 fix-r2 起 `issue-2495` 的守卫段领锁超时同样以 2 拒跑、非 traceback（fix-r3 起
-变异段领锁超时同口径）；
+变异段领锁超时同口径；fix-r3b 起变异段取得时的树脏 `SourceBaselineError` 同样拒跑
+并撤走空认领目录）；
 本句枚举的是 `test_negative_optimize_guards.py` 登记面，非全集），
 其余脚本是未捕获异常 → 1，仍按「失败关闭」处理（不会假绿），登记在 #1666 的后续批次。
 宿主分诊时不要把这三种边当成已覆盖。
 另：已迁移脚本一律先跑完启动守卫再 `claim_dir`，所以「从未开跑」的拒跑不会留下证据目录
-（唯一例外见上面的 `regex-proto-budget` doctest 基线：认领 OUT 之后的红基线）。
+（例外：`regex-proto-budget` doctest 基线——认领 OUT 之后的红基线；`issue-297` /
+`issue-297-domain-fold` 的 `guard_failed` 在退 2 前先写 `compile-summary.json`、
+`settings-gateway` 与 `_negkit/contract.py` 的启动分支在 mkdir 之后才退 2——
+撤目录对齐登记 #1666 跟进）。
 `network-timing` 的正式路径进共享执行器 `mutation_suite`（它先占目录再取环境），因此缺
 `CARGO_TARGET_DIR` 的拒跑放在 `main()` 里、早于名册与源码守卫；共享执行器自身遇到启动期的
 `refuse()`（rc 2）时不发布 `summary.json`：目录仍为空则撤掉（目录已被外部删掉时按「没有残留」
