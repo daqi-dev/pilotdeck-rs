@@ -16,6 +16,21 @@ from negative_selection import refuse
 from negative_suite import Case, classify, passed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
+# Discovery keys the host loop needs to schedule this table: the oracle, the
+# generator and the README are joined from bare file names below, and the
+# shared helpers are imported by module name (the rule lives in
+# fixtures/test_negative_discovery_anchors.py).
+DISCOVERY_ANCHORS = (
+    'transcript-archive-2622/oracle.json',
+    'transcript-archive-2622/generate.mts',
+    'transcript-archive-2622/README.md',
+    'fixtures/negative_process.py',
+    'fixtures/negative_selection.py',
+    'fixtures/negative_suite.py',
+    'fixtures/negative_panic.py',
+    'fixtures/negative_scope.py',
+    'fixtures/pending_reanchor.py',
+)
 ARCHIVE = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/transcript_archive.rs'
 CAPABILITIES = ROOT / 'src/pilotdeck-gateway/src/native_process/capabilities.rs'
 STORAGE = ROOT / 'src/pilotdeck-gateway/src/storage/transcript.rs'

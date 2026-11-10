@@ -124,6 +124,7 @@ TABLES = (
     'memory-gateway/negative_controls.py',
     'snapshot-projection/negative_controls.py',
     'metadata-process-cwd/negative_controls.py',
+    'transcript-archive-2622/negative_controls.py',
 )
 
 
