@@ -58,12 +58,10 @@ MUTATIONS = [
     # the hooks resource. Skipping it reverts the whole bridge to
     # on_async_registered: None (local pending fallback).
     ('assembly-sink-install-skipped', STEER_ASSEMBLY,
-     '    if let Some(hooks) = interaction_hooks {\n'
-     '        hooks.set_async_hook_sink(Arc::new(GatewayAsyncHookSink {',
-     '    if let Some(hooks) =\n'
-     '        None::<crate::runtime::project::interaction_hooks::InteractionHooks>\n'
-     '    {\n'
-     '        hooks.set_async_hook_sink(Arc::new(GatewayAsyncHookSink {',
+     '    hooks.set_async_hook_sink(Arc::new(GatewayAsyncHookSink {\n'
+     '        registry: registry.clone(),\n'
+     '    }));',
+     '    let _ = (&hooks, &registry);',
      [('native_process::assembly::steer::tests::'
        'production_hook_dispatch_registers_async_output_in_the_gateway_registry',
        '#1438 a bridged async output must not enter the local pending list')]),

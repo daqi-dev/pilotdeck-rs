@@ -12,28 +12,26 @@ pub(super) fn build_async_hook_registry(
     owner: &SessionOwner,
     coordinator: &Arc<TurnEventCoordinator>,
 ) -> Option<Arc<AsyncHookRegistry>> {
-    // Build the async-hook registry only when the project stages an
-    // InteractionSteer resource (i.e. the steer pathway is wired).
+    // Build the async-hook registry only when the project stages BOTH the
+    // InteractionSteer resource (i.e. the steer pathway is wired) and the
+    // InteractionHooks resource (the sink target). Missing either keeps the
+    // pre-#1438 degraded state: async hook outputs stay in the local
+    // pending fallback and `hook_async_result` answers `unknown`.
     // Check via ProjectResources→StageContext since InteractionSteer does
     // not implement RuntimeResources directly.
-    let interaction_hooks = build_project.acquire(None).ok().and_then(|lease| {
+    let hooks = build_project.acquire(None).ok().and_then(|lease| {
         let context = lease
             .runtime()
             .resources()
             .get::<ProjectResources>()?
             .context();
-        // The registration-side wiring needs the hooks resource; without
-        // one, async hook outputs keep their local pending fallback and
-        // `hook_async_result` answers `unknown` — the same degraded state
-        // as a project without interaction hooks at all.
         let hooks = context
             .resource(Resource::InteractionHooks)?
             .as_any()
             .downcast_ref::<crate::runtime::project::interaction_hooks::InteractionHooks>()
-            .cloned();
+            .cloned()?;
         context.resource(Resource::InteractionSteer).map(|_| hooks)
-    });
-    let interaction_hooks = interaction_hooks?;
+    })?;
     let reg_project = build_project.clone();
     let reg_owner = owner.clone();
     let reg_coordinator = coordinator.clone();
@@ -62,11 +60,9 @@ pub(super) fn build_async_hook_registry(
     // so every turn binding bridges async hook outputs (invocation ids) into
     // it — the counterpart of TS ProjectSessionFactory.ts:231-243 passing
     // gateway.registerAsyncHook into the per-session HookRuntime.
-    if let Some(hooks) = interaction_hooks {
-        hooks.set_async_hook_sink(Arc::new(GatewayAsyncHookSink {
-            registry: registry.clone(),
-        }));
-    }
+    hooks.set_async_hook_sink(Arc::new(GatewayAsyncHookSink {
+        registry: registry.clone(),
+    }));
     Some(registry)
 }
 
