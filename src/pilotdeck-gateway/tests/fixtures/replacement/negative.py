@@ -27,7 +27,7 @@ with mutating_sources(ROOT, [PRODUCT, OWNER, MEMORY_MOD]) as snapshots:
          'if state.reservations.contains(key) || state.pending.contains_key(key) {',
          'if state.reservations.contains(key) {', PREFIX + 'writer_reservations'),
         ('replace_write_reservation', PRODUCT,
-         'state.reservations.insert(key.clone());\n            active',
+         'state.reservations.insert(key.clone());\n            reservation.arm(&key);\n            active',
          '// mutation: omit replace reservation\n            active', PREFIX + 'concurrent_replace_and_writer'),
         ('unicode_whitespace', ROOT / 'src/pilotdeck-gateway/src/runtime/memory/mod.rs', '| 0xFEFF', '', PREFIX + 'invalid_replacement_ids'),
         ('active_run_conflict', PRODUCT, '&& *active != string(&input, "expectedTurnId")',
@@ -38,8 +38,14 @@ with mutating_sources(ROOT, [PRODUCT, OWNER, MEMORY_MOD]) as snapshots:
          PREFIX + 'replace_failure_abort'),
         ('drain_before_rewrite', PRODUCT, 'port(|| this.0.session.close_session(&key)).await?;',
          '// mutation: rewrite without draining writer', PREFIX + 'claim_release_rollback'),
-        ('failure_releases_write', PRODUCT, 'state.reservations.remove(&key);\n            result',
-         '// mutation: retain failed write reservation\n            result', PREFIX + 'replace_failure_close'),
+        # #2696 moved the failure-path release into the owned guard's `Drop`
+        # (the tail `reservations.remove` is gone), so this row neuters that
+        # `Drop`; the impl header keeps it distinct from the borrow guard's
+        # textually identical `Drop` body (#2391's target).
+        ('failure_releases_write', PRODUCT,
+         'impl Drop for OwnedTranscriptWriteReservation {\n    fn drop(&mut self) {\n        if let Some(key) = self.key.take() {\n            self.coordinator.release_transcript_write(&key);',
+         'impl Drop for OwnedTranscriptWriteReservation {\n    fn drop(&mut self) {\n        if let Some(key) = self.key.take() {\n            let _ = key; // mutation: retain failed write reservation',
+         PREFIX + 'replace_failure_close'),
         ('claim_run_identity', PRODUCT,
          'if pending.replacement_turn_id != *run || pending.phase != Phase::Prepared {',
          'if pending.phase != Phase::Prepared {', PREFIX + 'replace_abort_close_commit'),

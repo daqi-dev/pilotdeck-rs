@@ -316,6 +316,70 @@ fn replacement_fixture_regenerates_identically() {
     crate::test_baseline::regenerates_identically("replacement");
 }
 
+// #2696: the spawned body's direct state access after the storage ports is
+// the one stretch `port`/`port_call` cannot wrap. Poison the state lock while
+// the body is parked on the gated close port, so the mid-body lock unwrap
+// panics and tokio converts it to a JoinError — the tail cleanup at the end
+// of the body never runs. TS has no such exit (its async `finally` at
+// Coordinator.ts:126-128 releases on every exit), so the Rust port's Drop
+// guard must supply the release; without it the key strands at
+// SESSION_BUSY / replace_turn_pending until restart.
+#[tokio::test(start_paused = true)]
+async fn panicking_body_releases_reservation() {
+    let probe = Arc::new(Probe::default());
+    let gate = watch::channel(false).0;
+    probe
+        .gates
+        .lock()
+        .unwrap()
+        .insert("close".into(), gate.clone());
+    let coordinator = probe.coordinator("all");
+    let key = JsString::from("s");
+    let replacing =
+        coordinator.replace_last_turn(js(json!({"sessionKey":"s", "replacementTurnId":"new"})));
+    settle().await;
+    assert!(
+        coordinator.has_transcript_write_reservation(&key),
+        "#2696 reservation must be held while the spawned body is in flight"
+    );
+    // Poison the coordinator state lock: unwinding through this guard-holding
+    // closure poisons the mutex the spawned body is about to lock.
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        let _poison = coordinator.0.state.lock().unwrap();
+        panic!("#2696 test poison of the coordinator state lock");
+    }));
+    gate.send_replace(true);
+    let error = replacing
+        .await
+        .expect_err("#2696 poisoned mid-body lock must fail the waiter");
+    assert!(
+        error.message.contains("PoisonError"),
+        "#2696 expected the poisoned-lock panic, got: {}",
+        error.message
+    );
+    assert!(
+        !coordinator.has_transcript_write_reservation(&key),
+        "#2696 mid-body panic leaked the replace_last_turn reservation"
+    );
+    coordinator
+        .reserve_transcript_write(&key, "edit")
+        .expect("#2696 leaked reservation blocks a new transcript write");
+    coordinator.release_transcript_write(&key);
+    let state = coordinator
+        .0
+        .state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    assert!(
+        state.pending.is_empty(),
+        "#2696 panicked body must not leave a pending transaction"
+    );
+    assert!(
+        state.reservations.is_empty(),
+        "#2696 reservation set must be empty after the guard released"
+    );
+}
+
 cases!(
     panic_active_getter,
     panic_finalize_getter,

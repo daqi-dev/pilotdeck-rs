@@ -38,10 +38,13 @@ mutations = [
     # request dropped at an await point strands the reservation. The tuple
     # keeps `key` referenced: a bare `let _ = self.coordinator;` leaves the
     # `if let Some(key)` binding unused, which a `-D warnings` host turns
-    # into a compile failure (INVALID, not KILLED).
+    # into a compile failure (INVALID, not KILLED). The anchor carries the
+    # impl header because #2696 added `OwnedTranscriptWriteReservation`, a
+    # textually identical `Drop` body for `replace_last_turn`'s self-held
+    # reservation; the bare release line no longer identifies this guard.
     ('guard-drop-leak', REPLACEMENT,
-     'self.coordinator.release_transcript_write(&key);',
-     'let _ = (self.coordinator, &key);',
+     'impl Drop for TranscriptWriteReservation<\'_> {\n    fn drop(&mut self) {\n        if let Some(key) = self.key.take() {\n            self.coordinator.release_transcript_write(&key);',
+     'impl Drop for TranscriptWriteReservation<\'_> {\n    fn drop(&mut self) {\n        if let Some(key) = self.key.take() {\n            let _ = (self.coordinator, &key);',
      CFG + 'session_model_set_dropped_mid_write_releases_the_reservation',
      '#2391 a dropped request releases its transcript-write reservation'),
     # The set call site releases before the reserved body runs: the parked
