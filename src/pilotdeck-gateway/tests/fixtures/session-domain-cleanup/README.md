@@ -1643,3 +1643,60 @@ had).  Evidence `_tmp/20261109-1355-r25/` (matrix 80 cells
 0 RED after, baseline 23 RED before — 负控先证红; r24 probe
 F1-F5 0 of 7 faces confirmed; real-tree aggregation-audit
 self-check PASS with verdicts byte-identical to the r24 head).
+
+fix-r26 (dual-lineage review of the r25 head, P0x1 + P1x4 + P2x2,
+probe-verified): the single-direction polarity migration is complete.
+`_nested_slot_fail_closed` — the one exemption consumer the r25 verdict
+(a) never reached — is now the canonical `_armwise_shared` predicate with
+the nested layer's fail-closed literal arm kept (a shared arm certifies
+only itself; an empty/partial/un-walkable arm set certifies nothing), so
+`{'cleanupAudit': {'status': 'PASS' if flag else <shared>[0]}}` can no
+longer keep a second verdict its top-level twin lost.  The delegation
+family's guards judge with the caller's own file-trust view:
+`_function_shared_view(function, context)` threads the points loop's
+per-file `(shared, rel, loaders, proven, poisoned)` context through
+`_delegated_exit`/`_module_delegated_exit`/`_helper_exits_zero`/
+`_exit_name_violation`/`_exit_provenance`, so a helper that locally
+rebinds `common` is not the shared map (the r24 fail-closed verdict
+returned) while a registered proven loader rebinding keeps its shared
+call — the healthy `negative_controls.main` shape stays green (the
+first cut of this fix phantom-flagged it; the control is pinned by the
+real-tree byte-compare).  The `_helper_exits_zero` composite-arm check
+no longer trusts a status face it cannot see into (a helper returning
+`common.BATCH_EXIT_CODES['PASS']` reads exactly like its inline twin),
+and the `_exit_name_violation` name hop carries the same per-arm
+provenance judgement the helper hop got in r25 (`code =
+helpers.EXIT_OK if flag else 1; sys.exit(code)` no longer falls
+through).  The recursion family fails closed everywhere it recurses:
+the `_armwise_shared` tail and `_inevitably_shared`'s subscript and
+IfExp/BoolOp folds wrap (a deep legal chain certifies nothing instead
+of raising — the r25 :1876 registration described this wrap but the
+code never carried it), `seen` is isolated per sibling arm (a twin-arm
+relay is not "already traced"), and `_returned_summary_dicts` /
+`_nested_status_slots` over-collect on un-walkable chains (their
+ownership stays the registered residual band — measured on this
+interpreter the collector walk is never shallower than `_exit_arms`
+for the same tree, so their kill point is the :7790 point-level
+boundary, e2e-proven at 900-deep; at 1200-deep the parser's own
+family raises first and the file-level boundary fires).  The
+`_status_literals or _has_passed_aggregate` pair lives once as
+`_status_face` (seven consumer sites), a machine check (AST-based —
+the first-cut regex fired on the fix-r24/r25 comments that describe
+the retired any-arm shape) fails the audit if this source ever regains
+an any-arm `_inevitably_shared` exemption consumer, and the
+`_fsr9_dm_helper` fixture is renamed `_r26_dm_helper` so the pin
+count below greps clean.  Six new `_fsr9` pins (nested mixed/partial,
+rebound delegation, helper status face, name-hop composite, sibling
+seen), the `_r26_deep_faces` recursion pin, and the
+`_aggregate_status_slot` enumeration pin (the pair's aggregate half
+was a mutneg survivor before it); the `_fsr9` count above is corrected
+18 -> 24 this round.  Revert mutants are killed (`mutneg-r26.out`
+12/13; M13 — the helper-scope context threading — is a registered
+survivor: its judgement is the module-level guard's, killed by M02,
+and no non-fabricated fixture-level face exists for it).  Evidence
+`_tmp/20261026-issue-1355/fix-r26/` (rebuilt on this tree — the r25
+evidence directory does not exist here; matrix 56 cells 0 RED after,
+baseline 9 RED before — 负控先证红; probes 21 with 12 red on head, 0
+control-red, 0 unexpected after; real-tree aggregation-audit
+self-check PASS with verdicts byte-identical to the r25 head;
+test_safety 158/158; check_frozen --base dcc110f5f PASS 30).
