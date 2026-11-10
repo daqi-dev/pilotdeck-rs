@@ -515,6 +515,86 @@ class ReviewControls(unittest.TestCase):
                 with patch.object(G, 'WORKTREE', self.root):
                     self.assertIs(check_ruler.independent_review(), expected,
                                   '#2245-r8 row:' + name)
+        # fix-r9 (closure-round DS review, structural round): one row case per
+        # r9 element — every DS r8 P0/P1 shape plus its pinned direction.
+        row_cases_r9 = [
+            # boundary#1 (P0): English partial modifiers and percentage
+            # completion never close; guarded closure words read open.
+            ('pending-completed-50pct', '| 1 | DS | P1: foo | completed 50% |\n', False),
+            ('pending-partially-completed', '| 1 | DS | P1: foo | partially completed |\n', False),
+            ('pending-almost-completed', '| 1 | DS | P1: foo | almost completed |\n', False),
+            ('pending-migrated-partially', '| 1 | DS | P1: foo | migrated partially |\n', False),
+            ('open-passed-to-next-round', '| 1 | DS | P1: foo | passed to next round |\n', False),
+            ('open-accepted-risk', '| 1 | DS | P1: foo | accepted risk |\n', False),
+            ('pending-fixed-70pct', '| 1 | DS | P1: foo | fixed 70% |\n', False),
+            ('closed-verified-100pct', '| 1 | DS | P1: foo | verified 100% |\n', True),
+            # boundary#2 / sibling#3 (P0/P1): an unknown verb between the
+            # negation and the level keeps the level a real finding.
+            ('finding-尚未定位', '| 1 | DS | 尚未定位 P1 根因 | — |\n', False),
+            ('finding-未覆盖', '| 1 | DS | 未覆盖 P1 | — |\n', False),
+            ('finding-未影响', '| 1 | DS | 未影响 P1 | — |\n', False),
+            ('finding-尚未核对', '| 1 | DS | 尚未核对 P1 | — |\n', False),
+            ('finding-尚未分析', '| 1 | DS | 尚未分析 P1 | — |\n', False),
+            ('finding-尚未调查', '| 1 | DS | 尚未调查 P1 | — |\n', False),
+            ('finding-尚未区分', '| 1 | DS | 尚未区分 P1 | — |\n', False),
+            ('finding-尚未触发', '| 1 | DS | 尚未触发 P1 | — |\n', False),
+            # boundary#6 / sibling#5 (P1): a digit-internal '.' stays inside
+            # the strong negation gap (v1.2 folds; 泄漏.P1 never does). The
+            # handling cell is the dash DS reported — a closed cell would
+            # close the row either way and pin nothing.
+            ('negated-v1.2-gap', '| 1 | DS | 未发现 v1.2 的 P1 | — |\n', True),
+            ('negated-v1.2-tight', '| 1 | DS | 未发现v1.2引入P1 | — |\n', True),
+            # boundary#4 / sibling#4 (P1): one mechanism for <X>中 — a noun
+            # compound after 中 is closed for every preceding verb.
+            ('closed-已测试中断场景', '| 1 | DS | P1：foo | 已测试中断场景 |\n', True),
+            ('closed-已关闭中断', '| 1 | DS | P1：foo | 已关闭中断 |\n', True),
+            ('closed-已测试中心化', '| 1 | DS | P1：foo | 已测试中心化改造 |\n', True),
+            ('closed-已修进行中间件升级', '| 1 | DS | P1：foo | 已修复，进行中间件升级 |\n', True),
+            ('closed-已修复中断的会话', '| 1 | DS | P1：foo | 已修复中断的会话 |\n', True),
+            # sibling#1 (P1): <X>中 is structural — out-of-table verbs count.
+            ('pending-回归中', '| 1 | DS | P1：foo | 已修复，回归中 |\n', False),
+            ('pending-排查中', '| 1 | DS | P1：foo | 已修复，排查中 |\n', False),
+            ('pending-定位中', '| 1 | DS | P1：foo | 已修复，定位中 |\n', False),
+            # sibling#2 (P1): attested partial words beyond the r8 three.
+            ('pending-局部修复', '| 1 | DS | P1：foo | 已修复，局部修复 |\n', False),
+            ('pending-修复过半', '| 1 | DS | P1：foo | 修复过半 |\n', False),
+            ('pending-未完全修复', '| 1 | DS | P1：foo | 未完全修复 |\n', False),
+            # boundary#5 (P1): attested right extensions of the explicit
+            # pending words are noun phrases inside a closed cell.
+            ('closed-已修复不通过的用例', '| 1 | DS | P1：foo | 已修复不通过的用例 |\n', True),
+            ('closed-已修复待办事项', '| 1 | DS | P1：foo | 已修复待办事项 |\n', True),
+            ('closed-已处理保留意见变更', '| 1 | DS | P1：foo | 已处理保留意见变更 |\n', True),
+            # boundary#3 / sibling#8 (P1/P2): the remaining attested
+            # apostrophe code points fold (U+00B4 needs the pre-NFKC order).
+            ('english-curly-hasnt-u02b9',
+             '| 1 | DS | P1: foo | hasnʹt been fixed |\n', False),
+            ('english-curly-hasnt-u00b4',
+             '| 1 | DS | P1: foo | hasn´t been fixed |\n', False),
+            ('english-curly-hasnt-u02bb',
+             '| 1 | DS | P1: foo | hasnʻt been fixed |\n', False),
+            ('english-curly-hasnt-u201a',
+             '| 1 | DS | P1: foo | hasn‚t been fixed |\n', False),
+            ('english-curly-hasnt-ua78c',
+             '| 1 | DS | P1: foo | hasnꞌt been fixed |\n', False),
+            # sibling#6 (P2): the English disposal verbs stay paired with
+            # the Chinese side.
+            ('english-upgraded-closes', '| 1 | DS | P1: foo | upgraded middleware to 2.1 |\n', True),
+            ('english-modified-closes', '| 1 | DS | P1: foo | modified |\n', True),
+            # anthropic boundary#6 (P0): apostrophe-free contraction stems
+            # still negate — the closure verb must not rescue the row.
+            ('english-hasnt-no-apostrophe', '| 1 | DS | P1: foo | hasnt been fixed |\n', False),
+            ('english-isnt-merged', '| 1 | DS | P1: foo | isnt merged |\n', False),
+            # anthropic boundary#9 (P2): 部分 inside the 全部分支 compound is
+            # not a partial disposal — the row stays closed.
+            ('closed-已合并全部分支', '| 1 | DS | P1：foo | 已合并全部分支 |\n', True),
+        ]
+        for name, row, expected in row_cases_r9:
+            with self.subTest(name=name):
+                record.write_text(table.replace('| 1 | DS | P1：foo | 已修（c1） |\n', row) + conclusion,
+                                  encoding='utf-8')
+                with patch.object(G, 'WORKTREE', self.root):
+                    self.assertIs(check_ruler.independent_review(), expected,
+                                  '#2245-r9 row:' + name)
         for name, row, expected in row_cases:
             with self.subTest(name=name):
                 record.write_text(table.replace('| 1 | DS | P1：foo | 已修（c1） |\n', row) + conclusion,
@@ -675,6 +755,12 @@ class ReviewControls(unittest.TestCase):
                 # compounds — an object after 的 keeps the row open.
                 self.assertTrue(check_ruler._handling_pending(word + '中的问题'),
                                 '#2245-r8 in-progress-object:' + word + '中的问题')
+                # r9 (DS boundary#4): the noun compounds after 中 are closed
+                # for every preceding verb — one mechanism, one verdict.
+                self.assertFalse(check_ruler._handling_pending(word + '中断分析'),
+                                '#2245-r9 in-progress-noun:' + word + '中断分析')
+                self.assertFalse(check_ruler._handling_pending(word + '中心'),
+                                '#2245-r9 in-progress-noun:' + word + '中心')
         for word in check_ruler._ENGLISH_VERBS:
             for form in (f'not {word}', f'never {word}', f'un{word}',
                          f'un-{word}', f'un {word}', f'un_{word}',
@@ -689,10 +775,39 @@ class ReviewControls(unittest.TestCase):
                 self.assertTrue(check_ruler._handling_pending(marker + word),
                                 '#2245-r8 negation-family:' + marker + word)
         # r8 (DS boundary#2): partial-completion residuals are pending — a
-        # cell that names a partial disposal is still open.
-        for form in ('部分修复', '修复了一半', '阶段性修复'):
+        # cell that names a partial disposal is still open. r9 (DS sibling#2)
+        # walks the module's own partial-word list plus the English family.
+        for word in check_ruler._PARTIAL_WORDS:
+            self.assertTrue(check_ruler._handling_pending('已修复，' + word + '修复'),
+                            '#2245-r9 partial-pending:' + word)
+        for form in ('修复了一半', '未完全修复', 'partially fixed', 'almost completed',
+                     'migrated partially', 'half done', 'nearly finished'):
             self.assertTrue(check_ruler._handling_pending(form),
-                            '#2245-r8 partial-pending:' + form)
+                            '#2245-r9 en-partial-pending:' + form)
+        # r9 (anthropic boundary#9): the 部分 guard blocks only the attested
+        # compound — 全部分支 is a closed branch word, 部分修复 still partial.
+        self.assertIn('部分', check_ruler._PARTIAL_GUARDS,
+                      '#2245-r9 partial-guard-registered:部分')
+        self.assertFalse(check_ruler._handling_pending('已合并全部分支'),
+                         '#2245-r9 partial-guard:已合并全部分支')
+        self.assertTrue(check_ruler._handling_pending('部分修复'),
+                        '#2245-r9 partial-bare:部分修复')
+        # r9 (anthropic boundary#6): every apostrophe-free contraction stem
+        # negates a following verb of the module's own English source.
+        for stem in check_ruler._EN_CONTRACTIONS:
+            self.assertTrue(check_ruler._handling_pending(stem + ' merged'),
+                            '#2245-r9 en-contraction:' + stem)
+        # the whitelist stays closed: a real word ending in nt is not a
+        # negation (want/count/plant must not read pending).
+        for word in ('want', 'count', 'plant'):
+            self.assertFalse(check_ruler._EN_NEGATION.search(word),
+                              '#2245-r9 en-contraction-whitelist:' + word)
+        for form in ('verified 100%', 'fixed'):
+            self.assertFalse(check_ruler._handling_pending(form),
+                             '#2245-r9 full-percentage:' + form)
+        for form in ('completed 50%', 'fixed 70%', 'fixed 99%'):
+            self.assertTrue(check_ruler._handling_pending(form),
+                            '#2245-r9 percentage-pending:' + form)
         # r8 (DS boundary#1 / sibling#3): the explicit-pending right edge
         # blocks only the attested compound — 进行中断分析 is analysis prose,
         # while an object after 的 keeps the row open.
@@ -706,6 +821,28 @@ class ReviewControls(unittest.TestCase):
         for form in ('已拒绝', '保留意见'):
             self.assertFalse(check_ruler._handling_closed(form),
                              '#2245-r8 closure-guard:' + form)
+        # r9 (DS boundary#5 / boundary#1): the guarded markers bind directly —
+        # the module's own guard dictionaries are walked word by word, so a
+        # guard dropped from production code fails here, not in a review.
+        for word, guard_form, bare_form in (
+                ('不通过', '已修复不通过的用例', '评审不通过'),
+                ('待办', '已修复待办事项', '待办'),
+                ('保留意见', '已处理保留意见变更', '保留意见')):
+            self.assertIn(word, check_ruler._PENDING_GUARDS,
+                          '#2245-r9 guard-registered:' + word)
+            self.assertFalse(check_ruler._handling_pending(guard_form),
+                            '#2245-r9 pending-guard:' + guard_form)
+            self.assertTrue(check_ruler._handling_pending(bare_form),
+                            '#2245-r9 pending-bare:' + bare_form)
+        for word, guard_form, bare_form in (
+                ('passed', 'passed to next round', 'passed'),
+                ('accepted', 'accepted risk', 'accepted')):
+            self.assertIn(word, check_ruler._EN_CLOSURE_GUARDS,
+                          '#2245-r9 guard-registered:' + word)
+            self.assertFalse(check_ruler._handling_closed(guard_form),
+                            '#2245-r9 en-closure-guard:' + guard_form)
+            self.assertTrue(check_ruler._handling_closed(bare_form),
+                            '#2245-r9 en-closure-bare:' + bare_form)
         # DS sibling#2: intent markers are module constants — walk every one
         # of them paired with a gate verb, so adding a marker without the
         # grammar cannot pass silently.
@@ -753,6 +890,46 @@ class ReviewControls(unittest.TestCase):
                      '拒绝', '拒绝修复', '已拒绝合入', '保留意见'):
             self.assertTrue(check_ruler._handling_pending(form),
                             '#2245-r7 explicit-pending:' + form)
+        # r9 (DS boundary#3 / sibling#8): every attested apostrophe code point
+        # folds on the judgement copy — the fold runs before NFKC (U+00B4),
+        # so a code point dropped from _APOSTROPHES fails this traversal.
+        for curly in check_ruler._APOSTROPHES:
+            rows = check_ruler._open_review_rows(
+                '| 结论 | 处理 |\n|---|---|\n| P1: foo | hasn' + curly + 't been fixed |')
+            self.assertTrue(rows is not None and len(rows) == 1,
+                            '#2245-r9 apostrophe-fold:' + hex(ord(curly)))
+        # r9 (DS sibling#7): the weak negation gap walks its own innocuous
+        # set — every member folds 未<c> P1, and a verb-initial or unknown
+        # character (定位 / 核对 / 引入) keeps the level a real finding.
+        # r9 (DS boundary#2 / sibling#3): the weak negation tier folds only
+        # across the attested modifier characters — every member folds a bare
+        # level, and an unattested character (定位/核对/引入) keeps the level
+        # a real finding (fail-closed). The set is pinned by equality: it is
+        # a curated allowlist, not a derivation, so any edit must re-attest
+        # here (the per-character loop below reads the module's own set and
+        # cannot see a shrink).
+        self.assertEqual(check_ruler._NEG_GAP_INNOCUOUS,
+                         '新的增严重级别其他它任何',
+                         '#2245-r9 innocuous-set-frozen')
+        for char in check_ruler._NEG_GAP_INNOCUOUS:
+            self.assertIsNotNone(check_ruler._NEGATED_LEVELS.search('未' + char + ' P1'),
+                                 '#2245-r9 innocuous-gap-fold:' + char)
+        for prose in ('尚未定位 P1', '尚未核对 P1', '未引入 P1'):
+            self.assertIsNone(check_ruler._NEGATED_LEVELS.search(prose),
+                             '#2245-r9 innocuous-gap-survive:' + prose)
+        # r9 (DS sibling#7): every negation marker keeps a gate verb pending
+        # through the full pipeline. The live-list traversal above cannot see
+        # a deletion (the shrunk list simply stops iterating), so the
+        # attested marker set is also walked from this fixed tuple — deleting
+        # a marker (正在) fails the frozen walk, not the live one.
+        for marker in check_ruler._NEGATION_WORDS:
+            self.assertTrue(check_ruler._handling_pending(marker + '修复'),
+                            '#2245-r9 negation-marker-pipeline:' + marker)
+        for marker in ('未', '没', '尚未', '暂不', '正在'):
+            self.assertIn(marker, check_ruler._NEGATION_WORDS,
+                          '#2245-r9 negation-marker-frozen:' + marker)
+            self.assertTrue(check_ruler._handling_pending(marker + '修复'),
+                            '#2245-r9 negation-marker-frozen:' + marker)
 
 
 if __name__ == '__main__':
