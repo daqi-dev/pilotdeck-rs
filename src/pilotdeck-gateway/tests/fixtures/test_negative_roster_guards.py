@@ -54,8 +54,10 @@ touch the guarded tree; sdk-mcp-session-tools writes through the shared
 first extension in #2804). Each anchor test applies two kill demos to a
 doctored copy of its own source -- ``if recorded != expected:`` flipped to
 ``if False:``, and every anchor-bearing line commented out -- and requires
-the anchors to break either way, so the pin cannot be satisfied by comments
-or prose while the real code is gone.
+the anchors to break either way, so the pin cannot be satisfied by comment
+lines while the real code is gone (the filter only rejects ``#``-prefixed
+lines: anchor text surviving inside a docstring or string literal still
+counts -- the AST relocation of the scan is the #2804 extension).
 
 The lock import caveat (round 3, MM concurrency#4): ``tree_lock`` itself is
 imported before the lock is taken, and ``negative_process.py`` is an in-place
@@ -178,14 +180,22 @@ def held_tree_lock(root):
     boundary#5). Six drives each pass through this gate, so the wait would
     stack. 60 s names the cause instead.
     """
+    # Only the acquisition is rewritten (#2773 fix-r4, review DS r4
+    # boundary#2 / concurrency#2): wrapping the whole ``with`` would also
+    # swallow a TimeoutError raised by the drive body itself and misreport it
+    # as a lock outage.
+    lock = tree_lock(root, timeout=60)
     try:
-        with tree_lock(root, timeout=60):
-            yield
+        lock.__enter__()
     except TimeoutError as error:
         raise AssertionError(
             '#2773 fix-r3 the roster-guard drive could not take the tree '
             'lock within 60 s -- a mutating batch holds this checkout; this '
             f'is not an entry defect: {error}') from error
+    try:
+        yield
+    finally:
+        lock.__exit__(None, None, None)
 
 
 class RecordingRegistry:

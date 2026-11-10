@@ -10,8 +10,9 @@ zero-byte close) into a routed answer, killed by the #2773 CONNECT pin; the
 fourth turns the fail-closed `setHost` read into a fail-open one, killed by
 the catch_unwind pin. Rows five and six (fix-r1) disconnect only the drain
 wirings the P1 fixes added — the admission early-exit's (#2773 P1-b) and the
-guard-431 mid-head trip's — so the bound lib pins' own FIN expectations fail
-while the routed bytes still answer. One script holds both lanes because the
+guard-431 mid-head trip's — so the bound pins' beat-write assertion fires
+first ("every dribble beat is written, none reset", the fix-r3 write axis;
+the FIN expectation fails too on macOS) while the routed bytes still answer. One script holds both lanes because the
 six rows are one mutation family of a single issue (#2773, review r2 +
 fix-r1): the same node_parser_admission gate. The fix-r1 drain wirings
 (rows five and six) exist only on the user_dialog side; the sms lane has no
