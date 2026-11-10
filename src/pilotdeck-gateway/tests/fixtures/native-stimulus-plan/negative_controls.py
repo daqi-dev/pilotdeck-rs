@@ -86,6 +86,9 @@ cases = [
     ('empty-before-control-skipped', measurement, '                        witnessed(damaged, timeline)\n                    except ValueError as error:', "                        raise ValueError('#1368 missing required order edges: ' + target['name'])\n                    except ValueError as error:", 'test_measurement_empty_order_controls'),
     ('empty-before-count-omitted', measurement, 'empty_before_controls += 1', 'empty_before_controls += 0', 'test_measurement_empty_order_controls'),
     ('hardcoded-unchecked-count', fixture, "len(result['uncheckedBoundaries']) == case_count * repeats", "len(result['uncheckedBoundaries']) == 360", 'test_measurement_unchecked_not_pass'),
+    # #1530: the literals above track the frozen calibration total; the pin
+    # test fails the moment they go stale, and this mutant proves it can fail.
+    ('stale-hardcoded-count', runner, 'len(se' + 'en) != 360', 'len(seen) != 361', 'test_hardcoded_counts_track_calibration'),
     ('registry-wait-control-without-mock', r11, 'fixture._collect(output, real_settle=True, after_final=after_final,\n                                 synthetic_stimuli=True)', 'fixture._collect(output, real_settle=True, after_final=after_final,\n                                 synthetic_stimuli=False)', 'test_registry_free_settle_synthetic_control'),
     ('memory-plan-launches-cargo', runner, '            if not args.memory:\n                slot = wait_for_slot(', '            if True:\n                slot = wait_for_slot(', 'test_memory_runners_do_not_compile_tree'),
     ('memory-e2e-launches-cargo', e2e_runner, '            if not memory:\n                slot = wait_for_slot(', '            if True:\n                slot = wait_for_slot(', 'test_memory_runners_do_not_compile_tree'),
@@ -133,6 +136,7 @@ messages = {
     'empty-before-control-skipped': '#1368 empty-before data controls cover every ordered measurement',
     'empty-before-count-omitted': '#1368 empty-before data controls cover every ordered measurement',
     'hardcoded-unchecked-count': '#1368 unchecked measurement boundaries cannot report PASS',
+    'stale-hardcoded-count': '#1530 hardcoded count mutants track the frozen calibration total',
     'registry-wait-control-without-mock': '#1368 registry-free settle controls explicitly attest synthetic stimuli',
     'memory-plan-launches-cargo': '#1368 memory runners never launch cargo or claim a mutated build',
     'memory-e2e-launches-cargo': '#1368 memory runners never launch cargo or claim a mutated build',

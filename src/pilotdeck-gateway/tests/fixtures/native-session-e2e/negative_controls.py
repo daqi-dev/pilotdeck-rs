@@ -30,12 +30,19 @@ runner = Path(__file__).resolve()
 # Every guarded-source path this runner may mutate or must prove pristine.
 # Module-level because #1402 takes the global parity lease per case instead
 # of one whole-run lease, so the loop no longer sits inside a single with.
+# #1529: test_negative_guarded_sources_take_parity_lease guards this list --
+# drop the session_domain.py entry and the real parity lease silently
+# disappears while every mock-based test stays green.
 paths = [session, common, native, collector, fixture, runner, chain]
 # #1402 per-case lease window: a case holds /tmp/pdrs-parity.lock only while
 # its mutant is on disk and through the restored control (cargo no-run
-# preflight + bound test + restore + restored re-run). wait_for_slot and the
-# positive control run outside the lease, so other trees can take it in
-# every gap. The window must stay below the stale-lease takeover age in
+# preflight + bound test + restore + restored re-run). wait_for_slot still
+# runs outside the lease -- it reads no guarded bytes, so other trees can
+# take the lease in every gap. #1536 moved the positive control inside the
+# window: it reads guarded bytes (the fixture loads collect.py and the
+# frozen session_domain.py), so a second same-tree runner must not write
+# under it -- the guarded loop in main() now holds the tree lock for the
+# same reason. The window must stay below the stale-lease takeover age in
 # common.py, or another tree could take a live window over;
 # test_negative_lease_bound_composition pins the composition.
 BUILD_SECONDS = 900
@@ -47,6 +54,8 @@ PER_CASE_LEASE_SECONDS = BUILD_SECONDS + 2 * BOUND_TEST_SECONDS
 # the scoring-side shapes in session_domain.py and the recorder/contract-side
 # shapes in collect.py, so neither the collector's output nor the frozen audit
 # can silently drift away from the P1 recorder contract.
+EXPECTED_CASES = 31
+# Independent total: update deliberately when adding or retiring a control.
 cases = [
     ('decoder-frame-for-send-rows', session, "        require(len(decoded) == 1\n                and decoded[0].get('raw' if row['direction'] == 'send' else 'frame') == row['frame'],\n                'OBSERVER_WIRE', 'wire observation disagrees with recorder')\n", "        require(len(decoded) == 1\n                and decoded[0].get('frame') == row['frame'],\n                'OBSERVER_WIRE', 'wire observation disagrees with recorder')\n", 'test_e2e_scores_real_capture'),
     ('drop-required-provider-score', session, "        if case in required and case not in covered:\n            surfaces.append('provider.requests')\n", '        pass\n', 'test_e2e_data_control_empty_ledger'),
@@ -70,12 +79,21 @@ cases = [
     ('drop-unwitnessed-candidate', session, "            cell['cases'] = native['verdicts']", "            cell['cases'] = [] if all(row['status'] == 'NOT_RUN' for row in native['verdicts']) else native['verdicts']", 'test_unwitnessed_stimuli_are_not_executed'),
     ('manifest-count-minus-one', fixture, "    return len(c.session_manifest())", "    return len(c.session_manifest()) - 1", 'test_e2e_scores_real_capture'),
     ('chain-manifest-count-minus-one', chain, "        return len(self.healthy['expected'])", "        return len(self.healthy['expected']) - 1", 'test_negative_chain_denominators_derived'),
-    ('lease-enter-without-release', runner, "                with mutating_sources(root, paths, baseline=baseline) as originals:\n                    write_source_atomic(root, path, changed.encode())", "                for originals in [mutating_sources(root, paths, baseline=baseline).__enter__()]:\n                    write_source_atomic(root, path, changed.encode())", 'test_negative_lease_released_and_loud_on_cancellation'),
+    ('lease-enter-without-release', runner, "                with mutating_sources(root, paths, baseline=baseline) as originals:\n                    if not passed(run(name + '-positive', test)):\n                        raise ValueError('positive bound test did not pass')\n                    write_source_atomic(root, path, changed.encode())", "                for originals in [mutating_sources(root, paths, baseline=baseline).__enter__()]:\n                    if not passed(run(name + '-positive', test)):\n                        raise ValueError('positive bound test did not pass')\n                    write_source_atomic(root, path, changed.encode())", 'test_negative_lease_released_and_loud_on_cancellation'),
     ('lease-bound-erased', runner, "PER_CASE_LEASE_SECONDS = BUILD_SECONDS + 2 * BOUND_TEST_SECONDS\n", "PER_CASE_LEASE_SECONDS = 10 ** 9\n", 'test_negative_lease_bound_composition'),
     ('lease-cancel-swallowed', runner, "                        compiled = True\n                        status = classify(run(name + '-negative', test), test, messages[name])", "                        compiled = True\n                        try:\n                            status = classify(run(name + '-negative', test), test, messages[name])\n                        except BaseException:\n                            pass", 'test_negative_lease_released_and_loud_on_cancellation'),
     ('memory-rehearsal-without-lock', Path(__file__).resolve(), '        if memory:\n            with tree_' + 'lock(root, timeout=900):\n                for row in selected:\n                    one(row)\n        else:', '        if memory:\n            for row in selected:\n                one(row)\n        else:', 'test_memory_rehearsal_holds_tree_lock'),
     ('port-lease-not-exclusive', fixture, '        fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)\n', '        fcntl.flock(lease, fcntl.LOCK_UN)\n', 'test_port_reservation_is_exclusive_across_processes'),
     ('provider-lease-dropped', fixture, '            provider_lease = _acquire_port_lease(candidate + 1)\n', '            provider_lease = _acquire_port_lease(candidate + 100)\n', 'test_port_reservation_is_exclusive_across_processes'),
+    # #1535: an edited table (row dropped or duplicated) must fail fast at
+    # every entry point, not first at the next control run's missing verdict.
+    ('omit-e2e-case', Path(__file__).resolve(), "    ('provider-lease-drop" + "ped', fixture, '            provider_lease = _acquire_port_lease(candidate + 1)\\n', '            provider_lease = _acquire_port_lease(candidate + 100)\\n', 'test_port_reservation_is_exclusive_across_processes'),\n", '', 'test_expected_case_count'),
+    # #1536: without the tree lock a second same-tree runner can interleave
+    # writes with this runner's per-case lease windows.
+    ('guarded-run-without-tree-lock', Path(__file__).resolve(), '        else:\n            with tree_' + 'lock(root, timeout=900):', '        else:', 'test_negative_guarded_run_holds_tree_lock'),
+    # #1529: drop the session_domain.py entry and the real parity lease
+    # silently disappears while every mock-based test stays green.
+    ('omit-parity-guarded-source', Path(__file__).resolve(), 'paths = [sessio' + 'n, common, native, collector, fixture, runner, chain]', 'paths = [common, native, collector, fixture, runner, chain]', 'test_negative_guarded_sources_take_parity_lease'),
 ]
 messages = {
     'decoder-frame-for-send-rows': '#1140 e2e real capture scores 72/72 per-case PASS',
@@ -106,7 +124,19 @@ messages = {
     'memory-rehearsal-without-lock': '#1398 e2e memory rehearsal holds the source tree lock',
     'port-lease-not-exclusive': '#1510 the closed-guard handoff window stays exclusive via the port lease',
     'provider-lease-dropped': '#1510 the closed-guard handoff window stays exclusive via the port lease',
+    'omit-e2e-case': '#1535 e2e negative case inventory is complete',
+    'guarded-run-without-tree-lock': '#1536 the guarded e2e run holds the tree lock around the whole loop',
+    'omit-parity-guarded-source': '#1529 the e2e runner guards gateway-parity sources under the real parity lease',
 }
+
+
+def validate_case_count():
+    # #1535: a dropped or duplicated case row used to pass silently until the
+    # next control run noticed the missing verdict; this runs at every entry
+    # point (main and preflight) so the inventory fails fast instead.
+    if len(cases) != EXPECTED_CASES:
+        raise SystemExit(f'#1535 e2e negative case inventory is complete: '
+                         f'expected {EXPECTED_CASES}, got {len(cases)}')
 
 
 def _test_classes():
@@ -146,6 +176,7 @@ def bound(test):
 
 def preflight():
     # Read-only: this never executes a mutant or bypasses the HEAD guard.
+    validate_case_count()
     errors = []
     for name, path, before, after, test in cases:
         if test not in TEST_CLASSES:
@@ -211,6 +242,7 @@ def execution_environment():
 
 
 def main():
+    validate_case_count()
     if sys.argv[1:2] == ['--memory-run']:
         return memory_run(sys.argv[2])
     preflight()
@@ -281,8 +313,6 @@ def main():
                 raise ValueError('STALE ANCHOR ' + name)
             changed = text.replace(before, after, 1)
             compile(changed, str(path), 'exec')
-            if not passed(run(name + '-positive', test)):
-                raise ValueError('positive bound test did not pass')
             # #1402: the slot probe runs outside the lease -- it reads no
             # guarded bytes, so the shared parity lease need not be held.
             if not memory:
@@ -293,13 +323,19 @@ def main():
                 # test, restore) and through the restored control, because
                 # that control re-runs the bound test and must never race
                 # another tree that takes the same .negative-source.lock /
-                # parity lease over (#1440).
+                # parity lease over (#1440). #1536: the positive control also
+                # runs inside the window -- it reads guarded bytes (the
+                # fixture loads collect.py and the frozen session_domain.py),
+                # so a second same-tree runner must not write under it.
                 # #1908: one rename, never a truncating in-place write; the
                 # shared publish helper (#1903) keeps a SIGKILL mid-write from
                 # leaving a source the next preflight would refuse as "differs
                 # from HEAD". The table row `lease-enter-without-release`
-                # anchors the two lines below verbatim: keep them adjacent.
+                # anchors the with-entry, the positive control and the
+                # mutation write below verbatim: keep them adjacent.
                 with mutating_sources(root, paths, baseline=baseline) as originals:
+                    if not passed(run(name + '-positive', test)):
+                        raise ValueError('positive bound test did not pass')
                     write_source_atomic(root, path, changed.encode())
                     try:
                         build = run_owned(['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
@@ -324,6 +360,8 @@ def main():
                     # run under the whole-loop tree lock below instead.
                     restored()
             else:
+                if not passed(run(name + '-positive', test)):
+                    raise ValueError('positive bound test did not pass')
                 status = classify(run(name + '-negative', test, name), test, messages[name])
                 reason = {'KILLED': 'named assertion matched', 'SURVIVED': 'bound test passed',
                           'INVALID': 'exit/test identity/assertion marker did not match'}[status]
@@ -332,14 +370,21 @@ def main():
             status, reason = 'INVALID', str(error)
         results.append({'name': name, 'status': status, 'compiled': compiled, 'reason': reason,
                         'test': bound(test), 'marker': messages[name]})
+    # #1536: the guarded (committed-source) loop holds the tree lock for the
+    # whole run, same premise as the memory rehearsal above: this runner
+    # writes guarded bytes case by case, so a second same-tree runner must
+    # not interleave writes with the per-case lease windows. The between-case
+    # gaps stay free for other trees (README.md documents the premise); the
+    # table row `guarded-run-without-tree-lock` anchors the else entry below.
     try:
         if memory:
             with tree_lock(root, timeout=900):
                 for row in selected:
                     one(row)
         else:
-            for row in selected:
-                one(row)
+            with tree_lock(root, timeout=900):
+                for row in selected:
+                    one(row)
     except BaseException as error:
         # A guard failure or a cancellation voids every row; a swallowed
         # Ctrl-C would keep a stale green summary. The per-case with above
