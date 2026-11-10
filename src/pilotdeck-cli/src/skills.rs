@@ -727,9 +727,11 @@ mod tests {
                 "#2170 {lang}: probe row needs a language subtag"
             );
             // #2170 fix-r5 (DS boundary#2): compare the leading resolved
-            // subtag by equality, not by prefix — `fr-CA`.starts_with("fr")
-            // also matches a corrupted `fr-Cyrl-CA` column, which would audit
-            // as fine. The product `collator()` maps `C`/`POSIX` to `en-US`
+            // subtag by equality, not by prefix — a prefix comparison lets
+            // a first subtag that merely starts with the language through
+            // (e.g. a corrupted `frr-FR` column vs language `fr`; the
+            // paired mutation `probe-resolved-prefix-poisoned` pins this).
+            // The product `collator()` maps `C`/`POSIX` to `en-US`
             // (skills.rs `collator`), so those languages expect `en`.
             let expected_language = match language {
                 "C" | "POSIX" => "en",

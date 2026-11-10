@@ -82,6 +82,14 @@ mutations = [
     ('probe-language-emptied', PROBE_JSON,
      '"lang": "fr_CA.UTF-8"', '"lang": "_CA.UTF-8"',
      TEST, '#2170 _CA.UTF-8: probe row needs a language subtag'),
+    # #2170 fix-r6 (DS r7 sibling#2): the fix-r5 equality audit needs a
+    # mutation a prefix comparison would let through — poisoning the fr_FR
+    # row's resolved to "frr-FR" keeps starts_with("fr") true but fails the
+    # first-subtag equality, so reverting skills.rs to the prefix form
+    # leaves this row SURVIVED (the pair replay also passes).
+    ('probe-resolved-prefix-poisoned', PROBE_JSON,
+     '"resolved": "fr-FR"', '"resolved": "frr-FR"',
+     TEST, '#2170 fr_FR.UTF-8: resolved'),
 ]
 # fix-r1 (DS simplify#1, #1666): the run denominator must be a literal, not
 # `len(mutations)` — a dropped row would silently shrink the run.
@@ -92,6 +100,7 @@ EXPECTED_NAMES = (
     'fr-ca-script-widened',
     'probe-resolved-rewritten',
     'probe-language-emptied',
+    'probe-resolved-prefix-poisoned',
 )
 
 

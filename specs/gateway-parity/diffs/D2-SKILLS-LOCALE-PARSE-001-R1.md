@@ -29,26 +29,30 @@ fixture 增加两道前置自审（resolved 首子标签须等于该行语言子
 ## 范围
 
 仍只覆盖 CLI skills collator 的 locale 选择；原条目「范围」节的全部结论与
-分歧行登记不变。本更正仅将「机器判据」中负控名册从四条改为六条：新增
+分歧行登记不变。本更正仅将「机器判据」中负控名册从四条改为七条：新增
 `probe-resolved-rewritten`（改写 Cyrl 行 `"resolved": "fr-Cyrl-CA"` →
-`"en-US"`，自审必红，绑 `#2170 fr_Cyrl_CA.UTF-8: resolved`）与
+`"en-US"`，自审必红，绑 `#2170 fr_Cyrl_CA.UTF-8: resolved`）、
 `probe-language-emptied`（改写 fr_CA 行 `"lang"` → `"_CA.UTF-8"`，空语言
-守卫必红，绑 `#2170 _CA.UTF-8: probe row needs a language subtag`），均经
-`include_str!` 重编译生效，提交后宿主执行。
+守卫必红，绑 `#2170 _CA.UTF-8: probe row needs a language subtag`）与
+`probe-resolved-prefix-poisoned`（fix-r6：改写 fr_FR 行 `"resolved"` →
+`"frr-FR"`，钉住自审的首子标签相等判据——退回前缀式则该行 SURVIVED，绑
+`#2170 fr_FR.UTF-8: resolved`），均经 `include_str!` 重编译生效，提交后宿主
+执行。
 
 ## 机器判据
 
 负控正本 `src/pilotdeck-cli/tests/fixtures/skills-fr-ca-probe/negative_controls.py`
-现为六条变异（`fr-ca-repair-dropped` / `fr-ca-region-widened` /
+现为七条变异（`fr-ca-repair-dropped` / `fr-ca-region-widened` /
 `fr-ca-script-lost` / `fr-ca-script-widened` / `probe-resolved-rewritten` /
-`probe-language-emptied`；中间两条对应 gateway 侧 native-collation 的
-french-script-fallback-lost / french-script-widened 同款双向，后两条绑定
-#2170 的自审守卫），名册由静态 `EXPECTED_NAMES` 钉死（漂移 rc=2）；提交后宿主
-执行，任一非 KILLED 非零退出。CLI 回放测试与金样不变（同原条目）。
+`probe-language-emptied` / `probe-resolved-prefix-poisoned`；中间两条对应
+gateway 侧 native-collation 的 french-script-fallback-lost /
+french-script-widened 同款双向，后三条绑定 #2170 的自审守卫），名册由静态
+`EXPECTED_NAMES` 钉死（漂移 rc=2）；提交后宿主执行，任一非 KILLED 非零退出。
+CLI 回放测试与金样不变（同原条目）。
 
 ## 批准记录
 
 未单独报批：本更正为名册事实性修订（#2170 给两道新自审守卫补配对变异的直接
 后果，防止按旧「四条变异」字面名册产生审计假 FAIL），不改变原条目的登记
-范围、判分语义与豁免；六条名册由 `EXPECTED_NAMES` 静态钉死并经双谱系评审
-（deepseek + minimax）。AI 代批，待人复核。
+范围、判分语义与豁免；七条名册由 `EXPECTED_NAMES` 静态钉死并经双谱系评审
+（deepseek + anthropic）。AI 代批，待人复核。
