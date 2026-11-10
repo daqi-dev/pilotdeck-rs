@@ -37,7 +37,7 @@ use crate::{
         SessionStorageInput, StoreResult, TranscriptKey, TranscriptRead, TranscriptStore,
     },
 };
-use pilotdeck_protocol::{JsObject, JsString, JsValue, quote_json_string, stringify_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, quote_json_string};
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -142,10 +142,14 @@ enum Pretty {
     /// literal then coerces it to `"undefined"`.
     Undefined,
     /// Past the shared 2000-container bound (#1550 family) or past V8's
-    /// string length: V8's stringify throws a RangeError for either, and
-    /// the TS helper's catch falls back to `String(value)` for the whole
-    /// input. The caller performs that fallback so both halves share the
-    /// bounds.
+    /// string length. The string-length refusal is the same input where
+    /// V8's stringify throws the catchable RangeError the TS helper turns
+    /// into `String(value)`. The 2000-container bound is *not* V8's own
+    /// throw point — that is shape-dependent (arrays render deeper,
+    /// objects overflow earlier; registered in the A6-JSVALUE-DEPTH-001
+    /// family), so the bands around it diverge from TS in both directions
+    /// and are covered by that registered divergence, not by this code.
+    /// The caller performs the same fallback for both halves.
     Fallback,
 }
 
@@ -159,9 +163,10 @@ const MAX_PRETTY_OUTPUT_BYTES: usize = (1 << 29) - 24;
 /// inputs (up to the shared 2000-container bound) must not spend a native
 /// stack frame per level: the recursive form aborted the process
 /// (`fatal runtime error: stack overflow`, exit 134 — measured on the cb8
-/// host at depth 2000 × 50k flat elements, where V8 throws a catchable
-/// RangeError). Array frames borrow the item slice from the input tree;
-/// object frames move their filtered entry `Vec` along (no per-step clone).
+/// host at depth 2000 × 50k flat elements, where V8's stringify also
+/// refuses, that shape's pretty output exceeding `String::kMaxLength`).
+/// Array frames borrow the item slice from the input tree; object frames
+/// move their filtered entry `Vec` along (no per-step clone).
 enum Step<'a> {
     ArrayItem {
         items: &'a [JsValue],
@@ -538,10 +543,13 @@ fn validate_portable_archive(value: &JsValue) -> Result<(), RequestError> {
             ));
         }
     }
-    // `Buffer.byteLength(JSON.stringify(value), "utf8")` — compact JSON; the
-    // value cannot be `undefined` here (messages is an array above).
-    let serialized = stringify_json(value)
-        .map_err(|error| RequestError::new(error.to_string()))?
+    // `Buffer.byteLength(JSON.stringify(value), "utf8")` — compact JSON through
+    // the shared V8-semantics wrapper (`js_value::json_stringify`), so a
+    // too-deep archive reports V8's RangeError exactly like the TS delegate
+    // instead of the unbounded codec walk. The value cannot be `undefined`
+    // here (messages is an array above).
+    let serialized = js_value::json_stringify(value)
+        .map_err(|_| RequestError::new(js_value::StackOverflow::MESSAGE))?
         .unwrap_or_default();
     if serialized.len() > MAX_PORTABLE_SESSION_ARCHIVE_BYTES {
         return Err(invalid("Session transcript archive is too large."));
@@ -636,7 +644,9 @@ fn write_restored_transcript(
     // read — the factory's restore→publish window. TS would have observed
     // `hasSession` and answered SESSION_BUSY, so the lease refusal answers
     // the same domain error instead of the rename family's writer-busy one.
-    let Some(_lease) = transcript_locks::cold_write_lease(&storage.transcript_path) else {
+    // Err propagates the real fs error (e.g. EACCES), matching main's
+    // cold_write_lease split of busy vs. I/O failure.
+    let Some(_lease) = transcript_locks::cold_write_lease(&storage.transcript_path)? else {
         return Err(gateway_error(
             "SESSION_BUSY",
             "Cannot restore over an active Gateway session.",
@@ -1751,6 +1761,7 @@ mod tests {
             &key,
         );
         let lease = transcript_locks::cold_write_lease(&path)
+            .expect("#2622 the cold lease probe itself must not fail")
             .expect("#2622 the cold lease is free before the restore");
         negative_assert_eq!(
             call(
@@ -1787,26 +1798,59 @@ mod tests {
     ///
     /// The TS delegate surfaces the raw EACCES from `replaceTranscript`;
     /// here the cold-write lease cannot create its lock file first and the
-    /// refusal is the retryable busy domain error (registered in `-R1`).
+    /// fs error propagates as `gateway_request_failed` ("Could not open
+    /// session ledger lock …: Permission denied" — the fence inode is
+    /// Rust-only, so its text is deliberately not Node's uv shape,
+    /// transcript.rs `LedgerLock::acquire`) instead of the busy domain
+    /// error (#1873's busy/Err split; narrowed from the `-R1` divergence,
+    /// whose base flattened the fs failure into SESSION_BUSY).
     #[cfg(unix)]
     #[tokio::test]
     async fn restore_refuses_on_an_unwritable_chat_directory_and_retries_clean() {
+        // #1554-family convention: chmod 0o500 is not a write error for root
+        // or CAP_DAC_OVERRIDE hosts — probe the behaviour, do not assume.
+        if rustix::process::geteuid().as_raw() == 0 {
+            assert!(
+                !crate::test_permission_faults::require_permission_faults(),
+                "#2622 PDRS_REQUIRE_PERMISSION_FAULTS is set but chmod 500 did not make the \
+                 chat directory unwritable (root or CAP_DAC_OVERRIDE); this test needs an \
+                 unprivileged host (需要非特权宿主)"
+            );
+            crate::test_skip_line::stderr_skip_line(
+                "#2622 skip: restore_refuses_on_an_unwritable_chat_directory: \
+                 running as root (chmod 500 is not a write error for root)\n",
+            );
+            return;
+        }
         let (_scratch, requests) = management_tests::setup();
         let chat = chat_dir(&requests);
+        use std::os::unix::fs::PermissionsExt;
+        // Restore 0o755 even when an assert panics, so the scratch teardown
+        // can always remove the tree.
+        struct WritableAgain(std::path::PathBuf);
+        impl Drop for WritableAgain {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+            }
+        }
         let mut permissions = std::fs::metadata(&chat)
             .expect("#2622 chat metadata")
             .permissions();
-        use std::os::unix::fs::PermissionsExt;
         permissions.set_mode(0o500);
         std::fs::set_permissions(&chat, permissions).expect("#2622 read-only chat directory");
+        let _writable_again = WritableAgain(chat.clone());
         let params = params(&json!({"sessionKey": "fenced-write", "archive": restore_archive()}));
-        negative_assert_eq!(
-            call(&requests, "restore_session_transcript", &params).await,
-            json!({"error": {
-                "code": "SESSION_BUSY",
-                "message": "Cannot restore over an active Gateway session.",
-            }}),
-            "#2622 R10 an unwritable chat directory refuses without partial state"
+        let refused = call(&requests, "restore_session_transcript", &params).await;
+        let error = &refused["error"];
+        negative_assert!(
+            error["code"] == json!("gateway_request_failed"),
+            "#2622 R10 an unwritable chat directory fails with the raw fs error, not a busy domain error: {refused}"
+        );
+        negative_assert!(
+            error["message"]
+                .as_str()
+                .is_some_and(|text| text.contains("Permission denied")),
+            "#2622 R10 the refusal carries the raw EACCES io text: {refused}"
         );
         negative_assert!(
             !chat.join("fenced-write.jsonl").exists(),
@@ -1885,8 +1929,10 @@ mod tests {
     /// #2622 fix-r1 (boundary P1, arbitration probe on cb8): a 2000-container
     /// chain sits exactly at the shared bound and pretty-renders without
     /// spending a native frame per level — the recursive form aborted the
-    /// process (`fatal runtime error: stack overflow`, exit 134) where V8
-    /// throws a catchable RangeError.
+    /// process (`fatal runtime error: stack overflow`, exit 134). The bound
+    /// is the shared family budget, not V8's shape-dependent throw point
+    /// (see the `Fallback` doc and the registered A6-JSVALUE-DEPTH-001
+    /// divergence).
     #[test]
     fn deep_tool_input_renders_within_the_shared_container_bound() {
         let mut value = JsValue::Array(vec![JsValue::Number(1.0)]);
@@ -1904,10 +1950,37 @@ mod tests {
         assert_eq!(units.last(), Some(&u16::from(b']')));
     }
 
+    /// #2622 fix-r2 (sibling P2 pairing the depth half of the fallback): one
+    /// container past the shared bound the pretty render refuses and the
+    /// `String(value)` fallback runs — which itself reports the family's
+    /// RangeError at this depth. Without the depth guard the explicit stack
+    /// would happily render 2001 levels, so this test is the kill anchor for
+    /// the `export-pretty-depth-omitted` mutant.
+    #[test]
+    fn deep_tool_input_falls_back_past_the_shared_container_bound() {
+        let mut value = JsValue::Array(vec![JsValue::Number(1.0)]);
+        for _ in 0..2_000 {
+            value = JsValue::Array(vec![value]);
+        }
+        let error = stringify_portable_value(&value)
+            .expect_err("#2622 the pretty render refuses one container past the shared bound");
+        assert!(
+            error
+                .message
+                .to_utf8()
+                .map(|text| text.contains("Maximum call stack size exceeded"))
+                .unwrap_or(false),
+            "#2622 the depth fallback joins through the shared String bound (got {})",
+            error.message.to_utf8().unwrap_or_default()
+        );
+    }
+
     /// #2622 fix-r1: a wide payload at that depth pushes the pretty render
     /// past V8's string length — the render stops at
-    /// `MAX_PRETTY_OUTPUT_BYTES` and falls back to `String(value)`, the
-    /// same route the TS helper's catch takes for the RangeError.
+    /// `MAX_PRETTY_OUTPUT_BYTES` and falls back to `String(value)`. This
+    /// string-length boundary is the aligned one: V8's stringify throws the
+    /// catchable RangeError here and the TS helper's catch takes the same
+    /// fallback.
     #[test]
     fn wide_deep_tool_input_falls_back_past_the_pretty_output_bound() {
         let mut value = JsValue::Array(vec![JsValue::Number(1.0); 140_000]);

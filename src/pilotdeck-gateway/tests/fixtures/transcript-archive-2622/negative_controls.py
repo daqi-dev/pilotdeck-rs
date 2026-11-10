@@ -67,6 +67,13 @@ mutations = [
      'const MAX_PRETTY_OUTPUT_BYTES: usize = (1 << 40);',
      'native_process::methods::transcript_archive::tests::wide_deep_tool_input_falls_back_past_the_pretty_output_bound',
      '#2622 the fallback keeps this inside the shared bound'),
+    # #2622 fix-r2 (sibling P2 pairing): the depth half of the pretty fallback
+    # had no negative control — only the output-budget half was pinned.
+    ('export-pretty-depth-omitted', ARCHIVE,
+     '        JsValue::Array(items) => {\n            if depth >= js_value::MAX_ARRAY_DEPTH {\n                return false;\n            }',
+     '        JsValue::Array(items) => {\n            if depth >= usize::MAX {\n                return false;\n            }',
+     'native_process::methods::transcript_archive::tests::deep_tool_input_falls_back_past_the_shared_container_bound',
+     '#2622 the pretty render refuses one container past the shared bound'),
     # --- restore delegate ----------------------------------------------------
     # `hasActiveTurn || hasSession` ahead of the restore conflict.
     ('restore-busy-guard-omitted', ARCHIVE,
@@ -96,10 +103,11 @@ mutations = [
      '            let _ = &restoring;', R13,
      '#2622 the failed restore removed its key'),
     # R13: the lease refusal answers the busy domain error, not the rename
-    # family's writer-busy code.
+    # family's writer-busy code. The `?` (#1873 busy/Err split on main) is
+    # part of the anchored call text.
     ('restore-lease-busy-code', ARCHIVE,
-     '    let Some(_lease) = transcript_locks::cold_write_lease(&storage.transcript_path) else {\n        return Err(gateway_error(\n            "SESSION_BUSY",\n            "Cannot restore over an active Gateway session.",\n        ));\n    };',
-     '    let Some(_lease) = transcript_locks::cold_write_lease(&storage.transcript_path) else {\n        return Err(gateway_error(\n            "SESSION_WRITER_BUSY",\n            "Cannot restore over an active Gateway session.",\n        ));\n    };',
+     '    let Some(_lease) = transcript_locks::cold_write_lease(&storage.transcript_path)? else {\n        return Err(gateway_error(\n            "SESSION_BUSY",\n            "Cannot restore over an active Gateway session.",\n        ));\n    };',
+     '    let Some(_lease) = transcript_locks::cold_write_lease(&storage.transcript_path)? else {\n        return Err(gateway_error(\n            "SESSION_WRITER_BUSY",\n            "Cannot restore over an active Gateway session.",\n        ));\n    };',
      R13, '#2622 R13 the lease refusal answers the busy domain error'),
     # R11: the exists check runs under the transcript fence; rekeying the
     # acquire lets the queued restore race ahead of the landing transcript.
@@ -124,7 +132,7 @@ mutations = [
 # #1538: the table is its own denominator — pin the row count and the roster
 # (order and repeats included) so a dropped, renamed or duplicated mutation is
 # refused before anything runs or compiles.
-EXPECTED_TOTAL = 17
+EXPECTED_TOTAL = 18
 EXPECTED_NAMES = (
     'export-busy-guard-omitted',
     'export-missing-defaulted',
@@ -133,6 +141,7 @@ EXPECTED_NAMES = (
     'export-message-count-omitted',
     'export-title-ceiling-dropped',
     'export-pretty-budget-omitted',
+    'export-pretty-depth-omitted',
     'restore-busy-guard-omitted',
     'restore-set-membership-ignored',
     'restore-exists-check-omitted',
