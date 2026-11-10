@@ -195,6 +195,8 @@ updated: 2026-11-11 04:31（02:36–04:31 增记：**合并队列大出货**—�
 - sms-2499 | impl | doing | **#2499 已派**（#2026 决策 B，排期 A 阶段后已到点）：sms 头读对齐 Node 408 与 30 s 检查网格；对拍口径以 #2026 决策链为准。
 - frozen-2513 | impl | doing | **#2513 冻结装置缺口车道已派**：scripts/parity/round.py 宿主环境清理元组缺 PILOTDECK_GATEWAY_MODE；先判冻结范围（在冻结清单内走完整冻结程序+真实数据复算，--write 单独提交；清单外按正常开发），拿不准的冻结语义边界停下报协调者。
 - ext-hop7 | impl | doing | **hop7 缺口核查车道已派**（余 37：五跳 19 / 别根 18，开工前重取 live state）：verdict 落 exact-audit/ext-hop7-verdict.md；真缺口不派单归协调者；#2199/#2207/#2617/#2558（#2090/#2083/#1850 关闭闸门）重点核并标 P1。
+- harvest-2692-2696 | impl | doing | **红灯 9 两张「已交付待收」补收车道已派**（04:5x）：#2692（cb8 01:17 exit=0）/#2696（macmini 01:08 done-idle）DONE+RESULT 齐备差补推开 PR；收货核验走远端，pr-gate 过入队（GraphQL 复核）+双谱系评审。
+- harvest-1517 | impl | doing | **#1517 真积压补收车道已派**（04:5x）：r1 11-10 23:35 超时被杀但 final.patch 已应用、负控全过；唯一缺口 channel:: 3 FAILED 未证基线既有——车道先在基点跑同 3 测证基线红绿再定补收/重派（判定+处置见 coord 评论 issuecomment-6778774490）。
 <!-- READY:END -->
 
 ### 段末增记（18:4x–20:3x，coord2/e7）
@@ -5934,3 +5936,8 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | 下次两小时交接 | ~06:30 前写段（不空等） | coord2/e7 | 06:30 |
 
 （本段 READY 改动：updated 行重写；hop-batch 行增记 5 PR 口径；新增 disk-trim 一行并入巡场口径——细行由 hop/收口车道各自增记。段后 next-task --check 自查。）
+
+### 巡场增记（04:5x，coord2/e7，红灯处置滚动）
+
+- 红灯 9 收场：#2692/#2696 判「已交付待收」（差补推开 PR）→ 补收车道已派；#1517 判真积压（r1 超时被杀、patch 已应用、3 个 channel:: FAILED 待证基线）→ 基线核实补收车道已派；#2743/#2637 有车道不动。核场明细 `_tmp/20261107-coord/harvest-check-0441.md`。
+- 红灯 7 收场：看板 18/18 对齐零告警（4 CLOSED 标 Done、14 open 标 In Review；12 张 claude/ 前缀经署名核实 GLM 实现，--impl 显式带）。记录 `_tmp/20261107-coord/project-mark-0441.md`。
