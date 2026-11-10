@@ -1883,8 +1883,6 @@ class EnvironmentControls(unittest.TestCase):
         'for guard_target in .github/workflows/ci.yml .github/workflows/pr-gate.yml; do')
     runner_image_guard_os_release_override = (
         'os_release="${PDRS_IMAGE_GUARD_OS_RELEASE:-/etc/os-release}"')
-    runner_image_guard_workflow_paths = ('.github/workflows/ci.yml',
-                                         '.github/workflows/pr-gate.yml')
 
     def runner_image_guard_scripts(self, issue='#2780'):
         """两个守卫 step 的 run 块原文（含 YAML 缩进）与剥缩进后的可执行脚本。
@@ -1945,7 +1943,8 @@ class EnvironmentControls(unittest.TestCase):
 
     def runner_image_guard_pins(self, script, issue='#2780'):
         """从守卫脚本文本反向派生四个钉值（expected* 变量）——机检侧不另抄一份，
-        钉值的单一来源就是守卫脚本本身（boundary#1 / boundary#2）。"""
+        钉值的单一来源就是守卫脚本本身（boundary#1 / boundary#2）。fix-r3 起构建
+        号是钉值集合 expected_image_versions（空格分隔，命中任一即绿）。"""
         matches = re.findall(r'^(expected[a-z_]*)="([^"]*)"$', script, re.M)
         self.assertEqual(len(matches), 4,
                          f'{issue} the guard defines exactly the four pin variables')
@@ -1955,7 +1954,7 @@ class EnvironmentControls(unittest.TestCase):
                              f'{issue} each pin is defined exactly once: {name}')
             pins[name] = value
         self.assertEqual(set(pins), {'expected', 'expected_label', 'expected_image_os',
-                                     'expected_image_version'},
+                                     'expected_image_versions'},
                          f'{issue} the guard pins are exactly the registered four')
         # 三值互相锁定：标签 / 镜像族从 OS 版本派生，任何一处单独改钉先红在这里。
         self.assertEqual(pins['expected_label'], 'ubuntu-' + pins['expected'],
@@ -1964,7 +1963,38 @@ class EnvironmentControls(unittest.TestCase):
                          f'{issue} the pinned image family derives from the pinned OS '
                          'version major ($ImageOS keeps the major only, '
                          'e.g. ubuntu-24.04 -> ubuntu24)')
+        # fix-r3（#2780 P2-a 主题 3）：构建号钉值集合的格式契约——非空、单空格
+        # 分隔、无重复成员、每个成员都是上游 runner-images 构建号形态
+        # （YYYYMMDD.N.M）。空集合运行时也会 fail-closed，但先红在这里。
+        members = pins['expected_image_versions'].split(' ')
+        self.assertTrue(members and all(members),
+                        f'{issue} the pinned image-version set is non-empty and '
+                        'single-space separated; an empty or stray-space set would '
+                        'fail-closed at runtime and must be rejected here too')
+        self.assertEqual(len(members), len(set(members)),
+                         f'{issue} no duplicate members in the pinned image-version set')
+        for member in members:
+            self.assertRegex(member, r'^\d{8}\.\d+\.\d+$',
+                             f'{issue} each pinned image version looks like a '
+                             'runner-images build stamp (YYYYMMDD.N.M)')
+        pins['expected_image_versions_members'] = members
         return pins
+
+    def runner_image_guard_scan_targets(self, script, issue='#2780'):
+        """从守卫脚本的扫描行反向派生扫描面（单一来源，不另抄清单）——登记测试
+        再把它与 .github/workflows 目录对账：新增工作流文件不进扫描面先红
+        （#2780 fix-r3 P2-a 主题 1 的 Python 侧目录派生；让 shell 自己扫目录
+        动守卫块扫描逻辑，超出钉值集合化范围，开 P2-跟进单）。"""
+        self.assertIn(self.runner_image_guard_scan_line + '\n', script,
+                      f'{issue} the guard keeps the runs-on scan for-loop')
+        head, sep, _ = self.runner_image_guard_scan_line.partition('; do')
+        self.assertTrue(sep, f'{issue} the scan line keeps its for-loop shape')
+        prefix = 'for guard_target in '
+        self.assertTrue(head.startswith(prefix),
+                        f'{issue} the scan line keeps its iteration variable')
+        targets = head[len(prefix):].split()
+        self.assertTrue(targets, f'{issue} the scan line carries at least one target')
+        return targets
 
     def workflow_runs_on_values(self, text, issue='#2780'):
         """镜像守卫白名单判定的 Python 侧：全部非注释 runs-on 值（键形态连引号键
@@ -2015,11 +2045,22 @@ class EnvironmentControls(unittest.TestCase):
             for key in ('if', 'continue-on-error'):
                 self.assertNotIn(key, fields,
                                  '#2780 the guard steps stay unconditional')
-        # 白名单值等的机检侧：钉定标签从守卫脚本派生（单一来源），两个 workflow 的
-        # 全部非注释 runs-on 值必须等于它——arm / 26.04 / 22.04 / ubuntu-latest /
+        # 白名单值等的机检侧：钉定标签从守卫脚本派生（单一来源），扫描面也从守卫
+        # 脚本的扫描行派生（单一来源，fix-r3 P2-a 主题 1 Python 侧目录派生），并与
+        # .github/workflows 目录对账：新增工作流文件不进扫描面先红在这里（shell 侧
+        # 自动扫目录动守卫块扫描逻辑，开 P2-跟进单）。两个 workflow 的全部非注释
+        # runs-on 值必须等于钉定标签——arm / 26.04 / 22.04 / ubuntu-latest /
         # matrix 拼装 / 引号键写法全都过不去（sibling#1 / boundary#1）。
         root = Path(__file__).resolve().parents[3]
-        for relative in self.runner_image_guard_workflow_paths:
+        targets = self.runner_image_guard_scan_targets(script, '#2780')
+        actual_workflows = sorted(
+            str(path.relative_to(root)) for path in (root / '.github/workflows').iterdir()
+            if path.is_file() and path.suffix in ('.yml', '.yaml'))
+        self.assertEqual(sorted(targets), actual_workflows,
+                         '#2780 the guard scan surface must cover every workflow file '
+                         'under .github/workflows; a workflow outside the scan list '
+                         'silently escapes the runs-on whitelist')
+        for relative in targets:
             values = self.workflow_runs_on_values((root / relative).read_text(), '#2780')
             self.assertTrue(values,
                             f'#2780 must carry runs-on lines the guard can see: '
@@ -2027,6 +2068,20 @@ class EnvironmentControls(unittest.TestCase):
             self.assertEqual(set(values), {pins['expected_label']},
                              f'#2780 every non-comment runs-on must equal the guard-pinned '
                              f'label {pins["expected_label"]} (in {relative})')
+        # fix-r3（#2780 P2-a 主题 2）：守卫读的三个环境变量不许被任何工作流自己
+        # 定义——step / job / workflow 任一层 env 一旦钉死 ImageOS / ImageVersion /
+        # PDRS_IMAGE_GUARD_OS_RELEASE，守卫读到的就是自产假值，漂移永远不红（配对
+        # 负控见 rejects_registration_drift 的 *-env-neuters-* 两条）。正则只认
+        # 「键:」形态，守卫脚本正文里的 ${ImageVersion:-} 引用不会误伤。
+        for relative in targets:
+            offenders = [line for line in (root / relative).read_text().split('\n')
+                         if re.match(r"^\s*['\"]?(ImageOS|ImageVersion"
+                                     r"|PDRS_IMAGE_GUARD_OS_RELEASE)['\"]?\s*:", line)]
+            self.assertFalse(offenders,
+                             f'#2780 no workflow may define the guard env vars itself '
+                             f'(ImageOS/ImageVersion/PDRS_IMAGE_GUARD_OS_RELEASE) in '
+                             f'{relative}; a self-defined env neuters runner drift '
+                             'detection')
 
     def test_runner_image_guard_rejects_registration_drift(self):
         # #2780 fix-r2：登记断言的内存变异负控。每条都必须让上面的登记测试红在
@@ -2087,6 +2142,50 @@ class EnvironmentControls(unittest.TestCase):
                              workflow.replace('    runs-on: ubuntu-24.04', new, 1),
                              '#2780 every non-comment runs-on must equal the guard-pinned '
                              'label'))
+        # fix-r3（#2780 P2-a 主题 2/3）：钉值集合与守卫 env 的配对负控。集合类变异
+        # 两副本同改（保持逐字全等，让红落在绑定断言上而不是分叉断言上）。
+        pin_line = '          expected_image_versions="20261101.360.1"\n'
+        self.assertEqual(workflow.count(pin_line), 2,
+                         '#2780 both copies carry the image-version pin')
+        for label, new, message in (
+                ('pin-set-emptied',
+                 '          expected_image_versions=""\n',
+                 '#2780 the pinned image-version set is non-empty'),
+                ('pin-set-duplicate-member',
+                 '          expected_image_versions="20261101.360.1 20261101.360.1"\n',
+                 '#2780 no duplicate members in the pinned image-version set'),
+                ('pin-set-malformed-member',
+                 '          expected_image_versions="20261101.360.1 latest"\n',
+                 '#2780 each pinned image version looks like a runner-images build '
+                 'stamp'),
+                ('guard-fifth-pin',
+                 pin_line + '          expected_extra="x"\n',
+                 '#2780 the guard defines exactly the four pin variables')):
+            ci_cases.append((label, workflow.replace(pin_line, new), message))
+        # 重复定义钉值：把 expected_label 换成第二个 expected_image_versions——总匹配
+        # 数仍是 4，红在「每个钉值只定义一次」而不是总数断言上。
+        self.assertEqual(
+            workflow.count('          expected_label="ubuntu-24.04"\n'), 2,
+            '#2780 both copies carry the label pin (anchor for duplicate-pin mutant)')
+        ci_cases.append(('guard-duplicate-pin',
+                         workflow.replace('          expected_label="ubuntu-24.04"\n',
+                                           '          expected_image_versions='
+                                           '"20261231.1.0"\n'),
+                         '#2780 each pin is defined exactly once'))
+        # 守卫 env 冒犯（主题 2）：两副本同插 step 级 env / 头部插 workflow 级 env，
+        # 守卫读到的将是自产假值——必须红在 env 冒犯断言上。
+        self.assertTrue(workflow.startswith('name: ci\n'),
+                        '#2780 ci.yml keeps its head anchor for the env mutant')
+        ci_cases.append(('guard-env-step-neuters-version',
+                         workflow.replace(self.runner_image_guard_anchor,
+                                           self.runner_image_guard_anchor
+                                           + '        env:\n'
+                                             '          ImageVersion: 20261101.360.1\n'),
+                         '#2780 no workflow may define the guard env vars itself'))
+        ci_cases.append(('workflow-env-neuters-imageos',
+                         workflow.replace('name: ci\n',
+                                           'name: ci\n\nenv:\n  ImageOS: ubuntu24\n', 1),
+                         '#2780 no workflow may define the guard env vars itself'))
         self.check_ci_mutations(ci_cases,
                                 'test_runner_image_guard_steps_are_registered_and_identical',
                                 '#2780')
@@ -2115,9 +2214,11 @@ class EnvironmentControls(unittest.TestCase):
         # 跑从 ci.yml 提取的真实脚本（不 mock、不另写副本）：正控必须绿，每条拒绝
         # 路径必须红在专属错误标记上——OS 漂移 / $ImageOS 漂移 / $ImageVersion 漂移
         # 与缺失（构建维度）/ runs-on 值漂移（含 ubuntu-latest 回归）/ 目标不可读 /
-        # grep rc>=2 / 零命中。逐条跑完再汇总，任一非 KILLED 即红（不遇第一条失败
-        # 就中止）。$ImageOS/$ImageVersion 在真实 runner 上的存在性与格式属评审
-        # 推断（本环境无 GitHub 托管 runner），守卫按 fail-closed 设计覆盖。
+        # grep rc>=2 / 零命中。fix-r3 增补：os-release 边界（无 VERSION_ID / 不可
+        # 读）、pr-gate 值漂移逻辑级负控、引号键绿路径、钉值集合行为（第二成员绿 /
+        # 空集合红）。逐条跑完再汇总，任一非 KILLED 即红（不遇第一条失败就中止）。
+        # $ImageOS/$ImageVersion 在真实 runner 上的存在性与格式属评审推断（本环境
+        # 无 GitHub 托管 runner），守卫按 fail-closed 设计覆盖。
         guards = self.runner_image_guard_scripts('#2780')
         script = guards['negative-controls'][1]
         pins = self.runner_image_guard_pins(script, '#2780')
@@ -2125,10 +2226,11 @@ class EnvironmentControls(unittest.TestCase):
         ci_text = (root / '.github/workflows/ci.yml').read_text()
         gate_text = (root / '.github/workflows/pr-gate.yml').read_text()
         results = []
+        greens = []
         positive = None
 
         def world(guard_ci=ci_text, guard_gate=gate_text, os_version=None, env=None,
-                  ci_is_dir=False, skip_gate=False):
+                  ci_is_dir=False, skip_gate=False, os_release_missing=False):
             def build(work):
                 flows = work / '.github/workflows'
                 flows.mkdir(parents=True)
@@ -2138,28 +2240,46 @@ class EnvironmentControls(unittest.TestCase):
                     (flows / 'ci.yml').write_text(guard_ci)
                 if not skip_gate:
                     (flows / 'pr-gate.yml').write_text(guard_gate)
-                release = work / 'os-release'
-                release.write_text(f'VERSION_ID="{os_version or pins["expected"]}"\n')
+                # fix-r3（#2780 P2-a 主题 4）：os_version 三态——None=写钉定值（正
+                # 控）、''=文件在但无 VERSION_ID（边界：actual 退回空）、其余=具体漂
+                # 移值。旧写法 os_version or pins[...] 会把 '' 吞成钉定值，边界用例
+                # 根本跑不到（DS boundary 的原报告点）。
                 environment = {'PATH': '/usr/bin:/bin',
-                               'PDRS_IMAGE_GUARD_OS_RELEASE': str(release),
                                'ImageOS': pins['expected_image_os'],
-                               'ImageVersion': pins['expected_image_version']}
+                               'ImageVersion': pins['expected_image_versions_members'][0]}
+                if os_release_missing:
+                    environment['PDRS_IMAGE_GUARD_OS_RELEASE'] = str(
+                        work / 'nonexistent-os-release')
+                else:
+                    release = work / 'os-release'
+                    if os_version is None:
+                        release.write_text(f'VERSION_ID="{pins["expected"]}"\n')
+                    elif os_version == '':
+                        release.write_text('NAME="Ubuntu"\n')
+                    else:
+                        release.write_text(f'VERSION_ID="{os_version}"\n')
+                    environment['PDRS_IMAGE_GUARD_OS_RELEASE'] = str(release)
                 environment.update(env or {})
                 return environment
             return build
 
-        def run_guard(name, build, expect_pass, marker=None):
+        def run_guard(name, build, expect_pass, marker=None, extra_green=False,
+                      guard_script=None):
             nonlocal positive
             with tempfile.TemporaryDirectory() as temp:
                 completed = subprocess.run(
-                    ['bash', '-c', script], cwd=temp, env=build(Path(temp)),
-                    capture_output=True, text=True, timeout=60)
+                    ['bash', '-c', guard_script or script], cwd=temp,
+                    env=build(Path(temp)), capture_output=True, text=True, timeout=60)
             if expect_pass:
                 ok = (completed.returncode == 0
                       and 'runner 镜像守卫通过' in completed.stdout
                       and 'runs-on 白名单反向断言通过' in completed.stdout)
-                positive = (name, ok, f'rc={completed.returncode} '
-                                      f'stdout={completed.stdout!r} stderr={completed.stderr!r}')
+                detail = (f'rc={completed.returncode} stdout={completed.stdout!r} '
+                          f'stderr={completed.stderr!r}')
+                if extra_green:
+                    greens.append((name, ok, detail))
+                else:
+                    positive = (name, ok, detail)
                 return
             ok = completed.returncode != 0 and marker in completed.stderr
             status = ('KILLED' if ok
@@ -2198,8 +2318,43 @@ class EnvironmentControls(unittest.TestCase):
                   f'directory is not verified on {sys.platform}', flush=True)
         run_guard('no-runs-on-parsed', world(guard_ci=''), expect_pass=False,
                   marker='一条 runs-on 都没解析到')
+        # fix-r3（#2780 P2-a 主题 4）：os-release 边界——文件在但无 VERSION_ID /
+        # 文件读不到，actual 都退回空，必须红在「<读不到>」上而不是静默过。
+        run_guard('os-version-missing', world(os_version=''), expect_pass=False,
+                  marker='实际 OS 版本="<读不到>"')
+        run_guard('os-release-unreadable', world(os_release_missing=True),
+                  expect_pass=False, marker='实际 OS 版本="<读不到>"')
+        # pr-gate 侧值漂移的逻辑级负控；引号键是绿路径不是死代码（守卫键形态
+        # 连引号键一起认，#2017 先例）。
+        run_guard('pr-gate-runs-on-latest',
+                  world(guard_gate=gate_text.replace('    runs-on: ubuntu-24.04',
+                                                     '    runs-on: ubuntu-latest', 1)),
+                  expect_pass=False, marker='runs-on 值 "ubuntu-latest"')
+        run_guard('quoted-key-pr-gate-green',
+                  world(guard_gate=gate_text.replace('    runs-on: ubuntu-24.04',
+                                                     "    'runs-on': ubuntu-24.04", 1)),
+                  expect_pass=True, extra_green=True)
+        # fix-r3（#2780 anthropic boundary P1，钉值集合）：命中任一成员即绿、空集合
+        # fail-closed。只改提取出的脚本文本（不动 ci.yml）：临时扩一个第二成员，
+        # 实际值落在第二成员上必须绿；集合清空必须红在专属错误上。
+        pin_line = re.search(r'^expected_image_versions="[^"]*"$', script, re.M)[0]
+        second_member = '20261231.1.0'
+        script_two_members = script.replace(
+            pin_line, pin_line[:-1] + f' {second_member}"')
+        run_guard('image-version-set-second-member-green',
+                  world(env={'ImageVersion': second_member}), expect_pass=True,
+                  extra_green=True, guard_script=script_two_members)
+        run_guard('pin-set-emptied-at-runtime', world(), expect_pass=False,
+                  marker='钉值集合 expected_image_versions 为空',
+                  guard_script=script.replace(pin_line, 'expected_image_versions=""'))
+        # 「解析到非 runs-on 行」分支是纵深防御：grep 正则 ^\s*['\"]?runs-on['\"]?\s*:
+        # 只可能产出键剥引号/空白后等于 runs-on 的行，注入不出别的键——机检侧无法
+        # 从 YAML 文本确定性造出该分支的触发输入，不设行为用例（依据本注释，不是
+        # 遗漏）。
         self.assertTrue(positive and positive[1],
                         f'#2780 the guard logic positive control must pass: {positive}')
+        self.assertTrue(greens and all(ok for _, ok, _ in greens),
+                        f'#2780 every extra green path must stay green: {greens}')
         self.assertTrue(results and all(status == 'KILLED' for _, status in results),
                         f'#2780 every guard-logic mutant must die on its own marker: '
                         f'{results}')

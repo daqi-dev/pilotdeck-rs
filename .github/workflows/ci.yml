@@ -246,10 +246,12 @@ jobs:
           set -euo pipefail
           # 期望值单点：本步四个钉值全在下面四个变量里（fix-r2 起两副本由
           # test_metadata_io_driver 逐字全等机检钉住，改钉必须两处同改）。
+          # fix-r3（#2780 anthropic boundary P1，协调者裁 b）：构建号钉值从单一
+          # 精确值改为钉值集合 expected_image_versions（空格分隔，命中任一即绿）。
           expected="24.04"
           expected_label="ubuntu-24.04"
           expected_image_os="ubuntu24"
-          expected_image_version="20261101.360.1"
+          expected_image_versions="20261101.360.1"
           # PDRS_IMAGE_GUARD_OS_RELEASE 只重定向 os-release 的读取路径（供本仓
           # 守卫逻辑自测注入假 os-release），钉值比对不变；该行被机检钉死。
           os_release="${PDRS_IMAGE_GUARD_OS_RELEASE:-/etc/os-release}"
@@ -264,17 +266,38 @@ jobs:
           fi
           # fix-r2（#2780 MM P1）：构建维度。GitHub 托管镜像按构建滚动，VERSION_ID
           # 不变的镜像重指 / 滚动窗口内两 job 落在不同构建都会翻转 KILLED/SURVIVED
-          # 结论。两副本钉同一构建号，任何一侧不等即红（fail-closed）：两 job 同绿
-          # ⟺ 同一镜像构建。镜像滚动时只改 expected_image_version 一行（两副本
-          # 同改，全等机检强制）。初始钉值取 2026-11-10 上游 runner-images 的
-          # 现行构建号（依据见 _tmp/20261026-issue-2762/fix-r2/RESULT.md）。
+          # 结论。fix-r3（#2780 anthropic boundary P1，协调者裁 b）：单一精确构建号
+          # 在滚动窗口内没有稳定绿值（fleet 分批换版本），改为钉值集合——两副本钉
+          # 同一集合，实际值命中任一成员即绿。滚动窗口处置流程：① 守卫红且错误行
+          # 显示的「实际构建号」经值班协调者确认为上游 runner-images 新滚动版本后，
+          # 把该值追加进 expected_image_versions（两副本同改，全等机检强制），当轮
+          # 恢复绿；② 窗口结束（上游该版本 rollout 完成、实际值连续几天稳定在新值）
+          # 后由值班协调者删旧值，收窄回单值。谁做/何时：值班协调者，红当轮加新值、
+          # 窗口结束当轮删旧值。窗口内两 job 可能落在集合内不同构建上，「同绿」语义
+          # 放宽为「同在已登记集合」；需要严格同构建的对拍/负控结论时先删旧值收窄
+          # 再跑。空集合与未提供实际值都 fail-closed：不提供不等于命中集合。
           image_os="${ImageOS:-}"
           image_version="${ImageVersion:-}"
-          if [ "$image_os" != "$expected_image_os" ] || [ "$image_version" != "$expected_image_version" ]; then
-            echo "::error::runner 镜像漂移：实际 ImageOS=\"${image_os:-<未提供>}\" ImageVersion=\"${image_version:-<未提供>}\"，钉定 ImageOS=$expected_image_os ImageVersion=$expected_image_version（#2780 fix-r2：镜像滚动先红再改钉，别拿漂移构建上的结论）" >&2
+          if [ -z "${expected_image_versions// /}" ]; then
+            echo "::error::钉值集合 expected_image_versions 为空，fail-closed（#2780 fix-r3：空集合守卫哑炮）" >&2
             exit 1
           fi
-          echo "runner 镜像守卫通过：OS 版本 $actual / ImageOS $image_os / ImageVersion $image_version == 钉定"
+          if [ "$image_os" != "$expected_image_os" ] || [ -z "$image_version" ]; then
+            echo "::error::runner 镜像漂移：实际 ImageOS=\"${image_os:-<未提供>}\" ImageVersion=\"${image_version:-<未提供>}\"，钉定 ImageOS=$expected_image_os ImageVersion∈{$expected_image_versions}（#2780 fix-r3：镜像滚动先红再改钉，别拿漂移构建上的结论）" >&2
+            exit 1
+          fi
+          version_hit=0
+          for member in $expected_image_versions; do
+            if [ "$image_version" = "$member" ]; then
+              version_hit=1
+              break
+            fi
+          done
+          if [ "$version_hit" -ne 1 ]; then
+            echo "::error::runner 镜像漂移：实际 ImageVersion=\"$image_version\" 不在钉定集合 {$expected_image_versions}（#2780 fix-r3：确认为上游新滚动版本后把该值追加进集合，两副本同改）" >&2
+            exit 1
+          fi
+          echo "runner 镜像守卫通过：OS 版本 $actual / ImageOS $image_os / ImageVersion $image_version ∈ 钉定集合 {$expected_image_versions}"
           # fix-r2（#2780 MM P1）：反向断言从「字面量 ubuntu-latest 黑名单 × 仅
           # ci.yml」改为白名单值等——ci.yml 与 pr-gate.yml 的全部非注释 runs-on 值
           # 必须等于钉定标签，任何其他值（ubuntu-latest / -arm / 26.04 / 22.04 /
@@ -553,10 +576,12 @@ jobs:
           set -euo pipefail
           # 期望值单点：本步四个钉值全在下面四个变量里（fix-r2 起两副本由
           # test_metadata_io_driver 逐字全等机检钉住，改钉必须两处同改）。
+          # fix-r3（#2780 anthropic boundary P1，协调者裁 b）：构建号钉值从单一
+          # 精确值改为钉值集合 expected_image_versions（空格分隔，命中任一即绿）。
           expected="24.04"
           expected_label="ubuntu-24.04"
           expected_image_os="ubuntu24"
-          expected_image_version="20261101.360.1"
+          expected_image_versions="20261101.360.1"
           # PDRS_IMAGE_GUARD_OS_RELEASE 只重定向 os-release 的读取路径（供本仓
           # 守卫逻辑自测注入假 os-release），钉值比对不变；该行被机检钉死。
           os_release="${PDRS_IMAGE_GUARD_OS_RELEASE:-/etc/os-release}"
@@ -571,17 +596,38 @@ jobs:
           fi
           # fix-r2（#2780 MM P1）：构建维度。GitHub 托管镜像按构建滚动，VERSION_ID
           # 不变的镜像重指 / 滚动窗口内两 job 落在不同构建都会翻转 KILLED/SURVIVED
-          # 结论。两副本钉同一构建号，任何一侧不等即红（fail-closed）：两 job 同绿
-          # ⟺ 同一镜像构建。镜像滚动时只改 expected_image_version 一行（两副本
-          # 同改，全等机检强制）。初始钉值取 2026-11-10 上游 runner-images 的
-          # 现行构建号（依据见 _tmp/20261026-issue-2762/fix-r2/RESULT.md）。
+          # 结论。fix-r3（#2780 anthropic boundary P1，协调者裁 b）：单一精确构建号
+          # 在滚动窗口内没有稳定绿值（fleet 分批换版本），改为钉值集合——两副本钉
+          # 同一集合，实际值命中任一成员即绿。滚动窗口处置流程：① 守卫红且错误行
+          # 显示的「实际构建号」经值班协调者确认为上游 runner-images 新滚动版本后，
+          # 把该值追加进 expected_image_versions（两副本同改，全等机检强制），当轮
+          # 恢复绿；② 窗口结束（上游该版本 rollout 完成、实际值连续几天稳定在新值）
+          # 后由值班协调者删旧值，收窄回单值。谁做/何时：值班协调者，红当轮加新值、
+          # 窗口结束当轮删旧值。窗口内两 job 可能落在集合内不同构建上，「同绿」语义
+          # 放宽为「同在已登记集合」；需要严格同构建的对拍/负控结论时先删旧值收窄
+          # 再跑。空集合与未提供实际值都 fail-closed：不提供不等于命中集合。
           image_os="${ImageOS:-}"
           image_version="${ImageVersion:-}"
-          if [ "$image_os" != "$expected_image_os" ] || [ "$image_version" != "$expected_image_version" ]; then
-            echo "::error::runner 镜像漂移：实际 ImageOS=\"${image_os:-<未提供>}\" ImageVersion=\"${image_version:-<未提供>}\"，钉定 ImageOS=$expected_image_os ImageVersion=$expected_image_version（#2780 fix-r2：镜像滚动先红再改钉，别拿漂移构建上的结论）" >&2
+          if [ -z "${expected_image_versions// /}" ]; then
+            echo "::error::钉值集合 expected_image_versions 为空，fail-closed（#2780 fix-r3：空集合守卫哑炮）" >&2
             exit 1
           fi
-          echo "runner 镜像守卫通过：OS 版本 $actual / ImageOS $image_os / ImageVersion $image_version == 钉定"
+          if [ "$image_os" != "$expected_image_os" ] || [ -z "$image_version" ]; then
+            echo "::error::runner 镜像漂移：实际 ImageOS=\"${image_os:-<未提供>}\" ImageVersion=\"${image_version:-<未提供>}\"，钉定 ImageOS=$expected_image_os ImageVersion∈{$expected_image_versions}（#2780 fix-r3：镜像滚动先红再改钉，别拿漂移构建上的结论）" >&2
+            exit 1
+          fi
+          version_hit=0
+          for member in $expected_image_versions; do
+            if [ "$image_version" = "$member" ]; then
+              version_hit=1
+              break
+            fi
+          done
+          if [ "$version_hit" -ne 1 ]; then
+            echo "::error::runner 镜像漂移：实际 ImageVersion=\"$image_version\" 不在钉定集合 {$expected_image_versions}（#2780 fix-r3：确认为上游新滚动版本后把该值追加进集合，两副本同改）" >&2
+            exit 1
+          fi
+          echo "runner 镜像守卫通过：OS 版本 $actual / ImageOS $image_os / ImageVersion $image_version ∈ 钉定集合 {$expected_image_versions}"
           # fix-r2（#2780 MM P1）：反向断言从「字面量 ubuntu-latest 黑名单 × 仅
           # ci.yml」改为白名单值等——ci.yml 与 pr-gate.yml 的全部非注释 runs-on 值
           # 必须等于钉定标签，任何其他值（ubuntu-latest / -arm / 26.04 / 22.04 /
