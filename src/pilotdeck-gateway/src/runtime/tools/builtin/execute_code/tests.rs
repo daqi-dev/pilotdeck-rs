@@ -362,3 +362,34 @@ fn python_public_helper_exports_match_native_admission_registry() {
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(exported, HELPERS.iter().map(|(name, _)| *name).collect());
 }
+
+#[tokio::test]
+async fn configured_search_controls_python_exports_and_rpc_dispatch() {
+    for enabled in [false, true] {
+        let root = Workspace::create().unwrap();
+        let mut context = make_context(&root.path, Cancellation::new());
+        approved(&mut context);
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        hook(&mut context, calls.clone());
+        let tool = ExecuteCodeTool::with_sandbox_and_web_search(None, enabled);
+        let code = if enabled {
+            "from pilotdeck_tools import web_search\nprint(web_search('fixture'))\n"
+        } else {
+            "import pilotdeck_tools as p\nassert not hasattr(p, 'web_search')\ntry:\n p._call('web_search', {'query':'fixture'})\nexcept RuntimeError as e:\n print('denied', str(e))\nelse:\n raise AssertionError('disabled search dispatched')\n"
+        };
+        let output = execute(&tool, context, json!({"code": code})).await;
+        assert_eq!(
+            data(&output).get("status"),
+            Some(&string("success")),
+            "{output:?}"
+        );
+        assert_eq!(calls.lock().unwrap().len(), usize::from(enabled));
+        assert_eq!(
+            data(&output).get("tool_calls_made"),
+            Some(&JsValue::Number(if enabled { 1.0 } else { 0.0 }))
+        );
+        if enabled {
+            assert_eq!(text(&calls.lock().unwrap()[0].name), "web_search");
+        }
+    }
+}

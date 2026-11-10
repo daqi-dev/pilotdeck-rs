@@ -303,6 +303,26 @@ enum Message {
     Event(JsValue),
     End,
 }
+#[derive(Clone, Copy, Default)]
+struct SubmissionBudgets {
+    publication_closing_budget: Option<Duration>,
+    completion_wait_budget: Option<Duration>,
+}
+impl SubmissionBudgets {
+    fn native_connection(budget: Duration) -> Self {
+        Self {
+            publication_closing_budget: Some(budget),
+            completion_wait_budget: None,
+        }
+    }
+    fn reliable_consumer(budget: Duration) -> Self {
+        Self {
+            publication_closing_budget: Some(budget),
+            completion_wait_budget: Some(budget),
+        }
+    }
+}
+
 /// One consumer. Dropping it releases the consumer barrier; the owned pump
 /// still drains before completion so close/abort cannot strand a writer.
 /// A host MUST drain next() through End or drop the submission; retaining an
@@ -312,7 +332,7 @@ pub struct TurnSubmission {
     receiver: mpsc::UnboundedReceiver<Message>,
     consumed: Option<oneshot::Sender<()>>,
     result: Option<oneshot::Receiver<Result<(), SubmitError>>>,
-    reliable_budget: Option<Duration>,
+    completion_wait_budget: Option<Duration>,
 }
 impl TurnSubmission {
     pub async fn next(&mut self) -> Result<Option<JsValue>, SubmitError> {
@@ -323,7 +343,7 @@ impl TurnSubmission {
                     let _ = consumed.send(());
                 }
                 if let Some(result) = self.result.take() {
-                    let settled = if let Some(budget) = self.reliable_budget {
+                    let settled = if let Some(budget) = self.completion_wait_budget {
                         tokio::time::timeout(budget, result).await.map_err(|_| {
                             SubmitError::new("result_unknown", "Turn completion could not be confirmed within the native abort budget.")
                         })?
@@ -350,7 +370,7 @@ impl TurnSubmitter {
         input: JsValue,
         origin: ChannelAttachmentOrigin,
     ) -> TurnSubmission {
-        self.submit_with_budget(input, |_| {}, None, Some(origin))
+        self.submit_with_budget(input, |_| {}, SubmissionBudgets::default(), Some(origin))
     }
 
     /// Native consumers that must classify terminal failure reliably opt in.
@@ -359,7 +379,7 @@ impl TurnSubmitter {
         self.submit_with_budget(
             input,
             |_| {},
-            Some(Duration::from_millis(
+            SubmissionBudgets::reliable_consumer(Duration::from_millis(
                 self.host.abort_turn_timeout_ms().max(1),
             )),
             None,
@@ -372,15 +392,34 @@ impl TurnSubmitter {
         input: JsValue,
         admitted: impl FnOnce(&RunRef) + Send + 'static,
     ) -> TurnSubmission {
-        self.submit_with_budget(input, admitted, None, None)
+        self.submit_with_budget(input, admitted, SubmissionBudgets::default(), None)
     }
+    /// Native WS changes close-time publication only. Ordinary completion
+    /// retains the legacy consumer-finally/result waiting contract.
+    pub(super) fn submit_reliable_observed(
+        self: &Arc<Self>,
+        input: JsValue,
+        admitted: impl FnOnce(&RunRef) + Send + 'static,
+    ) -> TurnSubmission {
+        self.submit_with_budget(
+            input,
+            admitted,
+            SubmissionBudgets::native_connection(self.abort_budget()),
+            None,
+        )
+    }
+
     fn submit_with_budget(
         self: &Arc<Self>,
         input: JsValue,
         admitted: impl FnOnce(&RunRef) + Send + 'static,
-        reliable_budget: Option<Duration>,
+        budgets: SubmissionBudgets,
         channel_origin: Option<ChannelAttachmentOrigin>,
     ) -> TurnSubmission {
+        let SubmissionBudgets {
+            publication_closing_budget,
+            completion_wait_budget,
+        } = budgets;
         let (send, receiver) = mpsc::unbounded_channel();
         let (consumed, barrier) = oneshot::channel();
         let (result, completion) = oneshot::channel();
@@ -392,7 +431,7 @@ impl TurnSubmitter {
                     &send,
                     barrier,
                     admitted,
-                    reliable_budget,
+                    publication_closing_budget,
                     channel_origin,
                 )
                 .await;
@@ -403,7 +442,7 @@ impl TurnSubmitter {
             receiver,
             consumed: Some(consumed),
             result: Some(completion),
-            reliable_budget,
+            completion_wait_budget,
         }
     }
 
@@ -413,7 +452,7 @@ impl TurnSubmitter {
         send: &mpsc::UnboundedSender<Message>,
         barrier: oneshot::Receiver<()>,
         admitted: impl FnOnce(&RunRef) + Send,
-        reliable_budget: Option<Duration>,
+        publication_closing_budget: Option<Duration>,
         channel_origin: Option<ChannelAttachmentOrigin>,
     ) -> Result<(), SubmitError> {
         // Gateway normalization precedes validation and durable acceptance.
@@ -443,10 +482,10 @@ impl TurnSubmitter {
                 workspace_admissions: self.workspace_admissions.clone(),
             });
             return scoped
-                .run_bound(input, send, barrier, admitted, reliable_budget)
+                .run_bound(input, send, barrier, admitted, publication_closing_budget)
                 .await;
         }
-        self.run_bound(input, send, barrier, admitted, reliable_budget)
+        self.run_bound(input, send, barrier, admitted, publication_closing_budget)
             .await
     }
 
@@ -456,7 +495,7 @@ impl TurnSubmitter {
         send: &mpsc::UnboundedSender<Message>,
         barrier: oneshot::Receiver<()>,
         admitted: impl FnOnce(&RunRef) + Send,
-        reliable_budget: Option<Duration>,
+        publication_closing_budget: Option<Duration>,
     ) -> Result<(), SubmitError> {
         let routed = self.host.route_input(&mut input).await?;
         if !routed.is_empty() {
@@ -692,7 +731,7 @@ impl TurnSubmitter {
             .await;
             return Ok(());
         }
-        let publisher = Arc::new(if let Some(budget) = reliable_budget {
+        let publisher = Arc::new(if let Some(budget) = publication_closing_budget {
             TurnPublisher::start_reliable(
                 run.clone(),
                 self.registry.clone(),
@@ -1747,3 +1786,7 @@ fn request_material(input: &JsValue) -> Result<String, SubmitError> {
 #[cfg(test)]
 #[path = "submit_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "native_completion_tests.rs"]
+mod native_completion_tests;

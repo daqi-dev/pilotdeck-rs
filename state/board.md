@@ -5508,3 +5508,8 @@ Draft #2786 已推6c3277c19，当前继续本地共同候选。r49 mbp2严格cli
 ### 2026-11-10 · r56/r57 模型输入兼容与真实冷切换（未收口）
 
 main 已逐块整合至51844eaa0，提交8545768da保留双方增量；Draft #2786远端仍9a02c701，尚未入队。r55同源19渠道已取得9条外部消费者与10渠道22项实际Server消费者通过；完整7845项仍在mbp2跑，已发现3条旧断言（run未命中Null×2、未配置manager_browsers的能力oracle），用固定TS真实capture修正，原失败不改。r55精确Node22/ICU78两格冷切换：正常5阶段PASS；真实drain失败阻止下一writer并保全数据；另补upload_cancel实际消费，均不是正式retirement判分。用户已授权的提示/工具Schema窄范围资产完成前像校验接线，AGPL来源与同字节根LICENSE记录保留。r56严格检查发现1条失效ChatDigest import并修，r57正在独立probe目标编译；mbp2新空间534GiB，接手probe前已把4878项源码（含原缺失记录）归档逐SHA验证，_tmp原件及_build未清理，未新开工作树；checks-r24全量不被改写。本机无Rust构建。数据长名孤儿隔离、超限当前文件回滚、FIFO负控及迟到timeout候选待新头测试；native取消/压缩子信号缺口并行补修。全部正式host/session/retirement/最终回归与人签字仍未闭合，原统一目录与前端改动未迁移。下一步收r57及真实模型请求、精确timeout落盘，再同头负控与独立复核，继续后台实际触发闭环。
+
+
+### 2026-11-10 · r59 原生终态与权限结构修复接续（未收口）
+
+r55完整Gateway/CLI回归已结束：7845运行、7841通过、4失败、771跳过；3条旧断言已在r57定向通过，第四条为原有装置pyc污染，原缓存清单SHA保全移出后Python3.15隔离重跑4个离线fixture全过，原r55失败不改写。r57严格clippy/四bin通过，105定向103过2旧AO前缀失败已修；r58新取消适配遗漏旧字段访问在编译期暴露，现已接到真实parent wake及重连清理。r59源码清单8cb8586b在mbp2通过严格clippy/四bin，新增定向与context测试仍跑；已接native模式关闭通知预算（普通completion无新时限）、permission_list去重复payload、disabled search的Python导出和RPC双门、FIFO真实负例、328固定TS动态prompt边界与14工具构造oracle。r57实际AO六条模型请求30工具定义逐项相同，discovery两token差已定位真实UUID/时间；SOP一成功四预算拒绝双端相同，不称五成功。正式host/session/retirement仍未通过；main新增至cc85b315f待本批稳定后合入，冻结#1355车道r29独占不并写。未迁移正本/旧树/前端快照，未本机构建。下一步新bin真实WS权限和timeout复验、两家增量审阅、同步main与同头全域验收。

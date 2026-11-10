@@ -31,11 +31,11 @@ struct CancelExit {
 }
 impl CancelExit {
     fn observe(&mut self, cancellation: &Cancellation) {
-        if self.reason.is_none()
-            && let Some(reason) = cancellation.reason()
-        {
+        if self.reason.is_none() && cancellation.is_cancelled() {
             self.deadline = Some(Instant::now() + POST_CANCEL_EXIT_TIMEOUT);
-            self.reason = Some(reason);
+            // A native network signal carries no reason. Use the existing
+            // wire fallback here without inventing a reason on its parent.
+            self.reason = Some(cancellation.reason().unwrap_or_else(|| "host_abort".into()));
         }
     }
     fn take_reason_to_send(&mut self) -> Option<JsString> {
@@ -159,7 +159,6 @@ pub(super) async fn run(
             })
         })
         .transpose()?;
-    let mut cancel_changes = cancellation.0.subscribe();
     let mut cancel = CancelExit::default();
     #[cfg(test)]
     let signals = client.test_signals.clone();
@@ -254,7 +253,7 @@ pub(super) async fn run(
                         return Err(HostError::new(HostErrorKind::Timeout, "Sidecar execute timed out during reconnect."));
                     }
                     _ = wait_for_deadline(cancel.deadline) => return Err(post_cancel_timeout()),
-                    _ = cancel_changes.changed(), if cancel.deadline.is_none() => {}
+                    _ = cancellation.cancelled(), if cancel.deadline.is_none() => {}
                 }
             }
             // Reobserve before sending: cancellation may have raced with the
@@ -355,7 +354,7 @@ pub(super) async fn run(
                 while callbacks.join_next().await.is_some() {}
                 return Ok(terminal_applied.take().expect("applied terminal"));
             }
-            _ = cancel_changes.changed(), if cancel.deadline.is_none() => {}
+            _ = cancellation.cancelled(), if cancel.deadline.is_none() => {}
 
             completion = callbacks.join_next(), if !callbacks.is_empty() => {
                 match completion.expect("nonempty callback set").map_err(|error|

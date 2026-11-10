@@ -25,7 +25,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     task::Poll,
     time::Duration,
@@ -174,7 +174,7 @@ impl Drop for SubmissionDrain {
         }
     }
 }
-struct ConnectionTurnGateway(GatewayServices, Arc<Mutex<SubmissionDrains>>);
+struct ConnectionTurnGateway(GatewayServices, Arc<Mutex<SubmissionDrains>>, AtomicBool);
 impl ConnectionTurnGateway {
     fn track(&self) -> SubmissionDrain {
         let mut drains = self.1.lock().unwrap();
@@ -225,7 +225,13 @@ impl ConnectionGateway for ConnectionTurnGateway {
             // GatewayConnection emits final/error in the same poll as this
             // future returns, before an abort waiter can resume.
             let drain = self.track();
-            let mut submission = self.0.submitter.submit_observed(params, drain.observer());
+            let mut submission = if self.2.load(Ordering::Acquire) {
+                self.0
+                    .submitter
+                    .submit_reliable_observed(params, drain.observer())
+            } else {
+                self.0.submitter.submit_observed(params, drain.observer())
+            };
             while let Some(event) = submission.next().await.map_err(|error| RequestError {
                 code: error.code,
                 message: error.message.into(),
@@ -422,6 +428,24 @@ impl TurnGateway {
             Some(Box::pin(initialize)),
         )
     }
+    /// Explicit native engine: A19-HOST-001 timeout delivery retains writes
+    /// enqueued before close for the existing bounded abort budget. The mode
+    /// is selected before this constructor returns, before the embedding can
+    /// publish readiness or create a connection. Old builders stay TS parity.
+    pub(crate) fn start_native_with_initializer(
+        options: TurnReplayOptions,
+        teardown_budget: Duration,
+        build: impl FnOnce(Arc<TurnEventCoordinator>) -> std::io::Result<GatewayServices>
+        + Send
+        + 'static,
+        initialize: impl Future<Output = Result<(), String>> + Send + 'static,
+        cleanup: impl Future<Output = Result<(), String>> + Send + 'static,
+    ) -> std::io::Result<Self> {
+        let host =
+            Self::start_with_initializer(options, teardown_budget, build, initialize, cleanup)?;
+        host.gateway.2.store(true, Ordering::Release);
+        Ok(host)
+    }
     fn start_with_clock_and_cleanup(
         options: TurnReplayOptions,
         clock: Option<Arc<dyn ReplayTimer>>,
@@ -486,7 +510,7 @@ impl TurnGateway {
                         return;
                     }
                 }
-                let gateway = Arc::new(ConnectionTurnGateway(services, Arc::default()));
+                let gateway = Arc::new(ConnectionTurnGateway(services, Arc::default(), AtomicBool::new(false)));
                 if ready.send(Ok(gateway.clone())).is_err() { return; }
                 let mut running = JoinSet::new();
                 let budget = loop {

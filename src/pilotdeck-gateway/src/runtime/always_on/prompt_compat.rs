@@ -629,4 +629,94 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn discovery_dynamic_boundaries_match_fixed_ts_build_discovery_prompt() {
+        use crate::runtime::always_on::{
+            DiscoveryPlanRecord,
+            chat_digest::{ChatDigest, DigestItem},
+        };
+        use pilotdeck_protocol::JsValue;
+
+        fn text(value: &JsValue, key: &str) -> JsString {
+            value.get(key).and_then(JsValue::as_string).unwrap().clone()
+        }
+        fn array<'a>(value: &'a JsValue, key: &str) -> &'a [JsValue] {
+            match value.get(key).unwrap() {
+                JsValue::Array(items) => items,
+                _ => panic!("oracle array field {key}"),
+            }
+        }
+
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../../tests/fixtures/discovery-prompt-boundaries/oracle.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            text(&oracle, "sourceCommit"),
+            JsString::from("cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85")
+        );
+        assert_eq!(text(&oracle, "node"), JsString::from("22.22.0"));
+        assert_eq!(text(&oracle, "icu"), JsString::from("78.2"));
+        let cases = array(&oracle, "cases");
+        assert_eq!(cases.len(), 328, "complete bilingual boundary matrix");
+        for case in cases {
+            let input = case.get("input").unwrap();
+            let sessions = input
+                .get("chatDigest")
+                .map(|digest| {
+                    array(digest, "sessions")
+                        .iter()
+                        .map(|session| DigestItem {
+                            alias: text(session, "alias"),
+                            title: text(session, "title"),
+                            modified: text(session, "lastModified"),
+                            prompts: array(session, "userPrompts")
+                                .iter()
+                                .map(|prompt| prompt.as_string().unwrap().clone())
+                                .collect(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let digest = ChatDigest {
+                sessions,
+                aliases: Default::default(),
+            };
+            let plans: Vec<_> = array(input, "existingPlans")
+                .iter()
+                .map(|plan| {
+                    let JsValue::Object(raw) = plan else {
+                        panic!("oracle plan object")
+                    };
+                    DiscoveryPlanRecord {
+                        raw: raw.clone(),
+                        id: text(plan, "id"),
+                        title: Some(text(plan, "title")),
+                    }
+                })
+                .collect();
+            let project = text(input, "projectRoot").to_utf8().unwrap();
+            let run = text(input, "runId");
+            let created = text(input, "createdAt");
+            let workspace_value = input.get("workspace");
+            let cwd = workspace_value.map(|value| text(value, "cwd"));
+            let strategy = workspace_value.map(|value| text(value, "strategy").to_utf8().unwrap());
+            let actual = discovery(
+                text(input, "language") == JsString::from("zh-CN"),
+                &project,
+                &run,
+                &created,
+                cwd.as_ref().map(|cwd| (cwd, strategy.as_deref().unwrap())),
+                &digest,
+                &plans,
+            );
+            assert_eq!(
+                &actual,
+                case.get("expected").unwrap().as_string().unwrap(),
+                "fixed TS discovery case {:?}",
+                text(case, "id")
+            );
+        }
+    }
 }

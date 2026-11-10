@@ -3,16 +3,16 @@ use pilotdeck_gateway::{
     host::modules::context::{ContextInput, ContextRuntime},
     runtime::{
         context::{
+            DefaultContextRuntime, Options,
             memory::{
                 MemoryCaptureFuture, MemoryCaptureTurnInput, MemoryFuture, MemoryResolver,
                 MemoryRetrieveInput, MemoryRetrieveResult,
             },
-            DefaultContextRuntime, Options,
         },
         network::Cancellation,
     },
 };
-use pilotdeck_protocol::{parse_json, stringify_json, JsObject, JsValue};
+use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
 use std::sync::{Arc, Mutex};
 
 struct CancellingMemory {
@@ -55,14 +55,52 @@ async fn native_network_cancel_during_memory_poll_keeps_resolved_result_and_abor
         .await
         .unwrap();
     assert!(parent.is_cancelled());
-    assert!(child
-        .lock()
-        .unwrap()
-        .as_ref()
-        .expect("memory was entered")
-        .is_cancelled());
-    assert!(stringify_json(&result)
-        .unwrap()
-        .unwrap()
-        .contains("RESOLVED_MEMORY"));
+    assert!(
+        child
+            .lock()
+            .unwrap()
+            .as_ref()
+            .expect("memory was entered")
+            .is_cancelled()
+    );
+    assert!(
+        stringify_json(&result)
+            .unwrap()
+            .unwrap()
+            .contains("RESOLVED_MEMORY")
+    );
+}
+
+struct ChildCancellingMemory;
+impl MemoryResolver for ChildCancellingMemory {
+    fn capture_turn(&self, _: MemoryCaptureTurnInput) -> MemoryCaptureFuture {
+        Box::pin(async { Ok(()) })
+    }
+    fn retrieve(&self, input: MemoryRetrieveInput) -> MemoryFuture {
+        input.signal.cancel(None);
+        Box::pin(async {
+            Ok(MemoryRetrieveResult {
+                system_context: None,
+                diagnostics: vec![],
+            })
+        })
+    }
+}
+#[tokio::test]
+async fn memory_child_cancel_does_not_cancel_native_turn() {
+    let parent = Cancellation::new();
+    let runtime = DefaultContextRuntime::new(Options {
+        memory_resolver: Some(Arc::new(ChildCancellingMemory)),
+        ..Options::default()
+    });
+    let fields = parse_json(r#"{"cwd":"/fixture","provider":"fixture","model":"mock","permissionMode":"default","additionalWorkingDirectories":[],"tools":[],"messages":[],"protocol":"anthropic","supportsPromptCache":true}"#).unwrap().as_object().unwrap().clone();
+    runtime
+        .prepare_for_model(ContextInput {
+            fields,
+            abort_signal: Some(Arc::new(parent.clone())),
+            budget_evaluator: None,
+        })
+        .await
+        .unwrap();
+    assert!(!parent.is_cancelled());
 }

@@ -218,8 +218,37 @@ async fn drive_until<F: std::future::Future>(
     None
 }
 
+async fn cancel_linked_and_arm(
+    cancellation: &Cancellation,
+    parent: &crate::runtime::network::Cancellation,
+    use_parent: bool,
+    signals: &ExecutionSignals,
+) -> Instant {
+    if !use_parent {
+        return cancel_and_arm(cancellation, signals).await;
+    }
+    let anchor = Instant::now();
+    parent.abort();
+    let deadline = checkpoint(
+        "network cancel deadline armed",
+        &signals.cancel_deadline,
+        Option::is_some,
+    )
+    .await
+    .unwrap();
+    assert_eq!(deadline, anchor + POST_CANCEL_EXIT_TIMEOUT);
+    anchor
+}
 #[tokio::test]
 async fn cancellation_before_and_during_reconnect_uses_original_absolute_deadline() {
+    cancellation_reconnect_owned_peer(false).await;
+}
+#[tokio::test]
+async fn network_parent_cancellation_before_and_during_reconnect_arms_and_reaps_owned_peers() {
+    cancellation_reconnect_owned_peer(true).await;
+}
+
+async fn cancellation_reconnect_owned_peer(network_parent: bool) {
     for before in [true, false] {
         for mode in ["pending-hello", "pending-resume", "silent-resume"] {
             let (command, receipt) = cancel_peer(mode);
@@ -230,7 +259,12 @@ async fn cancellation_before_and_during_reconnect_uses_original_absolute_deadlin
             client.test_signals.reconnect_gate = Some(Arc::new(Notify::new()));
             let signals = client.test_signals.clone();
             let handler = Handler::new(mode);
-            let cancellation = Cancellation::default();
+            let network = crate::runtime::network::Cancellation::new();
+            let cancellation = if network_parent {
+                Cancellation::from_network_parent(network.clone())
+            } else {
+                Cancellation::default()
+            };
             let clock = ManualClock::start();
             let task = tokio::spawn(client.execute_cancellable(
                 request(),
@@ -240,7 +274,10 @@ async fn cancellation_before_and_during_reconnect_uses_original_absolute_deadlin
             marker(&receipt, "ready").await;
             let anchor = Instant::now();
             if before {
-                assert_eq!(cancel_and_arm(&cancellation, &signals).await, anchor);
+                assert_eq!(
+                    cancel_linked_and_arm(&cancellation, &network, network_parent, &signals).await,
+                    anchor
+                );
                 tokio::time::advance(Duration::from_secs(2)).await;
             }
             release(&receipt, "disconnect-release");
@@ -264,7 +301,10 @@ async fn cancellation_before_and_during_reconnect_uses_original_absolute_deadlin
             signals.reconnect_gate.as_ref().unwrap().notify_one();
             marker(&receipt, "replacement-ready").await;
             if !before {
-                assert_eq!(cancel_and_arm(&cancellation, &signals).await, anchor);
+                assert_eq!(
+                    cancel_linked_and_arm(&cancellation, &network, network_parent, &signals).await,
+                    anchor
+                );
                 tokio::time::advance(Duration::from_secs(2)).await;
             }
             if mode != "pending-hello" {

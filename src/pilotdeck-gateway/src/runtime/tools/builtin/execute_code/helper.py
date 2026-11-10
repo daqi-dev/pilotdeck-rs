@@ -76,3 +76,7 @@ def bash(command, timeout_ms=None, workdir=None):
     if timeout_ms is not None:
         args["timeout"] = timeout_ms
     return _call("bash", args)
+
+# Export only configured helpers; the RPC allow-list independently enforces it.
+if _os.environ.get("PILOTDECK_EXECUTE_CODE_WEB_SEARCH") == "0":
+    del web_search

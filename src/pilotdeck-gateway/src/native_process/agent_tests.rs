@@ -728,3 +728,80 @@ async fn raw_event_count_and_single_event_byte_limit_reject_without_silently_dro
     owner.release_generation().await.unwrap();
     registry.dispose().await.unwrap();
 }
+
+#[test]
+fn production_agent_model_fields_match_fixed_ts_default_custom_and_depth() {
+    let oracle = pilotdeck_protocol::parse_json(include_str!(
+        "../../tests/fixtures/agent-model-fields/oracle.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        oracle.get("sourceCommit"),
+        Some(&JsValue::from("cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"))
+    );
+    let JsValue::Array(cases) = oracle.get("agent").unwrap() else {
+        panic!("actual constructor cases")
+    };
+    assert_eq!(cases.len(), 12);
+    for case in cases {
+        let config = case.get("rustConfig").unwrap().as_object().unwrap();
+        let tool = AgentTool::for_config(config);
+        let expected = case.get("expected").unwrap();
+        for key in ["name", "description", "inputSchema"] {
+            assert_eq!(
+                tool.fields().get(key),
+                expected.get("model").unwrap().get(key),
+                "agent constructor {:?}, field {key}",
+                case.get("id")
+            );
+        }
+        for key in [
+            "aliases",
+            "kind",
+            "requiredRuntimeCapabilities",
+            "maxResultBytes",
+        ] {
+            assert_eq!(
+                tool.fields().get(key),
+                expected.get("metadata").unwrap().get(key),
+                "agent metadata {:?}, field {key}",
+                case.get("id")
+            );
+        }
+        let flags = expected.get("flags").unwrap();
+        assert_eq!(
+            &tool.is_read_only(&JsValue::Null).unwrap(),
+            flags.get("isReadOnly").unwrap()
+        );
+        assert_eq!(
+            &tool.is_concurrency_safe(&JsValue::Null).unwrap(),
+            flags.get("isConcurrencySafe").unwrap()
+        );
+        assert_eq!(tool.fields().get("isOpenWorld"), flags.get("isOpenWorld"));
+        assert_eq!(
+            JsValue::Array(
+                tool.required_runtime_capabilities()
+                    .unwrap()
+                    .into_iter()
+                    .map(JsValue::String)
+                    .collect()
+            ),
+            *expected
+                .get("metadata")
+                .unwrap()
+                .get("requiredRuntimeCapabilities")
+                .unwrap()
+        );
+        if config
+            .get("subagentDefinitions")
+            .and_then(JsValue::as_object)
+            .is_some_and(|map| map.get("fixture").is_some())
+        {
+            let available = definitions(config);
+            assert!(available.get("fixture").is_some());
+            assert!(available.get("general-purpose").is_none());
+            // The actual fixed TS constructor also keeps its static public description
+            // when fallback presets are overridden; do not invent a different model text.
+        }
+    }
+}

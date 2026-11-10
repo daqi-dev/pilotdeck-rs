@@ -2310,3 +2310,6 @@ async fn owned_producer_initializer_precedes_ready_and_failure_disposes_owner() 
         );
     }
 }
+
+#[path = "native_delivery_tests.rs"]
+mod native_delivery_tests;

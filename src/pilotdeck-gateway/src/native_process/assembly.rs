@@ -1727,7 +1727,7 @@ async fn start_assembly(
     let publish_refresh = refresh_cleanup.0.clone();
     let lookup_forks = fork_registry.clone();
     let budget = options.drain_budget;
-    let host = TurnGateway::start_with_initializer(
+    let host = TurnGateway::start_native_with_initializer(
         TurnReplayOptions::new(),
         // #1746: the failure path waits out this embedding's own drain budget
         // (the cleanup below bounds itself by the same value), so a slow but

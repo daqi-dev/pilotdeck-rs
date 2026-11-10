@@ -76,10 +76,18 @@ async fn summary_model_receives_forwarded_cancellation_and_cancellation_settles(
         .unwrap();
 }
 
-struct FailingStream { seen: Arc<Mutex<Option<pilotdeck_gateway::runtime::network::Cancellation>>> }
+struct FailingStream {
+    seen: Arc<Mutex<Option<pilotdeck_gateway::runtime::network::Cancellation>>>,
+}
 impl ModelExecution for FailingStream {
     fn prepare(&self, input: PrepareInput) -> ModelFuture<PreparedInvocation> {
-        Box::pin(async move { Ok(PreparedInvocation::new(input.request, "fixture".into(), "mock".into())) })
+        Box::pin(async move {
+            Ok(PreparedInvocation::new(
+                input.request,
+                "fixture".into(),
+                "mock".into(),
+            ))
+        })
     }
     fn stream(&self, input: StreamInput) -> ModelFuture<Box<dyn ModelStream>> {
         *self.seen.lock().unwrap() = input.abort;
@@ -89,41 +97,83 @@ impl ModelExecution for FailingStream {
 #[tokio::test]
 async fn summary_failure_aborts_owned_provider_child_without_aborting_turn() {
     let seen = Arc::new(Mutex::new(None));
-    let engine = CompactionEngine::new(CompactionEngineOptions::new(Arc::new(FailingStream { seen: seen.clone() }), "fixture".into(), "mock".into()));
+    let engine = CompactionEngine::new(CompactionEngineOptions::new(
+        Arc::new(FailingStream { seen: seen.clone() }),
+        "fixture".into(),
+        "mock".into(),
+    ));
     let parent = pilotdeck_gateway::runtime::network::Cancellation::new();
     let mut input = CompactionInput::new("manual", messages());
     input.transport_signal = Some(parent.clone());
     input.target_post_tokens = Some(1.0);
     input.protected_tool_names = ProtectedTools::Disabled;
     assert!(engine.run(input).await.is_err());
-    assert!(!parent.is_cancelled(), "summary error must not abort its owning turn");
-    assert!(seen.lock().unwrap().as_ref().expect("provider got owned child").is_cancelled());
+    assert!(
+        !parent.is_cancelled(),
+        "summary error must not abort its owning turn"
+    );
+    assert!(
+        seen.lock()
+            .unwrap()
+            .as_ref()
+            .expect("provider got owned child")
+            .is_cancelled()
+    );
 }
 #[tokio::test]
 async fn native_parent_cancellation_reaches_owned_provider_child() {
     let (tx, rx) = oneshot::channel();
-    let model = Arc::new(Delayed { seen: Arc::new(Mutex::new(Some(tx))) });
-    let engine = CompactionEngine::new(CompactionEngineOptions::new(model, "fixture".into(), "mock".into()));
+    let model = Arc::new(Delayed {
+        seen: Arc::new(Mutex::new(Some(tx))),
+    });
+    let engine = CompactionEngine::new(CompactionEngineOptions::new(
+        model,
+        "fixture".into(),
+        "mock".into(),
+    ));
     let parent = pilotdeck_gateway::runtime::network::Cancellation::new();
     let mut input = CompactionInput::new("manual", messages());
-    input.transport_signal = Some(parent.clone()); input.target_post_tokens = Some(1.0); input.protected_tool_names = ProtectedTools::Disabled;
+    input.transport_signal = Some(parent.clone());
+    input.target_post_tokens = Some(1.0);
+    input.protected_tool_names = ProtectedTools::Disabled;
     let task = tokio::spawn(async move { engine.run(input).await });
-    let child = tokio::time::timeout(std::time::Duration::from_secs(3), rx).await.unwrap().unwrap().expect("provider got child");
-    assert!(!child.is_cancelled()); parent.abort();
-    tokio::time::timeout(std::time::Duration::from_secs(3), child.cancelled()).await.expect("child cancellation");
-    tokio::time::timeout(std::time::Duration::from_secs(3), task).await.expect("engine settled").unwrap().expect_err("cancel rejects summary");
+    let child = tokio::time::timeout(std::time::Duration::from_secs(3), rx)
+        .await
+        .unwrap()
+        .unwrap()
+        .expect("provider got child");
+    assert!(!child.is_cancelled());
+    parent.abort();
+    tokio::time::timeout(std::time::Duration::from_secs(3), child.cancelled())
+        .await
+        .expect("child cancellation");
+    tokio::time::timeout(std::time::Duration::from_secs(3), task)
+        .await
+        .expect("engine settled")
+        .unwrap()
+        .expect_err("cancel rejects summary");
 }
 
 struct BrokenIterator;
 impl ModelStream for BrokenIterator {
-    fn next(&mut self) -> pilotdeck_gateway::host::modules::model::StreamFuture<'_, Option<JsValue>> {
+    fn next(
+        &mut self,
+    ) -> pilotdeck_gateway::host::modules::model::StreamFuture<'_, Option<JsValue>> {
         Box::pin(async { Err(ModuleError::new("mock next failed")) })
     }
 }
-struct IteratorFailure { seen: Arc<Mutex<Option<pilotdeck_gateway::runtime::network::Cancellation>>> }
+struct IteratorFailure {
+    seen: Arc<Mutex<Option<pilotdeck_gateway::runtime::network::Cancellation>>>,
+}
 impl ModelExecution for IteratorFailure {
     fn prepare(&self, input: PrepareInput) -> ModelFuture<PreparedInvocation> {
-        Box::pin(async move { Ok(PreparedInvocation::new(input.request, "fixture".into(), "mock".into())) })
+        Box::pin(async move {
+            Ok(PreparedInvocation::new(
+                input.request,
+                "fixture".into(),
+                "mock".into(),
+            ))
+        })
     }
     fn stream(&self, input: StreamInput) -> ModelFuture<Box<dyn ModelStream>> {
         *self.seen.lock().unwrap() = input.abort;
@@ -133,10 +183,16 @@ impl ModelExecution for IteratorFailure {
 #[tokio::test]
 async fn summary_iterator_failure_aborts_child_and_keeps_parent_alive() {
     let seen = Arc::new(Mutex::new(None));
-    let engine = CompactionEngine::new(CompactionEngineOptions::new(Arc::new(IteratorFailure { seen: seen.clone() }), "fixture".into(), "mock".into()));
+    let engine = CompactionEngine::new(CompactionEngineOptions::new(
+        Arc::new(IteratorFailure { seen: seen.clone() }),
+        "fixture".into(),
+        "mock".into(),
+    ));
     let parent = pilotdeck_gateway::runtime::network::Cancellation::new();
     let mut input = CompactionInput::new("manual", messages());
-    input.transport_signal = Some(parent.clone()); input.target_post_tokens = Some(1.0); input.protected_tool_names = ProtectedTools::Disabled;
+    input.transport_signal = Some(parent.clone());
+    input.target_post_tokens = Some(1.0);
+    input.protected_tool_names = ProtectedTools::Disabled;
     assert!(engine.run(input).await.is_err());
     assert!(!parent.is_cancelled());
     assert!(seen.lock().unwrap().as_ref().unwrap().is_cancelled());

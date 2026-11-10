@@ -1498,4 +1498,66 @@ mod tests {
         owner.release_generation().await.unwrap();
         resources.dispose().await.unwrap();
     }
+
+    #[test]
+    fn continuation_model_fields_match_fixed_ts_actual_constructors() {
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../tests/fixtures/agent-model-fields/oracle.json"
+        ))
+        .unwrap();
+        let JsValue::Array(cases) = oracle.get("continuation").unwrap() else {
+            panic!("actual continuation constructor cases")
+        };
+        assert_eq!(cases.len(), 2);
+        for case in cases {
+            let followup = case.get("followup") == Some(&JsValue::Bool(true));
+            let tool = ContinuationTool::new(followup);
+            let expected = case.get("expected").unwrap();
+            for key in ["name", "description", "inputSchema"] {
+                assert_eq!(
+                    tool.fields().get(key),
+                    expected.get("model").unwrap().get(key),
+                    "continuation constructor {:?}, field {key}",
+                    case.get("id")
+                );
+            }
+            for key in [
+                "aliases",
+                "kind",
+                "requiredRuntimeCapabilities",
+                "maxResultBytes",
+            ] {
+                assert_eq!(
+                    tool.fields().get(key),
+                    expected.get("metadata").unwrap().get(key),
+                    "continuation metadata {:?}, field {key}",
+                    case.get("id")
+                );
+            }
+            let flags = expected.get("flags").unwrap();
+            assert_eq!(
+                &tool.is_read_only(&JsValue::Null).unwrap(),
+                flags.get("isReadOnly").unwrap()
+            );
+            assert_eq!(
+                &tool.is_concurrency_safe(&JsValue::Null).unwrap(),
+                flags.get("isConcurrencySafe").unwrap()
+            );
+            assert_eq!(tool.fields().get("isOpenWorld"), flags.get("isOpenWorld"));
+            assert_eq!(
+                JsValue::Array(
+                    tool.required_runtime_capabilities()
+                        .unwrap()
+                        .into_iter()
+                        .map(JsValue::String)
+                        .collect()
+                ),
+                *expected
+                    .get("metadata")
+                    .unwrap()
+                    .get("requiredRuntimeCapabilities")
+                    .unwrap()
+            );
+        }
+    }
 }

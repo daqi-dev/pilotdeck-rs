@@ -429,12 +429,18 @@ pub struct Cancellation {
 }
 impl Default for Cancellation {
     fn default() -> Self {
-        Self { signal: watch::channel(None).0, network_parent: None }
+        Self {
+            signal: watch::channel(None).0,
+            network_parent: None,
+        }
     }
 }
 impl Cancellation {
     pub(crate) fn from_network_parent(parent: crate::runtime::network::Cancellation) -> Self {
-        Self { signal: watch::channel(None).0, network_parent: Some(parent) }
+        Self {
+            signal: watch::channel(None).0,
+            network_parent: Some(parent),
+        }
     }
     pub fn cancel(&self, reason: Option<JsString>) {
         self.signal.send_if_modified(|current| {
@@ -446,7 +452,11 @@ impl Cancellation {
         });
     }
     pub fn is_cancelled(&self) -> bool {
-        self.signal.borrow().is_some() || self.network_parent.as_ref().is_some_and(crate::runtime::network::Cancellation::is_cancelled)
+        self.signal.borrow().is_some()
+            || self
+                .network_parent
+                .as_ref()
+                .is_some_and(crate::runtime::network::Cancellation::is_cancelled)
     }
     /// Resolves once cancelled; watch retains a cancellation that happened
     /// before the call, so no polling task or timer is involved.
@@ -454,11 +464,16 @@ impl Cancellation {
         let own = async {
             let mut receiver = self.signal.subscribe();
             while receiver.borrow_and_update().is_none() {
-                if receiver.changed().await.is_err() { return; }
+                if receiver.changed().await.is_err() {
+                    return;
+                }
             }
         };
         let parent = async {
-            match &self.network_parent { Some(parent) => parent.cancelled().await, None => std::future::pending().await }
+            match &self.network_parent {
+                Some(parent) => parent.cancelled().await,
+                None => std::future::pending().await,
+            }
         };
         tokio::select! { _ = own => {}, _ = parent => {} }
     }

@@ -874,13 +874,27 @@ mod tests {
                 let prompt = request.message.to_utf8().unwrap();
                 let expected = match (phase.as_str(), self.1) {
                     ("always-on/discovery", true) => "你正在为项目执行自主 Always-On 发现任务:",
-                    ("always-on/discovery", false) => "You are running an autonomous Always-On discovery for project:",
-                    ("always-on/workspace", true) => "你正在为 Always-On 计划执行准备一个隔离工作区。",
-                    ("always-on/workspace", false) => "You are preparing an isolated workspace for an Always-On plan execution.",
-                    ("always-on/execute", true) => "你正在隔离工作区内执行一个 Always-On 发现计划。",
-                    ("always-on/execute", false) => "You are executing an Always-On discovery plan inside an isolated workspace.",
-                    ("always-on/report", true) => "你正在为已完成的 Always-On 计划执行撰写工作报告。",
-                    ("always-on/report", false) => "You are writing a work report for a completed Always-On plan execution.",
+                    ("always-on/discovery", false) => {
+                        "You are running an autonomous Always-On discovery for project:"
+                    }
+                    ("always-on/workspace", true) => {
+                        "你正在为 Always-On 计划执行准备一个隔离工作区。"
+                    }
+                    ("always-on/workspace", false) => {
+                        "You are preparing an isolated workspace for an Always-On plan execution."
+                    }
+                    ("always-on/execute", true) => {
+                        "你正在隔离工作区内执行一个 Always-On 发现计划。"
+                    }
+                    ("always-on/execute", false) => {
+                        "You are executing an Always-On discovery plan inside an isolated workspace."
+                    }
+                    ("always-on/report", true) => {
+                        "你正在为已完成的 Always-On 计划执行撰写工作报告。"
+                    }
+                    ("always-on/report", false) => {
+                        "You are writing a work report for a completed Always-On plan execution."
+                    }
                     _ => panic!("unexpected phase"),
                 };
                 assert!(

@@ -63,6 +63,7 @@ fn execute_code_description(mode: Option<&str>, web_search: bool) -> String {
 const MAX_CODE_BYTES: usize = 1024 * 1024;
 pub struct ExecuteCodeTool {
     fields: JsObject,
+    web_search: bool,
     sandbox: Option<Arc<NativeSandbox>>,
 }
 impl Default for ExecuteCodeTool {
@@ -87,6 +88,7 @@ impl ExecuteCodeTool {
         );
         Self {
             sandbox,
+            web_search,
             fields: object([
                 ("name", string("execute_code")),
                 ("kind", string("custom")),
@@ -216,12 +218,13 @@ impl ExecutableTool for ExecuteCodeTool {
     }
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
         let sandbox = self.sandbox.clone();
+        let web_search = self.web_search;
         Box::pin(async move {
             let started = context
                 .now_ms()
                 .map_err(|e| ToolError::failed(e.to_string()))?;
             let mut state = None;
-            let result = run(&input, &context, sandbox, &mut state).await;
+            let result = run(&input, &context, sandbox, web_search, &mut state).await;
             let (status, output, error) = match result {
                 Ok(value) => value,
                 Err(error) => (
@@ -449,6 +452,7 @@ async fn run(
     input: &JsValue,
     context: &ToolRunContext,
     sandbox: Option<Arc<NativeSandbox>>,
+    web_search: bool,
     state: &mut Option<Arc<rpc::State>>,
 ) -> Result<(String, String, Option<String>), ToolError> {
     let Some(hook) = context.execute_tool.clone() else {
@@ -563,7 +567,9 @@ async fn run(
     let token = uuid::Uuid::new_v4().to_string();
     let allowed = HELPERS
         .iter()
-        .filter(|(_, read_only)| mode != SandboxMode::ReadOnly || *read_only)
+        .filter(|(name, read_only)| {
+            (web_search || *name != "web_search") && (mode != SandboxMode::ReadOnly || *read_only)
+        })
         .map(|(name, _)| *name)
         .collect();
     let rpc = Arc::new(rpc::State::new(
@@ -597,6 +603,11 @@ async fn run(
     set_env(&mut env, "PILOTDECK_RPC_HOST", "127.0.0.1".into());
     set_env(&mut env, "PILOTDECK_RPC_PORT", port.to_string());
     set_env(&mut env, "PILOTDECK_RPC_TOKEN", token);
+    set_env(
+        &mut env,
+        "PILOTDECK_EXECUTE_CODE_WEB_SEARCH",
+        if web_search { "1" } else { "0" }.into(),
+    );
     set_env(&mut env, "PYTHONDONTWRITEBYTECODE", "1".into());
     // Remove stale alternate-transport authority inherited from an outer tool.
     env.retain(|(key, _)| key != "PILOTDECK_RPC_SOCKET");

@@ -447,7 +447,7 @@ impl TurnPermission {
                                 }
                             }),
                         },
-                        Some(object([("payload", payload)])),
+                        Some(payload),
                     )
                     .map_err(|_| ModuleError::new("Permission request registration failed."))?;
                 lock(&turn.run.requests).insert(request_id.clone(), registration);

@@ -436,7 +436,7 @@ fn explicit_rollback_accepts_a_current_transcript_that_grew_past_read_limit() {
 #[cfg(unix)]
 #[test]
 fn explicit_rollback_rejects_nonregular_current_without_consuming_backups() {
-    for symlink in [false, true] {
+    for kind in ["directory", "symlink", "fifo"] {
         let scratch = Scratch::new();
         let (path, backup, journal) = transaction(&scratch.0, b"original-data", b"current", None);
         let record = parse_json(fs::read_to_string(&journal).unwrap().trim()).unwrap();
@@ -444,27 +444,37 @@ fn explicit_rollback_rejects_nonregular_current_without_consuming_backups() {
         fs::remove_file(&path).unwrap();
         let outside = scratch.0.join("outside");
         fs::write(&outside, b"outside-data").unwrap();
-        if symlink {
-            std::os::unix::fs::symlink(&outside, &path).unwrap();
-        } else {
-            fs::create_dir(&path).unwrap();
+        match kind {
+            "symlink" => std::os::unix::fs::symlink(&outside, &path).unwrap(),
+            "directory" => fs::create_dir(&path).unwrap(),
+            "fifo" => assert!(
+                std::process::Command::new("mkfifo")
+                    .arg(&path)
+                    .status()
+                    .unwrap()
+                    .success()
+            ),
+            _ => unreachable!(),
         }
         let input = object([
             ("sessionKey", string("session")),
             ("transactionId", field(&record, "transactionId").clone()),
             ("action", string("rollback")),
         ]);
-        assert!(finalize(&input, &scratch.0, &path).is_err());
+        let error = finalize(&input, &scratch.0, &path)
+            .expect_err("nonregular current must not be replaced");
+        assert_eq!(error.code, Some("replace_transaction_missing".into()));
         assert_eq!(fs::read(&backup).unwrap(), b"original-data");
         assert_eq!(fs::read(&journal).unwrap(), journal_bytes);
         assert_eq!(fs::read(&outside).unwrap(), b"outside-data");
-        assert_eq!(
-            fs::symlink_metadata(&path)
-                .unwrap()
-                .file_type()
-                .is_symlink(),
-            symlink
-        );
+        use std::os::unix::fs::FileTypeExt;
+        let actual = fs::symlink_metadata(&path).unwrap().file_type();
+        match kind {
+            "symlink" => assert!(actual.is_symlink()),
+            "directory" => assert!(actual.is_dir()),
+            "fifo" => assert!(actual.is_fifo()),
+            _ => unreachable!(),
+        }
     }
 }
 

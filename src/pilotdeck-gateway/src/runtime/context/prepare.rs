@@ -826,8 +826,10 @@ impl ContextRuntime for DefaultContextRuntime {
         // a context child permission to cancel its owning turn.
         let abort = input.abort_signal.as_ref().and_then(|signal| {
             signal.downcast_ref::<Cancellation>().cloned().or_else(|| {
-                signal.downcast_ref::<crate::runtime::network::Cancellation>()
-                    .cloned().map(Cancellation::from_network_parent)
+                signal
+                    .downcast_ref::<crate::runtime::network::Cancellation>()
+                    .cloned()
+                    .map(Cancellation::from_network_parent)
             })
         });
         Box::pin(async move { runtime.prepare(input.fields, abort).await })

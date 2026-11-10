@@ -827,3 +827,60 @@ async fn closing_permission_without_pending_queues_no_notice() {
 
 #[path = "native_execution_tests.rs"]
 mod native_execution_tests;
+
+#[tokio::test]
+async fn pending_permission_replays_one_payload_envelope_and_answer_still_cleans_up() {
+    let coordinator = Arc::new(GatewayInteractionCoordinator::default());
+    let resource = InteractionPermission::default();
+    let emitted = Arc::new(Mutex::new(Vec::new()));
+    let seen = emitted.clone();
+    let (turn, _) = bind(
+        &resource,
+        InteractionProfileName::Interactive,
+        "s",
+        coordinator.clone(),
+        Arc::new(move |event| {
+            seen.lock().unwrap().push(event);
+            true
+        }),
+    );
+    let input = object([("command", "touch fixture".into())]);
+    let mut request = turn.request(
+        "bash".into(),
+        "call-1".into(),
+        input.clone(),
+        vec![],
+        Cancellation::new(),
+    );
+    park(&mut request).await;
+    let rows = coordinator.permission_bus().snapshot(&"s".into());
+    assert_eq!(rows.len(), 1);
+    let payload = rows[0].get("payload").unwrap();
+    assert_eq!(
+        payload.get("toolName"),
+        Some(&JsValue::String("bash".into()))
+    );
+    assert_eq!(
+        payload.get("toolCallId"),
+        Some(&JsValue::String("call-1".into()))
+    );
+    assert_eq!(payload.get("payload"), Some(&input));
+    assert_eq!(emitted.lock().unwrap().len(), 1);
+    assert_eq!(emitted.lock().unwrap()[0].get("payload"), Some(&input));
+    let id = rows[0]
+        .get("requestId")
+        .unwrap()
+        .as_string()
+        .unwrap()
+        .clone();
+    let decision = || crate::runtime::interaction::PermissionDecision {
+        request_id: id.clone(),
+        decision: "allow".into(),
+        remember: None,
+        reason: None,
+    };
+    assert!(coordinator.decide_permission(&"s".into(), decision(), None));
+    assert!(!coordinator.decide_permission(&"s".into(), decision(), None));
+    behavior(&request.await.unwrap(), "behavior", "allow");
+    assert_eq!(coordinator.permission_bus().pending_count(&"s".into()), 0);
+}

@@ -1,0 +1,7 @@
+# Native Always-On model surface fixture
+
+Product regression fixture, not the frozen session parity scorer. Fixed TS baseline is cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85. Run from a fresh copy in an isolated writable directory with `PDRS_BASELINE`, `PDRS_NODE`, `PDRS_GATEWAY_BINARY`, `PDRS_SIDECAR_BINARY`, `PDRS_GATEWAY_SHA256`, and `PDRS_SIDECAR_SHA256` set. Use Node 22.22.0 ICU 78.2. The baseline repository supplies tsx and the separately authorized skills. The harness binds loopback only; it creates a private home and its own git repository, verifies its project root, and uses fixture-only git identity.
+
+Acquire the existing parity lock before execution; then run `python3 run-ts.py`, rename `cur` to `ts`, run `python3 run-rust.py`, rename `cur` to `rust`, and run `python3 compare-tools.py`. Preserve both sides and logs even on failure; do not run concurrently or overwrite earlier data. Both launchers require the four actual model phases; the comparator checks all 30 tool descriptions and schemas on each of the six tool-bearing requests. The prompt messages contain real run IDs, timestamps, and worktree paths and remain raw for review. This does not approve a normalization or claim full Gateway parity.
+
+`ao-seed-tool.mts` calls the fixed baseline storage API to prepare a synthetic plan. Mock model and path/ports are local. Earlier reproducibility evidence: mbp2 automation `_tmp/20261110-session-suite-candidate/ao-r57-four-phase-owned/receipt.json`.

@@ -1,0 +1,1447 @@
+{
+  "schema": 1,
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "22.22.0",
+  "icu": "78.2",
+  "sourceSha256": {
+    "src/tool/builtin/agent.ts": "0527caf471592397ef677c421741f831850b3e0adeb28b33845b3cd1022b10c0",
+    "src/agent/sub/builtinSubagentTypes.ts": "863009bae840fbf29469eaff572c8cafec642f8618fe3dcf17d7de029f182473",
+    "src/tool/builtin/subagentContinuation.ts": "4e2743fa14d2d69249709a0d05b60e691aefd4e70b2c733d186e0acd11c59374",
+    "src/tool/builtin/executeCode.ts": "ccb317d7666d9a0f312967bdc9c068943fcb9fff64a122eb0c751d39d064b2ea"
+  },
+  "agent": [
+    {
+      "id": "default",
+      "options": {},
+      "rustConfig": {},
+      "expected": {
+        "model": {
+          "name": "agent",
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access except nested subagent launch. Tools: all parent tools except nested agent launch.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          }
+        },
+        "metadata": {
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "maxResultBytes": 200000
+        },
+        "flags": {
+          "isReadOnly": false,
+          "isConcurrencySafe": true,
+          "isOpenWorld": true
+        },
+        "rawSerializableDefinition": {
+          "name": "agent",
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access except nested subagent launch. Tools: all parent tools except nested agent launch.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          },
+          "maxResultBytes": 200000
+        }
+      }
+    },
+    {
+      "id": "custom-only",
+      "options": {
+        "subagents": {
+          "fixture": {
+            "type": "general-purpose",
+            "description": "CUSTOM PRESET DESCRIPTION",
+            "systemPrompt": "CUSTOM PRESET SYSTEM"
+          }
+        }
+      },
+      "rustConfig": {
+        "subagentDefinitions": {
+          "fixture": {
+            "allowedTools": [
+              "read_file"
+            ],
+            "disallowedTools": [
+              "bash"
+            ],
+            "systemPromptSuffix": "CUSTOM PRESET SYSTEM"
+          }
+        }
+      },
+      "expected": {
+        "model": {
+          "name": "agent",
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access except nested subagent launch. Tools: all parent tools except nested agent launch.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          }
+        },
+        "metadata": {
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "maxResultBytes": 200000
+        },
+        "flags": {
+          "isReadOnly": false,
+          "isConcurrencySafe": true,
+          "isOpenWorld": true
+        },
+        "rawSerializableDefinition": {
+          "name": "agent",
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access except nested subagent launch. Tools: all parent tools except nested agent launch.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          },
+          "maxResultBytes": 200000
+        }
+      }
+    },
+    {
+      "id": "empty-custom",
+      "options": {
+        "subagents": {}
+      },
+      "rustConfig": {
+        "subagentDefinitions": {}
+      },
+      "expected": {
+        "model": {
+          "name": "agent",
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access except nested subagent launch. Tools: all parent tools except nested agent launch.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          }
+        },
+        "metadata": {
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "maxResultBytes": 200000
+        },
+        "flags": {
+          "isReadOnly": false,
+          "isConcurrencySafe": true,
+          "isOpenWorld": true
+        },
+        "rawSerializableDefinition": {
+          "name": "agent",
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access except nested subagent launch. Tools: all parent tools except nested agent launch.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          },
+          "maxResultBytes": 200000
+        }
+      }
+    },
+    {
+      "id": "open",
+      "options": {
+        "maxSubagentDepth": 2,
+        "subagentDepth": 0
+      },
+      "rustConfig": {
+        "maxSubagentDepth": 2,
+        "subagentDepth": 0
+      },
+      "expected": {
+        "model": {
+          "name": "agent",
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access; nested delegation follows the configured depth cap. Tools: all parent tools; nested delegation is available within the configured depth cap.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          }
+        },
+        "metadata": {
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "maxResultBytes": 200000
+        },
+        "flags": {
+          "isReadOnly": false,
+          "isConcurrencySafe": true,
+          "isOpenWorld": true
+        },
+        "rawSerializableDefinition": {
+          "name": "agent",
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access; nested delegation follows the configured depth cap. Tools: all parent tools; nested delegation is available within the configured depth cap.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          },
+          "maxResultBytes": 200000
+        }
+      }
+    },
+    {
+      "id": "custom-open",
+      "options": {
+        "subagents": {
+          "fixture": {
+            "type": "general-purpose",
+            "description": "CUSTOM PRESET DESCRIPTION",
+            "systemPrompt": "CUSTOM PRESET SYSTEM"
+          }
+        },
+        "maxSubagentDepth": 2,
+        "subagentDepth": 0
+      },
+      "rustConfig": {
+        "subagentDefinitions": {
+          "fixture": {
+            "allowedTools": [
+              "read_file"
+            ],
+            "disallowedTools": [
+              "bash"
+            ],
+            "systemPromptSuffix": "CUSTOM PRESET SYSTEM"
+          }
+        },
+        "maxSubagentDepth": 2,
+        "subagentDepth": 0
+      },
+      "expected": {
+        "model": {
+          "name": "agent",
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access; nested delegation follows the configured depth cap. Tools: all parent tools; nested delegation is available within the configured depth cap.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          }
+        },
+        "metadata": {
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "maxResultBytes": 200000
+        },
+        "flags": {
+          "isReadOnly": false,
+          "isConcurrencySafe": true,
+          "isOpenWorld": true
+        },
+        "rawSerializableDefinition": {
+          "name": "agent",
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access; nested delegation follows the configured depth cap. Tools: all parent tools; nested delegation is available within the configured depth cap.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          },
+          "maxResultBytes": 200000
+        }
+      }
+    },
+    {
+      "id": "last-level",
+      "options": {
+        "maxSubagentDepth": 2,
+        "subagentDepth": 1
+      },
+      "rustConfig": {
+        "maxSubagentDepth": 2,
+        "subagentDepth": 1
+      },
+      "expected": {
+        "model": {
+          "name": "agent",
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access except nested subagent launch. Tools: all parent tools except nested agent launch.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          }
+        },
+        "metadata": {
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "maxResultBytes": 200000
+        },
+        "flags": {
+          "isReadOnly": false,
+          "isConcurrencySafe": true,
+          "isOpenWorld": true
+        },
+        "rawSerializableDefinition": {
+          "name": "agent",
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access except nested subagent launch. Tools: all parent tools except nested agent launch.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          },
+          "maxResultBytes": 200000
+        }
+      }
+    },
+    {
+      "id": "at-cap",
+      "options": {
+        "maxSubagentDepth": 2,
+        "subagentDepth": 2
+      },
+      "rustConfig": {
+        "maxSubagentDepth": 2,
+        "subagentDepth": 2
+      },
+      "expected": {
+        "model": {
+          "name": "agent",
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access except nested subagent launch. Tools: all parent tools except nested agent launch.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          }
+        },
+        "metadata": {
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "maxResultBytes": 200000
+        },
+        "flags": {
+          "isReadOnly": false,
+          "isConcurrencySafe": true,
+          "isOpenWorld": true
+        },
+        "rawSerializableDefinition": {
+          "name": "agent",
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access except nested subagent launch. Tools: all parent tools except nested agent launch.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          },
+          "maxResultBytes": 200000
+        }
+      }
+    },
+    {
+      "id": "zero-cap",
+      "options": {
+        "maxSubagentDepth": 0,
+        "subagentDepth": 0
+      },
+      "rustConfig": {
+        "maxSubagentDepth": 0,
+        "subagentDepth": 0
+      },
+      "expected": {
+        "model": {
+          "name": "agent",
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access except nested subagent launch. Tools: all parent tools except nested agent launch.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          }
+        },
+        "metadata": {
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "maxResultBytes": 200000
+        },
+        "flags": {
+          "isReadOnly": false,
+          "isConcurrencySafe": true,
+          "isOpenWorld": true
+        },
+        "rawSerializableDefinition": {
+          "name": "agent",
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access except nested subagent launch. Tools: all parent tools except nested agent launch.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          },
+          "maxResultBytes": 200000
+        }
+      }
+    },
+    {
+      "id": "negative-depth-clamped",
+      "options": {
+        "maxSubagentDepth": 2,
+        "subagentDepth": -2
+      },
+      "rustConfig": {
+        "maxSubagentDepth": 2,
+        "subagentDepth": -2
+      },
+      "expected": {
+        "model": {
+          "name": "agent",
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access; nested delegation follows the configured depth cap. Tools: all parent tools; nested delegation is available within the configured depth cap.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          }
+        },
+        "metadata": {
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "maxResultBytes": 200000
+        },
+        "flags": {
+          "isReadOnly": false,
+          "isConcurrencySafe": true,
+          "isOpenWorld": true
+        },
+        "rawSerializableDefinition": {
+          "name": "agent",
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access; nested delegation follows the configured depth cap. Tools: all parent tools; nested delegation is available within the configured depth cap.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          },
+          "maxResultBytes": 200000
+        }
+      }
+    },
+    {
+      "id": "fractional-closed",
+      "options": {
+        "maxSubagentDepth": 1.5,
+        "subagentDepth": 0.5
+      },
+      "rustConfig": {
+        "maxSubagentDepth": 1.5,
+        "subagentDepth": 0.5
+      },
+      "expected": {
+        "model": {
+          "name": "agent",
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access except nested subagent launch. Tools: all parent tools except nested agent launch.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          }
+        },
+        "metadata": {
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "maxResultBytes": 200000
+        },
+        "flags": {
+          "isReadOnly": false,
+          "isConcurrencySafe": true,
+          "isOpenWorld": true
+        },
+        "rawSerializableDefinition": {
+          "name": "agent",
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access except nested subagent launch. Tools: all parent tools except nested agent launch.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          },
+          "maxResultBytes": 200000
+        }
+      }
+    },
+    {
+      "id": "fractional-open",
+      "options": {
+        "maxSubagentDepth": 1.6,
+        "subagentDepth": 0.5
+      },
+      "rustConfig": {
+        "maxSubagentDepth": 1.6,
+        "subagentDepth": 0.5
+      },
+      "expected": {
+        "model": {
+          "name": "agent",
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access; nested delegation follows the configured depth cap. Tools: all parent tools; nested delegation is available within the configured depth cap.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          }
+        },
+        "metadata": {
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "maxResultBytes": 200000
+        },
+        "flags": {
+          "isReadOnly": false,
+          "isConcurrencySafe": true,
+          "isOpenWorld": true
+        },
+        "rawSerializableDefinition": {
+          "name": "agent",
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access; nested delegation follows the configured depth cap. Tools: all parent tools; nested delegation is available within the configured depth cap.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          },
+          "maxResultBytes": 200000
+        }
+      }
+    },
+    {
+      "id": "deeper-open",
+      "options": {
+        "maxSubagentDepth": 4,
+        "subagentDepth": 2
+      },
+      "rustConfig": {
+        "maxSubagentDepth": 4,
+        "subagentDepth": 2
+      },
+      "expected": {
+        "model": {
+          "name": "agent",
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access; nested delegation follows the configured depth cap. Tools: all parent tools; nested delegation is available within the configured depth cap.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          }
+        },
+        "metadata": {
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "maxResultBytes": 200000
+        },
+        "flags": {
+          "isReadOnly": false,
+          "isConcurrencySafe": true,
+          "isOpenWorld": true
+        },
+        "rawSerializableDefinition": {
+          "name": "agent",
+          "aliases": [
+            "Agent",
+            "Task"
+          ],
+          "description": "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access; nested delegation follows the configured depth cap. Tools: all parent tools; nested delegation is available within the configured depth cap.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.",
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short 3-5 word task summary used to label the subagent run."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."
+              },
+              "subagentType": {
+                "type": "string",
+                "description": "Deprecated legacy alias for subagent_type. Prefer subagent_type."
+              }
+            }
+          },
+          "maxResultBytes": 200000
+        }
+      }
+    }
+  ],
+  "continuation": [
+    {
+      "id": "subagent",
+      "followup": false,
+      "expected": {
+        "model": {
+          "name": "subagent",
+          "description": "Start a continuable background subagent. Available types: general-purpose, explore, plan, verify. The call returns after the initial message is durably admitted.",
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short label for the delegated task."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Initial directive for the background subagent."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Subagent definition. Available: general-purpose, explore, plan, verify."
+              }
+            }
+          }
+        },
+        "metadata": {
+          "aliases": [
+            "continuable_subagent"
+          ],
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ]
+        },
+        "flags": {
+          "isReadOnly": false,
+          "isConcurrencySafe": true,
+          "isOpenWorld": true
+        },
+        "rawSerializableDefinition": {
+          "name": "subagent",
+          "aliases": [
+            "continuable_subagent"
+          ],
+          "description": "Start a continuable background subagent. Available types: general-purpose, explore, plan, verify. The call returns after the initial message is durably admitted.",
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Short label for the delegated task."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Initial directive for the background subagent."
+              },
+              "subagent_type": {
+                "type": "string",
+                "description": "Subagent definition. Available: general-purpose, explore, plan, verify."
+              }
+            }
+          },
+          "outputSchema": {
+            "type": "object",
+            "required": [
+              "subagentId",
+              "messageId",
+              "turnId"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "subagentId": {
+                "type": "string"
+              },
+              "messageId": {
+                "type": "string"
+              },
+              "turnId": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "send-message",
+      "followup": true,
+      "expected": {
+        "model": {
+          "name": "send_message",
+          "description": "Send a follow-up message to a continuable subagent. The call returns after durable admission.",
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "subagent_id",
+              "message"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "subagent_id": {
+                "type": "string",
+                "description": "Stable continuable subagent id."
+              },
+              "message": {
+                "type": "string",
+                "description": "Message to enqueue for the subagent."
+              }
+            }
+          }
+        },
+        "metadata": {
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ]
+        },
+        "flags": {
+          "isReadOnly": false,
+          "isConcurrencySafe": true,
+          "isOpenWorld": true
+        },
+        "rawSerializableDefinition": {
+          "name": "send_message",
+          "description": "Send a follow-up message to a continuable subagent. The call returns after durable admission.",
+          "kind": "agent",
+          "requiredRuntimeCapabilities": [
+            "subagent_fork"
+          ],
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "subagent_id",
+              "message"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "subagent_id": {
+                "type": "string",
+                "description": "Stable continuable subagent id."
+              },
+              "message": {
+                "type": "string",
+                "description": "Message to enqueue for the subagent."
+              }
+            }
+          },
+          "outputSchema": {
+            "type": "object",
+            "required": [
+              "subagentId",
+              "messageId",
+              "turnId"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "subagentId": {
+                "type": "string"
+              },
+              "messageId": {
+                "type": "string"
+              },
+              "turnId": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "executeDescriptions": [
+    {
+      "id": "no-sandbox",
+      "description": "Run a local Python 3 script that can call a small allow-list of PilotDeck tools via `import pilotdeck_tools`. The script runs from the workspace cwd and inherits the same runtime environment as normal tools such as bash, including configured API, proxy, PATH, virtualenv, and conda variables; do not print secrets or dump the full environment. Only the script's final stdout/stderr summary is returned to the model; intermediate tool results stay inside the script. Available helper functions: web_search, web_fetch, read_file, write_file, edit_file, grep, glob, bash. Use normal Python control flow to orchestrate tools: loops for batch work, conditionals for branching, data structures for aggregation, and try/except around individual helper calls when one failure should not abort the whole script. Helper failures raise RuntimeError. You can chain helper results, e.g. grep -> read_file -> edit_file. Print only the concise final result needed by the agent. Before modifying an existing file, call read_file first so PilotDeck can verify freshness. Prefer edit_file for targeted changes and write_file for new files or complete rewrites. Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available."
+    },
+    {
+      "id": "danger-full-access",
+      "description": "Run a local Python 3 script that can call a small allow-list of PilotDeck tools via `import pilotdeck_tools`. The script runs from the workspace cwd and inherits the same runtime environment as normal tools such as bash, including configured API, proxy, PATH, virtualenv, and conda variables; do not print secrets or dump the full environment. Only the script's final stdout/stderr summary is returned to the model; intermediate tool results stay inside the script. Available helper functions: web_search, web_fetch, read_file, write_file, edit_file, grep, glob, bash. Use normal Python control flow to orchestrate tools: loops for batch work, conditionals for branching, data structures for aggregation, and try/except around individual helper calls when one failure should not abort the whole script. Helper failures raise RuntimeError. You can chain helper results, e.g. grep -> read_file -> edit_file. Print only the concise final result needed by the agent. Before modifying an existing file, call read_file first so PilotDeck can verify freshness. Prefer edit_file for targeted changes and write_file for new files or complete rewrites. Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available."
+    },
+    {
+      "id": "read-only",
+      "description": "Run a local Python 3 script that can call a small allow-list of PilotDeck tools via `import pilotdeck_tools`. The script runs from the workspace cwd with the host read-only file-effect policy. It inherits the same runtime environment as normal tools such as bash, including configured API, proxy, PATH, virtualenv, and conda variables; do not print secrets or dump the full environment. Only the script's final stdout/stderr summary is returned to the model; intermediate tool results stay inside the script. Available helper functions: web_search, web_fetch, read_file, write_file, edit_file, grep, glob, bash. Use normal Python control flow to orchestrate tools: loops for batch work, conditionals for branching, data structures for aggregation, and try/except around individual helper calls when one failure should not abort the whole script. Helper failures raise RuntimeError. You can chain helper results, e.g. grep -> read_file -> edit_file. Print only the concise final result needed by the agent. Before modifying an existing file, call read_file first so PilotDeck can verify freshness. Prefer edit_file for targeted changes and write_file for new files or complete rewrites. Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available."
+    },
+    {
+      "id": "workspace-write",
+      "description": "Run a local Python 3 script that can call a small allow-list of PilotDeck tools via `import pilotdeck_tools`. The script runs from the workspace cwd with the host workspace-write file-effect policy. It inherits the same runtime environment as normal tools such as bash, including configured API, proxy, PATH, virtualenv, and conda variables; do not print secrets or dump the full environment. Only the script's final stdout/stderr summary is returned to the model; intermediate tool results stay inside the script. Available helper functions: web_search, web_fetch, read_file, write_file, edit_file, grep, glob, bash. Use normal Python control flow to orchestrate tools: loops for batch work, conditionals for branching, data structures for aggregation, and try/except around individual helper calls when one failure should not abort the whole script. Helper failures raise RuntimeError. You can chain helper results, e.g. grep -> read_file -> edit_file. Print only the concise final result needed by the agent. Before modifying an existing file, call read_file first so PilotDeck can verify freshness. Prefer edit_file for targeted changes and write_file for new files or complete rewrites. Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available."
+    },
+    {
+      "id": "mode-omitted",
+      "description": "Run a local Python 3 script that can call a small allow-list of PilotDeck tools via `import pilotdeck_tools`. The script runs through a host-selected sandbox whose environment visibility is provider-defined; do not assume provider credentials or arbitrary host variables are available, and do not print secrets or dump the full environment. Only the script's final stdout/stderr summary is returned to the model; intermediate tool results stay inside the script. Available helper functions: web_search, web_fetch, read_file, write_file, edit_file, grep, glob, bash. Use normal Python control flow to orchestrate tools: loops for batch work, conditionals for branching, data structures for aggregation, and try/except around individual helper calls when one failure should not abort the whole script. Helper failures raise RuntimeError. You can chain helper results, e.g. grep -> read_file -> edit_file. Print only the concise final result needed by the agent. Before modifying an existing file, call read_file first so PilotDeck can verify freshness. Prefer edit_file for targeted changes and write_file for new files or complete rewrites. Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available."
+    }
+  ],
+  "policySelections": [
+    {
+      "configuredMode": "workspace-write",
+      "resolvedAndPreparedPolicy": {
+        "mode": "read-only",
+        "network": "deny"
+      },
+      "codeRuntimeRunCount": 0,
+      "resultStatus": "error",
+      "resultError": "policy-probe-stop",
+      "description": "Run a local Python 3 script that can call a small allow-list of PilotDeck tools via `import pilotdeck_tools`. The script runs from the workspace cwd with the host workspace-write file-effect policy. It inherits the same runtime environment as normal tools such as bash, including configured API, proxy, PATH, virtualenv, and conda variables; do not print secrets or dump the full environment. Only the script's final stdout/stderr summary is returned to the model; intermediate tool results stay inside the script. Available helper functions: web_search, web_fetch, read_file, write_file, edit_file, grep, glob, bash. Use normal Python control flow to orchestrate tools: loops for batch work, conditionals for branching, data structures for aggregation, and try/except around individual helper calls when one failure should not abort the whole script. Helper failures raise RuntimeError. You can chain helper results, e.g. grep -> read_file -> edit_file. Print only the concise final result needed by the agent. Before modifying an existing file, call read_file first so PilotDeck can verify freshness. Prefer edit_file for targeted changes and write_file for new files or complete rewrites. Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available."
+    },
+    {
+      "configuredMode": "workspace-write",
+      "resolvedAndPreparedPolicy": {
+        "mode": "workspace-write",
+        "network": "deny"
+      },
+      "codeRuntimeRunCount": 0,
+      "resultStatus": "error",
+      "resultError": "policy-probe-stop",
+      "description": "Run a local Python 3 script that can call a small allow-list of PilotDeck tools via `import pilotdeck_tools`. The script runs from the workspace cwd with the host workspace-write file-effect policy. It inherits the same runtime environment as normal tools such as bash, including configured API, proxy, PATH, virtualenv, and conda variables; do not print secrets or dump the full environment. Only the script's final stdout/stderr summary is returned to the model; intermediate tool results stay inside the script. Available helper functions: web_search, web_fetch, read_file, write_file, edit_file, grep, glob, bash. Use normal Python control flow to orchestrate tools: loops for batch work, conditionals for branching, data structures for aggregation, and try/except around individual helper calls when one failure should not abort the whole script. Helper failures raise RuntimeError. You can chain helper results, e.g. grep -> read_file -> edit_file. Print only the concise final result needed by the agent. Before modifying an existing file, call read_file first so PilotDeck can verify freshness. Prefer edit_file for targeted changes and write_file for new files or complete rewrites. Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available."
+    }
+  ],
+  "scope": "Actual TS constructors and selected policy path. Policy provider intentionally rejects before any Python execution; not a filesystem-enforcement claim."
+}
