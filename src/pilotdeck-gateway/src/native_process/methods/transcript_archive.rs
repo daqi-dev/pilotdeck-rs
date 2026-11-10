@@ -76,15 +76,20 @@ fn nullish(value: &JsValue) -> bool {
 
 /// `title.length` for the value shapes the export title gate reads it on:
 /// strings carry UTF-16 units, arrays their element count, and an object
-/// hands back its own `length` value when that is a finite number — every
-/// other shape reads `undefined`, which fails the `<=` and drops the title.
+/// hands back its own `length` value — coerced through JS `ToNumber` for
+/// the `<=` comparison, exactly like TS (`null` is 0, `"5"` is 5, `true` is
+/// 1, `[]` is 0; ±Infinity passes through the Number arm). Everything else
+/// reads `undefined`, which is NaN and fails the `<=` and drops the title.
+/// A depth-bound hit on an exotic array `.length` also folds to NaN — a
+/// conservative drop (fix-r5: DS r5 boundary P2-1 + Grok boundary P1-1,
+/// which independently converged on the same shapes).
 fn title_length(value: &JsValue) -> f64 {
     match value {
         JsValue::String(text) => text.len_utf16() as f64,
         JsValue::Array(items) => items.len() as f64,
         JsValue::Object(object) => match object.get("length") {
-            Some(JsValue::Number(number)) if number.is_finite() => *number,
-            _ => f64::NAN,
+            Some(length) => js_value::to_number(length).unwrap_or(f64::NAN),
+            None => f64::NAN,
         },
         _ => f64::NAN,
     }
@@ -554,8 +559,10 @@ fn to_portable_archive(entries: &[JsValue]) -> Result<JsValue, RequestError> {
         // An empty string is falsy and drops; a non-empty string counts its
         // UTF-16 units; a truthy array-like title (e.g. hand-written
         // `title: ["x"]`, `.length` 1) passes in TS and must pass here. A
-        // value with no numeric `.length` (undefined) fails `<=` and drops
-        // (DS r4 boundary P2 — ported literally rather than string-only).
+        // `.length` that coerces to NaN (undefined, a plain object, a
+        // non-numeric string) fails `<=` and drops, while `null`/`true`/
+        // `"5"` coerce through ToNumber and pass (fix-r5 — ported literally
+        // rather than string-only).
         if truthy(value) && title_length(value) <= MAX_PORTABLE_SESSION_ARCHIVE_TITLE_LENGTH as f64
         {
             archive.insert("title".into(), value.clone());
@@ -827,13 +834,18 @@ impl Requests {
             .iter()
             .any(|diagnostic| diagnostic.code == "transcript_missing")
         {
-            return Err(gateway_error(
-                "SESSION_NOT_FOUND",
-                format!(
-                    "Session not found: {}",
-                    String::from_utf16_lossy(key.units())
-                ),
-            ));
+            // TS echoes the raw UTF-16 key units in the template literal —
+            // no lossy decode, so a lone-surrogate key stays a surrogate
+            // (the connection-layer contract, connection/mod.rs:26-28;
+            // native_archive.rs `unknown_project_key` is the same shape).
+            let mut units: Vec<u16> = "Session not found: ".encode_utf16().collect();
+            units.extend_from_slice(key.units());
+            return Err(RequestError {
+                code: "SESSION_NOT_FOUND".into(),
+                message: JsString::from_utf16(units),
+                details: None,
+                validation: None,
+            });
         }
         if read
             .diagnostics
@@ -2064,7 +2076,7 @@ mod tests {
     /// the character itself, not `[`.
     #[test]
     fn cjk_pretty_render_is_budgeted_in_utf16_units() {
-        let text: Vec<u16> = std::iter::repeat(0x6C49).take(190_000_000).collect();
+        let text: Vec<u16> = vec![0x6C49; 190_000_000];
         let value = JsValue::Array(vec![JsValue::String(JsString::from_utf16(text))]);
         let rendered =
             stringify_portable_value(&value).expect("#2622 the unit budget keeps this renderable");
@@ -2082,7 +2094,7 @@ mod tests {
     /// and the whole-method `validatePortableSessionArchive` then rejects
     /// the non-string title — the method-level shape both sides must agree
     /// on (a string-only gate here would export successfully sans title
-    /// where TS throws). Shapes without a numeric `.length` (or over 512)
+    /// where TS throws). Shapes whose `.length` coerces to NaN (or over 512)
     /// drop at the gate and the export succeeds without a title.
     #[tokio::test]
     async fn export_title_gate_reads_the_length_property_like_ts() {
@@ -2096,6 +2108,25 @@ mod tests {
             ("array-over", array_title(513), false),
             ("number-title", json!({"title": 42}), false),
             ("empty-title", json!({"title": ""}), false),
+            // fix-r5 (DS r5 boundary P2-1 + Grok boundary P1-1): the gate's
+            // `<=` coerces the `.length` read through ToNumber, so `null` (0)
+            // and `"5"` (5) pass the gate exactly like TS — and then the
+            // whole-method validate rejects the non-string title.
+            (
+                "object-null-length",
+                json!({"title": {"length": null}}),
+                true,
+            ),
+            (
+                "object-string-length",
+                json!({"title": {"length": "5"}}),
+                true,
+            ),
+            (
+                "object-nan-length",
+                json!({"title": {"length": "abc"}}),
+                false,
+            ),
         ] {
             write_session(
                 &requests,
@@ -2141,6 +2172,42 @@ mod tests {
         teardown(&requests).await;
     }
 
+    /// #2622 fix-r5 (DS r5 boundary P2-2): `Session not found: ${key}` echoes
+    /// the caller's raw UTF-16 units — a lone-surrogate session key stays a
+    /// surrogate in the message, not a lossy U+FFFD replacement (the
+    /// connection-layer contract, connection/mod.rs:26-28).
+    #[tokio::test]
+    async fn export_not_found_echoes_a_lone_surrogate_key_like_ts() {
+        let (_scratch, requests) = management_tests::setup();
+        let mut object = JsObject::new();
+        object.insert(
+            "sessionKey".into(),
+            JsValue::String(JsString::from_utf16(vec![0xD800])),
+        );
+        let error = GatewayRequests::request(
+            &requests,
+            "export_session_transcript".into(),
+            JsValue::Object(object),
+        )
+        .await
+        .expect_err("#2622 the surrogate key has no transcript");
+        negative_assert!(
+            error.code == "SESSION_NOT_FOUND",
+            "#2622 the missing transcript answers the not-found domain error (got {})",
+            error.code
+        );
+        let expected: Vec<u16> = "Session not found: "
+            .encode_utf16()
+            .chain(std::iter::once(0xD800))
+            .collect();
+        negative_assert_eq!(
+            error.message.units(),
+            expected.as_slice(),
+            "#2622 the not-found message echoes the lone surrogate, not U+FFFD"
+        );
+        teardown(&requests).await;
+    }
+
     /// #2622 fix-r2 (sibling P2 pairing the depth half of the fallback): one
     /// container past the shared bound the pretty render refuses and the
     /// `String(value)` fallback runs — which itself reports the family's
@@ -2168,7 +2235,8 @@ mod tests {
 
     /// #2622 fix-r1: a wide payload at that depth pushes the pretty render
     /// past V8's string length — the render stops at
-    /// `MAX_PRETTY_OUTPUT_BYTES` and falls back to `String(value)`. This
+    /// `MAX_PRETTY_OUTPUT_UNITS` (UTF-16 code units) and falls back to
+    /// `String(value)`. This
     /// string-length boundary is the aligned one: V8's stringify throws the
     /// catchable RangeError here and the TS helper's catch takes the same
     /// fallback.

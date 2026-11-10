@@ -57,10 +57,13 @@ mutations = [
      EXPORT_ROWS, '#2622 export.empty-text'),
     # The 512-unit title ceiling drops (never truncates) over-long titles.
     # fix-r4: the gate is the literal TS shape (truthiness + `.length`,
-    # no typeof check), so the mutant drops only the ceiling half.
+    # no typeof check), so the mutant drops only the ceiling half. fix-r5:
+    # rustfmt puts the brace on its own line, so the anchor must carry it —
+    # a condition-only anchor left an extra `{` and the mutant did not
+    # compile (Grok sibling P1-1, confirmed by the r6 run's INVALID row).
     ('export-title-ceiling-dropped', ARCHIVE,
-     'if truthy(value) && title_length(value) <= MAX_PORTABLE_SESSION_ARCHIVE_TITLE_LENGTH as f64',
-     'if truthy(value) {', EXPORT_ROWS, '#2622 export.long-title'),
+     'if truthy(value) && title_length(value) <= MAX_PORTABLE_SESSION_ARCHIVE_TITLE_LENGTH as f64\n        {',
+     'if truthy(value)\n        {', EXPORT_ROWS, '#2622 export.long-title'),
     # The pretty render's V8 string-length budget: without it a wide deep
     # payload renders the full multi-hundred-MB layout instead of taking the
     # TS helper's catch fallback.
@@ -125,7 +128,8 @@ mutations = [
      'fs::rename(&cleanup.0, path.with_extension("jsonl2")).map_err(|e| path_error(e, "rename", path))?;',
      CHAT_TREE, [
          # The mutant renames onto a `.jsonl2` name, which the earlier
-         # staging-files assertion (transcript_archive.rs:1633-1649)
+         # staging-files assertion (the `#2622 no restore staging files
+         # remain` bound marker in chat_tree_holds_only_final_transcripts)
          # rejects first — a panic stops the test before the later
          # final-transcript assertion, so either bound marker kills
          # (#818 fix-r4 list-of-alternatives semantics).
