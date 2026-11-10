@@ -6,7 +6,7 @@
 the recorded verdicts against the static ``EXPECTED_NAMES`` roster *before*
 publishing anything that reads as success, and ``test_negative_roster_guards``
 drove that one ``main()`` with a stubbed executor layer. The same-shaped
-defence existed in three more entries -- memory-gateway and
+defence existed in more entries still -- memory-gateway and
 sdk-mcp-session-tools with no machine check at all, snapshot-projection
 delivered through #1456 with one-shot sandbox demos only -- so constant-ifying
 ``recorded != expected``, dropping one ``EXPECTED_NAMES`` entry or deleting
@@ -43,7 +43,7 @@ desired fail-closed direction.
 
 The injected mismatch differs per family because the entries' own seams
 differ: manager-gateway loses the last selected row through a patched
-``select`` (the #1666 hazard), while the other three cannot lose a row
+``select`` (the #1666 hazard), while every other registered entry cannot lose a row
 without failing their startup roster first, so the first stubbed cargo call
 drops the last ``EXPECTED_NAMES`` name mid-run -- the run then records a
 verdict the static roster no longer knows, the same ``recorded != expected``
@@ -502,13 +502,18 @@ def _drive_2495(testcase, *, perturbed=False, renamed=False,
     """Run issue-2495's real ``main()``; return the Drive of that run.
 
     The #2590 migrated-family row (#1433 sdk shape): same executor seams as
-    the sdk driver. What differs from sdk and stays real here on purpose:
-    the startup target guards (``missing_target`` / ``refuse_unusable_target``
-    read ``_environment``'s temp ``CARGO_TARGET_DIR``, admitted by the one
-    shared rule), the ``tree_lock`` + ``stale_names()`` anchor scan (the lock
-    file is gitignored and the anchors are the tree's real bytes), and the
-    ``--check`` / argv-contract refusals — all before any evidence directory
-    is claimed, all exercised as the entry's own code.
+    the sdk driver, and like the sdk row it leaves the startup target guards
+    (``missing_target`` / ``refuse_unusable_target`` over ``_environment``'s
+    temp ``CARGO_TARGET_DIR``) and the ``stale_names()`` anchor scan over
+    the tree's real bytes unstubbed. The one thing this row adds over sdk is
+    a real ``tree_lock`` around that scan: it stays the entry's own real
+    lock, only with the wait bounded to 2 s (``GUARD_LOCK_FAST``, the
+    entry's own fixture precedent) so a sibling round holding
+    ``ROOT/.negative-source.lock`` makes this row fail closed in seconds
+    instead of 60 s of silent wait per case. The ``--check`` /
+    argv-contract refusals are also unstubbed, but this register never
+    drives them — their coverage lives in the entry's own fixture
+    (issue-2495/test_negative_controls.py).
     """
     module = load_entry('issue-2495/negative_controls.py')
     base = Path(tempfile.mkdtemp(prefix='negctl-2804-'))
@@ -516,6 +521,11 @@ def _drive_2495(testcase, *, perturbed=False, renamed=False,
     out = base / 'out'
     writes = []
     drifted = [False]
+    real_tree_lock = module.tree_lock
+
+    def fast_tree_lock(root, **kwargs):
+        kwargs['timeout'] = 2
+        return real_tree_lock(root, **kwargs)
 
     def fake_write_atomic(root, path, data, *, mode=None):
         writes.append((Path(path), bytes(data)))
@@ -531,13 +541,9 @@ def _drive_2495(testcase, *, perturbed=False, renamed=False,
                                      else _reorder_roster(module.EXPECTED_NAMES)
                                      if reordered
                                      else module.EXPECTED_NAMES[:-1])
-        # The non-compile command ends with ``test -- --exact
-        # --include-ignored`` (test at -4); the compile-only one ends with
-        # ``--no-run`` and carries no test name.
-        test = command[-4] if '--no-run' not in command else 'compile-check'
-        return subprocess.CompletedProcess(
-            command, 0,
-            f'test {test} ... ok\ntest result: ok. 1 passed; 0 failed;\n', '')
+        # The non-compile command carries the bound test name at -4; the
+        # compile-only leg's log has no consumer here (passed/judge stubbed).
+        return subprocess.CompletedProcess(command, 0, _ok_log(command[-4]), '')
 
     def fake_judge(result, raw, targets, receipt):
         return 'KILLED', 'bound test failed at its assertion', []
@@ -549,6 +555,7 @@ def _drive_2495(testcase, *, perturbed=False, renamed=False,
          patch.object(module, 'write_source_atomic', fake_write_atomic), \
          patch.object(module, 'wait_for_slot', fake_slot), \
          patch.object(module, 'run_owned', fake_run_owned), \
+         patch.object(module, 'tree_lock', fast_tree_lock), \
          patch.object(module, 'passed', lambda result, test: True), \
          patch.object(module, 'judge', fake_judge), \
          patch.object(module, 'EXPECTED_NAMES',
@@ -586,10 +593,9 @@ ROSTER_GUARDED = {
     'memory-gateway/negative_controls.py': _drive_memory,
     'snapshot-projection/negative_controls.py': _drive_snapshot,
     'sdk-mcp-session-tools/negative_controls.py': _drive_sdk,
-    # #2860 fix-r4: issue-2495 grew the same defence through #2590 fix-r3b4
-    # (the roster-mismatch.json write landed on main after this branch's
-    # base), so the fail-closed scan below turned red on main's own CI shape
-    # until the row joined here in the same change.
+    # #2804: issue-2495 carries the same roster re-check (the mismatch
+    # publish itself landed with #2590 fix-r3b4), so the scan requires it
+    # registered the same as every other row.
     'issue-2495/negative_controls.py': _drive_2495,
 }
 
@@ -604,7 +610,7 @@ SUCCESS_LINE = {
     'memory-gateway/negative_controls.py': ('summary:', ' killed; '),
     'snapshot-projection/negative_controls.py': (' KILLED; see ',),
     'sdk-mcp-session-tools/negative_controls.py': ('"controls"',),
-    'issue-2495/negative_controls.py': ('summary:',),
+    'issue-2495/negative_controls.py': ('summary:', '"controls"'),
 }
 
 
