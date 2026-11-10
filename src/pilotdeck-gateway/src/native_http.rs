@@ -114,13 +114,14 @@ pub(crate) struct Config {
     /// every non-gateway listener and frozen fixture still pins.
     pub api_web: Option<crate::api_web::Config>,
     pub approvals: Option<crate::module_host::approvals::Config>,
+    /// Public capability callbacks, authenticated by the production host.
     pub public_host: Option<crate::module_host::Config>,
 }
 
 /// Route one parsed non-upgrade request to its TS-equivalent response.
 /// Only method, version, headers, and URI are consulted, never the body; the
 /// body-carrying entries are [`serve_with_body`] (the listener, whose
-/// `/api/web` write route also reads its body), which only the listener uses.
+/// `/api/web`, approvals and module-host routes also read their bodies).
 pub(crate) async fn serve<B>(
     request: &hyper::Request<B>,
     config: &Config,
@@ -129,7 +130,7 @@ pub(crate) async fn serve<B>(
 }
 
 /// Route one request whose body may belong to `/feishu/webhook` or the
-/// `/api/web` write route, collecting it only when one of them is live.
+/// `/api/web`, approvals or module-host routes, collecting only for a live route.
 /// Every other path is served exactly like [`serve`] and its body is never
 /// read — the streaming request body stays untouched for the routes that do
 /// not look at it.

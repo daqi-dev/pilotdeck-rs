@@ -9,7 +9,8 @@ use crate::{
     },
     runtime::project::{ProjectResources, ProjectRuntimeRegistry, RuntimeLease},
     skills::{
-        SkillManager, SkillManagerOptions, SkillMethod, SkillsFacade, skill_binding_from_snapshot,
+        ExternalSkillBinding, ExternalSkillsPort, SkillManager, SkillManagerOptions, SkillMethod,
+        SkillsBinding, select_binding, skill_binding_from_snapshot,
     },
 };
 use pilotdeck_protocol::{JsObject, JsValue};
@@ -36,6 +37,13 @@ fn internal(message: impl Into<String>) -> HostFailure {
         status: None,
         code: None,
         message: Some(message.into()),
+    }
+}
+fn skill_error(error: crate::skills::SkillError) -> HostFailure {
+    HostFailure {
+        status: Some(502),
+        code: Some(String::from_utf16_lossy(error.code.units())),
+        message: Some(String::from_utf16_lossy(error.message.units())),
     }
 }
 fn config_error(error: config::Error) -> HostFailure {
@@ -170,83 +178,93 @@ impl Provider {
         let options = self.resolver.options.clone();
         let env = self.resolver.env.clone();
         let root = self.generation.runtime().project_root().to_path_buf();
-        // Retain the selected project until the blocking catalog read has ended.
-        let generation = self.generation.clone();
         let snapshot = self.snapshot.clone();
-        let runtime = tokio::runtime::Handle::current();
-        blocking(move || {
-            let _generation = generation;
-            let mut settings =
-                SkillManagerOptions::new(options.home.to_string_lossy().into_owned());
-            settings.builtin_skills_root =
-                super::assembly::explicit_builtin_skills_root(&options, &env)
-                    .map(|root| root.to_string_lossy().into_owned());
-            settings.env = Some(env.clone());
-            settings.home_dir = Some(options.home.to_string_lossy().into_owned());
-            let skill_error = |e: crate::skills::SkillError| HostFailure {
-                status: Some(502),
-                code: Some(String::from_utf16_lossy(e.code.units())),
-                message: Some(String::from_utf16_lossy(e.message.units())),
-            };
-            let manager = SkillManager::new(settings).map_err(skill_error)?;
-            let proxy = snapshot
-                .get("config")
-                .and_then(|config| config.get("proxy"))
-                .and_then(crate::runtime::model::http::ProxySettings::from_config);
-            let transport = Arc::new(
-                crate::skills::HyperModuleTransport::skills_with_proxy_settings(
-                    proxy.as_ref(),
-                    &env,
-                ),
-            );
-            let facade = SkillsFacade::with_transport(
-                manager,
-                move |_| skill_binding_from_snapshot(&snapshot),
-                transport,
-            );
-            let mut result = runtime
-                .block_on(facade.call(
-                    SkillMethod::List,
-                    &object([("projectKey", root.to_string_lossy().as_ref().into())]),
-                ))
-                .map_err(skill_error)?;
-            if let JsValue::Object(result) = &mut result
-                && let Some(JsValue::Array(items)) = result.get("items")
-            {
-                let items = items.clone();
-                result.insert(
-                    "items".into(),
-                    JsValue::Array(
-                        items
-                            .into_iter()
-                            .map(|mut item| {
-                                let slug = value(&item, "slug").clone();
-                                if let JsValue::Object(fields) = &mut item {
-                                    fields.insert("id".into(), slug);
-                                }
-                                item
-                            })
-                            .collect(),
+        let binding = skill_binding_from_snapshot(&snapshot).map_err(skill_error)?;
+        let input = object([("projectKey", root.to_string_lossy().as_ref().into())]);
+        let mut result = match select_binding(&binding).map_err(skill_error)? {
+            SkillsBinding::Native => {
+                // Only filesystem work owns a session-IO permit. External HTTP
+                // waits below must neither occupy that pool nor run block_on.
+                let generation = self.generation.clone();
+                blocking(move || {
+                    let _generation = generation;
+                    let mut settings =
+                        SkillManagerOptions::new(options.home.to_string_lossy().into_owned());
+                    settings.builtin_skills_root =
+                        super::assembly::explicit_builtin_skills_root(&options, &env)
+                            .map(|root| root.to_string_lossy().into_owned());
+                    settings.env = Some(env);
+                    settings.home_dir = Some(options.home.to_string_lossy().into_owned());
+                    SkillManager::new(settings)
+                        .and_then(|manager| manager.call(SkillMethod::List, &input))
+                        .map_err(skill_error)
+                })
+                .await?
+            }
+            SkillsBinding::External => {
+                let proxy = snapshot
+                    .get("config")
+                    .and_then(|config| config.get("proxy"))
+                    .and_then(crate::runtime::model::http::ProxySettings::from_config);
+                let transport = Arc::new(
+                    crate::skills::HyperModuleTransport::skills_with_proxy_settings(
+                        proxy.as_ref(),
+                        &env,
                     ),
                 );
+                // Preserve the module's configured timeout and process credential
+                // semantics. Dropping the host call drops the actual HTTP future.
+                ExternalSkillsPort::new(
+                    ExternalSkillBinding::from_value(&binding).map_err(skill_error)?,
+                    transport,
+                )
+                .call(SkillMethod::List, &input)
+                .await
+                .map_err(skill_error)?
             }
-            let mut body = JsObject::new();
-            body.insert("data".into(), value(&result, "items").clone());
-            body.insert(
-                "next_cursor".into(),
-                match value(&result, "nextCursor") {
-                    JsValue::Undefined | JsValue::Null => JsValue::Null,
-                    value => value.clone(),
-                },
+            SkillsBinding::Disabled => {
+                return Err(failure(
+                    502,
+                    "SKILL_MODULE_DISABLED",
+                    "Skill module is disabled for this profile.",
+                ));
+            }
+        };
+        if let JsValue::Object(result) = &mut result
+            && let Some(JsValue::Array(items)) = result.get("items")
+        {
+            let items = items.clone();
+            result.insert(
+                "items".into(),
+                JsValue::Array(
+                    items
+                        .into_iter()
+                        .map(|mut item| {
+                            let slug = value(&item, "slug").clone();
+                            if let JsValue::Object(fields) = &mut item {
+                                fields.insert("id".into(), slug);
+                            }
+                            item
+                        })
+                        .collect(),
+                ),
             );
-            if let JsValue::Object(result) = &result {
-                for (key, value) in result.entries() {
-                    body.insert(key.clone(), value.clone());
-                }
+        }
+        let mut body = JsObject::new();
+        body.insert("data".into(), value(&result, "items").clone());
+        body.insert(
+            "next_cursor".into(),
+            match value(&result, "nextCursor") {
+                JsValue::Undefined | JsValue::Null => JsValue::Null,
+                value => value.clone(),
+            },
+        );
+        if let JsValue::Object(result) = &result {
+            for (key, value) in result.entries() {
+                body.insert(key.clone(), value.clone());
             }
-            Ok(response(JsValue::Object(body)))
-        })
-        .await
+        }
+        Ok(response(JsValue::Object(body)))
     }
 }
 impl PublicHostProvider for Provider {
@@ -305,6 +323,16 @@ impl Provider {
                 let mut cancelled = response(object([("code", "PUBLIC_HOST_CANCELLED".into())]));
                 cancelled.status = 499;
                 return Ok(cancelled);
+            }
+            // The fixed runtime adapter admits an object before invoking every
+            // configured capability, even ports whose method ignores its input.
+            if self.operations().contains(&operation) && !matches!(input, JsValue::Object(_)) {
+                let mut invalid = response(object([
+                    ("code", "PUBLIC_HOST_INPUT_INVALID".into()),
+                    ("message", "input must be an object.".into()),
+                ]));
+                invalid.status = 400;
+                return Ok(invalid);
             }
             match operation.as_str() {
                 "list_general_skills" if self.skills_enabled => self.skills().await,
@@ -408,7 +436,7 @@ fn truthy(value: &JsValue) -> bool {
         _ => true,
     }
 }
-fn bound_project(
+pub(super) fn bound_project(
     home: &Path,
     env: &Env,
     principal: &PublicHostPrincipal,
@@ -462,6 +490,11 @@ fn bound_project(
         };
     let store =
         pilotdeck_protocol::parse_json(&String::from_utf8_lossy(&bytes)).map_err(|_| invalid())?;
+    if matches!(store, JsValue::Null) {
+        return Err(internal(
+            "Cannot read properties of null (reading 'version')",
+        ));
+    }
     if value(&store, "version").as_number() != Some(1.0) || !truthy(value(&store, "installationId"))
     {
         return Err(invalid());
@@ -469,6 +502,11 @@ fn bound_project(
     let JsValue::Array(rows) = value(&store, "projects") else {
         return Err(invalid());
     };
+    if rows.iter().any(|row| matches!(row, JsValue::Null)) {
+        return Err(internal(
+            "Cannot read properties of null (reading 'status')",
+        ));
+    }
     let origin = env
         .get("STAFFDECK_FORMAL_API_ORIGIN")
         .map(|origin| origin.strip_suffix('/').unwrap_or(origin));
@@ -480,11 +518,12 @@ fn bound_project(
                 .is_some_and(|s| s.equals_str("bound"))
                 && value(row, "agentId").as_string() == Some(&principal.agent_id)
                 && value(row, "tenantId").as_string() == Some(&principal.tenant_id)
-                && origin.is_some_and(|origin| {
-                    value(row, "origin")
+                && match origin {
+                    Some(origin) => value(row, "origin")
                         .as_string()
-                        .is_some_and(|s| s.equals_str(origin))
-                })
+                        .is_some_and(|s| s.equals_str(origin)),
+                    None => value(row, "origin").is_undefined(),
+                }
         })
         .collect();
     if selected.len() != 1 {
@@ -494,10 +533,26 @@ fn bound_project(
             "No unique bound project exists.",
         ));
     }
-    let root = value(selected[0], "projectRoot")
-        .as_string()
-        .and_then(|s| s.to_utf8().ok())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| internal("PROJECT_BINDING_PRINCIPAL_REQUIRED"))?;
+    let root = value(selected[0], "projectRoot");
+    if !truthy(root) {
+        return Err(internal("PROJECT_BINDING_PRINCIPAL_REQUIRED"));
+    }
+    let root = match root {
+        JsValue::String(root) => String::from_utf16_lossy(root.units()),
+        other => match crate::metadata::argument_received(other) {
+            crate::metadata::ArgumentReceived::Text(description) => {
+                return Err(failure(
+                    502,
+                    "ERR_INVALID_ARG_TYPE",
+                    String::from_utf16_lossy(
+                        crate::metadata::invalid_arg_type_message("paths[0]", &description).units(),
+                    ),
+                ));
+            }
+            crate::metadata::ArgumentReceived::Throws { message, .. } => {
+                return Err(internal(String::from_utf16_lossy(message.units())));
+            }
+        },
+    };
     Ok(Some(PathBuf::from(root)))
 }

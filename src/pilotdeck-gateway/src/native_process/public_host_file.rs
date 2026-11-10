@@ -53,6 +53,9 @@ fn required<'a>(
 
 // The adapter's regex validates alphabet/padding shape, but deliberately does
 // not reject nonzero unused bits: Node Buffer.from("YR==", "base64") is "a".
+// Linear scanning avoids the fixed TS regex's stack overflow on long legal
+// input. That difference requires the A8.4-FILE-PARSE-STACK-001 disposition;
+// ordinary alphabet, padding and decoded-size rules remain the TS rules.
 fn base64_shape(value: &JsString) -> Option<(String, usize)> {
     let raw = value.to_utf8().ok()?;
     let bytes = raw.as_bytes();

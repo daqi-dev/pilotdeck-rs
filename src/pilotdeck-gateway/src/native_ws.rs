@@ -159,9 +159,7 @@ impl NativeWsServer {
         self
     }
 
-    /// Mount the `/api/web` route group on this listener (#2354): the token
-    /// is the same bearer the WS lane checks, and the catalog is the native
-    /// metadata registry over the same home the WS lane reads.
+    /// Mount the authenticated module-host callback routes on this listener.
     pub(crate) fn with_public_host(mut self, config: crate::module_host::Config) -> Self {
         self.http.public_host = Some(config);
         self
@@ -172,6 +170,9 @@ impl NativeWsServer {
         self
     }
 
+    /// Mount the `/api/web` route group on this listener (#2354): the token
+    /// is the same bearer the WS lane checks, and the catalog is the native
+    /// metadata registry over the same home the WS lane reads.
     pub(crate) fn with_api_web(mut self, config: crate::api_web::Config) -> Self {
         self.http.api_web = Some(config);
         self

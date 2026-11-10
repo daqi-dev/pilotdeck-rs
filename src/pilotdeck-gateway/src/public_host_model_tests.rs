@@ -35,22 +35,23 @@ fn wire_response(response: HostResponse) -> JsValue {
 async fn all_fixed_ts_public_prepare_cases_have_exact_native_consumers() {
     let oracle = oracle();
     let config = field(&oracle, "config");
-    let providers = Arc::new(ModelInvocationProviderRegistry::new(
-        tokio::runtime::Handle::current(),
-    ));
-    providers
-        .register(Arc::new(NativeModelInvocationProvider::new(
-            field(field(config, "providers"), "p").clone(),
-            Arc::new(HyperModelTransport::new()),
-        )))
-        .unwrap();
-    let model = ModelResources {
-        providers: providers.clone(),
-        config: config.clone(),
-    };
     let cases = array(field(&oracle, "cases")).unwrap();
-    assert_eq!(cases.len(), 34);
+    assert_eq!(cases.len(), 38);
     for row in cases {
+        let config = row.get("config").unwrap_or(config);
+        let providers = Arc::new(ModelInvocationProviderRegistry::new(
+            tokio::runtime::Handle::current(),
+        ));
+        providers
+            .register(Arc::new(NativeModelInvocationProvider::new(
+                field(field(config, "providers"), "p").clone(),
+                Arc::new(HyperModelTransport::new()),
+            )))
+            .unwrap();
+        let model = ModelResources {
+            providers: providers.clone(),
+            config: config.clone(),
+        };
         let response = match prepare(field(row, "input"), field(row, "catalog"), &model) {
             Ok(prepared) => value_response(200, prepared.body),
             Err(error) => request_error_response(error),
@@ -61,8 +62,8 @@ async fn all_fixed_ts_public_prepare_cases_have_exact_native_consumers() {
             "case {}",
             stringify_json(field(row, "case")).unwrap().unwrap()
         );
+        providers.dispose().await.unwrap();
     }
-    providers.dispose().await.unwrap();
 }
 #[test]
 fn public_budget_safe_integer_edges_do_not_coerce_or_round() {

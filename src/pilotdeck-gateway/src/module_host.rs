@@ -99,20 +99,12 @@ const FLUSH_PAUSE: Duration = Duration::from_millis(1);
 /// `PublicHostPrincipal`: the four non-empty trimmed strings the transport
 /// demands before a request may reach a provider. The transport validates
 /// and passes the whole principal through to the resolver and the provider
-/// call; the ports installed in this crate key only on `agent_id` (the
-/// scripted resolver's scenario) or nothing, and consuming the remaining
-/// fields — the TS runtime adapter threads `options.principal` into its
-/// runtime calls — belongs to the #1305 wiring lane.
+/// call. The production resolver checks the StaffDeck identity and bound
+/// project; the SOP authority port also consumes the full caller identity.
 #[derive(Clone)]
 pub(crate) struct PublicHostPrincipal {
-    // Validated and forwarded, but nothing in this crate reads them yet:
-    // the TS runtime adapter threads `options.principal` into its runtime
-    // calls, which is the #1305 wiring lane's port surface.
-    #[allow(dead_code)]
     pub pilot_deck_user_id: JsString,
-    #[allow(dead_code)]
     pub tenant_id: JsString,
-    #[allow(dead_code)]
     pub actor_user_id: JsString,
     pub agent_id: JsString,
 }
