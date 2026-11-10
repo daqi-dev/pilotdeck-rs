@@ -2068,6 +2068,25 @@ class EnvironmentControls(unittest.TestCase):
             self.assertEqual(set(values), {pins['expected_label']},
                              f'#2780 every non-comment runs-on must equal the guard-pinned '
                              f'label {pins["expected_label"]} (in {relative})')
+            # fix-r3（#2780 anthropic boundary#2 Python 侧）：flow 风格 job（`x:
+            # {runs-on: ...}`）与可复用 workflow 调用（job 级 uses:）不产生行首
+            # runs-on:，行级白名单（shell 守卫与 Python 镜像同口径）都扫不到——用
+            # 「job 数 == runs-on 命中数」对账 + 禁 job 级 uses: 钉死；配对负控见
+            # rejects_registration_drift 的 flow-style-job-escapes-whitelist。
+            import yaml
+            flow = yaml.safe_load((root / relative).read_text())
+            flow_jobs = flow.get('jobs') or {}
+            self.assertTrue(flow_jobs,
+                            f'#2780 {relative} carries jobs the guard can audit')
+            self.assertFalse([name for name, body in flow_jobs.items()
+                              if isinstance(body, dict) and 'uses' in body],
+                             f'#2780 no job may be a reusable-workflow call (uses:) in '
+                             f'{relative}; such a job escapes the line-based runs-on '
+                             'whitelist entirely')
+            self.assertEqual(len(flow_jobs), len(values),
+                             f'#2780 every job in {relative} must own exactly one '
+                             'line-based runs-on hit; a flow-style job would otherwise '
+                             'silently escape the whitelist')
         # fix-r3（#2780 P2-a 主题 2）：守卫读的三个环境变量不许被任何工作流自己
         # 定义——step / job / workflow 任一层 env 一旦钉死 ImageOS / ImageVersion /
         # PDRS_IMAGE_GUARD_OS_RELEASE，守卫读到的就是自产假值，漂移永远不红（配对
@@ -2186,6 +2205,25 @@ class EnvironmentControls(unittest.TestCase):
                          workflow.replace('name: ci\n',
                                            'name: ci\n\nenv:\n  ImageOS: ubuntu24\n', 1),
                          '#2780 no workflow may define the guard env vars itself'))
+        # fix-r3（#2780 P2-a 主题 3 补遗 + anthropic boundary#2）：working-directory
+        # 漂移、同 job 重复守卫、flow 风格 job 绕过行级白名单——各自红在绑定断言。
+        self.assertEqual(workflow.count(self.runner_image_guard_anchor
+                                        + '        working-directory: .\n'), 2,
+                         '#2780 both guard steps pin working-directory at repo root')
+        ci_cases.append(('guard-working-directory-drift',
+                         workflow.replace(self.runner_image_guard_anchor
+                                          + '        working-directory: .\n',
+                                          self.runner_image_guard_anchor
+                                          + '        working-directory: src\n'),
+                         '#2780 the guard reads the workflow files from the '
+                         'repository root'))
+        ci_cases.append(('guard-duplicated',
+                         workflow.replace(shift_anchor, step + shift_anchor, 1),
+                         '#2780 exactly two runner image guard steps exist'))
+        # flow 风格 job 绕过行级白名单的配对负控走 pr-gate.yml 路由：ci.yml 侧的
+        # 行式 job 声明守卫（ci_jobs 的 unsupported job declaration）会先红，构造
+        # 不出只红在本断言上的 ci 变异——那层是 ci.yml 独立的既有防御，这里的牙
+        # 由 pr-gate.yml 路由证明（该文件无同款行式守卫）。
         self.check_ci_mutations(ci_cases,
                                 'test_runner_image_guard_steps_are_registered_and_identical',
                                 '#2780')
@@ -2204,6 +2242,16 @@ class EnvironmentControls(unittest.TestCase):
             ('pr-gate-runs-on-removed',
              gate_text.replace('    runs-on: ubuntu-24.04\n', ''),
              '#2780 must carry runs-on lines the guard can see'),
+            # fix-r3（anthropic boundary#2 配对负控）：flow 风格 job 的 runs-on 行
+            # 不在行首，行级白名单（shell 守卫与 Python 镜像同口径）扫不到——红在
+            # 「job 数 == runs-on 命中数」对账断言上。
+            ('pr-gate-flow-style-job-escapes-whitelist',
+             gate_text.replace('jobs:\n',
+                               'jobs:\n'
+                               '  x: {runs-on: ubuntu-latest, steps: '
+                               '[{run: true}]}\n', 1),
+             '#2780 every job in .github/workflows/pr-gate.yml must own '
+             'exactly one line-based runs-on hit'),
         ]
         self.check_ci_mutations(gate_cases,
                                 'test_runner_image_guard_steps_are_registered_and_identical',
