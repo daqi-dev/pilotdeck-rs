@@ -140,6 +140,16 @@
 `_shared/negative_control.py`（`mutation_suite` 与 `run()` 的判杀守卫）。
 `negative.py` / `*_negative.py` 命名的同族入口仍不在扫描面内（#1666 后续批次）。
 
+**名册防线机检的入口覆盖（#2773 fix-r3 登记）**：`manager-gateway` 的「先核对 verdict
+名册后发布」防线由 `test_negative_roster_guards.py` 行为级驱动机检（stub 执行层、
+真 `main()`；fix-r3 起驱动持 `tree_lock`，见该文件 docstring）。`memory-gateway` ·
+`snapshot-projection` · `sdk-mcp-session-tools` 三条同族入口带同形防线
+（`recorded != expected` ⇒ 只发 `roster-mismatch.json`、退 1、不发 summary），由同文件的
+**源锚点钉**机检（有序锚 + 内联杀伤自检：`if recorded != expected:` 常量化即红）。
+行为级驱动仍只覆盖 manager-gateway——前两个旧形入口的变异写入是裸 `Path.write_text`，
+无 stub 接缝（登记表驱动的行为级扩展与三态注入见 #2804；三入口 summary 载荷缺
+`selected` 见 #2805）。
+
 1. **分母是静态字面量，不是运行期表长度**。表后写 `EXPECTED_NAMES`，启动即
    `registered(表, EXPECTED_NAMES)` 逐项（含顺序与重复）比对，漂移就拒跑。用 `len(表)`
    当分母时，删掉一行只是把这一轮悄悄变短：summary 仍报 `N/N killed`；整表被清空则打印

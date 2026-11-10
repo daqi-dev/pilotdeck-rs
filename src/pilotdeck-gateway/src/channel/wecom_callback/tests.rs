@@ -1527,8 +1527,11 @@ async fn stop_after_stalled_request(
 /// request after reading it all.
 #[tokio::test]
 async fn oversize_post_closes_at_the_cap_with_zero_bytes() {
-    // 18991 / 18990 are unused by this module; 18993 belongs to the
-    // concurrent-dispatch test's "nothing listens here" qyapi address.
+    // 18990/18991 are the two cross-lane binds this suite shares with the
+    // feishu LARK constants (the 189xx ledger in
+    // `channel/sms/head_timeout_tests.rs` is the single source of truth);
+    // 18993 belongs to the concurrent-dispatch test's "nothing listens
+    // here" qyapi address.
     const PORT: u16 = 18991;
     let listener = stalled_server(
         PORT,
