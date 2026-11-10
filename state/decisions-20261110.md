@@ -52,3 +52,17 @@
 - 已执行：停派 p2batch-n/o 通道实装车道（撤单或停 worker）；p2batch-j/l（slack/always-on 非通道）不受影响。
 - 影响面：工作量 -13 张实装（约 15.5 人日出关键路径）；#1353「drain 全入口」的口径须同步收窄（后续在 #1353 登记口径：未实装通道不在 drain 范围，由本条人令背书）。
 - #1302 原正式记录与本条冲突时，**以本条（更新的人令）为准**；不回改 #1302 历史，本卡即覆盖证据。
+
+## Grok Bot 通道定位：备胎评审谱系，不做主力（AI 判定，依 11-10 01:1x 人令备案；应人问「还能不能用 grok bot」）
+
+- 通道实测（2026-11-10 23:4x）：`scripts/grokbot-call.py`（Cursor 个人 key，`CURSOR_ACCESS_TOKEN` 于 `.env.local`，直连 api.cursor.com）活性探测成功（回复 OK；首试 SSL 失败、数秒后重试成功，属代理切节点瞬断，与当晚 GitHub TLS 同源）。
+- 定位：独立谱系（xAI），可计非作者评审；但不在 fleet 四池、无 runner、接口未文档化、走个人 Cursor 账号无并发计量——**只当备胎**：① MM Token Plan 打满且重试仍 429 时顶第二家评审；② DS/MM 分歧需第三家仲裁时优先叫它（仲裁仍首选实测）。主力评审仍是 DS + MM。
+- 用法约束（沿用脚本头注释）：提示词先落文件、外发前过权限/密钥检查、原始输出必须贴全。
+
+## #1953 r49 停轮裁决：开 r50（scope 模型并集语义），硬停条件不变（AI 判定，依 11-10 01:1x 人令备案）
+
+- 卡点：r49 结构性轮全绿交付（9a1b4cf8a）后，DS 四角色评审报 P0×2/P1×4，probe-r49d 逐条实测仲裁全部确认，合计同族新 P0×6 / P1×5（探针与日志 `_tmp/20261109-issue-1953-revival/r49/probe-r49d.*`）。按 `state/decisions-20261110-longtail-closure-rule.md` 判据 3 车道停手回报（正确执行）。
+- 判断（为何不停收口）：6 个 P0（try 包裹 / 闭包内使用 / 嵌套 def 遮蔽×2 / `from operator import *` / 类体 import）与 3 个 store 族 P1 共享**单一根因**——`_import_binding_origins` 的 scope 模型（模块级只读 `tree.body`、函数 scope 单值 overwrite）不取并集。这是结构性第二层（改一处语义灭 9 洞），不是词汇枚举（memory「lexical-verdict-fix-nonconvergence」警示的逐轮补词形态）。r49 修的是「识别键」（字面属性链→绑定解析），r50 修的是「取值域」（单值→并集）——两层不同，判据 1 的结构性要求仍满足。
+- 执行：r50 = scope 模型并集语义重写（模块 + 嵌套 def + 类体 + try 块 + star import）+ match 族（MatchAs 洗白）+ store/mapping 族（ior 合并键 / from-imported 非限定 setitem / `_sys_modules_write_values` ior 写）当轮全修；修法类型声明仍「结构性」，附测试真实遍历的 scope×import 形态矩阵。
+- 硬停条件（不变）：r50 评审（DS+MM）再出**同族** P0/P1 → 停轮，#1953 按残差登记收口（已确认洞写进 README 残差清单 + 开 P2-跟进族承接），不再开 r51。尺子域下游（#2050 #2213 #1954 #2214）继续压后其收敛。
+- MM 评审排 00:50 错峰（Token Plan 午夜重置，四车道错峰 00:05/00:20/00:35/00:50）。
