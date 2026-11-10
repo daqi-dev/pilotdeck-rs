@@ -10,5 +10,6 @@
   "missingBehavior": "No automatic browser/SDK provisioning in native source install. Existing third-party SDK and browser are configured explicitly; actual launch remains a separate acceptance requirement.",
   "licenseFile": "../../../LICENSE",
   "sourceLicenseSha256": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
-  "adaptation": "Rust source installation uses the existing configured MCP server override; original baseline source/hash above remain provenance, not a claim of byte-identical adapted skill text."
+  "adaptation": "Rust source installation uses the existing configured MCP server override; original baseline source/hash above remain provenance, not a claim of byte-identical adapted skill text.",
+  "adaptationStatus": "A6.5-NATIVE-INSTALL-TEXT-001: 未批准，非已接受差异；不把交付哈希作为固定 TS 文本金样。"
 }

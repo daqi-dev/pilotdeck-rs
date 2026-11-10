@@ -2,9 +2,9 @@
 
 ## 产品默认技能
 
-本目录的 32 项产品技能来自 [OpenBMB/PilotDeck](https://github.com/OpenBMB/PilotDeck/tree/cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85/skills)，固定提交 `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`。2026-11-09 用户明确授权仅复用这 32 项旧版技能资产，随源码安装交付。109 个文件按原字节及可执行位保留，包括引用材料、辅助脚本、运行依赖声明和测试；导入不执行脚本或安装技能的外部依赖。
+本目录的 32 项产品技能来自 [OpenBMB/PilotDeck](https://github.com/OpenBMB/PilotDeck/tree/cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85/skills)，固定提交 `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`。2026-11-09 用户明确授权仅复用这 32 项旧版技能资产，随源码安装交付。109 个文件的来源与可执行位保留，包括引用材料、辅助脚本、运行依赖声明和测试。其中文件 `audio-transcription/SKILL.md` 与 `browser-use/SKILL.md` 的安装指引已适配 Rust 源码交付；其余 107 个文件保留上游原字节。导入不执行脚本或安装技能的外部依赖。
 
-逐文件来源 Git blob、SHA-256、大小及模式见 [upstream-assets.json](upstream-assets.json)。上游根许可证与本库 [LICENSE](../LICENSE) 字节相同（AGPL-3.0）；各资产内原有的许可证及署名全部保留，包括 [docx/LICENSE](docx/LICENSE)、[frontend-slides/LICENSE](frontend-slides/LICENSE)、[skill-creator/LICENSE.txt](skill-creator/LICENSE.txt)。各项的具体许可仍以对应文件为准。
+逐文件交付 Git blob、SHA-256、大小及模式见 [upstream-assets.json](upstream-assets.json)；适配文件的 `upstream` 字段另存上游原字节身份，`adaptation` 明示差异。交付完整性检查不代表 TS 模型输入逐字相同；安装文本差异见 [A6.5-NATIVE-INSTALL-TEXT-001](../specs/gateway-parity/diffs/A6.5-NATIVE-INSTALL-TEXT-001.md)，尚非已接受豁免。上游根许可证与本库 [LICENSE](../LICENSE) 字节相同（AGPL-3.0）；各资产内原有的许可证及署名全部保留，包括 [docx/LICENSE](docx/LICENSE)、[frontend-slides/LICENSE](frontend-slides/LICENSE)、[skill-creator/LICENSE.txt](skill-creator/LICENSE.txt)。各项的具体许可仍以对应文件为准。
 
 源码安装使每一代可执行文件读取同代 `source/skills`，更新随 `current` 原子切换，旧代技能随旧代源码保留。显式指定外部技能目录时继续使用该目录，不以随包技能覆盖它；技能依赖及凭据仍按各项说明配置。
 

@@ -3,7 +3,7 @@
   "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
   "skill_count": 32,
   "file_count": 109,
-  "total_bytes": 793106,
+  "total_bytes": 794034,
   "source_root_license": {
     "path": "../LICENSE",
     "sha256": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0"
@@ -47,9 +47,19 @@
     {
       "path": "audio-transcription/SKILL.md",
       "mode": "100644",
-      "git_blob": "29f85808b7189dbbb566fc5dbd119ecf2ab7be81",
-      "bytes": 2214,
-      "sha256": "71479fd08d55660e4816bb213838ab3f21b09e1f855c8958c4b3906ac950d805"
+      "git_blob": "bde7f9ab5f0a8759e4f22e8544eef065726254f2",
+      "bytes": 2834,
+      "sha256": "a267e22c21b534580147d5e4fb0d4a45202b5d2e5dab6a478f87841d6a6d964f",
+      "upstream": {
+        "git_blob": "29f85808b7189dbbb566fc5dbd119ecf2ab7be81",
+        "bytes": 2214,
+        "sha256": "71479fd08d55660e4816bb213838ab3f21b09e1f855c8958c4b3906ac950d805"
+      },
+      "adaptation": {
+        "reason": "Rust 源码安装交付不包含旧 TypeScript npm 安装器；说明实际同代源码安装或既有第三方依赖的入口。",
+        "difference": "A6.5-NATIVE-INSTALL-TEXT-001",
+        "status": "未批准，非已接受差异；当前字节为交付完整性检查，不作为 TS 等价金样。"
+      }
     },
     {
       "path": "bear-notes/SKILL.md",
@@ -68,9 +78,19 @@
     {
       "path": "browser-use/SKILL.md",
       "mode": "100644",
-      "git_blob": "a57e20dc781875bef6207603545e49047f4c9e93",
-      "bytes": 5867,
-      "sha256": "02fa61bc49e3b7a70938a92de5e1d62f4530bf551699b80631ed1122ffd23e14"
+      "git_blob": "2811cc1cff65a1b3b42ad6fd70a2da576d6efbeb",
+      "bytes": 6175,
+      "sha256": "4ec5779f1e14b3e6db8761b7c1785a90ca91f6a3b81db70fd7b2da3da777e762",
+      "upstream": {
+        "git_blob": "a57e20dc781875bef6207603545e49047f4c9e93",
+        "bytes": 5867,
+        "sha256": "02fa61bc49e3b7a70938a92de5e1d62f4530bf551699b80631ed1122ffd23e14"
+      },
+      "adaptation": {
+        "reason": "Rust 源码安装交付不包含旧 TypeScript npm 安装器；说明实际同代源码安装或既有第三方依赖的入口。",
+        "difference": "A6.5-NATIVE-INSTALL-TEXT-001",
+        "status": "未批准，非已接受差异；当前字节为交付完整性检查，不作为 TS 等价金样。"
+      }
     },
     {
       "path": "diagram-maker/SKILL.md",
@@ -772,5 +792,6 @@
       "bytes": 1262,
       "sha256": "ff8a49768945e7929a65058a1843de11d170551a8b04b6d7c78f0f8b54343817"
     }
-  ]
+  ],
+  "upstream_total_bytes": 793106
 }

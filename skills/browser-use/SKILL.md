@@ -24,7 +24,7 @@ fi
 
 If that check reports an existing Chrome for Testing cache, proceed with browser automation directly. Repeated browser downloads are slow, brittle on restricted networks, and unnecessary when the cache is already populated.
 
-Only install the browser when all of the following are true:
+For a separately packaged TypeScript runtime that includes its own installer, consider browser installation only when all of the following are true:
 
 - The task truly requires an interactive browser rather than HTTP, curl, requests, or file parsing.
 - The cache check shows Chrome for Testing is missing, or an actual browser-use launch failed because the browser executable is missing.
@@ -38,7 +38,7 @@ Separately packaged TypeScript installations may still provide their own browser
 
 For those TypeScript installers, repeated installs are safe only when the installer can confirm the cache first. In task containers or time-limited jobs, avoid ad hoc commands such as `playwright install chromium` unless the missing-browser error is confirmed and installation time is acceptable.
 
-If the download is slow or blocked, configure your network proxy first and rerun the install command. Browser automation is optional; PilotDeck core chat, files, skills, and settings work without it.
+For those TypeScript installers, if the download is slow or blocked, configure the network proxy and retry that existing installer. A Rust source generation instead requires the prepared SDK and browser paths above. Browser automation is optional; PilotDeck core chat, files, skills, and settings work without it.
 
 ## Runtime Configuration
 

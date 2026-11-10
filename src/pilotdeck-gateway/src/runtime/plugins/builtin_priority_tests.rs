@@ -242,8 +242,8 @@ async fn actual_browser_builtin_asset_mcp_disable_and_whole_plugin_override() {
         use sha2::Digest as _;
         assert_eq!(
             format!("{:x}", sha2::Sha256::digest(skills[0].content.as_bytes())),
-            "bcac88f26a6fa11eddc788ca80b1b1047d1d879318cdef20567071f61318da9c",
-            "native source installer path adaptation; model-visible TS text difference is declared"
+            "8e8a81a5eceba123f9ec927da2088ac66b5ec161ddb097158f515ec40e708d2f",
+            "delivery integrity only; A6.5-NATIVE-INSTALL-TEXT-001 remains an unapproved TS text difference"
         );
     }
 

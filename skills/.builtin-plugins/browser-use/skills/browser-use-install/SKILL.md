@@ -5,7 +5,7 @@ description: Use before browser-use, Playwright MCP, web browsing, browser autom
 
 # Browser-Use Install
 
-PilotDeck Desktop ships browser-use without a bundled Chrome browser. When browser automation is needed, install the Playwright Chrome for Testing browser into the user's writable PilotDeck data directory, then retry the browser-use tool.
+The Rust source generation provides the browser-use integration and expects an existing Playwright MCP SDK and browser. Locate those dependencies, configure their absolute paths, and verify an actual browser-use launch before treating the integration as ready.
 
 ## Install
 
@@ -38,6 +38,6 @@ For an offline Rust source installation, supply the existing SDK and browser pat
 
 Separately packaged TypeScript desktop runtimes retain their own browser installer and mirror/archive settings. Use those runtime-specific commands only when their referenced installer actually exists in that runtime.
 
-## After Install
+## After Configuration
 
-Retry the browser-use request after the install succeeds. If the current MCP session still reports the old missing-browser error, tell the user to send the same request once more so PilotDeck can start a fresh browser-use session.
+Retry the browser-use request after the configured SDK and browser launch succeeds. If the current MCP session still reports the old missing-browser error, tell the user to send the same request once more so PilotDeck can start a fresh browser-use session.
