@@ -5852,3 +5852,6 @@ r76 fmt/strict clippy/四bin及35历史定向通过；已落盘r72四生产宿�
 
 
 04:08增记：稳定59e已经gitleaks推到Draft2786并核远端头，PR说明保留未完成门。cb8 19渠道对应9外部消费者+23真实Server/生命周期通过，SOP双端三进程通过；额外3HTTP模型列表/OPTIONS/企微GET已真实TS/Rust对齐，逐入口仍保留部分/未验证。网络隔离用现有本地Docker镜像network-none（不下载），四类非回环负控+loopback/Node/strace/pidfd/冻结校验均通过后，原sampler已重新采集。根宿主59e permission oracle6PASS/1忽略、Gateway完整lib在跑，后续CLI。新本地产品批收FunASR真实13case标准fixture/legacy marker原生适配/子孙进程组取消、唯一skills根发现、源安装脚本与飞书迟到模型写回屏障测试；固定FunASR/llama真源码cb8编译与安装后ldd通过，无预编译或模型下载。#2916两家首审发现旧负控/聚合/平台登记脱节，acceptance正在整组补齐，冻结未注册不假PASS。所有新源码待同头cb8编译，原正式FAIL保留。
+
+
+04:40增记：59e的19渠道/SOP与七外部渠道在途reload已采到真实终态屏障；#1356固定TS源码→Rust新写→TS读回→Rust再写/冷读正常格通过，真实WS排空失败格禁止下一writer且新数据保全，TS回滚仅Cron格式重写/迁移marker新增明确留证。59e公开101真实wire已调用（75成功/6不可用/20其他显式错误保留），不冒称101功能全PASS；完整Gateway lib仍在cb8运行，随后CLI。两家产品r2发现技能清单/旧npm默认/物理exe安装路径与oracle复算出口遗漏，root已收清单来源及取消锚点修复，core补其余；Linux9件旧消费者修复已commit0a266fdaa，r2两家在跑，冻结尚未登记。native on/off均因默认浏览器MCP失败exec而INCOMPLETE，原trace保留；7b979ff9d使受控profile显式禁三builtin，不改72判据/parser，默认MCP另验。渠道身份/附件候选eba6bf041与技能完整性456fedfb4待新头构建。本轮核main8a总差异又发现两份已合入决策卡缺失，现按原字节补回，历史决策不丢；无产品文件删除。主线/前端/旧快照未迁移，本机无构建；接续证据主仓_tmp/20261111-gateway-closeout。
