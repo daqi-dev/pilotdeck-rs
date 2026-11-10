@@ -29,6 +29,21 @@ runner = Path(__file__).resolve()
 e2e_runner = fixture.parent.parent / 'native-session-e2e/negative_controls.py'
 r11 = fixture.parent.parent / 'native-witness/test_r11.py'
 PUBLISH_DIR = root / '.negctl-publish'
+# fix-r1 (#1528 review P2): the guarded branch's whole-run parity lease is
+# acquired with an explicit budget instead of the mutating_sources default
+# (900 s) -- queuing behind another tree's full per-case lease window must
+# not INVALID the run before the first mutant is even written. The budget
+# is derived from this runner's own single-case hold upper bound (slot wait
+# + cargo no-run build + three bound-test runs: positive, negative,
+# restored) plus one bound-test margin; that hold (1890 s) already covers
+# the e2e family's per-case window (PER_CASE_LEASE_SECONDS = 1800 s), the
+# longest window this runner can queue behind. A peer's longer whole-run
+# lease still fails closed within this budget.
+SLOT_WAIT_SECONDS = 900
+BUILD_SECONDS = 900
+BOUND_TEST_SECONDS = 30
+CASE_HOLD_SECONDS = SLOT_WAIT_SECONDS + BUILD_SECONDS + 3 * BOUND_TEST_SECONDS
+LEASE_ACQUIRE_SECONDS = CASE_HOLD_SECONDS + BOUND_TEST_SECONDS
 
 
 def write_atomic(path, data):
@@ -89,6 +104,10 @@ cases = [
     # #1530: the literals above track the frozen calibration total; the pin
     # test fails the moment they go stale, and this mutant proves it can fail.
     ('stale-hardcoded-count', runner, 'len(se' + 'en) != 360', 'len(seen) != 361', 'test_hardcoded_counts_track_calibration'),
+    # fix-r1 (#1528 review): the stale-literal proof above only covered the
+    # measurement half of the pin; the unchecked half needs its own, or
+    # weakening that comparison alone would keep every control green.
+    ('stale-hardcoded-unchecked-count', runner, "len(result['uncheckedBoundar" + "ies']) == 360", "len(result['uncheckedBoundaries']) == 361", 'test_hardcoded_counts_track_calibration'),
     ('registry-wait-control-without-mock', r11, 'fixture._collect(output, real_settle=True, after_final=after_final,\n                                 synthetic_stimuli=True)', 'fixture._collect(output, real_settle=True, after_final=after_final,\n                                 synthetic_stimuli=False)', 'test_registry_free_settle_synthetic_control'),
     ('memory-plan-launches-cargo', runner, '            if not args.memory:\n                slot = wait_for_slot(', '            if True:\n                slot = wait_for_slot(', 'test_memory_runners_do_not_compile_tree'),
     ('memory-e2e-launches-cargo', e2e_runner, '            if not memory:\n                slot = wait_for_slot(', '            if True:\n                slot = wait_for_slot(', 'test_memory_runners_do_not_compile_tree'),
@@ -137,6 +156,7 @@ messages = {
     'empty-before-count-omitted': '#1368 empty-before data controls cover every ordered measurement',
     'hardcoded-unchecked-count': '#1368 unchecked measurement boundaries cannot report PASS',
     'stale-hardcoded-count': '#1530 hardcoded count mutants track the frozen calibration total',
+    'stale-hardcoded-unchecked-count': '#1530 hardcoded count mutants track the frozen calibration total',
     'registry-wait-control-without-mock': '#1368 registry-free settle controls explicitly attest synthetic stimuli',
     'memory-plan-launches-cargo': '#1368 memory runners never launch cargo or claim a mutated build',
     'memory-e2e-launches-cargo': '#1368 memory runners never launch cargo or claim a mutated build',
@@ -244,7 +264,7 @@ def main():
     def run(label, test, mutant=None):
         command = ([sys.executable, '-I', __file__, '--memory-run', mutant] if mutant else
                    [sys.executable, '-I', str(fixture), full_test(test)])
-        result = run_owned(command, cwd=root, env=env, timeout=30)
+        result = run_owned(command, cwd=root, env=env, timeout=BOUND_TEST_SECONDS)
         (out / (label + '.log')).write_text(result.stdout + result.stderr)
         return result
 
@@ -262,11 +282,11 @@ def main():
             if not args.memory:
                 write_atomic(path, changed.encode())
             if not args.memory:
-                slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
+                slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=SLOT_WAIT_SECONDS)
                 (out / (name + '-slots.log')).write_text(slot.stdout + slot.stderr)
                 build = run_owned(['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
                                    '-p', 'pilotdeck-gateway', '--test', 'native_stimulus_plan', '--no-run'],
-                                  cwd=root, env=env, timeout=900)
+                                  cwd=root, env=env, timeout=BUILD_SECONDS)
                 (out / (name + '-compile.log')).write_text(build.stdout + build.stderr)
                 if build.returncode != 0:
                     raise ValueError('no-run failed')
@@ -297,7 +317,7 @@ def main():
             paths = [source, driver, collector, fixture, measurement, runner, e2e_runner, r11,
                      Path(__file__).with_name('preregistration.mjs'),
                      root / 'src/pilotdeck-gateway/tests/native_stimulus_plan.rs']
-            with mutating_sources(root, paths) as originals:
+            with mutating_sources(root, paths, lock_timeout=LEASE_ACQUIRE_SECONDS) as originals:
                 for row in selected:
                     one(row)
     except BaseException as error:

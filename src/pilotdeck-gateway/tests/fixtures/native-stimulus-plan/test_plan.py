@@ -348,6 +348,10 @@ class PlanTests(unittest.TestCase):
         # option). If session-calibration.json ever changes, the literals go
         # stale and the mutants stop exercising their bound tests; this pin
         # fails first, before any control run can silently go hollow.
+        # fix-r1 (#1528 review): both halves of the pin are also bound to a
+        # stale-literal mutant (measurement and unchecked), so each half is
+        # provably able to go red, and the two stale rows are pinned here so
+        # they cannot be dropped without this test noticing.
         marker = '#1530 hardcoded count mutants track the frozen calibration total'
         try:
             runner = Path(__file__).with_name('negative_controls.py')
@@ -360,6 +364,12 @@ class PlanTests(unittest.TestCase):
                             == 'if seen != expected or len(seen) != %d:' % frozen
                             and rows['hardcoded-unchecked-count'][3]
                             == "len(result['uncheckedBoundaries']) == %d" % frozen, marker)
+            self.assertTrue(rows['stale-hardcoded-count'][3] == 'len(seen) != %d' % (frozen + 1)
+                            and rows['stale-hardcoded-unchecked-count'][3]
+                            == "len(result['uncheckedBoundaries']) == %d" % (frozen + 1)
+                            and rows['stale-hardcoded-count'][4]
+                            == rows['stale-hardcoded-unchecked-count'][4]
+                            == 'test_hardcoded_counts_track_calibration', marker)
         except Exception as error:
             self.fail(marker + ': ' + repr(error))
 
