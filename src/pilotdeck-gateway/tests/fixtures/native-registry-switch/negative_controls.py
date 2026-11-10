@@ -173,9 +173,17 @@ def main():
               f'(EXPECTED_NAMES roster matched); {EXPECTED_TOTAL} unique anchors '
               f'and assertion bindings: OK')
         return 0
+    # #2572 fix-r1: a mistyped or repeated name is a never-started refusal
+    # (exit 2) that names the offending entry, not a bare SystemExit string
+    # (Python exits 1 with one, reading as "it ran and was not green").
+    repeated = sorted({name for name in args.selected
+                       if args.selected.count(name) > 1})
+    if repeated:
+        refuse('#1369 repeated mutation name: ' + ', '.join(repeated))
+    unknown = sorted(set(args.selected) - {row[0] for row in mutations})
+    if unknown:
+        refuse('#1369 unknown mutation name: ' + ', '.join(unknown))
     selected = [row for row in mutations if not args.selected or row[0] in args.selected]
-    if not selected or (args.selected and len(selected) != len(args.selected)):
-        raise SystemExit('#1369 unknown or repeated mutation')
     if not args.output or not os.environ.get('CARGO_TARGET_DIR'):
         raise SystemExit('#1369 output and caller CARGO_TARGET_DIR required')
     output = Path(args.output).resolve()
@@ -270,6 +278,9 @@ def main():
     temporary = output / 'summary.json.tmp'
     temporary.write_text(json.dumps(
         {'controls': results, 'counts': counts, 'rosterTotal': EXPECTED_TOTAL,
+         # #2572 fix-r1: record what actually ran (manager-gateway #2309 fix-r3
+         # precedent) — a shrunken run is auditable from the summary alone.
+         'selected': [row[0] for row in selected],
          'guardedSha256': guarded_sha256, 'sidecarSha256': sidecar_sha256}, indent=2) + '\n')
     temporary.replace(output / 'summary.json')
     print(json.dumps({'controls': results, 'counts': counts}), flush=True)

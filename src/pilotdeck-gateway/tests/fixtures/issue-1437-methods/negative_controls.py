@@ -331,8 +331,9 @@ def main():
                        if selected_names.count(name) > 1})
     if repeated:
         refuse('#1437 repeated mutation name: ' + ', '.join(repeated))
-    if set(selected_names) - {row[0] for row in mutations}:
-        refuse('#1437 unknown mutation name')
+    unknown = sorted(set(selected_names) - {row[0] for row in mutations})
+    if unknown:
+        refuse('#1437 unknown mutation name: ' + ', '.join(unknown))
     selected = [Case(*row) for row in mutations
                 if not selected_names or row[0] in selected_names]
     out = Path(sys.argv[1]).resolve()
