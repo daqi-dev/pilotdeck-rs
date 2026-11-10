@@ -834,7 +834,7 @@ fn open_host_guard() -> std::io::Result<std::fs::File> {
         .open(HOST_LOCK_GUARD)?;
     let stat = rustix::fs::fstat(&guard)?;
     if rustix::fs::FileType::from_raw_mode(stat.st_mode) != rustix::fs::FileType::RegularFile
-        || u64::from(stat.st_nlink) != 1
+        || stat.st_nlink != 1
     {
         return Err(std::io::Error::other(format!(
             "{HOST_LOCK_GUARD} is not a lone regular file"
