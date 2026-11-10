@@ -2861,15 +2861,26 @@ fn empty_steps_cannot_be_zero_coverage() {
 /// `start` runs ([`effective_webhook_host`]). Only the empty host binds the
 /// dual-stack `::` (`bind_listener`, mod.rs:815-845), so only there can the
 /// v6 half below ask its question; a fixed host (every recorded case is
-/// `127.0.0.1` or the unreachable `203.0.113.7`) never touches IPv6, and a
-/// v6-only occupier used to fail the probe although the product's own
-/// `bind(("127.0.0.1", port))` succeeds — measured on both sides
-/// (`_tmp/20261026-issue-2691/probes/`: a v6-only holder of `[::]:P` makes
-/// the `::` bind `EADDRINUSE` while the 127.0.0.1 bind and Node's
-/// `listen(127.0.0.1, P)` both succeed). The v4 half stays on 127.0.0.1 for
-/// every host: it watches the address the replay's own probe traffic dials
-/// (`raw_request` / `raw_until_close` / the `connect` steps), not the
-/// product's bind address.
+/// `127.0.0.1`, the unreachable `203.0.113.7`, or the empty string —
+/// `empty-webhook-host`, the one recorded shape that takes the `::`
+/// wildcard) never touches IPv6, and a v6-only occupier used to fail the
+/// probe although the product's own `bind(("127.0.0.1", port))` succeeds —
+/// measured on both sides (`_tmp/20261026-issue-2691/probes/`: a v6-only
+/// holder of `[::]:P` makes the `::` bind `EADDRINUSE` while the 127.0.0.1
+/// bind and Node's `listen(127.0.0.1, P)` both succeed). The v4 half stays
+/// on 127.0.0.1 for every host: it watches the address the replay's own
+/// probe traffic dials (`raw_request` / `raw_until_close` / the `connect`
+/// steps), not the product's bind address.
+///
+/// #2691 fix-r2 (review r2 concurrency#2, P1): the halves divide the work by
+/// the host the product binds — the v6 half (empty host only) asks who holds
+/// the dual-stack `::` wildcard, and the bind probe after the connect half
+/// (fixed host only) asks whether the product's own `bind((host, port))`
+/// would fail. The connect probe cannot answer that second question: an
+/// occupier that never listens refuses instead of answering, and a
+/// **dual-stack** `[::]:port` holder covers the IPv4 port too, so exactly
+/// the bind the product issues fails and `start` swallows the loss into the
+/// no-op handle (mod.rs:606-628) — the shape the probe below catches.
 async fn ensure_replay_port_free(port: u16, host: &str) {
     if crate::mutants::on("sms-port-preflight") {
         return;
@@ -2949,6 +2960,41 @@ async fn ensure_replay_port_free(port: u16, host: &str) {
         Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
         Err(error) => {
             panic!("#1339 cannot prove port {port} is free on IPv4 ({error}); refusing to replay")
+        }
+    }
+
+    // #2691 fix-r2 (review r2 concurrency#2, P1): the fixed host's own bind.
+    // A std `TcpListener::bind((host, port))` has the same option shape as
+    // the product's `bind_listener` on Unix (mio sets `SO_REUSEADDR` on the
+    // tokio listener, exactly like std), so this probe's verdict is the
+    // product's verdict; `SO_REUSEADDR` is also what keeps it clear of the
+    // previous replay's `TIME_WAIT` (#1339 fix-r6). Measured on this host
+    // (`_tmp/20261026-issue-2691/fix-r2/probes/bind-probe-errno.log`):
+    //   a v6-only holder of `[::]:P`     -> Ok (the product's v4 bind
+    //      succeeds there too, so the v6_only_occupier case stays green)
+    //   a dual-stack holder of `[::]:P`  -> EADDRINUSE (the connect probe
+    //      above refused — the holder never listens — so this bind is the
+    //      only half that sees it)
+    //   a host this machine does not own -> EADDRNOTAVAIL (`203.0.113.7`,
+    //      whose recording itself expects the product's bind to fail —
+    //      `start-host-unavailable` — so there is nothing local to probe
+    //      and the replay must proceed)
+    // Anything the probe cannot classify aborts the replay, the same
+    // fail-closed posture both halves above take.
+    if !host.is_empty() && !crate::mutants::on("sms-port-preflight-bind-probe-skipped") {
+        match std::net::TcpListener::bind((host, port)) {
+            Ok(listener) => drop(listener),
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => panic!(
+                "#1339 port {port} is already bound on {host}: the product's own \
+                 bind would fail and start would degrade to the no-op handle — \
+                 an occupier the connect probe cannot see holds it"
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::AddrNotAvailable => {}
+            Err(error) => {
+                panic!(
+                    "#1339 cannot prove port {port} is bindable on {host} ({error}); refusing to replay"
+                )
+            }
         }
     }
 }
@@ -3032,17 +3078,21 @@ fn v6_wildcard_state(port: u16) -> V6Port {
 /// #2691: the host the product's `bind_listener` will bind for a case — the
 /// same `String(webhookHost ?? DEFAULT_HOST)` coalesce `start` runs
 /// (mod.rs:554-557), reusing the product's own `nullish` / `js_string_of`
-/// instead of a hand-built twin (a non-string host coerces exactly like the
-/// channel coerces it). The preflight must probe this address, not a
-/// lookalike: an empty host is the only shape that binds the dual-stack
-/// `::`, every other host binds that host alone and cannot collide with a
-/// v6-only occupier.
+/// and the product's own [`DEFAULT_HOST`] constant instead of a hand-built
+/// twin (a non-string host coerces exactly like the channel coerces it).
+/// The preflight must probe this address, not a lookalike: an empty host is
+/// the only recorded shape that binds the dual-stack `::`, and the other
+/// hosts this fixture records are fixed IPv4 addresses that cannot collide
+/// with a v6-only occupier. A hostname or IPv6 literal host would still
+/// resolve through the product's `bind((host, port))` — the bind probe in
+/// [`ensure_replay_port_free`] asks that question directly, so this helper
+/// does not need to predict the answer.
 fn effective_webhook_host(extra: Option<&Value>) -> String {
     let field = extra
         .and_then(|extra| extra.get("webhookHost"))
         .map_or(JsValue::Undefined, to_js);
     let host = if nullish(&field) {
-        JsValue::from("127.0.0.1")
+        JsValue::from(DEFAULT_HOST)
     } else {
         field
     };
@@ -3071,6 +3121,34 @@ fn assert_bound_listener(shared: &Arc<SmsShared>, port: u16) {
          race with an occupier the preflight could not see, so this pin would \
          measure a foreign listener"
     );
+}
+
+/// #2691 fix-r2 (review r2 concurrency#3 / boundary#2 / sibling#2): does this
+/// recording itself show a live listener? The product logs
+/// `sms: Twilio webhook http://…` only after a successful bind and listen,
+/// so the cells that expect `start` to degrade to the no-op handle — the
+/// `sms: missing config`, `sms: twilio init failed` and
+/// `sms: HTTP server failed` shapes (`start-missing-config`,
+/// `start-twilio-init-failed`, `start-port-busy`, `start-port-out-of-range`,
+/// `start-port-nan`, `start-host-unavailable`; `port-busy-preflight` too,
+/// though its replay never reaches `start` — the preflight fires first) —
+/// never record that line. [`assert_bound_listener`] runs only for the cells
+/// that do: the discriminator anchors the positive evidence (a bound
+/// listener in the recording), not an enumeration of failure modes, so a
+/// future cell that fails to start in a new way cannot turn the guard
+/// into a false red.
+fn expects_live_listener(case: &Value) -> bool {
+    recorded_expected(case)
+        .and_then(|expected| expected.get("logs"))
+        .and_then(Value::as_array)
+        .is_some_and(|logs| {
+            logs.iter().any(|log| {
+                log.as_array()
+                    .and_then(|pair| pair.get(1))
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| text.starts_with("sms: Twilio webhook http://"))
+            })
+        })
 }
 
 /// #1339 fix-r12 (P2, Codex r11 #1 / minimax simplify r11 #2): pin the
@@ -3259,6 +3337,10 @@ async fn replay_body_read_timeout(case: &Value, port: u16) {
         record_unhandled: None,
         request_timeout: Some(INJECTED_DEADLINE),
     });
+    // #2691 fix-r2: same post-start bind proof as the replay driver — the
+    // recording expects a live 408 answer, so a start that lost the bind must
+    // not fall through to the refused-connect mismatch silently.
+    let shared = channel.shared.clone();
     let handle = bounded(
         "body-read-timeout start",
         channel.start(ChannelStartDeps {
@@ -3270,6 +3352,8 @@ async fn replay_body_read_timeout(case: &Value, port: u16) {
     )
     .await
     .expect("#1901 start");
+    drop(channel);
+    assert_bound_listener(&shared, port);
     let mut stream = bounded(
         "body-read-timeout connect",
         TcpStream::connect(("127.0.0.1", port)),
@@ -3352,6 +3436,10 @@ async fn replay_named(name: &str) {
     // 127.0.0.1 -> the fixed host that never touches IPv6).
     let host = effective_webhook_host(recorded_extra(&case));
     ensure_replay_port_free(port, &host).await;
+    // #2691 fix-r2: the post-start guard below asserts a live listener, so
+    // it runs only for the cells whose recording shows one
+    // ([`expects_live_listener`]).
+    let live_listener_expected = expects_live_listener(&case);
     if name == "body-read-timeout" {
         // #1901: the recorded TS answer arrives only after Node's full 300 s
         // `requestTimeout`, so the cell is replayed through a shortened
@@ -3433,6 +3521,11 @@ async fn replay_named(name: &str) {
         record_unhandled: Some(record_unhandled),
         request_timeout: None,
     });
+    // #2691 fix-r2: the strong-count guard handle. The channel stays alive
+    // (the `cron` steps below call `channel.deliver_cron_result`), so it is
+    // not dropped — a started channel counts channel + handle + accept task
+    // against the no-op handle's single owner.
+    let shared = channel.shared.clone();
     let handle = channel
         .start(ChannelStartDeps {
             config: None,
@@ -3442,6 +3535,9 @@ async fn replay_named(name: &str) {
         })
         .await
         .expect("#1339 start");
+    if live_listener_expected {
+        assert_bound_listener(&shared, port);
+    }
 
     for step in steps {
         match step["op"].as_str().expect("#1339 step op") {
@@ -3918,7 +4014,13 @@ async fn pin_channel(
         record_unhandled: None,
         request_timeout: None,
     });
-    channel
+    // #2691 fix-r2 (review r2 concurrency#3 / boundary#2 / sibling#2): the
+    // same post-start bind proof the fixed-port pins run — a #2152 pin whose
+    // start lost the bind race would silently measure a foreign listener
+    // byte-for-byte (the occupier could be another worktree replaying the
+    // same oracle). The return value is unchanged.
+    let shared = channel.shared.clone();
+    let handle = channel
         .start(ChannelStartDeps {
             config: None,
             report_status: None,
@@ -3926,7 +4028,10 @@ async fn pin_channel(
             turn_gateway: None,
         })
         .await
-        .expect("#2152 start for the parser-admission pin")
+        .expect("#2152 start for the parser-admission pin");
+    drop(channel);
+    assert_bound_listener(&shared, port);
+    handle
 }
 
 /// One recorded case's first request step, rebuilt as wire bytes.
@@ -5659,8 +5764,9 @@ async fn json_null_body_is_unhandled_destroy() {
     // sat inside the wecom-callback golden replay segment (18900–18921),
     // held only by the fixture's documented courtesy of skipping 18901 —
     // moved out to the free gap above that segment, same policy as the
-    // 200/404 pins (18923/18922), the head-timeout ports (18924/18925)
-    // and the #2152 parser-admission pins (18927/18928).
+    // 200/404 pins (18923/18922), the head-timeout ports (18924/18925),
+    // the #2152 parser-admission pins (18927/18928) and the #2691
+    // port-guard cases (18929–18931).
     // #2691: this pin's extra carries no `webhookHost`, so the effective
     // host is the `127.0.0.1` default — the fixed-host shape.
     let extra = json!({
@@ -5862,7 +5968,12 @@ fn port_busy_on_ipv6_preflight_fails_fast() {
 /// negative control.
 #[test]
 fn v6_only_occupier_does_not_block_the_fixed_127_0_0_1_host() {
-    const PORT: u16 = 18927;
+    // #2691 fix-r2 (review r2, three roles independently): 18927 collided
+    // with the #2152 parser-admission pin `unknown_method_is_the_bare_parser_400`
+    // under nextest's default parallelism — moved into the free gap, keeping
+    // the ledger in `head_timeout_tests.rs` in sync (18929 here, 18930 for the
+    // TOCTOU case, 18931 for the dual-stack preflight case below).
+    const PORT: u16 = 18929;
     // A genuine v6-only holder of `[::]:PORT`, bound without listening (the
     // Q2 shape of `port_busy_on_ipv6_preflight_fails_fast`). tokio 1.48's
     // `TcpSocket` cannot set `IPV6_V6ONLY` and the crate forbids `unsafe`,
@@ -5894,7 +6005,7 @@ fn v6_only_occupier_does_not_block_the_fixed_127_0_0_1_host() {
         .build()
         .expect("#2691 preflight runtime build");
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        runtime.block_on(ensure_replay_port_free(PORT, "127.0.0.1"))
+        runtime.block_on(ensure_replay_port_free(PORT, DEFAULT_HOST))
     }));
     if let Err(payload) = panicked {
         let text = payload
@@ -5985,7 +6096,13 @@ fn v6_only_occupier_does_not_block_the_fixed_127_0_0_1_host() {
 /// switch disarms the guard; this test is then the one that must fail.
 #[tokio::test]
 async fn a_pin_start_that_loses_the_bind_race_is_caught_after_start() {
-    const PORT: u16 = 18928;
+    // #2691 fix-r2 (review r2, three roles independently): 18928 collided
+    // with the #2152 parser-admission pin
+    // `missing_host_is_the_headless_parser_400` — and this case deliberately
+    // holds the port, so the collision was a guaranteed cross-cell break
+    // under nextest's default parallelism, not a scheduling race. Moved to
+    // 18930; the ledger in `head_timeout_tests.rs` stays in sync.
+    const PORT: u16 = 18930;
     let extra = json!({
         "accountSid": "AC1", "authToken": "tok", "phoneNumber": "+15550000",
         "webhookPort": PORT,
@@ -6048,6 +6165,98 @@ async fn a_pin_start_that_loses_the_bind_race_is_caught_after_start() {
         .expect("#2691 stop the no-op handle");
     drop(occupier);
     settle().await;
+}
+
+/// #2691 fix-r2 (review r2 concurrency#2, P1): parameterizing the preflight
+/// by the effective host dropped more than the false red — on a host where a
+/// dual-stack `[::]:port` holder makes the product's own fixed-host bind
+/// fail (measured on this Linux host,
+/// `_tmp/20261026-issue-2691/fix-r2/probes/bind-probe-errno.log`: the v4
+/// connect probe is refused while the product-shaped bind reports
+/// `EADDRINUSE`), nothing reported the loss: the v6 half is correctly scoped
+/// to the empty host and the connect half cannot see an occupier that never
+/// listens. The bind probe in [`ensure_replay_port_free`] restores the only
+/// question that matters — would the product's own `bind((host, port))`
+/// fail — and this case pins it from the failing side: the
+/// `sms-port-preflight-bind-probe-skipped` switch restores the pre-fix
+/// shape and must turn this test red.
+///
+/// The assertion is the equivalence, not an unconditional catch: the std
+/// probe and the product's tokio bind share the same option shape on Unix
+/// (mio sets `SO_REUSEADDR`), but on macOS/BSD that option lets a specific
+/// address bind while a wildcard owns the port (measured in #1339 fix-r5:
+/// a v4 `SO_REUSEADDR` socket binds over a `::`-owned port). On such a host
+/// the product's own bind succeeds too, so a passing preflight is the
+/// correct verdict — the not-caught branch therefore proves the
+/// product-shaped bind really succeeds instead of assuming it.
+#[test]
+fn dual_stack_occupier_is_reported_by_the_fixed_host_bind_probe() {
+    // #2691 fix-r2: 18931 — the third #2691 port-guard slot; see the ledger
+    // in `head_timeout_tests.rs`.
+    const PORT: u16 = 18931;
+    // A dual-stack holder of `[::]:PORT`, bound without listening: the exact
+    // occupier of the review's Q2 — it covers the IPv4 port, so the
+    // product's fixed-host bind collides, while the v4 connect probe is
+    // refused and sees nothing. socket2 shapes it (`set_only_v6(false)`
+    // forces the dual-stack semantics instead of trusting the host's
+    // `bindv6only` default).
+    let socket = match socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::STREAM, None) {
+        Ok(socket) => socket,
+        Err(error) if means_no_ipv6(&error) => {
+            eprintln!("#2691 skipped: host has no IPv6 ({error})");
+            return;
+        }
+        Err(error) => panic!("#2691 cannot create an IPv6 socket for the occupier: {error}"),
+    };
+    if let Err(error) = socket.set_only_v6(false) {
+        panic!("#2691 cannot make the occupier dual-stack: {error}");
+    }
+    let address = std::net::SocketAddr::from(([0u16; 8], PORT));
+    if let Err(error) = socket.bind(&address.into()) {
+        if means_no_ipv6(&error) {
+            eprintln!("#2691 skipped: host has no IPv6 wildcard ({error})");
+            return;
+        }
+        panic!("#2691 cannot bind the dual-stack occupier to {address}: {error}");
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("#2691 preflight runtime build");
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runtime.block_on(ensure_replay_port_free(PORT, DEFAULT_HOST))
+    }));
+    match panicked {
+        Err(payload) => {
+            let text = payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| {
+                    payload
+                        .downcast_ref::<&str>()
+                        .map(|text| (*text).to_owned())
+                })
+                .unwrap_or_else(|| "#2691 non-string panic payload".to_owned());
+            crate::negative_assert!(
+                text.contains(&format!("#1339 port {PORT} is already bound on")),
+                "#2691 the fixed-host bind probe fired with an unexpected message: {text}"
+            );
+        }
+        Ok(()) => {
+            // The kernel let the product-shaped bind through (the
+            // macOS/BSD `SO_REUSEADDR` wildcard shape). Prove the product's
+            // own bind really succeeds there — the same std shape the probe
+            // uses — or the preflight silently lost the occupier.
+            match std::net::TcpListener::bind((DEFAULT_HOST, PORT)) {
+                Ok(listener) => drop(listener),
+                Err(error) => panic!(
+                    "#2691 the fixed-host bind probe did not fire although the \
+                     dual-stack [::]:{PORT} holder blocks the product's own bind: {error}"
+                ),
+            }
+        }
+    }
+    drop(socket);
 }
 
 /// #1339 fix-r1 (P2 #15): the mapped Node `listen` error texts (probed on
