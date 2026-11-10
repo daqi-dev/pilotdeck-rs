@@ -746,10 +746,9 @@ impl Requests {
     }
 
     /// InProcessGateway.ts:2423-2442: sessionKey → path → mtime → busy; the
-    /// native process has no setSessionCwd callback (the `workspaceCwd`
-    /// field is silently skipped) and no setSdkSessionConfig, so a truthy
-    /// `sdkSessionConfig` answers the unavailable shape. The router fence
-    /// (SessionRouter.ts:260-278) then seeds onto the live session.
+    /// native process currently has no setSessionCwd callback (the
+    /// `workspaceCwd` field is silently skipped). SDK configuration reuses
+    /// the submit path's registry before the router fence seeds the live session.
     async fn seed_read_state(&self, params: &JsValue) -> Result<JsValue, RequestError> {
         let session_key = require_session_key(params)?;
         let path = super::require_text(params, "path", "INVALID_FILE_PATH", "path is required.")?;
@@ -769,12 +768,6 @@ impl Requests {
                 "Cannot seed file read state while a turn is active.",
             ));
         }
-        if params.get("sdkSessionConfig").is_some_and(truthy) {
-            return Err(gateway_error(
-                "CAPABILITY_UNAVAILABLE",
-                "sdk_session_config is unavailable.",
-            ));
-        }
         let reservation = self
             .owner
             .begin_maintenance(&session_key)
@@ -784,6 +777,29 @@ impl Requests {
                     "Cannot seed file read state while a turn or session control is active.",
                 )
             })?;
+        if let Some(config) = params.get("sdkSessionConfig").filter(|v| truthy(v)) {
+            let changed = self
+                .session_overrides
+                .seed_sdk_config(
+                    &session_key,
+                    config,
+                    params.get("projectKey").and_then(JsValue::as_string),
+                )
+                .await
+                .map_err(|error| RequestError {
+                    code: error.code,
+                    message: error.message.into(),
+                    details: None,
+                    validation: None,
+                })?;
+            if changed {
+                crate::runtime::refresh::RefreshRouter::mark_session_dirty(
+                    &self.owner,
+                    &session_key,
+                    "sdk_session_config_changed",
+                );
+            }
+        }
         let context = SessionContext {
             session_key: session_key.clone(),
             project_key: Some(JsString::from(
@@ -2289,6 +2305,101 @@ mod tests {
             Some(JsString::from("high")),
             "#1864 the stored thinking reaches the agent config"
         );
+        teardown(&r).await;
+    }
+
+    struct SeedSdkProbe(std::sync::Mutex<Vec<JsValue>>);
+    impl crate::native_process::session_overrides::SdkOutputStylePort for SeedSdkProbe {
+        fn get<'a>(
+            &'a self,
+            _: &'a JsString,
+        ) -> crate::native_process::session_overrides::SdkStyleFuture<'a, Option<JsString>>
+        {
+            Box::pin(async { Ok(None) })
+        }
+        fn plugins<'a>(
+            &'a self,
+            _: &'a JsString,
+        ) -> crate::native_process::session_overrides::SdkStyleFuture<
+            'a,
+            Vec<Arc<crate::runtime::plugins::LoadedPlugin>>,
+        > {
+            Box::pin(async { Ok(vec![]) })
+        }
+        fn set<'a>(
+            &'a self,
+            _: &'a JsString,
+            _: &'a JsString,
+            _: Option<JsString>,
+        ) -> crate::native_process::session_overrides::SdkStyleFuture<'a, ()> {
+            Box::pin(async { Ok(()) })
+        }
+        fn seed_config<'a>(
+            &'a self,
+            _: &'a JsString,
+            config: &'a JsValue,
+            _: Option<&'a JsString>,
+        ) -> crate::runtime::turn::submit::SubmitFuture<
+            'a,
+            Result<bool, crate::runtime::turn::submit::SubmitError>,
+        > {
+            Box::pin(async move {
+                if config
+                    .get("systemPrompt")
+                    .is_some_and(|v| v.as_string().is_none())
+                {
+                    return Err(crate::runtime::turn::submit::SubmitError::new(
+                        "INVALID_SDK_SESSION_CONFIG",
+                        "systemPrompt must be a string.",
+                    ));
+                }
+                self.0.lock().unwrap().push(config.clone());
+                Ok(true)
+            })
+        }
+    }
+    #[tokio::test]
+    async fn seed_sdk_validates_after_busy_and_keeps_committed_config_on_seed_failure() {
+        let (_scratch, r) = setup_fixture();
+        let probe = Arc::new(SeedSdkProbe(std::sync::Mutex::new(Vec::new())));
+        let port: Arc<dyn crate::native_process::session_overrides::SdkOutputStylePort> =
+            probe.clone();
+        r.session_overrides.bind_sdk_styles(Arc::downgrade(&port));
+        let run: JsString = "sdk-busy-run".into();
+        let busy: JsString = "sdk-busy".into();
+        let reservation = r.owner.begin_turn(&busy, &run).unwrap();
+        let params = |session: &str, config: JsValue| {
+            object([
+                ("sessionKey", session.into()),
+                ("path", "missing.txt".into()),
+                ("mtime", JsValue::Number(0.0)),
+                ("sdkSessionConfig", config),
+            ])
+        };
+        let good = object([("systemPrompt", "SDK_SEED_SYSTEM_42".into())]);
+        let error = r
+            .session_config_request("seed_read_state".into(), params("sdk-busy", good.clone()))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "SESSION_BUSY");
+        assert!(probe.0.lock().unwrap().is_empty());
+        r.owner.end_turn(&busy, Some(&run), Some(&reservation));
+        let invalid = object([("systemPrompt", JsValue::Number(42.0))]);
+        let error = r
+            .session_config_request("seed_read_state".into(), params("sdk-invalid", invalid))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "INVALID_SDK_SESSION_CONFIG");
+        assert!(probe.0.lock().unwrap().is_empty());
+        let error = r
+            .session_config_request(
+                "seed_read_state".into(),
+                params("sdk-missing", good.clone()),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "file_not_found");
+        assert_eq!(&*probe.0.lock().unwrap(), &[good]);
         teardown(&r).await;
     }
 

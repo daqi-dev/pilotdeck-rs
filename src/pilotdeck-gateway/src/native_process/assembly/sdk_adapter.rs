@@ -860,6 +860,31 @@ mod user_dialog_config_tests {
 }
 
 impl super::super::session_overrides::SdkOutputStylePort for NativeSdkPort {
+    fn seed_config<'a>(
+        &'a self,
+        session: &'a JsString,
+        config: &'a JsValue,
+        project: Option<&'a JsString>,
+    ) -> SubmitFuture<'a, Result<bool, SubmitError>> {
+        Box::pin(async move {
+            validate_supported_config(config)?;
+            self.registry
+                .lock()
+                .await
+                .set_session_config(session, config, project, None)
+                .await
+                .map_err(|e| {
+                    SubmitError::new(
+                        if e.code.is_empty() {
+                            "gateway_request_failed"
+                        } else {
+                            &e.code
+                        },
+                        e.message,
+                    )
+                })
+        })
+    }
     fn get<'a>(
         &'a self,
         key: &'a JsString,

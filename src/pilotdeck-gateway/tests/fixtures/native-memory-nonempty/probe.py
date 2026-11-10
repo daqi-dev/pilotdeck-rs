@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported actual configured memory process producer; no product source mutations
 import pathlib,sys,json,subprocess,os,threading,signal,hashlib,http.server,argparse
 extra_parser=argparse.ArgumentParser(add_help=False)
 for field in ("candidate-manifest","source-manifest"):extra_parser.add_argument("--"+field,type=pathlib.Path,required=True)

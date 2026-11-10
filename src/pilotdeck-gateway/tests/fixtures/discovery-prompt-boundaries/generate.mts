@@ -1,23 +1,16 @@
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync} from 'node:fs';
-import {execFileSync} from 'node:child_process';
+import {assertBaseline,baselineSourceHashes} from '../_shared/baseline.mts';
 import {resolve,join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 const [baselineArg,outArg]=process.argv.slice(2);
 assert(baselineArg&&outArg,'usage: generate.mts BASELINE NEW_ORACLE_PATH');
 const baseline=resolve(baselineArg),out=resolve(outArg);
-const commit='cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 assert.equal(process.versions.node,'22.22.0');assert.equal(process.versions.icu,'78.2');
-assert.equal(execFileSync('git',['-C',baseline,'rev-parse','HEAD'],{encoding:'utf8'}).trim(),commit);
-const files=['src/always-on/runtime/discoveryPrompts.ts','src/always-on/runtime/discoveryPrompts.zh.ts','src/always-on/tool/AlwaysOnDiscoveryPlanTool.js','src/always-on/tool/AlwaysOnReportTool.js','src/always-on/tool/AlwaysOnWorkspaceTool.js','src/always-on/tool/AlwaysOnChatHistoryTool.js'];
-const sourceSha256:Record<string,string>={};
-for(const original of files){
- const file=original.endsWith('.js')?original.slice(0,-3)+'.ts':original;
- const expected=execFileSync('git',['-C',baseline,'show',commit+':'+file],{maxBuffer:4*1024*1024});
- const actual=readFileSync(join(baseline,file));assert.deepEqual(actual,expected,'fixed source mismatch: '+file);
- sourceSha256[file]=createHash('sha256').update(expected).digest('hex');
-}
+const commit=assertBaseline(baseline);
+const files=['src/always-on/runtime/discoveryPrompts.ts','src/always-on/runtime/discoveryPrompts.zh.ts','src/always-on/tool/AlwaysOnDiscoveryPlanTool.ts','src/always-on/tool/AlwaysOnReportTool.ts','src/always-on/tool/AlwaysOnWorkspaceTool.ts','src/always-on/tool/AlwaysOnChatHistoryTool.ts'];
+const sourceSha256=await baselineSourceHashes(baseline,files);
 const {buildDiscoveryPrompt}=await import(pathToFileURL(join(baseline,'src/always-on/runtime/discoveryPrompts.ts')).href);
 const timestamps=[
  ['iso-ms3','2026-01-02T03:04:05.678Z'],

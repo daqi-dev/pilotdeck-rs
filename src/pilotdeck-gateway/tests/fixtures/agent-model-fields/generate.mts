@@ -1,20 +1,15 @@
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync,mkdtempSync,mkdirSync,rmSync} from 'node:fs';
-import {execFileSync} from 'node:child_process';
+import {assertBaseline,baselineSourceHashes} from '../_shared/baseline.mts';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 const [baseArg,outArg]=process.argv.slice(2);assert(baseArg&&outArg);
-const baseline=resolve(baseArg),out=resolve(outArg),commit='cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
+const baseline=resolve(baseArg),out=resolve(outArg);
 assert.equal(process.versions.node,'22.22.0');assert.equal(process.versions.icu,'78.2');
-assert.equal(execFileSync('git',['-C',baseline,'rev-parse','HEAD'],{encoding:'utf8'}).trim(),commit);
-const sourceSha256:Record<string,string>={};
-for(const path of ['src/tool/builtin/agent.ts','src/agent/sub/builtinSubagentTypes.ts','src/tool/builtin/subagentContinuation.ts','src/tool/builtin/executeCode.ts']){
- const expected=execFileSync('git',['-C',baseline,'show',commit+':'+path],{maxBuffer:4*1024*1024});
- assert.deepEqual(readFileSync(join(baseline,path)),expected,path);
- sourceSha256[path]=createHash('sha256').update(expected).digest('hex');
-}
+const commit=assertBaseline(baseline);
+const sourceSha256=await baselineSourceHashes(baseline,['src/tool/builtin/agent.ts','src/agent/sub/builtinSubagentTypes.ts','src/tool/builtin/subagentContinuation.ts','src/tool/builtin/executeCode.ts']);
 const {createAgentTool}=await import(pathToFileURL(join(baseline,'src/tool/builtin/agent.ts')).href);
 const {createSubagentContinuationTool,createSendMessageTool}=await import(pathToFileURL(join(baseline,'src/tool/builtin/subagentContinuation.ts')).href);
 const {createExecuteCodeTool,setExecuteCodeTransportOverrideForTests}=await import(pathToFileURL(join(baseline,'src/tool/builtin/executeCode.ts')).href);
@@ -52,9 +47,13 @@ const continuation=[
 ];
 const neverPrepare={prepare:async()=>{throw Error('description-only construct must not prepare')}};
 const executeDescriptions=[];
-for(const mode of [null,'danger-full-access','read-only','workspace-write',undefined]){
- const options=mode===null?{}:{sandbox:{mode,port:neverPrepare,resolvePolicy:()=>{throw Error('not executing')}}};
- executeDescriptions.push({id:mode===null?'no-sandbox':mode===undefined?'mode-omitted':mode,description:createExecuteCodeTool(options).description});
+for(const webSearch of [false,true])for(const mode of [null,'danger-full-access','read-only','workspace-write',undefined]){
+ const options=mode===null?{webSearch}:{webSearch,sandbox:{mode,port:neverPrepare,resolvePolicy:()=>{throw Error('not executing')}}};
+ executeDescriptions.push({
+  id:mode===null?'no-sandbox':mode===undefined?'mode-omitted':mode,
+  ...(mode===undefined?{tsOnly:true}:{mode}),
+  webSearch,description:createExecuteCodeTool(options).description,
+ });
 }
 const scratch=mkdtempSync(join(tmpdir(),'pdrs-policy-'));const policySelections=[];
 try {

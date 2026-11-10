@@ -29,6 +29,15 @@ pub(crate) type SdkStyleFuture<'a, T> = std::pin::Pin<
 /// Production uses the committed SDK registry; the legacy map is only a
 /// synchronous observation cache and the generic no-port implementation.
 pub(crate) trait SdkOutputStylePort: Send + Sync {
+    fn seed_config<'a>(
+        &'a self,
+        session: &'a JsString,
+        config: &'a JsValue,
+        project: Option<&'a JsString>,
+    ) -> crate::runtime::turn::submit::SubmitFuture<
+        'a,
+        Result<bool, crate::runtime::turn::submit::SubmitError>,
+    >;
     fn get<'a>(&'a self, key: &'a JsString) -> SdkStyleFuture<'a, Option<JsString>>;
     fn plugins<'a>(
         &'a self,
@@ -93,6 +102,26 @@ pub struct SessionOverrides {
 }
 
 impl SessionOverrides {
+    pub(crate) async fn seed_sdk_config(
+        &self,
+        session: &JsString,
+        config: &JsValue,
+        project: Option<&JsString>,
+    ) -> Result<bool, crate::runtime::turn::submit::SubmitError> {
+        let port = self
+            .sdk_styles
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .and_then(|port| port.upgrade())
+            .ok_or_else(|| {
+                crate::runtime::turn::submit::SubmitError::new(
+                    "CAPABILITY_UNAVAILABLE",
+                    "sdk_session_config is unavailable.",
+                )
+            })?;
+        port.seed_config(session, config, project).await
+    }
     pub(crate) fn bind_sdk_styles(&self, port: std::sync::Weak<dyn SdkOutputStylePort>) {
         *self.sdk_styles.lock().unwrap_or_else(|e| e.into_inner()) = Some(port);
     }

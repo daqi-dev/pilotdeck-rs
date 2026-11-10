@@ -393,3 +393,57 @@ async fn configured_search_controls_python_exports_and_rpc_dispatch() {
         }
     }
 }
+
+#[test]
+fn model_description_matches_actual_ts_for_sandbox_and_search_settings() {
+    let oracle: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/agent-model-fields/oracle.json"
+    )))
+    .unwrap();
+    let cases = oracle["executeDescriptions"].as_array().unwrap();
+    let mut covered = std::collections::BTreeSet::new();
+    let mut ts_only = 0;
+    for case in cases {
+        let enabled = case["webSearch"]
+            .as_bool()
+            .expect("explicit search configuration");
+        if case["tsOnly"] == true {
+            assert_eq!(case["id"], "mode-omitted");
+            assert!(
+                case.get("mode").is_none(),
+                "TS-only omitted mode has no Rust state"
+            );
+            ts_only += 1;
+            continue;
+        }
+        let mode = match case["mode"].as_str() {
+            Some("danger-full-access") => Some(SandboxMode::DangerFullAccess),
+            Some("read-only") => Some(SandboxMode::ReadOnly),
+            Some("workspace-write") => Some(SandboxMode::WorkspaceWrite),
+            None if case["mode"].is_null() => None,
+            _ => panic!("unmapped constructor case: {case}"),
+        };
+        let key = (
+            mode.map(|mode| mode.as_str()).unwrap_or("no-sandbox"),
+            enabled,
+        );
+        assert!(covered.insert(key), "duplicate constructor case {key:?}");
+        let sandbox = mode.map(|mode| Arc::new(NativeSandbox::new(mode, std::env::temp_dir())));
+        let tool = ExecuteCodeTool::with_sandbox_and_web_search(sandbox, enabled);
+        assert_eq!(
+            tool.fields().get("description"),
+            Some(&string(case["description"].as_str().unwrap())),
+            "actual constructor {key:?}"
+        );
+    }
+    assert_eq!(
+        covered.len(),
+        8,
+        "four supported sandbox states times both search flags"
+    );
+    assert_eq!(
+        ts_only, 2,
+        "both search flags captured for TS-only omitted sandbox mode"
+    );
+}
