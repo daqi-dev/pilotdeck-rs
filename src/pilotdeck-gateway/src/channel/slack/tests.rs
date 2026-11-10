@@ -1,4 +1,4 @@
-//! #1344 stub-contract gold master replay: the 35 scenarios recorded by
+//! #1344 stub-contract gold master replay: the 36 scenarios recorded by
 //! `tests/fixtures/channel-slack/generate.mts` against the real TS baseline
 //! (Node v22.22.0, baseline cc7c4e6) behind the committed seven-member
 //! `@slack/bolt` stub, re-driven through the native port with the same
@@ -10,13 +10,13 @@
 //! event literals, so all four record streams (`requests` / `ws` / `rpcs` /
 //! `logs`) compare byte for byte.
 //!
-//! The 35 cases run strictly sequentially inside one test (the 16 replay
+//! The 36 cases run strictly sequentially inside one test (the 16 replay
 //! ports round-robin), so a parallel `--test-threads` run cannot collide two
 //! cases onto one listener.
 use super::*;
 use crate::channel::protocol::ChannelStartDeps;
 use crate::channel::sms::{
-    ElicitationResponse, PermissionDecisionOutcome, SmsGateway, TurnEventStream,
+    ElicitationResponse, PermissionDecisionOutcome, SmsGateway, SubmitTurnRequest, TurnEventStream,
 };
 use base64::Engine as _;
 use serde_json::{Map as JsonMap, Value, json};
@@ -31,7 +31,7 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::time::timeout;
 
 const ORACLE: &str = include_str!("../../../tests/fixtures/channel-slack/oracle.json");
-const EXPECTED_CASE_COUNT: usize = 35;
+const EXPECTED_CASE_COUNT: usize = 36;
 /// The fixed mapper uuid the generator injects, so `/new` session keys match.
 const MAPPER_UUID: &str = "aaaa1111-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 const BOT_TOKEN: &str = "xoxb-1";
@@ -70,7 +70,7 @@ fn cases(oracle: &Value) -> &Vec<Value> {
     crate::negative_assert_eq!(
         cases.len() as u64,
         EXPECTED_CASE_COUNT as u64,
-        "#1344 oracle holds the generator's 35 cases"
+        "#1344 oracle holds the generator's 36 cases"
     );
     cases
 }
@@ -229,7 +229,7 @@ async fn start_mock(
     scripted: VecDeque<(u16, String)>,
 ) -> Arc<Mock> {
     // `SO_REUSEADDR`, like the Node listener: the 16 ports round-robin over
-    // the 35 cases, and the previous case's listener may still sit in
+    // the 36 cases, and the previous case's listener may still sit in
     // TIME_WAIT when the next one binds.
     let socket = tokio::net::TcpSocket::new_v4().expect("#1344 mock socket");
     socket.set_reuseaddr(true).expect("#1344 mock reuseaddr");
@@ -713,6 +713,211 @@ async fn ensure_replay_port_free(port: u16) {
 }
 
 // ---------------------------------------------------------------------------
+// #2322: the host-level half of the port-segment serialization
+// ---------------------------------------------------------------------------
+
+/// `/tmp/pdrs-channel-slack.lock` in the canonical `cli-parity` form
+/// (`scripts/cli-parity/README.md`「锁被保留时怎么解」）： a `.guard` flock
+/// serializes the takers, the lock directory itself carries `owner.json`
+/// (`pid` / `timestamp` / `token` / `cleanupPending`, published tmp+rename),
+/// and a leftover directory is reclaimed only per the canonical rules — the
+/// owner pid is dead (regardless of age) or the lease is over the 2400 s
+/// takeover bound, never while `cleanupPending` is truthy. Contention waits,
+/// never fails: two `cargo test` processes on one host serialize instead of
+/// the later one tripping `ensure_replay_port_free` as a false FAIL.
+const HOST_LOCK_DIR: &str = "/tmp/pdrs-channel-slack.lock";
+const HOST_LOCK_GUARD: &str = "/tmp/pdrs-channel-slack.lock.guard";
+/// The canonical takeover bound (`MAX_AGE`); the port replay is bounded far
+/// below it, so this only fires on a wedged holder.
+const HOST_LOCK_MAX_AGE: Duration = Duration::from_secs(2400);
+
+/// The host lease. The guard flock is held only for the take (the canonical
+/// short-lived-helper shape); the directory is the lease across the replay.
+struct HostLease {
+    dir: std::path::PathBuf,
+    token: String,
+}
+
+impl Drop for HostLease {
+    fn drop(&mut self) {
+        // The canonical release: re-take the guard, verify the lease is
+        // still ours (a takeover could have renamed ours away), then rename
+        // the directory off the lock path before removing it — a crash
+        // mid-release leaves garbage off the lock path, never a bare
+        // directory a later taker would treat as a live lease.
+        let Some(_guard) = host_guard() else {
+            return; // fail-closed: retain for manual recovery per the README
+        };
+        let still_ours = std::fs::read(self.dir.join("owner.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .and_then(|owner| {
+                owner["token"]
+                    .as_str()
+                    .is_some_and(|token| token == self.token)
+                    .then_some(owner)
+            });
+        if still_ours.is_some() {
+            let retired = self.dir.with_extension(format!("releasing.{}", self.token));
+            if std::fs::rename(&self.dir, &retired).is_ok() {
+                let _ = std::fs::remove_file(retired.join("owner.json"));
+                let _ = std::fs::remove_dir(&retired);
+            }
+        }
+    }
+}
+
+/// Open the guard file and flock it non-blocking (another taker's critical
+/// section is short — creation and the owner.json publish — so the release
+/// retries briefly; `None` means held or not taken).
+fn host_guard() -> Option<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let guard = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(HOST_LOCK_GUARD)
+        .expect("#2322 port segment guard file");
+    rustix::fs::flock(&guard, rustix::fs::FlockOperation::NonBlockingLockExclusive)
+        .is_ok()
+        .then_some(guard)
+}
+
+/// The owner is dead when the kernel no longer knows the pid — the same
+/// verdict `kill(pid, 0)` returns `ESRCH` for. The workspace forbids `unsafe`,
+/// so the raw syscall is made through the `/proc/<pid>` existence the kernel
+/// answers it from; elsewhere the probe is unavailable and only the takeover
+/// bound reclaims (the tests themselves only run on Linux here).
+fn owner_pid_is_dead(pid: u64) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        !std::path::Path::new(&format!("/proc/{pid}")).exists()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = pid;
+        false
+    }
+}
+
+/// The canonical takeover rules: a lease is reclaimable when its owner pid
+/// is dead (regardless of age) or it is older than the takeover bound —
+/// unless it published a truthy `cleanupPending`. An unreadable owner is
+/// treated as reclaimable: `owner.json` is published tmp+rename inside the
+/// guard's critical section, so a live lease always has a readable one;
+/// this only relaxes the canonical `damaged` retention because a test that
+/// waited forever on manual recovery would be unusable.
+fn host_lease_is_stale(dir: &std::path::Path) -> bool {
+    let owner = std::fs::read(dir.join("owner.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+    let Some(owner) = owner else {
+        return true;
+    };
+    if owner["cleanupPending"].as_bool().unwrap_or(false) {
+        return false;
+    }
+    let Some(pid) = owner["pid"].as_u64().filter(|pid| *pid > 0) else {
+        return true;
+    };
+    // `kill(pid, 0)`'s dead verdict, made through `owner_pid_is_dead`: a live
+    // process — even another user's — keeps its lease.
+    if owner_pid_is_dead(pid) {
+        return true;
+    }
+    match owner["timestamp"].as_f64() {
+        Some(timestamp) => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("#2322 wall clock");
+            now.as_secs_f64() - timestamp > HOST_LOCK_MAX_AGE.as_secs_f64()
+        }
+        None => true,
+    }
+}
+
+/// One acquisition attempt: the guard's critical section, then the canonical
+/// lease publish. `None` means held — the caller waits and retries.
+fn try_take_host_lease() -> Option<HostLease> {
+    use std::io::Write as _;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt as _};
+    let _guard = host_guard()?;
+    let dir = std::path::PathBuf::from(HOST_LOCK_DIR);
+    if dir.is_dir() {
+        if !host_lease_is_stale(&dir) {
+            return None;
+        }
+        // Reclaim per the canonical rules; a directory the reclaim cannot
+        // remove (foreign files) is damage, not contention — the canonical
+        // form retains it for manual recovery, so fail loudly instead of
+        // waiting forever.
+        std::fs::remove_dir_all(&dir).unwrap_or_else(|error| {
+            panic!(
+                "#2322 stale port-segment lock {HOST_LOCK_DIR} cannot be \
+                 reclaimed ({error}); recover it per scripts/cli-parity/README.md \
+                 「锁被保留时怎么解」"
+            );
+        });
+    }
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .expect("#2322 wall clock");
+    let token = format!("{:x}-{:x}", std::process::id(), timestamp.as_nanos());
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&dir)
+        .expect("#2322 port segment lock dir");
+    // Atomic publish: tmp + rename, so a reader never sees a half lease.
+    let tmp = dir.join(format!("owner.json.tmp.{token}"));
+    let owner = json!({
+        "pid": std::process::id(),
+        "timestamp": timestamp.as_secs_f64(),
+        "token": token,
+        "cleanupPending": false,
+    });
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)
+        .expect("#2322 owner tmp");
+    file.write_all((serde_json::to_string(&owner).expect("#2322 owner json") + "\n").as_bytes())
+        .expect("#2322 owner write");
+    drop(file);
+    std::fs::rename(&tmp, dir.join("owner.json")).expect("#2322 owner publish");
+    Some(HostLease { dir, token })
+}
+
+/// Wait for the host lease — the canonical "wait, not fail": the holder's
+/// release (or its death — the kernel drops its flock) ends the wait.
+async fn host_port_segment_lease() -> HostLease {
+    loop {
+        if let Some(lease) = try_take_host_lease() {
+            return lease;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// Both halves of the port-segment serialization for one test: the
+/// in-process mutex first (cheap, process-local), then the host lease.
+struct PortSegmentGuard {
+    _in_process: tokio::sync::MutexGuard<'static, ()>,
+    _host: HostLease,
+}
+
+async fn lock_port_segment() -> PortSegmentGuard {
+    let in_process = FIXTURE_PORT_SEGMENT.lock().await;
+    let host = host_port_segment_lease().await;
+    PortSegmentGuard {
+        _in_process: in_process,
+        _host: host,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // replay
 // ---------------------------------------------------------------------------
 
@@ -889,8 +1094,9 @@ async fn channel_matches_real_ts() {
     // The generator's per-case port rotation is host-global, and the
     // `#[ignore]` regeneration test runs the same generator: serialize the
     // two so one binary can run both (`--include-ignored`) without either
-    // side measuring the other's listener.
-    let _port_segment = FIXTURE_PORT_SEGMENT.lock().await;
+    // side measuring the other's listener — in-process (#1344) and across
+    // the host's processes (#2322).
+    let _port_segment = lock_port_segment().await;
     let oracle = oracle();
     for case in cases(&oracle) {
         let name = case["name"].as_str().expect("#1344 case name").to_owned();
@@ -907,8 +1113,174 @@ async fn channel_matches_real_ts() {
 #[tokio::test]
 #[ignore = "regenerates from the real TS baseline; set PDRS_BASELINE and the pinned Node v22.22.0 runtime"]
 async fn channel_slack_fixture_regenerates_identically() {
-    let _port_segment = FIXTURE_PORT_SEGMENT.lock().await;
+    let _port_segment = lock_port_segment().await;
     crate::test_baseline::regenerates_identically("channel-slack");
+}
+
+// ---------------------------------------------------------------------------
+// #2321 / #2312: the default REST base, the abnormal close, the failed start
+// ---------------------------------------------------------------------------
+
+/// #2321: with the default base, each stub-contract path must join to its
+/// production URL exactly once — the old default carried its own `/api`, so
+/// every call site joined `https://slack.com/api/api/...` in production (the
+/// loopback mock hid it: its base has no path).
+#[test]
+fn default_rest_base_joins_the_contract_paths_once() {
+    let channel = SlackChannel::new(SlackChannelOptions {
+        bot_token: Some(JsValue::String(JsString::from(BOT_TOKEN))),
+        app_token: Some(JsValue::String(JsString::from(APP_TOKEN))),
+        mapper: None,
+        gateway: None,
+        env: None,
+        base_url: None,
+    });
+    for path in [
+        "/api/apps.connections.open",
+        "/api/auth.test",
+        "/api/chat.postMessage",
+    ] {
+        crate::negative_assert_eq!(
+            rest_url(&channel.shared.base_url, path),
+            format!("https://slack.com{path}"),
+            "#2321 the default REST base joins the contract paths once"
+        );
+    }
+}
+
+/// #2321: a non-1000 close frame is delivered as `Ok(Message::Close)` —
+/// measured: `Some(Ok(Close(Some(CloseFrame { code: Error, reason: "" }))))`,
+/// then `None` — so the reader reads `CloseFrame.code` and reports the stub's
+/// `bolt error` (`Error: websocket error`) for every code outside
+/// {1000, 1005} (1005 is the empty close the SDK treats as transport noise).
+#[tokio::test]
+async fn abnormal_close_logs_the_stub_bolt_error() {
+    let _port_segment = lock_port_segment().await;
+    let port = 18184;
+    ensure_replay_port_free(port).await;
+    let record: Arc<SyncMutex<Record>> = Arc::new(SyncMutex::new(Record::default()));
+    let gates: Gates = Arc::new(SyncMutex::new(HashMap::new()));
+    let gateway: GatewayRef = Arc::new(MockGateway {
+        turns: vec![],
+        next: SyncMutex::new(0),
+        record: record.clone(),
+        gates,
+    });
+    let mock = start_mock(port, &record, VecDeque::new()).await;
+    let channel = load_channel(port, &[], gateway);
+    let handle = bounded(
+        "#2321 an abnormal server close logs the stub bolt error",
+        channel.start(case_deps(&record)),
+    )
+    .await
+    .expect("#2321 start");
+    // A server close(1011): raw frame `0x88 0x02 0x03 0xf3` (FIN + close,
+    // payload = the 2-byte big-endian code).
+    let socket = mock
+        .sockets
+        .lock()
+        .expect("#1344 sockets mutex")
+        .last()
+        .cloned()
+        .expect("#2321 the socket opened");
+    let _ = socket
+        .lock()
+        .expect("#1344 socket mutex")
+        .try_write(&[0x88, 0x02, 0x03, 0xf3]);
+    let waited = record.clone();
+    until(
+        "#2321 an abnormal server close logs the stub bolt error",
+        "case abnormal-close bolt error log",
+        move || {
+            waited
+                .lock()
+                .expect("#1344 record mutex")
+                .logs
+                .iter()
+                .any(|(level, message)| {
+                    level == "error" && message == "slack: bolt error: Error: websocket error"
+                })
+        },
+    )
+    .await;
+    stop_mock(&mock);
+    drop(channel);
+    drop(handle);
+}
+
+/// #2312: a failed `auth.test` must retire the session it already opened —
+/// sink dropped (socket closed), reader aborted (task gone), `Arc<SlackShared>`
+/// releasable once the channel itself is dropped — and wire-invisibly: the
+/// `start-auth-test-failed` oracle cell pins `ws == [open]`, so the teardown
+/// sends no close frame (TS keeps `this.app` until process teardown — the
+/// registered R2 divergence).
+#[tokio::test]
+async fn auth_test_failure_releases_the_session() {
+    let _port_segment = lock_port_segment().await;
+    let port = 18185;
+    ensure_replay_port_free(port).await;
+    let record: Arc<SyncMutex<Record>> = Arc::new(SyncMutex::new(Record::default()));
+    let scripted = VecDeque::from([
+        (
+            200,
+            json!({"ok": true, "url": format!("ws://127.0.0.1:{port}/link")}).to_string(),
+        ),
+        (
+            200,
+            json!({"ok": false, "error": "invalid_bot_token"}).to_string(),
+        ),
+    ]);
+    let gates: Gates = Arc::new(SyncMutex::new(HashMap::new()));
+    let gateway: GatewayRef = Arc::new(MockGateway {
+        turns: vec![],
+        next: SyncMutex::new(0),
+        record: record.clone(),
+        gates,
+    });
+    let mock = start_mock(port, &record, scripted).await;
+    let channel = load_channel(port, &[], gateway);
+    let weak = Arc::downgrade(&channel.shared);
+    let handle = bounded(
+        "#2312 a failed auth.test releases the session",
+        channel.start(case_deps(&record)),
+    )
+    .await
+    .expect("#2312 start returns the silent handle");
+    let waited = record.clone();
+    until(
+        "#2312 a failed auth.test releases the session",
+        "case auth-test-failure start failed log",
+        move || {
+            waited
+                .lock()
+                .expect("#1344 record mutex")
+                .logs
+                .iter()
+                .any(|(level, message)| {
+                    level == "error" && message == "slack: start failed: Error: invalid_bot_token"
+                })
+        },
+    )
+    .await;
+    // Wire-invisible teardown: the connections.open + auth.test requests, one
+    // socket open, and no close frame or stop traffic after the failure.
+    crate::negative_assert_eq!(
+        snapshot(&record)["ws"],
+        json!([{"event": "open"}]),
+        "#2312 a failed auth.test releases the session"
+    );
+    // The channel is now the last owner of the shared state: the reader is
+    // aborted and the failure handle is the silent one, so dropping the
+    // channel releases the `Arc`.
+    drop(channel);
+    drop(handle);
+    until(
+        "#2312 a failed auth.test releases the session",
+        "case auth-test-failure the shared state is released",
+        || weak.upgrade().is_none(),
+    )
+    .await;
+    stop_mock(&mock);
 }
 
 // ---------------------------------------------------------------------------

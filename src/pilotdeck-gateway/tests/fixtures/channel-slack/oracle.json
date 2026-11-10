@@ -687,7 +687,7 @@
   "command": "PDRS_BASELINE=/absolute/path/to/PilotDeck node --import \"$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs\" src/pilotdeck-gateway/tests/fixtures/channel-slack/generate.mts src/pilotdeck-gateway/tests/fixtures/channel-slack",
   "node": "v22.22.0",
   "icu": "78.2",
-  "expectedCaseCount": 35,
+  "expectedCaseCount": 36,
   "cases": [
     {
       "name": "start-ok",
@@ -1844,8 +1844,110 @@
       }
     },
     {
-      "name": "redelivery-after-turn",
+      "name": "back-to-back-frames",
       "port": 18183,
+      "turns": [
+        {
+          "events": [
+            {
+              "type": "assistant_text_delta",
+              "text": "你好，处理完成。"
+            }
+          ]
+        }
+      ],
+      "steps": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "ws-send",
+          "event": {
+            "channel": "C1",
+            "user": "U999",
+            "ts": "300.1",
+            "text": "第一句"
+          }
+        },
+        {
+          "op": "ws-send",
+          "event": {
+            "channel": "C1",
+            "user": "U999",
+            "ts": "300.1",
+            "text": "第二句"
+          }
+        },
+        {
+          "op": "wait",
+          "rpcs": 1,
+          "requests": 3
+        },
+        {
+          "op": "stop",
+          "reason": "done"
+        }
+      ],
+      "scripted": [],
+      "expected": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/api/apps.connections.open",
+            "contentType": "application/json",
+            "body": "{\"token\":\"xoxa-1\"}"
+          },
+          {
+            "method": "POST",
+            "path": "/api/auth.test",
+            "contentType": "application/json",
+            "body": "{\"token\":\"xoxb-1\"}"
+          },
+          {
+            "method": "POST",
+            "path": "/api/chat.postMessage",
+            "contentType": "application/json",
+            "body": "{\"channel\":\"C1\",\"text\":\"你好，处理完成。\",\"mrkdwn\":true}"
+          }
+        ],
+        "ws": [
+          {
+            "event": "open"
+          },
+          {
+            "event": "close",
+            "code": 1000
+          }
+        ],
+        "rpcs": [
+          {
+            "rpc": "submitTurn",
+            "request": {
+              "sessionKey": "slack:chat=C1:general",
+              "channelKey": "slack",
+              "message": "第一句"
+            }
+          }
+        ],
+        "logs": [
+          [
+            "info",
+            "slack: Socket Mode connected as slackbot"
+          ],
+          [
+            "info",
+            "slack: chat C1 already active, skipping"
+          ],
+          [
+            "info",
+            "slack: stopping (done)"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "redelivery-after-turn",
+      "port": 18184,
       "turns": [
         {
           "events": [
@@ -1973,7 +2075,7 @@
     },
     {
       "name": "new-session",
-      "port": 18184,
+      "port": 18185,
       "turns": [
         {
           "events": [
@@ -2081,7 +2183,7 @@
     },
     {
       "name": "new-with-message",
-      "port": 18185,
+      "port": 18186,
       "turns": [
         {
           "events": [
@@ -2170,7 +2272,7 @@
     },
     {
       "name": "long-text-chunked",
-      "port": 18186,
+      "port": 18187,
       "turns": [
         {
           "events": [
@@ -2264,7 +2366,7 @@
     },
     {
       "name": "turn-error",
-      "port": 18187,
+      "port": 18188,
       "turns": [
         {
           "error": "agent exploded"
@@ -2353,7 +2455,7 @@
     },
     {
       "name": "elicitation-answer",
-      "port": 18188,
+      "port": 18189,
       "turns": [
         {
           "events": [
@@ -2487,7 +2589,7 @@
     },
     {
       "name": "elicitation-cancel",
-      "port": 18189,
+      "port": 18190,
       "turns": [
         {
           "events": [
@@ -2622,7 +2724,7 @@
     },
     {
       "name": "permission-allow-once",
-      "port": 18190,
+      "port": 18191,
       "turns": [
         {
           "events": [
@@ -2748,7 +2850,7 @@
     },
     {
       "name": "permission-allow-session",
-      "port": 18191,
+      "port": 18192,
       "turns": [
         {
           "events": [
@@ -2874,7 +2976,7 @@
     },
     {
       "name": "permission-deny",
-      "port": 18192,
+      "port": 18193,
       "turns": [
         {
           "events": [
@@ -3000,7 +3102,7 @@
     },
     {
       "name": "permission-prompt-fail-retry",
-      "port": 18193,
+      "port": 18194,
       "turns": [
         {
           "events": [
@@ -3057,7 +3159,7 @@
           "status": 200,
           "json": {
             "ok": true,
-            "url": "ws://127.0.0.1:18193/link"
+            "url": "ws://127.0.0.1:18194/link"
           }
         },
         {
@@ -3146,7 +3248,7 @@
     },
     {
       "name": "stop-during-turn",
-      "port": 18194,
+      "port": 18195,
       "turns": [
         {
           "gate": "turn-1",
@@ -3237,7 +3339,7 @@
     },
     {
       "name": "stop-then-silence",
-      "port": 18195,
+      "port": 18196,
       "turns": [
         {
           "events": [
@@ -3310,7 +3412,7 @@
     },
     {
       "name": "restart-after-stop",
-      "port": 18196,
+      "port": 18197,
       "turns": [
         {
           "events": [
@@ -3452,7 +3554,7 @@
     },
     {
       "name": "hot-reload-restart",
-      "port": 18197,
+      "port": 18198,
       "turns": [
         {
           "events": [
@@ -3594,7 +3696,7 @@
     },
     {
       "name": "post-message-failure",
-      "port": 18198,
+      "port": 18183,
       "turns": [
         {
           "events": [
@@ -3633,7 +3735,7 @@
           "status": 200,
           "json": {
             "ok": true,
-            "url": "ws://127.0.0.1:18198/link"
+            "url": "ws://127.0.0.1:18183/link"
           }
         },
         {
@@ -3710,7 +3812,7 @@
     },
     {
       "name": "mrkdwn-and-link-formats",
-      "port": 18183,
+      "port": 18184,
       "turns": [
         {
           "events": [
@@ -3799,7 +3901,7 @@
     },
     {
       "name": "empty-text-silent",
-      "port": 18184,
+      "port": 18185,
       "turns": [
         {
           "events": [
@@ -3872,7 +3974,7 @@
     },
     {
       "name": "no-channel-silent",
-      "port": 18185,
+      "port": 18186,
       "turns": [
         {
           "events": [

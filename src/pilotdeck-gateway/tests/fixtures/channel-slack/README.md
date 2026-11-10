@@ -18,20 +18,31 @@ appToken, socketMode})`、`event("message", h)`、`error(h)`、`start()`、
 端口上。不启动真实账号或非环回网络。每用例一个固定 uuid mapper 缝
 （`new SlackSessionMapper(undefined, () => 'aaaa1111-…')`）。
 
-端口段是**宿主全局**资源：18183-18198（16 个），35 个用例**严格串行**、按
+端口段是**宿主全局**资源：18183-18198（16 个），36 个用例**严格串行**、按
 `18183 + index % 16` 轮转；Node 与 Rust 重放两侧都在下一个用例绑定前关掉
 监听（两侧都开 SO_REUSEADDR）。与既有 fixture 避开的区间：
 weixin 18800-18921、feishu 18960-18993、wecom-callback 18900-18921、
 api-server-channel 18100-18182 之外见各 README。重放前若端口被占，测试报的
 是金样失败而不是被测代码回归，先按 `lsof -nP -iTCP:18183-18198` 核占用方。
+同段并发由双层锁串行化（#2322）：进程内 tokio mutex（重放与 `#[ignore]`
+再生成互斥），加宿主级锁 `/tmp/pdrs-channel-slack.lock`（`scripts/cli-parity/
+README.md`「锁被保留时怎么解」正本形态：`.guard` flock + 目录 + `owner.json`
+{pid,timestamp,token,cleanupPending}，tmp+rename 原子发布；死 pid 或超 2400 s
+按正本规则回收，等待不失败）——两个 `cargo test` 进程同段并发时后者等待而非
+误报 `ensure_replay_port_free`。夹具端口外的 18184/18185（#2321/#2312 组件测试）
+同持两锁。
 
-35 个场景覆盖 29 行状态机矩阵（含两个矩阵外补充格）：start 全配置、缺
+36 个场景覆盖 29 行状态机矩阵（含矩阵外补充格）：start 全配置、缺
 botToken / 缺 appToken（mock 全程静默作证）、connections.open `ok:false`、
-auth.test `ok:false`（socket 已开，失败句柄 stop 为 no-op，连接不关闭——TS 同形，
-`expected.ws` 只记 `open`）、普通消息回合、thread
+auth.test `ok:false`（socket 已开，失败句柄 stop 为 no-op——TS 侧连接存续到
+teardown，Rust 侧 wire-invisible 回收：drop sink 发裸 TCP FIN、abort reader，
+`expected.ws` 只记 `open` 两侧同形，差异登记于
+`A8.3-CH-SLACK-001-R2.md`）、普通消息回合、thread
 内消息、thread 根键、bot_id 过滤、bot_message subtype 过滤、
 message_changed/deleted 过滤、自发消息过滤、纯 @提及（静默）、@提及剥离、
-active 去重跳过、turn 结束后的重投递、`/new`、`/new <正文>`（不发确认）、
+active 去重跳过、**连发两帧**（两帧之间无 wait——#2313 保序格：TS stub 对每个
+message 帧同步调 handler、帧序即入场序，第一帧入回合、第二帧判 already active）、
+turn 结束后的重投递、`/new`、`/new <正文>`（不发确认）、
 超长分片（38500+\n+1500 → 40000+500... 两段）、turn 异常、elicitation 答复 /
 取消（"0"）、permission 1/2/0、permission 提示发出失败→状态回复+重发、
 turn 在途 stop、stop 后静默、同实例再 start（mapper 状态保留）、
@@ -41,7 +52,7 @@ start-fresh（mapper 重置）、postMessage `ok:false`、mrkdwn/链接转换、
 ## oracle schema
 
 顶层键：`sourceCommit` / `sourceSha256`（五个被装载基线源文件的 sha256） /
-`command` / `node` / `icu` / `expectedCaseCount`（35）/ `cases`。每个 case：
+`command` / `node` / `icu` / `expectedCaseCount`（36）/ `cases`。每个 case：
 
 ```json
 {
@@ -96,5 +107,6 @@ start-fresh（mapper 重置）、postMessage `ok:false`、mrkdwn/链接转换、
 
 ## 已登记差异与本金样的关系
 
-差异编号见 `specs/gateway-parity/diffs/A8.3-CH-SLACK-001.md`（正反向行为差异
+差异编号见 `specs/gateway-parity/diffs/A8.3-CH-SLACK-001.md` 及其 R1（生产装配
+接线更正）/ R2（#2312 auth.test 失败路径 wire-invisible 回收）（正反向行为差异
 只在差异文档登记，本金样两侧同库同规则，不承担差异检测）。

@@ -1715,8 +1715,29 @@ async fn handle_incoming(
 }
 
 /// The post-answer part of the TS permission branch: confirmation send,
-/// non-advancing status handling, and the next queued prompt.
+/// non-advancing status handling, and the next queued prompt. #2320: only the
+/// thin adapter — the body is the sms/slack shared implementation below, with
+/// this channel's send (the Twilio reply keyed by chat id).
 async fn deliver_answer(shared: &Arc<SmsShared>, chat_id: &JsString, answer: PermissionAnswer) {
+    let send = |text: JsString| {
+        let shared = shared.clone();
+        let chat_id = chat_id.clone();
+        Box::pin(async move { send_reply(&shared, &chat_id, text).await }) as BoxFuture<bool>
+    };
+    deliver_answer_shared(shared.permissions.clone(), chat_id, answer, send).await;
+}
+
+/// #2320: the shared post-answer tail behind both adapters'
+/// `deliver_answer` — 拿答复→发确认→下一提示. The permission state machine
+/// and the answer-token protocol are channel-independent; the send is the one
+/// channel seam (sms: the Twilio send keyed by chat id; slack: postMessage
+/// keyed by `{channelId, threadTs}`).
+pub(crate) async fn deliver_answer_shared(
+    permissions: PermissionState,
+    chat_id: &JsString,
+    answer: PermissionAnswer,
+    send: impl Fn(JsString) -> BoxFuture<bool>,
+) {
     // #1790: after `finish_answer` the answer lock is still held across both
     // sends below (the confirmation and, when queued, the next prompt), and
     // this branch never reaches `clear_after_turn`. One guard covers the whole
@@ -1724,13 +1745,9 @@ async fn deliver_answer(shared: &Arc<SmsShared>, chat_id: &JsString, answer: Per
     // settles the answer (`release_answer` + the queued-head promotion in
     // `recover_answer`) instead of leaving `answering` set forever — which
     // drops every later message as `BeginAnswer::None`.
-    let mut guard = PromptGuard::new(
-        shared.permissions.clone(),
-        chat_id.clone(),
-        answer.answer_token,
-    );
+    let mut guard = PromptGuard::new(permissions.clone(), chat_id.clone(), answer.answer_token);
     if let Some(text) = answer.text.clone() {
-        let delivered = send_reply(shared, chat_id, text).await;
+        let delivered = send(text).await;
         if !delivered {
             // Same recovery as the guard: an undelivered confirmation with a
             // permission captured meanwhile is queued in `pending` with no
@@ -1738,8 +1755,9 @@ async fn deliver_answer(shared: &Arc<SmsShared>, chat_id: &JsString, answer: Per
             // queue and leave `answering` set for good. With an empty queue the
             // two calls are identical, so the TS-mirrored bytes of this branch
             // are unchanged (`permission-confirmation-send-fail`).
-            shared
-                .lock_permissions()
+            permissions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .recover_answer(chat_id, answer.answer_token);
             guard.settle();
             return;
@@ -1748,20 +1766,20 @@ async fn deliver_answer(shared: &Arc<SmsShared>, chat_id: &JsString, answer: Per
             guard.settle();
             return;
         }
-        let next_prompt = shared
-            .lock_permissions()
+        let next_prompt = permissions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take_next_prompt(chat_id, answer.answer_token);
         if let Some(prompt) = next_prompt {
-            let expected = shared
-                .lock_permissions()
+            let expected = permissions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .get_prompt_request_id(chat_id, answer.answer_token);
-            let delivered = send_reply(shared, chat_id, prompt).await;
-            shared.lock_permissions().confirm_next_prompt(
-                chat_id,
-                delivered,
-                expected.as_ref(),
-                answer.answer_token,
-            );
+            let delivered = send(prompt).await;
+            permissions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .confirm_next_prompt(chat_id, delivered, expected.as_ref(), answer.answer_token);
         }
     }
     guard.settle();
@@ -1774,18 +1792,91 @@ async fn process_message(
     message: &JsString,
 ) -> Result<(), ChannelError> {
     let gateway = boundaries(shared).gateway;
-    if gateway.is_none() {
+    let Some(gateway) = gateway else {
         // TS `this.gateway.submitTurn(...)` with no gateway throws into
         // handleIncoming's catch; the log line is identical.
         return Err(ChannelError::Plain(
             "TypeError: Cannot read properties of undefined (reading 'submitTurn')".to_owned(),
         ));
-    }
-    let gateway = gateway.expect("#1339 checked above");
+    };
+    // #2320: this channel's seams — the send, the runtime-owned elicitation
+    // state, the sms render, the sms-tagged log, and the switch that swaps
+    // the error reply text — around the shared turn driver.
+    let send = |text: JsString| {
+        let shared = shared.clone();
+        let chat_id = chat_id.clone();
+        Box::pin(async move { send_reply(&shared, &chat_id, text).await }) as BoxFuture<bool>
+    };
+    let capture_elicitation = |chat_id: &JsString, session_key: &JsString, event: &JsValue| {
+        let shared = shared.clone();
+        let chat_id = chat_id.clone();
+        let session_key = session_key.clone();
+        let event = event.clone();
+        Box::pin(async move {
+            let mut runtime = shared.runtime.lock().await;
+            runtime.elicitation.capture(&chat_id, &session_key, &event)
+        }) as BoxFuture<JsString>
+    };
+    let clear_elicitation = |chat_id: &JsString| {
+        let shared = shared.clone();
+        let chat_id = chat_id.clone();
+        Box::pin(async move {
+            let mut runtime = shared.runtime.lock().await;
+            runtime.elicitation.clear(&chat_id);
+        }) as BoxFuture<()>
+    };
+    let log = |level: &str, message: String| shared.log(level, message);
+    let render = |event: &JsValue| render::render_sms_event(event);
+    let error_reply = || {
+        if crate::mutants::on("sms-error-reply-text") {
+            utf16("出错了。")
+        } else {
+            utf16("处理消息时发生错误，请重试。")
+        }
+    };
+    drive_turn_shared(
+        gateway,
+        shared.permissions.clone(),
+        chat_id,
+        session_key,
+        message,
+        "sms",
+        error_reply,
+        log,
+        render,
+        capture_elicitation,
+        clear_elicitation,
+        send,
+    )
+    .await;
+    Ok(())
+}
+
+/// #2320: the shared turn driver behind both adapters' `processMessage` —
+/// 驱动回合事件流: submit the turn, forward the elicitation/permission
+/// prompts as they stream, render the fragments, and deliver the trimmed
+/// reply. Channel-independent by construction; the seams are the send, the
+/// elicitation state (each adapter's runtime owns its helper behind its own
+/// async lock), the render, the log, the error reply and the channel key.
+#[allow(clippy::too_many_arguments)] // The adapter seams, one parameter each.
+pub(crate) async fn drive_turn_shared(
+    gateway: GatewayRef,
+    permissions: PermissionState,
+    chat_id: &JsString,
+    session_key: &JsString,
+    message: &JsString,
+    channel_key: &str,
+    error_reply: impl Fn() -> Vec<u16>,
+    log: impl Fn(&str, String),
+    render: impl Fn(&JsValue) -> Option<JsString>,
+    capture_elicitation: impl Fn(&JsString, &JsString, &JsValue) -> BoxFuture<JsString>,
+    clear_elicitation: impl Fn(&JsString) -> BoxFuture<()>,
+    send_reply: impl Fn(JsString) -> BoxFuture<bool>,
+) {
     let mut reply_units: Vec<u16> = Vec::new();
     let request = SubmitTurnRequest {
         session_key: session_key.clone(),
-        channel_key: JsString::from("sms"),
+        channel_key: JsString::from(channel_key),
         message: message.clone(),
     };
     let mut turn_error = None;
@@ -1809,11 +1900,8 @@ async fn process_message(
             let kind = event.get("type").and_then(JsValue::as_string);
             let is = |name: &str| kind.as_ref().is_some_and(|kind| kind.equals_str(name));
             if is("elicitation_request") {
-                let question = {
-                    let mut runtime = shared.runtime.lock().await;
-                    runtime.elicitation.capture(chat_id, session_key, &event)
-                };
-                send_reply(shared, chat_id, question).await;
+                let question = capture_elicitation(chat_id, session_key, &event).await;
+                send_reply(question).await;
                 continue;
             }
             if is("permission_request") {
@@ -1823,8 +1911,9 @@ async fn process_message(
                 // on the same value), so no fallible statement sits between the
                 // flags and the guard.
                 let expected = event.get("requestId").and_then(permission::optional_string);
-                let question = shared
-                    .lock_permissions()
+                let question = permissions
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .capture(chat_id, session_key, &event);
                 if let Some(question) = question {
                     // #1790: own the `answering`/`initial_prompt_pending` set
@@ -1832,43 +1921,37 @@ async fn process_message(
                     // cancellation then records the not-delivered retry
                     // instead of wedging the chat in "权限提示发送中".
                     let mut guard = InitialPromptGuard::new(
-                        shared.permissions.clone(),
+                        permissions.clone(),
                         chat_id.clone(),
                         expected.clone(),
                     );
-                    let delivered = send_reply(shared, chat_id, question).await;
-                    shared.lock_permissions().confirm_initial_prompt(
-                        chat_id,
-                        delivered,
-                        expected.as_ref(),
-                    );
+                    let delivered = send_reply(question).await;
+                    permissions
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .confirm_initial_prompt(chat_id, delivered, expected.as_ref());
                     guard.settle();
                 }
                 continue;
             }
-            if let Some(fragment) = render::render_sms_event(&event) {
+            if let Some(fragment) = render(&event) {
                 reply_units.extend_from_slice(fragment.units());
             }
         }
     }
     if let Some(error) = turn_error {
-        shared.log("error", format!("sms: submitTurn error: {error}"));
-        reply_units = if crate::mutants::on("sms-error-reply-text") {
-            utf16("出错了。")
-        } else {
-            utf16("处理消息时发生错误，请重试。")
-        };
+        log("error", format!("{channel_key}: submitTurn error: {error}"));
+        reply_units = error_reply();
     }
-    {
-        let mut runtime = shared.runtime.lock().await;
-        runtime.elicitation.clear(chat_id);
-    }
-    shared.lock_permissions().clear_after_turn(chat_id);
+    clear_elicitation(chat_id).await;
+    permissions
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear_after_turn(chat_id);
     let final_text = trim_units(&reply_units);
     if !final_text.is_empty() {
-        send_reply(shared, chat_id, JsString::from_utf16(final_text.to_vec())).await;
+        send_reply(JsString::from_utf16(final_text.to_vec())).await;
     }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
