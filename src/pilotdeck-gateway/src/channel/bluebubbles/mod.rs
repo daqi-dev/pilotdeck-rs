@@ -12,9 +12,11 @@
 //! Not carried over from TS (registered diffs, see
 //! `specs/gateway-parity/diffs/`): production assembly installs
 //! [`no_interaction`] (A8.3-CH-BLUEBUBBLES-002), `stop` does not await
-//! in-flight turns (A8.3-CH-BLUEBUBBLES-003, #1353 owns the drain entry), and
-//! a same-guid row arriving after a restart re-dispatches channel-side
-//! (A8.3-CH-BLUEBUBBLES-004 — upstream admission owns no-re-execution).
+//! in-flight turns (A8.3-CH-BLUEBUBBLES-003, #1353 owns the drain entry), a
+//! same-guid row arriving after a restart re-dispatches channel-side
+//! (A8.3-CH-BLUEBUBBLES-004 — upstream admission owns no-re-execution), and
+//! the #2285 poll-driver deviations — drop-without-stop and swallowed
+//! poll-task panics — are registered as A8.3-CH-BLUEBUBBLES-007.
 mod interaction;
 mod mapper;
 #[cfg(test)]
@@ -51,6 +53,10 @@ const POLL_MS: Duration = Duration::from_millis(2500);
 const MESSAGE_LIMIT: u32 = 50;
 /// `AbortSignal.timeout(120_000)` on the reply POST.
 const SEND_TIMEOUT: Duration = Duration::from_millis(120_000);
+/// Bounded reaping of the aborted interval task at `stop` (#2285 ③): the
+/// task is aborted before the await, so this only bounds a stuck runtime —
+/// the same 20 s shape the test suite's `DEADLINE` uses, never unbounded.
+const DRIVER_STOP: Duration = Duration::from_secs(20);
 
 /// `process.env` lookup at construction (`BLUEBUBBLES_SERVER_URL` /
 /// `BLUEBUBBLES_PASSWORD`).
@@ -225,6 +231,10 @@ struct Runtime {
     running: std::sync::atomic::AtomicBool,
     /// `pollAbort`: recreated by every `start`, aborted by `stop`.
     poll_abort: StdMutex<watch::Sender<bool>>,
+    /// The interval task's `JoinHandle` of the current epoch: taken and
+    /// reaped by `stop` (#2285 ③, the api_server `Listener.task` form) so
+    /// the driver cannot outlive the channel silently.
+    driver: StdMutex<Option<tokio::task::JoinHandle<()>>>,
     client: HttpClient,
 }
 
@@ -277,19 +287,25 @@ impl Runtime {
         );
 
         // `void this.pollMessages()` — the immediate poll, separate from the
-        // interval's first tick (tokio's `interval` fires at t=0, `setInterval`
-        // does not, so the first tick is discarded).
-        let runtime = self.clone();
+        // interval's first tick (tokio's `interval` fires at t=0, `setInterval` does
+        // not). #2285 ②: TS leaks its interval on the drop-without-stop flow; the task
+        // holds only a `Weak`, so the upgrade failure ends it instead of keeping the
+        // `Runtime` alive forever — but only while no poll is in flight (in-flight
+        // polls hold the strong count up: the TS-leak shape, see A8.3-CH-BLUEBUBBLES-007).
+        let weak = Arc::downgrade(self);
         tokio::spawn(async move {
+            let Some(runtime) = weak.upgrade() else {
+                return;
+            };
             runtime.poll_messages().await;
         });
-        let runtime = self.clone();
+        let weak = Arc::downgrade(self);
         let mut abort = self
             .poll_abort
             .lock()
             .expect("#1343 abort mutex")
             .subscribe();
-        tokio::spawn(async move {
+        let driver = tokio::spawn(async move {
             let mut timer = tokio::time::interval(POLL_MS);
             timer.tick().await;
             loop {
@@ -301,7 +317,9 @@ impl Runtime {
                         }
                     }
                     _ = timer.tick() => {
-                        let runtime = runtime.clone();
+                        // #2285 ②: same `Weak` rule as the immediate poll — but only while
+                        // no poll is in flight; a dropped channel ends the loop, not a forever poll.
+                        let Some(runtime) = weak.upgrade() else { break };
                         tokio::spawn(async move {
                             runtime.poll_messages().await;
                         });
@@ -309,6 +327,10 @@ impl Runtime {
                 }
             }
         });
+        // #2285 ③: keep the handle so `stop` can abort and reap the task; a
+        // restart replaces it (the previous epoch's task already exited via
+        // its replaced sender).
+        *self.driver.lock().expect("#1343 driver mutex") = Some(driver);
 
         Ok(Arc::new(BlueBubblesHandle {
             runtime: self.clone(),
@@ -792,6 +814,7 @@ impl BlueBubblesChannel {
             active_chats: Arc::new(StdMutex::new(HashSet::new())),
             running: std::sync::atomic::AtomicBool::new(false),
             poll_abort: StdMutex::new(watch::channel(false).0),
+            driver: StdMutex::new(None),
             client: HttpClient::new(),
         });
         Self {
@@ -852,6 +875,25 @@ impl ChannelHandle for BlueBubblesHandle {
                 .lock()
                 .expect("#1343 abort mutex")
                 .send(true);
+            // #2285 ③: TS `clearInterval`s the timer; here the interval
+            // task is aborted and reaped with a bounded wait (a task that
+            // panicked before `stop` surfaces as a log instead of stalling
+            // silently with `running === true`).
+            let driver = runtime.driver.lock().expect("#1343 driver mutex").take();
+            if let Some(driver) = driver {
+                driver.abort();
+                match tokio::time::timeout(DRIVER_STOP, driver).await {
+                    Ok(Err(error)) if error.is_panic() => runtime.log(
+                        "error",
+                        &format!("bluebubbles: poll driver task failed: {error}"),
+                    ),
+                    Ok(_) => {}
+                    Err(_) => runtime.log(
+                        "error",
+                        "bluebubbles: poll driver task did not exit after stop",
+                    ),
+                }
+            }
             // TS does not await in-flight turns here (#1353 owns the drain
             // entry): a turn already dispatched keeps running, and its
             // `sendReply` sees `running === false` and posts nothing.

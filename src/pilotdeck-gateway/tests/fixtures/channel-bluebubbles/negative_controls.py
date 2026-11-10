@@ -76,6 +76,26 @@ MUTATIONS = [
      'const MESSAGE_LIMIT: u32 = 50;',
      'const MESSAGE_LIMIT: u32 = 51;',
      GOLDEN, '#1343 case first-poll-hello-reply matches the TS oracle'),
+    # #2285 ①: `sendReply`'s `AbortSignal.timeout(120_000)` is the semantic
+    # sibling of MESSAGE_LIMIT; moving the deadline off the TS literal must
+    # fail the constant pin.
+    ('send-timeout-changed', source / 'mod.rs',
+     'const SEND_TIMEOUT: Duration = Duration::from_millis(120_000);',
+     'const SEND_TIMEOUT: Duration = Duration::from_millis(120_001);',
+     'bluebubbles::tests::send_timeout_is_the_ts_abort_deadline',
+     '#2285 the reply POST keeps the TS AbortSignal.timeout(120_000) deadline'),
+    # #2285 ②: the poll driver holds the runtime only weakly, so a channel
+    # dropped without stop ends it; re-arming a strong reference (the TS
+    # leak shape) keeps the dropped channel polling forever.
+    ('driver-weak-reverted', source / 'mod.rs',
+     '        let driver = tokio::spawn(async move {\n'
+     '            let mut timer = tokio::time::interval(POLL_MS);\n',
+     '        let driver = tokio::spawn(async move {\n'
+     '            let _hold = weak.upgrade();\n'
+     '            let mut timer = tokio::time::interval(POLL_MS);\n',
+     'bluebubbles::tests::poll_driver_exits_when_runtime_is_dropped',
+     '#2285 dropping a started channel without stop ends the poll driver '
+     '(the server keeps seeing polls after the drop)'),
     # The poll GET's only bound is the undici default 300 s deadline
     # (measured 301,257 ms on Node v22.22.0); unwiring that deadline must
     # fail the silent-server behavioral pin.
@@ -87,6 +107,138 @@ MUTATIONS = [
      '            std::time::Duration::from_secs(100000),\n',
      'http_client::tests::request_unbounded_settles_a_silent_server_at_the_undici_default',
      '#1343 a silent server settles the no-signal poll GET at the undici default'),
+    # #2285 r4 ④: a deadline drifting into the (300 s, 400 s) blind window
+    # still settles the outcome assertion; only the elapsed pin kills it.
+    ('unbounded-timeout-drift-350s',
+     root / 'src/pilotdeck-gateway/src/channel/http_client.rs',
+     '        match tokio::time::timeout(\n'
+     '            UNDICI_DEFAULT_TIMEOUT,\n',
+     '        match tokio::time::timeout(\n'
+     '            std::time::Duration::from_secs(350),\n',
+     'http_client::tests::request_unbounded_settles_a_silent_server_at_the_undici_default',
+     '#1343 the settle deadline is the undici default, not a later bound'),
+    # #2285 r4 ④: the folded constant pin — moving the measured undici
+    # default off 300 s dies on the value pin before any exchange runs.
+    ('unbounded-constant-changed',
+     root / 'src/pilotdeck-gateway/src/channel/http_client.rs',
+     'pub(crate) const UNDICI_DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);',
+     'pub(crate) const UNDICI_DEFAULT_TIMEOUT: Duration = Duration::from_secs(301);',
+     'http_client::tests::request_unbounded_settles_a_silent_server_at_the_undici_default',
+     '#1343 the no-signal poll GET stays bounded at the undici default'),
+    # #2285 r4 ⑤: an exchange that never writes any bytes must fail the
+    # wall-clock watchdog namedly instead of hanging the paused-clock test
+    # with the keeper spinning on one core.
+    ('request-stalls-before-bytes',
+     root / 'src/pilotdeck-gateway/src/channel/http_client.rs',
+     '        let exchange = async {\n',
+     '        let exchange = async {\n'
+     '            std::future::pending::<()>().await;\n',
+     'http_client::tests::request_unbounded_settles_a_silent_server_at_the_undici_default',
+     '#1343 server never saw the request'),
+    # #2285 r4 ⑤: a request that ends before the server saw any bytes must
+    # fail the is_finished race namedly (the watchdog's other branch).
+    ('request-dies-before-receipt',
+     root / 'src/pilotdeck-gateway/src/channel/http_client.rs',
+     '        let request = builder\n'
+     '            .body(Full::new(Bytes::from(body.to_owned())))\n'
+     '            .map_err(|error| format!("TypeError: {error}"))?;\n',
+     '        let request = builder\n'
+     '            .body(Full::new(Bytes::from(body.to_owned())))\n'
+     '            .map_err(|error| format!("TypeError: {error}"))?;\n'
+     '        return Ok(HttpResponse { status: 200, status_text: "", body: Bytes::new() });\n',
+     'http_client::tests::request_unbounded_settles_a_silent_server_at_the_undici_default',
+     '#1343 the request task ends only after the server saw the request'),
+    # #2285 r2 ④: a stray stamped with a foreign epoch — the exact leak the
+    # old `arm()` clear used to hide — must fail the case that observes it,
+    # not be silently dropped by the next arm.
+    ('strays-foreign-epoch', tests,
+     '                                let index = record.polls;\n'
+     '                                record.polls += 1;\n',
+     '                                let index = record.polls;\n'
+     '                                record.polls += 1;\n'
+     '                                mock.strays.lock().expect("#1343 stray mutex")\n'
+     '                                    .push((0, format!("{method} {path}")));\n',
+     GOLDEN, '#2285 every stray lands inside the case that armed it (case first-poll-hello-reply)'),
+    # #2285 fix-r1 boundary #1: re-inserting the r1 `arm()` clear must die —
+    # a late stray that really walked the disarmed server path must survive
+    # the next arm, not be silently dropped.
+    ('arm-clear-reinserted', tests,
+     '    fn arm(&self, case: &Value, record: Arc<Mutex<Record>>) -> u64 {\n'
+     '        let epoch = self.epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;\n',
+     '    fn arm(&self, case: &Value, record: Arc<Mutex<Record>>) -> u64 {\n'
+     '        let epoch = self.epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;\n'
+     '        self.strays.lock().expect("#1343 stray mutex").clear();\n',
+     'bluebubbles::tests::late_stray_survives_the_next_arm',
+     '#2285 a late stray survives the next arm charged to its own epoch '
+     '(the next arm must not clear the late stray)'),
+    # #2285 fix-r1 boundary #1: a late request really injected at the replay
+    # tail, after disarm — charged through `mock.stray()` on the real
+    # socket path — must fail the case that armed it, not vanish.
+    ('late-stray-real-path', tests,
+     '    drained(&record).await;\n'
+     '    mock.disarm();\n',
+     '    drained(&record).await;\n'
+     '    mock.disarm();\n'
+     '    let late_client = HttpClient::new();\n'
+     '    let _ = late_client\n'
+     '        .request_unbounded("GET", &format!("http://127.0.0.1:{MOCK_PORT}/api/v1/message?late=1"), None, "")\n'
+     '        .await;\n',
+     GOLDEN, '#1343 case missing-config records no request outside an armed case'),
+    # #2285 fix-r1 sibling #2: inlining the per-tick poll moves the panic
+    # into the driver task itself; the tick after the poisoned row never
+    # arrives, so the third-poll wait fires the cell.
+    ('poll-task-inlined-into-driver', source / 'mod.rs',
+     '                        let Some(runtime) = weak.upgrade() else { break };\n'
+     '                        tokio::spawn(async move {\n'
+     '                            runtime.poll_messages().await;\n'
+     '                        });\n',
+     '                        let Some(runtime) = weak.upgrade() else { break };\n'
+     '                        runtime.poll_messages().await;\n',
+     'bluebubbles::tests::poll_task_panic_does_not_stop_the_driver',
+     '#2285 a panicking poll task does not stop the poll driver'),
+    # #2285 fix-r1 boundary #2: back to the r1 single-silent-window
+    # termination — a starved first window ends the drain before the
+    # in-window arrival can extend it.
+    ('drained-single-quiet', tests,
+     '            if quiet >= 2 {\n'
+     '                break;\n'
+     '            }\n',
+     '            if quiet >= 1 {\n'
+     '                break;\n'
+     '            }\n',
+     'bluebubbles::tests::drained_holds_through_a_single_silent_window',
+     '#2285 the disarm drain holds through a single silent window '
+     '(two consecutive silent windows end the drain at exactly 200 ms)'),
+    # #2285 r2 review P2a-2: dropping the `quiet = 0` reset turns "two
+    # consecutive silent windows" into two cumulative ones — the 50 → 100
+    # (movement) → 150 ms trace ends the drain at 150 ms and the
+    # exact-trace pin (SETTLE * 4) fires.
+    ('drained-quiet-not-reset', tests,
+     '        } else {\n'
+     '            quiet = 0;\n'
+     '            last = now;\n'
+     '        }\n',
+     '        } else {\n'
+     '            last = now;\n'
+     '        }\n',
+     'bluebubbles::tests::drained_holds_through_a_single_silent_window',
+     '#2285 the disarm drain holds through a single silent window '
+     '(two consecutive silent windows end the drain at exactly 200 ms)'),
+    # #2285 r2 review P2a-1: removing the turn-index poisoning lets the
+    # dispatch complete normally, so the gateway projection is no longer
+    # empty — the submit-count ruler (judged after the third poll, when the
+    # dispatch has certainly run) must go red; the old immediately-after-
+    # polls>=2 assertion could pass on a dispatch that had not executed yet.
+    ('poison-turn-index-removed', tests,
+     '    // Poison the turn-index mutex before any dispatch can use it.\n'
+     '    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {\n'
+     '        let _guard = gateway.next.lock().expect("#2285 turn index");\n'
+     '        panic!("#2285 poison the turn index");\n'
+     '    }));\n',
+     '',
+     'bluebubbles::tests::poll_task_panic_does_not_stop_the_driver',
+     '#2285 a panicking poll task does not stop the poll driver '
+     '(the poisoned dispatch panicked before recording)'),
     # A8.3-CHANNEL-BLUEBUBBLES-001-R2: the implemented channel must not be in
     # the unmigrated rejection table; re-inserting the key refuses startup
     # for the subset the loader test keeps loadable.
