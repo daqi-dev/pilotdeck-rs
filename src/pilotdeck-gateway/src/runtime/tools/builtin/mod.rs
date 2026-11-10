@@ -668,36 +668,7 @@ pub(super) fn authorized_history_source(
         ));
     }
     #[cfg(unix)]
-    {
-        use crate::runtime::{project::SandboxMode, tools::sandbox::NativeSandbox};
-        let mode = match context
-            .fields
-            .get("nativeSandboxMode")
-            .and_then(JsValue::as_string)
-        {
-            Some(value) if value.equals_str("read-only") => Some(SandboxMode::ReadOnly),
-            Some(value) if value.equals_str("workspace-write") => Some(SandboxMode::WorkspaceWrite),
-            _ => None,
-        };
-        if let Some(mode) = mode {
-            let temporary_root = context
-                .fields
-                .get("nativeSandboxTemporaryRoot")
-                .and_then(JsValue::as_string)
-                .map(os_path)
-                .unwrap_or_else(|| PathBuf::from("/tmp"));
-            let mut sandbox_root = cwd(context);
-            if !permission_mode(context).equals_str("bypassPermissions") {
-                for candidate in additional_working_directories(context) {
-                    if within_root(&resolved.absolute, &candidate) {
-                        sandbox_root = candidate;
-                    }
-                }
-            }
-            NativeSandbox::new(mode, temporary_root)
-                .check_write(&os_path(&sandbox_root), &target)?;
-        }
-    }
+    native_sandbox_check_resolved_write(&resolved.absolute, &target, context)?;
     crate::storage::file_history::AuthorizedHistorySource::open_resolved(
         &path,
         &target,
@@ -1554,6 +1525,19 @@ pub(super) fn native_sandbox_write_path(
     path: &JsString,
     context: &crate::runtime::tools::ToolRunContext,
 ) -> Result<JsString, crate::runtime::tools::ToolError> {
+    native_sandbox_check_resolved_write(path, &os_path(path), context)?;
+    Ok(path.clone())
+}
+
+// The history path rechecks the exact target immediately before pinning its
+// descriptor. Keep that final authority check, but share mode/root selection
+// with every ordinary native write so the two paths cannot drift.
+#[cfg(unix)]
+fn native_sandbox_check_resolved_write(
+    lexical: &JsString,
+    target: &Path,
+    context: &crate::runtime::tools::ToolRunContext,
+) -> Result<(), crate::runtime::tools::ToolError> {
     use crate::runtime::{project::SandboxMode, tools::sandbox::NativeSandbox};
     let mode = match context
         .fields
@@ -1562,7 +1546,7 @@ pub(super) fn native_sandbox_write_path(
     {
         Some(mode) if mode.equals_str("read-only") => SandboxMode::ReadOnly,
         Some(mode) if mode.equals_str("workspace-write") => SandboxMode::WorkspaceWrite,
-        _ => return Ok(path.clone()),
+        _ => return Ok(()),
     };
     let temporary_root = context
         .fields
@@ -1573,15 +1557,13 @@ pub(super) fn native_sandbox_write_path(
     let mut root = cwd(context);
     if !permission_mode(context).equals_str("bypassPermissions") {
         for candidate in additional_working_directories(context) {
-            if within_root(path, &candidate) {
+            if within_root(lexical, &candidate) {
                 root = candidate;
                 break;
             }
         }
     }
-    NativeSandbox::new(mode, temporary_root)
-        .check_write(&os_path(&root), &os_path(path))
-        .map(|_| path.clone())
+    NativeSandbox::new(mode, temporary_root).check_write(&os_path(&root), target)
 }
 
 pub mod plan_todo;
