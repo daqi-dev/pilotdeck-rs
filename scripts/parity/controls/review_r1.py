@@ -38,6 +38,7 @@ import re
 from pathlib import Path
 import signal
 import subprocess
+import sysconfig
 import time
 import unittest
 from unittest.mock import patch
@@ -68,6 +69,32 @@ R = _load('round', _ROOT / 'round.py')
 _run_all = _load('controls.run_all', _HERE / 'run_all.py')
 rows, rec, terminal = _run_all.rows, _run_all.rec, _run_all.terminal
 self_compare = _load('self_compare', _ROOT / 'self_compare.py')
+
+# r18 (DS r17 boundary#2 P2 + concurrency#1 P2 — both lineages flagged the
+# same gate): the r17 gate used >=, so 3.14.4+, 3.15+, 3.14.3rc, free-threaded
+# and non-CPython builds PASSED the gate while the skip message claimed they
+# skip — an unmeasured interpreter that does not return to the eval loop
+# mid-backtrack would hang the control for hours instead of failing at 5 s.
+# The pin is exact: the sole measured interpreter is CPython 3.14.3 with
+# the GIL (r15 probe: TimeoutError after 0.303 s mid-backtrack). Everything
+# else skips, visibly (unittest prints OK (skipped=N)). The structural fix
+# — subprocess isolation with an outside-the-interpreter hard kill — is
+# tracked in #2914; see the r19 event file.
+_TIMING_PIN = (3, 14, 3)
+_TIMING_SUPPORTED = (sys.version_info[:3] == _TIMING_PIN
+                     and sys.version_info.releaselevel == 'final'
+                     and sys.implementation.name == 'cpython'
+                     and not sysconfig.get_config_var('Py_GIL_DISABLED'))
+_TIMING_SKIP_REASON = (
+    '#2245-r18 timing gate: CPython 3.14.3 (GIL enabled) is the sole '
+    'interpreter where the SIGALRM interrupt of the C-level backtrack loop '
+    'is verified (r15 probe: TimeoutError after 0.303 s mid-backtrack); the '
+    'apparatus itself requires just >= 3.11. Every other interpreter — '
+    'older or newer patches, other majors, release candidates, '
+    'free-threaded or non-CPython builds — is untested and skips. The '
+    'structural fix (subprocess isolation with an '
+    'outside-the-interpreter hard kill) is tracked in #2914; see the r19 '
+    'event file.')
 
 
 class ReviewControls(unittest.TestCase):
@@ -1391,6 +1418,40 @@ class ReviewControls(unittest.TestCase):
             ('closed-已修复中断\'回归通过\'',
              '| 1 | DS | P1：foo | 已修复中断\'回归通过\' |\n', True),
         ]
+        row_cases_r18 = [
+            # A. the FIFTH same-shape family miss (DS r17 sibling#1 P1 +
+            #    boundary#1 P1, both measured live in
+            #    _tmp/20261110-issue-2245-closure/fix-r18/raw/probe-r18-claims.out):
+            #    r17 structuralized the ENGLISH border only — the CJK side
+            #    still judged the character after the guarded second by
+            #    membership in a hand-copied list, 『』 was claimed joined
+            #    but never entered it, and every unlisted non-word family
+            #    (‹› «» ﹃﹄ 〝〞 „“) kept the hit alive (false FAIL). The
+            #    boundary is structural now (non-word = clause break), so
+            #    all six shapes close WITHOUT joining the list.
+            ('closed-已修复中断『回归通过』',
+             '| 1 | DS | P1：foo | 已修复中断『回归通过』 |\n', True),
+            ('closed-已修复中断‹回归通过›',
+             '| 1 | DS | P1：foo | 已修复中断‹回归通过› |\n', True),
+            ('closed-已修复中断«回归通过»',
+             '| 1 | DS | P1：foo | 已修复中断«回归通过» |\n', True),
+            ('closed-已修复中断﹃回归通过﹄',
+             '| 1 | DS | P1：foo | 已修复中断﹃回归通过﹄ |\n', True),
+            ('closed-已修复中断〝回归通过〞',
+             '| 1 | DS | P1：foo | 已修复中断〝回归通过〞 |\n', True),
+            ('closed-已修复中断„回归通过“',
+             '| 1 | DS | P1：foo | 已修复中断„回归通过“ |\n', True),
+            # B. the structural boundary must not open the OTHER way: a
+            #    word character after the guarded second keeps the hit
+            #    pending — the r11 pin re-pinned at r18 (已修复中等待回归,
+            #    等 keeps going with 待) and the no-boundary twin
+            #    (已修复中断回归通过, the disposal object needs a break).
+            ('open-已修复中等待回归',
+             '| 1 | DS | P1：foo | 已修复中等待回归 |\n', False),
+            ('open-已修复中断回归通过',
+             '| 1 | DS | P1：foo | 已修复中断回归通过 |\n', False),
+        ]
+        assert_rows('r18', row_cases_r18)
         assert_rows('r17', row_cases_r17)
         assert_rows('r16', row_cases_r16)
         assert_rows('r15', row_cases_r15)
@@ -1869,20 +1930,22 @@ class ReviewControls(unittest.TestCase):
                          (r'[^\w]', r'[\w]'),
                          '#2245-r17 en-closure-sep-spelling-frozen')
         # r17 cross-walk, rewritten per DS r16 simplify#3 (the r16 walk
-        # hand-decoded regex escapes and was one-way): the English family
-        # is structurally complete over non-word characters, so the walk
-        # COMPILES it and requires every CJK break character (and the
-        # hyphen) to be a separator — a CJK break that is a word
-        # character (a letter sneaking into the break family) fails here.
-        # The quote / book-title / dash family of the round is pinned as
-        # the behavioral sample: each member must be a separator.
+        # hand-decoded regex escapes and was one-way); r18 (DS r17
+        # simplify#1 P2) removes the SAMPLE string the r17 walk appended —
+        # it was a hand copy that drifted in the same round it was
+        # written (it contained 『』 while the product constant did not).
+        # The walk asserts only the structural invariant: the English
+        # separator domain ⊇ the CJK break family plus the hyphen, so a
+        # break that is a word character (a letter sneaking into the
+        # family) fails here. Family membership itself is pinned by the
+        # r18 behavior rows, which close via the non-word boundary
+        # regardless of list membership.
         _en_sep = re.compile(check_ruler._EN_CLOSURE_SEP)
         self.assertEqual(
             {ch for ch in check_ruler._CJK_CLAUSE_BREAKS + '-'
-             + "“”‘’\"'《》〈〉『』〔〕〖〗—–"
              if not _en_sep.fullmatch(ch)},
             set(),
-            '#2245-r17 en-closure-sep-matches-cjk-breaks')
+            '#2245-r18 en-closure-sep-matches-cjk-breaks')
         # r16 (DS r15 sibling#1 P1, measured): 'for now' is an explicit
         # pending word — the deferral no longer rides the closure-guard
         # verb table (fixed / verified for now read CLOSED on the r15
@@ -1910,11 +1973,21 @@ class ReviewControls(unittest.TestCase):
         # square-bracket family joins (已修复中断[回归通过] was a false FAIL).
         # r17 (DS r16 boundary#1 P0, reverse direction): the quote /
         # book-title / dash family joins (已修复中断“回归通过” was a false
-        # FAIL while the 【】 twin closed).
+        # FAIL while the 【】 twin closed). r18 (DS r17 sibling#1 P1): 『』
+        # joins FOR REAL — the r17 join missed it while claiming it; the
+        # in-progress boundary no longer reads this list (structural
+        # non-word), so the literal pins the _DISPOSED_VERB_BEFORE run
+        # family and the cross-walk anchor.
         self.assertEqual(check_ruler._CJK_CLAUSE_BREAKS,
                          '，。、；：！？,;:!? \t.()（）/[]【】「」“”‘’"\''
-                         '《》〈〉〔〕〖〗—–',
-                         '#2245-r17 clause-breaks-frozen')
+                         '《》〈〉『』〔〕〖〗—–',
+                         '#2245-r18 clause-breaks-frozen')
+        # r18 (DS r17 boundary#1 P1): the CJK after-boundary is structural —
+        # a word character continues the compound (fail-closed pending),
+        # any non-word character is a clause break. The spelling is pinned
+        # so the word class cannot silently erode into an enumeration.
+        self.assertEqual(check_ruler._WORD_CHAR_RE.pattern, r'\w',
+                         '#2245-r18 word-char-boundary-frozen')
         self.assertEqual(set(check_ruler._PARTIAL_LEFT_GUARDS),
                          {'部分', '局部', '过半', '一半', '阶段性', '未完全'},
                          '#2245-r14 partial-left-guard-keys-frozen')
@@ -2116,18 +2189,7 @@ class ReviewControls(unittest.TestCase):
             self.assertFalse(check_ruler._handling_closed(form),
                             '#2245-r14 en-closure-guard-family:' + form)
 
-    @unittest.skipUnless(
-        sys.version_info >= (3, 14, 3),
-        '#2245-r16 (DS r15 concurrency#1 P2; gate tightened to the exact '
-        'verified minor+patch by r17 / DS r16 boundary#2): the SIGALRM '
-        'interrupt of the C-level backtrack loop is verified on CPython '
-        '3.14.3 only (r15 probe: TimeoutError after 0.303 s mid-backtrack); the '
-        'apparatus itself requires just >= 3.11, and the gate pins the exact '
-        'verified minor+patch (3.14.3 — 3.14.0/3.14.1/3.14.2 and later majors '
-        'are untested and skip; an interpreter that does not return to the '
-        'eval loop mid-backtrack would leave this control hanging for hours '
-        'instead of failing at 5 s) is tracked as a follow-up — see the r18 '
-        'event file.')
+    @unittest.skipUnless(_TIMING_SUPPORTED, _TIMING_SKIP_REASON)
     def test_pct_gap_backtracks_linearly(self):
         """#2245 r14 (DS r13 concurrency#1 + MM r13 concurrency#1, both
         lineages, the SAME finding, measured live): the r13 unit
@@ -2207,14 +2269,7 @@ class ReviewControls(unittest.TestCase):
             self.fail('#2245-r15 pct-gap-unicode-nd (hang: >5s)')
         self.assertLess(elapsed3, 1.0, '#2245-r15 pct-gap-unicode-nd')
 
-    @unittest.skipUnless(
-        sys.version_info >= (3, 14, 3),
-        '#2245-r16 (DS r15 concurrency#1 P2; gate tightened to the exact '
-        'verified minor+patch by r17 / DS r16 boundary#2): the SIGALRM '
-        'interrupt of the C-level backtrack loop is verified on CPython '
-        '3.14.3 only; below it this control could hang for hours instead '
-        'of failing at 5 s — see the pct control above and the r18 event '
-        'file.')
+    @unittest.skipUnless(_TIMING_SUPPORTED, _TIMING_SKIP_REASON)
     def test_separator_runs_backtrack_linearly(self):
         """#2245 r15 (DS r14 concurrency#3 P2 + sibling#5 P1 / boundary#2
         P2, all measured live on 87871a970, raw output in

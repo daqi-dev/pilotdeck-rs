@@ -62,7 +62,7 @@ check_frozen = _load('check_frozen', _HERE / 'check_frozen.py').check
 
 # #2245 fix-r7 (r6 reviews, both families — structural redesign per the
 # 2026-11-10 coordinator ruling; round history: specs/parity/frozen/
-# 20261109-2245.md through 20261111-2245-r18.md). Six patch rounds proved
+# 20261109-2245.md through 20261111-2245-r19.md). Six patch rounds proved
 # lexical enumeration does not converge, so verdicts now derive structurally:
 #   1. every 处理/处置 cell is judged on its own copy, never concatenated —
 #      a row closes only when each cell names a closure and none is pending;
@@ -298,8 +298,9 @@ _CJK_GUARDED_SECONDS = tuple(rule[0] for rule in _CJK_COMPOUND_RULES
 # a guarded second character only marks a DISPOSAL OBJECT when its own
 # continuation broke at a clause boundary (已修复中断，回归通过); a live
 # continuation (已修复中等待回归 — 等 keeps going with 待) is still the
-# in-progress marker the r11 pin holds open. Any character outside this
-# separator family reads as a continuation, fail-closed.
+# in-progress marker the r11 pin holds open. Since r18 the boundary is
+# structural (see _WORD_CHAR_RE): a word character continues the compound
+# (fail-closed), any non-word character breaks.
 # r14 (DS r13 boundary#5 P1 / MM r13 boundary#3 P1): the family was a
 # closed whitelist — an opening bracket, an ASCII period or a slash after
 # the guarded second (已修复中断（回归通过） / 已修复中断. / 已修复中断/回归
@@ -315,12 +316,28 @@ _CJK_GUARDED_SECONDS = tuple(rule[0] for rule in _CJK_COMPOUND_RULES
 # rev-r16-ds-probe/probe.out): the quote/book-title/dash family was missing
 # here too — 已修复中断“回归通过” / 已修复中断"回归通过" / 已修复中断'回归
 # 通过' kept the hit alive and read pending (false FAIL) while the 【】 twin
-# closed. The family joins (“”‘’"'《》〈〉『』〔〕〖〗—–), mirroring the r17
-# English side where the SAME family caused the false-PASS hole; the EN
-# separator is now the structural complement [^\w], and the cross-walk
-# (review_r1.py) asserts every char here is non-word, so neither side can
-# miss a family the other has.
-_CJK_CLAUSE_BREAKS = '，。、；：！？,;:!? \t.()（）/[]【】「」“”‘’"\'《》〈〉〔〕〖〗—–'
+# closed. The family joins, mirroring the r17 English side where the SAME
+# family caused the false-PASS hole.
+# r18 (DS r17 sibling#1 P1, measured live in fix-r18/raw/probe-r18-claims.out):
+# the r17 join MISSED 『』 — the r17 comment (and the r18 event doc) claimed
+# the whole 书名号 family while the constant carried only 《》〈〉〔〕〖〗, so
+# 已修复中断『回归通过』 kept reading pending exactly like the “” twin.
+# 『』 joins for real. The list no longer feeds the in-progress boundary at
+# all (see _WORD_CHAR_RE below) — it remains the _DISPOSED_VERB_BEFORE run
+# terminator and the cross-walk anchor; that walk (review_r1.py) asserts
+# every char here is non-word (a one-way invariant: the EN separator is
+# the structural complement [^\w] and ⊇ this family).
+_CJK_CLAUSE_BREAKS = '，。、；：！？,;:!? \t.()（）/[]【】「」“”‘’"\'《》〈〉『』〔〕〖〗—–'
+# r18 (DS r17 boundary#1 P1, the FIFTH same-shape miss — r14/r15/r16/r17
+# each left a family out of a hand-copied list): the character after a
+# guarded second is now judged STRUCTURALLY, like the English side since
+# r17 — a WORD character (\w: letters, digits, underscore of every script)
+# continues the compound and keeps the hit pending (fail-closed), any
+# NON-word character is a clause break. No membership list remains to miss
+# a quote family on: 已修复中断『回归通过』 / ‹回归通过› / «回归通过» close
+# via the boundary itself (measured live — all six unlisted shapes read
+# pending before the fix).
+_WORD_CHAR_RE = re.compile(r'\w')
 # r14 (DS r13 boundary#7 P2 / MM sibling#5 P2 / DS sibling#3 P2, one code
 # site): the disposal verb check walked _CJK_LONG_VERBS with an IMMEDIATE
 # 已+verb adjacency — the single-char verbs (已修中断), a 了 after the verb
@@ -365,7 +382,7 @@ def _cjk_in_progress(handling):
         after = (handling[m.end() + 1] if m.end() + 1 < len(handling)
                  else '')
         if (succ in _CJK_GUARDED_SECONDS
-                and (not after or after in _CJK_CLAUSE_BREAKS)):
+                and (not after or not _WORD_CHAR_RE.match(after))):
             if _DISPOSED_VERB_BEFORE.search(handling[:m.start() + 1]):
                 continue  # 已修复中断 / 已修中断 / 已成功修复了中断 — object
             hits.append(m)
