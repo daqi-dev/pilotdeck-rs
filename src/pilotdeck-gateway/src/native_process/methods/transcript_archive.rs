@@ -74,6 +74,22 @@ fn nullish(value: &JsValue) -> bool {
     matches!(value, JsValue::Undefined | JsValue::Null)
 }
 
+/// `title.length` for the value shapes the export title gate reads it on:
+/// strings carry UTF-16 units, arrays their element count, and an object
+/// hands back its own `length` value when that is a finite number — every
+/// other shape reads `undefined`, which fails the `<=` and drops the title.
+fn title_length(value: &JsValue) -> f64 {
+    match value {
+        JsValue::String(text) => text.len_utf16() as f64,
+        JsValue::Array(items) => items.len() as f64,
+        JsValue::Object(object) => match object.get("length") {
+            Some(JsValue::Number(number)) if number.is_finite() => *number,
+            _ => f64::NAN,
+        },
+        _ => f64::NAN,
+    }
+}
+
 fn gateway_error(code: &'static str, message: impl Into<String>) -> RequestError {
     RequestError {
         code: code.into(),
@@ -153,11 +169,37 @@ enum Pretty {
     Fallback,
 }
 
-/// V8's `String::kMaxLength` (64-bit): the pretty render stops here and
-/// falls back, matching the same TS catch route as the depth bound. In
-/// bytes, so a non-ASCII render stops slightly earlier than V8 (which
-/// counts UTF-16 units); both routes end in the same fallback.
-const MAX_PRETTY_OUTPUT_BYTES: usize = (1 << 29) - 24;
+/// V8's `String::kMaxLength` (64-bit), counted in **UTF-16 code units** —
+/// the unit V8 measures that constant in, so the stop line matches the TS
+/// helper's catch exactly: past it the render falls back to `String(value)`,
+/// the same route V8's stringify throw takes for the same input. fix-r4:
+/// this was previously compared in UTF-8 bytes, stopping CJK renders up to
+/// 1.5x early — a real mis-alignment, not the "slightly earlier" the old
+/// comment claimed (DS r4 boundary P1).
+const MAX_PRETTY_OUTPUT_UNITS: usize = (1 << 29) - 24;
+
+/// The pretty render's running output: the UTF-8 buffer plus the UTF-16
+/// code-unit count the budget above is measured in. Every push routes
+/// through here so the counter stays exact — a non-BMP char is 4 UTF-8
+/// bytes but 2 units, and estimating from `buf.len()` is what the fix-r4
+/// P1 removed.
+#[derive(Default)]
+struct RenderOut {
+    buf: String,
+    units: usize,
+}
+
+impl RenderOut {
+    fn push_str(&mut self, text: &str) {
+        self.units += text.chars().map(char::len_utf16).sum::<usize>();
+        self.buf.push_str(text);
+    }
+
+    fn push(&mut self, ch: char) {
+        self.units += ch.len_utf16();
+        self.buf.push(ch);
+    }
+}
 
 /// One unit of remaining work in the explicit-stack pretty render. Deep
 /// inputs (up to the shared 2000-container bound) must not spend a native
@@ -189,7 +231,7 @@ enum Step<'a> {
 /// bounds — the whole render aborts and the caller falls back.
 fn open_value<'a>(
     stack: &mut Vec<Step<'a>>,
-    out: &mut String,
+    out: &mut RenderOut,
     value: &'a JsValue,
     depth: usize,
 ) -> bool {
@@ -260,7 +302,7 @@ fn stringify_pretty(value: &JsValue) -> Pretty {
     if matches!(value, JsValue::Undefined) {
         return Pretty::Undefined;
     }
-    let mut out = String::new();
+    let mut out = RenderOut::default();
     let mut stack: Vec<Step<'_>> = Vec::new();
     if !open_value(&mut stack, &mut out, value, 0) {
         return Pretty::Fallback;
@@ -320,17 +362,17 @@ fn stringify_pretty(value: &JsValue) -> Pretty {
         }
         // A single scalar or container header can append a whole string in
         // one go; re-check the shared length bound every frame.
-        if out.len() > MAX_PRETTY_OUTPUT_BYTES {
+        if out.units > MAX_PRETTY_OUTPUT_UNITS {
             return Pretty::Fallback;
         }
     }
-    if out.len() > MAX_PRETTY_OUTPUT_BYTES {
+    if out.units > MAX_PRETTY_OUTPUT_UNITS {
         return Pretty::Fallback;
     }
-    Pretty::Text(out)
+    Pretty::Text(out.buf)
 }
 
-fn indent(out: &mut String, depth: usize) {
+fn indent(out: &mut RenderOut, depth: usize) {
     for _ in 0..depth {
         out.push_str("  ");
     }
@@ -506,11 +548,17 @@ fn to_portable_archive(entries: &[JsValue]) -> Result<JsValue, RequestError> {
     archive.insert("schemaVersion".into(), JsValue::Number(1.0));
     archive.insert("format".into(), "portable_text_messages".into());
     archive.insert("messages".into(), JsValue::Array(messages));
-    if let Some(JsValue::String(text)) = &title {
-        // `title && title.length <= MAX`: only a non-empty string passes, so a
-        // truthy non-string title (its `.length` is undefined) is dropped.
-        if !text.is_empty() && text.len_utf16() <= MAX_PORTABLE_SESSION_ARCHIVE_TITLE_LENGTH {
-            archive.insert("title".into(), JsValue::String(text.clone()));
+    if let Some(value) = &title {
+        // `title && title.length <= MAX` (createLocalGateway.ts:1643): a
+        // truthiness check plus the `.length` property — **no typeof check**.
+        // An empty string is falsy and drops; a non-empty string counts its
+        // UTF-16 units; a truthy array-like title (e.g. hand-written
+        // `title: ["x"]`, `.length` 1) passes in TS and must pass here. A
+        // value with no numeric `.length` (undefined) fails `<=` and drops
+        // (DS r4 boundary P2 — ported literally rather than string-only).
+        if truthy(value) && title_length(value) <= MAX_PORTABLE_SESSION_ARCHIVE_TITLE_LENGTH as f64
+        {
+            archive.insert("title".into(), value.clone());
         }
     }
     Ok(JsValue::Object(archive))
@@ -1982,8 +2030,8 @@ mod tests {
             ]}"#,
         )
         .expect("#2622 the joined block parses");
-        let units = flatten_tool_result_text(&block)
-            .expect("#2622 the nullish-free joins never throw");
+        let units =
+            flatten_tool_result_text(&block).expect("#2622 the nullish-free joins never throw");
         let text = String::from_utf16(&units).expect("#2622 joined units");
         negative_assert_eq!(
             text,
@@ -2005,6 +2053,83 @@ mod tests {
             "#2622 the raw property read surfaces (got {})",
             error.message.to_utf8().unwrap_or_default()
         );
+    }
+
+    /// #2622 fix-r4 (DS r4 boundary P1): the pretty budget counts UTF-16
+    /// code units — the unit V8's `String::kMaxLength` is measured in — not
+    /// UTF-8 bytes. 190M CJK chars render to ~570M UTF-8 bytes (past the
+    /// old byte bound, which fell back) but only ~190M units, well under
+    /// the limit: the render must complete as pretty JSON. `String(value)`
+    /// on a one-element array joins the bare element, so it starts with
+    /// the character itself, not `[`.
+    #[test]
+    fn cjk_pretty_render_is_budgeted_in_utf16_units() {
+        let text: Vec<u16> = std::iter::repeat(0x6C49).take(190_000_000).collect();
+        let value = JsValue::Array(vec![JsValue::String(JsString::from_utf16(text))]);
+        let rendered =
+            stringify_portable_value(&value).expect("#2622 the unit budget keeps this renderable");
+        negative_assert_eq!(
+            rendered.first(),
+            Some(&u16::from(b'[')),
+            "#2622 the CJK render stays pretty past the old byte budget"
+        );
+    }
+
+    /// #2622 fix-r4 (DS r4 boundary P2): the export title gate is
+    /// `title && title.length <= MAX` (createLocalGateway.ts:1643) — a
+    /// truthiness check plus the `.length` property, **no typeof check**.
+    /// A truthy array-like title with a small `.length` passes in TS and
+    /// must pass here; a title without a numeric `.length` fails `<=` and
+    /// drops, and so does a 513-element array.
+    #[tokio::test]
+    async fn export_title_gate_reads_the_length_property_like_ts() {
+        let (_scratch, requests) = management_tests::setup();
+        for (key, metadata, keeps) in [
+            ("array-title", json!({"title": ["x"]}), true),
+            ("array-over", json!({"title": ["x"; 513]}), false),
+            ("number-title", json!({"title": 42}), false),
+            ("empty-title", json!({"title": ""}), false),
+        ] {
+            write_session(
+                &requests,
+                key,
+                &transcript(&[
+                    (
+                        "accepted_input",
+                        "t1",
+                        json!({"messages": [
+                            {"role": "user",
+                             "content": [{"type": "text", "text": "Titled"}]},
+                        ]}),
+                    ),
+                    ("session_metadata", "t1", json!({"metadata": metadata})),
+                    (
+                        "turn_result",
+                        "t1",
+                        json!({"result": {"usage": {}, "permissionDenials": []}}),
+                    ),
+                ]),
+            );
+            let archive = call(
+                &requests,
+                "export_session_transcript",
+                &params(&json!({"sessionKey": key})),
+            )
+            .await;
+            if keeps {
+                negative_assert_eq!(
+                    archive["title"],
+                    json!(["x"]),
+                    "#2622 a truthy array-like title with a small .length passes"
+                );
+            } else {
+                negative_assert!(
+                    archive.get("title").is_none(),
+                    "#2622 {key}: the title gate drops this shape"
+                );
+            }
+        }
+        teardown(&requests).await;
     }
 
     /// #2622 fix-r2 (sibling P2 pairing the depth half of the fallback): one

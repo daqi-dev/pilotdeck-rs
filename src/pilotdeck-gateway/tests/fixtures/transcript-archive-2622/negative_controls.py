@@ -56,15 +56,17 @@ mutations = [
      'if messages.len() > MAX_PORTABLE_SESSION_ARCHIVE_MESSAGES {',
      EXPORT_ROWS, '#2622 export.empty-text'),
     # The 512-unit title ceiling drops (never truncates) over-long titles.
+    # fix-r4: the gate is the literal TS shape (truthiness + `.length`,
+    # no typeof check), so the mutant drops only the ceiling half.
     ('export-title-ceiling-dropped', ARCHIVE,
-     'if !text.is_empty() && text.len_utf16() <= MAX_PORTABLE_SESSION_ARCHIVE_TITLE_LENGTH {',
-     'if !text.is_empty() {', EXPORT_ROWS, '#2622 export.long-title'),
+     'if truthy(value) && title_length(value) <= MAX_PORTABLE_SESSION_ARCHIVE_TITLE_LENGTH as f64',
+     'if truthy(value) {', EXPORT_ROWS, '#2622 export.long-title'),
     # The pretty render's V8 string-length budget: without it a wide deep
     # payload renders the full multi-hundred-MB layout instead of taking the
     # TS helper's catch fallback.
     ('export-pretty-budget-omitted', ARCHIVE,
-     'const MAX_PRETTY_OUTPUT_BYTES: usize = (1 << 29) - 24;',
-     'const MAX_PRETTY_OUTPUT_BYTES: usize = (1 << 40);',
+     'const MAX_PRETTY_OUTPUT_UNITS: usize = (1 << 29) - 24;',
+     'const MAX_PRETTY_OUTPUT_UNITS: usize = (1 << 40);',
      'native_process::methods::transcript_archive::tests::wide_deep_tool_input_falls_back_past_the_pretty_output_bound',
      '#2622 the fallback keeps this inside the shared bound'),
     # #2622 fix-r2 (sibling P2 pairing): the depth half of the pretty fallback
