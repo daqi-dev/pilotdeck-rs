@@ -2078,9 +2078,12 @@ mod tests {
     /// #2622 fix-r4 (DS r4 boundary P2): the export title gate is
     /// `title && title.length <= MAX` (createLocalGateway.ts:1643) — a
     /// truthiness check plus the `.length` property, **no typeof check**.
-    /// A truthy array-like title with a small `.length` passes in TS and
-    /// must pass here; a title without a numeric `.length` fails `<=` and
-    /// drops, and so does a 513-element array.
+    /// A truthy array-like title with a small `.length` passes that gate,
+    /// and the whole-method `validatePortableSessionArchive` then rejects
+    /// the non-string title — the method-level shape both sides must agree
+    /// on (a string-only gate here would export successfully sans title
+    /// where TS throws). Shapes without a numeric `.length` (or over 512)
+    /// drop at the gate and the export succeeds without a title.
     #[tokio::test]
     async fn export_title_gate_reads_the_length_property_like_ts() {
         let (_scratch, requests) = management_tests::setup();
@@ -2088,7 +2091,7 @@ mod tests {
         // array title with `vec!` and interpolate it.
         let array_title =
             |count: usize| json!({"title": Value::Array(vec![Value::String("x".into()); count])});
-        for (key, metadata, keeps) in [
+        for (key, metadata, rejected_by_validate) in [
             ("array-title", array_title(1), true),
             ("array-over", array_title(513), false),
             ("number-title", json!({"title": 42}), false),
@@ -2120,16 +2123,18 @@ mod tests {
                 &params(&json!({"sessionKey": key})),
             )
             .await;
-            if keeps {
+            if rejected_by_validate {
                 negative_assert_eq!(
-                    archive["title"],
-                    json!(["x"]),
-                    "#2622 a truthy array-like title with a small .length passes"
+                    archive,
+                    json!({"error": {"code": "INVALID_SESSION_ARCHIVE",
+                                     "message": "Session transcript archive title is invalid."}}),
+                    "#2622 {key}: the gate keeps the array-like title, then the \
+                     whole-method validate rejects it like TS"
                 );
             } else {
                 negative_assert!(
-                    archive.get("title").is_none(),
-                    "#2622 {key}: the title gate drops this shape"
+                    archive.get("ok").is_some() && archive["ok"].get("title").is_none(),
+                    "#2622 {key}: the gate drops this shape and the export succeeds without a title"
                 );
             }
         }
