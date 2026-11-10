@@ -7911,7 +7911,10 @@ class DiscoveryAnchorTests(unittest.TestCase):
         normalised key; declaring it turns the table green and puts the key
         in the text where the host greps.
         """
-        cases = {
+        # r38：局部名避开 anchor_selfcheck 的 TABLES 保留名（cases/mutations/
+        # controls/...）——「cases =」字样会被 exemption_signals 当成变异表豁免信号，
+        # --anchors-only 在 CI 上红（run 42830613311）。命名不改语义，只改拼写。
+        tail_shapes = {
             ('leading parent', 'division'): ('../x.rs', 'channel/x.rs'),
             ('leading parent', 'Path'): ('../x.rs', 'channel/x.rs'),
             ('leading parent', 'joinpath'): ('../x.rs', 'channel/x.rs'),
@@ -7927,7 +7930,7 @@ class DiscoveryAnchorTests(unittest.TestCase):
             ('folded across components', 'division'): ('a/b/../c.rs', 'a/c.rs'),
             ('folded across components', 'Path'): ('a/b/../c.rs', 'a/c.rs'),
         }
-        for (shape, spelling), (tail, key) in cases.items():
+        for (shape, spelling), (tail, key) in tail_shapes.items():
             with self.subTest(shape=shape, spelling=spelling):
                 expression = {
                     'division': f'SMS / {tail!r}',

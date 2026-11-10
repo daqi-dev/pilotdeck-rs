@@ -99,7 +99,7 @@ python3 -B tests/fixtures/pending-reanchor/negative_controls.py NEW_OUTPUT_DIR
 
 ### 负控发现锚点 `DISCOVERY_ANCHORS`（#2133）
 
-宿主清单由 ops 侧 `neg-for-diff.sh` 按 PR 的 diff 推导：对每个改动的 `src/**/*.rs` 与 `fixtures/**` 文件生成键 `上级目录名/文件名`，再用 `git grep -F` 在 `fixtures/**/*negative*.py` 里找这个字面串；命中哪张表就只跑哪张表的变异。因此**表里的路径必须让这个字面串出现**，否则改了产品文件那张表根本不进负控——闸门看起来全绿，实际一条变异没跑。本闸门的 sweep 直读活树且不加锁，须与宿主负控**串行**运行（同树并发的截断写会让 sweep 读到半截文件；CI 各 job 独立 checkout，无此暴露面，r25 登记）。
+宿主清单由 ops 侧 `neg-for-diff.sh` 按 PR 的 diff 推导：对每个改动的 `src/**/*.rs` 与 `fixtures/**` 文件生成键 `上级目录名/文件名`，再用 `git grep -F` 在 `fixtures/**/*negative*.py` 里找这个字面串；命中哪张表就只跑哪张表的变异。因此**表里的路径必须让这个字面串出现**，否则改了产品文件那张表根本不进负控——闸门看起来全绿，实际一条变异没跑。本闸门的 sweep 直读活树且不加锁，须与宿主负控**串行**运行（同树并发的截断写会让 sweep 读到半截文件；CI 各 job 独立 checkout，无此暴露面，r25 登记）。r38 起这条串行要求同样覆盖 `test_metadata_io_driver.EnvironmentControls` 的真跑钉——它们以子进程真跑 `sweep()` 读整棵 fixtures 树，与 reanchor 负控的非原子截断写交错时会以裸 traceback 红（fail-closed 方向，作废整轮测量；登记见 #2844）。
 
 两种写法等价性不同：
 
