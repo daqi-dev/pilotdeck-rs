@@ -29,8 +29,8 @@ api-server-channel 18100-18182 之外见各 README。重放前若端口被占，
 README.md`「锁被保留时怎么解」正本形态：`.guard` flock + 目录 + `owner.json`
 {pid,timestamp,token,cleanupPending}，tmp+rename 原子发布；死 pid 或超 2400 s
 按正本规则回收，等待不失败）——两个 `cargo test` 进程同段并发时后者等待而非
-误报 `ensure_replay_port_free`。夹具端口外的 18184/18185（#2321/#2312 组件测试）
-同持两锁。
+误报 `ensure_replay_port_free`。端口段内的 18184/18185（#2321/#2312 组件测试，与夹具
+用例同在 18183-18198 轮转段）靠同持两锁串行。
 
 36 个场景覆盖 29 行状态机矩阵（含矩阵外补充格）：start 全配置、缺
 botToken / 缺 appToken（mock 全程静默作证）、connections.open `ok:false`、
