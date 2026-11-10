@@ -2225,6 +2225,16 @@ impl ChannelAdapter for WeixinChannel {
         &self.0.key
     }
 
+    fn deliver_cron_result(
+        &self,
+        delivery: &super::im_cron::CronResultDelivery,
+    ) -> BoxFuture<bool> {
+        let channel = self.clone();
+        super::im_cron::deliver_chat_cron_result(delivery, &self.0.key, move |user, text| {
+            Box::pin(async move { channel.send_reply(&user, &text, true).await })
+        })
+    }
+
     fn start(
         &self,
         deps: ChannelStartDeps,

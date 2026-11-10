@@ -467,16 +467,42 @@ async fn feishu_real_server_protobuf_a7_public_reload_and_shutdown() {
     .unwrap();
     let outbound = |generation| {
         mock.state.requests.lock().unwrap().iter().any(|(p, b)| {
-            p.starts_with("/open-apis/im/v1/messages?")
+            // A streamed reply updates the placeholder returned by the real
+            // mock API. Both the initial send and that update are delivery.
+            (p.starts_with("/open-apis/im/v1/messages?")
+                || p == "/open-apis/im/v1/messages/sent-message")
                 && b.to_string()
                     .contains(&format!("channel-lifecycle-output-{generation}"))
         })
+    };
+    let chat = crate::session_chat_dir(
+        &requests.options.home,
+        &requests.options.project,
+        requests.options.project.to_string_lossy().as_ref(),
+    );
+    let durable_successes = || {
+        std::fs::read_dir(&chat)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter_map(|p| std::fs::read_to_string(p.path()).ok())
+            .flat_map(|text| {
+                text.lines()
+                    .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|row| row["type"] == "turn_result" && row["result"]["type"] == "success")
+            .count()
     };
     until(
         || outbound(0),
         "Feishu SDK protobuf input -> actual Server A7 -> real Lark REST output",
     )
     .await;
+    // A streamed placeholder update precedes turn completion. This fixture
+    // reloads a completed conversation; cancellation during streaming is a
+    // separate contract and must not substitute for this durable-success check.
+    until(|| durable_successes() >= 1, "first Feishu turn persisted").await;
     assert!(
         mock.state
             .requests
@@ -534,6 +560,11 @@ async fn feishu_real_server_protobuf_a7_public_reload_and_shutdown() {
         .await
         .unwrap();
     until(|| outbound(1), "reloaded Feishu actual A7 output").await;
+    until(
+        || durable_successes() >= 2,
+        "reloaded Feishu turn persisted",
+    )
+    .await;
     assert_eq!(
         mock.state
             .requests
@@ -561,11 +592,6 @@ async fn feishu_real_server_protobuf_a7_public_reload_and_shutdown() {
         count,
         mock.state.requests.lock().unwrap().len(),
         "no transport work after shutdown"
-    );
-    let chat = crate::session_chat_dir(
-        &requests.options.home,
-        &requests.options.project,
-        requests.options.project.to_string_lossy().as_ref(),
     );
     let transcripts = std::fs::read_dir(chat)
         .unwrap()

@@ -1934,6 +1934,83 @@ fn build_raw(step: &Value) -> Vec<u8> {
     raw
 }
 
+/// Exercise production trait dispatch, including a disabled origin channel.
+#[tokio::test]
+async fn sms_cron_server_dispatch_and_disabled_origin() {
+    use crate::channel::im_cron::CronResultDelivery as SharedDelivery;
+    use crate::channel::protocol::ReconcileInput;
+    use crate::channel::server::ChannelServer;
+
+    let record = Arc::new(SyncMutex::new(Record::default()));
+    let sender_record = record.clone();
+    let factory: TwilioFactory = Arc::new(move |_, _| {
+        Ok(Arc::new(MockSender {
+            case: json!({}),
+            record: sender_record.clone(),
+            gates: Arc::new(SyncMutex::new(HashMap::new())),
+        }) as Arc<dyn SmsSender>)
+    });
+    let channel = Arc::new(SmsChannel::new(SmsChannelOptions {
+        extra: Some(to_js_object(&json!({
+            "accountSid": "fixture-account",
+            "authToken": "fixture-token",
+            "phoneNumber": "+15550000",
+            "webhookHost": "127.0.0.1",
+            "webhookPort": 0
+        }))),
+        mapper: None,
+        gateway: None,
+        env: None,
+        twilio_factory: Some(factory),
+        record_unhandled: None,
+        request_timeout: None,
+    }));
+    let server = ChannelServer::new(
+        ChannelStartDeps::default(),
+        Arc::new(|| Box::pin(async { Ok(()) })),
+    );
+    bounded("cron hot start", server.hot_start_channel(channel))
+        .await
+        .expect("SMS starts");
+    let delivery = SharedDelivery {
+        task_id: JsString::from("task"),
+        run_id: JsString::from("run"),
+        session_key: JsString::from("background-session"),
+        channel_key: ChannelKey::new("webhook"),
+        origin_session_key: Some(JsString::from("sms:chat=+15550001:general")),
+        origin_channel_key: Some(ChannelKey::new("sms")),
+        text: JsString::from("cron done"),
+    };
+    assert!(
+        bounded(
+            "cron dispatch",
+            server.deliver_cron_result(delivery.clone())
+        )
+        .await
+    );
+    assert_eq!(
+        record.lock().unwrap().sends,
+        vec![json!({
+            "body": "cron done", "from": "+15550000", "to": "+15550001"
+        })]
+    );
+    let result = bounded(
+        "disable SMS",
+        server.reconcile_channels(ReconcileInput {
+            channels: vec![],
+            managed_channel_keys: vec![ChannelKey::new("sms")],
+        }),
+    )
+    .await
+    .expect("SMS disables");
+    assert_eq!(result.stopped, vec![ChannelKey::new("sms")]);
+    assert!(!bounded("disabled cron", server.deliver_cron_result(delivery)).await);
+    assert_eq!(record.lock().unwrap().sends.len(), 1);
+    bounded("cron server close", server.close())
+        .await
+        .expect("server closes");
+}
+
 fn cron_delivery(value: &Value) -> CronResultDelivery {
     CronResultDelivery {
         session_key: recorded_cron_session(value).map(JsString::from),
@@ -6387,6 +6464,32 @@ fn dual_stack_occupier_is_reported_by_the_fixed_host_bind_probe() {
     // #2691 fix-r2: 18931 — the third #2691 port-guard slot; see the ledger
     // in `head_timeout_tests.rs`.
     const PORT: u16 = 18931;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("#2691 preflight runtime build");
+    // This same-address holder makes the bind probe necessary on both
+    // kernels. In particular, a later dual-stack connect timeout alone
+    // cannot prove whether the fixed-host bind probe ran.
+    let fixed = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)
+        .expect("#2691 fixed-host occupier socket");
+    fixed
+        .bind(&std::net::SocketAddr::from(([127, 0, 0, 1], PORT)).into())
+        .expect("#2691 fixed-host occupier bind");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runtime.block_on(ensure_replay_port_free(PORT, DEFAULT_HOST))
+    }));
+    let payload = result.expect_err("#2691 fixed-host occupier must be rejected");
+    let text = payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .unwrap_or("#2691 non-string panic payload");
+    crate::negative_assert!(
+        text.contains(&format!("#1339 port {PORT} is already bound on")),
+        "#2691 fixed-host bind rejection marker: {text}"
+    );
+    drop(fixed);
     // A dual-stack holder of `[::]:PORT`, bound without listening: the exact
     // occupier of the review's Q2 — it covers the IPv4 port, so the
     // product's fixed-host bind collides, while the v4 connect probe is
@@ -6412,10 +6515,14 @@ fn dual_stack_occupier_is_reported_by_the_fixed_host_bind_probe() {
         }
         panic!("#2691 cannot bind the dual-stack occupier to {address}: {error}");
     }
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("#2691 preflight runtime build");
+    let fixed_bind_succeeds = match std::net::TcpListener::bind((DEFAULT_HOST, PORT)) {
+        Ok(listener) => {
+            drop(listener);
+            true
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => false,
+        Err(error) => panic!("#2691 cannot classify fixed-host bind: {error}"),
+    };
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         runtime.block_on(ensure_replay_port_free(PORT, DEFAULT_HOST))
     }));
@@ -6430,18 +6537,11 @@ fn dual_stack_occupier_is_reported_by_the_fixed_host_bind_probe() {
                         .map(|text| (*text).to_owned())
                 })
                 .unwrap_or_else(|| "#2691 non-string panic payload".to_owned());
-            if text.contains("#1339 wait timeout: port guard 127.0.0.1") {
-                // #2691 fix-r3: the v4 connect probe stalled on the
-                // dual-stack holder — the macOS shape (measured on the
-                // coordinator's macOS host: the SYN is swallowed for the
-                // whole `bounded` cap). Only the bind probe classifies this
-                // holder, and fix-r3 moved it ahead of the connect probe
-                // precisely so it is reachable; surviving to the connect
-                // stall means the probe did not run — the switch.
-                panic!(
-                    "#2691 the fixed-host bind probe did not fire: the v4 connect \
-                     probe alone cannot classify the dual-stack holder ({text})"
-                );
+            if fixed_bind_succeeds && text == "#1339 wait timeout: port guard 127.0.0.1" {
+                // mbp2 macOS 26.6 permits the reusing v4 listener over this
+                // holder, yet a connect to the holder still stalls. Refusing
+                // replay is correct; the first phase proves probe coverage.
+                return;
             }
             crate::negative_assert!(
                 text.contains(&format!("#1339 port {PORT} is already bound on")),
@@ -6450,8 +6550,7 @@ fn dual_stack_occupier_is_reported_by_the_fixed_host_bind_probe() {
         }
         Ok(()) => {
             // The kernel let the product-shaped bind through over the
-            // wildcard holder (a hypothetical shape: both measured hosts —
-            // Linux errno 98, macOS errno 48 — report `EADDRINUSE`). Prove
+            // wildcard holder. Prove
             // the product's own bind really succeeds there — the same std
             // shape the probe uses — or the preflight silently lost the
             // occupier.

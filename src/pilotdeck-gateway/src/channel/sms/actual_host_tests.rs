@@ -306,3 +306,252 @@ async fn sms_actual_server_a7_permission_elicitation_public_reload_shutdown() {
         assert!(logs.contains(marker), "durable transcript {marker}");
     }
 }
+
+async fn cron_public_rpc(
+    connection: &crate::runtime::turn::gateway::HostedConnection,
+    frames: &Frames,
+    state: &Wire,
+    id: &str,
+    method: &str,
+    params: Value,
+) -> Value {
+    connection
+        .receive(json!({"type":"request","id":id,"method":method,"params":params}).to_string())
+        .await
+        .unwrap();
+    until(state, id, || {
+        frames.0.lock().unwrap().iter().any(|row| row["id"] == id)
+    })
+    .await;
+    let reply = frames
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == id)
+        .unwrap()
+        .clone();
+    assert_eq!(reply["ok"], true, "public {method}: {reply}");
+    reply["result"].clone()
+}
+async fn cron_completed_run(
+    connection: &crate::runtime::turn::gateway::HostedConnection,
+    frames: &Frames,
+    state: &Wire,
+    project: &str,
+    task: &str,
+    label: &str,
+) -> Value {
+    let end = tokio::time::Instant::now() + Duration::from_secs(25);
+    for index in 0.. {
+        let listing = cron_public_rpc(
+            connection,
+            frames,
+            state,
+            &format!("{label}-{index}"),
+            "cron_list",
+            json!({"projectKey":project,"includeHistory":true,"limit":100}),
+        )
+        .await;
+        if let Some(run) = listing["recentRuns"]
+            .as_array()
+            .and_then(|runs| runs.iter().find(|run| run["taskId"] == task))
+        {
+            assert_eq!(run["outcome"], "completed", "{listing}");
+            return run.clone();
+        }
+        assert!(
+            tokio::time::Instant::now() < end,
+            "missing durable Cron terminal: {listing}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    unreachable!()
+}
+
+#[tokio::test]
+async fn sms_actual_server_cron_a7_twilio_delivery_and_disabled_source_is_quiet() {
+    let (_scratch, requests) = super::management_tests::setup();
+    requests.project.dispose().await.unwrap();
+    requests.owner.shutdown().await.unwrap();
+    let peer = peer(requests.options.project.join("unused-cron-permission")).await;
+    // The shared model peer's phase >=4 is an ordinary actual model response;
+    // it advertises no fabricated inner gateway or permission completion.
+    peer.state.phase.store(4, Ordering::SeqCst);
+    let reserve = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = reserve.local_addr().unwrap().port();
+    drop(reserve);
+    let path = requests.options.home.join("pilotdeck.yaml");
+    let base = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("http://127.0.0.1:1", &format!("{}/v1", peer.origin));
+    let config = |enabled| {
+        format!(
+            "{base}cron: {{enabled: true, timezone: UTC}}\nadapters:\n  sms:\n    enabled: {enabled}\n    extra:\n      accountSid: AC00000000000000000000000000000000\n      authToken: mock-token\n      phoneNumber: '+15550000001'\n      webhookHost: 127.0.0.1\n      webhookPort: {port}\n      publicUrl: http://127.0.0.1:{port}\n"
+        )
+    };
+    std::fs::write(&path, config(true)).unwrap();
+    let mut options = requests.options.clone();
+    options.sidecar = std::env::var_os("PDRS_CHANNEL_SIDECAR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("pilotdeck-agent-loop-sidecar")
+        });
+    let sidecar = std::fs::read(&options.sidecar).expect("actual sidecar required");
+    use sha2::Digest;
+    eprintln!(
+        "SMS Cron actual sidecar={} sha256={:x}",
+        options.sidecar.display(),
+        sha2::Sha256::digest(&sidecar)
+    );
+    let (host, _channels) = super::assembly::start_with_channel_endpoints(
+        options.clone(),
+        requests.env.clone(),
+        ChannelEndpointOverrides {
+            sms_twilio_api_base: Some(peer.origin.clone()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let frames = Arc::new(Frames::default());
+    let connection = host.connect(frames.clone(), "token".into(), "cron-fixture".into());
+    connection.receive(json!({"type":"hello","protocolVersion":pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,"token":"token","clientName":"web","clientVersion":"sms-cron-consumer"}).to_string()).await.unwrap();
+    let project = options.project.to_string_lossy().into_owned();
+    let params = |message: &str| {
+        json!({"projectKey":project,"message":message,
+        "sessionKey":"sms:chat=+15550000002:general","channelKey":"sms","mode":"default",
+        "schedule":{"type":"once","runAt":"2036-01-01T00:00:00.000Z"}})
+    };
+    let created = cron_public_rpc(
+        &connection,
+        &frames,
+        &peer.state,
+        "sms-cron-create",
+        "cron_create",
+        params("SMS_CRON_ENABLED_ACTUAL"),
+    )
+    .await;
+    let task = created["task"]["taskId"].as_str().unwrap();
+    let started = cron_public_rpc(
+        &connection,
+        &frames,
+        &peer.state,
+        "sms-cron-run",
+        "cron_run_now",
+        json!({"projectKey":project,"taskId":task}),
+    )
+    .await;
+    assert_eq!(started["started"], true);
+    let first = cron_completed_run(
+        &connection,
+        &frames,
+        &peer.state,
+        &project,
+        started["taskId"].as_str().unwrap(),
+        "sms-cron-persist",
+    )
+    .await;
+    until(
+        &peer.state,
+        "Cron actual A7 output reaches Twilio REST",
+        || peer.state.contains("sms-actual-final-0-4"),
+    )
+    .await;
+    {
+        let sent = peer.state.sent.lock().unwrap();
+        let output = sent
+            .iter()
+            .find(|row| {
+                row["Body"]
+                    .as_str()
+                    .is_some_and(|s| s.contains("sms-actual-final-0-4"))
+            })
+            .unwrap();
+        assert_eq!(output["From"], "+15550000001");
+        assert_eq!(output["To"], "+15550000002");
+    }
+    assert!(peer.state.models.lock().unwrap().iter().any(|model| {
+        model["messages"]
+            .to_string()
+            .contains("SMS_CRON_ENABLED_ACTUAL")
+    }));
+    until(&peer.state, "real Cron terminal notification", || {
+        frames.0.lock().unwrap().iter().any(|frame| {
+            frame["name"] == "always-on:turn-event"
+                && frame["payload"]["event"]["runId"] == first["runId"]
+                && frame["payload"]["event"]["type"] == "turn_completed"
+        })
+    })
+    .await;
+    std::fs::write(&path, config(false)).unwrap();
+    cron_public_rpc(
+        &connection,
+        &frames,
+        &peer.state,
+        "sms-cron-disable",
+        "reload_config",
+        json!({}),
+    )
+    .await;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_ok()
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("disabled production SMS listener closes");
+    let before = peer.state.sent.lock().unwrap().len();
+    let disabled = cron_public_rpc(
+        &connection,
+        &frames,
+        &peer.state,
+        "sms-disabled-create",
+        "cron_create",
+        params("SMS_CRON_DISABLED_ACTUAL"),
+    )
+    .await;
+    let disabled_id = disabled["task"]["taskId"].as_str().unwrap();
+    let disabled_started = cron_public_rpc(
+        &connection,
+        &frames,
+        &peer.state,
+        "sms-disabled-run",
+        "cron_run_now",
+        json!({"projectKey":project,"taskId":disabled_id}),
+    )
+    .await;
+    cron_completed_run(
+        &connection,
+        &frames,
+        &peer.state,
+        &project,
+        disabled_started["taskId"].as_str().unwrap(),
+        "sms-disabled-persist",
+    )
+    .await;
+    assert!(peer.state.models.lock().unwrap().iter().any(|model| {
+        model["messages"]
+            .to_string()
+            .contains("SMS_CRON_DISABLED_ACTUAL")
+    }));
+    connection.closed().await.unwrap();
+    // Owned shutdown is the final negative barrier: no pending delivery can
+    // appear after this return. Merely sleeping while no send occurred is not enough.
+    host.shutdown(options.drain_budget).await.unwrap();
+    assert_eq!(
+        peer.state.sent.lock().unwrap().len(),
+        before,
+        "disabled origin cannot send Cron output"
+    );
+    assert!(!peer.state.contains("sms-actual-final-0-5"));
+}

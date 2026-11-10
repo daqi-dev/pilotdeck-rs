@@ -13,6 +13,152 @@ fn text_of(value: &JsString) -> String {
     String::from_utf16_lossy(value.units())
 }
 
+fn cron_delivery() -> crate::channel::im_cron::CronResultDelivery {
+    crate::channel::im_cron::CronResultDelivery {
+        task_id: js("task"),
+        run_id: js("run"),
+        session_key: js("cron:task"),
+        channel_key: ChannelKey::new("cron"),
+        origin_session_key: Some(js("weixin:chat=chat:general")),
+        origin_channel_key: Some(ChannelKey::new("weixin")),
+        text: js("定时任务结果\n原样保留"),
+    }
+}
+
+fn cron_channel(root: &Root) -> WeixinChannel {
+    let mut options = WeixinChannelOptions::with_login_base_url("http://127.0.0.1:9".into());
+    options.credentials_path = root.path().join("credentials.json");
+    options.credentials_dir = Some(root.path());
+    // ChannelServer starts the actual adapter without contacting a login service.
+    options.login = Arc::new(|_| Box::pin(async { Err(WeixinClientError::abort()) }));
+    WeixinChannel::new(options)
+}
+
+#[tokio::test]
+async fn cron_result_reaches_weixin_through_trait_and_channel_server() {
+    let root = Root::new();
+    let channel = Arc::new(cron_channel(&root));
+    let wire = Arc::new(ReplyClient::default());
+    {
+        let mut inner = channel.lock_inner();
+        inner.client = Some(wire.clone());
+        inner.context_tokens.insert(js("chat"), js("ctx"));
+    }
+    let delivery = cron_delivery();
+    let adapter: Arc<dyn ChannelAdapter> = channel.clone();
+    assert!(adapter.deliver_cron_result(&delivery).await);
+
+    let server = crate::channel::server::ChannelServer::new(
+        ChannelStartDeps::default(),
+        Arc::new(|| Box::pin(async { Ok(()) })),
+    );
+    assert!(!server.deliver_cron_result(delivery.clone()).await);
+    server.hot_start_channel(adapter).await.unwrap();
+    assert!(server.deliver_cron_result(delivery.clone()).await);
+    assert_eq!(
+        *wire.0.lock().unwrap(),
+        vec![
+            serde_json::json!({"user":"chat","text":text_of(&delivery.text)}),
+            serde_json::json!({"user":"chat","text":text_of(&delivery.text)}),
+        ]
+    );
+    assert!(channel.lock_inner().pending_replies.is_empty());
+    server.close().await.unwrap();
+}
+
+#[derive(Default)]
+struct CronRetryClient {
+    fail: std::sync::atomic::AtomicBool,
+    attempts: std::sync::Mutex<Vec<(JsString, JsString, JsString, usize)>>,
+}
+
+impl WeixinIlinkClient for CronRetryClient {
+    fn cursor(&self) -> String {
+        String::new()
+    }
+    fn set_cursor(&self, _: &str) {}
+    fn poll(&self) -> BoxFuture<Result<JsValue, WeixinClientError>> {
+        panic!("cron delivery must not poll")
+    }
+    fn send_text_chunked(
+        &self,
+        user: &JsString,
+        text: &JsString,
+        context: &JsString,
+        max: usize,
+    ) -> BoxFuture<Result<usize, WeixinClientError>> {
+        self.attempts
+            .lock()
+            .unwrap()
+            .push((user.clone(), text.clone(), context.clone(), max));
+        let fail = self.fail.load(Ordering::SeqCst);
+        Box::pin(async move {
+            if fail {
+                Err(WeixinClientError::error("injected send failure"))
+            } else {
+                Ok(1)
+            }
+        })
+    }
+    fn send_typing(&self, _: &JsString, _: &JsString) -> BoxFuture<Result<(), WeixinClientError>> {
+        panic!("cron delivery must not send typing")
+    }
+}
+
+#[tokio::test]
+async fn cron_result_send_failure_uses_existing_pending_reply_queue() {
+    let root = Root::new();
+    let channel = cron_channel(&root);
+    let wire = Arc::new(CronRetryClient::default());
+    wire.fail.store(true, Ordering::SeqCst);
+    {
+        let mut inner = channel.lock_inner();
+        inner.client = Some(wire.clone());
+        inner.context_tokens.insert(js("chat"), js("ctx"));
+    }
+    let delivery = cron_delivery();
+    let adapter: &dyn ChannelAdapter = &channel;
+    assert!(!adapter.deliver_cron_result(&delivery).await);
+    assert_eq!(
+        channel.lock_inner().pending_replies.get(&js("chat")),
+        Some(&vec![delivery.text.clone()])
+    );
+    wire.fail.store(false, Ordering::SeqCst);
+    channel.flush_pending_replies().await;
+    channel.flush_pending_replies().await;
+    let expected = (js("chat"), delivery.text, js("ctx"), 2000);
+    assert_eq!(
+        *wire.attempts.lock().unwrap(),
+        vec![expected.clone(), expected]
+    );
+    assert!(channel.lock_inner().pending_replies.is_empty());
+}
+
+#[tokio::test]
+async fn cron_result_rejects_wrong_source_session_without_sending_or_queueing() {
+    let root = Root::new();
+    let channel = cron_channel(&root);
+    let wire = Arc::new(ReplyClient::default());
+    {
+        let mut inner = channel.lock_inner();
+        inner.client = Some(wire.clone());
+        inner.context_tokens.insert(js("chat"), js("ctx"));
+    }
+    let adapter: &dyn ChannelAdapter = &channel;
+    for source in ["telegram:chat=chat:general", "weixin:chat=chat:invalid"] {
+        let mut delivery = cron_delivery();
+        // A valid fallback must not override a present but invalid source.
+        delivery.session_key = js("weixin:chat=chat:general");
+        delivery.origin_session_key = Some(js(source));
+        assert!(!adapter.deliver_cron_result(&delivery).await);
+    }
+    let mut delivery = cron_delivery();
+    delivery.origin_channel_key = Some(ChannelKey::new("telegram"));
+    assert!(!adapter.deliver_cron_result(&delivery).await);
+    assert!(wire.0.lock().unwrap().is_empty());
+    assert!(channel.lock_inner().pending_replies.is_empty());
+}
+
 /// A temporary directory this test owns; removed on drop.
 struct Root(PathBuf);
 impl Root {

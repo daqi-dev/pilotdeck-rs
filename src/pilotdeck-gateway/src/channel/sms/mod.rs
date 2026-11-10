@@ -496,6 +496,16 @@ impl ChannelAdapter for SmsChannel {
         &self.key
     }
 
+    fn deliver_cron_result(
+        &self,
+        delivery: &super::im_cron::CronResultDelivery,
+    ) -> BoxFuture<bool> {
+        let shared = self.shared.clone();
+        super::im_cron::deliver_chat_cron_result(delivery, &self.key, move |chat_id, text| {
+            Box::pin(async move { send_reply(&shared, &chat_id, text).await })
+        })
+    }
+
     fn start(
         &self,
         deps: ChannelStartDeps,
