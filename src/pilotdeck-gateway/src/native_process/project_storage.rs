@@ -59,17 +59,10 @@ pub(super) fn for_generation(home: PathBuf, generation: Arc<RuntimeLease>) -> Cr
                                 "Native persistence has the wrong type.".into(),
                             )
                         })?;
-                    let recording = persistence.create_session_bounded(
+                    persistence.create_session_bounded(
                         context.session_key.clone(),
                         Some(open_path.clone()),
-                    )?;
-                    // The recording holds the ledger lock; the factory holds its
-                    // process writer lease. Only a genuinely new transcript may
-                    // invalidate crash debris belonging to an earlier lifetime.
-                    crate::storage::replacement_artifacts::cleanup_if_missing(&open_path).map_err(
-                        |e| crate::storage::recorder::RecorderError::Type(e.to_string()),
-                    )?;
-                    Ok(recording)
+                    )
                 }),
             }))
         })
@@ -234,17 +227,10 @@ pub(super) fn for_ephemeral(
                                 "Native persistence has the wrong type.".into(),
                             )
                         })?;
-                    let recording = persistence.create_session_bounded(
+                    persistence.create_session_bounded(
                         context.session_key.clone(),
                         Some(open_path.clone()),
-                    )?;
-                    // The recording holds the ledger lock; the factory holds its
-                    // process writer lease. Only a genuinely new transcript may
-                    // invalidate crash debris belonging to an earlier lifetime.
-                    crate::storage::replacement_artifacts::cleanup_if_missing(&open_path).map_err(
-                        |e| crate::storage::recorder::RecorderError::Type(e.to_string()),
-                    )?;
-                    Ok(recording)
+                    )
                 }),
             }))
         })

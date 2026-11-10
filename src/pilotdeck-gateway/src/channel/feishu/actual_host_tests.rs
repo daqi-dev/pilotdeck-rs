@@ -126,6 +126,29 @@ impl Drop for Peer {
         self.task.abort();
     }
 }
+async fn command(peer: &Peer, input: &str, expected: &str) -> String {
+    super::channel_command_fixture::control(
+        |input| peer.state.text(input),
+        || {
+            peer.state
+                .sent
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|frame| {
+                    frame["content"]
+                        .as_str()
+                        .and_then(|content| serde_json::from_str::<Value>(content).ok())
+                        .and_then(|content| content["text"].as_str().map(str::to_owned))
+                })
+                .collect()
+        },
+        || peer.state.models.lock().unwrap().len(),
+        input,
+        expected,
+    )
+    .await
+}
 async fn until(state: &Wire, label: &str, mut check: impl FnMut() -> bool) {
     tokio::time::timeout(Duration::from_secs(30), async {
         while !check() {
@@ -212,8 +235,8 @@ async fn peer(
             }else if body["stream"]==true{
             state.models.lock().unwrap().push(body);let phase=state.phase.fetch_add(1,Ordering::SeqCst);let generation=state.generation.load(Ordering::SeqCst);
             let(delta,finish)=match phase{
-            0=>(json!({"role":"assistant","tool_calls":[{"index":0,"id":"feishu-send-file","type":"function","function":{"name":"send_attachment","arguments":json!({"file_path":output,"name":"reply.txt","mime_type":"text/plain"}).to_string()}}]}),"tool_calls"),
-            2|5|9=>{let path=if phase==2{approved}else{denied};(json!({"role":"assistant","tool_calls":[{"index":0,"id":format!("feishu-permission-{phase}"),"type":"function","function":{"name":"bash","arguments":json!({"command":format!("printf approved > '{}'",path.display())}).to_string()}}]}),"tool_calls")},
+            0=>(json!({"role":"assistant","tool_calls":[{"index":0,"id":"feishu-send-file","type":"function","function":{"name":"send_attachment","arguments":json!({"file_path":output,"name":"reply.txt","mime_type":"text/plain"}).to_string()}},{"index":1,"id":"feishu-send-image","type":"function","function":{"name":"send_attachment","arguments":json!({"file_path":output.with_extension("png"),"name":"reply.png","mime_type":"image/png"}).to_string()}}]}),"tool_calls"),
+            2|5|10=>{let path=if phase==2{approved}else{denied};(json!({"role":"assistant","tool_calls":[{"index":0,"id":format!("feishu-permission-{phase}"),"type":"function","function":{"name":"bash","arguments":json!({"command":format!("printf approved > '{}'",path.display())}).to_string()}}]}),"tool_calls")},
             3=>(json!({"role":"assistant","tool_calls":[{"index":0,"id":"feishu-question","type":"function","function":{"name":"ask_user_question","arguments":json!({"questions":[{"header":"Choice","question":"Feishu choose mock option","options":[{"label":"One","description":"Mock one"},{"label":"Two","description":"Mock two"}],"multiSelect":false}]}).to_string()}}]}),"tool_calls"),
             _=>(json!({"role":"assistant","content":format!("feishu-actual-final-{generation}-{phase}")}),"stop")};
             ("200 OK","text/event-stream",format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",json!({"id":"mock","choices":[{"index":0,"delta":delta,"finish_reason":null}]}),json!({"id":"mock","choices":[{"index":0,"delta":{},"finish_reason":finish}]})).into_bytes())
@@ -245,8 +268,19 @@ async fn feishu_actual_server_media_a7_upload_interactions_new_reload_shutdown()
     let (_scratch, requests) = super::management_tests::setup();
     requests.project.dispose().await.unwrap();
     requests.owner.shutdown().await.unwrap();
+    let mock_cli = super::channel_command_fixture::prepare(&requests.options);
     let output = requests.options.project.join("feishu-outgoing.txt");
     std::fs::write(&output, FILE_OUT).unwrap();
+    {
+        use base64::Engine;
+        std::fs::write(
+            output.with_extension("png"),
+            base64::engine::general_purpose::STANDARD
+                .decode(PNG)
+                .unwrap(),
+        )
+        .unwrap();
+    }
     let approved = requests.options.project.join("feishu-approved.txt");
     let denied = requests.options.project.join("feishu-denied.txt");
     let peer = peer(output, approved.clone(), denied.clone()).await;
@@ -279,6 +313,7 @@ async fn feishu_actual_server_media_a7_upload_interactions_new_reload_shutdown()
         requests.env.clone(),
         ChannelEndpointOverrides {
             feishu_api_base: Some(peer.origin.clone()),
+            channel_system_cli: Some(mock_cli),
             ..Default::default()
         },
     )
@@ -288,6 +323,18 @@ async fn feishu_actual_server_media_a7_upload_interactions_new_reload_shutdown()
         peer.state.sockets.load(Ordering::SeqCst) == 1
     })
     .await;
+    command(&peer, "/help", "/projects").await;
+    let listed = command(&peer, "/projects", "项目列表：").await;
+    let name = super::channel_command_fixture::project_name(&listed);
+    command(&peer, &format!("/switch-project {name}"), "已切换到项目").await;
+    let status = command(&peer, "/status", "PilotDeck Status").await;
+    assert!(
+        status.contains("fixture") && status.contains("mock channel status"),
+        "real git status must reach the external channel"
+    );
+    command(&peer, "/update check", "已是最新 Release").await;
+    command(&peer, "/update", "mock-release-restart").await;
+    super::channel_command_fixture::assert_update_calls(&options);
     peer.state.event("image", json!({"image_key":"img-key"}));
     peer.state.event(
         "file",
@@ -340,6 +387,31 @@ async fn feishu_actual_server_media_a7_upload_interactions_new_reload_shutdown()
                     .is_some_and(|c| c.contains("uploaded-file-key"))),
         "actual uploaded file key sent to chat"
     );
+    assert!(
+        peer.state
+            .http
+            .lock()
+            .unwrap()
+            .iter()
+            .any(
+                |(path, authorization, body)| path == "/open-apis/im/v1/images"
+                    && authorization == "Bearer mock-tenant-token"
+                    && body.windows(8).any(|bytes| bytes == b"\x89PNG\r\n\x1a\n")
+            ),
+        "actual image tool uploads the PNG bytes to image API"
+    );
+    assert!(
+        peer.state
+            .sent
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame["msg_type"] == "image"
+                && frame["content"]
+                    .as_str()
+                    .is_some_and(|value| value.contains("uploaded-image-key"))),
+        "actual uploaded image key reaches external Feishu chat"
+    );
     let files = walk(&options.home.join("im-attachments"));
     assert!(
         files.iter().any(|p| std::fs::read(p)
@@ -357,6 +429,12 @@ async fn feishu_actual_server_media_a7_upload_interactions_new_reload_shutdown()
             );
         }
     }
+    command(
+        &peer,
+        "/search feishu-inbound-file-marker --all --limit 3 --role user",
+        "🔍 找到",
+    )
+    .await;
     peer.state.text("interaction-start");
     until(&peer.state, "actual Feishu permission prompt", || {
         peer.state.sent("回复 1 允许一次")
@@ -466,6 +544,18 @@ async fn feishu_actual_server_media_a7_upload_interactions_new_reload_shutdown()
         peer.state.sent("feishu-actual-final-1-8")
     })
     .await;
+    let before_plan = peer.state.models.lock().unwrap().len();
+    peer.state.text("/plan mock channel planning task");
+    until(
+        &peer.state,
+        "non-system plan command reaches actual A7 final",
+        || peer.state.sent("feishu-actual-final-1-9"),
+    )
+    .await;
+    assert_eq!(peer.state.models.lock().unwrap().len(), before_plan + 1);
+    // /plan persists read-only mode in this session. Use the real reset command
+    // before the independent shutdown scenario that requires a writable tool gate.
+    command(&peer, "/new", "已创建新会话").await;
     let prompts = peer
         .state
         .sent

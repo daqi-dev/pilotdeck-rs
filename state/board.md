@@ -5498,3 +5498,8 @@ Draft #2786 保持2b72c477未合并。mbp2 r37完整Gateway/CLI nextest实际775
 ### 2026-11-10 · r50 持久数据与渠道控制接续（未收口）
 
 Draft #2786 已推6c3277c19，当前继续本地共同候选。r49 mbp2严格clippy/四bin与2项真实取消信号测试通过；304定向302过2失败。r50严格检查/四bin通过，101定向100过1失败；新目录句柄安全重开与刷盘、删除失败保备份/写者占用拒绝、portable孤儿清理、通知夹具和SOP/durable压缩作用域均已取得相应证据。飞书/new已能重置；剩余actual失败暴露渠道控制没有接abort_turn，已补共享owner精确取消候选，待编译及真实回放；测试CLI隔离注入亦待下一批。三条TS渠道异常只新增未批准差异，不增判分豁免。mbp2空间闸曾拒跑r48 targeted，未绕过；本任务已完成编译的rcgu.o可重建缓存2709项（逻辑8.18GB）经清单SHA后清理，源码/冻结bin/原log保留。cb8新collector复采使同45b版本适用54项12→14 WITNESSED，余项仍NOT_RUN；四拓扑、session全域、retirement、最终回归及人工签字仍未闭合。main已固定ad3710106待批量逐块收取；原CLI/app/GPUI/file_edit目录及快照未动。本机无Rust编译。证据主仓_tmp/20261110-gateway-integration/，下一步收main与真实渠道新缺项，在干净HEAD复算负控并继续正式采集，不把分批通过数相加为最终成绩。
+
+
+### 2026-11-10 · r55 渠道控制与数据保护接续（未收口）
+
+共同候选已逐块接main至ad3710106，后续main51844eaa0另批接收，未混为已合。r52严格clippy/四bin通过，308定向305过3失败；r54修共享取消等待、run未命中Undefined与孤儿事务保全后47定向46过1失败，末项实证为fixture在/plan持久模式下错误期待写权限提示。r55通过真实/new隔离场景后47项全过，四bin/严格检查通过；同源Gateway+CLI 7845项回归正在mbp2运行，编译边界Linux专测单列，不能预填总通过。cb8 clean8072目录句柄5项、native journal4项、background_archive真实18项通过；18源码负控初轮15杀/1幸存/2INVALID，后2项补固定baseline环境后均杀死，FIFO幸存待强化用例与新clean head。正式原生14WITNESSED仍是14FAIL、58NOT_RUN，不算阶段验收；已有R5#2737复用，#1355现役r26尚待交付，禁止并写冻结入口。用户现已批准模型输入兼容资产窄范围复用，Sol/Terra额度恢复继续三车道；用户要求阶段完成节点再讨论迁移，旧CLI/app/GPUI/file_edit树与快照未动。本机只编辑、静态检查和提交，Rust构建在mbp2/Linux cb8。证据仍主仓_tmp/20261110-gateway-integration/；下一步收当前回归、兼容资产与Linux迟到timeout修复，再完成同头验收和独立审阅。

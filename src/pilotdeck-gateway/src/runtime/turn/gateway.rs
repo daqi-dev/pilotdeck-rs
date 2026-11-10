@@ -205,6 +205,14 @@ impl ConnectionGateway for ConnectionTurnGateway {
                 Ok(crate::metadata::object([("ok", JsValue::Bool(true))]))
             });
         }
+        if method.equals_str("close_session") || method.equals_str("delete_session") {
+            // GatewayWsConnection.ts wraps successful void lifecycle calls.
+            // Keep the dispatcher contract and propagate failures unchanged.
+            return Box::pin(async move {
+                self.0.requests.request(method, params).await?;
+                Ok(crate::metadata::object([("ok", JsValue::Bool(true))]))
+            });
+        }
         self.0.requests.request(method, params)
     }
     fn submit<'a>(

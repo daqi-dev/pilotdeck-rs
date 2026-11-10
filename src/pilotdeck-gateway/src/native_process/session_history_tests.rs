@@ -389,6 +389,30 @@ fn recovery_does_not_resurrect_a_missing_current_transcript() {
     assert_eq!(fs::read(journal).unwrap(), journal_bytes);
 }
 #[test]
+fn late_rollback_after_interrupted_delete_preserves_backup_without_resurrection() {
+    let scratch = Scratch::new();
+    let (path, backup, journal) =
+        transaction(&scratch.0, b"deleted-conversation", b"current", None);
+    let record = parse_json(fs::read_to_string(&journal).unwrap().trim()).unwrap();
+    let input = object([
+        ("sessionKey", string("session")),
+        ("transactionId", field(&record, "transactionId").clone()),
+        ("action", string("rollback")),
+    ]);
+    let backup_bytes = fs::read(&backup).unwrap();
+    let journal_bytes = fs::read(&journal).unwrap();
+    // Persisted state at unlink-success / sidecar-cleanup-not-yet-started.
+    fs::remove_file(&path).unwrap();
+    let report = recover_chats(std::slice::from_ref(&scratch.0));
+    assert_eq!(report.failures.len(), 1);
+    assert_eq!(report.rolled_back, 0);
+    let error = finalize(&input, &scratch.0, &path).unwrap_err();
+    assert_eq!(error.code.as_deref(), Some("replace_transaction_missing"));
+    assert!(!path.exists());
+    assert_eq!(fs::read(&backup).unwrap(), backup_bytes);
+    assert_eq!(fs::read(&journal).unwrap(), journal_bytes);
+}
+#[test]
 fn error_message_and_requested_ids_preserve_raw_utf16_units() {
     let value = JsValue::String(JsString::from_utf16(vec![0xd800]));
     let message = prefixed_value("Transcript entry not found: ", &value).unwrap();

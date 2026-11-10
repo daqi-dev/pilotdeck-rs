@@ -12,13 +12,39 @@ use std::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::tungstenite::Message;
+const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
 
 #[derive(Default)]
 struct Wire {
+    commands: Mutex<std::collections::VecDeque<String>>,
+    command_id: AtomicUsize,
+    image_reset_started: std::sync::atomic::AtomicBool,
     generation: AtomicUsize,
     frames: Mutex<Vec<(usize, Value)>>,
     model: Mutex<Vec<Value>>,
     artifact: Mutex<String>,
+}
+async fn command(state: &Wire, input: &str, expected: &str) -> String {
+    super::channel_command_fixture::control(
+        |input| state.commands.lock().unwrap().push_back(input.to_owned()),
+        || {
+            state
+                .frames
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|(_, frame)| {
+                    frame["body"]["markdown"]["content"]
+                        .as_str()
+                        .map(str::to_owned)
+                })
+                .collect()
+        },
+        || state.model.lock().unwrap().len(),
+        input,
+        expected,
+    )
+    .await
 }
 async fn eventually(mut condition: impl FnMut() -> bool, label: &str) {
     tokio::time::timeout(Duration::from_secs(20), async {
@@ -61,7 +87,20 @@ async fn wecom_actual_host_media_and_help() {
                     if String::from_utf8_lossy(&peek).to_ascii_lowercase().contains("upgrade: websocket") {
                         let mut peer=tokio_tungstenite::accept_async(socket).await.unwrap();
                         let generation=state.generation.load(Ordering::SeqCst);
-                        while let Some(Ok(frame))=peer.next().await {
+                        let mut ticks=tokio::time::interval(Duration::from_millis(20));
+                        loop {
+                            let frame=tokio::select!{
+                                _=ticks.tick()=>{
+                                    let input=state.commands.lock().unwrap().pop_front();
+                                    if let Some(input)=input {
+                                        let id=state.command_id.fetch_add(1,Ordering::SeqCst)+1;
+                                        let event=json!({"cmd":"aibot_msg_callback","headers":{"req_id":format!("in-command-{id}")},"body":{"msgid":format!("m-command-{id}"),"from":{"userid":"alice"},"chatid":"alice","chattype":"single","msgtype":"text","text":{"content":input}}});
+                                        if peer.send(Message::Text(event.to_string().into())).await.is_err(){break;}
+                                    }
+                                    continue;
+                                },
+                                frame=peer.next()=>match frame{Some(Ok(frame))=>frame,_=>break},
+                            };
                             let Message::Text(raw)=frame else { continue };
                             let value:Value=serde_json::from_str(raw.as_str()).unwrap();
                             let cmd=value["cmd"].as_str().unwrap_or(""); let id=value["headers"]["req_id"].as_str().unwrap_or("");
@@ -72,6 +111,17 @@ async fn wecom_actual_host_media_and_help() {
                                 _ => json!({"headers":{"req_id":id},"body":{"errcode":0}})
                             };
                             peer.send(Message::Text(reply.to_string().into())).await.unwrap();
+                            if cmd=="aibot_respond_msg" && value["body"]["file"]["media_id"]=="test-media"
+                                && !state.image_reset_started.swap(true,Ordering::SeqCst) {
+                                // Fixed TS explicitly skips another message in the same active
+                                // session. Reset through the real channel command first; this tests
+                                // image input in a fresh session without sleeps or changing that rule.
+                                peer.send(Message::Text(json!({"cmd":"aibot_msg_callback","headers":{"req_id":"in-reset-image"},"body":{"msgid":"m-reset-image","from":{"userid":"alice"},"chatid":"alice","chattype":"single","msgtype":"text","text":{"content":"/new"}}}).to_string().into())).await.unwrap();
+                            }
+                            if cmd=="aibot_respond_msg" && value["headers"]["req_id"]=="in-reset-image"
+                                && value["body"]["markdown"]["content"].as_str().is_some_and(|text|text.contains("已创建新会话")) {
+                                peer.send(Message::Text(json!({"cmd":"aibot_msg_callback","headers":{"req_id":"in-image"},"body":{"msgid":"m-image","from":{"userid":"alice"},"chatid":"alice","chattype":"single","msgtype":"image","image":{"url":format!("http://{address}/encrypted-image"),"aeskey":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8","content_type":"image/png"}}}).to_string().into())).await.unwrap();
+                            }
                             if cmd=="aibot_subscribe" {
                                 peer.send(Message::Text(json!({"cmd":"aibot_msg_callback","headers":{"req_id":"in-help"},"body":{"msgid":"m-help","from":{"userid":"alice"},"chatid":"alice","chattype":"single","msgtype":"text","text":{"content":"/help"}}}).to_string().into())).await.unwrap();
                                 peer.send(Message::Text(json!({"cmd":"aibot_msg_callback","headers":{"req_id":"in-media"},"body":{"msgid":"m-media","from":{"userid":"alice"},"chatid":"alice","chattype":"single","msgtype":"file","file":{"url":format!("http://{address}/encrypted"),"aeskey":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8","filename":"wecom-actual.txt"}}}).to_string().into())).await.unwrap();
@@ -81,6 +131,12 @@ async fn wecom_actual_host_media_and_help() {
                     }
                     let mut bytes=vec![]; while !bytes.ends_with(b"\r\n\r\n") {let mut byte=[0];if socket.read_exact(&mut byte).await.is_err(){return} bytes.push(byte[0]);assert!(bytes.len()<65536);}
                     let headers=String::from_utf8(bytes).unwrap();
+                    if headers.starts_with("GET /encrypted-image ") {
+                        use base64::Engine;
+                        let encrypted=base64::engine::general_purpose::STANDARD.decode("vvnZzQwwP9hfNIvc8y0ibwEwDM1d7N6V3Nzz7HsesBiU3aH8QnW3pptM6KyyarPcRP60anbGyAa5QGdleiW9RXOoRwYOiQ54Ek9x0ymzmAGTUJ/C0PRQ77xBd/xcBsv1").unwrap();
+                        let head=format!("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",encrypted.len());
+                        let _=socket.write_all(head.as_bytes()).await;let _=socket.write_all(&encrypted).await;return;
+                    }
                     if headers.starts_with("GET /encrypted ") {
                         use base64::Engine;
                         let encrypted=base64::engine::general_purpose::STANDARD.decode("6JdUl0nUIkkcDmt4hXQEniF52SgeWTEWDIlNe4n4Av8=").unwrap();
@@ -106,12 +162,25 @@ async fn wecom_actual_host_media_and_help() {
     let (_scratch, requests) = super::management_tests::setup();
     requests.project.dispose().await.unwrap();
     requests.owner.shutdown().await.unwrap();
+    let mock_cli = super::channel_command_fixture::prepare(&requests.options);
     let artifact = requests.options.project.join("wecom-outbound.txt");
     std::fs::write(&artifact, b"wecom-output-fixture").unwrap();
-    *state.artifact.lock().unwrap() = artifact.to_string_lossy().into_owned();
+    let image = artifact.with_extension("png");
+    {
+        use base64::Engine;
+        std::fs::write(
+            &image,
+            base64::engine::general_purpose::STANDARD
+                .decode(PNG)
+                .unwrap(),
+        )
+        .unwrap();
+    }
+    *state.artifact.lock().unwrap() = format!("{}\nMEDIA:{}", artifact.display(), image.display());
     let path = requests.options.home.join("pilotdeck.yaml");
     let base = std::fs::read_to_string(&path)
         .unwrap()
+        .replace("test: {}", "test: {multimodal: {input: [text, image]}}")
         .replace("http://127.0.0.1:1", &format!("http://{address}/v1"));
     std::fs::write(&path,format!("{base}adapters:\n  wecom:\n    enabled: true\n    token: mock-bot\n    extra:\n      botSecret: mock-secret\n      dmPolicy: open\n      textBatchDelayMs: 0\n      websocketUrl: ws://{address}/wecom\n")).unwrap();
     let mut options = requests.options.clone();
@@ -137,7 +206,10 @@ async fn wecom_actual_host_media_and_help() {
     let (host, _channels) = super::assembly::start_with_channel_endpoints(
         options.clone(),
         requests.env.clone(),
-        ChannelEndpointOverrides::default(),
+        ChannelEndpointOverrides {
+            channel_system_cli: Some(mock_cli),
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
@@ -201,6 +273,98 @@ async fn wecom_actual_host_media_and_help() {
                 })
         },
         "real model MEDIA output uploads and sends file via WeCom",
+    )
+    .await;
+    eventually(
+        || {
+            state.model.lock().unwrap().iter().any(|model| {
+                model["messages"].as_array().is_some_and(|messages| {
+                    messages.iter().any(|message| {
+                        message["content"].as_array().is_some_and(|blocks| {
+                            blocks.iter().any(|block| {
+                                block["type"] == "image_url"
+                                    && block["image_url"]["url"]
+                                        == format!("data:image/png;base64,{PNG}")
+                            })
+                        })
+                    })
+                })
+            })
+        },
+        "encrypted image callback reaches real multimodal A7 model",
+    )
+    .await;
+    eventually(
+        || {
+            let frames = state.frames.lock().unwrap();
+            frames
+                .iter()
+                .filter(|(_, frame)| {
+                    frame["cmd"] == "aibot_upload_media_init"
+                        && frame["body"]["type"] == "image"
+                        && frame["body"]["total_size"] == 70
+                })
+                .count()
+                >= 2
+                && frames
+                    .iter()
+                    .filter(|(_, frame)| {
+                        frame["cmd"] == "aibot_upload_media_chunk"
+                            && frame["body"]["base64_data"] == PNG
+                    })
+                    .count()
+                    >= 2
+                && frames.iter().any(|(_, frame)| {
+                    frame["cmd"] == "aibot_respond_msg"
+                        && frame["headers"]["req_id"] == "in-image"
+                        && frame["body"]["image"]["media_id"] == "test-media"
+                })
+        },
+        "image-input A7 run uploads and sends a real image to the same external callback",
+    )
+    .await;
+    let listed = command(&state, "/projects", "项目列表：").await;
+    let name = super::channel_command_fixture::project_name(&listed);
+    command(&state, &format!("/switch-project {name}"), "已切换到项目").await;
+    let status = command(&state, "/status", "PilotDeck Status").await;
+    assert!(
+        status.contains("fixture") && status.contains("mock channel status"),
+        "real git status must reach the external channel"
+    );
+    command(&state, "/update check", "已是最新 Release").await;
+    command(&state, "/update", "mock-release-restart").await;
+    super::channel_command_fixture::assert_update_calls(&options);
+    command(
+        &state,
+        "/search WeCom encrypted attachment --all --limit 3 --role user",
+        "🔍 找到",
+    )
+    .await;
+    command(&state, "/new", "已创建新会话").await;
+    let before_plan = state.model.lock().unwrap().len();
+    let frames_before_plan = state.frames.lock().unwrap().len();
+    state
+        .commands
+        .lock()
+        .unwrap()
+        .push_back("/plan mock channel planning task".into());
+    eventually(
+        || state.model.lock().unwrap().len() == before_plan + 1,
+        "non-system plan command enters actual A7",
+    )
+    .await;
+    eventually(
+        || {
+            state.frames.lock().unwrap()[frames_before_plan..]
+                .iter()
+                .any(|(_, frame)| {
+                    frame["cmd"] == "aibot_respond_msg"
+                        && frame["body"]["markdown"]["content"]
+                            .as_str()
+                            .is_some_and(|text| text.contains("wecom-actual-output-0"))
+                })
+        },
+        "plan A7 reply reaches same external WeCom transport",
     )
     .await;
     host.shutdown(options.drain_budget).await.unwrap();

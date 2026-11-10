@@ -1,4 +1,4 @@
-//! Removal of stale last-turn replacement sidecars, shared by native reopen and portable restore.
+//! Invalidation of stale last-turn replacement sidecars, shared by native reopen and portable restore.
 //! Caller owns the transcript writer lease and mutation fence. Never infer absence from read failure.
 use rustix::fs::{AtFlags, Dir, Mode, OFlags, openat, statat, unlinkat};
 use std::{fs::File, io, path::Path};
@@ -8,12 +8,12 @@ fn parent(path: &Path) -> io::Result<File> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Transcript has no parent"))?;
     crate::project_files::open_directory_beneath(Path::new("/"), parent)
 }
-fn valid_uuid(s: &str) -> bool {
+pub(crate) fn valid_uuid(s: &str) -> bool {
     uuid::Uuid::parse_str(s).is_ok_and(|id| {
         matches!(id.get_version_num(), 1..=5) && matches!(id.get_variant(), uuid::Variant::RFC4122)
     }) && s.len() == 36
 }
-fn discard_at(directory: &File, path: &Path) -> io::Result<()> {
+fn invalidate_at(directory: &File, path: &Path, preserve: bool) -> io::Result<()> {
     // A traversal/search descriptor is not necessarily readable. In particular
     // Darwin O_SEARCH loses DIRECTORY from F_GETFL, so Dir::read_from cannot
     // infer the right access mode. Reopen the pinned object, not its path.
@@ -44,7 +44,22 @@ fn discard_at(directory: &File, path: &Path) -> io::Result<()> {
         });
         if id.is_some_and(valid_uuid) {
             removed = true;
-            match unlinkat(directory, entry.file_name(), AtFlags::empty()) {
+            let result = if preserve {
+                // Missing is not proof of an intentional delete: these may
+                // be the only recovery bytes left after a crash. Remove the
+                // transaction from automatic recovery without discarding it.
+                let quarantine = format!("{name}.orphaned.{}", uuid::Uuid::new_v4());
+                rustix::fs::renameat_with(
+                    directory,
+                    entry.file_name(),
+                    directory,
+                    quarantine.as_str(),
+                    rustix::fs::RenameFlags::NOREPLACE,
+                )
+            } else {
+                unlinkat(directory, entry.file_name(), AtFlags::empty())
+            };
+            match result {
                 Ok(()) | Err(rustix::io::Errno::NOENT) => {}
                 Err(error) => return Err(error.into()),
             }
@@ -60,9 +75,9 @@ fn discard_at(directory: &File, path: &Path) -> io::Result<()> {
 /// A successful transcript deletion invalidates every replacement transaction for this exact key.
 /// Parent traversal rejects symlinks and unlinks stay relative to one pinned directory descriptor.
 pub(crate) fn discard(path: &Path) -> io::Result<()> {
-    discard_at(&parent(path)?, path)
+    invalidate_at(&parent(path)?, path, false)
 }
-/// Only ENOENT at the transcript leaf permits cleanup. Existing regular files, directories,
+/// Only ENOENT at the transcript leaf permits quarantine. Existing regular files, directories,
 /// and even dangling symlinks are not absence. Parent/stat errors propagate without removing data.
 pub(crate) fn cleanup_if_missing(path: &Path) -> io::Result<bool> {
     let directory = parent(path)?;
@@ -72,7 +87,7 @@ pub(crate) fn cleanup_if_missing(path: &Path) -> io::Result<bool> {
     match statat(&directory, name, AtFlags::SYMLINK_NOFOLLOW) {
         Ok(_) => Ok(false),
         Err(rustix::io::Errno::NOENT) => {
-            discard_at(&directory, path)?;
+            invalidate_at(&directory, path, true)?;
             Ok(true)
         }
         Err(error) => Err(error.into()),
@@ -111,7 +126,7 @@ mod tests {
         for item in &artifacts {
             std::fs::write(item, b"old backup").unwrap();
         }
-        discard_at(&search, &path)
+        invalidate_at(&search, &path, false)
             .expect("readable directory reopened from pinned search descriptor");
         assert!(artifacts.iter().all(|item| !item.exists()));
         let readable = File::from(
@@ -139,7 +154,7 @@ mod tests {
     }
 
     #[test]
-    fn only_missing_leaf_discards_exact_uuid_sidecars() {
+    fn only_missing_leaf_quarantines_exact_uuid_sidecars() {
         let s = Scratch::new();
         let sidecars = s.sidecars();
         for p in &sidecars {
@@ -154,6 +169,22 @@ mod tests {
         }
         assert!(cleanup_if_missing(&s.0.join("session.jsonl")).unwrap());
         assert!(sidecars.iter().all(|p| !p.exists()));
+        for original in &sidecars {
+            let prefix = format!(
+                "{}.orphaned.",
+                original.file_name().unwrap().to_str().unwrap()
+            );
+            let quarantined: Vec<_> = std::fs::read_dir(&s.0)
+                .unwrap()
+                .map(Result::unwrap)
+                .filter(|entry| entry.file_name().to_str().unwrap().starts_with(&prefix))
+                .collect();
+            assert_eq!(quarantined.len(), 1);
+            assert_eq!(std::fs::read(quarantined[0].path()).unwrap(), b"old data");
+        }
+        // A second open cannot reclassify or erase quarantined recovery bytes.
+        assert!(cleanup_if_missing(&s.0.join("session.jsonl")).unwrap());
+        assert_eq!(std::fs::read_dir(&s.0).unwrap().count(), 5);
         for p in [&unrelated, &malformed, &lock] {
             assert_eq!(std::fs::read(p).unwrap(), b"keep");
         }

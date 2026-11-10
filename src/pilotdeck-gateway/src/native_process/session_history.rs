@@ -116,11 +116,7 @@ fn now() -> Result<String, ReplacementError> {
 fn uuid() -> String {
     uuid::Uuid::new_v4().to_string()
 }
-fn valid_uuid(s: &str) -> bool {
-    uuid::Uuid::parse_str(s).is_ok_and(|id| {
-        matches!(id.get_version_num(), 1..=5) && matches!(id.get_variant(), uuid::Variant::RFC4122)
-    }) && s.len() == 36
-}
+use crate::storage::replacement_artifacts::valid_uuid;
 fn parent(path: &Path) -> Result<(File, &std::ffi::OsStr), ReplacementError> {
     let directory = path.parent().ok_or_else(|| io("Artifact has no parent."))?;
     let fd = crate::project_files::open_directory_beneath(Path::new("/"), directory).map_err(io)?;
@@ -538,6 +534,15 @@ fn finalize(input: &JsValue, chat: &Path, path: &Path) -> ReplacementResult {
     }
     let (backup, journal) = transaction_paths(chat, path, &id);
     if action == "rollback" {
+        // Deletion may have committed before a crash interrupted sidecar
+        // cleanup. A late rollback must not recreate that deleted lifetime.
+        // The caller retains the canonical writer lease and mutation fence.
+        read_bytes(path).map_err(|e| {
+            error(
+                "replace_transaction_missing",
+                format!("The current transcript could not be safely restored: {e}"),
+            )
+        })?;
         let original = read_bytes(&backup).map_err(|e| {
             error(
                 "replace_transaction_missing",

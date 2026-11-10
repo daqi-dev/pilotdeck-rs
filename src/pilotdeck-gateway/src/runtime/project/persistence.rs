@@ -134,6 +134,13 @@ impl PersistenceResources {
                     JsonlTranscriptStore::open_locked(&path)
                 }
                 .map_err(RecorderError::Store)?;
+                if bounded {
+                    // open_locked_bounded has established canonical identity
+                    // and holds the ledger writer lock. All native openers use
+                    // this one invalidation point before publishing a recorder.
+                    crate::storage::replacement_artifacts::cleanup_if_missing(&path)
+                        .map_err(|error| RecorderError::Type(error.to_string()))?;
+                }
                 let locked = Arc::new(store);
                 (
                     locked.clone() as Arc<dyn TranscriptStore>,

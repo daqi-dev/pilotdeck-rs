@@ -19,6 +19,27 @@ impl NativeChannelControl {
 }
 
 impl ChannelControlPort for NativeChannelControl {
+    fn signal_abort_turn(&self, params: JsValue) -> BoxFuture<Result<JsValue, ChannelError>> {
+        let requests = self.requests.get().and_then(Weak::upgrade);
+        Box::pin(async move {
+            let requests = requests.ok_or_else(|| ChannelError::error("Gateway not ready"))?;
+            if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)
+                && params
+                    .get("runId")
+                    .is_none_or(|run| matches!(run, JsValue::String(_) | JsValue::Undefined))
+            {
+                requests
+                    .owner
+                    .start_gateway_abort(
+                        key,
+                        params.get("runId").and_then(JsValue::as_string),
+                        params.get("reason").and_then(JsValue::as_string),
+                    )
+                    .map_err(|error| ChannelError::error(error.to_string()))?;
+            }
+            Ok(crate::metadata::object([("ok", JsValue::Bool(true))]))
+        })
+    }
     fn call(
         &self,
         method: &'static str,
@@ -28,21 +49,23 @@ impl ChannelControlPort for NativeChannelControl {
         Box::pin(async move {
             let requests = requests.ok_or_else(|| ChannelError::error("Gateway not ready"))?;
             if method == "abort_turn" {
-                // WS intercepts this control before the method dispatcher too.
-                // A channel can issue cancellation from its own stream consumer
-                // (watchdog/stop), so acknowledge cancellation here; its owned
-                // turn must then drain or drop that stream in finally. Waiting
-                // for that same consumer here would deadlock it.
+                // A reset is acknowledged only after cleanup releases the old
+                // workspace. Watchdogs inside the consumer use the signal-only
+                // trait method below so they cannot wait on themselves.
                 if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)
-                    && params.get("runId").is_none_or(|run| {
-                        matches!(run, JsValue::String(_) | JsValue::Undefined)
-                    })
+                    && params
+                        .get("runId")
+                        .is_none_or(|run| matches!(run, JsValue::String(_) | JsValue::Undefined))
                 {
-                    requests.owner.start_gateway_abort(
-                        key,
-                        params.get("runId").and_then(JsValue::as_string),
-                        params.get("reason").and_then(JsValue::as_string),
-                    ).map_err(|error| ChannelError::error(error.to_string()))?;
+                    requests
+                        .owner
+                        .abort_turn(
+                            key,
+                            params.get("runId").and_then(JsValue::as_string),
+                            params.get("reason").and_then(JsValue::as_string),
+                        )
+                        .await
+                        .map_err(|error| ChannelError::error(error.to_string()))?;
                 }
                 return Ok(crate::metadata::object([("ok", JsValue::Bool(true))]));
             }
@@ -75,22 +98,60 @@ mod tests {
         for params in [
             JsValue::Null,
             object([("sessionKey", JsValue::Number(1.0))]),
-            object([("sessionKey", JsValue::String(session.clone())), ("runId", JsValue::Null)]),
-            object([("sessionKey", JsValue::String(session.clone())), ("runId", "old".into())]),
+            object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("runId", JsValue::Null),
+            ]),
+            object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("runId", "old".into()),
+            ]),
         ] {
-            port.call("abort_turn", params).await.unwrap();
+            port.signal_abort_turn(params).await.unwrap();
             assert!(!current.is_cancelled());
             assert!(!unrelated.is_cancelled());
         }
-        tokio::time::timeout(std::time::Duration::from_secs(2), port.call("abort_turn", object([
-            ("sessionKey", JsValue::String(session.clone())),
-            ("runId", JsValue::String(run)),
-            ("reason", "system:channel-stop".into()),
-        ]))).await.expect("consumer must remain free to finish after cancellation").unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            port.signal_abort_turn(object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("runId", JsValue::String(run)),
+                ("reason", "system:channel-stop".into()),
+            ])),
+        )
+        .await
+        .expect("consumer must remain free to finish after cancellation")
+        .unwrap();
         assert!(current.is_cancelled());
         assert!(!unrelated.is_cancelled());
         requests.owner.complete_turn(&session, &current);
         requests.owner.complete_turn(&other, &unrelated);
+        requests.owner.shutdown().await.unwrap();
+        requests.project.dispose().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn channel_reset_waits_for_selected_turn_cleanup() {
+        use crate::metadata::object;
+        let (_root, requests) = crate::native_process::management_tests::setup();
+        let requests = Arc::new(requests);
+        let port = NativeChannelControl::default();
+        assert!(port.publish(&requests));
+        let key = "reset-wait".into();
+        let run = "old-run".into();
+        let completion = requests.owner.begin_completion(&key, &run);
+        let mut reset = port.call(
+            "abort_turn",
+            object([
+                ("sessionKey", JsValue::String(key.clone())),
+                ("runId", JsValue::String(run)),
+            ]),
+        );
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(reset.as_mut().poll(&mut cx).is_pending());
+        assert!(completion.is_cancelled());
+        requests.owner.complete_turn(&key, &completion);
+        assert_eq!(reset.await.unwrap(), object([("ok", JsValue::Bool(true))]));
         requests.owner.shutdown().await.unwrap();
         requests.project.dispose().await.unwrap();
     }

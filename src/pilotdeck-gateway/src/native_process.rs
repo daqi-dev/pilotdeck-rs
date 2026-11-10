@@ -493,6 +493,8 @@ mod telegram_actual_host_tests;
 
 mod channel_search;
 
+#[cfg(test)]
+mod channel_command_fixture;
 #[cfg(unix)]
 mod channel_system;
 

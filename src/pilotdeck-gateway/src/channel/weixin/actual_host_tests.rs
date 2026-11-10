@@ -55,6 +55,28 @@ impl Drop for Peer {
         self.task.abort();
     }
 }
+async fn command(peer: &Peer, input: &str, expected: &str) -> String {
+    super::channel_command_fixture::control(
+        |input| peer.state.enqueue(input),
+        || {
+            peer.state
+                .sent
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|frame| {
+                    frame["msg"]["item_list"][0]["text_item"]["text"]
+                        .as_str()
+                        .map(str::to_owned)
+                })
+                .collect()
+        },
+        || peer.state.models.lock().unwrap().len(),
+        input,
+        expected,
+    )
+    .await
+}
 async fn until(state: &Wire, label: &str, mut check: impl FnMut() -> bool) {
     tokio::time::timeout(Duration::from_secs(25), async {
         while !check() {
@@ -115,6 +137,7 @@ async fn weixin_actual_server_a7_permissions_elicitation_commands_new_and_shutdo
     let (_scratch, requests) = super::management_tests::setup();
     requests.project.dispose().await.unwrap();
     requests.owner.shutdown().await.unwrap();
+    let mock_cli = super::channel_command_fixture::prepare(&requests.options);
     let approved = requests.options.project.join("weixin-approved.txt");
     let denied = requests.options.project.join("weixin-must-not-exist.txt");
     let peer = peer(approved.clone(), denied.clone()).await;
@@ -156,7 +179,10 @@ async fn weixin_actual_server_a7_permissions_elicitation_commands_new_and_shutdo
     let (host, _channels) = super::assembly::start_with_channel_endpoints(
         options.clone(),
         requests.env.clone(),
-        ChannelEndpointOverrides::default(),
+        ChannelEndpointOverrides {
+            channel_system_cli: Some(mock_cli),
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
@@ -179,6 +205,17 @@ async fn weixin_actual_server_a7_permissions_elicitation_commands_new_and_shutdo
     })
     .await;
     assert_eq!(peer.state.tools.load(Ordering::SeqCst), 0);
+    let listed = command(&peer, "/projects", "项目列表：").await;
+    let name = super::channel_command_fixture::project_name(&listed);
+    command(&peer, &format!("/switch-project {name}"), "已切换到项目").await;
+    let status = command(&peer, "/status", "PilotDeck Status").await;
+    assert!(
+        status.contains("fixture") && status.contains("mock channel status"),
+        "real git status must reach the external channel"
+    );
+    command(&peer, "/update check", "已是最新 Release").await;
+    command(&peer, "/update", "mock-release-restart").await;
+    super::channel_command_fixture::assert_update_calls(&options);
     peer.state.enqueue("permission-start");
     until(
         &peer.state,
@@ -245,6 +282,21 @@ async fn weixin_actual_server_a7_permissions_elicitation_commands_new_and_shutdo
     )
     .await;
     assert!(!denied.exists(), "new must abort original pending tool");
+    command(
+        &peer,
+        "/search permission-start --all --limit 3 --role user",
+        "🔍 找到",
+    )
+    .await;
+    let before_plan = peer.state.models.lock().unwrap().len();
+    peer.state.enqueue("/plan mock channel planning task");
+    until(
+        &peer.state,
+        "non-system plan command reaches actual A7",
+        || peer.state.contains("weixin-actual-final-7"),
+    )
+    .await;
+    assert_eq!(peer.state.models.lock().unwrap().len(), before_plan + 1);
     host.shutdown(options.drain_budget).await.unwrap();
     let count = peer.state.sent.lock().unwrap().len();
     tokio::time::sleep(Duration::from_millis(250)).await;

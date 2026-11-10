@@ -437,11 +437,13 @@ pub(crate) async fn restore_guarded<G: Send + 'static>(
         .acquire_owned()
         .await
         .map_err(|e| RequestError::new(e.to_string()))?;
-    let check_archive = archive.clone();
     let check_files = files.clone();
     let check_session = session.clone();
-    let (path, lease) = tokio::task::spawn_blocking(move || {
-        validate_archive(&check_archive)?;
+    let (path, lease, archive, permit, guard) = tokio::task::spawn_blocking(move || {
+        // Keep the IO reservation in every worker that can panic, including
+        // validation/path lookup, and carry it into the publication worker.
+        let (permit, guard) = (permit, guard);
+        validate_archive(&archive)?;
         let path =
             super::reader::history_path(&check_files, &check_session).map_err(RequestError::new)?;
         let lease = crate::runtime::session::transcript_locks::cold_write_lease(&path).ok_or_else(
@@ -452,7 +454,7 @@ pub(crate) async fn restore_guarded<G: Send + 'static>(
                 )
             },
         )?;
-        Ok::<_, RequestError>((path, lease))
+        Ok::<_, RequestError>((path, lease, archive, permit, guard))
     })
     .await
     .map_err(|e| RequestError::new(e.to_string()))??;

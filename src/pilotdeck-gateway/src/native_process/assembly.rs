@@ -1448,8 +1448,6 @@ async fn start_assembly(
                             })?;
                         let recording = persistence
                             .create_session_bounded(context.session_key.clone(), Some(open_path.clone()))?;
-                        crate::storage::replacement_artifacts::cleanup_if_missing(&open_path)
-                            .map_err(|e| crate::storage::recorder::RecorderError::Type(e.to_string()))?;
                         Ok(recording)
                     }),
                 }))

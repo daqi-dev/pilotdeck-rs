@@ -1268,7 +1268,7 @@ impl Runtime {
                             &format!("feishu: live reply timed out for chat {chat_id}"),
                         );
                         let active = self.active_run(chat_id);
-                        self.abort_turn(
+                        self.signal_abort_turn(
                             &turn.session_key,
                             active.as_ref().and_then(|r| r.run_id.as_deref()),
                             Some("system:timeout"),
@@ -1395,7 +1395,21 @@ impl Runtime {
         }
     }
 
+    async fn signal_abort_turn(&self, session: &str, run: Option<&str>, reason: Option<&str>) {
+        self.abort_turn_with_wait(session, run, reason, false).await;
+    }
+
     async fn abort_turn(&self, session: &str, run: Option<&str>, reason: Option<&str>) {
+        self.abort_turn_with_wait(session, run, reason, true).await;
+    }
+
+    async fn abort_turn_with_wait(
+        &self,
+        session: &str,
+        run: Option<&str>,
+        reason: Option<&str>,
+        wait: bool,
+    ) {
         let control = self
             .host_ports
             .lock()
@@ -1413,7 +1427,12 @@ impl Runtime {
         if let Some(reason) = reason {
             params.insert("reason".into(), JsValue::from(reason));
         }
-        if let Err(error) = control.call("abort_turn", JsValue::Object(params)).await {
+        let result = if wait {
+            control.call("abort_turn", JsValue::Object(params)).await
+        } else {
+            control.signal_abort_turn(JsValue::Object(params)).await
+        };
+        if let Err(error) = result {
             self.log("warn", &format!("feishu: abort turn failed: {error}"));
         }
     }

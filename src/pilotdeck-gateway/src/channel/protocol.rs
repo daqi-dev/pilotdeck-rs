@@ -121,6 +121,13 @@ pub trait ChannelControlPort: Send + Sync {
         method: &'static str,
         params: JsValue,
     ) -> BoxFuture<Result<JsValue, ChannelError>>;
+
+    /// Cancel from inside the turn's event consumer without waiting for that
+    /// same consumer to finish. External commands use `call("abort_turn", ...)`
+    /// and wait for the full turn cleanup before acknowledging a reset.
+    fn signal_abort_turn(&self, params: JsValue) -> BoxFuture<Result<JsValue, ChannelError>> {
+        self.call("abort_turn", params)
+    }
 }
 
 pub trait ChannelSearchPort: Send + Sync {
