@@ -3,11 +3,11 @@
 positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one sms-channel behavior and is killed by the oracle replay
-cell or dedicated test that pins that behavior's TS bytes (26 → 76; `#1984`
+cell or dedicated test that pins that behavior's TS bytes (26 → 77; `#1984`
 added `sms-oracle-boundary-unregistered`, `#1957` added
 `sms-oracle-signed-signature-header`, `#1913` added
 `sms-oracle-recorded-version`, `#2152` added
-`sms-oracle-recorded-omit-host`, `#2691` added the two port-guard
+`sms-oracle-recorded-omit-host`, `#2691` added the three port-guard
 switches — the `switches` table is the truth source). `#1879` only
 rewrites existing reads (`recorded_present`
 covers `env` / `sendFailAt` / `turn.*` / `truncate` / `halfClose` / `headers` /
@@ -354,6 +354,16 @@ switches = [
     ('sms-pin-bind-race-unchecked', SMS / 'tests.rs',
      'a_pin_start_that_loses_the_bind_race_is_caught_after_start',
      '#2691 the post-start bind guard did not fire'),
+    # #2691 fix-r2: the fixed-host bind probe is skipped — a dual-stack
+    # `[::]:port` holder (the occupier the connect probe cannot see) no
+    # longer fails the preflight on a host where it blocks the product's own
+    # bind (measured on Linux; on a macOS/BSD host whose kernel lets a
+    # `SO_REUSEADDR` specific bind through over a wildcard holder the
+    # product's bind succeeds too, so the switch is unobservable there and
+    # the bound test proves it instead of assuming it).
+    ('sms-port-preflight-bind-probe-skipped', SMS / 'tests.rs',
+     'dual_stack_occupier_is_reported_by_the_fixed_host_bind_probe',
+     '#2691 the fixed-host bind probe did not fire'),
 ]
 GUARDED = [SMS / name for name in (
     'mod.rs', 'gateway.rs', 'mapper.rs', 'render.rs', 'elicitation.rs',
