@@ -198,18 +198,14 @@ impl ProductionFaces {
                 // coming to re-issue the teardown request — the cancelled
                 // half may have died inside the close-notice window, before
                 // its own request below `finish()`'s window ever fired,
-                // which would leave the teardown to the `StopHost` drop
-                // request — same `send_if_modified`, same budget, only
-                // later, and a no-op on exits that skip Drop (per
-                // A8.5-SWITCH-MACHINE-001-R6). Synchronous and idempotent,
-                // so a no-op when
+                // which would leave the teardown to the unawaited `StopHost`
+                // drop request. Synchronous and idempotent, so a no-op when
                 // the cancelled run (or the drain) already sent it; the
                 // normal completion path is untouched — the window still
                 // closes before the request, the shutdown is not moved up.
                 // `switch-halt-owner-skip-reissue` (negative control,
                 // #2557): the re-issue deleted, so the cell regresses to the
-                // drop backstop alone — late, and absent on exits that
-                // skip Drop.
+                // unawaited backstop alone.
                 if !crate::mutants::on("switch-halt-owner-skip-reissue") {
                     self.phased.request_host_shutdown();
                 }

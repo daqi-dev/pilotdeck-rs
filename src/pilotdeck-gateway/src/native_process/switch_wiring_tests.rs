@@ -832,8 +832,7 @@ async fn a_panicking_runner_halts_and_the_death_march_returns() {
 /// below the window ever fires. The walk's timeout branch must re-issue the
 /// host teardown request itself: the process exits when the walk returns
 /// and no revisit is coming, so without the re-issue the only request left
-/// is the `StopHost` drop one — same `send_if_modified`, same budget, only
-/// later, and absent on exits that skip Drop (A8.5-SWITCH-MACHINE-001-R6).
+/// is the unawaited `StopHost` drop one.
 ///
 /// Real clock: the close half really burns the entries backstop (drain
 /// budget + `BACKSTOP_SLACK_MS`) off the shared deadline, and the host
