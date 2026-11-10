@@ -139,7 +139,7 @@ TABLES = (
 # Each reason states how many discovery keys the table needs and how many path
 # shapes the scanner could not follow; both are re-measured by
 # test_known_blind_counts_match_the_scan. #2141 carries the per-table fix list.
-# 276 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 200 blind only, 3 with unresolvable shapes only, 73 in both; 1459 keys: 412 bare-filename joins and 1047 shared-helper import keys.
+# 278 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 202 blind only, 3 with unresolvable shapes only, 73 in both; 1467 keys: 412 bare-filename joins and 1055 shared-helper import keys.
 # Why a key a table needs shows up in no table text: the import line spells a
 # module name, while the host keys the helper file it lives in.
 IMPORTED_HELPER_REASON = 'imported shared fixture helper'
@@ -310,6 +310,10 @@ KNOWN_BLIND = {
     'output-schema/negative.py': '5 keys',
     'p01-preflight/negative_controls.py': '6 keys + 1 unresolvable',
     'parity-lock-release/negative_controls.py': '6 keys + 1 unresolvable',
+    # #2398 parity-subprocess-hardening 与 #1891 sidecar-liveness：随 #2136
+    # fix-r41 合并 main（c3100a2b7）到达的两张新表，无 DISCOVERY_ANCHORS，
+    # 按 #2141 规则以实测键数登记为 blind；补锚点归 #2141 修表清单。
+    'parity-subprocess-hardening/negative_controls.py': '2 keys',
     'pending-reanchor/negative_controls.py': '4 keys',
     'permission-mode-surrogate/negative_controls.py': '6 keys',
     'phased-run-drained/negative_controls.py': '6 keys',
@@ -368,6 +372,7 @@ KNOWN_BLIND = {
     'settings-gateway/negative_controls.py': '5 keys + 1 unresolvable',
     'settings/negative_controls.py': '2 keys',
     'shared-runner-failclosed/negative_controls.py': '2 keys',
+    'sidecar-liveness-1891/negative_controls.py': '6 keys',
     'sidecar-payload/negative.py': '1 key + 1 unresolvable',
     'skills-external/negative_controls.py': '6 keys',
     'skills-external/negative_controls_949.py': '6 keys',
