@@ -33,7 +33,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import Case, classify, passed
+from negative_suite import Case, classify, declares_test, passed
 
 root = Path(__file__).resolve().parents[5]
 gates = root / 'src/pilotdeck-gateway/src/runtime/always_on/gates.rs'
@@ -229,7 +229,11 @@ def check_manifest():
         source = bound_test_source(row[4])
         if source is None:
             errors.append(f'{row[0]}: no source file for bound test {ident}')
-        elif not re.search(rf'\bfn {re.escape(ident)}\(', source.read_text()):
+        # 双谱系评审 P2（DS+MM simplify 两家撞上）：绑定测试存在性复用共享装置
+        # negative_suite.declares_test（#2064 r10 硬化版：注释/字符串先抹白、左
+        # 边界、三拼写折叠），不自写裸正则——注释里的 `fn name(` 满足裸正则，
+        # 满足不了 declares_test，--check 不再空心通过。
+        elif not declares_test(source.read_text(), ident):
             errors.append(f'{row[0]}: bound test {ident} is not defined in {source.name}')
     return errors
 

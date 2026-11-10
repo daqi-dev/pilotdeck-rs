@@ -24,7 +24,7 @@ const CONTROLS: &str = include_str!("../../../tests/fixtures/always-on-2294/nega
 /// The digest of [`CONTROLS`]: any fixture edit — even one that keeps the
 /// row list intact — must re-pin this consciously, next to the row-list
 /// change that explains it.
-const CONTROLS_SHA256: &str = "d69bd69944ad9ae81e383e6d212901286521094f111bb55dcc4edf2be8fdfa50";
+const CONTROLS_SHA256: &str = "c4de0c1d7be687cb074e38d5fc524e27d30df05436dcc4d3651f1a5ec8429565";
 
 /// The closed set itself: every mutation row's name, in the order the
 /// table holds it. Shrink, reorder and rename all fail the test below;
