@@ -11,7 +11,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic
 from negative_suite import ReceiptRun, judge, passed
 
 root = Path(__file__).resolve().parents[5]
@@ -19,6 +19,7 @@ turn = root / 'src/pilotdeck-cli/src/sdk/turn.rs'
 output = root / 'src/pilotdeck-cli/src/sdk/output.rs'
 transport = root / 'src/pilotdeck-cli/src/sdk/transport.rs'
 tests = root / 'src/pilotdeck-cli/tests/sdk_resume_exit.rs'
+common = root / 'src/pilotdeck-cli/tests/common/sdk_exit.rs'
 sdk = root / 'src/pilotdeck-cli/src/sdk.rs'
 fixture = root / 'src/pilotdeck-cli/tests/fixtures/sdk-terminal'
 oracle = fixture / 'oracle.json'
@@ -50,9 +51,9 @@ mutations = [
     ('resume-placeholder', sdk, 'turn::run(argv, &connection, Some(session))', 'Err(Failure::Todo("resume regression"))', 'resume_token_reaches_gateway', '#1086 output bytes and exit'),
     ('oracle-empty', oracle, '  "cases": [', '  "cases": [],\n  "discardedCases": [', 'resume_matches_ts_matrix', '#1086 registered 143 cells'),
     ('oracle-drift', oracle, '"nodeVersion": "v22.22.0"', '"nodeVersion": "v0.0.0"', 'terminal_oracle_regenerates_identically', '#1086 identical TS fixture sdk-terminal'),
-    ('fixture-stdin-skip', tests, 'match stdin.write_all(data) {', 'match { let _ = (stdin, data); Ok::<(), io::Error>(()) } {', 'fixture_stdin_writes_all_bytes', '#1086 complete stdin write'),
-    ('fixture-stdin-other-error', tests, 'Err(error) => panic!("#1086 fixture stdin: {error:?}"),', 'Err(_error) => {},', 'fixture_stdin_other_errors_still_fail', '#1086 other stdin errors must fail'),
-    ('fixture-stdin-broken-pipe', tests, 'Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}', 'Err(error) if false && error.kind() == io::ErrorKind::BrokenPipe => {}', 'fixture_stdin_broken_pipe_preserves_output', '#1086 broken pipe must not panic'),
+    ('fixture-stdin-skip', common, 'match stdin.write_all(data) {', 'match { let _ = (stdin, data); Ok::<(), io::Error>(()) } {', 'fixture_stdin_writes_all_bytes', '#1075 complete stdin write'),
+    ('fixture-stdin-other-error', common, 'Err(error) => panic!("#1075 fixture stdin: {error:?}"),', 'Err(_error) => {},', 'fixture_stdin_other_errors_still_fail', '#1075 other stdin errors must fail'),
+    ('fixture-stdin-broken-pipe', common, 'Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}', 'Err(error) if false && error.kind() == io::ErrorKind::BrokenPipe => {}', 'fixture_stdin_broken_pipe_preserves_output', '#1075 broken pipe must not panic'),
 ]
 
 def check(row):
@@ -64,6 +65,9 @@ def check(row):
 def main():
     args = sys.argv[1:]
     if args == ['--check']:
+        if not mutations:
+            # #1364: an empty manifest must fail closed, not "0 anchors checked".
+            raise SystemExit('#1086 anchors: empty mutation manifest; refusing to pass')
         failures = []
         for row in mutations:
             try:
@@ -101,6 +105,7 @@ def main():
     guarded = [*sorted((root / 'src/pilotdeck-cli/src').rglob('*.rs')),
                root / 'src/pilotdeck-cli/Cargo.toml', root / 'src/Cargo.lock', Path(__file__).resolve(),
                tests, *sorted(fixture.glob('*.*')),
+               common,
                root / 'src/pilotdeck-cli/tests/common/negative_receipt.rs',
                Path(__file__).resolve().parents[1] / 'negative_process.py',
                Path(__file__).resolve().parents[1] / 'negative_suite.py']
@@ -128,7 +133,11 @@ def main():
                         killed,reason,_ = judge(result,'',[(test,assertion)],receipt)
                         item.update(status='KILLED' if killed else ('SURVIVED' if passed(result,test) else 'INVALID'),reason=reason)
                 finally:
-                    path.write_bytes(originals[path])
+                    # Only restore bytes supplied by the official HEAD guard.
+                    # #1903: one atomic rename, never a truncating write -- a
+                    # SIGKILL mid-restore must not leave a half-written common
+                    # module that fails every sibling suite's baseline.
+                    write_source_atomic(root, path, originals[path])
                     if path.read_bytes() != originals[path]:
                         raise RuntimeError('restoration mismatch')
                 if not compile_only and not passed(run(name+'-restored',test,env),test):

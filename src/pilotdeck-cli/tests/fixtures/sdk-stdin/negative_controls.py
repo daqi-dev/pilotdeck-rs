@@ -16,17 +16,16 @@ sys.dont_write_bytecode = True
 root = Path(__file__).resolve().parents[5]
 shared = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path.insert(0, str(shared))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic
 from negative_suite import ReceiptRun, judge, passed
 
-# #1044: settings/sessions-list fixture bodies moved to tests/common/sdk_exit.rs;
+# #1044/#1179: every family's fixture bodies live in tests/common/sdk_exit.rs;
 # rows carry an explicit cargo --test target because the shared module's stem is
 # not a test binary. The exit-code mutant on the shared module cannot rely on
 # the per-file ExitStatusExt import, so it calls the trait by path.
 settings_target = 'sdk_settings_exit'
 sessions_list_target = 'sdk_sessions_list_exit'
 common = root / 'src/pilotdeck-cli/tests/common/sdk_exit.rs'
-sessions_messages = root / 'src/pilotdeck-cli/tests/sdk_sessions_messages_exit.rs'
 mutations = [
     ('settings-broken-pipe', common, settings_target, 'Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}', 'Err(error) if false && error.kind() == io::ErrorKind::BrokenPipe => {}', 'fixture_stdin_broken_pipe_preserves_output', '#1075 broken pipe must not panic'),
     ('settings-other-error', common, settings_target, 'Err(error) => panic!("#1075 fixture stdin: {error:?}"),', 'Err(_error) => {},', 'fixture_stdin_other_errors_still_fail', '#1075 other stdin errors must fail'),
@@ -34,18 +33,36 @@ mutations = [
     ('sessions-list-broken-pipe', common, sessions_list_target, 'Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}', 'Err(error) if false && error.kind() == io::ErrorKind::BrokenPipe => {}', 'fixture_stdin_broken_pipe_preserves_output', '#1075 broken pipe must not panic'),
     ('sessions-list-other-error', common, sessions_list_target, 'Err(error) => panic!("#1075 fixture stdin: {error:?}"),', 'Err(_error) => {},', 'fixture_stdin_other_errors_still_fail', '#1075 other stdin errors must fail'),
     ('sessions-list-skip-write', common, sessions_list_target, 'match stdin.write_all(data) {', 'match { let _ = (stdin, data); Ok::<(), io::Error>(()) } {', 'fixture_stdin_writes_all_bytes', '#1075 complete stdin write'),
-    ('sessions-messages-broken-pipe', sessions_messages, 'sdk_sessions_messages_exit', 'Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}', 'Err(error) if false && error.kind() == io::ErrorKind::BrokenPipe => {}', 'fixture_stdin_broken_pipe_preserves_output', '#1075 broken pipe must not panic'),
-    ('sessions-messages-other-error', sessions_messages, 'sdk_sessions_messages_exit', 'Err(error) => panic!("#1075 fixture stdin: {error:?}"),', 'Err(_error) => {},', 'fixture_stdin_other_errors_still_fail', '#1075 other stdin errors must fail'),
-    ('sessions-messages-skip-write', sessions_messages, 'sdk_sessions_messages_exit', 'match stdin.write_all(data) {', 'match { let _ = (stdin, data); Ok::<(), io::Error>(()) } {', 'fixture_stdin_writes_all_bytes', '#1075 complete stdin write'),
+    ('sessions-messages-broken-pipe', common, 'sdk_sessions_messages_exit', 'Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}', 'Err(error) if false && error.kind() == io::ErrorKind::BrokenPipe => {}', 'fixture_stdin_broken_pipe_preserves_output', '#1075 broken pipe must not panic'),
+    ('sessions-messages-other-error', common, 'sdk_sessions_messages_exit', 'Err(error) => panic!("#1075 fixture stdin: {error:?}"),', 'Err(_error) => {},', 'fixture_stdin_other_errors_still_fail', '#1075 other stdin errors must fail'),
+    ('sessions-messages-skip-write', common, 'sdk_sessions_messages_exit', 'match stdin.write_all(data) {', 'match { let _ = (stdin, data); Ok::<(), io::Error>(()) } {', 'fixture_stdin_writes_all_bytes', '#1075 complete stdin write'),
     ('settings-exit-code', common, settings_target, 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.status = std::os::unix::process::ExitStatusExt::from_raw(0); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve exit code'),
     ('settings-stdout', common, settings_target, 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.stdout.clear(); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve stdout'),
     ('settings-stderr', common, settings_target, 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.stderr.clear(); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve stderr'),
     ('sessions-list-exit-code', common, sessions_list_target, 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.status = std::os::unix::process::ExitStatusExt::from_raw(0); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve exit code'),
     ('sessions-list-stdout', common, sessions_list_target, 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.stdout.clear(); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve stdout'),
     ('sessions-list-stderr', common, sessions_list_target, 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.stderr.clear(); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve stderr'),
-    ('sessions-messages-exit-code', sessions_messages, 'sdk_sessions_messages_exit', 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.status = std::process::ExitStatus::from_raw(0); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve exit code'),
-    ('sessions-messages-stdout', sessions_messages, 'sdk_sessions_messages_exit', 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.stdout.clear(); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve stdout'),
-    ('sessions-messages-stderr', sessions_messages, 'sdk_sessions_messages_exit', 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.stderr.clear(); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve stderr'),
+    ('sessions-messages-exit-code', common, 'sdk_sessions_messages_exit', 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.status = std::os::unix::process::ExitStatusExt::from_raw(0); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve exit code'),
+    ('sessions-messages-stdout', common, 'sdk_sessions_messages_exit', 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.stdout.clear(); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve stdout'),
+    ('sessions-messages-stderr', common, 'sdk_sessions_messages_exit', 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.stderr.clear(); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve stderr'),
+    ('run-broken-pipe', common, 'sdk_run_exit', 'Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}', 'Err(error) if false && error.kind() == io::ErrorKind::BrokenPipe => {}', 'fixture_stdin_broken_pipe_preserves_output', '#1075 broken pipe must not panic'),
+    ('run-other-error', common, 'sdk_run_exit', 'Err(error) => panic!("#1075 fixture stdin: {error:?}"),', 'Err(_error) => {},', 'fixture_stdin_other_errors_still_fail', '#1075 other stdin errors must fail'),
+    ('run-skip-write', common, 'sdk_run_exit', 'match stdin.write_all(data) {', 'match { let _ = (stdin, data); Ok::<(), io::Error>(()) } {', 'fixture_stdin_writes_all_bytes', '#1075 complete stdin write'),
+    ('run-exit-code', common, 'sdk_run_exit', 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.status = std::os::unix::process::ExitStatusExt::from_raw(0); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve exit code'),
+    ('run-stdout', common, 'sdk_run_exit', 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.stdout.clear(); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve stdout'),
+    ('run-stderr', common, 'sdk_run_exit', 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.stderr.clear(); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve stderr'),
+    ('format-broken-pipe', common, 'sdk_format_exit', 'Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}', 'Err(error) if false && error.kind() == io::ErrorKind::BrokenPipe => {}', 'fixture_stdin_broken_pipe_preserves_output', '#1075 broken pipe must not panic'),
+    ('format-other-error', common, 'sdk_format_exit', 'Err(error) => panic!("#1075 fixture stdin: {error:?}"),', 'Err(_error) => {},', 'fixture_stdin_other_errors_still_fail', '#1075 other stdin errors must fail'),
+    ('format-skip-write', common, 'sdk_format_exit', 'match stdin.write_all(data) {', 'match { let _ = (stdin, data); Ok::<(), io::Error>(()) } {', 'fixture_stdin_writes_all_bytes', '#1075 complete stdin write'),
+    ('format-exit-code', common, 'sdk_format_exit', 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.status = std::os::unix::process::ExitStatusExt::from_raw(0); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve exit code'),
+    ('format-stdout', common, 'sdk_format_exit', 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.stdout.clear(); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve stdout'),
+    ('format-stderr', common, 'sdk_format_exit', 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.stderr.clear(); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve stderr'),
+    ('resume-broken-pipe', common, 'sdk_resume_exit', 'Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}', 'Err(error) if false && error.kind() == io::ErrorKind::BrokenPipe => {}', 'fixture_stdin_broken_pipe_preserves_output', '#1075 broken pipe must not panic'),
+    ('resume-other-error', common, 'sdk_resume_exit', 'Err(error) => panic!("#1075 fixture stdin: {error:?}"),', 'Err(_error) => {},', 'fixture_stdin_other_errors_still_fail', '#1075 other stdin errors must fail'),
+    ('resume-skip-write', common, 'sdk_resume_exit', 'match stdin.write_all(data) {', 'match { let _ = (stdin, data); Ok::<(), io::Error>(()) } {', 'fixture_stdin_writes_all_bytes', '#1075 complete stdin write'),
+    ('resume-exit-code', common, 'sdk_resume_exit', 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.status = std::os::unix::process::ExitStatusExt::from_raw(0); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve exit code'),
+    ('resume-stdout', common, 'sdk_resume_exit', 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.stdout.clear(); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve stdout'),
+    ('resume-stderr', common, 'sdk_resume_exit', 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.stderr.clear(); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve stderr'),
 ]
 
 
@@ -138,7 +155,7 @@ def main():
         (out / f'{label}.stderr').write_text(result.stderr)
         return result
 
-    guarded = [common, sessions_messages, Path(__file__).resolve(),
+    guarded = [common, Path(__file__).resolve(),
                root / 'src/pilotdeck-cli/Cargo.toml', root / 'src/Cargo.lock',
                shared / 'negative_process.py', shared / 'negative_suite.py']
     results = []
@@ -170,7 +187,10 @@ def main():
                                     ('SURVIVED' if passed(result, test) else 'INVALID'), reason=reason)
                 finally:
                     # Only restore bytes supplied by the official HEAD guard.
-                    path.write_bytes(originals[path])
+                    # #1903: one atomic rename, never a truncating write -- a
+                    # SIGKILL mid-restore must not leave a half-written common
+                    # module that fails every sibling suite's baseline.
+                    write_source_atomic(root, path, originals[path])
                     if path.read_bytes() != originals[path]:
                         raise RuntimeError('restoration mismatch')
                 if not compile_only and not passed(run(name + '-restored', target, test, env), test):
