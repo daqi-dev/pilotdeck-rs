@@ -102,9 +102,12 @@ MUTATIONS = [
      "                case + ': rust durable statuses differ from the D4-B canonical output')\n",
      ""),
     # The inapplicable-registry require is neutralized: the branch body must
-    # stay a statement, so the require becomes ``pass`` (#1190).
+    # stay a statement, so the require becomes ``pass`` (#1190).  fix-r33:
+    # the anchor follows the same_json spelling of the registry identity
+    # gate (DS r33 sibling#1/#4).
     ('drop-registry-inapplicable-require', SESSION,
-     "            require(registry == {'applicable': False}, 'EXPECTATION_RUST_DERIVATION',\n"
+     "            require(not native_evidence.same_json(registry, {'applicable': False}),\n"
+     "                    'EXPECTATION_RUST_DERIVATION',\n"
      "                    case + ': rust registry must be inapplicable without a run registry')\n",
      "            pass\n"),
 ]

@@ -1067,7 +1067,13 @@ def validate_expectations(registration, observations):
                 case + ': rust durable statuses differ from the D4-B canonical output')
         registry = row['rust']['registry']
         if canonical['eventLabels'] is None:
-            require(registry == {'applicable': False}, 'EXPECTATION_RUST_DERIVATION',
+            # fix-r33 (DS sibling#1/#4, probe-r33/folds.py): the registry
+            # block is an external document read — ``{'applicable': 0}``
+            # folded onto ``{'applicable': False}`` through the dict
+            # ``==`` and the derivation oracle passed; same_json is
+            # type-strict on booleans (#1372 semantics on numbers).
+            require(not native_evidence.same_json(registry, {'applicable': False}),
+                    'EXPECTATION_RUST_DERIVATION',
                     case + ': rust registry must be inapplicable without a run registry')
         else:
             first = int(row['ts']['registry']['events'][0].split(':', 1)[0])
@@ -1091,7 +1097,12 @@ def calibration_coverage(registration, manifest):
             'COVERAGE', 'all six preregistered cells required')
     require(all(c.get('registry') is c['name'].startswith('registry-') for c in registration['cells']),
             'CAPABILITY', 'registry configuration must match the fixed six-cell topology')
-    require(registration['phases'] == ['model', 'tool'] and registration['repeats'] == REPEATS,
+    # fix-r33 (DS sibling#5, probe-r33/folds.py): repeats is an external
+    # document int — ``5.0`` folded onto ``5`` through the bare ``==``;
+    # the real-int gate (type() excludes bool and float) precedes both
+    # repeats comparisons in this file.
+    require(registration['phases'] == ['model', 'tool']
+            and type(registration['repeats']) is int and registration['repeats'] == REPEATS,
             'COVERAGE', 'model/tool x five repetitions required')
     expected = [f"{cell['name']}/{variant['name']}/{phase}"
                 for cell in registration['cells'] for variant in cell['variants'] for phase in registration['phases']]
@@ -1110,7 +1121,8 @@ def validate_calibration(folder, output, baseline):
     raw = folder / 'raw'
     registration, manifest = read(raw / 'preregistration.json'), read(raw / 'manifest.json')
     expected = calibration_coverage(registration, manifest)
-    require(manifest['baselineCommit'] == BASELINE_COMMIT and manifest['repeats'] == REPEATS,
+    require(manifest['baselineCommit'] == BASELINE_COMMIT
+            and type(manifest['repeats']) is int and manifest['repeats'] == REPEATS,
             'IDENTITY', 'wrong baseline or repetition count')
     fixture_hashes = {f'scripts/a5-19/{name}': digest(ROOT / 'scripts/a5-19' / name) for name in FIXTURE_NAMES}
     require({row['path']: row['sha256'] for row in manifest['fixtureFiles']} == fixture_hashes,

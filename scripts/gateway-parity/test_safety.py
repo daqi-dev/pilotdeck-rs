@@ -5482,15 +5482,36 @@ class RetirementScoring(unittest.TestCase):
 
             for value, anchor in ((True, 0), (True, -1), (False, -1),
                                   (float('nan'), 0), (float('inf'), 0),
-                                  (float('-inf'), -1)):
+                                  (float('-inf'), -1),
+                                  # fix-r33 (MM boundary#1 P1 + DS
+                                  # sibling#6/boundary#2, probe-r33/folds.py):
+                                  # json.loads accepts arbitrary-precision
+                                  # ints, and the old isfinite spelling
+                                  # converted them through float() — a huge
+                                  # int anchor raised OverflowError out of
+                                  # validate(); the out-of-range int itself
+                                  # is not a plausible millisecond anchor
+                                  # and must resolve like any non-finite
+                                  # fold.  The anchors sit where the
+                                  # subtraction stays ≥ 300 (huge last, or
+                                  # hugely negative first), so the oracle
+                                  # that fires is the gate, not the
+                                  # pre-existing window value check.
+                                  (10**400, -1), (2**53 + 1, -1),
+                                  (-(2**53) - 1, 0)):
                 details = elapsed_errors(value, anchor)
                 self.assertIn('stream buffered/truncated', details,
-                              f'fix-r32 elapsed fold {value!r} at anchor {anchor}')
+                              f'fix-r32/r33 elapsed fold {value!r} at anchor {anchor}')
             # The honest anchors and the equal-type float spelling pass the
             # gate (floats are legal timestamps); the too-fast honest window
             # still fires the pre-existing value oracle, proving reach.
+            # fix-r33: the inclusive ±2**53 boundary is the largest int the
+            # gate still accepts — an honest anchor at it stays legal while
+            # the window subtraction stays ≥ 300.
             self.assertNotIn('stream buffered/truncated', elapsed_errors(0, 0))
             self.assertNotIn('stream buffered/truncated', elapsed_errors(0.0, 0))
+            self.assertNotIn('stream buffered/truncated', elapsed_errors(2**53, -1))
+            self.assertNotIn('stream buffered/truncated', elapsed_errors(-(2**53), 0))
             self.assertIn('stream buffered/truncated', elapsed_errors(100, -1))
 
     def test_wire_metadata_cross_check_refuses_int_folds_of_booleans(self):
@@ -5708,6 +5729,12 @@ _COMPARISON_DOC_NAMES = {
     # through these locals — without them the contract-identity compares
     # were invisible to the family sweep.
     'process', 'allowed', 'expected_parent', 'p',
+    # fix-r33 (DS sibling#3/#4): read_results is a helper-returned
+    # document view (response_map walks frames) and registry is a
+    # subscripted document field — neither a loader call nor a display
+    # literal, so the assignment tracker could not see them and their
+    # comparisons stayed outside the family.
+    'read_results', 'registry',
 }
 _COMPARISON_DOC_LOADERS = {'load', 'read', 'json_loads'}
 
@@ -5761,6 +5788,24 @@ def _comparison_doc_read(node, constructed):
             and node.func.id == 'type':
         return any(_comparison_doc_read(argument, constructed)
                   for argument in node.args)
+    # fix-r33 (DS sibling#2, probe-r33/folds.py): a comprehension reads
+    # the document through its generators and carries document data out
+    # through its element — ``[row.get('status') for row in http] !=
+    # expected`` fell out of the family because a ListComp is neither a
+    # tracked name nor a shape the reader walked, and its gate with it.
+    if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+        return (_comparison_doc_read(node.elt, constructed)
+                or any(_comparison_doc_read(generator.iter, constructed)
+                       or any(_comparison_doc_read(test, constructed)
+                              for test in generator.ifs)
+                       for generator in node.generators))
+    if isinstance(node, ast.DictComp):
+        return (_comparison_doc_read(node.key, constructed)
+                or _comparison_doc_read(node.value, constructed)
+                or any(_comparison_doc_read(generator.iter, constructed)
+                       or any(_comparison_doc_read(test, constructed)
+                              for test in generator.ifs)
+                       for generator in node.generators))
     return _comparison_doc_base(node, constructed)
 
 
@@ -5841,7 +5886,16 @@ def _comparison_family_sites():
                                    for argument in operand.args)
                            for operand in operands):
                     continue
-            elif not any(doc_sides[i] and (doc_sides[j] or _comparison_numeric_expr(operands[j]))
+            # fix-r33 (DS sibling#1, probe-r33/folds.py): the family
+            # definition says "the other operand is a document read, a
+            # document construction or a numeric expression" — but the
+            # pair judgment only ever asked read/numeric, so a literal
+            # construction operand (``registry == {'applicable': False}``)
+            # kept the site out of the family and the "closed" ledger
+            # stayed green over the hole.
+            elif not any(doc_sides[i] and (doc_sides[j]
+                                           or _comparison_numeric_expr(operands[j])
+                                           or _comparison_doc_construction(operands[j]))
                          for i in range(len(operands)) for j in range(len(operands)) if i != j):
                 continue
             snippet = ast.get_source_segment(src, node) or '?'
@@ -5862,72 +5916,72 @@ def _comparison_family_sites():
 # carry a boolean/float fold; the reason says why).  Line and snippet both
 # anchor each entry: a moved site or a same-line drift turns the ledger red.
 _COMPARISON_POINT_REGISTRY = (
-    ('session_domain.py', 'validate_calibration', 1129, "data['cell'] == cell['name']",
+    ('session_domain.py', 'validate_calibration', 1141, "data['cell'] == cell['name']",
      'EXEMPT', 'string domain: cell names are identity strings on both sides'),
-    ('session_domain.py', 'validate_calibration', 1133, "type(observation.get('repetition')) is int",
+    ('session_domain.py', 'validate_calibration', 1145, "type(observation.get('repetition')) is int",
      'GATE', 'fix-r32: this IS the gate body — deleting it reopens the bool/float repetition fold'),
-    ('session_domain.py', 'validate_calibration', 1151, "type(manifest['totalMeasurements']) is int",
+    ('session_domain.py', 'validate_calibration', 1163, "type(manifest['totalMeasurements']) is int",
      'GATE', 'fix-r32: this IS the gate body for the totalMeasurements =='),
-    ('session_domain.py', 'validate_calibration', 1152,
+    ('session_domain.py', 'validate_calibration', 1164,
      "manifest['totalMeasurements'] == len(observations)",
      'GATE', 'fix-r31: a real-int gate (type is int) precedes the =='),
-    ('session_domain.py', 'validate_calibration', 1170, "launch.get('exitCode') == 0",
+    ('session_domain.py', 'validate_calibration', 1182, "launch.get('exitCode') == 0",
      'GATE', 'fix-r31: a real-int gate precedes the =='),
-    ('session_domain.py', 'validate_calibration', 1170, "type(launch.get('exitCode')) is int",
+    ('session_domain.py', 'validate_calibration', 1182, "type(launch.get('exitCode')) is int",
      'GATE', 'fix-r32: this IS the gate body for the launch exitCode =='),
-    ('session_domain.py', 'audit_native', 1249, "process['ppid'] == expected_parent",
+    ('session_domain.py', 'audit_native', 1261, "process['ppid'] == expected_parent",
      'GATE', '_retirement_real_pid precedes on both sides (fix-r8/r31)'),
-    ('session_domain.py', 'audit_native', 1272, 'started == exited == set(actual_pids)',
+    ('session_domain.py', 'audit_native', 1284, 'started == exited == set(actual_pids)',
      'GATE', 'operands gated upstream: fix-r8 real-pid census + fix-r29 event-pid type gates'),
-    ('session_domain.py', 'audit_native', 1301,
+    ('session_domain.py', 'audit_native', 1313,
      "observer['connections'] == len({r['connection'] for r in observer['rows']})",
      'GATE', 'fix-r30: _retirement_real_count precedes on both sides'),
-    ('session_domain.py', 'audit_native', 1302,
+    ('session_domain.py', 'audit_native', 1314,
      "observer['connections'] == contract['connections']",
      'GATE', 'fix-r30: _retirement_real_count precedes on both sides'),
-    ('session_domain.py', 'audit_native', 1328, "type(binding.get('generation')) is int",
+    ('session_domain.py', 'audit_native', 1340, "type(binding.get('generation')) is int",
      'GATE', 'fix-r32: this IS the gate body for the binding generation >='),
-    ('session_domain.py', 'audit_native', 1329, "binding['generation'] >= 1",
+    ('session_domain.py', 'audit_native', 1341, "binding['generation'] >= 1",
      'GATE', 'type is int precedes inside the same condition'),
-    ('session_domain.py', '_load_native_artifacts', 1443, 'named == expected',
+    ('session_domain.py', '_load_native_artifacts', 1455, 'named == expected',
      'GATE', 'isinstance str gate precedes'),
-    ('session_domain.py', '_retirement_census', 1768, 'result.returncode == 0',
+    ('session_domain.py', '_retirement_census', 1780, 'result.returncode == 0',
      'EXEMPT', 'subprocess returncode is always a plain int'),
-    ('session_domain.py', '_retirement_real_pid', 1831, '0 < value <= 2 ** 31 - 1',
+    ('session_domain.py', '_retirement_real_pid', 1843, '0 < value <= 2 ** 31 - 1',
      'GATE', 'this IS the realness gate body (bool excluded before the comparison)'),
-    ('session_domain.py', '_retirement_real_count', 1845, 'type(value) is int',
+    ('session_domain.py', '_retirement_real_count', 1857, 'type(value) is int',
      'GATE', 'fix-r32: this IS the gate body — deleting it reopens the count fold'),
-    ('session_domain.py', '_retirement_real_count', 1845, 'value >= 0',
+    ('session_domain.py', '_retirement_real_count', 1857, 'value >= 0',
      'GATE', 'this IS the realness gate body (type is int precedes)'),
-    ('session_domain.py', '_retirement_real_port', 1862, '0 < value <= 65535',
+    ('session_domain.py', '_retirement_real_port', 1874, '0 < value <= 65535',
      'GATE', 'this IS the realness gate body (bool excluded before the comparison)'),
-    ('session_domain.py', '_retirement_connections', 2029, 'result.returncode != 0',
+    ('session_domain.py', '_retirement_connections', 2041, 'result.returncode != 0',
      'EXEMPT', 'subprocess returncode is always a plain int'),
-    ('session_domain.py', '_retirement_listener_verdict', 2132, 'addresses != expected',
+    ('session_domain.py', '_retirement_listener_verdict', 2144, 'addresses != expected',
      'EXEMPT', 'string domain: only string addresses can equal the constructed endpoint list'),
-    ('session_domain.py', 'score_retirement_round', 2269, 'driver_exit == 0',
+    ('session_domain.py', 'score_retirement_round', 2281, 'driver_exit == 0',
      'GATE', 'fix-r3 shape guard precedes in the same condition (isinstance int, bool excluded)'),
-    ('session_domain.py', 'score_retirement_round', 2375, 'events.get(identifier, 0) < 1',
+    ('session_domain.py', 'score_retirement_round', 2387, 'events.get(identifier, 0) < 1',
      'EXEMPT', "events is the scorer's own int-valued counter over wire frames"),
-    ('session_domain.py', '_retirement_strip_wire', 2403, "frame.get('method') == method",
+    ('session_domain.py', '_retirement_strip_wire', 2415, "frame.get('method') == method",
      'EXEMPT', 'string domain: the method parameter is an internally built string'),
-    ('session_domain.py', '_retirement_strip_receive', 2422, "frame.get('method') == method",
+    ('session_domain.py', '_retirement_strip_receive', 2434, "frame.get('method') == method",
      'EXEMPT', 'string domain: the method parameter is an internally built string'),
-    ('session_domain.py', '_retirement_controls', 2638, "mutated.get('outcomes') == outcomes",
+    ('session_domain.py', '_retirement_controls', 2650, "mutated.get('outcomes') == outcomes",
      'EXEMPT', 'apparatus-compared own constructions; a fold only fails the control harder'),
-    ('session_domain.py', '_retirement_controls', 2780, "frame.get('id') == identifier",
+    ('session_domain.py', '_retirement_controls', 2792, "frame.get('id') == identifier",
      'EXEMPT', 'string domain: identifier is an internally built string (fix-r4 usable-frame-id gate precedes)'),
-    ('session_domain.py', '_retirement_entry_inventory', 2932, "100 <= probe.get('status') <= 599",
+    ('session_domain.py', '_retirement_entry_inventory', 2944, "100 <= probe.get('status') <= 599",
      'GATE', 'isinstance int non-bool gate precedes in the same ternary (fix-r9)'),
-    ('session_domain.py', 'ready', 3181, 'response.status == 200',
+    ('session_domain.py', 'ready', 3193, 'response.status == 200',
      'EXEMPT', 'urllib HTTPResponse.status is always a plain int (stdlib, not a document)'),
-    ('session_domain.py', '_retirement_baseline_revision', 3253, 'result.returncode == 0',
+    ('session_domain.py', '_retirement_baseline_revision', 3265, 'result.returncode == 0',
      'EXEMPT', 'subprocess returncode is always a plain int'),
-    ('session_domain.py', 'main', 3576, "report['frozen']['exitCode'] != 0",
+    ('session_domain.py', 'main', 3588, "report['frozen']['exitCode'] != 0",
      'EXEMPT', 'apparatus-produced report field (frozen-check exit code)'),
-    ('session_domain.py', 'main', 3592, "audit['exitCode'] == 0",
+    ('session_domain.py', 'main', 3604, "audit['exitCode'] == 0",
      'EXEMPT', 'apparatus-produced audit field (launcher exit code)'),
-    ('session_domain.py', 'main', 3640, "report['frozen']['exitCode'] != 0",
+    ('session_domain.py', 'main', 3652, "report['frozen']['exitCode'] != 0",
      'EXEMPT', 'apparatus-produced report field (frozen-check exit code)'),
     ('native_evidence.py', 'session_windows', 427, "type(entry.get('pid')) is int",
      'GATE', 'fix-r32: this IS the gate body for the pid reads (fix-r30 family)'),
@@ -5944,48 +5998,99 @@ _COMPARISON_POINT_REGISTRY = (
      'GATE', 'type is int precedes inside the same condition'),
     ('native_evidence.py', 'session_chain', 645, "type(frame.get('final')) is bool",
      'GATE', 'fix-r32: this IS the gate body for the final flag'),
-    ('compare.py', 'wire_frame', 253, "type(row['wire']['opcode']) is not int",
+    ('compare.py', 'wire_frame', 270, "type(row['wire']['opcode']) is not int",
      'GATE', 'fix-r32 (DS sibling#3): the independent real-int gate; the same_json metadata check subsumes the value'),
-    ('compare.py', 'validate', 309, 'exit_code != 0',
+    ('compare.py', 'validate', 326, 'exit_code != 0',
      'GATE', 'fix-r31: a real-int gate precedes the !='),
-    ('compare.py', 'validate', 309, 'type(exit_code) is not int',
+    ('compare.py', 'validate', 326, 'type(exit_code) is not int',
      'GATE', 'fix-r32: this IS the gate body for the exitCode != 0'),
-    ('compare.py', 'validate', 329, 'records != len(rows)',
+    ('compare.py', 'validate', 346, 'records != len(rows)',
      'GATE', 'fix-r31: a real-int gate precedes the !='),
-    ('compare.py', 'validate', 329, 'type(records) is not int',
+    ('compare.py', 'validate', 346, 'type(records) is not int',
      'GATE', 'fix-r32: this IS the gate body for the records !='),
-    ('compare.py', 'validate', 333, 'connection_count < 0',
+    ('compare.py', 'validate', 350, 'connection_count < 0',
      'GATE', 'fix-r31: a real-int gate precedes in the same condition'),
-    ('compare.py', 'validate', 333, 'type(connection_count) is not int',
+    ('compare.py', 'validate', 350, 'type(connection_count) is not int',
      'GATE', 'fix-r32: this IS the gate body for the connection count reads'),
-    ('compare.py', 'validate', 334, 'connection_count > len(rows)',
+    ('compare.py', 'validate', 351, 'connection_count > len(rows)',
      'GATE', 'fix-r32: the real-int gate precedes; every connection owns at least one row, so an oversized count is an immediate G2 mismatch (and bounds the set(range) materialisation)'),
-    ('compare.py', 'validate', 335, 'connections != set(range(1, connection_count + 1))',
+    ('compare.py', 'validate', 352, 'connections != set(range(1, connection_count + 1))',
      'GATE', 'fix-r31: a real-int gate precedes the comparison'),
-    ('compare.py', 'validate', 339, "type(row.get('seq')) is not int",
+    ('compare.py', 'validate', 356, "type(row.get('seq')) is not int",
      'GATE', 'fix-r32: this IS the gate body for the recorder seq'),
-    ('compare.py', 'validate', 341, "type(row.get('connection')) is not int",
+    ('compare.py', 'validate', 358, "type(row.get('connection')) is not int",
      'GATE', 'fix-r32: this IS the row gate body for the connection field'),
-    ('compare.py', 'validate', 341, "row['connection'] < 1",
+    ('compare.py', 'validate', 358, "row['connection'] < 1",
      'GATE', 'fix-r31 row gate: type is int precedes in the same condition'),
-    ('compare.py', 'validate', 355, "row['connection'] != 4",
+    ('compare.py', 'validate', 372, "row['connection'] != 4",
      'GATE', 'fix-r31 row gate precedes the auth special case'),
-    ('compare.py', 'validate', 363, "binding['generation'] < 1",
+    ('compare.py', 'validate', 380, "binding['generation'] < 1",
      'GATE', 'type is int precedes inside the same condition'),
-    ('compare.py', 'validate', 363, "type(binding.get('generation')) is not int",
+    ('compare.py', 'validate', 380, "type(binding.get('generation')) is not int",
      'GATE', 'fix-r32: this IS the gate body for the hello binding'),
-    ('compare.py', 'validate', 375, "type(frame.get('final')) is not bool",
+    ('compare.py', 'validate', 392, "type(frame.get('final')) is not bool",
      'GATE', 'fix-r32: this IS the gate body for the stream final flag'),
-    ('compare.py', 'validate', 389, "frame['seq'] != expected",
+    ('compare.py', 'validate', 406, "frame['seq'] != expected",
      'GATE', 'type is int precedes inside the same condition'),
-    ('compare.py', 'validate', 389, "type(frame.get('seq')) is not int",
+    ('compare.py', 'validate', 406, "type(frame.get('seq')) is not int",
      'GATE', 'fix-r32: this IS the gate body for the event seq'),
-    ('compare.py', 'validate', 484, "body != row['body']",
+    ('compare.py', 'validate', 518, "body != row['body']",
      'EXEMPT', 'string domain: decoded UTF-8 chunk text vs recorded body'),
-    ('compare.py', 'validate', 510, "chunks[-1]['elapsedMs'] - chunks[0]['elapsedMs'] < 300",
+    ('compare.py', 'validate', 546, "chunks[-1]['elapsedMs'] - chunks[0]['elapsedMs'] < 300",
      'GATE', 'fix-r31 real-number gate + fix-r32 isfinite gate precede in the same condition'),
-    ('compare.py', 'validate', 520, "row['connection'] == 4",
+    ('compare.py', 'validate', 556, "row['connection'] == 4",
      'GATE', 'quirks rows already passed the fix-r31 row gate above'),
+    # fix-r33 (r33 structural closure - DS sibling#1/#2, probe-r33/folds.py):
+    # the pair judgment now accepts a document-construction operand and the
+    # reader walks comprehensions, so the sites below entered the family.
+    ('compare.py', '_stream_elapsed_real', 242, 'type(value) is int',
+     'GATE', 'fix-r33: this IS the real-int arm of the finiteness gate body'),
+    ('compare.py', '_stream_elapsed_real', 243, '-2**53 <= value <= 2**53',
+     'GATE', 'fix-r33: magnitude arm - a legal-JSON int outside +-2**53 is not a millisecond anchor (math.isfinite would OverflowError)'),
+    ('compare.py', '_stream_elapsed_real', 244, 'type(value) is float',
+     'GATE', 'fix-r33: float arm of the gate body - bool is excluded, isfinite applies here only'),
+    ('compare.py', 'validate', 421, 'auth != [4001, 4001, 4003, 4002, 1000]',
+     'GATE', 'fix-r33: the any(type is int) real-int gate precedes in the same condition'),
+    ('compare.py', 'validate', 463, "item.get('requestId') == value",
+     'EXEMPT', 'string domain: elicitation request ids are identity strings'),
+    ('compare.py', 'validate', 492, 'type(entry_count) is not int',
+     'GATE', 'fix-r33: this IS the gate body for the manifest entryCount'),
+    ('compare.py', 'validate', 492, 'entry_count < 1',
+     'GATE', 'fix-r33: the real-int gate precedes in the same condition'),
+    ('compare.py', 'validate', 513, "type(row.get('status')) is not int",
+     'GATE', 'fix-r33: this IS the gate body for the http status list'),
+    ('compare.py', 'validate', 514, "[row.get('status') for row in http] != expected",
+     'GATE', 'fix-r33: the real-int gate precedes in the same condition'),
+    ('compare.py', 'validate', 550, "[row.get('kind') for row in quirks] != ['rsv', 'continuation', 'client-close', 'unmasked']",
+     'EXEMPT', 'string domain: quirk kinds are identity strings'),
+    ('compare.py', 'validate', 580, "type(row.get('seq')) is not int",
+     'GATE', 'fix-r33: the upstream.jsonl seq gate - the frames.jsonl twin is registered at 356'),
+    ('native_evidence.py', 'session_profile', 385, "contract.get('externalEndpoints') == [endpoint]",
+     'EXEMPT', 'string domain: endpoint urls'),
+    ('native_evidence.py', 'session_profile', 386, "contract.get('capabilities') == {'provider': 'loopback-mock', 'tools': []}",
+     'EXEMPT', 'string domain: provider name and tool list'),
+    ('native_evidence.py', 'project_envelopes', 600, "envelope.get('id') == request_id",
+     'EXEMPT', 'string domain: request ids'),
+    ('native_evidence.py', 'session_chain', 618, "[row.get('case') for row in rows] == cases",
+     'EXEMPT', 'string domain: case names'),
+    ('session_domain.py', 'validate_expectations', 1019, "document.get('phases') == ['model', 'tool']",
+     'EXEMPT', 'string domain: phase names'),
+    ('session_domain.py', 'validate_expectations', 1022, "[row.get('case') if isinstance(row, dict) else None for row in rows] == contract['cases']",
+     'EXEMPT', 'string domain: case names and None'),
+    ('session_domain.py', 'validate_expectations', 1082, "registry['events'] == expected_events",
+     'EXEMPT', 'string domain: registry event labels'),
+    ('session_domain.py', 'calibration_coverage', 1104, "registration['phases'] == ['model', 'tool']",
+     'EXEMPT', 'string domain: phase names'),
+    ('session_domain.py', 'calibration_coverage', 1105, "type(registration['repeats']) is int",
+     'GATE', 'fix-r33: this IS the gate body for the registration repeats =='),
+    ('session_domain.py', 'validate_calibration', 1125, "type(manifest['repeats']) is int",
+     'GATE', 'fix-r33: this IS the gate body for the manifest repeats =='),
+    ('session_domain.py', 'validate_calibration', 1128, "{row['path']: row['sha256'] for row in manifest['fixtureFiles']} == fixture_hashes",
+     'EXEMPT', 'string domain: paths and sha256 hex digests'),
+    ('session_domain.py', 'validate_calibration', 1142, "[o['id'] for o in rows] == expected_ids",
+     'EXEMPT', 'string domain: observation ids'),
+    ('session_domain.py', '_retirement_round', 3215, "addresses == [f'127.0.0.1:{gateway_port}']",
+     'EXEMPT', 'string domain: listen addresses'),
 )
 
 
@@ -5998,7 +6103,12 @@ class ComparisonPointLedger(unittest.TestCase):
         # files in place (write_source_atomic) inside this same parity
         # lease — an unlocked read can see mutant bytes mid-batch and
         # either red on them or bless them.  The sweep holds the lease.
-        with common.parity_lock():
+        # fix-r33 (DS concurrency#2/boundary#4 + MM concurrency#1/#2 +
+        # MM boundary#2, four role hits across two lineages): the
+        # mutation batches budget their lease hold at 900s, above the
+        # lock's 600s default wait — the test now waits past that bound
+        # instead of timing out red while a batch still owns the lease.
+        with common.parity_lock(timeout=1200):
             sites = _comparison_family_sites()
         keys = {(entry[0], entry[1], entry[2], entry[3])
                 for entry in _COMPARISON_POINT_REGISTRY}

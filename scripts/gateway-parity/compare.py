@@ -227,6 +227,23 @@ def load(path, expected=dict):
     return value
 
 
+def _stream_elapsed_real(value):
+    """fix-r33 (MM boundary#1 P1, two lineages — DS sibling#6/boundary#2 —
+    probe-verified, probe-r33/folds.py): ``math.isfinite`` converts its
+    argument through ``float()`` first, so a legal-JSON huge integer
+    (``json.loads`` accepts ``{"elapsedMs": <400 digits>}`` as an
+    arbitrary-precision int) raised OverflowError straight out of
+    validate() — a crash instead of a verdict, and the r32 except tuples
+    do not catch ArithmeticError children.  An int outside +-2**53 cannot
+    be a millisecond anchor any recording produces; the gate reads it as
+    not-a-real anchor and the oracle fails closed, matching the pre-r32
+    arithmetic which failed the <300 window on the same input.
+    """
+    if type(value) is int:
+        return -2**53 <= value <= 2**53
+    return type(value) is float and math.isfinite(value)
+
+
 def wire_frame(row):
     data = bytes.fromhex(row['wireHex'])
     if len(data) < 2:
@@ -397,7 +414,11 @@ def validate(path, local_methods=()):
             return [row['frame'] for row in frames.get(name, []) if row.get('direction') == 'receive' and isinstance(row.get('frame'), dict)]
 
         auth = [row['close']['code'] for row in frames.get('auth', []) if 'close' in row]
-        if auth != [4001, 4001, 4003, 4002, 1000]:
+        # fix-r33 (DS sibling#1, probe-r33/folds.py): the close codes are
+        # external document ints — ``4001.0`` folded onto ``4001`` through
+        # the list ``==`` and the auth oracle passed; every code is now
+        # held to a real int first (bool is not int under type()).
+        if any(type(code) is not int for code in auth) or auth != [4001, 4001, 4003, 4002, 1000]:
             fail('G3.oracle', 'auth close codes / valid hello missing')
         for name in ('turn', 'permission'):
             events = [frame for frame in received(name) if frame.get('type') == 'event']
@@ -461,7 +482,14 @@ def validate(path, local_methods=()):
             fail('G3.oracle', 'agent / model catalog cannot be empty')
         if read_results.get('session_model_get', {}).get('effective', {}).get('model') != 'deterministic':
             fail('G3.oracle', 'session model must resolve the configured model')
-        if not read_results.get('native_archive_entries', {}).get('entries') or read_results.get('native_archive_manifest', {}).get('entryCount', 0) < 1:
+        # fix-r33 (DS sibling#3 + MM sibling#3, two lineages, probe-r33/
+        # folds.py): entryCount is an external document int — ``true``
+        # (``True < 1`` is False), ``1.0`` and ``NaN`` all folded through
+        # the bare ``< 1`` and the native-archive oracle read clean; the
+        # real-int gate (type() excludes bool and float) precedes it.
+        entry_count = read_results.get('native_archive_manifest', {}).get('entryCount', 0)
+        if not read_results.get('native_archive_entries', {}).get('entries') \
+                or type(entry_count) is not int or entry_count < 1:
             fail('G3.oracle', 'native archive must contain the completed text turn')
         # Independent disk oracles prevent both-sides-the-same failed execution.
         if (path / 'project/note.txt').read_text() != 'gateway parity fixture\n' or (path / 'project/written.txt').read_text() != 'HTTP written fixture\n':
@@ -477,7 +505,13 @@ def validate(path, local_methods=()):
             fail('G3.oracle', 'cron task must persist')
         http = load(path / 'scenarios/http/http.json', list)
         expected = [200, 200, 200, 200, 200, 401, 200, 200]
-        if [row.get('status') for row in http] != expected:
+        # fix-r33 (DS sibling#1/#2, probe-r33/folds.py): the statuses are
+        # external document ints — a ``200.0`` folded onto ``200`` through
+        # the list ``==``; every status is held to a real int first, and
+        # the comprehension operand now reads as a document read for the
+        # ledger (family sweep sees ListComp elt walks).
+        if any(type(row.get('status')) is not int for row in http) \
+                or [row.get('status') for row in http] != expected:
             fail('G3.oracle', 'HTTP status or endpoint coverage incorrect')
         for row in http:
             body = b''.join(base64.b64decode(chunk['base64'], validate=True) for chunk in row['chunks']).decode('utf8')
@@ -503,9 +537,11 @@ def validate(path, local_methods=()):
             # ``nan - nan < 300`` are False, so a doctored http.json could
             # clear the streamed-window oracle without ever streaming.  The
             # gate now demands a finite real number on both anchor chunks.
+            # fix-r33 (MM boundary#1 P1, probe-r33/folds.py): the finite
+            # check runs through _stream_elapsed_real — math.isfinite on a
+            # huge int anchor raised OverflowError out of validate().
             if (len(chunks) < 2
-                    or any(type(chunk.get('elapsedMs')) not in (int, float)
-                           or not math.isfinite(chunk.get('elapsedMs'))
+                    or any(not _stream_elapsed_real(chunk.get('elapsedMs'))
                            for chunk in (chunks[0], chunks[-1]))
                     or chunks[-1]['elapsedMs'] - chunks[0]['elapsedMs'] < 300
                     or 'first' not in row['body'] or 'last' not in row['body']):
@@ -536,9 +572,18 @@ def validate(path, local_methods=()):
                 fail('G2.observer', 'required passthrough requests missing from independently recorded upstream')
             if set(local_methods) & upstream_methods:
                 fail('G7.no-forward', 'declared local method was forwarded to TS upstream')
-            if any(row.get('seq') != index for index, row in enumerate(upstream, 1)):
+            # fix-r33 (MM sibling#1, probe-r33/folds.py): the frames.jsonl
+            # twin of this check has had its real-int gate since r31
+            # (``type(row.get('seq')) is not int`` precedes) — the
+            # upstream.jsonl site was missed, and ``"seq": true`` folded
+            # through ``True != 1``; same spelling as the gated twin.
+            if any(type(row.get('seq')) is not int or row.get('seq') != index
+                   for index, row in enumerate(upstream, 1)):
                 fail('G2.observer', 'upstream recorder seq must be contiguous')
-    except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError) as error:
+    except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError, OverflowError) as error:
+        # fix-r33 (MM boundary#1 P1): OverflowError is an ArithmeticError
+        # child that none of the value errors cover — belt and braces so
+        # any future overflow reads as a failed round, not a crash.
         fail('G0.round', str(error))
     return frames, errors
 

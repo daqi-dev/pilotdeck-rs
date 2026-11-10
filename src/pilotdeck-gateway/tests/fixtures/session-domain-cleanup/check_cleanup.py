@@ -5533,12 +5533,25 @@ def _literal_test_value_fold(node, budget=None):
                 # character (a ``\\U000e0000`` escape) plus the quotes —
                 # ``'%r' % ('\\U000e0000' * 700000,)`` measured 7,000,002.
                 # A bytes left (PEP 461) renders ``%s`` as the bytes
-                # themselves, so it keeps the 1:1 length.
+                # themselves, so it keeps the 1:1 length — but it also
+                # accepts ``%r``/``%a`` and inserts ``repr()``/``ascii()``
+                # there (fix-r33, DS r33 boundary#3 P2 read as the b-class
+                # P1 rule, probe-verified —
+                # _tmp/20261110-1355-r26-harvest/probe-r33-bytes-left.out):
+                # ``b'%r' % (b'\\x00' * 700000,)`` measured a 2,800,003-byte
+                # render against a 700,000 charge, and a *str* right under
+                # a bytes left replays the same repr arm —
+                # ``b'%r' % ('\\U000e0000' * 700000,)`` worst-cases the
+                # same 10-characters-per-character plus the quotes.
                 if isinstance(right, bytes):
-                    payload = len(right) * 4 + 3 if isinstance(left, str) else len(right)
+                    payload = (len(right) * 4 + 3
+                               if isinstance(left, str)
+                               or any(spec and spec[-1] in ('r', 'a')
+                                      for spec in specs)
+                               else len(right))
                 else:
                     payload = (len(right) * 10 + 2
-                               if isinstance(left, str)
+                               if isinstance(left, (str, bytes))
                                and any(spec and spec[-1] in ('r', 'a')
                                        for spec in specs)
                                else len(right))
@@ -9486,6 +9499,34 @@ def _aggregation_audit_impl():
     if _literal_test_value(_vsr_ctrl) is _LITERAL_TEST_UNRESOLVED:
         failures.append('#892 aggregation-audit: the Mod %s-str twin control '
                         'stopped folding (#1652)')
+    # fix-r33 (DS r33 boundary#3 P2 read as the b-class P1 rule,
+    # probe-verified — probe-r33-bytes-left.out): a bytes left (PEP 461)
+    # also renders ``%r``/``%a`` through repr/ascii — the scalar-branch
+    # probes resolve the sentinel while their same-shape twins fold, so
+    # the sentinel is the repr charge, not the shape (the bytes twin
+    # swaps the spec to ``%s``; the str twin shrinks under the worst-case
+    # 10-per-character charge, the same size class the r31 escape control
+    # used).
+    _vsbl_probe = ast.parse("b'%r' % (b'\\x00' * 700000)",
+                            mode='eval').body
+    if _literal_test_value(_vsbl_probe) is not _LITERAL_TEST_UNRESOLVED:
+        failures.append('#892 aggregation-audit: the Mod bytes-left repr '
+                        'payload charged the raw length (#1652)')
+    _vsbsl_probe = ast.parse("b'%r' % ('\\U000e0000' * 700000)",
+                             mode='eval').body
+    if _literal_test_value(_vsbsl_probe) is not _LITERAL_TEST_UNRESOLVED:
+        failures.append('#892 aggregation-audit: the Mod bytes-left repr-str '
+                        'payload charged the raw length (#1652)')
+    _vsbl_ctrl = ast.parse("b'%s' % (b'\\x00' * 700000)",
+                           mode='eval').body
+    if _literal_test_value(_vsbl_ctrl) is _LITERAL_TEST_UNRESOLVED:
+        failures.append('#892 aggregation-audit: the bytes-left %s twin '
+                        'control stopped folding (#1652)')
+    _vsbsl_ctrl = ast.parse("b'%r' % ('x' * 99000)",
+                            mode='eval').body
+    if _literal_test_value(_vsbsl_ctrl) is _LITERAL_TEST_UNRESOLVED:
+        failures.append('#892 aggregation-audit: the bytes-left repr-str '
+                        'twin control stopped folding (#1652)')
     _fsr_probe = ast.parse("'%r' % ('a' * 999000)", mode='eval').body
     if _folded_string(_fsr_probe) is not _FOLD_STRING_UNRESOLVED:
         failures.append('#892 aggregation-audit: the string fold built an '

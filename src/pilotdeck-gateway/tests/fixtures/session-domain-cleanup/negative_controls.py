@@ -4057,9 +4057,14 @@ MUTATIONS = [
     # probe-r31-render.out): reversion controls for the r31 fold-ledger
     # battery — with either charge reverted, a shape the battery must
     # resolve fail-closed folds instead.
+    # fix-r33 (mutneg-r33-unthreaded.out): the budget argument of
+    # ``_folded_size`` became required in fix-r32, so the bare revert
+    # spelled a TypeError that the fold-level error rule swallowed into
+    # the UNRESOLVED sentinel — the mutation survived its own judge.
+    # The reverted side now re-states the r30 per-call mint verbatim.
     ('mult-fold-budget-unthreaded', CHECK,
      "                        content = _folded_size(sequence, budget)",
-     "                        content = _folded_size(sequence)"),
+     "                        content = _folded_size(sequence, [_FOLD_SIZE_WORK_CAP])"),
     ('mod-render-bound-reverted', CHECK,
      "            elif isinstance(right, (list, tuple, set, frozenset, dict)):\n"
      "                try:\n"
@@ -4079,13 +4084,19 @@ MUTATIONS = [
     # _tmp/20261110-1355-r26-harvest/probe-r32-scalar-repr.out): the scalar
     # arm of the same charge — with the spec-aware render bound reverted to
     # the raw length, the ``%r``/``%a`` str and the bytes scalar probes fold
-    # past the cap the battery must resolve fail-closed.
+    # past the cap the battery must resolve fail-closed.  fix-r33: the
+    # anchor follows the bytes-left repr arm (DS r33 boundary#3) — under
+    # the revert the bytes-left probes join the same fold-past-cap kill.
     ('scalar-repr-reverted', CHECK,
      "                if isinstance(right, bytes):\n"
-     "                    payload = len(right) * 4 + 3 if isinstance(left, str) else len(right)\n"
+     "                    payload = (len(right) * 4 + 3\n"
+     "                               if isinstance(left, str)\n"
+     "                               or any(spec and spec[-1] in ('r', 'a')\n"
+     "                                      for spec in specs)\n"
+     "                               else len(right))\n"
      "                else:\n"
      "                    payload = (len(right) * 10 + 2\n"
-     "                               if isinstance(left, str)\n"
+     "                               if isinstance(left, (str, bytes))\n"
      "                               and any(spec and spec[-1] in ('r', 'a')\n"
      "                                       for spec in specs)\n"
      "                               else len(right))",
