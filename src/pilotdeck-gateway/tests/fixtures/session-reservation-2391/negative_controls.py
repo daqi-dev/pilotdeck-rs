@@ -84,7 +84,7 @@ mutations = [
      '        drop(owner_guard);\n'
      '        drop(reserved);\n'
      '        result\n',
-     '        drop(reserve_model_update(self, params, "%s the session model")?);\n'
+     '        drop(reserve_model_update(self, params, "change the session model")?);\n'
      '        // #1872: `a-b` and `a/b` fold to one transcript, so the session the\n'
      '        // append and the close below target can be registered under a\n'
      '        // different spelling than the request. Admission gates that session\n'
@@ -155,7 +155,7 @@ mutations = [
      '        drop(owner_guard);\n'
      '        drop(reserved);\n'
      '        result\n',
-     '        drop(reserve_model_update(self, params, "%s the session model")?);\n'
+     '        drop(reserve_model_update(self, params, "clear the session model")?);\n'
      '        // #1872: mirror the set wrapper — the owner an alias spelling folds\n'
      '        // onto is gated by its own exact key, so reserve it before the busy\n'
      '        // check → append → close window opens on it, held in the same\n'
