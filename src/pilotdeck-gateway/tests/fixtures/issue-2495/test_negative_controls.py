@@ -14,8 +14,13 @@ sibling mutation round can hold it for the length of a full round, and that
 timeout is the same "never started" refusal, never an uncaught traceback
 a host reads as rc 1; fix-r3 bounds the guard's wait to 60 s and extends the
 same rc 2 refusal to the mutation round's own lock acquisition, which also
-publishes no verdict). A stray positional argument next to ``--check`` is
-refused too (fix-r3). Instead of duplicating the guard logic here, each
+publishes no verdict; fix-r3b scopes that refusal to the ACQUISITION phase --
+a lock timeout or a not-pristine tree at entry refuses and withdraws the
+empty claimed directory, while any failure after acquisition, including the
+restore window, keeps the red-run shape of INVALID rows, a published summary
+and rc 1). A stray positional argument, an empty output slot or a
+``--compile-only`` flag next to ``--check`` is refused too (fix-r3/r3b).
+Instead of duplicating the guard logic here, each
 case execs the real
 script with one source-level edit injected -- the same shape an accidental
 edit would take -- and checks the refusal message, the exit code and that no
@@ -30,6 +35,7 @@ Run from this directory: ``python3 -m unittest issue-2495/test_negative_controls
 """
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import shutil
@@ -223,6 +229,29 @@ class ExitCodeTaxonomy(unittest.TestCase):
         self.assertIn('--check takes no output directory', stderr)
         self.assertFalse(out.exists())
 
+    def test_check_with_empty_output_arg_is_refused(self):
+        # fix-r3b (DS r3 boundary#1 P2a): `--check ''` is the same contract
+        # hole with a legal-looking shape -- argparse assigns the empty
+        # string to the positional slot, the old `args.output or ...` truth
+        # check let it through and the guard's answer never ran. The
+        # refusal now keys on ``is not None``.
+        code, _stdout, stderr, out = run('--check', '')
+        self.assertEqual(code, 2)
+        self.assertIn('INVALID:', stderr)
+        self.assertIn('--check takes no output directory', stderr)
+        self.assertFalse(out.exists())
+
+    def test_check_with_compile_only_is_refused(self):
+        # fix-r3b (MM r3 boundary#5 P3, folded into the same guard line):
+        # `--check --compile-only` used to be accepted and silently ignored
+        # -- the --check branch returned before args.compile_only was ever
+        # read, so the caller believed a compile-only roster check had run.
+        code, _stdout, stderr, out = run('--check', '--compile-only')
+        self.assertEqual(code, 2)
+        self.assertIn('INVALID:', stderr)
+        self.assertIn('--check takes no output directory', stderr)
+        self.assertFalse(out.exists())
+
 
 class StaleAndTemplateGuards(unittest.TestCase):
     """A stale anchor or a template bound assertion is a refusal, not a traceback."""
@@ -335,7 +364,14 @@ class SharedExitContract(unittest.TestCase):
         # the ``--check`` mode, which the matrix does not drive.
         for optimize in (False, True):
             with self.subTest(optimize=optimize):
-                out = Path(tempfile.mkdtemp(prefix='issue-2495-2590-o-')) / 'out'
+                # fix-r3b (DS r3 concurrency#5 P3 / boundary#4 P3 / MM r3
+                # boundary#4 P3): this case spawns its own subprocess, so it
+                # never goes through run(); its base is registered for the
+                # module teardown too -- otherwise the "no mkdtemp residue"
+                # claim above only holds for the in-process cases.
+                base = Path(tempfile.mkdtemp(prefix='issue-2495-2590-o-'))
+                _RUN_BASES.append(base)
+                out = base / 'out'
                 command = [sys.executable, *(['-O'] if optimize else []),
                            '-I', str(SCRIPT), str(out), 'no-such-mutation-2590']
                 result = subprocess.run(command, capture_output=True, text=True,
@@ -383,9 +419,16 @@ class TreeLockBusy(unittest.TestCase):
     def _kill_holder(holder):
         # Group kill, not a bare kill(): the holder runs in its own session,
         # so a plain kill() only reaches the leader (fix-r3, MM r2
-        # concurrency#3 P2).
+        # concurrency#3 P2). The holder may exit between the poll and the
+        # group signal (its 30 s hold expiring, its own acquisition failing);
+        # a vanished group is not an error, the same tolerance
+        # negative_process._kill_group has (fix-r3b, DS r3 concurrency#3 P3
+        # / boundary#3 P3).
         if holder.poll() is None:
-            os.killpg(os.getpgid(holder.pid), signal.SIGKILL)
+            try:
+                os.killpg(os.getpgid(holder.pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         holder.wait(timeout=30)
 
     def wait_until_held(self, holder, ready):
@@ -429,18 +472,20 @@ class TreeLockBusy(unittest.TestCase):
 
     def test_mutation_lock_timeout_is_refused_not_a_failed_round(self):
         # fix-r3 (MM r2 concurrency#1 P1 / DS r2 concurrency#1 / MM r2
-        # sibling#2, 两家同撞取高 P1): a sibling can seize the tree lock in
-        # the window between the guard scan and the mutation round's own
-        # acquisition -- the two are separate critical sections -- and that
-        # timeout must land on the same "never started" side as the guard's
-        # (rc 2, refuse), not exit 1 over INVALID rows a host would read as a
+        # sibling#2, 两家同撞取高 P1): a sibling can hold the tree lock when
+        # the mutation round goes to acquire it -- the guard scan and the
+        # mutation round are separate critical sections -- and that timeout
+        # must land on the same "never started" side as the guard's (rc 2,
+        # refuse), not exit 1 over INVALID rows a host would read as a
         # finished, not-green round (fix-r2's README/CI wording carries no
         # stage qualifier; issue-297 r7 is the precedent). The guard's lock
-        # is bypassed here because it already has the busy-lock case above
-        # and the lock is held from the start; the mutation round's own wait
-        # is shrunk to 2 s so the case stays fast. The evidence directory is
-        # claimed by then, so the "never started" signal is rc 2 plus a
-        # directory that publishes no verdict at all.
+        # is bypassed here (it already has the busy-lock case above and the
+        # lock is held from the start, so the interleaving-specific case is
+        # the mutation acquisition itself); the wait is shrunk to 2 s so the
+        # case stays fast. fix-r3b (MM r3 boundary#1 P2a, utf16
+        # startup_refusal precedent): the "never started" signal is rc 2
+        # plus the empty evidence directory withdrawn -- no summary, and no
+        # claimed-looking directory either.
         holder, ready = self.hold_the_tree_lock('issue-2495-2590-mlock-')
         self.wait_until_held(holder, ready)
         result = run(
@@ -449,8 +494,10 @@ class TreeLockBusy(unittest.TestCase):
                 ('        with tree_lock(ROOT, timeout=2):\n'
                  '            stale = stale_names()',
                  '        stale = stale_names()'),
-                ('        with mutating_sources(ROOT, guarded) as originals:',
-                 '        with mutating_sources(ROOT, guarded, lock_timeout=2) as originals:'),
+                ('                originals = stack.enter_context(\n'
+                 '                    mutating_sources(ROOT, guarded))',
+                 '                originals = stack.enter_context(\n'
+                 '                    mutating_sources(ROOT, guarded, lock_timeout=2))'),
             ])
         code, stdout, stderr, out = result
         self.assertEqual(
@@ -460,11 +507,87 @@ class TreeLockBusy(unittest.TestCase):
         self.assertIn('INVALID:', stderr)
         self.assertIn('source lock busy', stderr)
         self.assertIn('never started', stderr)
-        self.assertTrue(out.exists(),
-                        'the evidence directory is claimed before the '
-                        'mutation round starts')
+        self.assertFalse(out.exists(),
+                         'a never-started refusal withdraws the empty '
+                         'claimed directory (utf16 startup_refusal)')
         self.assertFalse((out / 'summary.json').exists(),
                          'a never-started round must publish no verdict')
+        self.assertFalse((out / 'roster-mismatch.json').exists())
+
+    def test_restore_timeout_after_entry_is_a_failed_round(self):
+        # fix-r3b (DS r3 concurrency#1 P1, 实测 TimeoutError ⊂ OSError 且
+        # errno.ETIMEDOUT 映射到它): the rc 2 refusal is scoped to the
+        # acquisition phase, not to the exception type. A TimeoutError raised
+        # while EXITING mutating_sources -- an ETIMEDOUT on the restore
+        # write-back -- happens after the round has run and possibly after
+        # mutants were written, so it must fall to the generic handler:
+        # INVALID rows, a published summary.json, rc 1. Refusing there would
+        # misfile a started, possibly still-dirty round as "never started".
+        # mutating_sources is replaced by a stub that enters cleanly and
+        # raises TimeoutError on exit; the row loop is emptied so the case
+        # runs no cargo at all.
+        import contextlib
+        import negative_process
+
+        @contextlib.contextmanager
+        def fake_mutating_sources(root, paths, **kwargs):
+            yield {path: b'fixture bytes' for path in paths}
+            raise TimeoutError('simulated ETIMEDOUT on the restore write-back')
+
+        with patch.object(negative_process, 'mutating_sources',
+                          fake_mutating_sources):
+            code, stdout, stderr, out = run(
+                environ={'CARGO_TARGET_DIR': '/nonexistent-cargo-target'},
+                patch_source=(
+                    '            for name, path, old, new, test, assertion in selected:',
+                    '            for name, path, old, new, test, assertion in []:'))
+        self.assertEqual(
+            code, 1,
+            f'a restore-phase timeout is a failed round (rc 1), not a '
+            f'refusal: stderr={stderr!r} stdout={stdout!r}')
+        self.assertNotIn('never started', stderr)
+        self.assertNotIn('source lock busy', stderr)
+        self.assertTrue((out / 'summary.json').exists(),
+                        'a round that started must publish its verdict')
+        self.assertIn('INVALID=7', stdout)
+        summary = json.loads((out / 'summary.json').read_text(encoding='utf-8'))
+        self.assertEqual(summary['counts']['INVALID'], 7)
+        self.assertIn('source guard: TimeoutError',
+                      summary['controls'][0]['reason'])
+
+    def test_pristine_failure_at_entry_is_refused_not_a_failed_round(self):
+        # fix-r3b (MM r3 concurrency#1 P2a): a sibling round SIGKILLed
+        # mid-mutation leaves its mutant on disk; this round's acquisition
+        # must refuse that as never-started (rc 2, spec rc table: 树脏 → 2),
+        # not fold it into seven INVALID rows and a published summary the
+        # host would read as a finished, not-green round. The stub raises
+        # SourceBaselineError from __enter__, the same point the real
+        # _assert_workspace_sources / _assert_product_pristine run.
+        import contextlib
+        import negative_process
+
+        @contextlib.contextmanager
+        def fake_mutating_sources(root, paths, **kwargs):
+            raise negative_process.SourceBaselineError(
+                root, 'src/pilotdeck-gateway/src/native_process/services.rs',
+                'simulated sibling residue on disk')
+            yield {path: b'fixture bytes' for path in paths}
+
+        with patch.object(negative_process, 'mutating_sources',
+                          fake_mutating_sources):
+            code, stdout, stderr, out = run(
+                environ={'CARGO_TARGET_DIR': '/nonexistent-cargo-target'})
+        self.assertEqual(
+            code, 2,
+            f'a pristine failure at entry is a refusal, got {code}: '
+            f'stderr={stderr!r} stdout={stdout!r}')
+        self.assertIn('INVALID:', stderr)
+        self.assertIn('tree not pristine', stderr)
+        self.assertIn('never started', stderr)
+        self.assertFalse(out.exists(),
+                         'a never-started refusal withdraws the empty '
+                         'claimed directory (utf16 startup_refusal)')
+        self.assertFalse((out / 'summary.json').exists())
         self.assertFalse((out / 'roster-mismatch.json').exists())
 
 
