@@ -31,6 +31,37 @@ use tokio::{runtime::Handle, sync::watch};
 
 const PERMISSION_CALLBACK: &str = "pilotdeck.gateway.permission";
 
+/// Gateway-owned destination for SDK deferred-hook registrations: the TS
+/// session factory passes `gateway.registerAsyncHook` per session
+/// (ProjectSessionFactory.ts:231-243), resolving the session key from the
+/// session context and the registration semantics living in the gateway. The
+/// Rust assembly installs one sink per gateway on the hooks resource; each
+/// turn binding resolves its own session key, so no per-session registry is
+/// introduced.
+pub trait AsyncHookSink: Send + Sync {
+    fn register(
+        &self,
+        session_key: &JsString,
+        registration: crate::runtime::hooks::runtime::AsyncHookRegistration,
+    ) -> Result<(), HostError>;
+}
+
+/// Per-turn bridge from a hook runtime's async output to the gateway sink:
+/// captures the binding session, exactly where TS's per-session closure
+/// closes over `context.sessionKey`.
+struct TurnAsyncHookRegistration {
+    session: JsString,
+    sink: Arc<dyn AsyncHookSink>,
+}
+impl crate::runtime::hooks::runtime::AsyncHookRegistrationHandler for TurnAsyncHookRegistration {
+    fn handle(
+        &self,
+        registration: crate::runtime::hooks::runtime::AsyncHookRegistration,
+    ) -> Result<(), HostError> {
+        self.sink.register(&self.session, registration)
+    }
+}
+
 #[derive(Default)]
 struct State {
     closed: bool,
@@ -42,6 +73,11 @@ struct State {
     // #686: pending async hook receipts voided when their run closed. Kept
     // until the same session binds its next turn (or the generation closes).
     notices: Vec<DiscardNotice>,
+    // #1438: the gateway assembly's async-hook registration sink (TS
+    // ProjectSessionFactory.ts:231-243 wraps gateway.registerAsyncHook with
+    // the session key). Installed once per gateway; read at every turn
+    // binding, where the run's session key is known.
+    async_hook_sink: Option<Arc<dyn AsyncHookSink>>,
 }
 struct Run {
     owner: Weak<Mutex<State>>,
@@ -136,6 +172,13 @@ impl InteractionHooks {
             permission,
         }
     }
+    /// Installs the gateway's async-hook registration sink (#1438). Later
+    /// turn bindings forward async hook outputs with invocation ids to it —
+    /// the Rust counterpart of the TS session factory's per-session
+    /// `registerAsyncHook` bridge — instead of the local pending registry.
+    pub fn set_async_hook_sink(&self, sink: Arc<dyn AsyncHookSink>) {
+        lock(&self.state).async_hook_sink = Some(sink);
+    }
     /// `settings` is the host's leased session contribution config (TS
     /// ProjectSessionRuntimeBundle:380), never sidecar input. Keep that lease
     /// alongside the project lease until wait_closed completes.
@@ -163,13 +206,26 @@ impl InteractionHooks {
         mut settings: HooksSettings,
         permission: Option<TurnPermission>,
         router: &mut ModuleRouter,
-        options: HookRuntimeOptions,
+        mut options: HookRuntimeOptions,
     ) -> Result<TurnHooks, HostError> {
         let executor = Handle::try_current()
             .map_err(|_| ModuleError::new("Hook binding requires a Tokio runtime."))?;
         let mut state = lock(&self.state);
         if state.closed {
             return Err(stale());
+        }
+        // #1438: bridge async hook outputs to the gateway registry whenever
+        // the assembly installed a sink and the caller did not supply its own
+        // handler. Production (`bind_turn`) always passes default options, so
+        // it always takes the bridge; test callers that inject an explicit
+        // `on_async_registered` keep precedence.
+        if options.on_async_registered.is_none()
+            && let Some(sink) = state.async_hook_sink.clone()
+        {
+            options.on_async_registered = Some(Arc::new(TurnAsyncHookRegistration {
+                session: binding.session_id.clone(),
+                sink,
+            }));
         }
         if let Some(permission) = &permission
             && !self
