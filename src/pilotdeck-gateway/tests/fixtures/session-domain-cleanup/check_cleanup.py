@@ -22527,9 +22527,11 @@ def main():
     args = parser.parse_args()
     global md
     md = load_session_domain()
-    if args.mode=='linux-kernel-controls' and sys.platform!='linux':
-        print(json.dumps({'mode':args.mode,'reason':'Linux kernel controls are not applicable on this platform'}))
-        return md.common.aggregate_status('BLOCKED')[1]
+    if args.mode in ('linux-kernel-controls','kernel-lease','kernel-cancellation') and sys.platform!='linux':
+        status,code=md.common.aggregate_status('BLOCKED')
+        print(json.dumps({'mode':args.mode,'status':status,
+                          'reason':'Linux kernel controls are not applicable on this platform'}))
+        return code
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     results = []

@@ -16,9 +16,13 @@
 //! stimulus ("loop waiting × timeout first"). The wait is still bounded so a
 //! lost collector yields a failed turn instead of a hung process.
 use crate::loop_stimulus::{LoopStimulus, Order, Phase, Plan};
-use crate::server::{ExecutionClock, ExecutionContext, ExecutionTerminal};
-use pilotdeck_agent::driver::BudgetLedger;
-use pilotdeck_agent::ports::{PortError, PortResult};
+use crate::server::{ExecuteRequest, ExecutionClock, ExecutionContext, ExecutionTerminal};
+use pilotdeck_agent::driver::{BudgetLedger, InvocationDisposition};
+use pilotdeck_agent::ports::{
+    CallControl, ExecutionHints, ExecutionIdentity, HostCall, HostPort, HostReply, ModelHints,
+    PortError, PortResult, PreparedRequestHandle, Route,
+};
+use pilotdeck_agent::source_invocation::run_source_model_invocation;
 use pilotdeck_agent::turn::{TurnInput, TurnResult, TurnResultKind, TurnStopReason};
 use pilotdeck_agent::turn_wire;
 use pilotdeck_protocol::model::Usage;
@@ -32,6 +36,7 @@ pub(crate) fn run(
     plan: &Plan,
     input: &TurnInput,
     context: &mut ExecutionContext,
+    provider: Option<&mut dyn FnMut() -> PortResult<()>>,
 ) -> PortResult<ExecutionTerminal> {
     stimulus.publish(
         "loop",
@@ -52,6 +57,12 @@ pub(crate) fn run(
             ("model", JsValue::from("controlled")),
         ]),
     )?;
+    if plan.require_provider {
+        let consume =
+            provider.ok_or_else(|| invalid("Controlled model invocation was not composed."))?;
+        consume()?;
+        stimulus.publish("model", "completed", &plan.id, None);
+    }
     if plan.phase == Phase::Tool {
         let call = fields([
             ("id", JsValue::from("tool-1")),
@@ -99,6 +110,116 @@ pub(crate) fn run(
                 ),
             ])),
         })
+    }
+}
+
+/// Consume the actual model iterator for this operation using the same host
+/// prepare, pull/eager, error reducer and close operations as an ordinary turn.
+/// The fixture owns the visible lifecycle events; a missing, empty or failed
+/// provider response can never advance its outcome barrier.
+pub(crate) fn consume_provider(
+    host: &mut dyn HostPort,
+    control: &CallControl,
+    input: &TurnInput,
+    route: &Route,
+    identity: &ExecutionIdentity,
+    request: &ExecuteRequest,
+) -> PortResult<()> {
+    let request_value = JsValue::Object(fields([
+        ("provider", JsValue::String(route.provider.clone())),
+        ("model", JsValue::String(route.model.clone())),
+        (
+            "messages",
+            JsValue::Array(
+                input
+                    .messages
+                    .iter()
+                    .map(|message| message.value().clone())
+                    .collect(),
+            ),
+        ),
+        ("stream", JsValue::Bool(true)),
+        ("maxOutputTokens", JsValue::Number(32.0)),
+    ]));
+    let canonical = crate::model_admission::request(&request_value)?;
+    let hints = ModelHints {
+        session_id: identity.session_id.clone(),
+        turn_id: identity.turn_id.clone(),
+        execution: ExecutionHints {
+            run_id: identity.run_id.clone(),
+            operation_id: identity.operation_id.clone(),
+            idempotency_key: identity.idempotency_key.clone(),
+            operation_deadline: request
+                .boundary
+                .get("operationDeadline")
+                .and_then(JsValue::as_string)
+                .cloned(),
+        },
+        workspace_id: None,
+        storage_config_version: None,
+        metadata: None,
+        model_override: input
+            .model_override
+            .as_ref()
+            .map(|model| model.route.clone()),
+    };
+    let id = uuid::Uuid::new_v4().to_string();
+    let HostReply::ModelPrepared(prepared) = host.call(
+        control,
+        HostCall::ModelPrepare {
+            handle: PreparedRequestHandle(id.clone().into()),
+            request: Box::new(canonical),
+            hints: hints.clone(),
+        },
+    )?
+    else {
+        return Err(invalid(
+            "Controlled model preparation returned another operation.",
+        ));
+    };
+    let cleanup = CallControl {
+        cancellation: control.cancellation.cleanup_scope(),
+        // The existing invocation owner gives close its own bounded budget.
+        deadline: None,
+    };
+    let mut text = false;
+    let mut ended = false;
+    let invocation = run_source_model_invocation(
+        host,
+        control,
+        &cleanup,
+        &prepared,
+        &hints,
+        id.into(),
+        &mut |event| {
+            let value = event.boundary.value();
+            let kind = value.get("type").and_then(JsValue::as_string);
+            ended |= kind.is_some_and(|kind| kind.equals_str("message_end"));
+            text |= kind.is_some_and(|kind| kind.equals_str("text_delta"))
+                && value
+                    .get("text")
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|delta| !delta.units().is_empty());
+            Ok(())
+        },
+    );
+    match invocation.disposition {
+        InvocationDisposition::PortFailure(error) => Err(*error),
+        InvocationDisposition::Cancelled(cause) => Err(PortError::Cancelled { cause }),
+        InvocationDisposition::Assembled
+            if invocation.stream_completed && invocation.assembled.is_ok() && text && ended =>
+        {
+            Ok(())
+        }
+        _ => Err(invalid(
+            "Controlled model invocation did not consume a complete nonempty response.",
+        )),
+    }
+}
+
+fn invalid(message: &'static str) -> PortError {
+    PortError::InvalidResponse {
+        message: message.into(),
     }
 }
 

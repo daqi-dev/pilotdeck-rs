@@ -852,26 +852,21 @@ impl ExecutionFactory for OriginalAgentFactory {
                     boundary: BoundarySnapshot::capture(&request.boundary),
                 }
             })?;
-        // #1371: the env-armed controlled loop entry. Inert (unset, or armed
-        // without a plan) keeps the production path byte for byte; a malformed
-        // plan fails closed instead of quietly running a real turn.
-        if let Some(stimulus) = crate::loop_stimulus::LoopStimulus::global() {
-            match stimulus.plan() {
-                Ok(None) => {}
-                Ok(Some(plan)) => {
-                    return crate::controlled_loop::run(
-                        stimulus.as_ref(),
-                        plan,
-                        &decoded.input,
-                        context,
-                    );
-                }
-                Err(message) => {
-                    return Err(PortError::InvalidResponse {
-                        message: message.into(),
-                    });
-                }
+        // An unarmed/inert stimulus never opens a model port. A collection
+        // plan may require the real bound model invocation before its outcome.
+        let stimulus = crate::loop_stimulus::LoopStimulus::global();
+        let plan = match stimulus.as_ref().map(|value| value.plan()).transpose() {
+            Ok(plan) => plan.flatten(),
+            Err(message) => {
+                return Err(PortError::InvalidResponse {
+                    message: message.into(),
+                });
             }
+        };
+        if let (Some(stimulus), Some(plan)) = (&stimulus, plan)
+            && !plan.require_provider
+        {
+            return crate::controlled_loop::run(stimulus, plan, &decoded.input, context, None);
         }
         let identity = context.identity(
             decoded.input.session_id.clone(),
@@ -892,6 +887,32 @@ impl ExecutionFactory for OriginalAgentFactory {
             }
         }
         let mut host = RemoteHost::new(exchange, effective_methods);
+        if let (Some(stimulus), Some(plan)) = (&stimulus, plan) {
+            let mut control = context.control.clone();
+            let fixture_bound = std::time::Instant::now() + plan.bound;
+            control.deadline = Some(
+                control
+                    .deadline
+                    .map_or(fixture_bound, |deadline| deadline.min(fixture_bound)),
+            );
+            let mut consume = || {
+                crate::controlled_loop::consume_provider(
+                    &mut host,
+                    &control,
+                    &decoded.input,
+                    &decoded.config.route,
+                    &identity,
+                    request,
+                )
+            };
+            return crate::controlled_loop::run(
+                stimulus,
+                plan,
+                &decoded.input,
+                context,
+                Some(&mut consume),
+            );
+        }
         // Order matches the original default factory: initialize plan state,
         // fetch initial model metadata, then parse file/model projections.
         let mut plan_todo_addendum = None;

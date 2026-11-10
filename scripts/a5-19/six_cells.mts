@@ -176,6 +176,11 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
   const oldClose = AsyncQueue.prototype.close;
   const oldWarn = console.warn;
   const oldInfo = console.info;
+  const restoreHooks = () => {
+    globalThis.setTimeout = realSetTimeout; globalThis.clearTimeout = realClearTimeout;
+    AsyncQueue.prototype.enqueue = oldEnqueue; AsyncQueue.prototype.close = oldClose;
+    console.warn = oldWarn; console.info = oldInfo;
+  };
   const fault = (point: string) => Object.assign(new Error(`Injected storage failure at ${point}`), { code: 'EIO' });
   // Passive taps delegate synchronously and preserve the real queue semantics.
   AsyncQueue.prototype.enqueue = function(event: any) {
@@ -255,22 +260,30 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
       return { result, messages: input.messages };
     },
   };
-  // #1314: explicit collection adapter only; original loop/control/score stays default.
-  const sidecarScene = process.env.A19_HOST_ADAPTER
-    ? await (await import(pathToFileURL(resolve(process.env.A19_HOST_ADAPTER)).href)).wrapLoop({
+  // #1314: use the real composed session when an external sidecar is selected.
+  // The original in-process fixture and its exact recorder remain the default.
+  let sidecarScene: any;
+  try {
+    if (process.env.A19_HOST_ADAPTER) {
+      sidecarScene = await (await import(pathToFileURL(resolve(process.env.A19_HOST_ADAPTER)).href)).wrapLoop({
         dir, phase, order, journal: j, outcome, knownReturn, transcript, time: TIME, id,
-      })
-    : undefined;
-  const runner = new TurnRunner(sidecarScene?.loop ?? loop, transcript, undefined, () => new Date(TIME), undefined,
-    { cwd: dir, transcriptPath, collectFileArtifacts: false }, { autoGenerateSessionTitle: false });
-  const session = new AgentSession({ sessionId: 'session', turnRunner: runner, cwd: dir, transcriptPath });
+      });
+    }
+  } catch (error) {
+    try { await cleanupAll([() => transcript.close()], restoreHooks); }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'sidecar session initialization rollback failed'); }
+    throw error;
+  }
+  const session = sidecarScene?.session ?? new AgentSession({ sessionId: 'session', cwd: dir, transcriptPath,
+    turnRunner: new TurnRunner(loop, transcript, undefined, () => new Date(TIME), undefined,
+      { cwd: dir, transcriptPath, collectFileArtifacts: false }, { autoGenerateSessionTitle: false }) });
   const originalSubmit = session.submit.bind(session);
   session.submit = async function*(...args: any[]) {
     try { yield* originalSubmit(...args); } finally { j.add('session.submit.exit'); }
   };
   const originalAbort = session.abort.bind(session);
   session.abort = (reason: string) => { j.add('session.abort', { reason }); return originalAbort(reason); };
-  const router = new SessionRouter({ idleSweepIntervalMs: 0, createSession: () => session });
+  const router = new SessionRouter({ idleSweepIntervalMs: 0, createSession: () => sidecarScene?.handle ?? session });
   const fence = new GatewayTurnCompletionFence();
   const originalCurrent = fence.isCurrent.bind(fence);
   fence.isCurrent = (...args: any[]) => { const current = originalCurrent(...args); j.add('fence.current', { current }); return current; };
@@ -332,7 +345,7 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
     ...(registry ? { runRegistry: registry } : {}),
     recordAgentStatusMessage: async (input: any) => { await recordStatus(input.sessionKey, input.turnId, input.status); return { recorded: true }; },
   });
-  const iterator = gateway.submitTurn({ sessionKey: 'session', channelKey: 'experiment', message: 'controlled wait', timeoutMs: TIMEOUT_MS })[Symbol.asyncIterator]();
+  const iterator = gateway.submitTurn({ sessionKey: 'session', channelKey: 'experiment', message: sidecarScene?.message ?? 'controlled wait', timeoutMs: TIMEOUT_MS })[Symbol.asyncIterator]();
   const take = async () => {
     const next = await iterator.next();
     if (!next.done) { frames.push(clone(next.value)); j.add('client.frame', { event: next.value }); }
@@ -452,11 +465,7 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
       () => transcript.close(),
       () => gateway.dispose(),
       () => router.shutdown(),
-    ], () => {
-      globalThis.setTimeout = realSetTimeout; globalThis.clearTimeout = realClearTimeout;
-      AsyncQueue.prototype.enqueue = oldEnqueue; AsyncQueue.prototype.close = oldClose;
-      console.warn = oldWarn; console.info = oldInfo;
-    });
+    ], restoreHooks);
   }
 }
 
@@ -513,7 +522,7 @@ let failedRegistry: any;
 writeFileSync(resolve(OUTPUT, 'preregistration.json'), JSON.stringify({ rules: RULES, cells, phases: ['model', 'tool'], repeats: 5 }, null, 2) + '\n');
 const selectedCase = process.env.A19_HOST_CASE;
 const registeredCases = cells.flatMap(cell => cell.variants.flatMap(variant => ['model', 'tool'].map(phase => `${cell.name}/${variant.name}/${phase}`)));
-assert.ok(!selectedCase || registeredCases.includes(selectedCase), 'host subset must name an original registered case');
+assert.ok(selectedCase === undefined || registeredCases.includes(selectedCase), 'host subset must name an original registered case');
 for (const cell of cells) {
   const observations: any[] = [];
   const repetitions: any[] = [];
@@ -555,7 +564,8 @@ const manifest = {
   preregisteredRules: RULES, expectedCases: cells.flatMap(c => c.variants.flatMap(v => ['model', 'tool'].map(phase => `${c.name}/${v.name}/${phase}`))),
   executedCases: summary.map(r => `${r.cell}/${r.variant}/${r.phase}`),
   isolation: Object.fromEntries(['HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'TMPDIR', 'PILOTDECK_SKIP_BROWSER_OPEN', 'SKIP_BROWSER_OPEN'].map(k => [k, process.env[k]])), pilotHome: process.env.PILOT_HOME,
-  fixtureFiles: ['six_cells.mts', 'observation_rules.mjs', 'run.py', 'append-observer.mjs', 'cleanup-observer.mjs'].map(name => ({ path: `scripts/a5-19/${name}`, sha256: createHash('sha256').update(readFileSync(resolve(WORKTREE, 'scripts/a5-19', name))).digest('hex') })),
+  fixtureFiles: ['six_cells.mts', 'observation_rules.mjs', 'run.py', 'append-observer.mjs', 'cleanup-observer.mjs',
+    'run-host.py', 'host-sidecar-adapter.mjs', 'host-sidecar-source-loader.mjs', 'host-sidecar-stimulus.mjs'].map(name => ({ path: `scripts/a5-19/${name}`, sha256: createHash('sha256').update(readFileSync(resolve(WORKTREE, 'scripts/a5-19', name))).digest('hex') })),
   scriptSha256: createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex'),
   externalSidecarAdapter: process.env.A19_HOST_ADAPTER ? {
     path: resolve(process.env.A19_HOST_ADAPTER),

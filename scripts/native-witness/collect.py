@@ -632,6 +632,43 @@ def wait_ready(tracer, folder, port, deadline):
         time.sleep(0.01)
 
 
+def fixture_provider_handler(requests):
+    """The original isolated model endpoint shared by the host profiles."""
+    class Provider(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_POST(self):
+            length = int(self.headers.get('Content-Length', '0'))
+            w.need(0 < length <= 1024 * 1024, 'provider request size')
+            raw = self.rfile.read(length)
+            body = json.loads(raw)
+            # The driver's own request ledger: keyed by the case marker the
+            # submitted message carries, recorded before any delay, so a
+            # request the gateway abandoned after a timeout is still ledged.
+            marker = re.search(r'\[native-witness:([^\]]+)\]'.encode(), raw)
+            case = marker.group(1).decode() if marker else None
+            requests.append({'case': case, 'path': self.path, 'raw': raw.decode('utf-8')})
+            if case is not None:
+                time.sleep(case_plan(case)['delay'])
+            if body.get('stream'):
+                data = ''.join('data: ' + json.dumps({'id': 'witness', 'choices': [{'index': 0, 'delta': delta,
+                                        'finish_reason': finish}]}) + '\n\n'
+                               for delta, finish in [({'role': 'assistant', 'content': 'native witness text'}, None), ({}, 'stop')]) + 'data: [DONE]\n\n'
+                mime = 'text/event-stream'
+            else:
+                data = json.dumps({'id': 'title', 'choices': [{'message': {'role': 'assistant',
+                        'content': '{"title":"Witness"}'}, 'finish_reason': 'stop'}]})
+                mime = 'application/json'
+            encoded = data.encode()
+            self.send_response(200)
+            self.send_header('Content-Type', mime)
+            self.send_header('Content-Length', str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+    return Provider
+
+
 def _native_run(gateway, sidecar, output, port, session_domain=False, registry='on',
                 ts_sidecar_baseline=None, session_cases=()):
     # #1314: the only alternate collector profile starts the original TS CLI
@@ -666,6 +703,8 @@ def _native_run(gateway, sidecar, output, port, session_domain=False, registry='
                'host capture partition must agree with the process-frozen registry setting')
         cases = [case for case in cases if case in session_cases]
     expectations = session_expectations() if session_domain else {}
+    provider_required = w.native.required_provider_cases({'cases': [
+        {'case': case, 'rust': expectation} for case, expectation in expectations.items()]})
     rows, observer_rows, sources = [], [], []
     # The driver's own record of the gateway's hello answer (#1140 fix-r3),
     # written at receive time and published as its own receipt-pinned
@@ -683,40 +722,10 @@ def _native_run(gateway, sidecar, output, port, session_domain=False, registry='
                                              registry_on=(registry == 'on')) \
         if session_domain else None
     if control is not None:
-        control.prepare(cases[0], 1, stimuli.plan(cases[0]), 'run-01')
+        control.prepare(cases[0], 1, stimuli.plan(cases[0]), 'run-01',
+                        require_provider=cases[0] in provider_required)
 
-    class Provider(http.server.BaseHTTPRequestHandler):
-        def log_message(self, *args):
-            pass
-
-        def do_POST(self):
-            length = int(self.headers.get('Content-Length', '0'))
-            w.need(0 < length <= 1024 * 1024, 'provider request size')
-            raw = self.rfile.read(length)
-            body = json.loads(raw)
-            # The driver's own request ledger: keyed by the case marker the
-            # submitted message carries, recorded before any delay, so a
-            # request the gateway abandoned after a timeout is still ledged.
-            marker = re.search(r'\[native-witness:([^\]]+)\]'.encode(), raw)
-            case = marker.group(1).decode() if marker else None
-            requests.append({'case': case, 'path': self.path, 'raw': raw.decode('utf-8')})
-            if case is not None:
-                time.sleep(case_plan(case)['delay'])
-            if body.get('stream'):
-                data = ''.join('data: ' + json.dumps({'id': 'witness', 'choices': [{'index': 0, 'delta': delta,
-                                        'finish_reason': finish}]}) + '\n\n'
-                               for delta, finish in [({'role': 'assistant', 'content': 'native witness text'}, None), ({}, 'stop')]) + 'data: [DONE]\n\n'
-                mime = 'text/event-stream'
-            else:
-                data = json.dumps({'id': 'title', 'choices': [{'message': {'role': 'assistant',
-                        'content': '{"title":"Witness"}'}, 'finish_reason': 'stop'}]})
-                mime = 'application/json'
-            encoded = data.encode()
-            self.send_response(200)
-            self.send_header('Content-Type', mime)
-            self.send_header('Content-Length', str(len(encoded)))
-            self.end_headers()
-            self.wfile.write(encoded)
+    Provider = fixture_provider_handler(requests)
 
     server = worker = None
     started = stopped = False
@@ -800,7 +809,8 @@ def _native_run(gateway, sidecar, output, port, session_domain=False, registry='
                             # Relay the frozen sidecar plan between cases:
                             # sidecar N spawns during submit N, so it freezes
                             # case N's plan at its own startup (plan.md §1).
-                            control.prepare(case, index, plan['stimulus'], run_id)
+                            control.prepare(case, index, plan['stimulus'], run_id,
+                                            require_provider=case in provider_required)
                         client.send({'type': 'request', 'id': request_id, 'method': 'submit_turn', 'params': {
                             'projectKey': str(project), 'sessionKey': key, 'runId': run_id,
                             'channelKey': 'session-domain', 'message': f'[native-witness:{case}] controlled wait',

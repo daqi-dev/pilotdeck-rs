@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import subprocess
+from typing import NamedTuple
 from collections import Counter
 from pathlib import Path
 
@@ -101,13 +102,30 @@ def roles(contract, cell, node, baseline, bins, root):
     need(contract['binaries']['sidecar']['argv'] == wanted, 'SIDECAR_IDENTITY', 'wrong sidecar source/argv')
 
 
-def ts_capture(folder, ref, session, expected, cell, node, baseline, bins, root):
+class TsPartition(NamedTuple):
+    measurements: list
+    witness: dict
+    contract: dict
+    registration: dict
+    raw_rows: list
+
+
+def ts_capture(folder, ref, preflight, session, expected, cell, node, baseline, bins, root):
     raw, contract, evidence = session.native_evidence.load_capture(folder / 'capture')
     roles(contract, cell, node, baseline, bins, root)
     checked = session.native_evidence.checked_evidence(raw, contract, evidence)
-    need(checked['cleanup']['allStopped'] is True and all(checked[key]['complete'] is True for key in ('execWitness', 'networkWitness', 'transcriptWitness')) and
-         not checked['networkWitness']['calls'] and
-         contract['externalEndpoints'] == [], 'NETWORK_WITNESS', 'TS host requires stopped processes and no network calls')
+    need(checked['cleanup']['allStopped'] is True and
+         all(checked[key]['complete'] is True for key in ('execWitness', 'networkWitness', 'transcriptWitness')),
+         'PROCESS_WITNESS', 'TS host requires complete independent exec/network/disk and cleanup')
+    fixture = root / 'scripts/a5-19'
+    pins = {**preflight['originals'], 'run-host.py': preflight['producer']}
+    names = {'six_cells.mts', 'host-sidecar-adapter.mjs', 'host-sidecar-source-loader.mjs',
+             'host-sidecar-stimulus.mjs', 'run-host.py'}
+    need(set(pins) == names and contract['fixtureSources'] == pins,
+         'TS_SOURCE_IDENTITY', 'prelaunch and preflight must bind every executable fixture')
+    for name, pin in pins.items():
+        need(artifact(pin) == fixture / name and sha(folder / name) == pin['sha256'],
+             'TS_SOURCE_IDENTITY', 'captured fixture identity differs: ' + name)
     raw_folder = folder / 'raw'
     manifest = read(raw_folder / 'manifest.json')
     case = ref['case']
@@ -119,6 +137,23 @@ def ts_capture(folder, ref, session, expected, cell, node, baseline, bins, root)
     need(manifest['scriptSha256'] == sha(root / 'scripts/a5-19/six_cells.mts') and
          manifest['externalSidecarAdapter']['sha256'] == sha(adapter) and
          manifest['externalSidecarAdapter']['sidecarSpec']['language'] == cell[1], 'HOST_IDENTITY', 'wrong actual adapter or topology')
+    provider = read(raw_folder / 'provider.json')
+    required_provider = case in session.native_evidence.required_provider_cases(
+        session.read(session.SCRIPT / 'fixtures/session-expectations.json'))
+    calls = checked['networkWitness']['calls']
+    if required_provider:
+        endpoint = provider['endpoint']
+        host = next(row['pid'] for row in checked['processes'] if row['role'] == 'host')
+        need(isinstance(endpoint, str) and endpoint.startswith('127.0.0.1:') and
+             contract['externalEndpoints'] == [endpoint] and calls and
+             all(call['target'] == endpoint and call['ownerPid'] == host for call in calls),
+             'NETWORK_WITNESS', 'model traffic must originate from the real host and target its owned loopback')
+        need(len(provider['requests']) == K and all(json.loads(request['raw']).get('stream') is True for request in provider['requests']) and
+             session.native_evidence.provider_cases(provider['requests'], [case]) == [case] * K,
+             'PROVIDER_WITNESS', 'each required repetition must reach the same owned case via the real model port')
+    else:
+        need(provider['endpoint'] is None and not provider['requests'] and not calls and not contract['externalEndpoints'],
+             'NETWORK_WITNESS', 'unrequired model traffic must stay absent')
     raw_pins = ref['rawSha256']
     need(raw_pins == {path.name: sha(path) for path in raw_folder.glob('*.json')}, 'IDENTITY', 'TS raw artifacts not bound')
     need(Counter(row['role'] for row in checked['processes']) ==
@@ -127,8 +162,9 @@ def ts_capture(folder, ref, session, expected, cell, node, baseline, bins, root)
     transcripts = {row['path'] for row in checked['transcriptWitness']['opens']}
     commit_source(baseline, manifest['importedSources'])
     registration = read(raw_folder / 'preregistration.json')
-    need(session.calibration_coverage(registration, {'expectedCases': expected, 'executedCases': expected}) == expected,
-         'COVERAGE', 'original independent registration differs')
+    registered = [f"{cell['name']}/{variant['name']}/{phase}"
+                  for cell in registration['cells'] for variant in cell['variants'] for phase in registration['phases']]
+    need(registered == expected and registration['repeats'] == K, 'COVERAGE', 'original independent registration differs')
     observations, case_pids, child_loads = [], set(), []
     group = read(raw_folder / (case.split('/')[0] + '.json'))['observations']
     need([row['id'] for row in group] == [f'{case}/{k}' for k in range(1, K + 1)], 'COVERAGE', 'missing or duplicate partition repetitions')
@@ -145,6 +181,10 @@ def ts_capture(folder, ref, session, expected, cell, node, baseline, bins, root)
         need(any(entry['kind'] == 'sidecar.exit' and entry['pid'] == pid for entry in journal) and
              any(entry['kind'] == 'sidecar.receipt' and entry['receipt']['pid'] == pid and entry['receipt']['phase'] == 'final' for entry in journal),
              'TERMINAL_WITNESS', row['id'])
+        if required_provider:
+            seen = [entry['receipt'] for entry in journal if entry['kind'] == 'sidecar.receipt' and entry['receipt']['site'] == 'model']
+            need(len(seen) == 1 and seen[0]['pid'] == pid and seen[0]['key'] == row['id'] and seen[0]['phase'] == 'completed',
+                 'PROVIDER_WITNESS', 'actual sidecar did not consume the real model response before the original outcome')
         if cell[1] == 'ts':
             loaded = [json.loads(line) for line in (path.parent.parent / 'child-loaded.ndjson').read_text().splitlines()]
             need(bool(loaded) and {entry['pid'] for entry in loaded} == {pid}, 'TS_SOURCE_IDENTITY', row['id'])
@@ -155,7 +195,9 @@ def ts_capture(folder, ref, session, expected, cell, node, baseline, bins, root)
     need(case_pids == all_pids, 'PROCESS_WITNESS', 'unattributed sidecar execution')
     if cell[1] == 'ts':
         commit_source(baseline, child_loads)
-    return observations, {'path': str(folder), 'processes': checked['processes'], 'network': checked['networkWitness'], 'cleanup': checked['cleanup']}, contract, registration, group
+    return TsPartition(observations, {'path': str(folder), 'processes': checked['processes'],
+                       'network': checked['networkWitness'], 'cleanup': checked['cleanup']},
+                       contract, registration, group)
 
 
 def rust_capture(folder, ref, session, expected, cell, node, baseline, bins, root):
@@ -166,6 +208,13 @@ def rust_capture(folder, ref, session, expected, cell, node, baseline, bins, roo
     verdicts = {row['case']: row for row in session.score_native_cases(capture['rows'], expected, capture['providerCases'])}
     evidence = capture['evidence']
     sources = read(folder / 'session-domain/sources.json')
+    paths = evidence['transcriptPaths']
+    need(len(paths) == len(sources), 'DISK_IDENTITY', 'one original transcript path per case')
+    for path, source in zip(paths, sources):
+        transcript = Path(path).resolve(strict=True)
+        need(str(transcript) == path and transcript.is_relative_to(folder) and
+             transcript.read_text() == source['transcriptText'],
+             'DISK_IDENTITY', 'native transcript differs from the actual traced file: ' + path)
     registry = ref['registry']
     need(registry in ('on', 'off') and len(sources) == len(capture['expected']) and
          all(row.get('stimulusEvidence', {}).get('construction', {}).get('runRegistry') == registry for row in sources),
@@ -182,6 +231,25 @@ def rust_capture(folder, ref, session, expected, cell, node, baseline, bins, roo
                 if row['case'].startswith('registry-') == (registry == 'on')]
     return selected, {'path': str(folder), 'processes': evidence['processes'], 'network': evidence['networkWitness'],
                       'cleanup': evidence['cleanup'], 'surfaces': evidence['surfaces'], 'registry': registry}, capture['contract']
+
+
+def run_ts_oracle(session, registration, raw_rows, expected, output, sidecar):
+    """Feed the original raw dict rows, never the projected scoring tuples."""
+    order = {case: index for index, case in enumerate(expected)}
+    raw_rows.sort(key=lambda row: (order[row['id'].rsplit('/', 1)[0]], row['repetition']))
+    observed_ids = [row['id'] for row in raw_rows]
+    need(observed_ids == [f'{case}/{k}' for case in expected for k in range(1, K + 1)],
+         'COVERAGE', 'the original oracle requires all 360 unique raw observation IDs')
+    executed = list(dict.fromkeys(row['id'].rsplit('/', 1)[0] for row in raw_rows))
+    session.calibration_coverage(registration, {'expectedCases': expected, 'executedCases': executed})
+    oracle = session.observation_check({'observations': raw_rows, 'controls': True}, output,
+                                       name=f'host-ts-{sidecar}-oracle')
+    controls = oracle['controls']
+    need(len(controls) == 9 and len({row['name'] for row in controls}) == 9 and
+         all(row['detected'] is True and row['hitRule'] == row['expectedRule'] for row in controls),
+         'CONTROLS', 'all nine original controls must hit their registered rules')
+    session.validate_expectations(registration, raw_rows)
+    return oracle
 
 
 def report(manifest_path, *, session, output):
@@ -210,10 +278,12 @@ def report(manifest_path, *, session, output):
                     preflight = read(artifact(ref['preflight']))
                     need(preflight['head'] == head and preflight['sourceManifest'] == manifest['sourceManifest'] and
                          preflight['binaryManifest'] == manifest['binaryManifest'], 'IDENTITY', 'TS capture used a different candidate generation')
-                    data, witness, contract, registration, observations = ts_capture(folder, ref, session, expected, cell, node, baseline, bins, root)
-                    need(original_registration is None or registration == original_registration, 'COVERAGE', 'TS partitions use different registrations')
-                    original_registration = registration
-                    original_ts_rows.extend(observations)
+                    partition = ts_capture(folder, ref, preflight, session, expected, cell, node, baseline, bins, root)
+                    data, witness, contract = partition.measurements, partition.witness, partition.contract
+                    need(original_registration is None or partition.registration == original_registration,
+                         'COVERAGE', 'TS partitions use different registrations')
+                    original_registration = partition.registration
+                    original_ts_rows.extend(partition.raw_rows)
                 else:
                     data, witness, contract = rust_capture(folder, ref, session, expected, cell, node, baseline, bins, root)
                     if cell == ('rust', 'rust'):
@@ -235,15 +305,7 @@ def report(manifest_path, *, session, output):
                 errors.append({'rule': getattr(error, 'rule', 'HOST_EVIDENCE'), 'detail': str(error), 'capture': ref.get('receipt')})
         if cell[0] == 'ts' and len(rows) == len(expected) * K and not errors:
             try:
-                order = {case: index for index, case in enumerate(expected)}
-                original_ts_rows.sort(key=lambda row: (order[row['id'].rsplit('/', 1)[0]], row['repetition']))
-                original_oracle = session.observation_check({'observations': original_ts_rows, 'controls': True}, output,
-                                                            name=f'host-ts-{cell[1]}-oracle')
-                controls = original_oracle['controls']
-                need(len(controls) == 9 and len({row['name'] for row in controls}) == 9 and
-                     all(row['detected'] is True and row['hitRule'] == row['expectedRule'] for row in controls),
-                     'CONTROLS', 'all nine original controls must hit their registered rules')
-                session.validate_expectations(original_registration, original_ts_rows)
+                original_oracle = run_ts_oracle(session, original_registration, original_ts_rows, expected, output, cell[1])
             except (HostError, session.EvidenceError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
                 errors.append({'rule': getattr(error, 'rule', 'ORIGINAL_TS_ORACLE'), 'detail': str(error)})
         cases = []
@@ -280,4 +342,4 @@ def report(manifest_path, *, session, output):
     if status == 'PASS' and not controls_pass:
         status = 'FAIL'
     return {'suite': 'host', 'sourceHead': head, 'status': status, 'executionStatus': status if all(cell['executionStatus'] != 'NOT_RUN' for cell in cells) else 'NOT_RUN', 'acceptanceStatus': 'NOT_RUN',
-            'cells': cells, 'controls': {'status': 'PASS' if controls_pass else 'NOT_RUN', 'results': controls}}
+            'cells': cells, 'controls': {'status': 'PASS' if controls_pass else 'FAIL' if len(controls) == 3 else 'NOT_RUN', 'results': controls}}

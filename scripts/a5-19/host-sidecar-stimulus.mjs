@@ -14,9 +14,13 @@ assert.equal(typeof plan.id,'string');
 assert.ok(['model','tool'].includes(plan.phase));
 assert.ok(['timeout-first','unknown-first','known-final-first','after-complete','known-final-before-timeout-pending'].includes(plan.order));
 assert.ok(Number.isSafeInteger(plan.boundMs)&&plan.boundMs>0&&plan.boundMs<=120000);
+assert.ok(plan.requireProvider === undefined || typeof plan.requireProvider === 'boolean');
 const baseline=process.env.A19_HOST_BASELINE;
 assert.ok(baseline,'fixed upstream baseline required');
-const {AgentLoopResultUnknownError}=await import(pathToFileURL(join(baseline,'src/agent/modules/transport/operationLedger.ts')).href);
+const upstream=path=>import(pathToFileURL(join(baseline,'src',path+'.ts')).href);
+const {AgentLoopResultUnknownError}=await upstream('agent/modules/transport/operationLedger');
+const {createHostModelInvokerPort}=await upstream('agent/modules/llm/hostModelInvokerPort');
+const {readHostModelModuleMethods}=await upstream('agent/modules/protocol');
 let sequence=0;
 function publish(phase,key,extra={}){
  const row={pid:process.pid,seq:sequence++,site:'loop',phase,key,...extra};
@@ -32,12 +36,35 @@ async function release(stage){
  }
  publish('bound',stage);throw Error(`#1371 controlled loop ${stage} bound expired without a release.`);
 }
-export default function({request,abortSignal}){
+async function consumeProvider(request, input, callModule) {
+ const payload=request.payload??{}, agent=payload.agent??{};
+ const model=createHostModelInvokerPort(callModule,{methods:readHostModelModuleMethods(payload.hostModules?.model?.methods)});
+ const context={sessionId:input.sessionId,turnId:input.turnId,runId:request.runId,
+  operationId:request.operationId,idempotencyKey:request.idempotencyKey,
+  operationDeadline:request.operationDeadline,abortSignal:input.abortSignal,modelOverride:agent.modelOverride};
+ const canonical={provider:agent.provider,model:agent.model,messages:input.messages,stream:true,maxOutputTokens:32};
+ assert.equal(typeof canonical.provider,'string');assert.equal(typeof canonical.model,'string');
+ const prepared=await model.prepare({request:canonical,context});
+ let text=false, complete=false;
+ for await(const event of model.stream({prepared,context})){
+  if(event.type==='error')throw Error('controlled model invocation reported an error');
+  if(event.type==='text_delta'&&event.text.length)text=true;
+  if(event.type==='message_end')complete=true;
+ }
+ assert.ok(text&&complete,'controlled model invocation must consume a complete nonempty response');
+ publish('completed',plan.id,{site:'model'});
+}
+export default function({request,abortSignal,abortExecution,callModule}){
  const sessionId=String(request.sessionId??request.operationId),turnId=String(request.turnId??request.operationId);
  const input={sessionId,turnId,messages:request.payload?.messages??[],abortSignal};
  return {input,loop:{snapshotFileState:()=>({}),async *run(value){
   publish('input',plan.id,{planPhase:plan.phase,planOrder:plan.order});
   yield{type:'model_request_started',sessionId,turnId,provider:'fixture',model:'controlled'};
+  if(plan.requireProvider){
+   assert.equal(typeof abortExecution,'function');
+   const watchdog=setTimeout(()=>abortExecution('controlled model invocation bound expired'),plan.boundMs);
+   try{await consumeProvider(request,value,callModule)}finally{clearTimeout(watchdog)}
+  }
   if(plan.phase==='tool')yield{type:'tool_calls_detected',sessionId,turnId,calls:[{id:'tool-1',name:'controlled_wait',input:{}}]};
   publish('wait',plan.id,{planPhase:plan.phase});
   const answer=await release('outcome');

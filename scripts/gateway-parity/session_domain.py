@@ -134,7 +134,9 @@ CLEANUP_UNVERIFIED_FREEZE = 'BLOCKED_CLEANUP_UNVERIFIED'
 MATRIX = tuple((host, sidecar) for host in ('ts', 'rust') for sidecar in ('ts', 'rust'))
 REPEATS = 5
 FIXTURE_NAMES = ('run.py', 'six_cells.mts', 'observation_rules.mjs',
-                 'append-observer.mjs', 'cleanup-observer.mjs')
+                 'append-observer.mjs', 'cleanup-observer.mjs', 'run-host.py',
+                 'host-sidecar-adapter.mjs', 'host-sidecar-source-loader.mjs',
+                 'host-sidecar-stimulus.mjs')
 # A19-HOST per-case expectation registration (issue #1177): the labels the D4-B
 # canonical outputs are built from.  S(T)/E(T) are the single timeout status and
 # error set; U is the result_unknown responsibility record that replaces a failed
@@ -1403,6 +1405,14 @@ def _load_native_artifacts(folder, *, expected_partition=None):
     audited = dict(evidence, expectedCases=expected, executedCases=named, transcriptPaths=paths,
                    capabilities=contract.get('capabilities'), surfaces=surfaces,
                    observer=observer, binding=contract['binding'])
+    if expected_partition is not None:
+        # Partitioning the trace budget must retain the exact same independent
+        # profile and per-case transcript-open witnesses as the full capture.
+        try:
+            native_evidence.session_profile(contract, expected)
+            native_evidence.session_windows(audited, expected, paths)
+        except native_evidence.Incomplete as error:
+            raise EvidenceError('NATIVE_PROCESS', str(error)) from error
     return {'folder': folder, 'contract': contract, 'evidence': audited, 'rows': rows,
             'expected': expected, 'executed': named,
             'providerCases': native_evidence.provider_cases(requests, expected)}

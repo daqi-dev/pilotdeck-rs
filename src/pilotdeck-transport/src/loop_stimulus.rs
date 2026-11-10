@@ -18,6 +18,8 @@
 //!   starts, so "before launch" means before the *gateway* is launched:
 //!   writing it later would let the gateway keep the automatic title request
 //!   while the sidecar runs a controlled turn.
+//!   Optional `requireProvider: true` arms an actual admitted model invocation
+//!   before the controlled outcome. Absent/false retains the original stimulus.
 //! - `<dir>/release.json` is the collector's release, written atomically:
 //!   `{"id","stage":"outcome"|"return","outcome":"unknown"|"known"}`.
 //! - `<dir>/witness/<pid>-<seq>.json` are the product's receipts, published
@@ -115,6 +117,7 @@ pub struct Plan {
     pub phase: Phase,
     pub order: Order,
     pub bound: Duration,
+    pub require_provider: bool,
 }
 
 impl Plan {
@@ -174,11 +177,21 @@ impl Plan {
                 Duration::from_millis(ms as u64)
             }
         };
+        let require_provider = value
+            .get("requireProvider")
+            .map(|raw| {
+                raw.as_bool().ok_or_else(|| {
+                    "native loop stimulus: loop.json requireProvider must be a boolean".to_string()
+                })
+            })
+            .transpose()?
+            .unwrap_or(false);
         Ok(Some(Self {
             id,
             phase,
             order,
             bound,
+            require_provider,
         }))
     }
 }
@@ -444,6 +457,39 @@ mod tests {
             assert_eq!(plan.order, expected, "#1371 order {order}");
             assert_eq!(plan.phase, Phase::Tool, "#1371 tool phase");
             assert_eq!(plan.bound, Duration::from_millis(1500), "#1371 bound");
+        }
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn provider_arm_is_strict_and_opt_in() {
+        let dir = scratch("model-arm");
+        for (field, expected) in [
+            ("", Some(false)),
+            (",\"requireProvider\":false", Some(false)),
+            (",\"requireProvider\":true", Some(true)),
+            (",\"requireProvider\":\"true\"", None),
+        ] {
+            write(
+                &dir,
+                "loop.json",
+                &format!(r#"{{"id":"p","phase":"model","order":"known-final-first"{field}}}"#),
+            );
+            let stimulus = LoopStimulus::control(&dir);
+            match expected {
+                Some(value) => assert_eq!(
+                    stimulus
+                        .plan()
+                        .expect("valid provider flag")
+                        .expect("armed plan")
+                        .require_provider,
+                    value,
+                ),
+                None => assert!(
+                    stimulus.plan().is_err(),
+                    "invalid provider flag must fail closed"
+                ),
+            }
         }
         let _ = fs::remove_dir_all(dir);
     }

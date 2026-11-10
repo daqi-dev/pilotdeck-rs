@@ -138,12 +138,14 @@ class StimulusDriver:
     # ------------------------------------------------------------------
     # control files
     # ------------------------------------------------------------------
-    def prepare(self, case, index, plan, run_id):
+    def prepare(self, case, index, plan, run_id, *, require_provider=False):
         """Arm the per-case plan before the turn is submitted."""
         plan_id = f'{case}#{index}'
-        atomic_write(self.loop_dir / 'loop.json', json.dumps({
-            'id': plan_id, 'phase': plan['phase'], 'order': plan['order'],
-            'boundMs': LOOP_BOUND_MS}))
+        loop_plan = {'id': plan_id, 'phase': plan['phase'], 'order': plan['order'],
+                     'boundMs': LOOP_BOUND_MS}
+        if require_provider:
+            loop_plan['requireProvider'] = True
+        atomic_write(self.loop_dir / 'loop.json', json.dumps(loop_plan))
         atomic_write(self.storage_dir / 'stimulus.json',
                     json.dumps(storage_arms(case, index, plan['variant'])))
         self._active = {
@@ -159,7 +161,8 @@ class StimulusDriver:
             'storageSteps': {}, 'missed': [],
         }
         self._action('arm-loop', {'planId': plan_id, 'phase': plan['phase'],
-                                  'order': plan['order']})
+                                  'order': plan['order'],
+                                  **({'requireProvider': True} if require_provider else {})})
         self._action('arm-storage', self._active['arms'])
         return plan_id
 
