@@ -198,7 +198,7 @@ b99cf015dc3dac281f46a7aef70824f881a6d8864ba158131a9eeea260550c36  ../../scripts/
 0ea4fb1ff42bf4a72e6e69ad788bfdfd2f4771d57059817f12f58cd550fc7b49  ../../scripts/gateway-parity/run_round.py
 e9b52b5ba0a3f381c8704c6a677c5dc6a660bcd91b0864a6fe66c536afcb3bd6  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs
-7e255c438cd14162e6e73f7569034faa4d8df1787f07afaa7291630170e42539  ../../scripts/gateway-parity/test_safety.py
+abb78091bfcb458af81973acd491c9d42f2f5786ea3ff126c829e69d801d5756  ../../scripts/gateway-parity/test_safety.py
 e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 3e641ee353effae94c3751b198cb08f1728bf225bc9963356befea1d722df49b  accepted-diffs.md
