@@ -93,6 +93,11 @@ async function main() {
     // （仲裁：timedClose 入口即发起 close，hold 是 close 后的观测窗）；但降级行
     // premise（初始入池前提原值）与 premiseAtClose（close 前池状态）分立，不再
     // 折叠成 premise:false；freeSocketCount 判定与记录同用一份局部快照。
+    // fix-r3（DS concurrency#1 降级判据）：复检与 close() 发起之间只隔同步代码、
+    // close() 内部 channel 停 await 期间理论上仍可被服务端 idle 超时抢先 FIN——
+    // 本探针 fake gateway、无 channel，该 await 仅微任务，实测不可达（复检→Node
+    // 级 close 同毫秒、池占用不变，见 fix-r3 exp-close-tick-race 场景 B）；有
+    // channel 且 stop 真异步时可达（场景 C）。
     const freeSocketsBeforeClose = ka.freeSocketCount();
     const premiseAtClose = premise && freeSocketsBeforeClose > 0;
     if (premise && !premiseAtClose) {
@@ -101,19 +106,28 @@ async function main() {
         note: "C 格退化成无连接状态 A（agent 池内已无 idle socket），settled 不作 A14②「空闲 keep-alive settle」对照",
       });
     }
-    const { p, settledAfterHoldMs } = premiseAtClose
-      ? await timedClose(s, "C:idle-keepalive", 2000, { premise: true, premiseAtClose: true, freeSocketsBeforeClose })
-      : await timedClose(s, "C:idle-keepalive", 2000, {
+    // fix-r3（Grok simplify P3 顺手项）：两支 extra 合 base 常量再展开。
+    const cExtra = {
+      premise,
+      premiseAtClose,
+      freeSocketsBeforeClose,
+      ...(premiseAtClose ? {} : {
         skipped: true,
-        premise,
-        premiseAtClose: false,
-        freeSocketsBeforeClose,
-        reason: premise ? "池在 close 前被服务端空闲超时收尾（见 C/SKIP-pool-drained-before-reuse）" : "入池前提未成立（见 C/SKIP-idle-keepalive）",
-      });
+        reason: premise
+          ? "池在 close 前被服务端空闲超时收尾（见 C/SKIP-pool-drained-before-reuse）"
+          : "入池前提未成立（见 C/SKIP-idle-keepalive）",
+      }),
+    };
+    const { p, settledAfterHoldMs } = await timedClose(s, "C:idle-keepalive", 2000, cExtra);
     say(premiseAtClose
       ? `C settled=${settledAfterHoldMs}`
-      : `C skipped（${premise ? "池在 close 前被收尾，见 C/SKIP-pool-drained-before-reuse" : "入池前提未成立，见 C/SKIP-idle-keepalive"}——不作 A14② 空闲 keep-alive settle 对照）`);
-    if (!settledAfterHoldMs) {
+      : `C skipped（${cExtra.reason}——不作 A14② 空闲 keep-alive settle 对照）`);
+    // fix-r3（DS boundary#1 + concurrency#2 撞条，必修）：等待/打印分支改精确判
+    // premiseAtClose && settledAfterHoldMs === false——fix-r2 的降级哨兵
+    // settledAfterHoldMs:null 在旧判 !settledAfterHoldMs 下恒真，降级路径会走进
+    // 本分支多打一条「C resolved after agent destroy」假因果证据（stdout 说
+    // destroy 后才放行、JSON 行却记 skipped，二者互为反证）。
+    if (premiseAtClose && settledAfterHoldMs === false) {
       ka.destroy();
       await p;
       say("C resolved after agent destroy");

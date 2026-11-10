@@ -128,19 +128,29 @@ async function main() {
     // ECONNREFUSED、reusedSocket:false，与「既有 keep-alive 在途被拆」语义不同。
     // 事后按 reusedSocket 复核：false（复用池在发出前已被收尾）→ 记
     // ka/SKIP-reuse-fell-to-new-conn、该行降级 skipped，与三态编码对齐。
+    // fix-r3（DS sibling#2）：降级行保留 once 原字段（ok/error/code/reusedSocket——
+    // p16 fix-r1「失败分支保留 {...r}」先例，读 sigterm-concurrent 数组的消费方不
+    // 漏判真实挂起/其它失败形状），reason 按 r.ok / r.reusedSocket 实测值推导
+    //（reusedSocket 全路径恒布尔：Node v22.22.0 构造器置 false、freeSockets 弹出
+    // 复用置 true，error/timeout 路径同布尔，见 fix-r3 exp-reused-socket-semantics）。
     kaPoolAtSigterm
       ? ka.once("/health").then((r) => {
           if (r.reusedSocket === true) return { kind: "keepalive-http", ...r };
           log("ka/SKIP-reuse-fell-to-new-conn", {
             reusedSocket: r.reusedSocket,
             once: r,
-            reason: "SIGTERM 前池占用复检通过，但请求实际落在新连接（reusedSocket:false，复用池在发出前已被收尾）",
+            reason: r.ok === true
+              ? `SIGTERM 前池占用复检通过，但请求实际落在新连接（reusedSocket:${r.reusedSocket}，复用池在发出前已被收尾）`
+              : `SIGTERM 前池占用复检通过，但请求未在池内 socket 上完成（ok:false${r.code ? `，${r.code}` : r.error ? `，${r.error}` : ""}；reusedSocket:${r.reusedSocket}）——成因以 once 原值为准，不按「落新连接」单义解释`,
             note: "keepalive-http 行降级 skipped：该请求不在池内 socket 上在途，「既有 keep-alive 在途被拆（ECONNRESET 单样本）」观测不作对照（新连接对照已由 new-http 覆盖，不重复产出）",
           });
           return {
             kind: "keepalive-http",
+            ...r,
             skipped: true,
-            reason: "请求落新连接而非池内 socket 在途（reusedSocket:false，见 ka/SKIP-reuse-fell-to-new-conn）",
+            reason: r.ok === true
+              ? `请求落新连接而非池内 socket 在途（reusedSocket:${r.reusedSocket}，见 ka/SKIP-reuse-fell-to-new-conn）`
+              : `请求未在池内 socket 上完成（reusedSocket:${r.reusedSocket}，once 原值随行——见 ka/SKIP-reuse-fell-to-new-conn）`,
           };
         })
       : Promise.resolve({ kind: "keepalive-http", skipped: true, reason: kaPool ? "池在 SIGTERM 前被服务端空闲超时收尾（见 ka/SKIP-pool-drained-before-reuse）" : "建池前提未成立（见 ka/SKIP-sigterm-keepalive-http）" }),

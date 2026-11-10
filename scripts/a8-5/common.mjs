@@ -276,7 +276,9 @@ export function keepAlivePremise(r) {
  * 按隐式）才会入池；后续「复用」结论以该前提成立为前提。错误路径带 code/message
  * 分立字段（connect 相位判定用）。
  * fix-r1（boundary P1 仲裁）：once 返回加 reusedSocket（本请求是否复用池内
- * socket，req.reusedSocket）——「复用已关连接」证据须以它区分新旧连接；
+ * socket，req.reusedSocket）——fix-r2 措辞限定：仅对 close/SIGTERM 前发出的
+ * 在途请求（p6 keepalive-http）有新旧连接判别力，close 后两路径（正常重建连 /
+ * 池提前收尾的新连接）同为 false、只作参考（判别依据是池占用复检）；
  * 另暴露 freeSocketCount()（agent.freeSockets 占用数）供调用方在 close/SIGTERM
  * 前最后一刻复检池占用——服务端空闲超时会收掉池内 idle socket（实测 ~5.5–6s，
  * keepAliveTimeout 5000 + 余量），且 server.close() 本身 ~11ms 内即 FIN 掉池内
