@@ -41,7 +41,6 @@
 - [rebase-conflict-merge](20261020-rebase-conflict-merge.md) — 状态文件冲突可取 main 侧；代码测试逐块真合并，#142 机械取侧丢 8 测试
 - [arbitration-runtime-test](20261020-arbitration-runtime-test.md) — 仲裁结论依赖运行时/标准库行为时必须最小实测贴输出（readdir 排序误判）
 - [ruler-real-data](20261020-ruler-real-data.md) — 尺子/装置改动用真实数据复算；对照全过不证明真实输入可用（#35、F2）
-- [词表判定不收敛](20261110-lexical-verdict-fix-nonconvergence.md) — 中文处置判定走结构派生不走词表枚举；r2–r6 五轮逐词补丁每轮同位置开新洞，评审词表建议只收形状不收方案
 - [GLM 5 小时额度](20261020-glm-5h-quota.md) — 429/1308「Usage limit reached for 5 hour」会让闸门全 ERROR（模型不符 <synthetic>）；等重置时间过了再重跑，不算闸门结论
 - [测试日志归属](20261021-test-log-tree-identity.md) — 跨 worktree 全量测试先用「本分支新测试在、他分支不在」核日志属于哪棵树；通过数相等先 diff 名单
 - [macOS exec SIGKILL](20261022-macos-exec-sigkill.md) — 测试二进制 `--list` 也 137 是系统拒启动非测试失败；复制新 inode + ad-hoc 重签取真实结果，不记通过
@@ -56,3 +55,4 @@
 - [混合署名口径](20261106-mixed-authorship.md) — 看板 impl 写家族并集；单一「主实现方」用最大 diff 行数方（可复算），评审按「参与过即作者」取补集（#1544 人批 C+B）
 - [macmini 仅 Wi-Fi](20261106-macmini-wifi-linkloss.md) — en0 无有线，长链断链会作废整批宿主/对拍；B 已让等待器 resume + 证据分轮次，根治仍需现场插网线（#1498 人批 B）
 - [大总管会话启动](20261107-coord-session-launch.md) — 起会话用 `claude --permission-mode bypassPermissions`；`--allow-dangerously-skip-permissions` 实测落 auto mode，分类器抖动会被误读成权限被拒
+- [词表判定不收敛](20261110-lexical-verdict-fix-nonconvergence.md) — 中文处置判定走结构派生不走词表枚举；r2–r6 五轮逐词补丁每轮同位置开新洞，评审词表建议只收形状不收方案

@@ -84,15 +84,20 @@ check_frozen = _load('check_frozen', _HERE / 'check_frozen.py').check
 # Vocabulary that cannot be derived structurally stays in named closed lists
 # below; each residual entry is paired with a control in
 # controls/review_r1.py (memory: ruler-real-data).
+# r8 (closure-round DS review): 修改/维修/检修 join the single word source —
+# an unknown disposal verb made 修改中 / 维修中 read as closed (boundary#2),
+# and the English table gains accepted/migrated/passed/completed so an
+# English disposal cell does not read open (sibling#5).
 _ENGLISH_VERBS = ('done', 'fixed', 'resolved', 'closed', 'merged',
-                  'verified', 'confirmed', 'reviewed', 'tested', 'checked')
+                  'verified', 'confirmed', 'reviewed', 'tested', 'checked',
+                  'accepted', 'migrated', 'passed', 'completed')
 _CJK_OBSERVE_ONLY = ('观察',)  # 观察 never closes a row; 已修，后续观察 stays closed
 _CJK_VERBS = ('修', '修复', '解决', '关闭', '拒', '保留', '完成', '合入', '并入', '合并',
               '降级', '升级', '处置', '处理', '评审', '复核', '验收', '通过',
-              '验证', '确认', '检查', '测试', '复检', '迁移', '观察')
+              '验证', '确认', '检查', '测试', '复检', '迁移', '观察',
+              '修改', '维修', '检修')
 _CJK_GATE_VERBS = tuple(v for v in _CJK_VERBS if v not in _CJK_OBSERVE_ONLY)
 _CJK_LONG_VERBS = tuple(v for v in _CJK_VERBS if len(v) >= 2)
-_CLOSED_HANDLING = _CJK_GATE_VERBS + _ENGLISH_VERBS + ('无需', 'wontfix', "won't fix")
 # Right extensions that turn a closure verb into a different lexeme with a
 # non-closure meaning (拒绝修复 / 已拒绝合入 / 保留意见 stay open, r6 MM#2).
 _CJK_CLOSURE_GUARDS = {'拒': '绝', '保留': '意见'}
@@ -102,7 +107,6 @@ def _longest_first(words):
     return sorted(words, key=len, reverse=True)
 
 
-_WORD_EDGE = r'(?![0-9A-Za-z一-鿿])'
 _CJK_CLOSURE_RE = re.compile('|'.join(
     verb + ('(?!%s)' % _CJK_CLOSURE_GUARDS[verb]
             if verb in _CJK_CLOSURE_GUARDS else '')
@@ -111,14 +115,23 @@ _EN_CLOSURE_RE = re.compile(r'\b(?:' + '|'.join(_ENGLISH_VERBS) + r'|wontfix)\b'
 _CLOSURE_PHRASES = ('无需', "won't fix")
 _CJK_FAILING_RE = re.compile(
     '(?:' + '|'.join(_longest_first(_CJK_LONG_VERBS)) + ')失败')
+# r8 (DS boundary#1): the r7 blanket word edge made <动词>中 and the explicit
+# pending words stop matching as soon as a CJK character — any character,
+# including 的 — followed, so 修复中的问题已定位 / 进行中的评审 read as closed
+# (false PASS). The edge now blocks only the attested noun compounds that
+# swallow 中 as a morpheme (中间 / 中间层; 进行中断分析), each with a control in
+# controls/review_r1.py.
+_PENDING_RIGHT_GUARDS = {'进行中': '(?!断)'}
 _CJK_IN_PROGRESS_RE = re.compile(
-    '(?:' + '|'.join(_longest_first(_CJK_LONG_VERBS)) + ')中' + _WORD_EDGE)
-# 拒绝 keeps matching inside longer phrases (拒绝修复 / 已拒绝合入); every
-# other explicit pending word needs its right edge (进行中断分析 is not pending).
+    '(?:' + '|'.join(_longest_first(_CJK_LONG_VERBS)) + ')中(?!间)')
+# 拒绝 keeps matching inside longer phrases (拒绝修复 / 已拒绝合入).
 _EXPLICIT_PENDING_RE = re.compile('|'.join(
-    word + ('' if word == '拒绝' else _WORD_EDGE)
+    word + _PENDING_RIGHT_GUARDS.get(word, '')
     for word in _longest_first(('进行中', '保留观察', '继续观察', '待观察', '待定',
                                 '待办', '不通过', '拒绝', '保留意见'))))
+# r8 (DS boundary#2): partial-completion residuals — a cell that names a
+# partial disposal (部分修复 / 修复了一半 / 阶段性修复) is still open.
+_PARTIAL_WORDS = ('部分', '一半', '阶段性')
 _EN_PENDING_RE = re.compile(r'\bin[ -]?progress\b|\bpending\b|\btodo\b|\btbd\b'
                             r'|\bwip\b', re.IGNORECASE)
 _EN_UNDONE_RE = re.compile(r'\bun[- _]?(?:' + '|'.join(_ENGLISH_VERBS) + r')\b',
@@ -150,15 +163,27 @@ _GATE_VERB = re.compile('|'.join(
 _CLAUSE_SPLIT = re.compile(r'[，、。；：！？,;:!?]|(?<!\d)\.(?!\d)')
 # Level negation by grammar (invariant 5): the gap may span at most 8
 # characters that start no verb (a verb-initial character in the gap marks a
-# real finding, not a negated level) and carry no clause punctuation.
+# real finding, not a negated level) and carry no clause punctuation. r8:
+# ASCII '.' joins the separator set (sibling#1 — _CLAUSE_SPLIT splits it, so
+# 未发现缓存泄漏.P1 must not fold the level across the sentence boundary) and
+# the heads of attested out-of-table statement verbs (排除 / 涉及 / 识别 /
+# 触发 / 复现) join the exclusion set (boundary#3 — 尚未排除 P1 is a finding,
+# not a negated level); both make the gap narrower, never wider.
 _VERB_HEADS = ''.join(sorted({v[0] for v in _CJK_VERBS}))
+_GAP_STATEMENT_HEADS = '涉排识触复'
 _NEGATED_LEVELS = re.compile(
     '(?:没有|未发现|未见|不含|未|无(?!法))'
-    '[^' + _VERB_HEADS + '，、。；：！？,;:!?/／]{0,8}'
+    '[^' + _VERB_HEADS + _GAP_STATEMENT_HEADS + '，、。；：！？,;:!?./／]{0,8}'
     r'(?<![0-9A-Za-z_])P[012](?![0-9A-Za-z_])'
     r'(?:\s*[/／、]\s*P[012](?![0-9A-Za-z_]))*', re.IGNORECASE)
 # Word boundaries keep identifiers (`case_p1`) from reading as a level.
 _LEVEL_TOKEN = re.compile(r'(?<![0-9A-Za-z_])p[012](?![0-9A-Za-z_])', re.IGNORECASE)
+# r8 (DS boundary#4): every typographic apostrophe of the family folds to
+# ASCII ' on the judgement copy — NFKC does not fold them, and hasn‘t /
+# hasnʼt / hasn′t otherwise dodge the English negation while the closure
+# verb still matches (false PASS). Each member has a control in
+# controls/review_r1.py.
+_APOSTROPHES = '’‘‛ʼ′'
 
 
 def _normalized_handling(cell):
@@ -183,6 +208,8 @@ def _handling_pending(handling):
     """The 处理/处置 cell still leaves its finding open (#2245 r7)."""
     if _CJK_FAILING_RE.search(handling):
         return True  # a failed attempt (合并失败/验收失败…) is pending
+    if any(word in handling for word in _PARTIAL_WORDS):
+        return True  # a partial disposal (部分修复/修复了一半) is still open (r8)
     if _CJK_IN_PROGRESS_RE.search(handling):
         return True  # 修复中 / 处置中 / 验收中 …（升级中 ≠ 已升级中间件）
     if _EXPLICIT_PENDING_RE.search(handling):
@@ -323,12 +350,14 @@ def _open_review_rows(text):
     结论/处理/处置 table: unverifiable is not clean. Lines come from the
     shared LF-only splitter, so a U+2028 inside a cell cannot hide half of a
     finding (CR/CRLF are normalised first). Full-width Ｐ１ folds to P1 and
-    the curly apostrophe folds to ' on this judgement copy — never on the
-    record bytes — before matching, and the text must already be fence-free
-    (see _visible_text). Each run of consecutive pipe lines is one table
-    block classified by its own header.
+    every typographic apostrophe (r8: ’ ‘ ‛ ʼ ′) folds to ' on this judgement
+    copy — never on the record bytes — before matching, and the text must
+    already be fence-free (see _visible_text). Each run of consecutive pipe
+    lines is one table block classified by its own header.
     """
-    text = unicodedata.normalize('NFKC', text).replace('’', "'")
+    text = unicodedata.normalize('NFKC', text)
+    for curly in _APOSTROPHES:
+        text = text.replace(curly, "'")
     open_rows, review_table, run = [], False, []
     for line in G.jsonl_lines(re.sub(r'\r\n?', '\n', text)):
         stripped = line.strip()

@@ -371,6 +371,8 @@ class ReviewControls(unittest.TestCase):
              '| 1 | DS | 无法复现 P1 | — |\n', False),
             ('negation-grammar-unseen-fix',
              '| 1 | DS | 未见修复 P1：锁无过期回收 | — |\n', False),
+            ('negation-grammar-unseen-xiu',
+             '| 1 | DS | 未见修 P1 | — |\n', False),
             ('negation-grammar-not-handled',
              '| 1 | DS | 没有处理 P1 | — |\n', False),
             ('negation-grammar-irrelevant',
@@ -456,6 +458,63 @@ class ReviewControls(unittest.TestCase):
             # fix-r7: 待观察 joins its 保留观察/继续观察 family (MM boundary#8).
             ('pending-待观察', '| 1 | DS | P1：foo | 已修，待观察 |\n', False),
         ]
+        # fix-r8 (closure-round DS review): one row case per r8 element, kept
+        # in its own list so the failure markers carry the round they pin.
+        row_cases_r8 = [
+            # the in-progress right edge blocks only attested noun compounds
+            # — an object after 的 keeps the row open (boundary#1).
+            ('pending-修复中的问题已定位',
+             '| 1 | DS | P1：foo | 修复中的问题已定位 |\n', False),
+            ('pending-进行中的评审', '| 1 | DS | P1：foo | 进行中的评审 |\n', False),
+            ('closed-已修进行中断分析',
+             '| 1 | DS | P1：foo | 已修，进行中断分析 |\n', True),
+            # 修改/维修/检修 join the single word source, and partial
+            # completion never closes (boundary#2).
+            ('pending-修改中', '| 1 | DS | P1：foo | 修改中 |\n', False),
+            ('pending-维修中', '| 1 | DS | P1：foo | 维修中 |\n', False),
+            ('pending-检修中', '| 1 | DS | P1：foo | 检修中 |\n', False),
+            ('pending-修复了一半', '| 1 | DS | P1：foo | 修复了一半 |\n', False),
+            ('pending-部分修复', '| 1 | DS | P1：foo | 部分修复 |\n', False),
+            ('pending-阶段性修复', '| 1 | DS | P1：foo | 阶段性修复 |\n', False),
+            ('closed-已修改', '| 1 | DS | P1：foo | 已修改 |\n', True),
+            ('closed-已维修', '| 1 | DS | P1：foo | 已维修 |\n', True),
+            ('closed-已检修', '| 1 | DS | P1：foo | 已检修 |\n', True),
+            # out-of-table statement verbs and ASCII '.' keep a negated level
+            # a real finding (boundary#3 / sibling#1).
+            ('finding-尚未排除', '| 1 | DS | 尚未排除 P1 | — |\n', False),
+            ('finding-未涉及', '| 1 | DS | 未涉及 P1 | — |\n', False),
+            ('finding-未识别', '| 1 | DS | 未识别 P1 | — |\n', False),
+            ('negated-句点后级别',
+             '| 1 | DS | 未发现缓存泄漏.P1：锁无过期回收 | — |\n', False),
+            # pin the negation-gap cap boundary (sibling#4): 8 characters
+            # fold, 9 survive as a finding.
+            ('negated-gap-8-fold', '| 1 | DS | 未发现本次改动中新引入P1 | — |\n', True),
+            ('negated-gap-9-survive',
+             '| 1 | DS | 未发现本次改动中新引入的P1 | — |\n', False),
+            # every typographic apostrophe of the family folds on the
+            # judgement copy (boundary#4) — the r6 MM#4 hole, other code points.
+            ('english-curly-hasnt-u2018',
+             "| 1 | DS | P1: foo | hasn‘t been fixed |\n", False),
+            ('english-curly-hasnt-u02bc',
+             '| 1 | DS | P1: foo | hasnʼt been fixed |\n', False),
+            ('english-curly-hasnt-u2032',
+             '| 1 | DS | P1: foo | hasn′t been fixed |\n', False),
+            ('english-curly-hasnt-u201b',
+             '| 1 | DS | P1: foo | hasn‛t been fixed |\n', False),
+            # the English verb source covers disposal verbs, so an English
+            # handling cell closes (sibling#5).
+            ('english-accepted-closes', '| 1 | DS | P1: foo | accepted |\n', True),
+            ('english-migrated-closes', '| 1 | DS | P1: foo | migrated to main |\n', True),
+            ('english-passed-closes', '| 1 | DS | P1: foo | passed |\n', True),
+            ('english-completed-closes', '| 1 | DS | P1: foo | completed |\n', True),
+        ]
+        for name, row, expected in row_cases_r8:
+            with self.subTest(name=name):
+                record.write_text(table.replace('| 1 | DS | P1：foo | 已修（c1） |\n', row) + conclusion,
+                                  encoding='utf-8')
+                with patch.object(G, 'WORKTREE', self.root):
+                    self.assertIs(check_ruler.independent_review(), expected,
+                                  '#2245-r8 row:' + name)
         for name, row, expected in row_cases:
             with self.subTest(name=name):
                 record.write_text(table.replace('| 1 | DS | P1：foo | 已修（c1） |\n', row) + conclusion,
@@ -578,14 +637,19 @@ class ReviewControls(unittest.TestCase):
         that can drift one-sidedly (r5's hand-copied Chinese side let
         验收失败 / 评审不通过 / not 修复 read as closed; r6 asked for module
         constants + traversal, r7 delivered them)."""
-        # closure really is derived: gate verbs + English verbs + closure
-        # phrases, and nothing else (r6 MM sibling#2: set equality, not
-        # containment; observe-only 观察 never closes).
-        self.assertEqual(set(check_ruler._CLOSED_HANDLING),
-                         set(check_ruler._CJK_GATE_VERBS)
-                         | set(check_ruler._ENGLISH_VERBS)
-                         | {'无需', 'wontfix', "won't fix"})
-        self.assertNotIn('观察', check_ruler._CLOSED_HANDLING)
+        # closure really is derived: gate verbs + English verbs + the wontfix
+        # phrases, and nothing else (r6 MM sibling#2). r8 (DS sibling#2 /
+        # boundary#5): the old set-equality asserted a `_CLOSED_HANDLING`
+        # constant that production code no longer reads, so a one-sided drift
+        # stayed green. The vocabulary is now traversed through the real
+        # matcher `_handling_closed` — behaviour, not a re-derived definition
+        # — and observe-only 观察 never closes.
+        for word in (set(check_ruler._CJK_GATE_VERBS)
+                     | set(check_ruler._ENGLISH_VERBS)
+                     | {'无需', 'wontfix', "won't fix"}):
+            self.assertTrue(check_ruler._handling_closed(word),
+                            '#2245-r8 closure-word:' + word)
+        self.assertFalse(check_ruler._handling_closed('观察'))
         # the failing / in-progress families really are <two-char verb>失败 /
         # <two-char verb>中 over the module's own verb list, derived once.
         self.assertEqual(set(check_ruler._CJK_LONG_VERBS),
@@ -607,12 +671,41 @@ class ReviewControls(unittest.TestCase):
                 # noun is not in-progress — the noun must not reopen a row.
                 self.assertFalse(check_ruler._handling_pending(word + '中间层'),
                                 '#2245-r7 in-progress-right-edge:' + word + '中间层')
+                # r8 (DS boundary#1): the edge blocks only attested noun
+                # compounds — an object after 的 keeps the row open.
+                self.assertTrue(check_ruler._handling_pending(word + '中的问题'),
+                                '#2245-r8 in-progress-object:' + word + '中的问题')
         for word in check_ruler._ENGLISH_VERBS:
             for form in (f'not {word}', f'never {word}', f'un{word}',
                          f'un-{word}', f'un {word}', f'un_{word}',
                          f"hasn't been {word}", f'未 {word}', f'待 {word}'):
                 self.assertTrue(check_ruler._handling_pending(form),
                                 '#2245-r7 english-pending:' + form)
+        # r8 (DS sibling#3): every negation marker in the module's own list
+        # keeps a gate verb pending — the old check only covered 未/没, so a
+        # newly added marker without the grammar stayed green.
+        for marker in check_ruler._NEGATION_WORDS:
+            for word in ('修复', '合并'):
+                self.assertTrue(check_ruler._handling_pending(marker + word),
+                                '#2245-r8 negation-family:' + marker + word)
+        # r8 (DS boundary#2): partial-completion residuals are pending — a
+        # cell that names a partial disposal is still open.
+        for form in ('部分修复', '修复了一半', '阶段性修复'):
+            self.assertTrue(check_ruler._handling_pending(form),
+                            '#2245-r8 partial-pending:' + form)
+        # r8 (DS boundary#1 / sibling#3): the explicit-pending right edge
+        # blocks only the attested compound — 进行中断分析 is analysis prose,
+        # while an object after 的 keeps the row open.
+        self.assertFalse(check_ruler._handling_pending('进行中断分析'),
+                        '#2245-r8 explicit-pending-edge:进行中断分析')
+        for form in ('进行中的评审', '修复中的问题已定位'):
+            self.assertTrue(check_ruler._handling_pending(form),
+                            '#2245-r8 explicit-pending-object:' + form)
+        # r8 (DS sibling#3): the closure guards bind directly — 拒绝/保留意见
+        # inside a handling cell must not read as the bare closure verb.
+        for form in ('已拒绝', '保留意见'):
+            self.assertFalse(check_ruler._handling_closed(form),
+                             '#2245-r8 closure-guard:' + form)
         # DS sibling#2: intent markers are module constants — walk every one
         # of them paired with a gate verb, so adding a marker without the
         # grammar cannot pass silently.
@@ -647,7 +740,8 @@ class ReviewControls(unittest.TestCase):
                       '已通过', '已迁移至 #456', "won't fix", '不会修复',
                       '无需处理', '已修，未引入回归', '没发现问题，已修复',
                       '已修复，不需要进一步处理', '已修复，后续观察',
-                      '已升级中间件到 2.1', '已关闭中间层缓存', '已保留中间态'):
+                      '已升级中间件到 2.1', '已关闭中间层缓存', '已保留中间态',
+                      '已修改', '已维修', '已检修'):
             self.assertFalse(check_ruler._handling_pending(closed),
                              '#2245-r7 closed-family:' + closed)
         # observe-only verbs and explicit pending words never close a row
