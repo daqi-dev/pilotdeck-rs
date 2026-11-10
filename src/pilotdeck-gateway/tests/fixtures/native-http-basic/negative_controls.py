@@ -247,6 +247,41 @@ switches = [
     ('native-http-408-into-unflushed-tail', SOURCE_PROXY,
      'unflushed_response_tail_headers_timeout_closes_silently_like_ts',
      'the unflushed tail never carries the 51-byte 408 — Node destroys the started response instead'),
+    # #1517 fix-r1 (review concurrency #1/#2, the zero-writable-space quadrant):
+    # the tail hyper buffers after the body's end never reaches the gate's
+    # `poll_write`, so the gate's own write-side window never opens — Node's
+    # expiry guard still holds because `finish` needs the flush
+    # (`probe-1517-t3.out` T3a), so the late follow-up head must stay withheld
+    # for the parked deadline to fire at the +150 s grid. The mutant reverts
+    # withholding to the in-flight slot alone — the pre-fix-r1 behavior — so
+    # the half head parks hyper's read machinery on its non-empty buffer and
+    # the grid point goes quiet: the connection is still open past the idle
+    # deadline.
+    ('native-http-withholding-unflushed-tail', SOURCE_PROXY,
+     'unflushed_tail_never_at_gate_withholds_late_head_like_ts',
+     '#1517 the zero-space tail\'s close lands at the +150 s grid point: the connection is still open past the idle deadline'),
+    # #1517 fix-r1 (review boundary #1, the no-follow-up-head grid): with no
+    # next head anywhere on the wire, Node has no headersTimeout window at all
+    # (`probe-1517-t3.out` T3b: the +150 s grid passes open, the tail flushes
+    # only on the client's resume), so the stand-by re-arm waits for the
+    # flush. The mutant arms the stand-by deadline at the frame hand-off —
+    # the pre-fix-r1 behavior — so the +150 s grid expiry closes the
+    # connection that Node keeps open past its landing: the probe at +150.5 s
+    # reads the latched EOF instead of the quiet window.
+    ('native-http-standby-rearm-ignores-unflushed', SOURCE_PROXY,
+     'unflushed_tail_no_follow_up_head_opens_no_window_like_ts',
+     '#1517 with no follow-up head, no window opens at the grid point while the tail is stuck'),
+    # #1517 fix-r1 (review sibling #2, the flush-clear half): the drained
+    # flush is the one transition that re-opens the post-response window —
+    # Node's `_httpMessage` detaches at `finish`, which is the flush, not the
+    # frame hand-off. The mutant never clears the hand-off flag, so a fully
+    # served and flushed previous response keeps its window held forever:
+    # the follow-up head's +90 s grid expiry destroys the connection
+    # silently instead of answering the 408 Node writes for a detached
+    # previous response.
+    ('native-http-flush-clear-off', SOURCE_PROXY,
+     'served_follow_up_head_dribble_408s_like_ts',
+     'dribbled follow-up head: EOF before the 408 arrived'),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_ws.rs',

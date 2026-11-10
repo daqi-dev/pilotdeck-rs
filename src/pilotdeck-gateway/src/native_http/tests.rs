@@ -18,9 +18,10 @@ use std::{
     net::SocketAddr,
     path::PathBuf,
     sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
+    task::Waker,
     time::{Duration, Instant},
 };
 use tokio::{
@@ -2328,27 +2329,27 @@ async fn read_response(client: &mut tokio::io::DuplexStream, what: &str) -> Stri
     text
 }
 
-/// #1250: the probe/tail helpers' shared internal advance — both
-/// `probe_still_open` and `eof_after_idle_close` arm an
-/// `IDLE_CLOSE_HELPER_READ_WINDOW_MS` read, then advance virtual time by
-/// this step before awaiting it (tokio polls the inner read before the
-/// delay, so an EOF latched during the advance wins). The advance must
-/// stay strictly greater than the read window (the const assert below):
-/// the helper crosses the read's timeout with the advance, so a
-/// still-open read resolves `Elapsed` while the latched EOF wins. The
-/// #1292 lane's two inline helpers (`headers_timeout_408_arrives` /
-/// `stream_ends_silently_at_grid_point`) deliberately keep their own
-/// 60 ms literals each — the 002-family literal collection is follow-up
-/// #2380, out of this change's scope. The family's window arithmetic
-/// below and the same-instant cell's half-close instant are both written
-/// in terms of this step, so the (5.99, 6.09] s judgment window stays
-/// recomputable from named constants alone.
+/// #1250: the probe/tail helpers' shared internal advance — the shared
+/// `windowed_read` (below) arms an `IDLE_CLOSE_HELPER_READ_WINDOW_MS` read,
+/// then advances virtual time by this step before awaiting it (tokio polls
+/// the inner read before the delay, so an EOF latched during the advance
+/// wins), and `eof_after_idle_close` does the same. The advance must stay
+/// strictly greater than the read window (the const assert below): the
+/// helper crosses the read's timeout with the advance, so a still-open
+/// read resolves `Elapsed` while the latched EOF wins. Every windowed
+/// helper across the #1250/#1292/#1517 lanes now routes through
+/// `windowed_read` except `stream_ends_silently_at_grid_point`, whose
+/// panic text is a bound negative-control anchor and whose own literals
+/// stay inline (002-family literal collection, follow-up #2380). The
+/// family's window arithmetic below and the same-instant cell's half-close
+/// instant are both written in terms of this step, so the (5.99, 6.09] s
+/// judgment window stays recomputable from named constants alone.
 const IDLE_CLOSE_HELPER_ADVANCE_MS: u64 = 60;
 
-/// #1250: the probe/tail helpers' shared read window — the `timeout` each
-/// helper arms on its read before its `IDLE_CLOSE_HELPER_ADVANCE_MS`
-/// advance. Only the #1250 family's two helpers use it: the #1292 lane's
-/// own 50 ms literals stay inline (002 family, follow-up #2380).
+/// #1250: the probe/tail helpers' shared read window — the `timeout`
+/// `windowed_read` arms on its read before its
+/// `IDLE_CLOSE_HELPER_ADVANCE_MS` advance. `stream_ends_silently_at_grid_point`
+/// keeps its own 50 ms literal inline (002 family, follow-up #2380).
 const IDLE_CLOSE_HELPER_READ_WINDOW_MS: u64 = 50;
 
 /// #1250: Node's effective keep-alive idle-close deadline —
@@ -2408,59 +2409,58 @@ const _: () = assert!(
 );
 const _: () = assert!(IDLE_CLOSE_HELPER_ADVANCE_MS > IDLE_CLOSE_HELPER_READ_WINDOW_MS);
 
-/// #1250: probe for data/EOF at the current virtual time. The
-/// `IDLE_CLOSE_HELPER_READ_WINDOW_MS` timeout is armed before its own
-/// `IDLE_CLOSE_HELPER_ADVANCE_MS` advance, so a still-open read resolves
-/// `Elapsed`, while an EOF latched by a close during the advance wins —
-/// tokio polls the inner future before the delay.
-async fn probe_still_open(client: &mut tokio::io::DuplexStream, what: &str) {
-    for _ in 0..8 {
-        tokio::task::yield_now().await;
-    }
-    let mut probe = [0u8; 1];
+/// #1250: the windowed read the probe and drain helpers are built on — arm
+/// the `IDLE_CLOSE_HELPER_READ_WINDOW_MS` timeout on the read, then advance
+/// virtual time by `IDLE_CLOSE_HELPER_ADVANCE_MS`, so a still-open read
+/// resolves `None` (quiet), while an EOF latched by a close during the
+/// advance wins — tokio polls the inner future before the delay.
+async fn windowed_read(
+    client: &mut tokio::io::DuplexStream,
+    chunk: &mut [u8],
+) -> Option<std::io::Result<usize>> {
     let pending = timeout(
         Duration::from_millis(IDLE_CLOSE_HELPER_READ_WINDOW_MS),
-        client.read(&mut probe),
+        client.read(chunk),
     );
     tokio::time::advance(Duration::from_millis(IDLE_CLOSE_HELPER_ADVANCE_MS)).await;
     for _ in 0..8 {
         tokio::task::yield_now().await;
     }
-    match pending.await {
-        Err(_quiet) => {}
-        Ok(Ok(0)) => panic!("#1250 {what}"),
-        Ok(Ok(count)) => panic!("#1250 {what}: {count} unexpected byte(s) arrived"),
-        Ok(Err(error)) => panic!("#1250 {what}: {error}"),
+    pending.await.ok()
+}
+
+/// #1250: probe for data/EOF at the current virtual time (the shared
+/// `windowed_read` window; any byte here is a failure, so only the quiet and
+/// error readings pass).
+async fn probe_still_open(client: &mut tokio::io::DuplexStream, what: &str) {
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    let mut probe = [0u8; 1];
+    match windowed_read(client, &mut probe).await {
+        None => {}
+        Some(Ok(0)) => panic!("#1250 {what}"),
+        Some(Ok(count)) => panic!("#1250 {what}: {count} unexpected byte(s) arrived"),
+        Some(Err(error)) => panic!("#1250 {what}: {error}"),
     }
 }
 
 /// #1250: advance virtual time past the idle deadline and read the latched
 /// EOF (a half-closed duplex keeps reading 0, so no window is needed). The
-/// read is itself bounded by an `IDLE_CLOSE_HELPER_READ_WINDOW_MS` timeout
-/// and one more `IDLE_CLOSE_HELPER_ADVANCE_MS` advance: a connection still
-/// open past the expected deadline fails here with the cell's own message
-/// instead of hanging until the harness wall guard.
+/// read is itself bounded by the shared `windowed_read` window: a connection
+/// still open past the expected deadline fails here with the cell's own
+/// message instead of hanging until the harness wall guard.
 async fn eof_after_idle_close(client: &mut tokio::io::DuplexStream, elapsed: Duration, what: &str) {
     tokio::time::advance(elapsed).await;
     for _ in 0..8 {
         tokio::task::yield_now().await;
     }
     let mut probe = [0u8; 1];
-    let pending = timeout(
-        Duration::from_millis(IDLE_CLOSE_HELPER_READ_WINDOW_MS),
-        client.read(&mut probe),
-    );
-    tokio::time::advance(Duration::from_millis(IDLE_CLOSE_HELPER_ADVANCE_MS)).await;
-    for _ in 0..8 {
-        tokio::task::yield_now().await;
-    }
-    match pending.await {
-        Ok(Ok(0)) => {}
-        Ok(Ok(count)) => panic!("#1250 {what}: {count} unexpected byte(s) before the EOF"),
-        Ok(Err(error)) => panic!("#1250 {what}: {error}"),
-        Err(_still_open) => {
-            panic!("#1250 {what}: the connection is still open past the idle deadline")
-        }
+    match windowed_read(client, &mut probe).await {
+        Some(Ok(0)) => {}
+        Some(Ok(count)) => panic!("#1250 {what}: {count} unexpected byte(s) before the EOF"),
+        Some(Err(error)) => panic!("#1250 {what}: {error}"),
+        None => panic!("#1250 {what}: the connection is still open past the idle deadline"),
     }
 }
 
@@ -3165,19 +3165,14 @@ async fn headers_timeout_408_arrives(client: &mut tokio::io::DuplexStream, what:
     let mut buffer = Vec::new();
     while buffer.len() < expected.len() {
         let mut chunk = [0u8; 64];
-        let pending = timeout(Duration::from_millis(50), client.read(&mut chunk));
-        tokio::time::advance(Duration::from_millis(60)).await;
-        for _ in 0..8 {
-            tokio::task::yield_now().await;
-        }
-        match pending.await {
-            Ok(Ok(0)) => panic!(
+        match windowed_read(client, &mut chunk).await {
+            Some(Ok(0)) => panic!(
                 "#1292 {what}: EOF before the 408 arrived (buffer so far: {:?})",
                 latin1_string(&buffer)
             ),
-            Ok(Ok(count)) => buffer.extend_from_slice(&chunk[..count]),
-            Ok(Err(error)) => panic!("#1292 {what}: {error}"),
-            Err(_no_408) => {
+            Some(Ok(count)) => buffer.extend_from_slice(&chunk[..count]),
+            Some(Err(error)) => panic!("#1292 {what}: {error}"),
+            None => {
                 panic!("#1292 {what}: the 51-byte 408 never arrived at the headersTimeout deadline")
             }
         }
@@ -3188,13 +3183,8 @@ async fn headers_timeout_408_arrives(client: &mut tokio::io::DuplexStream, what:
         "#1292 {what}: the bytes are exactly Node's canned 51-byte 408, got {text:?}"
     );
     let mut tail = [0u8; 1];
-    let pending = timeout(Duration::from_millis(50), client.read(&mut tail));
-    tokio::time::advance(Duration::from_millis(60)).await;
-    for _ in 0..8 {
-        tokio::task::yield_now().await;
-    }
-    match pending.await {
-        Ok(Ok(0)) => {}
+    match windowed_read(client, &mut tail).await {
+        Some(Ok(0)) => {}
         other => panic!(
             "#1292 {what}: the connection closes after the 408 like Node's destroy(), got {other:?}"
         ),
@@ -3260,55 +3250,59 @@ async fn probe_open_with_stuck_tail(
     what: &str,
 ) {
     let mut chunk = [0u8; 64];
-    let pending = timeout(Duration::from_millis(50), client.read(&mut chunk));
-    tokio::time::advance(Duration::from_millis(60)).await;
-    for _ in 0..8 {
-        tokio::task::yield_now().await;
-    }
-    match pending.await {
-        Ok(Ok(0)) => panic!("#1517 {what}"),
-        Ok(Ok(count)) => buffer.extend_from_slice(&chunk[..count]),
-        Ok(Err(error)) => panic!("#1517 {what}: {error}"),
-        Err(_open) => {}
+    match windowed_read(client, &mut chunk).await {
+        Some(Ok(0)) => panic!("#1517 {what}"),
+        Some(Ok(count)) => buffer.extend_from_slice(&chunk[..count]),
+        Some(Err(error)) => panic!("#1517 {what}: {error}"),
+        None => {}
     }
 }
 
-/// #1517: read everything the connection still offers until its close,
-/// inside the same windowed probe pattern as `stream_ends_silently_at_grid_point`,
-/// but with bytes allowed — the verdict is what they are: Node's destroy
-/// leaves the flushed prefix in front of the EOF and never the 51-byte 408
+/// #1517: the shared windowed drain — the same windowed probe pattern as
+/// `stream_ends_silently_at_grid_point`, but with bytes allowed. The window
+/// budget is the caller's: `drain_to_close_without_408`'s 24 (the 8 KiB tail
+/// the close must cut needs more wall than the #1292 lane's 16-window
+/// still-open verdict, and the budget only widens the *failure* window — a
+/// close the verdict expects has always landed by the first EOF), and the
+/// resume-drain cells' 96 (the full tail plus terminator has to flow through
+/// the 256-byte window reads, 8 KiB ≈ 32 windows, before the EOF can land).
+async fn drain_until_closed(
+    client: &mut tokio::io::DuplexStream,
+    buffer: &mut Vec<u8>,
+    windows: usize,
+    what: &str,
+) {
+    for _ in 0..windows {
+        let mut chunk = [0u8; 256];
+        match windowed_read(client, &mut chunk).await {
+            Some(Ok(0)) => return,
+            Some(Ok(count)) => buffer.extend_from_slice(&chunk[..count]),
+            Some(Err(error)) => panic!("#1517 {what}: {error}"),
+            None => {}
+        }
+    }
+    panic!(
+        "#1517 {what}: the connection was never closed after its grid landing (buffer so far: {:?})",
+        latin1_string(buffer)
+    );
+}
+
+/// #1517: read everything the connection still offers until its close, then
+/// hold the unflushed-tail verdict on the bytes: Node's destroy leaves the
+/// flushed prefix in front of the EOF and never the 51-byte 408
 /// (`probe-1517.out` T1/T2), and it cuts the tail mid-chunk, so the chunked
 /// terminator never arrives either. A stray 408 (the
 /// `native-http-408-into-unflushed-tail` mutant) fails with the bytes read.
 async fn drain_to_close_without_408(client: &mut tokio::io::DuplexStream, mut buffer: Vec<u8>) {
-    let mut closed = false;
-    for _ in 0..24 {
-        let mut chunk = [0u8; 256];
-        let pending = timeout(Duration::from_millis(50), client.read(&mut chunk));
-        tokio::time::advance(Duration::from_millis(60)).await;
-        for _ in 0..8 {
-            tokio::task::yield_now().await;
-        }
-        match pending.await {
-            Ok(Ok(0)) => {
-                closed = true;
-                break;
-            }
-            Ok(Ok(count)) => buffer.extend_from_slice(&chunk[..count]),
-            Ok(Err(error)) => panic!("#1517 the unflushed-tail drain: {error}"),
-            Err(_open) => {}
-        }
-    }
-    assert!(
-        closed,
-        "#1517 the unflushed-tail drain: the connection was never closed after its grid landing (buffer so far: {:?})",
-        latin1_string(&buffer)
-    );
+    drain_until_closed(client, &mut buffer, 24, "the unflushed-tail drain").await;
     let text = latin1_string(&buffer);
     assert!(
         text.starts_with("HTTP/1.1 200 OK\r\n"),
         "#1517 the unflushed-tail response head is the flushed 200, got {text:?}"
     );
+    // Helper contract, not this cell's verdict: the caller must hand in the
+    // buffer its `read_until` already filled with the first chunk, so this
+    // can only fire on a caller bug (review fix-r1 simplify #4).
     assert!(
         text.contains("part1-"),
         "#1517 the flushed prefix carries the first chunk, got {text:?}"
@@ -3816,7 +3810,7 @@ async fn mid_stream_head_timeout_closes_stream_silently_like_ts() {
         let grid_anchor = tokio::time::Instant::now();
         let (server, mut client) = tokio::io::duplex(4096);
         let (_stop, stop_rx) = watch::channel(false);
-        let (release_tx, release_rx) = watch::channel(false);
+        let (_release_tx, release_rx) = watch::channel(false);
         let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
             server,
             move |_request, _lease| {
@@ -3873,10 +3867,10 @@ async fn mid_stream_head_timeout_closes_stream_silently_like_ts() {
             "the mid-stream head's deadline closes the streaming connection without a 408",
         )
         .await;
-        // The release sender outlives the connection (it drops at scope end):
-        // dropping it earlier would fail the held body's wait instead of
-        // leaving the grid-point close as the cell's verdict.
-        let _release_hold = release_tx;
+        // The release sender stays alive to scope end by itself (the
+        // local binding moved nothing); dropping it earlier would fail the
+        // held body's wait instead of leaving the grid-point close as the
+        // cell's verdict.
         let served = task.await.expect("#1292 mid-stream-head task join");
         ended_by_408_close(
             served,
@@ -4163,16 +4157,17 @@ async fn unflushed_response_tail_headers_timeout_closes_silently_like_ts() {
             "#1517 the held response is not interrupted before the mid-stream head's deadline",
         )
         .await;
-        // t = +88.4 s: release the last chunk. The body ends — every frame is
-        // handed to hyper, the in-flight slot is gone — but the tail cannot
-        // flush into the full duplex, so the response stays unflushed exactly
-        // like Node's backpressured `writableLength`.
+        // t = +88.5 s (the probe above advanced its own 60 ms): release the
+        // last chunk. The body ends — every frame is handed to hyper, the
+        // in-flight slot is gone — but the tail cannot flush into the full
+        // duplex, so the response stays unflushed exactly like Node's
+        // backpressured `writableLength`.
         tokio::time::advance(Duration::from_millis(28_000)).await;
         release_tx.send_replace(true);
         for _ in 0..8 {
             tokio::task::yield_now().await;
         }
-        // t ≈ +89.4 s: past the deadline, before the +90 s grid landing — the
+        // t ≈ +89.5 s: past the deadline, before the +90 s grid landing — the
         // stuck tail's bytes are the expected reading, only an early close
         // fails.
         tokio::time::advance(Duration::from_millis(1_000)).await;
@@ -4187,14 +4182,334 @@ async fn unflushed_response_tail_headers_timeout_closes_silently_like_ts() {
         // and the close cuts the tail mid-chunk.
         tokio::time::advance(Duration::from_millis(600)).await;
         drain_to_close_without_408(&mut client, buffer).await;
-        // The release sender outlives the connection (it drops at scope end):
-        // dropping it earlier would fail the held body's wait instead of
-        // leaving the grid-point close as the cell's verdict.
-        let _release_hold = release_tx;
+        // The release sender stays alive to scope end by itself (the
+        // local binding moved nothing); dropping it earlier would fail the
+        // held body's wait instead of leaving the grid-point close as the
+        // cell's verdict.
         let served = task.await.expect("#1517 unflushed-tail task join");
         ended_by_408_close(
             served,
             "the unflushed-tail connection future ends at the silent close",
+        );
+    })
+    .await;
+}
+
+/// #1517 fix-r1: the test-side handle of a parked write side — parking is
+/// the flag, unparking both clears it and wakes the writer that parked on
+/// it, under the waker-slot lock so the two can never interleave into a
+/// missed wake.
+#[derive(Clone, Default)]
+struct WritePark {
+    parked: Arc<AtomicBool>,
+    waker: Arc<Mutex<Option<Waker>>>,
+}
+impl WritePark {
+    fn park(&self) {
+        self.parked.store(true, Ordering::SeqCst);
+    }
+    fn unpark(&self) {
+        let waker = {
+            let mut slot = self.waker.lock().expect("#1517 park waker");
+            self.parked.store(false, Ordering::SeqCst);
+            slot.take()
+        };
+        if let Some(waker) = waker {
+            waker.wake();
+        }
+    }
+    /// Whether the write side is parked; registers the caller's waker in the
+    /// same critical section so an unpark between the check and the
+    /// registration still wakes it.
+    fn parked(&self, cx: &Context<'_>) -> bool {
+        let mut slot = self.waker.lock().expect("#1517 park waker");
+        if self.parked.load(Ordering::SeqCst) {
+            *slot = Some(cx.waker().clone());
+            return true;
+        }
+        false
+    }
+}
+
+/// #1517 fix-r1: a transport whose write side parks behind a flag — while
+/// parked, every write and flush returns `Pending` without handing a byte to
+/// the duplex, so the tail frames hyper buffers after the body's end never
+/// reach the gate's `poll_write` at all: the review's zero-writable-space
+/// quadrant, where the whole tail sits in hyper's own `write_buf` (the
+/// real-world shape is a full kernel send buffer; parking the transport makes
+/// it deterministic). Reads always pass through — the half head the client
+/// writes while parked must reach the gate exactly like it would a full
+/// socket.
+struct ParkedWriteTransport {
+    inner: tokio::io::DuplexStream,
+    park: WritePark,
+}
+impl tokio::io::AsyncRead for ParkedWriteTransport {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+impl tokio::io::AsyncWrite for ParkedWriteTransport {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        if self.park.parked(cx) {
+            return Poll::Pending;
+        }
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        if self.park.parked(cx) {
+            return Poll::Pending;
+        }
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+/// #1517 fix-r1 (review concurrency #1/#2, the zero-writable-space quadrant):
+/// the previous response's tail never reached the gate — the transport
+/// accepted no byte after the body's end — so the gate's own write-side
+/// window never opens and `in_flight` is already gone when the follow-up
+/// head's half bytes arrive (+89 s, *after* the +88.4 s release; the
+/// `unflushed_response_tail_…` cell covers the head-during-in-flight shape).
+/// Node's expiry guard still holds — `_httpMessage` stays attached until
+/// `finish`, which needs the flush (`probe-1517-t3.out` T3a: the +150 s grid
+/// destroy carries no 408, the client reads the flushed prefix then EOF) — so
+/// the half head must stay withheld gate-side for the parked deadline to stay
+/// pollable, and the close lands at the grid point with the tail cut. Binds
+/// the negative control `native-http-withholding-unflushed-tail` (the
+/// pre-#1517 withholding — the in-flight slot alone — so the half head parks
+/// hyper's read machinery on its non-empty buffer and the grid point goes
+/// quiet).
+#[tokio::test(start_paused = true)]
+async fn unflushed_tail_never_at_gate_withholds_late_head_like_ts() {
+    manual_clock(async {
+        let grid_anchor = tokio::time::Instant::now();
+        // The duplex stays roomy: the pre-release writes flow and drain, so
+        // the gate's flush confirms them — the parked transport is the
+        // *release-time* zero writable space, not an always-stuck wire.
+        let (server, mut client) = tokio::io::duplex(4096);
+        let park = WritePark::default();
+        let transport = ParkedWriteTransport {
+            inner: server,
+            park: park.clone(),
+        };
+        let (_stop, stop_rx) = watch::channel(false);
+        let (release_tx, release_rx) = watch::channel(false);
+        let last = "x".repeat(8192);
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            transport,
+            move |_request, _lease| {
+                let release = release_rx.clone();
+                let last = last.clone();
+                async move {
+                    hyper::Response::builder()
+                        .status(hyper::StatusCode::OK)
+                        .header(hyper::header::CONTENT_TYPE, "text/plain")
+                        .body(held_body("part1-", &last, release))
+                        .map_err(std::io::Error::other)
+                }
+            },
+            stop_rx,
+            None,
+            Some(grid_anchor),
+        ));
+        client
+            .write_all(&latin1_bytes(
+                "GET /held HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            ))
+            .await
+            .expect("#1517 write the streaming request");
+        // The flushed prefix: the head and the first chunk land and drain —
+        // the gate's flush confirms them before anything stalls.
+        let mut buffer = Vec::new();
+        read_until(&mut buffer, &mut client, "part1-", "zero-space first chunk").await;
+        // t = +88 s: park the write side. From here the transport accepts
+        // no byte — the tail hyper is about to buffer can never reach the
+        // gate's `poll_write`.
+        tokio::time::advance(Duration::from_millis(88_000)).await;
+        park.park();
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // t = +88.4 s: release the last chunk. The body ends — every frame
+        // handed to hyper, the in-flight slot gone — but the parked
+        // transport keeps the whole tail inside hyper's write buffer: not
+        // one byte passes the gate, so the gate's own write-side window
+        // never opens.
+        tokio::time::advance(Duration::from_millis(400)).await;
+        release_tx.send_replace(true);
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // t = +89 s: the follow-up head's first byte, after the release —
+        // the quadrant's point (the in-flight slot is already gone). Its
+        // deadline (+149 s) quantizes to +150 s.
+        tokio::time::advance(Duration::from_millis(600)).await;
+        client
+            .write_all(&latin1_bytes(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Len",
+            ))
+            .await
+            .expect("#1517 write the post-release half head");
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // t ≈ +149.9 s: just before the half head's deadline landing.
+        tokio::time::advance(Duration::from_millis(60_900)).await;
+        probe_still_open(
+            &mut client,
+            "#1517 the zero-space tail keeps the connection open before the half head's deadline",
+        )
+        .await;
+        // The +150 s grid landing: Node destroys the started-but-unflushed
+        // response without the 408 — while the transport is still parked, so
+        // only the withheld-head window closing here can be the cause (the
+        // tail alone could never deliver anything).
+        eof_after_idle_close(
+            &mut client,
+            Duration::from_millis(200),
+            "#1517 the zero-space tail's close lands at the +150 s grid point",
+        )
+        .await;
+        // Unparking changes nothing anymore — whatever the close left open
+        // stays open (the fixed close already ended the connection), and the
+        // drain reads the flushed prefix and the EOF: no 408, no terminator.
+        park.unpark();
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        drain_to_close_without_408(&mut client, buffer).await;
+        let served = task.await.expect("#1517 zero-space task join");
+        ended_by_408_close(
+            served,
+            "the zero-space connection future ends at the grid-point close",
+        );
+    })
+    .await;
+}
+
+/// #1517 fix-r1 (review boundary #1, the no-follow-up-head grid): the tail
+/// stuck entirely in hyper's write buffer and **no** next head arriving —
+/// Node has no headersTimeout window at all in this shape
+/// (`probe-1517-t3.out` T3b: the +150 s grid passes with the connection
+/// open and no 408, the tail flushes only when the client resumes, the full
+/// body plus terminator arrives, and the close is the post-finish idle
+/// one) — so the stand-by re-arm must not open a window at the frame
+/// hand-off either; it waits for the flush. Binds the negative control
+/// `native-http-standby-rearm-ignores-unflushed` (the stand-by armed at the
+/// hand-off, so the +150 s grid expiry clears the `_headerSent` mirror and
+/// writes the 408 into the still-stuck connection).
+#[tokio::test(start_paused = true)]
+async fn unflushed_tail_no_follow_up_head_opens_no_window_like_ts() {
+    manual_clock(async {
+        let grid_anchor = tokio::time::Instant::now();
+        let (server, mut client) = tokio::io::duplex(4096);
+        let park = WritePark::default();
+        let transport = ParkedWriteTransport {
+            inner: server,
+            park: park.clone(),
+        };
+        let (_stop, stop_rx) = watch::channel(false);
+        let (release_tx, release_rx) = watch::channel(false);
+        let last = "x".repeat(8192);
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            transport,
+            move |_request, _lease| {
+                let release = release_rx.clone();
+                let last = last.clone();
+                async move {
+                    hyper::Response::builder()
+                        .status(hyper::StatusCode::OK)
+                        .header(hyper::header::CONTENT_TYPE, "text/plain")
+                        .body(held_body("part1-", &last, release))
+                        .map_err(std::io::Error::other)
+                }
+            },
+            stop_rx,
+            None,
+            Some(grid_anchor),
+        ));
+        client
+            .write_all(&latin1_bytes(
+                "GET /held HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            ))
+            .await
+            .expect("#1517 write the streaming request");
+        let mut buffer = Vec::new();
+        read_until(
+            &mut buffer,
+            &mut client,
+            "part1-",
+            "no-follow-up-head first chunk",
+        )
+        .await;
+        // t = +88 s / +88.4 s: park, then release — the tail lands entirely
+        // in hyper's write buffer with no next head anywhere on the wire.
+        tokio::time::advance(Duration::from_millis(88_000)).await;
+        park.park();
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_millis(400)).await;
+        release_tx.send_replace(true);
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // t = +150.5 s: past the +150 s grid point where a stand-by armed at
+        // the +88.4 s frame hand-off would have expired (+148.4 s deadline
+        // quantized). Node is still open here (T3b) — nothing fired.
+        tokio::time::advance(Duration::from_millis(62_100)).await;
+        probe_still_open(
+            &mut client,
+            "#1517 with no follow-up head, no window opens at the grid point while the tail is stuck",
+        )
+        .await;
+        // Unpark: the client's backpressure is gone — Node's resume flushes
+        // the tail, the finish happens, and the body plus terminator arrive
+        // whole before the close (T3b: full bytes, no 408; the close timing
+        // itself is the #1250 frame-hand-off idle residual, registered).
+        park.unpark();
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        drain_until_closed(
+            &mut client,
+            &mut buffer,
+            96,
+            "the no-follow-up-head drain",
+        )
+        .await;
+        let text = latin1_string(&buffer);
+        assert!(
+            text.starts_with("HTTP/1.1 200 OK\r\n"),
+            "#1517 the no-follow-up-head response head is the flushed 200, got {text:?}"
+        );
+        assert!(
+            text.contains("part1-"),
+            "#1517 the no-follow-up-head flushed prefix carries the first chunk, got {text:?}"
+        );
+        assert!(
+            !text.contains("HTTP/1.1 408"),
+            "#1517 the no-follow-up-head verdict: no head ever started, so no window ever opened — the 408 never appears, got {text:?}"
+        );
+        assert!(
+            text.ends_with("0\r\n\r\n"),
+            "#1517 the no-follow-up-head verdict: the resumed flush delivers the whole body and the chunked terminator, got {text:?}"
+        );
+        let served = task.await.expect("#1517 no-follow-up-head task join");
+        ended_by_408_close(
+            served,
+            "the no-follow-up-head connection future ends at the idle close",
         );
     })
     .await;
