@@ -1412,6 +1412,33 @@ def _eval_order_nodes(root):
             stack.append((child, False))
 
 
+def _case_pattern_unmatchable(subject, pattern):
+    """A literal pattern that can never match a constant subject (r48).
+
+    #1953 fix-r1 round 48 (GLM r47 concurrency#1, probe
+    c1-guard-nomatch): ``match 0:`` under ``case 1 if <events>`` never
+    evaluates the guard -- the literal pattern fails first -- yet the
+    r47 fall-through fork ran those events on every path, and their
+    insertion could cancel the arm that really executed (a false
+    PASS; r46 hung the guard on the body arm and never ran it, so
+    this is an r47 regression).  Only the statically decidable shape
+    answers True: a constant subject against a constant ``MatchValue``
+    or a ``MatchSingleton`` it compares unequal to.  Everything else
+    -- non-constant subjects, sequence/class/mapping/or patterns,
+    attribute values -- keeps the conservative fall-through fork.
+    """
+    if not isinstance(subject, ast.Constant):
+        return False
+    if isinstance(pattern, ast.MatchValue):
+        return (isinstance(pattern.value, ast.Constant)
+                and subject.value != pattern.value.value)
+    if isinstance(pattern, ast.MatchSingleton):
+        # ``==`` semantics, matching the interpreter's pattern match:
+        # ``match 1:`` does take ``case True``.
+        return bool(subject.value != pattern.value)
+    return False
+
+
 def _conditional_arm_chains(scope):
     """Per-node conditional-arm chains and fork kinds (r46).
 
@@ -1483,8 +1510,24 @@ def _conditional_arm_chains(scope):
                     # rides its own fall-through fork, keyed apart from
                     # the body fork so the two enumerations stay in
                     # lockstep.
-                    _push(case.guard,
-                          chain + ((('guardfall', id(node)), index),))
+                    #
+                    # #1953 fix-r1 round 48 (GLM r47 concurrency#1,
+                    # probe c1-guard-nomatch): a case whose *pattern*
+                    # cannot match never evaluates its guard at all --
+                    # hanging it on the fall-through fork ran the
+                    # events of a guard the interpreter cannot reach,
+                    # and their insertion could cancel the executed
+                    # arm's move (an r47 regression: r46 hung the
+                    # guard on the body arm).  Statically unmatchable
+                    # literals ride the case arm itself, which cannot
+                    # run either; every other shape keeps the
+                    # conservative fall-through fork.
+                    if _case_pattern_unmatchable(node.subject,
+                                                case.pattern):
+                        _push(case.guard, arm)
+                    else:
+                        _push(case.guard,
+                              chain + ((('guardfall', id(node)), index),))
                 for child in case.body:
                     _push(child, arm)
             continue
@@ -3963,8 +4006,22 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
         unconditionally: a priced-safe ``pop`` inside one is the same
         composite the simulation refuses (probe b1-loop).
         """
+        base = callee.value if isinstance(callee, ast.Attribute) else None
+        base_name = None
+        if isinstance(base, ast.Name):
+            base_name = base.id
+        elif (isinstance(base, ast.Attribute)
+                and isinstance(base.value, ast.Name)
+                and base.value.id == 'builtins'):
+            # #1953 fix-r1 round 48 (probe builtins-qualified-append):
+            # ``builtins.list.append(items, z)`` is the unbound
+            # spelling behind one attribute hop.
+            base_name = base.attr
         if not (isinstance(callee, ast.Attribute)
-                and callee.attr in _MUTATING_DISPLAY_ATTRS):
+                and (callee.attr in _MUTATING_DISPLAY_ATTRS
+                     or (base_name == 'operator'
+                         and callee.attr in ('setitem', 'delitem',
+                                             'iadd', 'iconcat')))):
             return None
         if isinstance(callee.value, ast.Name) and callee.value.id in names:
             if (callee.attr in ('pop', 'insert', 'append', 'extend')
@@ -4004,10 +4061,17 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
             return True
         # The unbound spellings: ``list.reverse(_items)`` /
         # ``dict.update(_items, ...)`` name the method on the type and hand
-        # the display in as the receiver argument.
-        if (isinstance(callee.value, ast.Name)
-                and callee.value.id in ('list', 'dict', 'set',
-                                        'frozenset')):
+        # the display in as the receiver argument.  #1953 fix-r1 round
+        # 48 (GLM r47 sibling#3, probes s3-operator-setitem /
+        # operator-iadd): the ``operator`` module's store functions name
+        # the display first the same way --
+        # ``operator.setitem(items, 1, hs[0])`` /
+        # ``operator.iadd(items, [hs[0]])`` -- so they join the bare
+        # type names here and in the registration walk.
+        if (base_name in ('list', 'dict', 'set', 'frozenset')
+                or (base_name == 'operator'
+                    and callee.attr in ('setitem', 'delitem',
+                                         'iadd', 'iconcat'))):
             first = call.args[0] if call.args else None
             if isinstance(first, ast.Name) and first.id in names:
                 return True
@@ -4258,8 +4322,27 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
                     # non-literal value (``items += other``) is not
                     # statically priceable and stays a mutation.
                     if (isinstance(node.target, ast.Name)
-                            and node.target.id in names
-                            and not display_is_dict):
+                            and node.target.id in names):
+                        if display_is_dict:
+                            # #1953 fix-r1 round 48 (GLM r47
+                            # boundary#2 + concurrency#3, probe
+                            # b2-dict-augassign): ``d |= {...}`` merges
+                            # in place, but a dict display has no
+                            # element price, and the target loop below
+                            # only matches subscripts -- so the merge
+                            # left no event and no conviction while
+                            # the run time replaced the selected
+                            # value (a false PASS).  Decline the
+                            # selection, same conservative read as
+                            # every other unpriceable dict write; the
+                            # fixpoint registers the receiver only
+                            # when the merged literal carries a
+                            # handle, so the clean twin stays clean.
+                            if id(node) in repeated:
+                                return True
+                            if after_use:
+                                continue
+                            return True
                         if id(node) in repeated:
                             return True
                         if after_use:
@@ -7202,6 +7285,13 @@ def _receiver_attribute_writes(tree, receivers, shared):
         factored out so the element-store registrations below ask the
         stored value the same question an assignment value gets.
         """
+        # #1953 fix-r1 round 48 (GLM r47 boundary#3, probe
+        # b3-append-starred-literal): a static starred argument
+        # (``items.append(*[hs[0]])``) unpacks its literal before the
+        # call -- the values the store writes are the display's
+        # elements, the same question the plain spelling asks.
+        if isinstance(value, ast.Starred):
+            value = value.value
         carried = _container_handle_roots(value, kinds, simple)
         if not carried:
             called = _container_callee(value, _wrapper_fresh(scope))
@@ -7339,18 +7429,44 @@ def _receiver_attribute_writes(tree, receivers, shared):
         binding of the same value would.  The subscript-store and the
         augmented spellings live in the fixpoint's Assign arm, which already
         holds the value.
+
+        #1953 fix-r1 round 48: the store functions of the ``operator``
+        module (``operator.setitem(items, 1, hs[0])`` /
+        ``operator.iadd(items, [hs[0]])``) name the display first the way
+        the unbound type spelling does, and a keyword-form
+        ``mapping.update(common=hs[0])`` (or ``update(**{...})``, which
+        compiles to the same keywords) stores its values just like the
+        positional form -- GLM r47 boundary#1 (P0) + sibling#3, probes
+        b1-update-kwargs / b1-update-starred-dict / s3-operator-setitem.
         """
         if isinstance(node, ast.Call):
             callee = _callee_expr(node)
-            if not (isinstance(callee, ast.Attribute)
-                    and callee.attr in _ELEMENT_STORE_ATTRS):
+            if not isinstance(callee, ast.Attribute):
+                return False
+            attr = callee.attr
+            operator_store = (isinstance(callee.value, ast.Name)
+                              and callee.value.id == 'operator'
+                              and attr in ('setitem', 'iadd', 'iconcat'))
+            if not (attr in _ELEMENT_STORE_ATTRS or operator_store):
                 return False
             args = list(node.args)
-            if (isinstance(callee.value, ast.Name)
-                    and callee.value.id in ('list', 'dict', 'set',
-                                            'frozenset')):
-                # The unbound spelling hands the receiver in as the first
-                # argument: ``list.append(items, z)``.
+            unbound = (isinstance(callee.value, ast.Name)
+                       and (callee.value.id in ('list', 'dict', 'set',
+                                                'frozenset')
+                            or operator_store))
+            if (not unbound
+                    and isinstance(callee.value, ast.Attribute)
+                    and isinstance(callee.value.value, ast.Name)
+                    and callee.value.value.id == 'builtins'):
+                # #1953 fix-r1 round 48 (probe
+                # builtins-qualified-append): ``builtins.list.append(
+                # items, z)`` is the unbound spelling behind one
+                # attribute hop.
+                unbound = True
+            if unbound:
+                # The unbound spellings hand the receiver in as the first
+                # argument: ``list.append(items, z)`` /
+                # ``operator.setitem(items, 1, z)``.
                 if not args:
                     return False
                 receiver = args[0]
@@ -7360,7 +7476,11 @@ def _receiver_attribute_writes(tree, receivers, shared):
             if not isinstance(receiver, ast.Name):
                 return False
             carried = []
-            for argument in args:
+            for argument in args + [keyword.value
+                                    for keyword in node.keywords]:
+                # r48: the keyword values join the positional ones --
+                # ``update`` is the store family's only kwargs-taking
+                # spelling, and its keywords are the values it merges in.
                 carried.extend(root for root in
                                _carried_handle_roots(argument, scope)
                                if root not in carried)
@@ -7441,7 +7561,26 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 # ``items += [z]`` grows the bound container in place, so
                 # the name carries what the value carries exactly like a
                 # rebinding does.
-                targets, value = [node.target], node.value
+                # #1953 fix-r1 round 48 (GLM r47 concurrency#2, probe
+                # c2-augassign-alias): the grow is *in place*, so every
+                # name of the target's object registers together -- the
+                # same read a store through an alias gets.  A plain
+                # ``_carry`` of the target alone left
+                # ``_a = items; _a += [hs[0]]`` registering only ``_a``
+                # while the caller's fallback looks ``items`` up and
+                # stays empty.
+                carried = _carried_handle_roots(node.value, scope)
+                if carried:
+                    if isinstance(node.target, ast.Name):
+                        if _register_container_names(
+                                scope, [node.target.id], carried):
+                            grown = True
+                    elif isinstance(node.target, ast.Subscript):
+                        if _register_container_names(
+                                scope, _store_base_names(node.target),
+                                carried):
+                            grown = True
+                continue
             else:
                 # #1953 fix-r1 round 47 (probes p4/p6a/p6b +
                 # bare-append/insert/for-target): element stores register
@@ -20068,6 +20207,150 @@ def aggregation_audit():
             failures.append('#1953 aggregation-audit: detector self-test '
                             'withdrew a clean receiver behind ' + _m47_kind
                             + ' (round 47)')
+    # #1953 fix-r1 round 48 (GLM r47 boundary#1/#2/#3 + concurrency#1/#2/
+    # #3 + sibling#3, anthropic r47 boundary battery-row, probes
+    # b1-update-kwargs / b1-update-starred-dict / b2-dict-augassign /
+    # c1-guard-nomatch / c2-augassign-alias / b3-append-starred-literal /
+    # s3-operator-setitem / operator-iadd / builtins-qualified-append,
+    # 2026-11-10): the store family's remaining spellings -- a keyword-form
+    # or ``**``-unpacked dict ``update``, an unbound ``dict.update(d, ...)``,
+    # a dict display's ``|=`` merge, an alias's ``+=`` grow, a starred
+    # literal argument, the ``operator`` module's ``setitem``/``iadd`` and
+    # the ``builtins.list.append`` hop -- each registers/declines the way
+    # its plain spelling does (the keyword values join the positional ones,
+    # an unpriceable dict merge declines the selection, a pattern that
+    # cannot match never evaluates its guard, and a name-target ``+=``
+    # registers the whole name class), so none of them launders a withdrawn
+    # receiver (a false PASS) while their clean twins stay clean.
+    for _m48_kind, _m48_src in (
+            ("a keyword-form dict update of a handle",
+             "    _d = {'common': lambda *a: None}\n"
+             "    _d.update(common=_hs[0])\n"
+             "    _d['common']('common', object())\n"),
+            ("a **-unpacked dict update of a handle",
+             "    _d = {'common': lambda *a: None}\n"
+             "    _d.update(**{'common': _hs[0]})\n"
+             "    _d['common']('common', object())\n"),
+            ("an unbound keyword-form dict update of a handle",
+             "    _d = {'common': lambda *a: None}\n"
+             "    dict.update(_d, common=_hs[0])\n"
+             "    _d['common']('common', object())\n"),
+            ("a dict augmented merge of a handle",
+             "    _d = {'common': lambda *a: None}\n"
+             "    _d |= {'common': _hs[0]}\n"
+             "    _d['common']('common', object())\n"),
+            ("a guard on a never-matching pattern",
+             "    _items = [_hs[0], lambda *a: None]\n"
+             "    match 0:\n"
+             "        case 1 if _items.insert(1, 0):\n"
+             "            pass\n"
+             "        case _:\n"
+             "            _items.pop(1)\n"
+             "    _items[-1]('common', object())\n"),
+            ("an aliased augmented append of a handle",
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _a = _items\n"
+             "    _a += [_hs[0]]\n"
+             "    _items[-1]('common', object())\n"),
+            ("a starred-literal append of a handle",
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _items.append(*[_hs[0]])\n"
+             "    _items[-1]('common', object())\n"),
+            ("an operator.setitem store of a handle",
+             "    import operator\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    operator.setitem(_items, 1, _hs[0])\n"
+             "    _items[1]('common', object())\n"),
+            ("an operator.iadd grow of a handle",
+             "    import operator\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    operator.iadd(_items, [_hs[0]])\n"
+             "    _items[-1]('common', object())\n"),
+            ("a builtins-qualified append of a handle",
+             "    import builtins\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _z = _hs[0]\n"
+             "    builtins.list.append(_items, _z)\n"
+             "    _items[-1]('common', object())\n")):
+        _m48_display = ast.parse(
+            "def _m48a(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m48_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' not in _withdrawn_receivers(_m48_display):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost a receiver behind ' + _m48_kind
+                            + ' (round 48)')
+    for _m48_kind, _m48_src in (
+            ("a keyword-form dict update of a clean lambda",
+             "    _d = {'common': lambda *a: None}\n"
+             "    _d.update(common=lambda *a: None)\n"
+             "    _d['common']('common', object())\n"),
+            ("a **-unpacked dict update of a clean lambda",
+             "    _d = {'common': lambda *a: None}\n"
+             "    _d.update(**{'common': lambda *a: None})\n"
+             "    _d['common']('common', object())\n"),
+            ("an unbound keyword-form dict update of a clean lambda",
+             "    _d = {'common': lambda *a: None}\n"
+             "    dict.update(_d, common=lambda *a: None)\n"
+             "    _d['common']('common', object())\n"),
+            ("a dict augmented merge of a clean lambda",
+             "    _d = {'common': lambda *a: None}\n"
+             "    _d |= {'common': lambda *a: None}\n"
+             "    _d['common']('common', object())\n"),
+            ("a never-matching guard with a clean fall-through",
+             "    _items = [_hs[0], lambda *a: None]\n"
+             "    match 0:\n"
+             "        case 1 if _items.insert(1, 0):\n"
+             "            pass\n"
+             "        case _:\n"
+             "            pass\n"
+             "    _items[-1]('common', object())\n"),
+            ("an aliased augmented append of a clean lambda",
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _a = _items\n"
+             "    _a += [lambda *a: None]\n"
+             "    _items[-1]('common', object())\n"),
+            ("a starred-literal append of a clean lambda",
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _items.append(*[lambda *a: None])\n"
+             "    _items[-1]('common', object())\n"),
+            ("an operator.setitem store of a clean lambda",
+             "    import operator\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    operator.setitem(_items, 1, lambda *a: None)\n"
+             "    _items[1]('common', object())\n"),
+            ("an operator.iadd grow of a clean lambda",
+             "    import operator\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    operator.iadd(_items, [lambda *a: None])\n"
+             "    _items[-1]('common', object())\n"),
+            ("a builtins-qualified append of a clean lambda",
+             "    import builtins\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    builtins.list.append(_items, lambda *a: None)\n"
+             "    _items[-1]('common', object())\n"),
+            ("an alias append of a clean lambda",
+             "    _items = [lambda *a: None, lambda *a: None,"
+             " lambda *a: None]\n"
+             "    _a = _items\n"
+             "    _a.append(lambda *a: None)\n"
+             "    _items[-1]('common', object())\n"),
+            ("an unbound append of a clean lambda",
+             "    _items = [lambda *a: None, lambda *a: None,"
+             " lambda *a: None]\n"
+             "    _z = lambda *a: None\n"
+             "    list.append(_items, _z)\n"
+             "    _items[-1]('common', object())\n")):
+        _m48_clean = ast.parse(
+            "def _m48b(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m48_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' in _withdrawn_receivers(_m48_clean):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'withdrew a clean receiver behind ' + _m48_kind
+                            + ' (round 48)')
     # #1953 fix-r1 round 47 (GLM r46 sibling#2/#3, unit probes u-class-site/
     # u-fortarget-loops): the module call tables record a class-body call at
     # its class statement and carry the loop id on a for-target call.
@@ -20088,7 +20371,12 @@ def aggregation_audit():
         "    pass\n"
         "for _d[_f()] in (0, 0):\n"
         "    _f()\n"))
-    if not all(_loops for _position, _loops in _m47_for_sites.get('_f', ())):
+    # #1953 fix-r1 round 48 (GLM r47 boundary#4): an empty table also
+    # answers ``all()`` True -- assert the two sites exist first, so the
+    # self-test fails when the table drops them wholesale.
+    if (len(_m47_for_sites.get('_f', ())) != 2
+            or not all(_loops for _position, _loops
+                       in _m47_for_sites['_f'])):
         failures.append('#1953 aggregation-audit: detector self-test '
                         'dropped the loop id from a for-target call site '
                         '(round 47)')

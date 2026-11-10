@@ -2867,3 +2867,93 @@ loop's flow mark (unchanged from round 46).
 | **The remaining spellings** (false PASS guard): a starred one-element for-iterable double pop, a del statement's second same-index target, and a class body re-run inside a loop -- withdraw; a mutator call after the use inside its arm stays clean (the after-use cut gates the direct convictions). | `... lost a receiver behind a starred one-element for-iterable double pop / a del statement's second same-index target / a class body re-run inside a loop (round 47)`; `... withdrew a clean receiver behind a mutator call after the use inside its arm (round 47)` |
 | **A del statement's second head-index target stays clean** (false FAIL guard): `del _items[0], _items[0]` keeps the trailing element a lambda, and a class body outside any loop prices once. | `... withdrew a clean receiver behind a del statement's second head-index target / a class body outside any loop (round 47)` |
 | **The module call tables carry class-body and for-target sites** (unit): a class-body call records its `(3, 4)` position with no loop id; a for-target call inside a module loop carries the loop id. | `... dropped the class-body call site from the position table / dropped the loop id from a for-target call site (round 47)` |
+
+### Closed by `fix-r1` round 48 (GLM r47 boundary#1..#3 / concurrency#1..#3 / sibling#3; anthropic r47 boundary battery row; probes 2026-11-10)
+
+Every finding was probe-reproduced against the round-47 committed ruler
+`ec67bc358` before any fix (frozen procedure: `probe-r48.log` holds the
+pre-fix columns -- the "r47" column there is the round-47 commit, the
+"r46" column `acfd050dc` -- and `probe-r48b.log` the spelling-family
+extension rows; every dirty row carries a runtime oracle).  One reviewer
+claim did not reproduce and was rejected *with* that probe evidence:
+the value-side use / target-side store mirror
+(`_items[0] = _items[-1]('common', object())`, GLM sibling#1) reads
+clean at round 47 with its runtime twin clean too (`s1-valueside-use-
+store-clean`, R = False = runtime) -- the use evaluates before the
+store runs, so the selection's element really is the clean lambda.
+
+The keyword-form store spellings (GLM boundary#1, P0).  The r47
+registration family scanned only positional arguments, so a keyword
+`_d.update(common=_hs[0])` -- and its `**{'common': ...}` unfolding,
+which compiles to the same keywords -- never registered the dict, and
+the whole r47 chain (mutation -> decline -> whole-display fallback)
+fell through to an empty table (a false PASS on the exact family r47
+claimed closed).  The keyword values join the positional ones in
+`_register_element_stores` (`update` is the store family's only
+kwargs-taking spelling).
+
+The dict augmented merge (GLM boundary#2 + concurrency#3, an r47
+incompleteness carried from r46).  `_d |= {'common': _hs[0]}` merges in
+place, but the r47 AugAssign pricing branch gated itself on `not
+display_is_dict` and the target loop only matches subscripts, so the
+merge left *no* event and no conviction.  A dict display has no element
+price, so the window now declines the selection outright (the same
+conservative read as every other unpriceable dict write); the fixpoint
+registers the receiver only when the merged literal carries a handle,
+which keeps the clean twin clean.
+
+The guard on a never-matching pattern (GLM concurrency#1 -- an r47
+*regression*, r46 convicted it).  `match 0:` under `case 1 if
+<events>` never evaluates the guard -- the literal pattern fails first
+-- yet the r47 fall-through fork ran those events on every path, and
+their insertion cancelled the executed arm's removal (a false PASS).
+Statically unmatchable literal patterns (a constant subject against a
+constant `MatchValue`/`MatchSingleton` it compares unequal to, with
+`==` semantics -- `match 1:` does take `case True`) now ride the case
+arm itself, which cannot run either; every other shape (non-constant
+subjects, sequence/class/mapping/or patterns, attribute values) keeps
+the conservative fall-through fork.
+
+The alias augmented grow (GLM concurrency#2).  The fixpoint's AugAssign
+arm registered only the target name through `_carry`, so `_a = _items;
+_a += [_hs[0]]` registered `_a` while the caller's fallback looks
+`_items` up and stays empty.  The grow is in place, so every name of the
+target's object registers together -- the name-target arm now goes
+through `_register_container_names` (the symmetric name class), the
+same read a store through an alias gets.
+
+The remaining spellings (GLM boundary#3 + sibling#3): a static starred
+argument `_items.append(*[_hs[0]])` unpacks its literal before the
+call (`_carried_handle_roots` unwraps `ast.Starred`; only *dynamic*
+starred arguments stay residual); `operator.setitem(_items, 1, _hs[0])`
+/ `operator.iadd(_items, [_hs[0]])` name the display first the way the
+unbound type spelling does -- both the mutation gate in
+`mutates_display` (whose entry now admits the operator store trio;
+`delitem` joins them) and the registration walk read them, and
+`builtins.list.append(_items, z)` is the unbound spelling behind one
+attribute hop on both sides.  The r47 battery's for-site self-test
+asserts its two recorded sites exist before `all()` (GLM boundary#4:
+an empty table answered `all()` True).
+
+Known residuals (follow-up issue; unchanged from round 47 unless
+noted): the use-in-Assign-target conservative floor, a `Try`
+interrupted mid-body, the not-fork-aware mutator-name conviction, and
+`extend` of an empty literal all over-report; stale container history
+survives a clean rebind; *dynamic* starred/keyword arguments remain
+unanalyzable (the *static* starred literal closed this round); the
+guardfall fork stays independent of the match fork in the combination
+enumeration (unexecutable combinations can only over-report -- GLM
+boundary#5); `_scoped_nodes` class-body walrus, `_name_bindings`
+for-target spellings and the For-only `AsyncFor` walks at the two
+module-table sites remain (GLM sibling#2, not probe-reproduced this
+round).
+
+| Shape | Self-test |
+|---|---|
+| **The keyword-form store spellings register** (false PASS guard): a keyword `update`, a `**`-unpacked `update`, an unbound `dict.update(d, ...)` and a dict `\|=` merge of a handle -- withdraw. | `... lost a receiver behind a keyword-form dict update of a handle / a **-unpacked dict update of a handle / an unbound keyword-form dict update of a handle / a dict augmented merge of a handle (round 48)` |
+| **The keyword-form clean twins stay clean** (false FAIL guard): the same four spellings storing a clean lambda. | `... withdrew a clean receiver behind a keyword-form dict update of a clean lambda / a **-unpacked dict update of a clean lambda / an unbound keyword-form dict update of a clean lambda / a dict augmented merge of a clean lambda (round 48)` |
+| **A guard on a never-matching pattern no longer launders** (false PASS guard / false FAIL guard): the guard's insert cannot cancel the executed pop; the clean fall-through twin stays clean. | `... lost a receiver behind a guard on a never-matching pattern (round 48)`; `... withdrew a clean receiver behind a never-matching guard with a clean fall-through (round 48)` |
+| **An aliased augmented grow registers the name class** (false PASS guard / false FAIL guard): `_a += [handle]` registers `_items` too; the clean lambda twin stays clean. | `... lost a receiver behind an aliased augmented append of a handle (round 48)`; `... withdrew a clean receiver behind an aliased augmented append of a clean lambda (round 48)` |
+| **The static starred and qualified spellings register** (false PASS guard): `append(*[handle])`, `operator.setitem`, `operator.iadd` and `builtins.list.append` of a handle -- withdraw. | `... lost a receiver behind a starred-literal append of a handle / an operator.setitem store of a handle / an operator.iadd grow of a handle / a builtins-qualified append of a handle (round 48)` |
+| **The static starred and qualified clean twins stay clean** (false FAIL guard): the same four spellings plus the alias and unbound appends of a clean lambda. | `... withdrew a clean receiver behind a starred-literal append of a clean lambda / an operator.setitem store of a clean lambda / an operator.iadd grow of a clean lambda / a builtins-qualified append of a clean lambda / an alias append of a clean lambda / an unbound append of a clean lambda (round 48)` |
+| **The for-site self-test asserts its sites** (unit): the module call table must still record both `_f` sites with their loop ids. | `... dropped the loop id from a for-target call site (round 47)` |
