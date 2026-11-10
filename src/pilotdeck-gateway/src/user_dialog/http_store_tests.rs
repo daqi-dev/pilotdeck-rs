@@ -1590,6 +1590,79 @@ async fn oversized_chunked_body_rejection_closes_connection() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
+/// #2774 (arbitration pin): a parser-level rejection written before the
+/// request body was consumed must still deliver its bytes and close the
+/// connection. Node v22.22.0 measured against a bare `createServer` (the
+/// #2774 arbitration probe, `_tmp/20261026-issue-2773/node-arbitration/`)
+/// delivers the 400/431 first and then RSTs once the unread body exceeds the
+/// parser buffer (`frob-body-1m` / `header-no-colon-body-1m` cells), while
+/// the missing-Host family drains and FINs; Rust delivers the response and
+/// closes with a plain FIN in every cell — the strictly more graceful side
+/// of the registered `A7.4-HTTPSTORE-PARSER-ADMISSION-001-R1` deviation. A
+/// regression that loses the rejection bytes to an RST turns this red; the
+/// no-op admission mutant that lets these cells reach the handler is killed
+/// by both this test and the socket-request replay below it.
+#[tokio::test]
+async fn parser_rejection_with_unread_body_delivers_and_closes() {
+    let body = vec![b'a'; UNREAD_BODY_BYTES];
+    let (store, directory) = file_store("unread-admission");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+
+    let frob = http_request("FROB", &format!("{STORE_PATH_PREFIX}list"), &[], &body);
+    let (response, closed) = exchange_until_eof(port, &frob, Duration::from_secs(10)).await;
+    assert_close_without_keep_alive(&response, 400, "#2774 unread-admission-frob");
+    assert!(
+        closed,
+        "#2774 the admission 400 must close the connection, not park it after an unread body"
+    );
+
+    // Withheld body: the peer declared a body it never sent; the rejection
+    // still answers and closes (Node's `frob-head` cell measured the same).
+    let withheld = format!(
+        "FROB {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+         Content-Length: {UNREAD_BODY_BYTES}\r\n\r\n"
+    );
+    let (response, closed) =
+        exchange_until_eof(port, withheld.as_bytes(), Duration::from_secs(10)).await;
+    assert_close_without_keep_alive(&response, 400, "#2774 unread-admission-withheld");
+    assert!(
+        closed,
+        "#2774 the withheld-body 400 must close the connection"
+    );
+
+    // The headless 400 family: Node drains this one and FINs even at 1 MiB
+    // (`get-body-1m` cell); Rust answers the same full 400 shape.
+    let hostless = format!(
+        "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nContent-Length: {UNREAD_BODY_BYTES}\r\n\r\n{}",
+        String::from_utf8_lossy(&body)
+    );
+    let (response, closed) =
+        exchange_until_eof(port, hostless.as_bytes(), Duration::from_secs(10)).await;
+    assert_close_without_keep_alive(&response, 400, "#2774 unread-admission-hostless");
+    assert!(closed, "#2774 the headless 400 must close the connection");
+
+    // CONNECT: the gate's `Err` is the zero-byte close — Node measured the
+    // same zero bytes (`connect` cell); the sms lane pins its own twin
+    // (`connect_pin_is_the_zero_byte_destroy`, #2773).
+    let (response, closed) = exchange_until_eof(
+        port,
+        b"CONNECT 127.0.0.1:80 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+        Duration::from_secs(10),
+    )
+    .await;
+    assert!(
+        response.is_empty(),
+        "#2774 CONNECT must destroy the connection with zero response bytes: {response:?}"
+    );
+    assert!(
+        closed,
+        "#2774 the CONNECT destroy must close the connection"
+    );
+
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
 /// Node v22.22.0 answers HTTP/1.0 with `Connection: close` even when the
 /// request carries `Connection: keep-alive` (measured against the real TS
 /// server: `.../probe/node-real-server.out.txt`, plus a focused probe showing

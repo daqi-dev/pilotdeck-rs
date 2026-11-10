@@ -3579,10 +3579,11 @@ replay_cases! {
 /// holds the hyper side to its measured shape.
 #[tokio::test]
 async fn http10_request_closes_the_connection() {
-    // #2257 fix-r4 (review r4 P1): 18904 sat inside the wecom-callback golden
-    // replay segment (18900–18921 — its post-rejects case listens on 18904)
-    // and the two tests run in parallel in the same lib binary; the pin owns
-    // a port in the free gap above that segment (18922 is the 404 pin).
+    // #2257 fix-r4 (review r4 P1): 18904 previously sat inside the
+    // wecom-callback golden replay segment and the two tests run in parallel
+    // in the same lib binary; the pin owns a port in the free gap above that
+    // segment — the full 189xx layout lives in the single ledger in
+    // `head_timeout_tests.rs` (#2773 A2).
     const PORT: u16 = 18923;
     let case = case_by_name("http10");
     let steps = recorded_steps(&case).expect("#1339 steps validated array");
@@ -3870,11 +3871,9 @@ const PARSER_BAD_REQUEST_400: &[u8] =
 /// presentation dimensions (see [`PARSER_BAD_REQUEST_400`]).
 #[tokio::test]
 async fn unknown_method_is_the_bare_parser_400() {
-    // #2257 fix-r4: the free gap above the wecom-callback golden replay
-    // segment (18900–18921); 18922–18923 are the http10 pins, 18924–18925
-    // belong to `head_timeout_tests` (r1 review caught these two pins
-    // sitting on them), 18926 to the json-null cell — so these pins take
-    // 18927/18928.
+    // #2773: the port layout lives in the single 189xx ledger in
+    // `head_timeout_tests.rs` — 18927/18928 are the two #2152
+    // parser-admission pins.
     const PORT: u16 = 18927;
     let case = case_by_name("unknown-method");
     let request = pin_request(&case);
@@ -3921,8 +3920,9 @@ async fn unknown_method_is_the_bare_parser_400() {
 /// header, not a lane-wide presence.
 #[tokio::test]
 async fn missing_host_is_the_headless_parser_400() {
-    // #2152 fix-r1: see the sibling pin above — 18924/18925 are the
-    // head-timeout ports, so this pin takes 18928.
+    // #2773: the port layout lives in the single 189xx ledger in
+    // `head_timeout_tests.rs` — this pin takes 18928, right after the
+    // unknown-method pin above.
     const PORT: u16 = 18928;
     let case = case_by_name("missing-host");
     let request = pin_request(&case);
@@ -3975,6 +3975,45 @@ async fn missing_host_is_the_headless_parser_400() {
     assert_eq!(
         body, "0\r\n\r\n",
         "#2152 pin missing-host: the chunked empty body terminator"
+    );
+}
+
+/// #2773 (r2 addition): the gate's `Err` is CONNECT's zero-byte close —
+/// hyper aborts the connection without writing, like the other native
+/// lanes. Node v22.22.0 measured against a bare `createServer` answers
+/// CONNECT with zero response bytes and a plain close (`connect` cell of
+/// the #2774 arbitration probe), so a routed answer here would prove the
+/// `Err` branch was disconnected (the mutation the negative control
+/// `sms-admission-err-responds` makes).
+#[tokio::test]
+async fn connect_pin_is_the_zero_byte_destroy() {
+    // Port ledger: 18929, right after the two #2152 admission pins — see the
+    // 189xx segment ledger in `head_timeout_tests.rs`.
+    const PORT: u16 = 18929;
+    let case = case_by_name("unknown-method");
+    let handle = pin_channel(&case, PORT).await;
+    // #2773: the label carries the pin's marker — under the
+    // `sms-admission-err-responds` mutant the routed answer keeps the
+    // connection open, so the failure arrives here at the deadline instead
+    // of at the empty-bytes assert below.
+    let raw = bounded(
+        "#2773 pin connect: the exchange must finish",
+        raw_until_close(
+            PORT,
+            b"CONNECT 127.0.0.1:80 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+        ),
+    )
+    .await;
+    settle().await;
+    bounded("connect pin cleanup stop", handle.stop("cleanup"))
+        .await
+        .expect("#2773 connect pin cleanup stop");
+
+    assert!(
+        raw.is_empty(),
+        "#2773 pin connect: the gate's `Err` destroys the connection with zero \
+         response bytes (Node v22.22.0 measured the same against a bare \
+         `createServer`), not a routed answer: {raw:?}"
     );
 }
 
@@ -5564,12 +5603,10 @@ async fn json_null_body_is_unhandled_destroy() {
     });
     // #2257 fix-r4 (review r4 P2a): same preflight as the http10 pins — a
     // NoopHandle fallback on a busy port would test a foreign listener.
-    // #2257 fix-r5 (review r5 anthropic-concurrency P1): 18901 previously
-    // sat inside the wecom-callback golden replay segment (18900–18921),
-    // held only by the fixture's documented courtesy of skipping 18901 —
-    // moved out to the free gap above that segment, same policy as the
-    // 200/404 pins (18923/18922), the head-timeout ports (18924/18925)
-    // and the #2152 parser-admission pins (18927/18928).
+    // #2257 fix-r5 (review r5): 18901 previously sat inside the
+    // wecom-callback golden replay segment — moved out to the free gap; the
+    // full 189xx layout lives in the single ledger in
+    // `head_timeout_tests.rs` (#2773 A2).
     ensure_replay_port_free(PORT).await;
     let channel = SmsChannel::new(SmsChannelOptions {
         extra: Some(to_js_object(&json!({
