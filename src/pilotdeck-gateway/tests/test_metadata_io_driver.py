@@ -7512,12 +7512,15 @@ class AggregationAudit(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('negative_166_continue', path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        names = [row[0] for row in module.MUTATIONS[:2]]
-        module.MUTATIONS = [(names[0], module.SOURCE, '#166 absent anchor', 'absent'),
-                            (names[1], module.SOURCE, 'def main():', 'def main(:')]
+        names = [row[0] for row in module.applicable_mutations('darwin')[:2]]
+        injected = {names[0]: (names[0], module.SOURCE, '#166 absent anchor', 'absent'),
+                    names[1]: (names[1], module.SOURCE, 'def main():', 'def main(:')}
+        # Keep the actual ordered roster intact and exercise the real --only
+        # selector. Only the two selected mutation payloads are controlled.
+        module.MUTATIONS = [injected.get(row[0], row) for row in module.MUTATIONS]
         self.assertEqual(module.SOURCE.read_text().count('def main():'), 1,
                          '#166 compile-invalid fixture needs exactly one real main anchor')
-        originals = {p: p.read_bytes() for p in (module.SOURCE, module.COMMON_SOURCE)}
+        originals = {p: p.read_bytes() for p in {module.COMMON_SOURCE, *(Path(row[1]) for row in module.MUTATIONS)}}
 
         @contextlib.contextmanager
         def guard(*_a, **_k):
@@ -7538,7 +7541,8 @@ class AggregationAudit(unittest.TestCase):
                     patch.object(module, 'pgrep_launcher', return_value=''), \
                     patch.object(module, 'run_check', return_value=restored) as check, \
                     patch.object(module, 'read_summary', return_value=(summary, None)), \
-                    patch.object(module.sys, 'argv', ['negative_controls.py', '--output', str(output)]), \
+                    patch.object(module.sys, 'argv', ['negative_controls.py', '--output', str(output),
+                                                     '--only', names[0], '--only', names[1]]), \
                     patch.object(module.sys, 'platform', 'darwin'), \
                     patch.object(Path, 'write_text', evidence_only), \
                     patch.object(Path, 'write_bytes', lambda path, value: len(value)):

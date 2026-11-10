@@ -9,6 +9,16 @@
 useDefault = true
 
 [[allowlists]]
+description = "MuPDF 原始 pkcs7-openssl.c 的 C 类型名 PKCS12_SAFEBAG 被 generic-api-key 从函数形参声明误抽取；它是公开 OpenSSL 类型标识符，不是凭据。只放行 Secret 完全等于此标识符的命中，不跳过文件或目录。"
+regexTarget = "secret"
+regexes = ['''^PKCS12_SAFEBAG$''']
+
+[[allowlists]]
+description = "sop_control_authority_tests.rs 的回环 mock discoveryApiKey：顺序数字加 fixture-key 字面量，不对应任何账号或服务；仅放行精确测试值，前后缀或其他值仍扫描。"
+regexTarget = "secret"
+regexes = ['''^12345678901234567890-fixture-key$''']
+
+[[allowlists]]
 description = "WeCom media-capture.mjs 的公开 AES 测试向量：整数 0..31 组成的 32 字节数组再编码为无补位 base64，不是账号凭据；仅放行该精确值，包含此前后缀或其他值仍扫描"
 regexTarget = "secret"
 regexes = ['''^AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8$''']
