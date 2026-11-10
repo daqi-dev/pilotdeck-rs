@@ -287,8 +287,8 @@ class LeaseTests(unittest.TestCase):
     def test_blocked_fixture_releases_lease(self):
         marker = '#1221 BLOCKED empty fixture releases lease for successor'
         # The real child/cleanup/lease run on this host. Only the scoring platform
-        # is selected deterministically: non-Darwin must remain BLOCKED.
-        with patch.object(c, 'LIVE_GROUPS', set()), patch.object(s.sys, 'platform', 'linux'):
+        # is selected deterministically: unsupported platforms remain BLOCKED.
+        with patch.object(c, 'LIVE_GROUPS', set()), patch.object(s.sys, 'platform', 'freebsd'):
             try:
                 with c.parity_lock(lock=self.lock):
                     audit = s.run_fixture(self.folder, self.folder,
@@ -306,7 +306,7 @@ class LeaseTests(unittest.TestCase):
         marker = '#1221 non-PASS cleanup releases only a settled empty group'
         for event in ('failure', 'cancel', 'deadline'):
             with self.subTest(event=event), patch.object(c, 'LIVE_GROUPS', set()), \
-                    patch.object(s.sys, 'platform', 'linux'):
+                    patch.object(s.sys, 'platform', 'freebsd'):
                 output = self.folder / event
                 output.mkdir()
                 lock = output / 'lock'

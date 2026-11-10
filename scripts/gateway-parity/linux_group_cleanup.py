@@ -48,7 +48,7 @@ def _observed_members(pgid):
             # Vanished identities do not prove the group empty. The final
             # kernel group-existence query remains the only emptiness proof.
             pass
-        except (OSError, ValueError, IndexError) as error:
+        except (OSError, ValueError, IndexError, AttributeError) as error:
             errors.append(f'visible member {pid}: {type(error).__name__}: {error}')
         finally:
             if fd is not None:
@@ -98,7 +98,7 @@ def probe(child, held, result, *, verified, not_empty, blocked, not_verified):
                 if outcome == 'sent':
                     result['signal'] = sig.name
                 elif outcome == 'refused':
-                    result.update(status=not_verified,
+                    result.update(status=not_empty, signalRefused=str(detail),
                                   reason='group signal refused after leader identity was lost: ' + str(detail))
                     return result
                 elif outcome not in ('missing',):

@@ -29,7 +29,7 @@ feeds a full libproc buffer and pins `None`, never a partial list;
 `census-enumeration` makes enumeration fail and pins `BLOCKED`; `pid-blocked`
 denies `kill(pid, 0)` and pins the three-state `blocked` as "cannot exclude
 alive" (never gone); `linux-filtered-proc` simulates hidepid's visible-only
-`/proc` on Linux and pins `BLOCKED` before any census read or signal, never
+`/proc` on Linux and pins `BLOCKED` when an empty visible set has no kernel ESRCH proof, never
 `VERIFIED`/`PASS`; `signal-entry`
 pins that the single signal entry refuses a reaped leader for both group and
 direct-pid sends while still sending to a live held child; `reap-state` forces
@@ -228,11 +228,7 @@ does not count, so an initializer overwritten only inside a loop is still
 flagged — a false FAIL on unusual code, never a false PASS.  The
 exit mapping is the one
 registered order: `PASS=0`, `PASS_WITH_SKIPS/FAIL=1`, `BLOCKED=2`, `NOT_RUN=3`.
-Every process mode checks the live process group and the grandchild PID after
-the run.  On non-Darwin the Darwin-only positives (`clean`, `leak`, `ignore`,
-`eperm-live-member`, `runtime-negative`) are recorded as `passed: null` with an
-explicit `skipped` reason instead of a false FAIL: the non-Darwin probe is
-`BLOCKED` before any census, so their positive expectation is unprovable there.
+Every process mode checks the live process group and grandchild identity after the run. Positives run on Darwin and Linux; only other platforms record explicit skips because neither registered proof is available there.
 The fixture summary is pessimistic: any executed failure or malformed result is
 `FAIL`; all executed pass with any skip is `PASS_WITH_SKIPS` (exit 1); only no
 skips and all executed pass is `PASS` (exit 0).  A skip is never a pass.
@@ -1054,3 +1050,8 @@ now does).  Separately, an alias chain of ~1,100 hops exhausts the Python
 recursion limit instead of resolving (codex's measurement, not independently
 reproduced here); the README's "bounded by the chain's own length" statement
 holds only below the interpreter's recursion limit.
+
+
+### #2916 Linux cleanup proof
+
+Linux uses `/proc` and pidfd only to record positive same-group member findings. It never calls that visible set complete. The held leader pins the group before any real signal; after reaping it, only kernel `killpg(pgid, 0)=ESRCH` proves the group absent. EPERM/unknown remain BLOCKED, identity loss remains NOT_VERIFIED, and a recorded GROUP_NOT_EMPTY finding is never erased by remediation. Darwin retains its independent complete-census path. Other platforms remain explicitly unsupported. `check_cleanup.py --mode all` runs the eight `check_linux.py` controls on Linux; visible-set/EPERM mutations target the new helper and must be KILLED. The registered proof concerns this process group, not descendants that escaped it with setsid.

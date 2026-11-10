@@ -89,7 +89,7 @@ exit 3；任一 FAIL → 批 `FAIL` exit 1）。采集目录的记录契约与�
 `BLOCKED=2`）。`controls/session_domain.py`、`session_domain.py` calibrate、
 fixture 的 `check_cleanup.py` 与源码负控 `negative_controls.py` 的顶层状态/退出码
 都调用它，不再各自写 `== 'PASS'` / `all(passed)` 分支。只有所有 case 与 cleanup
-都 `PASS` 才是顶层 `PASS` / exit 0；cleanup 在非 Darwin 跳过 3 项正控得到
+都 `PASS` 才是顶层 `PASS` / exit 0；cleanup 在非 Darwin/Linux 跳过 3 项正控得到
 `PASS_WITH_SKIPS`，缺 `--source` 的 `notRun` 也计入 `PASS_WITH_SKIPS`，两者都
 必须 exit 1，绝不能汇总成 `PASS`（人定 A：装置顶层不得比任一子核验乐观）。
 `check_cleanup.py --mode batch-aggregation` 钉住该全序、`run_all()`/`main()` 的
@@ -114,12 +114,7 @@ libproc 返回的字节数等于缓冲容量即视为截断（XNU 按容量复�
 小于容量且 4 字节对齐的写，满缓冲继续增长重试，重试仍满返回「不可核验」。两次完整组快照
 必须一致，成员在两次快照之间变化同样不可核验。枚举失败、截断、快照变化、leader 探测被拒
 一律 `BLOCKED`、不发信号；只有两次完整一致且除未回收 leader 外无成员才记 `VERIFIED`。
-非 Darwin 平台没有等价的完整组枚举：Linux `/proc` 受挂载选项 `hidepid` 与
-dumpable/权限过滤影响，`iterdir`/`getpgid` 可以**无错误地漏掉仍在本组的活后代**，
-逐 pid 汇总的可见集合不能证明完整性；因此 `probe_process_group` 在非 darwin 上 leader
-未回收后直接 `BLOCKED`，不读普查、不发信号（即使 `killpg0=ESRCH` 也不判 `empty`）。
-这是证明边界：非 Darwin 的 cleanup 不会出现 `VERIFIED`/`PASS`，由宿主上的 macOS
-calibrate 证明。`observe_pid` 保留 `alive`/`missing`/`blocked` 三态，只有 `missing`
+Linux `/proc` 仍不是完整组枚举，受 hidepid/dumpable/权限过滤的可见集合只能提供正向残留发现。Linux 分支持有未回收 leader 后才可发真实组信号，reap 后只作 signal-0；只有内核 `killpg0=ESRCH` 允许 VERIFIED。EPERM/未知仍 BLOCKED，残留发现即使清走仍 GROUP_NOT_EMPTY；其它无已登记证明的平台仍 BLOCKED。`observe_pid` 保留 `alive`/`missing`/`blocked` 三态，只有 `missing`
 才可当已消失；`blocked`（EPERM/EACCES）只说明本进程无权探测，必须记未核验/失败，
 不得当已清理。组内仍有存活成员记 `GROUP_NOT_EMPTY` 并只向该组 SIGTERM（5 s 有界等待
 后仍不空则只对该组 SIGKILL）；leader 已被他人回收或平台无法证明归属时记 `NOT_VERIFIED`
@@ -145,10 +140,10 @@ CI/shell 调用方也不会把它当通过。
 `cleanup-pid-blocked`、`cleanup-linux-filtered-proc`、`cleanup-signal-entry-reaped`、
 `cleanup-signal-entry-held` 等行为控制，cleanup 结果计入
 `results.json:cleanup`。cleanup 子报告 `FAIL` 或任一 `case` 失败 → 整批 `FAIL`；
-非 Darwin 跳过的 Darwin-only 正控记 `passed:null`+`skipped`，cleanup 子报告为
+非 Darwin/Linux 跳过的正控记 `passed:null`+`skipped`，cleanup 子报告为
 `PASS_WITH_SKIPS`，整批只能到 `PASS_WITH_SKIPS` / exit 1，不计为通过。行为 fixture
 `src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/` 的 `ignore` 孙进程先装好
-`SIG_IGN` 并写就绪标记，launcher 有界等待后才退出；同一 fixture 在非 Darwin 把
+`SIG_IGN` 并写就绪标记，launcher 有界等待后才退出；同一 fixture 在非 Darwin/Linux 把
 `clean/leak/ignore/eperm-live-member/runtime-negative` 记 `passed:null`+`skipped`，
 汇总同样是 `PASS_WITH_SKIPS`（exit 1），不把平台未证明的正控报成 FAIL 或 PASS。源码
 变异负控按变异绑定期望字段，未声明的 `signalError`/`probeError` 判 INVALID
@@ -274,3 +269,8 @@ Rust 侧的 `src/pilotdeck-gateway/tests/common/permission_faults.rs` 有
   不认 `off`/`no`、未识别值不拒绝（`=off` 会读成 ON）。它只影响「是否允许跳过
   ripgrep 检查」，误读方向是放行跳过而不是解除强制闸门，CI 从不设置它，真跳过时
   也有 loud skip 行，所以本单只登记不改；与上面两个开关一起并入 #1930 统一口径。
+
+
+### #2916 Linux cleanup proof
+
+Linux uses `/proc` and pidfd only to record positive same-group member findings. It never calls that visible set complete. The held leader pins the group before any real signal; after reaping it, only kernel `killpg(pgid, 0)=ESRCH` proves the group absent. EPERM/unknown remain BLOCKED, identity loss remains NOT_VERIFIED, and a recorded GROUP_NOT_EMPTY finding is never erased by remediation. Darwin retains its independent complete-census path. Other platforms remain explicitly unsupported. `check_cleanup.py --mode all` runs the eight `check_linux.py` controls on Linux; visible-set/EPERM mutations target the new helper and must be KILLED. The registered proof concerns this process group, not descendants that escaped it with setsid.

@@ -1186,9 +1186,9 @@ def cleanup_controls(output):
         probe = probe_process_group(child, wait=10)
         top = cleanup_status({'processTreeCleanup': probe['status']})
         grandchild = int(marker.read_text()) if marker.is_file() else None
+        group_empty_after = wait_group_empty(child.pid)
         grandchild_state = _pid_state(grandchild) if grandchild is not None else None
         grandchild_gone = _grandchild_gone(grandchild) if grandchild is not None else False
-        group_empty_after = wait_group_empty(child.pid)
         check('cleanup-leftover-grandchild',
               probe['status'] == CLEANUP_GROUP_NOT_EMPTY and top == CLEANUP_UNVERIFIED_STATUS
               and grandchild_gone and group_empty_after,
@@ -1469,19 +1469,17 @@ def cleanup_controls(output):
           f'pidState={blocked_state} grandchildGone={blocked_gone}',
           pidState=blocked_state, grandchildGone=blocked_gone)
 
-    # 14. Linux hidepid-style filtering: /proc shows only the leader while a
-    # live same-group descendant is hidden.  The non-darwin gate must report
-    # BLOCKED before reading that visible set or sending any signal; reading it
-    # as a complete group would return empty/VERIFIED/PASS.
+    # 14. The actual Linux helper sees an empty, incomplete visible set.
+    # A denied kernel query cannot prove absence: the result must stay BLOCKED.
     child = subprocess.Popen([sys.executable, '-I', '-c', 'pass'], start_new_session=True)
     state = wait_exit_unreaped(child.pid, 10)
     leader = child.pid
-    visible = iter([[leader]] * 6)
+    helper = session_domain_module._load('linux_group_cleanup', session_domain_module.SCRIPT / 'linux_group_cleanup.py')
     census_calls = []
 
     def visible_only(*args):
         census_calls.append(args)
-        return set(next(visible, [leader]))
+        return [], ['simulated hidepid: visible membership is incomplete']
 
     filtered = {'status': None}
     error = None
@@ -1489,8 +1487,7 @@ def cleanup_controls(output):
         try:
             with patch.object(session_domain_module, 'sys',
                               SimpleNamespace(platform='linux')), \
-                    patch.object(session_domain_module, '_group_snapshot',
-                                 side_effect=visible_only), \
+                    patch.object(helper, '_observed_members', side_effect=visible_only), \
                     patch.object(os, 'killpg', side_effect=PermissionError('EPERM')):
                 filtered = probe_process_group(child)
         except Exception as exc:
@@ -1506,7 +1503,7 @@ def cleanup_controls(output):
     check('cleanup-linux-filtered-proc',
           filtered.get('status') == CLEANUP_BLOCKED
           and filtered_top == CLEANUP_UNVERIFIED_STATUS
-          and not census_calls and error is None,
+          and census_calls and filtered.get('memberObservationComplete') is False and error is None,
           f"status={filtered.get('status')} top={filtered_top} "
           f"censusCalls={len(census_calls)} error={error}", probe=filtered)
 

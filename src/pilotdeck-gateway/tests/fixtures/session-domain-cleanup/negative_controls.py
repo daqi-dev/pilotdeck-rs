@@ -76,6 +76,7 @@ COMMON_SOURCE = ROOT / 'scripts/gateway-parity/common.py'
 # exit-call enumeration are exercised where the real ``rel`` is not the fixture
 # itself.
 GUARD_SOURCE = ROOT / 'scripts/gateway-parity/_guard.py'
+LINUX_SOURCE = ROOT / 'scripts/gateway-parity/linux_group_cleanup.py'
 CHECK = Path(__file__).resolve().with_name('check_cleanup.py')
 NEGATIVE = Path(__file__).resolve()
 # #892 fix-r25: the ``rel`` the audit reports for the two fixture files, so a
@@ -1886,9 +1887,15 @@ MUTATIONS = [
      "        except OSError:\n            return 'blocked'",
      "        except ProcessLookupError:\n            return 'missing'\n"
      "        except OSError:\n            return 'missing'  # mutant: blocked == gone"),
-    ('linux-visible-census-trusted', SOURCE,
-     "    if sys.platform != 'darwin':\n",
-     "    if False:  # mutant: trust the platform's visible process set\n"),
+    ('linux-visible-census-trusted', LINUX_SOURCE,
+     "    finding = bool(members)\n",
+     "    finding = bool(members)\n    if not members:\n        result.update(status=verified)\n        return result  # mutant: empty visible /proc is trusted\n"),
+    ('linux-eperm-means-empty', LINUX_SOURCE,
+     "                state, detail = 'denied', str(error)",
+     "                result.update(status=verified)\n                return result  # mutant: EPERM is treated as emptiness"),
+    ('linux-no-esrch-needed', LINUX_SOURCE,
+     "                state, detail = 'alive', 'kernel still observes the process group'",
+     "                result.update(status=verified)\n                return result  # mutant: a live group is accepted"),
     ('batch-status-relaxed', CONTROLS_SOURCE,
      "    cleanup = cleanup_controls(output)\n"
      "    status, _ = common.aggregate_status(\n"
@@ -4346,6 +4353,14 @@ JUDGES = {
         }),
         False,
         ()),
+    'linux-eperm-means-empty': (
+        'linux-filtered-proc',
+        lambda rows: match(rows, 'linux-filtered-proc', {'processTreeCleanup': 'VERIFIED', 'topLevel': 'PASS'}),
+        False, ()),
+    'linux-no-esrch-needed': (
+        'linux-filtered-proc',
+        lambda rows: match(rows, 'linux-filtered-proc', {'aliveProbe.status': 'VERIFIED'}),
+        False, ()),
     'batch-status-relaxed': (
         'batch-aggregation',
         lambda rows: match(rows, 'batch-aggregation', {
@@ -5104,7 +5119,7 @@ def main():
                 restored = None
                 restored_summary = None
                 restored_error = f'{type(error).__name__}: {error}'
-            expected_status = 'PASS' if sys.platform == 'darwin' else 'PASS_WITH_SKIPS'
+            expected_status = 'PASS' if sys.platform in ('darwin', 'linux') else 'PASS_WITH_SKIPS'
             expected_code = 0 if expected_status == 'PASS' else 1
             restored_ok = False
             if restored_summary is not None:

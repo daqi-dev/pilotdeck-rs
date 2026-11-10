@@ -37,10 +37,9 @@ Modes:
                      calibrate maps a skipped controls batch to BLOCKED/exit 2
   all    - every mode above (default)
 
-Darwin-only positives (clean, leak, ignore, eperm-live-member, runtime-negative)
-are recorded as ``passed: null`` + ``skipped`` on other platforms: the non-Darwin
-probe is BLOCKED before any census, so their positive expectation is unprovable
-there.  Skips are never counted as passes; the summary is PASS_WITH_SKIPS.
+Positives (clean, leak, ignore, eperm-live-member, runtime-negative) run on
+Darwin and Linux. Other platforms record passed:null with an explicit skip;
+those skips are never counted as passes.
 """
 import argparse
 import ast
@@ -107,11 +106,11 @@ def load_controls():
 
 
 def platform_skip(mode):
-    """Reason a Darwin-only positive cannot be proven on this platform."""
-    if sys.platform == 'darwin':
+    """Reason a positive cannot be proven by either supported platform path."""
+    if sys.platform in ('darwin', 'linux'):
         return None
-    return (f'{mode} requires complete Darwin group enumeration; '
-            'the non-darwin probe is BLOCKED before any census')
+    return (f'{mode} requires Darwin group enumeration or Linux post-reap '
+            'kernel ESRCH; this platform has neither registered proof')
 
 
 def skipped_result(mode, reason):
@@ -486,7 +485,9 @@ def census_unavailable_control(md):
     probe = None
     error = None
     try:
-        with patch.object(md, 'live_group_members', return_value=None):
+        with patch.object(md, 'sys', SimpleNamespace(platform='darwin')), \
+                patch.object(md.os, 'killpg', side_effect=PermissionError('denied')), \
+                patch.object(md, 'live_group_members', return_value=None):
             probe = md.probe_process_group(child)
     except Exception as exc:  # a crash must not count as the expected finding
         error = f'{type(exc).__name__}: {exc}'
@@ -752,46 +753,46 @@ def pid_blocked_control(md):
 
 
 def linux_filtered_proc_control(md):
-    """A filtered /proc on Linux is BLOCKED, never a complete group.
-
-    ``/proc`` can hide a live same-group descendant (hidepid, EACCES/EPERM, a
-    changing read) without an error.  The visible set below contains only the
-    leader; reading it as complete would return empty/VERIFIED/PASS.  The
-    non-darwin gate must return BLOCKED before the census is read or a signal
-    is sent.
-    """
-    child = _zombie_child()
-    leader = child.pid
-    visible = iter([[leader]] * 8)
+    """An empty visible set cannot replace denied or live kernel group evidence."""
+    helper = md._load('linux_group_cleanup', md.SCRIPT / 'linux_group_cleanup.py')
     calls = []
-
     def visible_only(*args):
         calls.append(args)
-        return set(next(visible, [leader]))
-
-    probe = None
-    error = None
-    try:
-        with patch.object(md, 'sys', SimpleNamespace(platform='linux')), \
-                patch.object(md, '_group_snapshot', side_effect=visible_only), \
-                patch.object(md.os, 'killpg', side_effect=PermissionError('EPERM')):
-            probe = md.probe_process_group(child)
-    except Exception as exc:  # a crash must not count as the expected finding
-        error = f'{type(exc).__name__}: {exc}'
-    finally:
-        if child.returncode is None:
-            try:
+        return [], ['simulated hidepid: visible membership is incomplete']
+    def one(denied):
+        child = _zombie_child()
+        error = None
+        probe = None
+        def kernel_probe(pgid, sig):
+            if sig != 0:
+                raise AssertionError('no real signal after the held leader was reaped')
+            if denied:
+                raise PermissionError('EPERM')
+            return None  # simulated kernel: a same-group member is still present
+        try:
+            with patch.object(md, 'sys', SimpleNamespace(platform='linux')), \
+                    patch.object(helper, '_observed_members', side_effect=visible_only), \
+                    patch.object(md.os, 'killpg', side_effect=kernel_probe):
+                probe = md.probe_process_group(child)
+        except Exception as exc:
+            error = f'{type(exc).__name__}: {exc}'
+        finally:
+            if child.returncode is None:
                 child.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                pass
-    status = (probe or {}).get('status')
+        return probe or {}, error
+    probe, error = one(True)
+    alive, alive_error = one(False)
+    status = probe.get('status')
     result = {'mode': 'linux-filtered-proc', 'processTreeCleanup': status,
               'topLevel': md.cleanup_status({'processTreeCleanup': status}),
-              'censusCalls': len(calls), 'error': error}
-    result['passed'] = bool(error is None and probe is not None
+              'censusCalls': len(calls), 'error': error, 'aliveProbe': alive,
+              'aliveError': alive_error}
+    result['passed'] = bool(error is None and alive_error is None
                             and status == md.CLEANUP_BLOCKED
                             and result['topLevel'] == md.CLEANUP_UNVERIFIED_STATUS
-                            and not calls)
+                            and len(calls) == 2 and probe.get('memberObservationComplete') is False
+                            and alive.get('status') == md.CLEANUP_GROUP_NOT_EMPTY
+                            and alive.get('kernelGroupProbe') == 'alive')
     return result
 
 
@@ -890,6 +891,8 @@ NON_AGGREGATION_POINTS = {
         'builds the single comparison result main returns; scenarios are not tri-state children',
     ('scripts/gateway-parity/controls/prerequisites.py', 'run_prerequisites'):
         'boolean prerequisite suite; per-comparison status labels are not a top-level batch',
+    ('scripts/gateway-parity/linux_group_cleanup.py', 'probe'):
+        'one Linux process-group cleanup status; VERIFIED only after post-reap kernel ESRCH, not a batch summary',
     ('scripts/gateway-parity/session_domain.py', 'probe_process_group'):
         'one process-group domain status (VERIFIED/BLOCKED), not a batch summary',
     ('scripts/gateway-parity/session_domain.py', 'score_native_cases'):
@@ -7328,7 +7331,7 @@ def negative_restored_replays(output):
 
     cases = (
         ('pass', 'darwin', 'PASS', 0, 'KILLED', True, ('PASS', 0)),
-        ('skip', 'linux', 'PASS_WITH_SKIPS', 1, 'KILLED', True,
+        ('skip', 'freebsd', 'PASS_WITH_SKIPS', 1, 'KILLED', True,
          ('PASS_WITH_SKIPS', 1)),
         ('survived', 'darwin', 'PASS', 0, 'SURVIVED', True, ('FAIL', 1)),
         ('invalid', 'darwin', 'PASS', 0, 'INVALID', True, ('BLOCKED', 2)),
@@ -7659,6 +7662,19 @@ def main():
             result = batch_aggregation_control(md, output)
         except Exception as error:
             result = control_failure('batch-aggregation', error)
+        results.append(result)
+        print(json.dumps(result, ensure_ascii=False), flush=True)
+    if args.mode == 'all' and sys.platform == 'linux':
+        linux_output = output / 'linux-kernel-controls'
+        child = subprocess.run([sys.executable, '-I', '-B',
+                                str(Path(__file__).with_name('check_linux.py')),
+                                '--output', str(linux_output)], capture_output=True, text=True, timeout=45)
+        (output / 'linux-kernel-controls.log').write_text(child.stdout + child.stderr)
+        document = json.loads((linux_output / 'report.json').read_text())
+        result = {'mode': 'linux-kernel-controls', 'passed': bool(
+            child.returncode == 0 and document.get('status') == 'PASS'
+            and document.get('testsRun') == 8 and not document.get('skipped')
+            and document.get('sourceUnchanged') is True), 'report': str(linux_output / 'report.json')}
         results.append(result)
         print(json.dumps(result, ensure_ascii=False), flush=True)
     if args.mode in ('aggregation-audit', 'all'):

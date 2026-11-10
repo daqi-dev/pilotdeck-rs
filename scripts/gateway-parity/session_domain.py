@@ -534,7 +534,9 @@ def probe_process_group(child, wait=5):
     unavailable/incomplete census is BLOCKED.  A live group is a finding
     (``GROUP_NOT_EMPTY``), not something to hide after remediation: record it,
     SIGTERM only that group, and never rewrite the status to VERIFIED just
-    because our own SIGTERM eventually emptied it.
+    because our own SIGTERM eventually emptied it. Linux uses positive pidfd
+    observations and post-reap kernel ESRCH; it never upgrades /proc to a
+    complete census. Other platforms without either proof stay BLOCKED.
     """
     held = HeldProcessGroup(child)
     pgid = held.pid
@@ -558,8 +560,8 @@ def probe_process_group(child, wait=5):
     if sys.platform != 'darwin':
         # A filtered /proc can hide a live same-group descendant (hidepid,
         # EACCES/EPERM on a pid, a changing read) with no observable error.
-        # Neither killpg0=EPERM nor killpg0=ESRCH can then prove the group is
-        # empty, and Linux has no libproc-equivalent exact group census.  Do not
+        # This fallback serves platforms other than Darwin and Linux, without
+        # either registered proof. Do not
         # read a census and do not signal: unproven is BLOCKED, never VERIFIED.
         result.update(status=CLEANUP_BLOCKED,
                       reason='group membership completeness cannot be proven on '

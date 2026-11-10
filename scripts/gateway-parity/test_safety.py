@@ -972,7 +972,7 @@ class ImportIsolation(unittest.TestCase):
         contract = json.loads(fixture.read_text())
         entries = {name for name in common.A2_SCRIPTS if name.endswith('.py')
                    and name not in ('common.py', '_guard.py', 'test_safety.py',
-                                    'controls/prerequisites.py')}
+                                    'controls/prerequisites.py', 'linux_group_cleanup.py')}
         self.assertEqual(set(contract['errors']),
                          {'ordinary', 'interrupt', 'timeout', 'permission', 'subprocess_timeout',
                           'apparatus', 'rule_only', 'system_exit'}, message + ': required exception classes')
@@ -1974,7 +1974,7 @@ class ApparatusInputs(unittest.TestCase):
         folder = Path(__file__).resolve().parent
         entries = [name for name in common.A2_SCRIPTS if name.endswith('.py')
                    and name not in ('common.py', '_guard.py', 'test_safety.py',
-                                    'controls/prerequisites.py')]
+                                    'controls/prerequisites.py', 'linux_group_cleanup.py')]
         for name in entries:
             with self.subTest(entry=name):
                 text = (folder / name).read_text(encoding='utf-8')
