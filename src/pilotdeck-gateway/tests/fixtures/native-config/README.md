@@ -12,7 +12,7 @@ CARGO_TARGET_DIR=<本树独立 target> \
 ```
 
 - `<NEW_OUTPUT_DIR>` 必须不存在（独占创建，不覆盖历史证据）。
-- `CARGO_TARGET_DIR` 必须由调用方提供（脚本不猜，避免复用陈旧 target 把环境问题报成「变异没杀死」）；且解析后不得落在仓内共享的 `_build/cargo-target` 之内或之上——共享根按部署形态取**两个**：本树（或本 worktree）的 `<ROOT>/_build/cargo-target`，以及 worktree 部署下主 checkout 的同一路径（由 git common dir 推导）；相对值按 cargo 的口径（`cwd=ROOT`）解析，已存在的拼写另按 inode（`samefile`）比对，符号链接别名与大小写重拼都拦（#1651：入口拒绝发生在进证据目录之前——本装置要求树外独立 target，该本地规则不动共享的 `negative_process.target_environment` 默认规则）。
+- `CARGO_TARGET_DIR` 必须由调用方提供（脚本不猜，避免复用陈旧 target 把环境问题报成「变异没杀死」）；且解析后不得落在仓内共享的 `_build/cargo-target` 之内或之上——共享根按部署形态取**两个**：本树（或本 worktree）的 `<ROOT>/_build/cargo-target`，以及 worktree 部署下主 checkout 的同一路径（由 git common dir 推导；worktree 内推导失败即拒跑，fail-closed）；相对值按 cargo 的口径（`cwd=ROOT`）解析，再经 `realpath` 归一化（`..` 词法拼写与指向共享子目录的别名落在同一条归一化路径上），已存在的拼写另按 inode（`samefile`）比对，符号链接别名与大小写重拼都拦（#1651：入口拒绝发生在进证据目录之前——本装置要求树外独立 target，该本地规则不动共享的 `negative_process.target_environment` 默认规则）。
 - 只跑某几条：在输出目录后追加变异名（见脚本 `mutations` 表），可配合 `--compile-only` 只验编译。
 
 只校验锚点、不执行：

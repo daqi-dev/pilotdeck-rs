@@ -1106,20 +1106,34 @@ def _shared_target_roots(root):
 
     ``<root>/_build/cargo-target`` is the shared default when the fixture runs
     in the primary checkout. A worktree deployment (this runner's normal
-    shape, ``_build/wt-<N>``) additionally shares the primary checkout's
-    ``_build/cargo-target``, which the worktree-local path never equals, so
-    the primary root is derived from the git common dir (#1651: DS r2 P1).
+    shape, ``_build/wt-<N>`` — ``<root>/.git`` is a file) additionally shares
+    the primary checkout's ``_build/cargo-target``, which the worktree-local
+    path never equals, so the primary root is derived from the git common
+    dir (#1651: DS r2 P1). In a worktree the derivation is load-bearing:
+    if it cannot be made (git missing/old/broken, or a layout whose common
+    dir is not a ``.git`` directory), fail closed instead of silently
+    dropping the primary root.
     """
     roots = [root / '_build' / 'cargo-target']
+    in_worktree = (root / '.git').is_file()
     try:
         common = subprocess.run(
             ['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'],
             cwd=str(root), capture_output=True, text=True, check=True,
+            timeout=30,
         ).stdout.strip()
-    except (OSError, subprocess.CalledProcessError):
+    except (OSError, subprocess.SubprocessError):
+        if in_worktree:
+            raise SystemExit('#1651 cannot derive the primary checkout to '
+                              'guard its shared target; refusing to run')
         return roots
     common_dir = Path(common)
-    if common_dir.name == '.git' and common_dir.parent not in (root, root.resolve()):
+    if common_dir.name != '.git':
+        if in_worktree:
+            raise SystemExit('#1651 unrecognized git layout; cannot guard the '
+                            'primary checkout shared target; refusing to run')
+        return roots
+    if common_dir.parent not in (root, root.resolve()):
         primary = common_dir.parent / '_build' / 'cargo-target'
         if primary not in roots:
             roots.append(primary)
@@ -1131,16 +1145,19 @@ def _shared_target_collision(value, root):
 
     Values are resolved on cargo's basis — cargo runs with ``cwd=ROOT``, so a
     relative spelling is joined to ROOT, never to the caller's cwd — then
-    rejected on equality with, or containment inside, any shared target
-    (#1651: subpath and relative spellings cannot slip past on a different
-    resolution basis). Existing spellings are also compared by inode
-    (``samefile``), so symlink aliases and case-insensitive spellings of a
-    shared root cannot bypass while the directory exists; paths that do not
-    exist yet fall back to the textual comparison alone.
+    normalized with ``realpath``, which collapses ``..``/``.`` and follows
+    symlinks, so spellings that differ only lexically, or through an alias
+    pointing *inside* a shared target, land on the same normalized path
+    (#1651: subpath, relative, and alias-to-subdirectory spellings cannot
+    slip past). The equality/containment comparison runs against every
+    shared root; existing spellings are additionally compared by inode
+    (``samefile``), so case-insensitive re-spellings of a shared root cannot
+    bypass while the directory exists.
     """
     raw = Path(value)
-    resolved = raw if raw.is_absolute() else root / raw
+    resolved = Path(os.path.realpath(raw if raw.is_absolute() else root / raw))
     for shared in _shared_target_roots(root):
+        shared = Path(os.path.realpath(shared))
         if resolved == shared:
             return shared
         try:

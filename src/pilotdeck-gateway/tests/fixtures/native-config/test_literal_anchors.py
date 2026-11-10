@@ -219,7 +219,20 @@ class LiteralAnchorGuard(unittest.TestCase):
             alias = root / 'alias-target'
             alias.symlink_to(shared)
             self.assertEqual(
-                nc._shared_target_collision(str(alias), root), shared)
+                nc._shared_target_collision(str(alias), root),
+                Path(os.path.realpath(shared)))
+            # An alias pointing *inside* the shared target normalizes onto it.
+            into = root / 'into-shared'
+            into.symlink_to(shared / 'debug', target_is_directory=True)
+            self.assertEqual(
+                nc._shared_target_collision(str(into), root),
+                Path(os.path.realpath(shared)))
+            # A `..` hop through a directory that does not exist yet is
+            # normalized lexically onto the shared root.
+            self.assertEqual(
+                nc._shared_target_collision('_build/missing/../cargo-target',
+                                            root),
+                Path(os.path.realpath(shared)))
             # A tree-external target proceeds untouched.
             self.assertIsNone(
                 nc._shared_target_collision(str(root / 'elsewhere'), root))

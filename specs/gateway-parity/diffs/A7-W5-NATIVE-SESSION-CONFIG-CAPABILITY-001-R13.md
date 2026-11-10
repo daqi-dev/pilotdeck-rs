@@ -75,23 +75,23 @@ path 门，busy-before-mtime 只有 ③ 能杀）；空串 `mode`（`""` / 纯�
   回合 + `sessionKey:""`（seed 带有效 path+mtime、thinking/style 带合法载荷），
   断 `INVALID_SESSION_KEY` + 「sessionKey is required.」逐字。
 - #2703 空键三联负控（`negative_controls.py`）：
-  `thinking-blank-key-require-weakened`（`:528`）/ `style-blank-key-require-
-  weakened`（`:545`）/ `seed-blank-key-require-weakened`（`:562`），锚
+  `thinking-blank-key-require-weakened`（`:529`）/ `style-blank-key-require-
+  weakened`（`:546`）/ `seed-blank-key-require-weakened`（`:563`），锚
   `#2703 the blank key is a sessionKey error for thinking|output style|seed
   read state`，变异为各法 `require_session_key` 弱化为空默认（上下文行随法
   取唯一：thinking/style 带各自的 busy 块、seed 带 path 门行）。
-- #1651 四行：`seed-path-before-session-key`（`:177`）/
-  `seed-busy-before-path`（`:186`）`seed-busy-before-mtime`（`:201`）绑
+- #1651 四行：`seed-path-before-session-key`（`:178`）/
+  `seed-busy-before-path`（`:187`）`seed-busy-before-mtime`（`:202`）绑
   `seed_read_state_answers_gates_in_order`（`config.rs:3319`，用例 ①②③ 见
-  范围段）；`permission-modes-widened`（`:152`，变异 `permission.rs` 常量
+  范围段）；`permission-modes-widened`（`:153`，变异 `permission.rs` 常量
   `[&str; 3]` → `[&str; 4]` 含 `"debug"`，绑 `permission_modes_are_pinned_
   verbatim`（`config.rs:2436`）——钉字面量以 `as_slice()` 比较，数组直比会在
   放宽时编译失败、判 INVALID 而非 KILLED）。另有两枚纯回归钉无负控行：
   `set_permission_mode_blank_mode_is_rejected_verbatim`（`config.rs:2453`，
   `mode:""` / `" "` / `"\t"` 逐字拒绝）、`permission_modes_are_pinned_verbatim`
   自身即上行的 bound 测试。
-- #1868 两行换锚：`transcript-fence-removed-config`（`:230`）与
-  `transcript-fence-removed-rename`（`:235`）变异文本不变，锚换为
+- #1868 两行换锚：`transcript-fence-removed-config`（`:231`）与
+  `transcript-fence-removed-rename`（`:236`）变异文本不变，锚换为
   `#1868 the concurrent model set waits at the held transcript fence` /
   `#1868 the concurrent rename waits at the held transcript fence`；bound 测试
   同名重写（`config.rs:3515`）——测试按生产同序自持该会话转录的 fence
@@ -122,6 +122,14 @@ path 门，busy-before-mtime 只有 ③ 能杀）；空串 `mode`（`""` / 纯�
   `cargo test -p pilotdeck-gateway --lib -- native_process::` → `387 passed;
   0 failed`、`-- runtime::session::` → `342 passed; 0 failed`；fmt --check 与
   clippy --all-targets -- -D warnings 无输出。
+- 收货轮补记（#1651 target 守卫收口，两轮）：评审 fix-r1（双共享根 +
+  samefile）与 fix-r2（realpath 归一化：`..` 词法拼写与指向共享子目录的
+  别名落同一条归一化路径；git 推导子进程加 30s 超时、worktree 内推导失败
+  fail-closed 拒跑）。新增守卫代码路径的红侧由
+  `python3 -m unittest …/test_literal_anchors.py` 承载并实跑：`Ran 15 tests
+  … OK`（含子路径 / 相对拼写 chdir 证 cwd 无关 / 真实 git worktree 双根 /
+  符号链接别名含指向子目录 / `..` 拼写五组；收货机 macOS，原始输出见 PR）。
+  上文 `negative_controls.py` 行号为 PR 合入 head 上的行号。
 
 ## 批准记录
 
