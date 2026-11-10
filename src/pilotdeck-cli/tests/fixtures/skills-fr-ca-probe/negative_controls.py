@@ -68,15 +68,17 @@ mutations = [
      TEST, '#2140 fr_Cyrl_CA.UTF-8: "coté" vs "côte"'),
     # #2170 (DS r1 sibling#5): the `resolved` audit in skills.rs had no
     # paired mutation. Rewriting the fixture's recorded locale for the Cyrl
-    # row must turn that audit red — the audit panics on
-    # `"en-US".starts_with("fr")` failing.
+    # row must turn that audit red — the audit panics when the leading
+    # resolved subtag ("en") differs from the row language ("fr")
+    # (fix-r5: equality, not starts_with).
     ('probe-resolved-rewritten', PROBE_JSON,
      '"resolved": "fr-Cyrl-CA"', '"resolved": "en-US"',
      TEST, '#2170 fr_Cyrl_CA.UTF-8: resolved'),
     # #2170 fix-r4 (DS fix-r3 sibling#1): the empty-language audit assert
     # had no paired mutation. Emptying the fr_CA row's language subtag must
     # turn that assert red; deleting the assert from skills.rs would leave
-    # this row SURVIVED (the pair replay still fails, but without the marker).
+    # this row INVALID (the pair replay still fails, but the panic payload
+    # lacks the marker — classified non-KILLED either way).
     ('probe-language-emptied', PROBE_JSON,
      '"lang": "fr_CA.UTF-8"', '"lang": "_CA.UTF-8"',
      TEST, '#2170 _CA.UTF-8: probe row needs a language subtag'),

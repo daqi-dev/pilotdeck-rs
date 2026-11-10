@@ -726,8 +726,17 @@ mod tests {
                 !language.is_empty(),
                 "#2170 {lang}: probe row needs a language subtag"
             );
+            // #2170 fix-r5 (DS boundary#2): compare the leading resolved
+            // subtag by equality, not by prefix — `fr-CA`.starts_with("fr")
+            // also matches a corrupted `fr-Cyrl-CA` column, which would audit
+            // as fine. The product `collator()` maps `C`/`POSIX` to `en-US`
+            // (skills.rs `collator`), so those languages expect `en`.
+            let expected_language = match language {
+                "C" | "POSIX" => "en",
+                other => other,
+            };
             assert!(
-                resolved.starts_with(language),
+                resolved.split('-').next() == Some(expected_language),
                 "#2170 {lang}: resolved {resolved:?} keeps the row language {language:?}"
             );
             let collator = collator(&Env::from_pairs(&[("LANG", lang), ("LC_ALL", lang)]))

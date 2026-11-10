@@ -27,7 +27,8 @@ HEAD-only 变异负控，绑定唯一被点名测试
   （`!language.is_empty()`）必红，绑
   `#2170 _CA.UTF-8: probe row needs a language subtag`（同样经
   `include_str!` 重编译生效；删掉该守卫后此行因 panic 载荷缺 marker 判
-  SURVIVED，钉住守卫本身）。
+  INVALID（非 KILLED，与锚点过期同口径，见下方「均不记成 SURVIVED」段），
+  钉住守卫本身）。
 
 用法（提交后由协调者在宿主跑；未提交源码会被 HEAD 守卫拒绝）：
 
