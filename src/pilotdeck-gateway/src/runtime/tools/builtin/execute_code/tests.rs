@@ -396,10 +396,7 @@ async fn configured_search_controls_python_exports_and_rpc_dispatch() {
 
 #[test]
 fn model_description_matches_actual_ts_for_sandbox_and_search_settings() {
-    let raw = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/agent-model-fields/oracle.json"
-    ));
+    let raw = include_str!("../../../../../tests/fixtures/agent-model-fields/oracle.json");
     // Shared provenance checks run even without an optional baseline checkout.
     let _provenance = crate::test_baseline::oracle(raw);
     let oracle: serde_json::Value = serde_json::from_str(raw).unwrap();
