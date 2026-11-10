@@ -255,6 +255,7 @@ fn read_vendored_source(package: &str, file: &Path) -> String {
 // default modules     collected by caller       resolve recursively
 // path base/bounds    vendored package rules     repository, no symlink
 // conditional path    scan conservatively       reject unresolved context
+// metadata literal    treated as a file edge    rejected: own #1249 message
 // alias/indirection   vendored boundary policy  reject include aliases
 // A workspace seed may be a custom Cargo crate root or an ordinary module.
 // Scan the union of both ownership contexts, then use exact contexts on edges.
@@ -463,18 +464,32 @@ impl EdgeScanner<'_> {
 
     // `#[path = "..."]`, `#[r#path = "..."]` and the nested
     // `cfg_attr(..., path|r#path = "...")` form. doc comments arrive as
-    // `#[doc = "..."]`; their text is a literal, never an edge.
+    // `#[doc = "..."]`; their text is a literal, never an edge. In workspace
+    // mode every `path`-keyed attribute that is not a direct `#[path]` fails
+    // closed; #1249 split that rejection's message by the position the key was
+    // found in, so a metadata literal (`databake(path = "child.rs")`, also
+    // under cfg_attr) no longer reports itself as a conditional path.
     fn attribute_paths(&mut self, tokens: &[SourceToken], top_level: bool) {
         if is_doc_attribute(tokens) {
             return;
         }
-        if self.workspace && attribute_names_path(tokens) {
+        if self.workspace
+            && let Some(kind) = attribute_path_key_kind(tokens)
+        {
             assert!(
                 matches!(tokens.first(), Some(SourceToken::Ident(name)) if name == "path"),
-                "#1166 conditional path attribute cannot be resolved statically"
+                "{}",
+                match kind {
+                    PathKeyKind::MetadataLiteral => {
+                        "#1249 literal path attribute treated as a file edge"
+                    }
+                    PathKeyKind::Conditional => {
+                        "#1166 conditional path attribute cannot be resolved statically"
+                    }
+                }
             );
         }
-        attribute_path_keys(tokens, &mut |tokens, index| {
+        attribute_path_keys(tokens, &mut |tokens, index, _| {
             assert!(
                 top_level,
                 "vendored package {} #[path] must appear at the file top level; a non-top-level #[path] (macro body, `mod $i {{ ... }}`, inline module, function body, or macro argument) has a base directory determined by the expansion context, so this scanner rejects it: {}",
@@ -686,10 +701,12 @@ fn is_doc_attribute(tokens: &[SourceToken]) -> bool {
 // `visit` for every file `path` / `r#path` key followed by `=`. Shared by the edge
 // scanner and the candidate-marker test so a new attribute shape is handled by
 // both at once; a one-sided change would collect a file without scanning it,
-// or scan a file that was never collected as a candidate.
+// or scan a file that was never collected as a candidate. The third `visit`
+// argument is the `file_attribute` level, so a caller can tell which position
+// a key was found in (#1249) without a second walker drifting from this one.
 fn attribute_path_keys<'a>(
     tokens: &'a [SourceToken],
-    visit: &mut impl FnMut(&'a [SourceToken], usize),
+    visit: &mut impl FnMut(&'a [SourceToken], usize, bool),
 ) {
     attribute_path_keys_in(tokens, true, visit);
 }
@@ -697,7 +714,7 @@ fn attribute_path_keys<'a>(
 fn attribute_path_keys_in<'a>(
     tokens: &'a [SourceToken],
     file_attribute: bool,
-    visit: &mut impl FnMut(&'a [SourceToken], usize),
+    visit: &mut impl FnMut(&'a [SourceToken], usize, bool),
 ) {
     for (index, token) in tokens.iter().enumerate() {
         if matches!(token, SourceToken::Ident(word) if word == "path")
@@ -709,7 +726,7 @@ fn attribute_path_keys_in<'a>(
                 || matches!(tokens.get(index + 2), Some(SourceToken::Literal(value))
                     if plain_string_value(value).is_some()))
         {
-            visit(tokens, index);
+            visit(tokens, index, file_attribute);
         }
         if let SourceToken::Group { tokens: inner, .. } = token {
             let conditional = index > 0
@@ -717,6 +734,38 @@ fn attribute_path_keys_in<'a>(
             attribute_path_keys_in(inner, conditional, visit);
         }
     }
+}
+
+// #1249: the position a visited `path = ...` key was found in. `Conditional`
+// is attribute level - a direct `#[path]` or one a `cfg_attr(...)` applies,
+// where only cfg evaluation can settle the file. `MetadataLiteral` is a
+// literal key in a metadata position (`databake(path = "child.rs")`, also
+// under cfg_attr): the scanner cannot prove it does not name a source file,
+// so it is treated conservatively as a file edge. The workspace rejection
+// names the position it actually saw: before #1249 both positions shared the
+// conditional text and sent readers hunting for a cfg_attr that did not
+// exist.
+#[derive(Debug, PartialEq)]
+enum PathKeyKind {
+    Conditional,
+    MetadataLiteral,
+}
+
+// Attribute level wins over metadata: an attribute holding both positions
+// reports the stricter conditional reason, and a direct `#[path]` never
+// reaches the message at all (its first token is `path`).
+fn attribute_path_key_kind(tokens: &[SourceToken]) -> Option<PathKeyKind> {
+    let mut kind = None;
+    attribute_path_keys(tokens, &mut |_, _, file_attribute| {
+        if file_attribute || kind.is_none() {
+            kind = Some(if file_attribute {
+                PathKeyKind::Conditional
+            } else {
+                PathKeyKind::MetadataLiteral
+            });
+        }
+    });
+    kind
 }
 
 // Candidate test over the same token tree: `#` followed by a bracket group
@@ -749,7 +798,7 @@ fn attribute_names_path(tokens: &[SourceToken]) -> bool {
         return false;
     }
     let mut found = false;
-    attribute_path_keys(tokens, &mut |_, _| found = true);
+    attribute_path_keys(tokens, &mut |_, _, _| found = true);
     found
 }
 
@@ -855,6 +904,68 @@ mod tests {
             assert!(
                 lexemes_name_edge(&tokens),
                 "#132 nonliteral conditional paths must reach strict validation"
+            );
+        }
+    }
+
+    // #1249: a metadata literal path and a cfg_attr conditional path are two
+    // different rejections; the panic text is the only thing that tells a
+    // reader which shape tripped the scanner, so each names its own reason.
+    #[test]
+    fn workspace_rejections_name_their_actual_reason() {
+        let directory = manifest_dir().join("tests/common");
+        let file = directory.join("source_inputs.rs");
+        for (source, expected) in [
+            (
+                "#[cfg_attr(all(), custom(path = r#\"source_inputs.rs\"#))] mod renamed;",
+                "#1249 literal path attribute treated as a file edge",
+            ),
+            (
+                "#[databake(path = \"source_inputs.rs\")] mod renamed;",
+                "#1249 literal path attribute treated as a file edge",
+            ),
+            (
+                "#[cfg_attr(all(), path = concat!(\"x\", \".rs\"))] mod renamed;",
+                "#1166 conditional path attribute cannot be resolved statically",
+            ),
+            // #1249: the mixed shape - a metadata literal key first, then an
+            // attribute-level path key in the same attribute - must report the
+            // stricter conditional reason, not whichever key was visited first.
+            (
+                "#[cfg_attr(all(), databake(path = \"x.rs\"), path = \"source_inputs.rs\")] mod renamed;",
+                "#1166 conditional path attribute cannot be resolved statically",
+            ),
+            // #1249 r3: the same mixed shape with the visit order reversed -
+            // attribute-level path key first, metadata literal second - must
+            // still report the conditional reason, so the precedence cannot be
+            // an artifact of which key the walker happens to reach first or
+            // last.
+            (
+                "#[cfg_attr(all(), path = \"child.rs\", databake(path = \"x.rs\"))] mod renamed;",
+                "#1166 conditional path attribute cannot be resolved statically",
+            ),
+        ] {
+            let tokens = lex_source(source).expect("#1249 rejection fixture must lex");
+            let mut scanner = EdgeScanner {
+                package: "fixture",
+                directory: &directory,
+                file: &file,
+                targets: Vec::new(),
+                macro_depth: 0,
+                workspace: true,
+            };
+            let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                scanner.walk(&tokens, true, vec![directory.clone()]);
+            }))
+            .expect_err("#1249 workspace scanner must reject the fixture");
+            let message = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .expect("#1249 rejection carries a message");
+            assert!(
+                message.contains(expected),
+                "#1249 rejection names its actual reason: {source} -> {message}"
             );
         }
     }

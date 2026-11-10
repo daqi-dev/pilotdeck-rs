@@ -52,6 +52,12 @@ ASSEMBLY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
 # span both. FACTORY_TESTS carries the message the bound test asserts on.
 FACTORY = ROOT / 'src/pilotdeck-gateway/src/runtime/session/factory.rs'
 FACTORY_TESTS = ROOT / 'src/pilotdeck-gateway/src/runtime/session/factory_tests.rs'
+# #1874: the three-segment cold-write protocol the config, rename and status
+# callers share now lives in the runtime's transcript locks — each caller
+# passes its own live/cold closures in — so the lease-skip mutant anchors on
+# the helper every caller goes through. TRANSCRIPT_LOCKS joins SOURCE_TEXTS
+# below.
+TRANSCRIPT_LOCKS = ROOT / 'src/pilotdeck-gateway/src/runtime/session/transcript_locks.rs'
 LIVE = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
 # #1864 fix-r2: the host session tools' admission source — `turn()` writes
 # the stored selection back into `Permissions` *and* this turn's local
@@ -175,25 +181,27 @@ mutations = [
     # ── fix-r2 P0: a loaded session must be written *through* its recorder.
     # Bypassing the lookup sends the entry to a fresh writer on the same tail;
     # the loaded writer's next append then duplicates `sequence + 1` and the
-    # bound test's chain assertion must catch it.
+    # bound test's chain assertion must catch it. #1874 re-anchored the three
+    # rows on the callers' `live` closures — the lookup itself moved into the
+    # shared helper, so neutralising the closure's recorder lookup is the
+    # same bypass it always was.
     ('transcript-live-bypass-config', CONFIG,
-     '            if let Some((owner, recorder)) = super::super::assembly::live_recorder(&recorders, &key)\n'
-     '            {',
-     '            if let Some((owner, recorder)) = None::<(JsString, Arc<crate::storage::recorder::Recorder>)>\n'
-     '            {',
+     '                    super::super::assembly::live_recorder(&recorders, &key)',
+     '                    None::<(pilotdeck_protocol::JsString,'
+     ' std::sync::Arc<crate::storage::recorder::Recorder>)>',
      CFG + 'model_set_appends_through_the_loaded_writer',
      '#1457 the transcript still loads'),
     ('transcript-live-bypass-rename', SESSION_DIR,
-     '            if let Some((_owner, recorder)) = live {',
-     '            if let Some((_owner, recorder)) = None::<(JsString, Arc<crate::storage::recorder::Recorder>)> {',
+     '                    super::super::assembly::live_recorder(&recorders, &key_clone)',
+     '                    None::<(pilotdeck_protocol::JsString,'
+     ' std::sync::Arc<crate::storage::recorder::Recorder>)>',
      DIR + 'rename_appends_through_the_loaded_writer',
      '#1457 the transcript still loads'),
     # ── fix-r3: the status live branch and the cold writer lease.
     ('transcript-live-bypass-status', SESSION_DIR,
-     '        if let Some((_owner, recorder)) = live_recorder {',
-     '        if let Some((_owner, recorder)) =\n'
-     '            None::<(JsString, Arc<crate::storage::recorder::Recorder>)>\n'
-     '        {',
+     '                    super::super::assembly::live_recorder(&recorders, &session_key)',
+     '                    None::<(pilotdeck_protocol::JsString,'
+     ' std::sync::Arc<crate::storage::recorder::Recorder>)>',
      DIR + 'status_appends_through_the_loaded_writer',
      '#1457 the transcript still loads'),
     # ── #1860: hydration itself must hold the fence across
@@ -214,13 +222,310 @@ mutations = [
      '            drop(_write_fence);',
      FT + 'hydration_holds_the_transcript_fence_until_the_recorder_is_published',
      '#1860 hydrate holds the transcript fence until the recorder is published'),
-    ('transcript-cold-lease-skipped', SESSION_DIR,
-     '            let Some(_lease) = transcript_locks::cold_write_lease(&storage.transcript_path) else {\n'
-     '                // #1457 fix-r3: a session claimed the transcript after the',
-     '            let Some(_lease) = Some::<()>(()) else {\n'
-     '                // #1457 fix-r3: a session claimed the transcript after the',
+    # ── #1874: the cold-write lease now lives once in the shared helper. One
+    # anchor, one mutation, three rows — the bound test is what says which
+    # caller's busy answer the skipped lease took away. Skipping the lease
+    # lets the cold append run beside the holder and the bound expect_err
+    # dies on a success.
+    ('transcript-cold-lease-skipped', TRANSCRIPT_LOCKS,
+     '    let Some(_lease) = cold_write_lease(&storage.transcript_path)? else {\n'
+     '        // A session claimed the transcript between the lookup and here.',
+     '    let Some(_lease) = Ok::<_, RequestError>(Some::<()>(()))? else {\n'
+     '        // A session claimed the transcript between the lookup and here.',
      DIR + 'cold_metadata_write_reports_busy_while_a_session_holds_the_lease',
      '#1457 a cold append must not run beside a session that owns the writer'),
+    ('transcript-cold-lease-skipped-status', TRANSCRIPT_LOCKS,
+     '    let Some(_lease) = cold_write_lease(&storage.transcript_path)? else {\n'
+     '        // A session claimed the transcript between the lookup and here.',
+     '    let Some(_lease) = Ok::<_, RequestError>(Some::<()>(()))? else {\n'
+     '        // A session claimed the transcript between the lookup and here.',
+     DIR + 'status_cold_write_reports_busy_while_a_session_holds_the_lease',
+     '#1873 a cold status append must not run beside a session that owns the writer'),
+    ('transcript-cold-lease-skipped-config', TRANSCRIPT_LOCKS,
+     '    let Some(_lease) = cold_write_lease(&storage.transcript_path)? else {\n'
+     '        // A session claimed the transcript between the lookup and here.',
+     '    let Some(_lease) = Ok::<_, RequestError>(Some::<()>(()))? else {\n'
+     '        // A session claimed the transcript between the lookup and here.',
+     CFG + 'model_set_cold_write_reports_busy_while_a_session_holds_the_lease',
+     '#1874 a cold model-set append must not run beside a session that owns the writer'),
+    # ── #1874: each caller's live closure must use the checked append — a
+    # writer that closed under the request is an error, not a silent no-op
+    # reported as success. Reverting one caller to the unchecked form makes
+    # its closed-writer test's expect_err die on a success.
+    ('model-set-checked-append-reverted', CONFIG,
+     '                    .record_session_metadata_checked(&key, &turn, entry.clone())',
+     '                    .record_session_metadata(&key, &turn, entry.clone())',
+     CFG + 'model_set_reports_a_closed_writer_as_an_error',
+     '#1874 a closed session writer is an error, not a silent save'),
+    ('rename-checked-append-reverted', SESSION_DIR,
+     '                    .record_session_metadata_checked(&key_clone, &turn_id, entry.clone())',
+     '                    .record_session_metadata(&key_clone, &turn_id, entry.clone())',
+     DIR + 'rename_reports_a_closed_writer_as_an_error',
+     '#1874 a closed session writer is an error, not a silent rename'),
+    ('status-checked-append-reverted', SESSION_DIR,
+     '                    .record_agent_status_message_checked(&session_key, &turn_id, &status)',
+     '                    .record_agent_status_message(&session_key, &turn_id, &status)',
+     DIR + 'status_reports_a_closed_writer_as_an_error',
+     '#1874 a closed session writer is an error, not a recorded status'),
+    # ── #1873 P2: `try_writer_lease` must not fold storage failures into the
+    # retryable busy answer. Reverting to the pre-fix fold makes the broken
+    # lock request answer SESSION_WRITER_BUSY, and the bound test's code
+    # assertion dies on exactly that.
+    ('writer-lease-folded-to-busy', FACTORY,
+     '        Err(crate::storage::LedgerError::Io(ref io))\n'
+     '            if io.kind() == std::io::ErrorKind::WouldBlock =>\n'
+     '        {\n'
+     '            return Ok(None);\n'
+     '        }\n'
+     '        Err(e) => return Err(RuntimeError::new(e.to_string())),',
+     '        Err(crate::storage::LedgerError::Io(ref io))\n'
+     '            if io.kind() == std::io::ErrorKind::WouldBlock =>\n'
+     '        {\n'
+     '            return Ok(None);\n'
+     '        }\n'
+     '        Err(_) => return Ok(None),',
+     DIR + 'status_cold_write_surfaces_a_broken_lock_file_as_an_error',
+     '#1873 a broken lock file is a storage error, not the retryable busy answer'),
+    # ── #1872: the alias-key busy gate. Reverting the owner-side check to the
+    # pre-fix request-key-only shape lets the request through; it appends
+    # through the owner's recorder and the close aborts the running turn, so
+    # the bound test's expect_err dies on a success.
+    ('set-alias-owner-busy-removed', CONFIG,
+     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
+     '            && (self.owner.has_active_turn(key)\n'
+     '                || trimmed_string_is_non_empty(key)\n'
+     '                    && owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
+     '        {',
+     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
+     '            && self.owner.has_active_turn(key)\n'
+     '        {',
+     CFG + 'session_model_set_rejects_active_turn_on_alias_owner',
+     '#1872 session_model_set is busy on the alias owner'),
+    # ── #1872 fix-r2: the owner-side blank-key arm of the same gate. TS's
+    # busy gate consults the request spelling alone, so a blank request key
+    # that folds onto the `session` transcript must reach the port write's
+    # sessionKey gate; removing the `trimmed_string_is_non_empty(key)`
+    # conjunct lets the owner-side check fire first and the bound test dies
+    # on the SESSION_BUSY answer instead of the sessionKey gate's. The
+    # anchor is the test's own assert label — the expect_err message never
+    # reaches the panic payload on this path (cb8 sample r1 INVALID).
+    ('set-busy-gate-blank-key-guard-removed', CONFIG,
+     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
+     '            && (self.owner.has_active_turn(key)\n'
+     '                || trimmed_string_is_non_empty(key)\n'
+     '                    && owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
+     '        {',
+     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
+     '            && (self.owner.has_active_turn(key)\n'
+     '                || owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
+     '        {',
+     CFG + 'session_model_set_blank_key_answers_the_session_key_gate',
+     '#1872 the blank key is a sessionKey error'),
+    # ── #1872 fix-r2: the request-side arm for a blank key. TS answers
+    # SESSION_BUSY for a turn held on the blank spelling itself (probe B),
+    # so the request-side check must stay live; reverting to the fix-r1
+    # whole-gate skip makes the bound test see INVALID_SESSION_KEY instead
+    # of the busy code.
+    ('set-blank-key-busy-reverted-to-gate-skip', CONFIG,
+     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
+     '            && (self.owner.has_active_turn(key)\n'
+     '                || trimmed_string_is_non_empty(key)\n'
+     '                    && owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
+     '        {',
+     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
+     '            && trimmed_string_is_non_empty(key)\n'
+     '            && (self.owner.has_active_turn(key)\n'
+     '                || owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
+     '        {',
+     CFG + 'session_model_set_reports_busy_for_a_turn_held_on_the_blank_key',
+     '#1872 the blank key answers busy'),
+    # ── #1872 fix-r2 arbitration of the DS P1: the real TS wiring runs
+    # hasActiveTurn on the raw request key before the callback's sessionKey
+    # gate (probe C), so permission needs no blank-key guard — this mutant
+    # is the reviewed-away shape, and the bound test dies on the
+    # INVALID_SESSION_KEY answer instead of the busy code.
+    ('permission-blank-key-busy-skipped', CONFIG,
+     '        if let Some(JsValue::String(key)) = params.get("sessionKey")\n'
+     '            && self.owner.has_active_turn(key)\n'
+     '        {\n'
+     '            return Err(gateway_error(\n'
+     '                "SESSION_BUSY",\n'
+     '                "Cannot change permission mode during an active turn.",\n'
+     '            ));\n'
+     '        }',
+     '        if let Some(JsValue::String(key)) = params.get("sessionKey")\n'
+     '            && trimmed_string_is_non_empty(key)\n'
+     '            && self.owner.has_active_turn(key)\n'
+     '        {\n'
+     '            return Err(gateway_error(\n'
+     '                "SESSION_BUSY",\n'
+     '                "Cannot change permission mode during an active turn.",\n'
+     '            ));\n'
+     '        }',
+     CFG + 'set_permission_mode_reports_busy_for_a_turn_held_on_the_blank_key',
+     '#1872 the blank key answers busy for permission'),
+    # ── #1872 fix-r2: clear answers the sessionKey gate first — TS's
+    # sessionModelClear runs requireSessionKey before hasActiveTurn. The
+    # mutant weakens the require to a blank default, so the busy gate (with
+    # a live blank-spelling turn) answers SESSION_BUSY and the bound test
+    # dies on the INVALID_SESSION_KEY assert.
+    ('clear-blank-key-require-weakened', CONFIG,
+     '        let session_key = require_session_key(params)?;\n'
+     '        if self.owner.has_active_turn(&session_key)\n'
+     '            || owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n'
+     '        {',
+     '        let session_key = require_session_key(params).unwrap_or_default();\n'
+     '        if self.owner.has_active_turn(&session_key)\n'
+     '            || owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n'
+     '        {',
+     CFG + 'session_model_clear_blank_key_answers_the_session_key_gate',
+     '#1872 the blank key is a sessionKey error on clear'),
+    # ── #1872 fix-r4: the owner-side reservation skip for a blank request
+    # key. The owner stays resolved (the busy gate inside keeps its own
+    # blank-key guard live); dropping the `owner_reserved` conjunct
+    # reserves the folded owner spelling for a request TS rejects as
+    # INVALID_SESSION_KEY, so a busy reservation under that owner answers
+    # SESSION_BUSY and the bound test dies on the sessionKey-gate assert.
+    ('set-blank-key-owner-reservation-restored', CONFIG,
+     '        let reserved_key = params.get("sessionKey").and_then(JsValue::as_string);\n'
+     '        let owner = self.live_transcript_owner(reserved_key);\n'
+     '        let owner_reserved = matches!(\n'
+     '            (&owner, reserved_key),\n'
+     '            (Some(owner), Some(key)) if owner != key && trimmed_string_is_non_empty(key)\n'
+     '        );\n'
+     '        let owner_guard = self\n'
+     '            .replacement\n'
+     '            .reserve_transcript_write_held(\n'
+     '                if owner_reserved { owner.as_ref() } else { None },\n'
+     '                "change the session model",\n'
+     '            )\n'
+     '            .map_err(replacement_error)?;',
+     '        let reserved_key = params.get("sessionKey").and_then(JsValue::as_string);\n'
+     '        let owner = self.live_transcript_owner(reserved_key);\n'
+     '        let owner_reserved = matches!(\n'
+     '            (&owner, reserved_key),\n'
+     '            (Some(owner), Some(key)) if owner != key\n'
+     '        );\n'
+     '        let owner_guard = self\n'
+     '            .replacement\n'
+     '            .reserve_transcript_write_held(\n'
+     '                if owner_reserved { owner.as_ref() } else { None },\n'
+     '                "change the session model",\n'
+     '            )\n'
+     '            .map_err(replacement_error)?;',
+     CFG + 'session_model_set_blank_key_ignores_a_busy_owner_reservation',
+     '#1872 the blank key is a sessionKey error despite a busy owner reservation'),
+    # ── #1872 fix-r4: the clear twin of the owner-reservation skip.
+    ('clear-blank-key-owner-reservation-restored', CONFIG,
+     '        let reserved_key = params.get("sessionKey").and_then(JsValue::as_string);\n'
+     '        let owner = self.live_transcript_owner(reserved_key);\n'
+     '        let owner_reserved = matches!(\n'
+     '            (&owner, reserved_key),\n'
+     '            (Some(owner), Some(key)) if owner != key && trimmed_string_is_non_empty(key)\n'
+     '        );\n'
+     '        let owner_guard = self\n'
+     '            .replacement\n'
+     '            .reserve_transcript_write_held(\n'
+     '                if owner_reserved { owner.as_ref() } else { None },\n'
+     '                "clear the session model",\n'
+     '            )\n'
+     '            .map_err(replacement_error)?;',
+     '        let reserved_key = params.get("sessionKey").and_then(JsValue::as_string);\n'
+     '        let owner = self.live_transcript_owner(reserved_key);\n'
+     '        let owner_reserved = matches!(\n'
+     '            (&owner, reserved_key),\n'
+     '            (Some(owner), Some(key)) if owner != key\n'
+     '        );\n'
+     '        let owner_guard = self\n'
+     '            .replacement\n'
+     '            .reserve_transcript_write_held(\n'
+     '                if owner_reserved { owner.as_ref() } else { None },\n'
+     '                "clear the session model",\n'
+     '            )\n'
+     '            .map_err(replacement_error)?;',
+     CFG + 'session_model_clear_blank_key_ignores_a_busy_owner_reservation',
+     '#1872 the blank key is a sessionKey error on clear despite a busy owner reservation'),
+    # ── #1872 fix-r4: permission's blank key with no turn must reach the
+    # sessionKey gate. Weakening the require to a blank default returns Ok,
+    # so the bound test dies at its expect_err — whose message is the
+    # anchor itself; an Ok never reaches the assert labels (cb8 r5
+    # INVALID, DS fix-r3 sibling#2).
+    ('permission-blank-key-require-weakened', CONFIG,
+     '        let session_key = require_session_key(params)?;\n'
+     '        let mode = match mode.as_string() {',
+     '        let session_key = require_session_key(params).unwrap_or_default();\n'
+     '        let mode = match mode.as_string() {',
+     CFG + 'set_permission_mode_blank_key_answers_the_session_key_gate',
+     '#1872 the blank key is a sessionKey error for permission'),
+    ('clear-alias-owner-busy-removed', CONFIG,
+     '        if self.owner.has_active_turn(&session_key)\n'
+     '            || owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n'
+     '        {',
+     '        if self.owner.has_active_turn(&session_key) {',
+     CFG + 'session_model_clear_rejects_active_turn_on_alias_owner',
+     '#1872 session_model_clear is busy on the alias owner'),
+    # ── #1872: the owner-side transcript-write reservation itself. Without it
+    # the check→append→close window admits a turn on the owner's own key —
+    # the bound test polls the reservation table while the request is parked
+    # on the transcript fence and dies when the owner's key never shows up.
+    ('set-alias-owner-reservation-skipped', CONFIG,
+     '        let owner_guard = self\n'
+     '            .replacement\n'
+     '            .reserve_transcript_write_held(\n'
+     '                if owner_reserved { owner.as_ref() } else { None },\n'
+     '                "change the session model",\n'
+     '            )\n'
+     '            .map_err(replacement_error)?;',
+     '        let owner_guard = self\n'
+     '            .replacement\n'
+     '            .reserve_transcript_write_held(\n'
+     '                if false { owner.as_ref() } else { None },\n'
+     '                "change the session model",\n'
+     '            )\n'
+     '            .map_err(replacement_error)?;',
+     CFG + 'session_model_set_holds_the_owner_reservation_through_the_write',
+     '#1872 the owner and alias reservations are held while the write is parked'),
+    ('clear-alias-owner-reservation-skipped', CONFIG,
+     '        let owner_guard = self\n'
+     '            .replacement\n'
+     '            .reserve_transcript_write_held(\n'
+     '                if owner_reserved { owner.as_ref() } else { None },\n'
+     '                "clear the session model",\n'
+     '            )\n'
+     '            .map_err(replacement_error)?;',
+     '        let owner_guard = self\n'
+     '            .replacement\n'
+     '            .reserve_transcript_write_held(\n'
+     '                if false { owner.as_ref() } else { None },\n'
+     '                "clear the session model",\n'
+     '            )\n'
+     '            .map_err(replacement_error)?;',
+     CFG + 'session_model_clear_holds_the_owner_reservation_through_the_write',
+     '#1872 the clear-side owner and alias reservations are held while the write is parked'),
+    # ── #1872: the fallback arm of close_model_selection_owner — the owner
+    # first seen by the append itself, published while the request was in
+    # flight, so the wrapper holds no reservation for it. Removing its
+    # has_active_turn recheck makes the close abort the admitted turn, and
+    # the bound test dies on a success instead of the busy error.
+    ('close-owner-fallback-busy-skipped', CONFIG,
+     '        if self.owner.has_active_turn(target) {\n'
+     '            self.replacement.release_transcript_write(target);\n'
+     '            return Err(gateway_error("SESSION_BUSY", busy_message));\n'
+     '        }',
+     '        if false {\n'
+     '            self.replacement.release_transcript_write(target);\n'
+     '            return Err(gateway_error("SESSION_BUSY", busy_message));\n'
+     '        }',
+     CFG + 'close_model_selection_owner_reports_busy_for_an_owner_seen_by_the_append',
+     '#1872 the fallback reports the admitted turn as busy'),
+    # ── #1872: the close target. Folding the owner spelling back to the
+    # request spelling leaves the owner session cached and serving the old
+    # selection; the bound test dies on its current_handle assertion.
+    ('set-closes-owner-target-reverted', CONFIG,
+     '        let target = loaded.unwrap_or(session_key);',
+     '        let target = session_key;',
+     CFG + 'model_set_closes_the_owner_spelling_of_an_alias_request',
+     '#1872 the close targeted the owner spelling, not the request spelling'),
     ('seed-mtime-wiring', CONFIG,
      '.seed_read_state(&path, mtime)',
      '.seed_read_state(&path, 0.0)',
@@ -533,6 +838,19 @@ LITERAL_ANCHORS = [
     (CONFIG, '#1457 exact mtime applies'),
     (CONFIG, '#1457 busy message'),
     (CONFIG, '#1457 clear busy message'),
+    (CONFIG, '#1872 session_model_set is busy on the alias owner'),
+    (CONFIG, '#1872 session_model_clear is busy on the alias owner'),
+    (CONFIG, '#1872 the owner and alias reservations are held while the write is parked'),
+    (CONFIG, '#1872 the clear-side owner and alias reservations are held while the write is parked'),
+    (CONFIG, '#1872 the blank key is a sessionKey error'),
+    (CONFIG, '#1872 the blank key answers busy'),
+    (CONFIG, '#1872 the blank key answers busy for permission'),
+    (CONFIG, '#1872 the blank key is a sessionKey error on clear'),
+    (CONFIG, '#1872 the blank key is a sessionKey error despite a busy owner reservation'),
+    (CONFIG, '#1872 the blank key is a sessionKey error on clear despite a busy owner reservation'),
+    (CONFIG, '#1872 the blank key is a sessionKey error for permission'),
+    (CONFIG, '#1872 the fallback reports the admitted turn as busy'),
+    (CONFIG, '#1872 the close targeted the owner spelling, not the request spelling'),
     (CONFIG, '#1457 pm busy message'),
     (CONFIG, '#1457 th busy message'),
     (CONFIG, '#1457 style busy message'),
@@ -545,6 +863,12 @@ LITERAL_ANCHORS = [
     (CONFIG, '#1864 the list echoes the stored selection for the session'),
     (SESSION_DIR, '#1457 the transcript still loads'),
     (SESSION_DIR, '#1457 a cold append must not run beside a session that owns the writer'),
+    (SESSION_DIR, '#1873 a cold status append must not run beside a session that owns the writer'),
+    (CONFIG, '#1874 a cold model-set append must not run beside a session that owns the writer'),
+    (CONFIG, '#1874 a closed session writer is an error, not a silent save'),
+    (SESSION_DIR, '#1874 a closed session writer is an error, not a silent rename'),
+    (SESSION_DIR, '#1874 a closed session writer is an error, not a recorded status'),
+    (SESSION_DIR, '#1873 a broken lock file is a storage error, not the retryable busy answer'),
     (SESSION_DIR, '#1455 resume_session rejects the blank key'),
     (SESSION_DIR, '#1455 resume_session accepts the surrogate key'),
     (SESSION_DIR, '#2083 the surrogate projectKey reaches the capability gate'),
@@ -570,7 +894,7 @@ LITERAL_ANCHORS = [
 # scan does not read would be a guard with a blind spot.
 SOURCE_TEXTS = (CONFIG, SESSION_DIR, METHODS_MOD, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS,
                 REVIEW_TESTS, FACTORY, FACTORY_TESTS, REQUESTS, SERVICES,
-                MANAGEMENT_TESTS, CRON, CRON_TESTS)
+                MANAGEMENT_TESTS, CRON, CRON_TESTS, TRANSCRIPT_LOCKS)
 
 
 def _assertions(case):

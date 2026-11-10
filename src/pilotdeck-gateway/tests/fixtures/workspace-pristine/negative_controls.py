@@ -50,7 +50,7 @@ cases = [
      'WorkspacePristine.test_module_path_metadata_is_not_a_file_edge',
      '#132 module path metadata must preserve source discovery'),
     ('string-path-edge-dropped', SCANNER,
-     '            visit(tokens, index);', '            if false { visit(tokens, index); }',
+     '            visit(tokens, index, file_attribute);', '            if false { visit(tokens, index, file_attribute); }',
      'WorkspacePristine.test_string_path_attributes_remain_file_edges',
      '#132 string path attributes must retain the exact file edge'),
     ('conditional-path-context-dropped', SCANNER,
@@ -62,7 +62,42 @@ cases = [
      'if plain_string_value(value).is_some()))',
      'if false && plain_string_value(value).is_some()))',
      'WorkspacePristine.test_metadata_string_paths_remain_rejected',
-     '#132 metadata string paths must retain conditional rejection'),
+     '#1249 metadata string paths must report their own rejection'),
+    # #1249: a metadata literal path and a cfg_attr conditional path are two
+    # different rejections, and the bound tests must be able to tell them
+    # apart from the failure text alone. The first row swaps the metadata
+    # arm back to the conditional message (the pre-#1249 copy-paste slip the
+    # issue was filed for); the second drops the fail-closed assert entirely,
+    # so the metadata edge resolves to the decoy file and no rejection
+    # reaches the bound test at all. The third mirrors the first onto the
+    # conditional arm: classification is untouched and only the text is wrong,
+    # so only the conditional test's message assertion can catch the merge.
+    ('metadata-path-message-merged-back', SCANNER,
+     'PathKeyKind::MetadataLiteral => {\n                        "#1249 literal path attribute treated as a file edge"\n                    }',
+     'PathKeyKind::MetadataLiteral => {\n                        "#1166 conditional path attribute cannot be resolved statically"\n                    }',
+     'WorkspacePristine.test_metadata_string_paths_remain_rejected',
+     '#1249 metadata string paths must report their own rejection'),
+    ('metadata-path-rejection-accepted', SCANNER,
+     'if self.workspace\n            && let Some(kind) = attribute_path_key_kind(tokens)\n        {',
+     'if false && self.workspace\n            && let Some(kind) = attribute_path_key_kind(tokens)\n        {',
+     'WorkspacePristine.test_metadata_string_paths_remain_rejected',
+     '#1249 metadata string paths must report their own rejection'),
+    ('conditional-path-message-merged-back', SCANNER,
+     'PathKeyKind::Conditional => {\n                        "#1166 conditional path attribute cannot be resolved statically"\n                    }',
+     'PathKeyKind::Conditional => {\n                        "#1249 literal path attribute treated as a file edge"\n                    }',
+     'WorkspacePristine.test_conditional_nonliteral_paths_remain_rejected',
+     '#132 conditional nonliteral paths must fail closed'),
+    # #1249 r2: the attribute-over-metadata precedence itself. Dropping the
+    # file_attribute term leaves the first-visited kind in place, so a mixed
+    # attribute (metadata literal key first, attribute-level path key second)
+    # flips from the conditional rejection to the metadata text - the exact
+    # mirror of the issue. Single-kind shapes keep their classification under
+    # this mutant, so the kill rides on the mixed shape the bound test commits.
+    ('attribute-kind-priority-dropped', SCANNER,
+     '        if file_attribute || kind.is_none() {',
+     '        if kind.is_none() {',
+     'WorkspacePristine.test_conditional_nonliteral_paths_remain_rejected',
+     '#132 conditional nonliteral paths must fail closed'),
     ('model-factory-cargo-env-omitted', MODEL_FACTORY,
      'cwd=root, env=env, timeout=100', 'cwd=root, timeout=100',
      'RunnerTargets.test_model_factory_target_admission', '#1166 model-factory runner shares the admissible target'),

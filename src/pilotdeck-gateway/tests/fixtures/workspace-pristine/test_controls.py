@@ -485,27 +485,46 @@ class WorkspacePristine(unittest.TestCase):
 
     def test_conditional_nonliteral_paths_remain_rejected(self):
         for key in ('path', 'r#path'):
-            failure = None
-            try:
-                self.commit_source(f'#[cfg_attr(all(), {key} = concat!("x", ".rs"))] mod child;',
-                                   {'src/pilotdeck-cli/src/child.rs': '// default decoy'})
-                api._workspace_literal_inputs(self.root, 'HEAD')
-            except api.SourceBaselineError as error:
-                failure = str(error)
-            self.assertTrue(failure is not None and 'conditional path attribute' in failure,
-                            '#132 conditional nonliteral paths must fail closed')
+            # #1249: a conditional path attribute must keep its own rejection
+            # in every shape that resolves to it: the plain nonliteral value,
+            # and the mixed attribute in either visit order - metadata literal
+            # path first or attribute-level path key first - so the precedence
+            # cannot depend on which key the walker reaches first or last.
+            for source in (f'#[cfg_attr(all(), {key} = concat!("x", ".rs"))] mod child;',
+                           f'#[cfg_attr(all(), databake(path = "x.rs"), {key} = "child.rs")] mod child;',
+                           f'#[cfg_attr(all(), {key} = "child.rs", databake(path = "x.rs"))] mod child;'):
+                with self.subTest(key=key, source=source):
+                    failure = None
+                    try:
+                        self.commit_source(source,
+                                           {'src/pilotdeck-cli/src/child.rs': '// default decoy'})
+                        api._workspace_literal_inputs(self.root, 'HEAD')
+                    except api.SourceBaselineError as error:
+                        failure = str(error)
+                    self.assertTrue(failure is not None and 'conditional path attribute' in failure
+                                    and 'literal path attribute' not in failure,
+                                    '#132 conditional nonliteral paths must fail closed')
 
     def test_metadata_string_paths_remain_rejected(self):
         for key in ('path', 'r#path'):
-            failure = None
-            try:
-                self.commit_source(f'#[cfg_attr(all(), custom({key} = r#"child.rs"#))] mod child;',
-                                   {'src/pilotdeck-cli/src/child.rs': '// default decoy'})
-                api._workspace_literal_inputs(self.root, 'HEAD')
-            except api.SourceBaselineError as error:
-                failure = str(error)
-            self.assertTrue(failure is not None and 'conditional path attribute' in failure,
-                            '#132 metadata string paths must retain conditional rejection')
+            # #1249: a metadata literal path nests either directly inside a
+            # plain attribute or inside cfg_attr; both positions are file
+            # edges, so both rejections must say so and neither may reuse the
+            # cfg_attr message.
+            for source in (f'#[databake({key} = r#"child.rs"#)] mod child;',
+                           f'#[cfg_attr(all(), custom({key} = r#"child.rs"#))] mod child;'):
+                with self.subTest(key=key, source=source):
+                    failure = None
+                    try:
+                        self.commit_source(source,
+                                           {'src/pilotdeck-cli/src/child.rs': '// default decoy'})
+                        api._workspace_literal_inputs(self.root, 'HEAD')
+                    except api.SourceBaselineError as error:
+                        failure = str(error)
+                    self.assertTrue(failure is not None
+                                    and 'literal path attribute treated as a file edge' in failure
+                                    and 'conditional path attribute' not in failure,
+                                    '#1249 metadata string paths must report their own rejection')
 
     def test_attribute_data_inputs_are_guarded(self):
         self.commit_source('#[doc = include_str!("../../../assets/doc.md")] fn documented() {}',

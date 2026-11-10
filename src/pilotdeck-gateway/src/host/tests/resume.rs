@@ -155,11 +155,36 @@ async fn execute(
 ) {
     let (command, receipt) = peer(mode);
     let handler = ResumeHandler::new(mode, &receipt);
-    let client = HostClient::spawn_resumable(command, Some(&"fixture".into()), limits)
-        .await
-        .unwrap();
+    let client = crate::test_negative_receipt::expect_ok(
+        HostClient::spawn_resumable(command, Some(&"fixture".into()), limits).await,
+        // #1891: receipt-wired spawn failure; the failure point and the
+        // pass/fail condition are unchanged — the label only makes the
+        // negative-control shrink mutant observable by name.
+        "#1891 resume peer spawn failed",
+    );
     let result = client.execute(request(), handler.clone()).await;
     (result, handler, receipt)
+}
+/// #1891: liveness margins for the reconnect fixtures that answer — the same
+/// (60 s, 120 s) form the #1851 relaxation already uses for the
+/// `rejected_resume_or_replacement_handshake` modes below. Every spawn here
+/// is a real Python peer, and the reconnect path pays Python startup twice;
+/// the old `limits()` 2 s handshake / 2 s execution were wall-clock bets on
+/// host scheduling, not replay semantics under test. `close_timeout` and the
+/// byte/queue fields keep their original values, and the one mode that must
+/// lose to a deadline (`reconnect-handshake-timeout`) keeps its own tight
+/// Limits below.
+fn liveness_limits() -> Limits {
+    Limits {
+        // The handshake line stays explicit even though `limits()` already
+        // grants the same 60 s: it is the anchor site of the
+        // `resume-liveness-shrunk` negative-control row, and that row's kill
+        // runs through the spawn-failure receipt label above — shrinking the
+        // execution field instead would not fail the spawn.
+        handshake_timeout: Duration::from_secs(60),
+        execution_timeout: Some(Duration::from_secs(120)),
+        ..limits()
+    }
 }
 
 #[tokio::test]
@@ -169,7 +194,7 @@ async fn resume_sends_accepted_cursor_and_replays_from_next_sequence() {
         ("reconnect-terminal", 3, 1.0),
         ("reconnect-observer-panic", 3, 0.0),
     ] {
-        let (result, handler, receipt) = execute(mode, limits()).await;
+        let (result, handler, receipt) = execute(mode, liveness_limits()).await;
         assert!(
             matches!(result, Ok(ExecuteResult::Terminal(_))),
             "{mode}: {result:?}"
@@ -219,7 +244,7 @@ async fn first_replayed_event_must_be_exactly_next_sequence_like_ts() {
     // TS client:889-892 has no replay overlap tolerance: next - 1 and next + 1
     // both fail closed with the same message.
     for (mode, got) in [("reconnect-duplicate", 0), ("reconnect-gap", 2)] {
-        let (result, handler, receipt) = execute(mode, limits()).await;
+        let (result, handler, receipt) = execute(mode, liveness_limits()).await;
         let error = result.unwrap_err();
         assert_eq!(error.kind, HostErrorKind::Protocol, "{mode}: {error}");
         assert!(
@@ -254,9 +279,11 @@ async fn resume_replays_cached_or_pending_module_response_without_repeating_effe
                 // the final event; keep this whole-flow watchdog wide enough that a
                 // loaded host never decides the result (#560). Test-only: production
                 // `Limits::default().execution_timeout` is `None` (no local watchdog, #554).
+                // #1891: the handshake and execution clocks both come from
+                // `liveness_limits` (60 s / 120 s) — fix-r1 dropped a local
+                // 60 s override that silently narrowed the inherited 120 s.
                 close_timeout: Duration::from_millis(500),
-                execution_timeout: Some(Duration::from_secs(60)),
-                ..limits()
+                ..liveness_limits()
             },
         )
         .await;
@@ -295,9 +322,9 @@ async fn resume_is_not_attempted_before_acceptance_or_without_capability_or_prov
         let (mut command, receipt) = peer(mode);
         let handler = ResumeHandler::new(mode, &receipt);
         let client = if mode == "reconnect-no-provider" {
-            HostClient::spawn(&mut command, None, limits()).await
+            HostClient::spawn(&mut command, None, liveness_limits()).await
         } else {
-            HostClient::spawn_resumable(command, None, limits()).await
+            HostClient::spawn_resumable(command, None, liveness_limits()).await
         }
         .unwrap();
         let error = client
@@ -370,7 +397,10 @@ async fn reconnect_retains_callback_cache_in_the_same_byte_budget() {
             Limits {
                 max_frame_bytes: 8000,
                 max_buffered_bytes: 18000,
-                ..limits()
+                // #1891: the budget stays the limit under test; the handshake
+                // and execution clocks are liveness margins (see
+                // `liveness_limits`).
+                ..liveness_limits()
             },
         )
         .await;
@@ -408,24 +438,14 @@ async fn reconnect_preserves_command_environment_clear_removals_and_cwd() {
         .env_remove("HOST_REPLAY_REMOVE")
         .current_dir(receipt.0.parent().unwrap());
     let handler = ResumeHandler::new(mode, &receipt);
-    let client = HostClient::spawn_resumable(
-        command,
-        None,
-        Limits {
-            // Two independent clocks, both test-only. `handshake_timeout` bounds
-            // the initial hello/capabilities exchange (mod.rs:422-424) and the
-            // post-reconnect handshake (recovery.rs:55); the recorded load
-            // failures for this test are exactly that bound expiring on Python
-            // startup (s4.log:1159, s7.log:1159), so it must be widened too.
-            // `execution_timeout` only starts at execute (execution.rs:134) and
-            // bounds the rest of the flow. Production keeps its own defaults.
-            handshake_timeout: Duration::from_secs(20),
-            execution_timeout: Some(Duration::from_secs(20)),
-            ..limits()
-        },
-    )
-    .await
-    .unwrap();
+    // #1891 fix-r1: the recorded load failures for this test were exactly the
+    // handshake bound expiring on Python startup (s4.log:1159, s7.log:1159);
+    // this block kept a local 20 s/20 s pair while every other answering
+    // reconnect mode in this file moved to `liveness_limits`, so it joins them
+    // (nothing else here is a limit under test).
+    let client = HostClient::spawn_resumable(command, None, liveness_limits())
+        .await
+        .unwrap();
     let result = client.execute(request(), handler.clone()).await;
     assert!(
         matches!(result, Ok(ExecuteResult::Terminal(_))),
@@ -461,7 +481,7 @@ async fn successful_resume_never_observes_failure_or_retries_after_bad_replay() 
             "stdout closed",
         ),
     ] {
-        let (result, handler, receipt) = execute(mode, limits()).await;
+        let (result, handler, receipt) = execute(mode, liveness_limits()).await;
         let error = result.unwrap_err();
         assert_eq!(error.kind, kind, "{mode}: {error}");
         assert!(error.message.contains(expected), "{mode}: {error}");
@@ -484,17 +504,12 @@ async fn successful_resume_never_observes_failure_or_retries_after_bad_replay() 
 #[tokio::test]
 async fn coalesced_ack_cumulative_cleanup_slow_pipe_disconnect_and_resume_are_lossless() {
     let mode = "reconnect-ack-coalesced";
-    let (result, handler, receipt) = execute(
-        mode,
-        Limits {
-            // Same reconnect + 2 MiB cached-response path as #560 above; keep the
-            // whole-flow watchdog wide enough that a loaded host never decides the
-            // result. Test-only.
-            execution_timeout: Some(Duration::from_secs(60)),
-            ..limits()
-        },
-    )
-    .await;
+    // Same reconnect + 2 MiB cached-response path as #560 above; keep the
+    // whole-flow watchdog wide enough that a loaded host never decides the
+    // result. Test-only. #1891: the handshake and execution clocks both
+    // come from `liveness_limits` — fix-r1 dropped a local 60 s override
+    // that silently narrowed the inherited 120 s.
+    let (result, handler, receipt) = execute(mode, liveness_limits()).await;
     assert!(
         matches!(result, Ok(ExecuteResult::Terminal(_))),
         "{result:?}"

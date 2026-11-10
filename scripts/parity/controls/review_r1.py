@@ -237,14 +237,18 @@ class ReviewControls(unittest.TestCase):
                 self.assertFalse(result['ok'])
                 self.assertIsInstance(result['error'], str)
                 self.assertIn(expected_errors[name], result['error'])
-                # Main must emit a failed JSON report and exit 1 too.
-                argv = ['check_ruler.py', '--self-compare', str(path), '--json', str(self.root / 'check.json')]
+                # Main must emit a failed JSON report and exit 1 too. #2398
+                # fix-r1: every subTest gets its own --json path — the result
+                # file is created exclusively, so a shared path would make the
+                # second subTest die on "already exists" before asserting.
+                report_path = self.root / (name + '.check.json')
+                argv = ['check_ruler.py', '--self-compare', str(path), '--json', str(report_path)]
                 with patch.object(sys, 'argv', argv), \
                      patch.object(check_ruler, 'run_controls', return_value={'negative_controls': True, 'both_broken': True, 'positive_controls': True}), \
                      patch.object(check_ruler, 'check_frozen', return_value={'ok': True, 'fully_registered': True}), \
                      redirect_stdout(io.StringIO()):
                     self.assertEqual(check_ruler.main(), 1)
-                report = json.loads((self.root / 'check.json').read_text())
+                report = json.loads(report_path.read_text())
                 self.assertFalse(report['self_compare'])
                 self.assertFalse(report['machine_checks_pass'])
                 self.assertIsInstance(report['self_compare_error'], str)

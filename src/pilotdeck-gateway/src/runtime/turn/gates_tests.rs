@@ -126,10 +126,17 @@ async fn matrix(name: &str) {
                         &mut command,
                         Some(&"fixture".into()),
                         Limits {
-                            // #1080: use the default startup budget. A 6s Python
+                            // #1080: use a real startup budget. A 6s Python
                             // startup delay exhausted the former 5s override
                             // before execute, masquerading as a gate-count bug.
-                            execution_timeout: Some(Duration::from_secs(10)),
+                            // #1891 fix-r1: `peer.py` is a real Python sidecar
+                            // (the #978 loaded-host reddening source), so all
+                            // three startup/IO clocks get the same 60 s
+                            // liveness margin the sibling nine-file sweep uses;
+                            // the gate-count oracles below are unchanged.
+                            handshake_timeout: Duration::from_secs(60),
+                            execution_timeout: Some(Duration::from_secs(60)),
+                            io_timeout: Duration::from_secs(60),
                             ..Limits::default()
                         },
                     )
@@ -158,7 +165,11 @@ async fn matrix(name: &str) {
     for _ in 0..30 {
         let result = if !gated && name != "drop-before" {
             let mut pending = turn.as_mut().expect("#743 gates prerequisite").next();
-            let progress = timeout(Duration::from_secs(15), async {
+            // #1891 fix-r1: the settle covers the sidecar connect (handshake
+            // 60 s) plus the execute round trip (60 s), so the outer bound
+            // must stay strictly looser than both, or a loaded host turns a
+            // legal slow peer into a watchdog failure of the positive phase.
+            let progress = timeout(Duration::from_secs(130), async {
                 tokio::select! { biased; _ = &mut entry => None, value = &mut pending => Some(value) }
             }).await.expect("#743 gates gate or next must settle");
             drop(pending);
@@ -285,7 +296,9 @@ async fn matrix(name: &str) {
         );
     }
     drop(turn);
-    timeout(Duration::from_secs(15), async {
+    // #1891 fix-r1: the worker's cleanup drives the child close path, so the
+    // bound must stay looser than the granted 5 s close grace plus teardown.
+    timeout(Duration::from_secs(70), async {
         while session
             .state
             .lock()
@@ -553,6 +566,9 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
     } else {
         {
             let mut waiting = turn.next();
+            // In-process only: the append entering the durability gate is
+            // scheduler work, no sidecar involved, so this keeps the shared
+            // short anti-hang form (#1891 policy: in-process waits stay tight).
             timeout(Duration::from_secs(15), async {
                     tokio::select! {
                         biased;
@@ -765,7 +781,9 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
         "#741i [{case}]: consumed gate stream matches real TS projection"
     );
     drop(turn);
-    timeout(Duration::from_secs(15), async {
+    // #1891 fix-r1: the worker's cleanup drives the child close path, so the
+    // bound must stay looser than the granted 5 s close grace plus teardown.
+    timeout(Duration::from_secs(70), async {
         while session
             .state
             .lock()

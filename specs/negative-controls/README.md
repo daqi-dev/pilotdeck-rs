@@ -132,7 +132,18 @@
 `utf16-residual-sort`（#2131 起
 同形自管：`EXPECTED_NAMES` 静态名册 + 启动拒跑全走 `refuse()` + 进 `mutating_sources`
 之后的守卫失败作废已跑行、发布 INVALID 后按四分表退 1（延迟信号退 128+signum），
-同批进三条拒跑矩阵）。**其余同族入口尚未迁移**，
+同批进三条拒跑矩阵），以及 `issue-2495`
+（#2590 fix-r1 起同形：启动四拒 + `EXPECTED_NAMES` 静态名册 + stale 扫描入树锁；
+fix-r2 起守卫段领锁（等待上界 60 s）超时本身也拒跑（rc 2，非 traceback）、
+`--compile-only` 汇总打
+`COMPILED=n/N`，并进 `test_negative_optimize_guards.py` 矩阵与 CI `--check`；
+fix-r3 起变异段领锁超时同口径（rc 2 never-started；fix-r3b 起相位定界：
+取得阶段的领锁超时或树脏 `SourceBaselineError` 都拒跑并撤走空的认领目录，
+utf16 `startup_refusal` 先例，证据目录既不发 summary 也不留认领形状；
+取得之后含还原窗口的失败作废已跑行、发布 summary 并退 1），
+名册不符只发 `roster-mismatch.json`（原子写）并退出 1、`--check` 带位置
+参数、空输出槽或 `--compile-only` 即拒跑）。
+**其余同族入口尚未迁移**，
 由 #1666 按目录分批推进，名单是机器可检的：`tests/fixtures/test_negative_optimize_guards.py`
 的 `PENDING_BARE_ASSERTS` 登记每个仍含裸 `assert` 的 `*/negative_controls.py` 及理由，
 该表只减不增——新脚本带裸 `assert` 会让 CI 红，迁移一个就在同一次改动里删掉它的条目。
@@ -162,7 +173,22 @@
 | 2 | 从未开跑，本轮没有判决可读：未知或重复的变异名、名册与静态清单不符、marker 越界或取自判杀条件自身的 token、输出目录已存在（`negative_selection.claim_dir`）、`CARGO_TARGET_DIR` 不可用（未设置、空串、纯空白，或 `target_environment` 拒绝的 dot / 文件系统或仓库根 / `src` 内）、树脏或领锁超时、oracle 读不了 |
 | 42 | 全杀但基线不是 HEAD，只是非宿主证据（用到的脚本按自身规约） |
 
-分界判据是「有没有真的开始变异」：进 `mutating_sources` 之前返回的都算 2，进去之后被打断的算 1。
+分界判据是「有没有真的开始变异」：完整形态下，`mutating_sources` 的取得阶段（领锁等待、
+洁净检查、快照读——任何变异字节落盘之前）返回的都算 2，取得之后（含 `__exit__` 还原窗口）
+被打断的算 1（各入口实现进度不一，见下与 #1666）。
+分界的结构形态是取得旗标（`same-json-surfaces` / `utf16-residual-sort` 的 `started`），
+不由异常类型白名单保证——#2590 fix-r3 实测教训：`TimeoutError` ⊂ `OSError` 且是
+`errno.ETIMEDOUT` 的标准映射（PEP 3151），按类型把取得段超时收进拒跑的同时也会把
+还原窗口的超时误收（fix-r3b 已修）。issue-2495 当前实现：取得段的 `TimeoutError`（领锁
+等待）与 `SourceBaselineError` 映射为 2——后者除树脏（diff / 未跟踪 / assume-unchanged /
+回读不一致 / 缺文件）外，还覆盖「oracle 不可读」的**已包裹形态**：`_head_bytes` 把 git
+失败包成 `SourceBaselineError`，`_workspace_literal_inputs` 把扫描器运行期的
+`(ValueError, OSError, SubprocessError)` 也包进去；取得段的**裸**异常——预检
+`_assert_input_areas` 直接调 `_git` 的 `RuntimeError`、`_ensure_workspace_scanner` 冷启动
+cargo 失败、被守文件 `read_bytes` / `stat` 的裸 `OSError`——仍按失败关闭落 1（不会假绿，
+有实测钉：issue-2495 测试取得段裸 `RuntimeError` → 1 + summary 全 INVALID）。全取得段覆盖
+与同族入口旗标化见 #2590 跟进（条目 22）；信号不走此表（128+signum，
+还原窗口的 SIGTERM 不发 summary，见下）。
 被信号直接杀死（SIGKILL 137）不在表内，看证据是否完整；以下退出码都以前台、未继承
 SIG_IGN 为前提（nohup / 后台链式宿主把 SIGINT / SIGTERM 设成 SIG_IGN 传给子进程时，
 信号被静默吞掉，进程既不退、证据也不终止，宿主需 SIGKILL / 超时兜底；实测：SIG_IGN
@@ -215,12 +241,25 @@ target、无证据目录，实际可矩阵承载——纳入矩阵待登记表�
 `same-json-surfaces`（#2422 起的 `started` 旗标，#2431 落了 rc2 回归钉）与
 `utf16-residual-sort`（#2131 起的 `started` 旗标 + `startup_refusal` 撤回空证据目录，
 覆盖 enter 两边；无 oracle 读取）已实现
-（`sdk-signals` 的相位路由 #1885 r8 与 `_negkit/contract.py` 的 `entered` 旗标也各自实现；
+（`sdk-signals` 的相位路由 #1885 r8 也实现；`_negkit/contract.py` 的 `entered` 旗标
+口径相反——取得段失败退 1、进守卫后失败退 2，见下「另」段，不算本条已实现；
+#2590 fix-r2 起 `issue-2495` 的守卫段领锁超时同样以 2 拒跑、非 traceback（fix-r3 起
+变异段领锁超时同口径；fix-r3b 起变异段取得时的树脏 `SourceBaselineError` 同样拒跑
+并撤走空认领目录）；
 本句枚举的是 `test_negative_optimize_guards.py` 登记面，非全集），
 其余脚本是未捕获异常 → 1，仍按「失败关闭」处理（不会假绿），登记在 #1666 的后续批次。
 宿主分诊时不要把这三种边当成已覆盖。
 另：已迁移脚本一律先跑完启动守卫再 `claim_dir`，所以「从未开跑」的拒跑不会留下证据目录
-（唯一例外见上面的 `regex-proto-budget` doctest 基线：认领 OUT 之后的红基线）。
+（例外：`regex-proto-budget` doctest 基线——认领 OUT 之后的红基线；`issue-297` /
+`issue-297-domain-fold` 的 `guard_failed` 在退 2 前先写 `compile-summary.json`、
+`settings-gateway` 的启动分支在 mkdir 之后才退 2（`entered` 旗标翻转前的
+`BaseException` 收成拒跑码 2，见上）。`_negkit/contract.py` 是另一种口径，**不并入**
+上句：它先 `claim_output`（mkdir 并写 `.claim`，认领目录**非空**）后进守卫，
+`entered` 只在 `guard().__enter__` 成功返回后翻转，退出码按
+`0 if success else (2 if entered else 1)` 计算——守卫进不去（含树脏）退的是 **1**
+而非 2、进守卫之后的失败退 **2**，与本节四分表「从未开跑 → 2 / 跑过 → 1」两侧都相反
+（它自己的 docstring 即如此声明）；失败也不发布 summary、认领目录连同 `.claim` 留在盘上。
+撤目录与退码口径对齐登记 #1666 跟进）。
 `network-timing` 的正式路径进共享执行器 `mutation_suite`（它先占目录再取环境），因此缺
 `CARGO_TARGET_DIR` 的拒跑放在 `main()` 里、早于名册与源码守卫；共享执行器自身遇到启动期的
 `refuse()`（rc 2）时不发布 `summary.json`：目录仍为空则撤掉（目录已被外部删掉时按「没有残留」

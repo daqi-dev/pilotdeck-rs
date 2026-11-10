@@ -749,7 +749,7 @@ async fn capture(stream: &mut TcpStream, id: &str) -> (Vec<u8>, bool) {
             }
         }
     }
-    assert!(
+    crate::negative_assert!(
         !out.is_empty() || closed,
         "#1349 cell {id} produced no bytes and stayed open"
     );

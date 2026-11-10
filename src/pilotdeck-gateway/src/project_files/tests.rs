@@ -887,21 +887,51 @@ fn fr_ca_script_tag_follows_the_default_spelling_not_the_explicit_one() {
     );
     // The repair is Latin-only: a region match under another script must not
     // get it. Measured against real Node (v22.22.0 / ICU 78.2) as row
-    // `fr_Cyrl_CA.UTF-8` of `pilotdeck-cli/tests/fixtures/skills-fr-ca-probe.json`:
-    // the default collator resolves `fr-Cyrl-CA` and orders `coté < côte` like
-    // generic `fr`, i.e. no repair — matching both spellings here. Comparing
-    // against the explicit spelling keeps the assertion independent of whatever
-    // order ICU4X picks for `fr-Cyrl-CA`; negative control
-    // `french-script-widened` proves it goes red if `latin_or_none` is widened.
+    // `fr_Cyrl_CA.UTF-8` of `pilotdeck-cli/tests/fixtures/skills-fr-ca-probe.json`
+    // (default spelling) plus #2170's explicit `new Intl.Collator("fr-Cyrl-CA")`
+    // probe: the default collator resolves `fr-Cyrl-CA`, the explicit one
+    // resolves `fr`, and both order the four recorded pairs like generic `fr`,
+    // i.e. no repair. #2170 pins the measured orderings directly instead of the
+    // old self-comparison, so a mutant that repairs either spelling goes red
+    // on the recorded Node value; negative control `french-script-widened`
+    // binds the first assertion's message.
     let cyrillic: Locale = "fr-Cyrl-CA".parse().unwrap();
     let default_cyrillic = node_collator(&cyrillic).unwrap();
-    assert_eq!(
-        default_cyrillic.compare("coté", "côte"),
-        node_explicit_collator(&cyrillic)
-            .unwrap()
-            .compare("coté", "côte"),
-        "#132 a non-Latin script does not get fr-CA's backward secondary"
-    );
+    for (left, right, node_sign) in [
+        ("coté", "côte", std::cmp::Ordering::Less),
+        ("côte", "coté", std::cmp::Ordering::Greater),
+        ("cote", "côte", std::cmp::Ordering::Less),
+        ("coté", "cote", std::cmp::Ordering::Greater),
+    ] {
+        assert_eq!(
+            default_cyrillic.compare(left, right),
+            node_sign,
+            "#132 a non-Latin script does not get fr-CA's backward secondary"
+        );
+    }
+    // #2170 (DS r1 sibling#3 / minimax boundary#5): pin the explicit spelling
+    // on the same measured signs — `new Intl.Collator("fr-Cyrl-CA")` resolves
+    // `fr` and orders these pairs like generic fr (measured v22.22.0 /
+    // ICU 78.2, `_tmp/20261109-issue-2140-2170/r1/round/S2-RESULT.md`).
+    // fix-r5 (DS r6 sibling#1): no mutation row binds this assertion yet —
+    // the explicit branch behaviour is covered indirectly by
+    // `french-explicit-script-repaired` (anchor `project_files.rs:720`,
+    // bound to the `PAIRS` test); the paired gateway-side mutation binding
+    // this message is tracked as a P2 follow-up (#2830), so this comment
+    // claims no direct mutant kill.
+    let explicit_cyrillic = node_explicit_collator(&cyrillic).unwrap();
+    for (left, right, node_sign) in [
+        ("coté", "côte", std::cmp::Ordering::Less),
+        ("côte", "coté", std::cmp::Ordering::Greater),
+        ("cote", "côte", std::cmp::Ordering::Less),
+        ("coté", "cote", std::cmp::Ordering::Greater),
+    ] {
+        assert_eq!(
+            explicit_cyrillic.compare(left, right),
+            node_sign,
+            "#2170 explicit fr-Cyrl-CA orders the recorded pairs like generic fr"
+        );
+    }
     assert_ne!(
         default_cyrillic.compare("coté", "côte"),
         default.compare("coté", "côte"),

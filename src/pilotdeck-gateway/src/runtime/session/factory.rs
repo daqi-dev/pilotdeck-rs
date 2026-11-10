@@ -242,16 +242,31 @@ async fn acquire_writer_resolved(
 /// read the tail and append `sequence + 1` while the factory is between
 /// `restore()` and publishing the recorder (or while a session is closing):
 /// this lease is the one object both sides respect, and it also keeps the
-/// cross-process ledger fence. `None` means some session owns the transcript
-/// right now, so the entry has to go through its recorder instead.
-pub(crate) fn try_writer_lease(path: &Path) -> Option<WriterLease> {
-    let canonical = crate::storage::canonical_transcript_path(path).ok()?;
-    let process = writer_mutex(&canonical).try_lock_owned().ok()?;
-    let (_, file) = crate::storage::LedgerLock::acquire(&canonical).ok()?;
-    Some(WriterLease {
+/// cross-process ledger fence. `Ok(None)` means some session owns the
+/// transcript right now — the process mutex or the ledger flock is contended —
+/// so the entry has to go through its recorder instead. Every other failure
+/// (a transcript path that will not canonicalize, a `<transcript>.lock` that
+/// will not open) is a storage error, not contention (#1873: folding it into
+/// the retryable `None` misreported a broken directory as a busy session).
+pub(crate) fn try_writer_lease(path: &Path) -> Result<Option<WriterLease>, RuntimeError> {
+    let canonical = crate::storage::canonical_transcript_path(path)
+        .map_err(|e| RuntimeError::new(e.to_string()))?;
+    let Ok(process) = writer_mutex(&canonical).try_lock_owned() else {
+        return Ok(None);
+    };
+    let (_, file) = match crate::storage::LedgerLock::acquire(&canonical) {
+        Ok(pair) => pair,
+        Err(crate::storage::LedgerError::Io(ref io))
+            if io.kind() == std::io::ErrorKind::WouldBlock =>
+        {
+            return Ok(None);
+        }
+        Err(e) => return Err(RuntimeError::new(e.to_string())),
+    };
+    Ok(Some(WriterLease {
         _file: file,
         _process: process,
-    })
+    }))
 }
 fn writer_mutex(path: &Path) -> Arc<WriterMutex> {
     // Shared across factory instances. Weak entries do not retain idle sessions.

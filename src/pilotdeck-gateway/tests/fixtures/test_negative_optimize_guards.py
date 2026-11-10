@@ -98,6 +98,12 @@ SCRIPTS = (
     # (registered + select + claim_dir + missing_target/refuse_unusable_target
     # + verdict_exit).
     ('utf16-residual-sort/negative_controls.py', (), ()),
+    # #2590 fix-r2 (DS-sibling#2 P2 / MM-sibling#2 P1, 取高按 P1): the
+    # issue-2495 fixture migrated to the negative_selection contract in
+    # fix-r1 (registered + refuse + claim_dir + missing_target/
+    # refuse_unusable_target + verdict_exit); its startup refusals join the
+    # machine-checked matrix here, and its --check is also wired into CI.
+    ('issue-2495/negative_controls.py', (), ()),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption
@@ -534,7 +540,7 @@ class UnknownControlIsRefused(unittest.TestCase):
 class BareAssertInventory(unittest.TestCase):
     """The class invariant has an explicit, shrink-only register (#1666).
 
-    The twenty-seven entries migrated so far (twenty-six fixture directories;
+    The twenty-eight entries migrated so far (twenty-seven fixture directories;
     ``network-timing`` counts two scripts) are not the whole family. Rather than
     let a hand-written list look like a closed set, the remaining debt is named
     here: a file in ``scanned_entries()`` that is not in
