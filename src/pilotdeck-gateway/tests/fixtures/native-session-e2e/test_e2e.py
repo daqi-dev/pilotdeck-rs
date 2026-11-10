@@ -16,10 +16,12 @@ import sys
 if not sys.flags.isolated:
     raise SystemExit('run with python3 -I')
 sys.dont_write_bytecode = True
+import ast
 import contextlib
 import errno
 import fcntl
 import importlib.util
+import inspect
 import io
 import json
 import os
@@ -1168,11 +1170,13 @@ class NegativeRunnerTests(unittest.TestCase):
         return module
 
     def _drive(self, runner, *, run_effect=None, slot_error=None, gap=0.0,
-               lease=None, window=0.0):
+               lease=None, window=0.0, tree=None):
         """Run the real e2e main(); record stage events, timeouts, disk bytes.
 
         Stage labels come from the runner's own calls (passed/classify/with),
         never from call counting, so injected failures cannot mislabel a stage.
+        #1536: the guarded loop's tree lock defaults to a no-op stand-in here;
+        tests that pin it inject a recording one through `tree`.
         """
         events, timeouts, disks = self.events, self.timeouts, self.disks
         originals = {self.source: self.source.read_bytes()}
@@ -1180,25 +1184,36 @@ class NegativeRunnerTests(unittest.TestCase):
         killed = subprocess.CompletedProcess([], 1, '', self.KILLED_LOG)
         real_passed = runner.passed
 
-        @contextlib.contextmanager
-        def mutating(root, paths, **_kwargs):
-            if lease is None:
-                events.append('acquire')
-                try:
-                    yield dict(originals)
-                finally:
-                    events.append('release')
-            else:
+        class mutating:
+            """#1529 explicit enter/exit stand-in: a @contextlib.contextmanager
+            stand-in lets the interpreter close its generator on GC, so an
+            enter-without-exit mutant used to observe a premature "release"
+            (the kill depended on GC timing, not on the missing exit); only a
+            real __exit__ records one now."""
+
+            def __init__(self, root, paths, **_kwargs):
+                self.inner = None
+
+            def __enter__(self):
+                if lease is None:
+                    events.append('acquire')
+                    return dict(originals)
                 # The real lease protocol on a private directory: the drive is
                 # evidence that a second host can take the between-case gap.
-                with c.common.parity_lock(timeout=2, lock=lease):
-                    events.append(('acquire', time.monotonic()))
-                    if window:
-                        time.sleep(window)
-                    try:
-                        yield dict(originals)
-                    finally:
-                        events.append(('release', time.monotonic()))
+                self.inner = c.common.parity_lock(timeout=2, lock=lease)
+                self.inner.__enter__()
+                events.append(('acquire', time.monotonic()))
+                if window:
+                    time.sleep(window)
+                return dict(originals)
+
+            def __exit__(self, *_exc):
+                if lease is None:
+                    events.append('release')
+                else:
+                    events.append(('release', time.monotonic()))
+                    self.inner.__exit__(*_exc)
+                return False
 
         def run_owned(command, **kwargs):
             # cargo is the only command that names its stage; a Python bound
@@ -1219,13 +1234,12 @@ class NegativeRunnerTests(unittest.TestCase):
                 # classify probes the negative result internally through the
                 # module-global passed; that is not a stage of its own.
                 return real_passed(result)
-            # positive precedes the lease (or follows the previous case's
-            # release); restored now runs inside the lease, right after the
-            # negative control -- a plain string without a lease, a
-            # timestamped tuple when the real lease protocol records the event.
+            # #1536 moved the positive control inside the lease, right after
+            # acquire; restored runs right after the negative control -- a
+            # plain string without a lease, a timestamped tuple when the real
+            # lease protocol records the event.
             last = events[-1] if events else None
-            stage = 'restored' if (last in ('cargo', 'negative') or
-                                   (isinstance(last, tuple) and last[0] == 'acquire')) else 'positive'
+            stage = 'restored' if last == 'negative' else 'positive'
             events.append(stage)
             disks.append((stage, self.source.read_text()))
             return real_passed(result)
@@ -1244,12 +1258,15 @@ class NegativeRunnerTests(unittest.TestCase):
         rows = [('first', self.source, 'x = 0', 'x = 1', self.SYNTHETIC_TEST),
                 ('second', self.source, 'y = 1', 'y = 2', self.SYNTHETIC_TEST)]
         with mock.patch.object(runner, 'cases', rows), \
+                mock.patch.object(runner, 'EXPECTED_CASES', len(rows)), \
                 mock.patch.object(runner, 'messages', {row[0]: self.MARKER for row in rows}), \
                 mock.patch.object(runner, 'preflight'), \
                 mock.patch.object(runner, 'execution_environment', return_value={}), \
                 mock.patch.object(runner, 'run_owned', run_owned), \
                 mock.patch.object(runner, 'wait_for_slot', slot), \
                 mock.patch.object(runner, 'mutating_sources', mutating), \
+                mock.patch.object(runner, 'tree_lock',
+                                  tree or (lambda *arguments, **keywords: contextlib.nullcontext())), \
                 mock.patch.object(runner, 'passed', passed), \
                 mock.patch.object(sys, 'argv',
                                   [str(Path(__file__).with_name('negative_controls.py')),
@@ -1261,7 +1278,9 @@ class NegativeRunnerTests(unittest.TestCase):
         marker = '#1402 each case takes and releases the parity lease exactly once'
         runner = self.load_runner()
         code, summary = self._drive(runner)
-        expected = ['positive', 'slot', 'acquire', 'cargo', 'negative', 'restored', 'release']
+        # #1536: the positive control runs inside the lease window, right
+        # after acquire; the slot probe stays outside it.
+        expected = ['slot', 'acquire', 'positive', 'cargo', 'negative', 'restored', 'release']
         self.assertTrue(code == 0 and self.events == expected * 2, marker)
         self.assertTrue(all(row['status'] == 'KILLED' and row['compiled'] for row in summary['controls']), marker)
         self.assertTrue(self.events.count('acquire') == 2 and self.events.count('release') == 2, marker)
@@ -1341,7 +1360,7 @@ class NegativeRunnerTests(unittest.TestCase):
         # The negative stage timed out: the exception propagates out of the
         # guarded window before the restored control, which stays inside the
         # lease exactly like the other guarded runners.
-        expected = ['positive', 'slot', 'acquire', 'cargo', 'negative', 'release']
+        expected = ['slot', 'acquire', 'positive', 'cargo', 'negative', 'release']
         self.assertTrue(code == 1 and self.events == expected * 2, marker)
         self.assertTrue(all(row['status'] == 'INVALID' for row in summary['controls'])
                         and all('timed out' in row['reason'] for row in summary['controls']), marker)
@@ -1356,7 +1375,7 @@ class NegativeRunnerTests(unittest.TestCase):
 
         with self.assertRaises(KeyboardInterrupt, msg=marker):
             self._drive(runner, run_effect=effect)
-        expected = ['positive', 'slot', 'acquire', 'cargo', 'negative', 'release']
+        expected = ['slot', 'acquire', 'positive', 'cargo', 'negative', 'release']
         self.assertTrue(self.events == expected, marker + ': the lease must be released on the way out')
         summary = json.loads((self.out / 'summary.json').read_text())
         self.assertTrue(all(row['status'] == 'INVALID' for row in summary['controls'])
@@ -1372,6 +1391,119 @@ class NegativeRunnerTests(unittest.TestCase):
         self.assertTrue(code == 1 and 'acquire' not in self.events
                         and 'cargo' not in self.events and 'negative' not in self.events, marker)
         self.assertTrue(all(row['status'] == 'INVALID' for row in summary['controls']), marker)
+
+    def test_expected_case_count(self):
+        marker = '#1535 e2e negative case inventory is complete'
+        # A dropped or duplicated case row used to surface only at the next
+        # control run, as a missing verdict or a wrong total; the runner now
+        # refuses to start at every entry point instead. Same shape as the
+        # session-lease pin: direct call plus every argv shape main() takes.
+        path = Path(__file__).with_name('negative_controls.py')
+        try:
+            spec = importlib.util.spec_from_file_location('e2e_case_count', path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            module.validate_case_count()
+            for argv in ([], ['--check-anchors'], ['--memory-run', 'unused'],
+                         ['unused-output'], ['unused-output', '--memory', '--case', 'unused']):
+                with self.subTest(argv=argv):
+                    with mock.patch.object(sys, 'argv', [str(path)] + argv), \
+                            mock.patch.object(module, 'cases', module.cases[:-1]):
+                        with self.assertRaises(SystemExit) as rejected:
+                            module.main()
+                    self.assertTrue(str(rejected.exception.code).startswith(marker), marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_negative_guarded_run_holds_tree_lock(self):
+        marker = '#1536 the guarded e2e run holds the tree lock around the whole loop'
+        # The recording lock is not a stage mock: main() itself must call
+        # tree_lock once for the whole loop, before the first slot and after
+        # the last release, so a second same-tree runner cannot interleave
+        # writes with the per-case parity lease windows.
+        runner = self.load_runner()
+        calls = []
+        events = self.events
+
+        class recording_tree_lock:
+            def __init__(self, *arguments, **keywords):
+                calls.append((arguments, keywords))
+
+            def __enter__(self):
+                events.append('tree-enter')
+
+            def __exit__(self, *_exc):
+                events.append('tree-exit')
+
+        def tree(*arguments, **keywords):
+            return recording_tree_lock(*arguments, **keywords)
+
+        code, summary = self._drive(runner, tree=tree)
+        expected = ['slot', 'acquire', 'positive', 'cargo', 'negative', 'restored', 'release'] * 2
+        self.assertTrue(code == 0 and calls == [((runner.root,), {'timeout': 900})]
+                        and events[0] == 'tree-enter' and events[-1] == 'tree-exit'
+                        and events[1:-1] == expected, marker)
+        self.assertTrue(all(row['status'] == 'KILLED' and row['compiled'] for row in summary['controls']), marker)
+
+    def test_negative_guarded_sources_take_parity_lease(self):
+        marker = '#1529 the e2e runner guards gateway-parity sources under the real parity lease'
+        # Not a mock: the runner's own inventory, against the criterion
+        # negative_process.mutating_sources applies -- any scripts/gateway-parity
+        # path in the guarded set takes /tmp/pdrs-parity.lock per case. If this
+        # list ever loses that prefix, the real lease silently disappears while
+        # every _drive-based test stays green, so the core claim is pinned here.
+        runner = self.load_runner()
+        relative = [path.relative_to(runner.root).as_posix() for path in runner.paths]
+        self.assertTrue('scripts/gateway-parity/session_domain.py' in relative
+                        and any(name.startswith('scripts/gateway-parity/')
+                                for name in relative)
+                        and runner.common in runner.paths, marker)
+
+    def test_negative_lease_released_after_run(self):
+        marker = '#1529 a finished run leaves the parity lease immediately acquirable'
+        runner = self.load_runner()
+        lease = self.folder / 'parity.lock'
+        code, summary = self._drive(runner, lease=lease)
+        # The stand-in's __exit__ must really have exited the inner
+        # parity_lock, or this acquisition would block and time out.
+        with c.common.parity_lock(timeout=2, lock=lease):
+            # The probe itself must be discriminating: a lease still held by
+            # its owner must time out, or "acquirable" would be vacuous.
+            with self.assertRaises(TimeoutError, msg=marker):
+                with c.common.parity_lock(timeout=2, lock=lease):
+                    pass
+        self.assertTrue(code == 0 and all(row['status'] == 'KILLED' for row in summary['controls']), marker)
+
+    def test_negative_parity_acquire_budget_follows_lock_timeout(self):
+        marker = '#1528 the parity lease acquire budget follows the caller lock timeout'
+        # Two links must hold: mutating_sources hands its lock_timeout to
+        # _parity_mutation_lock (the old cap min(lock_timeout, 60) starved
+        # runners queuing behind another tree's case window -- the hold bound
+        # is the same order), and that lock forwards the budget to the
+        # snapshot common.py's parity_lock. The call site is pinned statically
+        # (running mutating_sources itself needs a git repo and the real
+        # /tmp/pdrs-parity.lock), the forwarding through a stub snapshot.
+        spec = importlib.util.spec_from_file_location(
+            'e2e_budget_probe', Path(__file__).resolve().parents[1] / 'negative_process.py')
+        process = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(process)
+        calls = [node for node in ast.walk(ast.parse(inspect.getsource(process.mutating_sources)))
+                 if isinstance(node, ast.Call) and getattr(node.func, 'id', '') == '_parity_mutation_lock']
+        self.assertTrue(len(calls) == 1 and len(calls[0].args) == 3
+                        and isinstance(calls[0].args[2], ast.Name)
+                        and calls[0].args[2].id == 'lock_timeout', marker)
+        record = self.folder / 'acquire-budget.txt'
+        stub = ('import contextlib\n'
+                'LIVE_GROUPS = set()\n'
+                '@contextlib.contextmanager\n'
+                'def parity_lock(timeout=600, takeovers=None, lock=None):\n'
+                '    with open(%r, "w") as stream:\n'
+                '        stream.write(str(timeout))\n'
+                '    yield\n' % str(record))
+        snapshot = {ROOT / 'scripts/gateway-parity/common.py': stub.encode()}
+        with process._parity_mutation_lock(ROOT, snapshot, 900):
+            pass
+        self.assertTrue(record.is_file() and record.read_text() == '900', marker)
 
     def test_negative_chain_denominators_derived(self):
         marker = '#1402 chain denominators derive from the calibration manifest'

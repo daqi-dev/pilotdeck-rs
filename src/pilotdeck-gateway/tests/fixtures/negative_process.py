@@ -946,7 +946,10 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
     Any scripts/gateway-parity path requires common.py in the guarded set:
     acquire the shared parity lease before yielding, then retain it through
     restoration and byte verification. Lease polling and each guard flock
-    acquisition have separate 60s bounds; a busy lock fails before source writes.
+    acquisition share the caller's lock_timeout budget (#1528: the old 60s
+    cap starved runners queuing behind another tree's case window -- the
+    hold bound is the same order, so the acquire budget must be too); a
+    busy lock still fails before source writes.
     """
     root = Path(root).resolve()
     normalized = []
@@ -981,7 +984,7 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
                           for _alias, path, _relative in normalized}
         parity = any(relative.startswith("scripts/gateway-parity/")
                      for _alias, _path, relative in normalized)
-        lock = (_parity_mutation_lock(root, snapshot, min(lock_timeout, 60))
+        lock = (_parity_mutation_lock(root, snapshot, lock_timeout)
                 if parity else nullcontext())
         with lock as restored:
             try:

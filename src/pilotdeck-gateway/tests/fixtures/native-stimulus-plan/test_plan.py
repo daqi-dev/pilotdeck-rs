@@ -24,6 +24,16 @@ spec.loader.exec_module(c)
 spec = importlib.util.spec_from_file_location('measurement', Path(__file__).with_name('verify_measurement.py'))
 v = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(v)
+# #1530: the frozen calibration contract (72 cases x 5 repeats) is the
+# denominator the hardcoded-count mutants write as a bare literal; the guards
+# in the measurement tests and the pin below keep test-side values honest
+# against it instead of relying on the old "never use 5 here" comment.
+CALIBRATION = json.loads(
+    (ROOT / 'scripts/gateway-parity/fixtures/session-calibration.json').read_text())
+
+
+def frozen_count():
+    return len(CALIBRATION['cases']) * CALIBRATION['repeats']
 
 
 def measurement_fixture(folder, repeats):
@@ -184,7 +194,12 @@ class PlanTests(unittest.TestCase):
             # #1402: never use 5 here -- 72 * 5 = 360 equals the literal the
             # hardcoded-unchecked-count mutant writes, so that iteration would
             # let the mutant survive; 1, 2 and 3 all stay clear of 360.
+            # #1530: that advice is now an executable guard -- every repeats
+            # value used here must stay clear of the frozen calibration total,
+            # or the hardcoded-count mutants could survive behind a collision.
             for repeats in (1, 2, 3):
+                self.assertTrue(case_count * repeats != frozen_count(),
+                                '#1530 test repeats must never collide with the frozen calibration total')
                 measurement_fixture(folder, repeats)
                 with mock.patch.object(v.s, 'plan', side_effect=unchecked_plan):
                     result = v.verify(folder)
@@ -194,6 +209,13 @@ class PlanTests(unittest.TestCase):
                                         for row in result['uncheckedBoundaries'])
                                 and result['missingEventControls'] == result['reversedOrderControls']
                                 == result['emptyBeforeControls'] == 0, marker)
+            # Constructive proof the guard above is load-bearing: at the frozen
+            # registration's own repeats the product equals frozen_count(), so
+            # the guard fires exactly there (and this also pins the local case
+            # inventory to the calibration's, which the literal alone never did).
+            self.assertTrue(case_count * CALIBRATION['repeats'] == frozen_count()
+                            and case_count == len(CALIBRATION['cases']),
+                            '#1530 the local case inventory matches the frozen calibration contract')
 
     def test_empty_order_not_witnessed(self):
         marker = '#1368 every ordered boundary rejects empty before'
@@ -300,6 +322,12 @@ class PlanTests(unittest.TestCase):
                 case_count = len(registration_rows({'cells': v.s.CELLS, 'phases': ['model', 'tool']}))
                 with mock.patch.object(v.s, 'plan', side_effect=unchecked_plan):
                     for repeats in (1, 2):
+                        # Same defect class as test_measurement_unchecked_not_pass:
+                        # the hardcoded-measurement-count mutant writes the frozen
+                        # total as a literal, so a colliding repeats value would
+                        # let it survive (#1530 guard mirrors that test's guard).
+                        self.assertTrue(case_count * repeats != frozen_count(),
+                                        '#1530 test repeats must never collide with the frozen calibration total')
                         measurement_fixture(folder, repeats)
                         result = v.verify(folder)
                         self.assertTrue(result['measurements'] == case_count * repeats, marker)
@@ -312,6 +340,28 @@ class PlanTests(unittest.TestCase):
                             v.verify(folder)
         except Exception as error:
             self.fail(marker + ': ' + str(error))
+
+    def test_hardcoded_counts_track_calibration(self):
+        # #1530: the two hardcoded-count mutants in the mutation table write
+        # the frozen calibration total as a bare literal (anchor_selfcheck's
+        # static evaluator cannot derive it, so derivation-in-table is not an
+        # option). If session-calibration.json ever changes, the literals go
+        # stale and the mutants stop exercising their bound tests; this pin
+        # fails first, before any control run can silently go hollow.
+        marker = '#1530 hardcoded count mutants track the frozen calibration total'
+        try:
+            runner = Path(__file__).with_name('negative_controls.py')
+            spec = importlib.util.spec_from_file_location('negative_controls_pin', runner)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            rows = {row[0]: row for row in module.cases}
+            frozen = frozen_count()
+            self.assertTrue(rows['hardcoded-measurement-count'][3]
+                            == 'if seen != expected or len(seen) != %d:' % frozen
+                            and rows['hardcoded-unchecked-count'][3]
+                            == "len(result['uncheckedBoundaries']) == %d" % frozen, marker)
+        except Exception as error:
+            self.fail(marker + ': ' + repr(error))
 
     def test_measurement_rejects_empty_repeats(self):
         marker = '#1368 measurement repeats must be positive'
