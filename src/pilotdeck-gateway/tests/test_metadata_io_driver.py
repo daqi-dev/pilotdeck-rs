@@ -1492,6 +1492,24 @@ class EnvironmentControls(unittest.TestCase):
             % (tag, module, cp.returncode, out[-800:]))
         return out
 
+    def test_step_budgets_derive_whole_minute_timeouts(self):
+        # r40（DS r39 boundary#1 P2）：budget→`timeout-minutes` 用 `// 60` 截断，
+        # 「同一常量同源派生」只在预算是整分钟数时成立——610 s 会让 CI 步被钉成
+        # 600 s 而真跑钉拿 610 s（步比钉先红，r38 修掉的假 PASS 方向悄悄复活），
+        # 而守卫的等式断言照样过。把「整分钟」机检为不变式，而不是靠巧合。
+        for name in ('discovery_anchor_step_budget',
+                     'optimize_guards_step_budget',
+                     'copy_manifest_step_budget',
+                     'isolation_step_budget',
+                     'driver_step_budget'):
+            budget = getattr(self, name)
+            self.assertEqual(
+                budget % 60, 0,
+                '#2136 %s=%d must be a whole number of minutes: the CI step '
+                'pins budget // 60 while the pin passes budget seconds, and a '
+                'non-whole-minute budget silently makes the step tighter '
+                'than the pin it claims to match' % (name, budget))
+
     def test_the_verbose_skip_reading_covers_every_channel(self):
         # r39（DS boundary#3 P2）：skip 判读助手自身的负控——r38 版正则对
         # docstring / subTest 形状零命中而 `空集 ⊆ 白名单` 恒真，没有任何用例
