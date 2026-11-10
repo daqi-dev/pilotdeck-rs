@@ -454,7 +454,11 @@ class SiblingRosterDefenceAnchorPins(unittest.TestCase):
         # line that is not a comment. The filter only rejects ``#``-prefixed
         # lines -- a copy inside a docstring or string literal still counts
         # (#2773 fix-r6, review DS r6 sibling#3/boundary#3/simplify#3); the
-        # full AST relocation of the scan is the #2804 extension.
+        # full AST relocation of the scan is the #2804 extension. Note the
+        # kill demo below comments out every line carrying an anchor --
+        # including a docstring copy -- so this blind spot is NOT covered
+        # by the demo: the note above is a known-gap declaration, not a
+        # guard (#2773 fix-r11, review MM r5 boundary#3).
         lines = source.splitlines()
         position = 0
         for anchor in SIBLING_DEFENCE_ANCHORS[name]:
