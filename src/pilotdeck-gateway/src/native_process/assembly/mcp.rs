@@ -50,7 +50,13 @@ impl SdkMcpProjectResolver for NativeMcpResolver {
                 .clone();
             let resolved: Arc<dyn SdkMcpProject> = Arc::new(LeasedMcpProject {
                 project: PluginProjectRuntime::from_generation(lease.runtime(), plugin_runtime),
-                _lease: lease,
+                // Struct-literal fields evaluate in written order: `project`
+                // borrows `lease` first, this field moves it.
+                _lease: if crate::mutants::on("mcp-resolver-lease") {
+                    None
+                } else {
+                    Some(lease)
+                },
             });
             Ok(resolved)
         })
@@ -64,10 +70,13 @@ impl SdkMcpProjectResolver for NativeMcpResolver {
 /// generation and `PluginResources::dispose` shut the runtime down under the
 /// caller (#2157; the memory route documents and fixes the same invariant).
 /// `RuntimeLease` releases exactly once on drop, so the generation stays
-/// leased until the gateway drops this handle.
+/// leased until the gateway drops this handle. The `mcp-resolver-lease`
+/// fixture switch (`crate::mutants::on`, feature `pdrs-mutants`) selects the
+/// registered mutation that resolves without holding the lease; with the
+/// feature off the switch is a constant `false` and the lease is always held.
 struct LeasedMcpProject {
     project: PluginProjectRuntime,
-    _lease: RuntimeLease,
+    _lease: Option<RuntimeLease>,
 }
 
 impl SdkMcpProject for LeasedMcpProject {
@@ -249,9 +258,11 @@ mod tests {
     /// runtime. The assertions run behaviour first: the refresh either still
     /// works or names the disposed runtime, then retirement must still be
     /// blocked, and `lease_count` is the deterministic backstop under both
-    /// timings. Removing `_lease` from `LeasedMcpProject` makes this red at
-    /// `refresh` whenever the cleanup wins the 500 ms window and at
-    /// `lease_count` in every case.
+    /// timings. The claim that the resolver must hold the lease is registered
+    /// as the `mcp-resolver-lease` executable mutation
+    /// (`tests/fixtures/mcp-resolver-lease/negative_controls.py`), which must
+    /// stay red at the refresh assertion; this prose no longer carries the
+    /// proof on its own.
     #[tokio::test]
     async fn resolved_project_holds_the_generation_lease_through_refresh() {
         let scratch = Scratch::new();
@@ -269,16 +280,15 @@ mod tests {
         // deterministic `lease_count` assertion below still catches the early
         // drop when a slow machine lets the disposal outlast this window.
         let retired = timeout(Duration::from_millis(500), runtime.wait_disposed()).await;
-        let refreshed = resolved.refresh().await;
-        assert!(
-            refreshed.is_ok(),
-            "#2157 refresh must run on the generation the resolver leased, got {refreshed:?}"
+        crate::test_negative_receipt::expect_ok(
+            resolved.refresh().await,
+            "#2157 refresh must run on the generation the resolver leased",
         );
-        assert!(
+        crate::negative_assert!(
             retired.is_err(),
             "#2157 retirement must wait for the resolver's lease; the returned project dropped it"
         );
-        assert_eq!(
+        crate::negative_assert_eq!(
             runtime.lease_count(),
             1,
             "#2157 the resolved project must own the generation lease"
