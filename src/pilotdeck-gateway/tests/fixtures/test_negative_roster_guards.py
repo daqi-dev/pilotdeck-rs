@@ -204,8 +204,8 @@ def _shadowed_source_writes(guarded, writes, phase):
         yield
 
 
-def _drive_manager(testcase, argv, *, drop_last=False, shrink_roster=False,
-                   registry=None):
+def _drive_manager(testcase, argv, *, drop_last=False, renamed=False,
+                   shrink_roster=False, registry=None):
     """Run manager-gateway's real ``main()``; return the Drive of that run."""
     module = load_entry(MANAGER_SCRIPT)
     base = Path(tempfile.mkdtemp(prefix='negctl-2804-'))
@@ -216,9 +216,19 @@ def _drive_manager(testcase, argv, *, drop_last=False, shrink_roster=False,
 
     def dropping_select(controls, requested, **kwargs):
         rows = real_select(controls, requested, **kwargs)
-        # The injected shrink: a select() that silently loses the last row
-        # is the #1666 hazard this guard exists to catch.
-        return rows[:-1] if drop_last and rows else rows
+        if drop_last and rows:
+            # The injected shrink: a select() that silently loses the last
+            # row is the #1666 hazard this guard exists to catch.
+            return rows[:-1]
+        if renamed and rows:
+            # The injected rename: the row keeps its place, so the recorded
+            # roster keeps its length, but its last name is no longer the
+            # name the roster pins. A re-check that only compared lengths
+            # would wave this through; the entries compare names.
+            rows = list(rows)
+            last = rows[-1]
+            rows[-1] = (last[0] + '-renamed',) + last[1:]
+        return rows
 
     def fake_write_atomic(root, path, data, *, mode=None):
         writes.append((Path(path), bytes(data)))
@@ -276,7 +286,15 @@ def _drive_manager(testcase, argv, *, drop_last=False, shrink_roster=False,
     return Drive(module, code, out, stdout.getvalue(), stderr.getvalue(), writes, installed)
 
 
-def _drive_memory(testcase, *, perturbed=False, shrink_roster=False, argv=()):
+def _rename_roster(names):
+    """The same-length drift: the roster keeps its size, not its last name."""
+    renamed = list(names)
+    renamed[-1] += '-renamed'
+    return tuple(renamed)
+
+
+def _drive_memory(testcase, *, perturbed=False, renamed=False,
+                  shrink_roster=False, argv=()):
     """Run memory-gateway's real ``main()``; return the Drive of that run."""
     module = load_entry('memory-gateway/negative_controls.py')
     base = Path(tempfile.mkdtemp(prefix='negctl-2804-'))
@@ -297,13 +315,16 @@ def _drive_memory(testcase, *, perturbed=False, shrink_roster=False, argv=()):
         yield {path: path.read_bytes() for path in paths}
 
     def fake_run_bound(test):
-        if perturbed and not drifted[0]:
-            # The injected drift: the static roster loses its last name
-            # after the startup checks, so the run records a verdict the
-            # roster no longer knows -- the same recorded != expected
-            # predicate, at the only seam a driver can reach.
+        if (perturbed or renamed) and not drifted[0]:
+            # The injected drift: after the startup checks, the static
+            # roster either loses its last name or keeps its length but
+            # not that name, so the run records verdicts the roster no
+            # longer pins -- the same recorded != expected predicate, at
+            # the only seam a driver can reach.
             drifted[0] = True
-            module.EXPECTED_NAMES = module.EXPECTED_NAMES[:-1]
+            module.EXPECTED_NAMES = (_rename_roster(module.EXPECTED_NAMES)
+                                     if renamed
+                                     else module.EXPECTED_NAMES[:-1])
         if phase[0] == 'mutant':
             return subprocess.CompletedProcess(
                 ['stub'], 1,
@@ -332,7 +353,8 @@ def _drive_memory(testcase, *, perturbed=False, shrink_roster=False, argv=()):
     return Drive(module, code, out, stdout.getvalue(), stderr.getvalue(), writes, None)
 
 
-def _drive_snapshot(testcase, *, perturbed=False, shrink_roster=False, argv=()):
+def _drive_snapshot(testcase, *, perturbed=False, renamed=False,
+                    shrink_roster=False, argv=()):
     """Run snapshot-projection's real ``main()``; return the Drive of that run."""
     module = load_entry('snapshot-projection/negative_controls.py')
     base = Path(tempfile.mkdtemp(prefix='negctl-2804-'))
@@ -350,9 +372,11 @@ def _drive_snapshot(testcase, *, perturbed=False, shrink_roster=False, argv=()):
         yield {path: path.read_bytes() for path in paths}
 
     def fake_run(target, test, env):
-        if perturbed and not drifted[0]:
+        if (perturbed or renamed) and not drifted[0]:
             drifted[0] = True
-            module.EXPECTED_NAMES = module.EXPECTED_NAMES[:-1]
+            module.EXPECTED_NAMES = (_rename_roster(module.EXPECTED_NAMES)
+                                     if renamed
+                                     else module.EXPECTED_NAMES[:-1])
         if phase[0] == 'mutant':
             return subprocess.CompletedProcess(
                 ['stub'], 1,
@@ -396,7 +420,8 @@ def _drive_snapshot(testcase, *, perturbed=False, shrink_roster=False, argv=()):
     return Drive(module, code, out, stdout.getvalue(), stderr.getvalue(), writes, None)
 
 
-def _drive_sdk(testcase, *, perturbed=False, shrink_roster=False, argv=()):
+def _drive_sdk(testcase, *, perturbed=False, renamed=False,
+              shrink_roster=False, argv=()):
     """Run sdk-mcp-session-tools' real ``main()``; return the Drive of that run."""
     module = load_entry('sdk-mcp-session-tools/negative_controls.py')
     base = Path(tempfile.mkdtemp(prefix='negctl-2804-'))
@@ -412,9 +437,11 @@ def _drive_sdk(testcase, *, perturbed=False, shrink_roster=False, argv=()):
         return subprocess.CompletedProcess([], 0, '', '')
 
     def fake_run_owned(command, **kwargs):
-        if perturbed and not drifted[0]:
+        if (perturbed or renamed) and not drifted[0]:
             drifted[0] = True
-            module.EXPECTED_NAMES = module.EXPECTED_NAMES[:-1]
+            module.EXPECTED_NAMES = (_rename_roster(module.EXPECTED_NAMES)
+                                     if renamed
+                                     else module.EXPECTED_NAMES[:-1])
         test = command[-4]
         return subprocess.CompletedProcess(
             command, 0,
@@ -442,9 +469,10 @@ def _drive_sdk(testcase, *, perturbed=False, shrink_roster=False, argv=()):
     return Drive(module, code, out, stdout.getvalue(), stderr.getvalue(), writes, None)
 
 
-def _drive_manager_entry(testcase, *, perturbed=False, shrink_roster=False, argv=()):
+def _drive_manager_entry(testcase, *, perturbed=False, renamed=False,
+                         shrink_roster=False, argv=()):
     """The register's manager-gateway row: the perturbation is the lost row."""
-    return _drive_manager(testcase, argv, drop_last=perturbed,
+    return _drive_manager(testcase, argv, drop_last=perturbed, renamed=renamed,
                           shrink_roster=shrink_roster)
 
 
@@ -463,6 +491,16 @@ ROSTER_GUARDED = {
     'memory-gateway/negative_controls.py': _drive_memory,
     'snapshot-projection/negative_controls.py': _drive_snapshot,
     'sdk-mcp-session-tools/negative_controls.py': _drive_sdk,
+}
+
+# The line each entry prints on its way out of a *clean* run. A mismatched
+# run must leave none of them behind (r5: the shrunken run used to print
+# the green count line after the summary was unlinked).
+SUCCESS_LINE = {
+    MANAGER_SCRIPT: ('summary:',),
+    'memory-gateway/negative_controls.py': ('summary:',),
+    'snapshot-projection/negative_controls.py': (' KILLED; see ',),
+    'sdk-mcp-session-tools/negative_controls.py': ('"controls"',),
 }
 
 
@@ -501,9 +539,11 @@ class RegisteredEntryRosterGuard(unittest.TestCase):
                                 f'got {run.code}; stderr={run.stderr!r}')
                 summary = json.loads((run.out / 'summary.json').read_text())
                 rows = summary['controls'] if isinstance(summary, dict) else summary
-                self.assertTrue(len(rows) == len(run.module.EXPECTED_NAMES),
-                                f'#2804 {script}: the full run must record one row '
-                                f'per roster name, got {len(rows)}')
+                key = 'mutation' if script == MANAGER_SCRIPT else 'name'
+                names = sorted(row[key] for row in rows)
+                self.assertTrue(names == sorted(run.module.EXPECTED_NAMES),
+                                f'#2804 {script}: the full run must record exactly '
+                                f'the roster names, got {names}')
                 self.assertTrue(all(row['status'] == 'KILLED' for row in rows),
                                 f'#2804 {script}: every stubbed-kill row must be '
                                 f'recorded KILLED')
@@ -531,6 +571,50 @@ class RegisteredEntryRosterGuard(unittest.TestCase):
                 self.assertTrue('verdict roster mismatch' in run.stderr,
                                 f'#2804 {script}: the refusal must name the '
                                 f'mismatch: {run.stderr!r}')
+                # A mismatch publishes nothing that reads as success, and
+                # that includes the green count line each entry prints on
+                # the way out of a clean run (r5: the shrunken run used to
+                # leave one behind after the summary was unlinked).
+                for marker in SUCCESS_LINE[script]:
+                    self.assertTrue(marker not in run.stdout,
+                                    f'#2804 {script}: a mismatched run must '
+                                    f'not print its green line ({marker!r}): '
+                                    f'{run.stdout!r}')
+
+    def test_a_same_length_rename_is_still_a_mismatch(self):
+        # The recorded roster keeps its length and only a name changes, so
+        # a re-check that only compared lengths would wave it through; the
+        # entries' recorded != expected compares names (boundary P1,
+        # fix-r1).
+        for script, driver in ROSTER_GUARDED.items():
+            with self.subTest(script=script):
+                run = driver(self, renamed=True)
+                self.assertTrue(run.code == 1,
+                                f'#2804 {script}: a run whose recorded names '
+                                f'disagree with the roster must exit 1, got '
+                                f'{run.code}')
+                self.assertTrue(not (run.out / 'summary.json').exists(),
+                                f'#2804 {script}: a mismatched run must not publish '
+                                f'summary.json')
+                mismatch = json.loads((run.out / 'roster-mismatch.json').read_text())
+                self.assertTrue(mismatch.get('verdict') == 'ROSTER_MISMATCH',
+                                f'#2804 {script}: the mismatch artifact must carry '
+                                f'the verdict: {mismatch!r}')
+                self.assertTrue(len(mismatch['expected']) == len(mismatch['recorded']),
+                                f'#2804 {script}: the rename keeps the roster '
+                                f'length, so the artifact must show two '
+                                f'same-length lists: {mismatch!r}')
+                self.assertTrue(set(mismatch['expected']) != set(mismatch['recorded']),
+                                f'#2804 {script}: the mismatch artifact must name '
+                                f'the disagreement: {mismatch!r}')
+                self.assertTrue('verdict roster mismatch' in run.stderr,
+                                f'#2804 {script}: the refusal must name the '
+                                f'mismatch: {run.stderr!r}')
+                for marker in SUCCESS_LINE[script]:
+                    self.assertTrue(marker not in run.stdout,
+                                    f'#2804 {script}: a mismatched run must '
+                                    f'not print its green line ({marker!r}): '
+                                    f'{run.stdout!r}')
 
     def test_a_drifted_roster_never_starts(self):
         for script, driver in ROSTER_GUARDED.items():
