@@ -431,7 +431,10 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `mult-fold-budget-unthreaded`, `mod-render-bound-reverted`,
 `scalar-repr-reverted` (fix-r32: the Mod scalar payload charge reverted to
 the raw length — the `%r`/`%a` str and the bytes scalar render probes must
-flag it; `#1652`).
+flag it; fix-r33 re-anchors the scalar arm to the bytes-left repr spelling
+and re-states the unthreaded mint as the r30 self-minted call, after the
+r32 required-budget change turned the bare revert into a TypeError the
+fold-level error rule swallowed; `#1652`).
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1883,7 +1886,11 @@ the same charge: a str left renders bytes as their repr under every spec
 (`4*len + 3`) and `%r`/`%a` render a str as its repr (`10*len + 2`
 worst case), each with its own sentinel probe and a folding `%s` twin
 (probe-r32-scalar-repr.out), plus a third revert mutant
-(`scalar-repr-reverted`, 241 total). (S) The boolean-folding family
+(`scalar-repr-reverted`, 241 total). fix-r33 closes the bytes-left arm
+of the same charge: a bytes left (PEP 461) also renders `%r`/`%a`
+through repr/ascii — a bytes right pays `4*len + 3`, a str right the
+same `10*len + 2` worst case — with two sentinel probes and folding
+twins (probe-r33-bytes-left.out). (S) The boolean-folding family
 in the frozen comparison sites: every witness/evidence equality on
 external documents now goes through `native_evidence.same_json`
 (type-strict on booleans, #1372 number semantics — `True == 1` /
