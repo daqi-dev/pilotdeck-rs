@@ -644,7 +644,8 @@ def open_output_dir(root, parts=()):
 
 def write_at(dir_fd, name, text, exclusive=False):
     """相对 ``dir_fd`` 写一个文件：``O_NOFOLLOW|O_NONBLOCK`` + ``S_ISREG`` + 失败一律折成
-    ``OutputError``（rc2）。
+    ``OutputError``——控件循环里的调用点被收成**该控件 INVALID**（#2573），只有 `main()`
+    发布 `summary.json` 处穿出为 rc2。
 
     ``O_NOFOLLOW`` 让预置的 ``.../methods.json -> ~/.bashrc`` 直接 ``ELOOP`` 失败，
     而不是以本进程权限截断目标（DeepSeek r11 P1）。``O_NONBLOCK`` + ``S_ISREG``
@@ -1549,7 +1550,8 @@ def run_locked(args, out_root):
         finally:
             os.close(out_fd)
     except OutputError as error:
-        # 写盘失败是「跑不了」（rc2），不是「某个控件的判据 FAIL」（rc1）。
+        # 这里只兜 summary 发布的写盘失败：是「跑不了」（rc2），不是「某个控件的判据
+        # FAIL」（rc1）；逐控件的写盘失败已在控件循环里收成该控件 INVALID（#2573）。
         print(f'negative_controls: 输出目录不可用：{error}', file=sys.stderr)
         return 2
     print(json.dumps({'status': summary['status'], 'counts': counts,
