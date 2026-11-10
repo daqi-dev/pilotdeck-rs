@@ -730,16 +730,26 @@ const HOST_LOCK_GUARD: &str = "/tmp/pdrs-channel-slack.lock.guard";
 /// The canonical takeover bound (`MAX_AGE`); the port replay is bounded far
 /// below it, so this only fires on a wedged holder.
 const HOST_LOCK_MAX_AGE: Duration = Duration::from_secs(2400);
+/// The bounded retry a release spends regaining the guard before it retains
+/// the lease fail-closed (the same bound the in-tree `release_guard`
+/// precedent uses in `sdk_sessions_list_exit.rs`).
+const HOST_LOCK_RELEASE_RETRY: Duration = Duration::from_secs(2);
 /// The wait bound for a would-be taker. A lease governed by the takeover
 /// rules — a live holder that releases, a dead holder (every poll reads its
 /// pid dead), or an age past `HOST_LOCK_MAX_AGE` — always resolves within
 /// `HOST_LOCK_MAX_AGE` of the wait's start (the lease ages as the wait
-/// advances), so this deadline (max age plus margin) is only ever tripped by
-/// a lease outside those rules, e.g. a future-dated `timestamp`, and it
+/// advances), so this deadline is only ever tripped by a lease the rules
+/// cannot resolve — a future-dated `timestamp`, a truthy `cleanupPending`
+/// (the rules never reclaim it), or a foreign lease no rule owns — and it
 /// fails by naming the manual recovery section instead of hanging the test
-/// process. The canonical gateway side raises `TimeoutError` rather than
-/// wait forever (`scripts/gateway-parity/common.py`).
-const HOST_LOCK_WAIT_LIMIT: Duration = Duration::from_secs(3000);
+/// process. Derived from the max age (`Duration::as_secs` /
+/// `from_secs` are const), so the two bounds cannot drift apart; the
+/// canonical gateway side raises `TimeoutError` rather than wait forever
+/// (`scripts/gateway-parity/common.py`).
+const HOST_LOCK_WAIT_LIMIT: Duration = Duration::from_secs(HOST_LOCK_MAX_AGE.as_secs() + 600);
+/// The manual recovery section every #2322 retention printout and lock
+/// failure names.
+const HOST_LOCK_RECOVERY: &str = "scripts/cli-parity/README.md 「锁被保留时怎么解」";
 
 /// The host lease. The guard flock is held only for the take (the canonical
 /// short-lived-helper shape); the directory is the lease across the replay.
@@ -750,15 +760,25 @@ struct HostLease {
 
 impl Drop for HostLease {
     fn drop(&mut self) {
-        // The canonical release: re-take the guard (bounded retry per the
-        // in-tree `release_guard` precedent — never stolen), verify the
-        // lease is still ours (a takeover could have renamed ours away),
-        // then rename the directory off the lock path before removing it —
-        // a crash mid-release leaves garbage off the lock path, never a
-        // live-looking lease a later taker would wait on. A release that
-        // could not regain the guard still renames, retaining `owner.json`
-        // for manual recovery: the lock path itself must never keep a
-        // lease its own process is done with.
+        // The canonical release: re-take the guard with a bounded retry
+        // (the in-tree `release_guard` precedent — never stolen), verify
+        // the lease is still ours (a takeover could have renamed ours
+        // away), then rename the directory off the lock path and reap it —
+        // the whole release inside the guard's critical section, as the
+        // canonical release holds it. A release that cannot regain the
+        // guard within `HOST_LOCK_RELEASE_RETRY` retains fail-closed, like
+        // the canonical release's own `Err` on `release_guard`: the
+        // `still_ours` read and the rename are only atomic under the
+        // guard, so a guard-less rename could instead move a fresh lease
+        // another taker just published onto the lock path (a stale holder
+        // dropping while its own lease is being taken over), leaving the
+        // path empty for a third taker — two replays on one port segment.
+        // Retention loses no liveness either: the r1 worry (a short
+        // taker's critical section straddling the drop) is exactly what
+        // the bounded retry covers, and a lease that outlives the retry is
+        // resolved the canonical way — by the takeover rules (a dead pid
+        // or an age past `HOST_LOCK_MAX_AGE`) or by the manual recovery
+        // section the retention printout names.
         let guard = release_host_guard();
         let still_ours = std::fs::read(self.dir.join("owner.json"))
             .ok()
@@ -772,18 +792,28 @@ impl Drop for HostLease {
         if still_ours.is_none() {
             return; // a takeover renamed ours away; nothing of ours to release
         }
+        let Some(_held) = guard else {
+            // Fail-closed retention: the lease stays put on the lock
+            // path — whole and visible to the takeover rules, `owner.json`
+            // intact — and the printout names the recovery section, never
+            // a silent fork. Nothing is renamed or removed without the
+            // guard.
+            eprintln!(
+                "#2322 port segment lease {HOST_LOCK_DIR} retained on the lock \
+                 path: the release could not regain its guard within {} s; \
+                 recover it per {HOST_LOCK_RECOVERY}",
+                HOST_LOCK_RELEASE_RETRY.as_secs()
+            );
+            return;
+        };
         let retired = self.dir.with_extension(format!("releasing.{}", self.token));
         if std::fs::rename(&self.dir, &retired).is_err() {
             return; // the takeover rules eventually reclaim what stayed put
         }
-        if let Some(_held) = guard {
-            // The guard was held across the rename, as the canonical
-            // release holds it: safe to reap the retired directory.
-            let _ = std::fs::remove_file(retired.join("owner.json"));
-            let _ = std::fs::remove_dir(&retired);
-        }
-        // No guard: the retired lease keeps its `owner.json` for manual
-        // recovery per the README — the lock path is already free.
+        // The guard was held across the rename, as the canonical release
+        // holds it: safe to reap the retired directory.
+        let _ = std::fs::remove_file(retired.join("owner.json"));
+        let _ = std::fs::remove_dir(&retired);
     }
 }
 
@@ -821,7 +851,7 @@ fn host_guard() -> Option<std::fs::File> {
     let guard = open_host_guard().unwrap_or_else(|error| {
         panic!(
             "#2322 port segment guard {HOST_LOCK_GUARD} is damaged ({error}); \
-             recover it per scripts/cli-parity/README.md 「锁被保留时怎么解」"
+             recover it per {HOST_LOCK_RECOVERY}"
         );
     });
     rustix::fs::flock(&guard, rustix::fs::FlockOperation::NonBlockingLockExclusive)
@@ -831,23 +861,28 @@ fn host_guard() -> Option<std::fs::File> {
 
 /// The release-side guard acquisition: a taker may be inside its critical
 /// section when the owner drops, so the release retries the non-blocking
-/// take against a 2 s deadline (the in-tree `release_guard` precedent in
-/// `sdk_sessions_list_exit.rs` — bounded, so a wedged guard holder cannot
-/// hang the test, and never stolen). `None` means the deadline passed or the
-/// guard is damaged — the caller must still move its lease off the lock
-/// path, which is why damage here is a quiet `None` and not the take side's
-/// loud panic: the lease removal needs no guard, only the lock path.
+/// take against a `HOST_LOCK_RELEASE_RETRY` deadline (the in-tree
+/// `release_guard` precedent in `sdk_sessions_list_exit.rs` — bounded, so a
+/// wedged guard holder cannot hang the test, and never stolen). Transient
+/// failures — a held guard, or an `open` a momentary condition like EMFILE
+/// answers — retry to the same deadline; `None` means the deadline passed or
+/// the guard is damaged, and the caller retains fail-closed, which is why
+/// damage here is a quiet `None` and not the take side's loud panic: the
+/// retention printout, not this function, carries the recovery pointer.
 fn release_host_guard() -> Option<std::fs::File> {
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + HOST_LOCK_RELEASE_RETRY;
     loop {
-        let guard = open_host_guard().ok()?;
-        match rustix::fs::flock(&guard, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
-            Ok(()) => return Some(guard),
-            Err(rustix::io::Errno::WOULDBLOCK) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(5));
+        if let Ok(guard) = open_host_guard() {
+            match rustix::fs::flock(&guard, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
+                Ok(()) => return Some(guard),
+                Err(rustix::io::Errno::WOULDBLOCK) => {}
+                Err(_) => return None,
             }
-            Err(_) => return None,
         }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(5));
     }
 }
 
@@ -924,8 +959,7 @@ fn try_take_host_lease() -> Option<HostLease> {
         std::fs::remove_dir_all(&dir).unwrap_or_else(|error| {
             panic!(
                 "#2322 stale port-segment lock {HOST_LOCK_DIR} cannot be \
-                 reclaimed ({error}); recover it per scripts/cli-parity/README.md \
-                 「锁被保留时怎么解」"
+                 reclaimed ({error}); recover it per {HOST_LOCK_RECOVERY}"
             );
         });
     }
@@ -972,8 +1006,8 @@ async fn host_port_segment_lease() -> HostLease {
             panic!(
                 "#2322 port segment lock {HOST_LOCK_DIR} is still held after \
                  {} s of waiting — it sits outside the takeover rules (a \
-                 future-dated or foreign lease); recover it per \
-                 scripts/cli-parity/README.md 「锁被保留时怎么解」",
+                 future-dated timestamp, a truthy cleanupPending, or a \
+                 foreign lease); recover it per {HOST_LOCK_RECOVERY}",
                 HOST_LOCK_WAIT_LIMIT.as_secs()
             );
         }
@@ -1001,18 +1035,56 @@ async fn lock_port_segment() -> PortSegmentGuard {
     }
 }
 
+/// A failing host-lease test must not leave its retained lease blocking the
+/// same process's sibling tests until the `HOST_LOCK_WAIT_LIMIT` bound —
+/// the retained owner pid is this very process, alive, so no takeover rule
+/// ever resolves it in-process. While unwinding, this reaps our own lease
+/// off the lock path under the guard; the green path has nothing to reap
+/// (the release already removed it), and a lease a takeover replaced (the
+/// token check) is left to its new owner.
+struct RetainedLeaseReaper {
+    token: String,
+}
+
+impl Drop for RetainedLeaseReaper {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            return;
+        }
+        let Some(_held) = release_host_guard() else {
+            return; // a taker holds the guard; the path is not ours to touch
+        };
+        let still_ours = std::fs::read(std::path::Path::new(HOST_LOCK_DIR).join("owner.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .is_some_and(|owner| {
+                owner["token"]
+                    .as_str()
+                    .is_some_and(|token| token == self.token)
+            });
+        if still_ours {
+            let _ = std::fs::remove_file(std::path::Path::new(HOST_LOCK_DIR).join("owner.json"));
+            let _ = std::fs::remove_dir(HOST_LOCK_DIR);
+        }
+    }
+}
+
 /// #2322: the release retries the guard past another taker's critical
 /// section instead of silently keeping a live lease. The guard is held
 /// across the drop on purpose — the r1 shape this fixes — and released
-/// shortly after, so the bounded retry must outlast it, re-take the guard
-/// and reap the retired lease inside the same drop. Before the fix the
-/// single non-blocking take missed the guard and returned, leaving the
-/// lease (a live pid, a fresh timestamp) on the lock path where no
-/// takeover rule ever reclaims it: the first assertion below was red.
+/// shortly after, so the bounded retry (`HOST_LOCK_RELEASE_RETRY`) must
+/// outlast it, re-take the guard and reap the retired lease inside the
+/// same drop. Before the fix the single non-blocking take missed the
+/// guard and returned, retaining the lease (a live pid, a fresh
+/// timestamp) on the lock path where no takeover rule ever reclaims it:
+/// the first assertion below was red.
 #[tokio::test]
 async fn host_lease_release_retries_past_a_held_guard() {
     let in_process = FIXTURE_PORT_SEGMENT.lock().await;
     let lease = host_port_segment_lease().await;
+    let _reaper = RetainedLeaseReaper {
+        token: lease.token.clone(),
+    };
     let retired = lease
         .dir
         .with_extension(format!("releasing.{}", lease.token));
@@ -1037,37 +1109,175 @@ async fn host_lease_release_retries_past_a_held_guard() {
     drop(in_process);
 }
 
-/// #2322: a release that cannot regain the guard within its bounded retry
-/// still moves the lease off the lock path — a live lease left on the lock
-/// path is the deadlock the fix closes — and retains the retired directory
-/// with its `owner.json` for manual recovery per the README.
+/// #2322: a release that cannot regain the guard within
+/// `HOST_LOCK_RELEASE_RETRY` retains the lease on the lock path
+/// (fail-closed, the canonical release's own `Err`-on-`release_guard`
+/// shape) instead of renaming it off — the rename form this fixes could
+/// move a fresh lease another taker had just published onto the lock path,
+/// leaving the path empty for a third taker while the second still holds
+/// the segment. The pre-fix (rename) form is red here on the first
+/// assertion (it empties the lock path); it also leaves a
+/// `releasing.<token>` directory behind and prints no retention line,
+/// which the later assertions and the worker rerun below would catch.
 #[tokio::test]
-async fn host_lease_release_without_the_guard_retains_off_the_lock_path() {
+async fn host_lease_release_without_the_guard_retains_on_the_lock_path() {
     let in_process = FIXTURE_PORT_SEGMENT.lock().await;
     let lease = host_port_segment_lease().await;
-    let retired = lease
-        .dir
-        .with_extension(format!("releasing.{}", lease.token));
-    // The guard stays with another taker past the release's 2 s deadline.
+    let token = lease.token.clone();
+    let _reaper = RetainedLeaseReaper {
+        token: token.clone(),
+    };
+    let retired = std::path::Path::new(HOST_LOCK_DIR).with_extension(format!("releasing.{token}"));
+    // The guard stays with another taker past the release's bounded retry.
     let held = host_guard().expect("#2322 the guard is free under our own lease");
     drop(lease);
     crate::negative_assert!(
-        !std::path::Path::new(HOST_LOCK_DIR).exists(),
-        "#2322 even a guard-less release frees the lock path"
+        std::path::Path::new(HOST_LOCK_DIR).is_dir(),
+        "#2322 a guard-less release retains the lease on the lock path"
     );
     crate::negative_assert!(
-        retired.is_dir(),
-        "#2322 the guard-less release retains the retired lease"
+        std::path::Path::new(HOST_LOCK_DIR)
+            .join("owner.json")
+            .is_file(),
+        "#2322 the retained lease keeps its owner.json for the takeover rules"
     );
     crate::negative_assert!(
-        retired.join("owner.json").is_file(),
-        "#2322 the retained lease keeps its owner.json for manual recovery"
+        !retired.exists(),
+        "#2322 a guard-less release renames nothing off the lock path"
     );
-    // Reap the retained lease by hand: this test is its only owner.
-    drop(held);
-    std::fs::remove_file(retired.join("owner.json"))
+    // Reap the retained lease by hand under the still-held guard: this
+    // test is its only owner, and the rerun below needs the path free.
+    std::fs::remove_file(std::path::Path::new(HOST_LOCK_DIR).join("owner.json"))
         .expect("#2322 the retained owner.json is removable");
-    std::fs::remove_dir(&retired).expect("#2322 the retained lease is removable");
+    std::fs::remove_dir(HOST_LOCK_DIR).expect("#2322 the retained lease is removable");
+    drop(held);
+    // The retention must also be observable, not a silent fork: the
+    // printout names the manual recovery section. It goes to this
+    // process's stderr, which the test harness captures, so an owned
+    // rerun of the same shape in a worker child provides the line.
+    let rerun = crate::test_process::rerun_exact(
+        "channel::slack::tests::host_lease_retention_output_worker",
+        &[],
+        Duration::from_secs(30),
+    );
+    crate::negative_assert!(
+        !rerun.timed_out && !rerun.overflow,
+        "#2322 the retention worker rerun was stopped (timeout={} overflow={}):\n{}\n{}",
+        rerun.timed_out,
+        rerun.overflow,
+        rerun.stdout,
+        rerun.stderr
+    );
+    crate::negative_assert!(
+        rerun.status.success() && rerun.stderr.contains(HOST_LOCK_RECOVERY),
+        "#2322 the guard-less retention prints the manual recovery section:\n{}\n{}",
+        rerun.stdout,
+        rerun.stderr
+    );
+    drop(in_process);
+}
+
+/// #2322 retention-output worker only: rerun by
+/// `host_lease_release_without_the_guard_retains_on_the_lock_path` — the
+/// parent cannot read its own harness-captured stderr — to expose the
+/// retention printout through a child the parent owns.
+#[tokio::test]
+#[ignore = "#2322 retention-output worker only (rerun by its parent test)"]
+async fn host_lease_retention_output_worker() {
+    let lease = host_port_segment_lease().await;
+    let dir = lease.dir.clone();
+    let held = host_guard().expect("#2322 the guard is free under the worker's own lease");
+    drop(lease); // the guard-less retention prints the recovery pointer
+    // Reap the retained lease by hand under the still-held guard: this
+    // worker is the lease's only owner.
+    std::fs::remove_file(dir.join("owner.json")).expect("#2322 the worker reaps its owner.json");
+    std::fs::remove_dir(&dir).expect("#2322 the worker reaps its retained lease");
+    drop(held);
+}
+
+/// #2322: the stale-takeover interleaving the fail-closed retention fixes.
+/// P drops a lease the takeover rules already consider stale (its age is
+/// past `HOST_LOCK_MAX_AGE`, backdated through the owner.json itself — no
+/// clock hook in the production code) while Q holds the guard past the
+/// release's bounded retry. The release retains: the lock path still
+/// carries P's complete lease, which the takeover side (the
+/// `host_lease_is_stale` read Q does inside its critical section) still
+/// sees whole, and Q's takeover then reclaims it and publishes a fresh
+/// lease. The pre-fix (rename) form was red on the first assertion — it
+/// moved the stale lease off the lock path (and would have moved Q's
+/// fresh lease instead, had Q already published it, leaving the path
+/// empty for a third taker).
+#[tokio::test]
+async fn host_lease_release_retains_a_stale_lease_a_takeover_still_sees() {
+    let in_process = FIXTURE_PORT_SEGMENT.lock().await;
+    let lease = host_port_segment_lease().await;
+    let token = lease.token.clone();
+    let _reaper = RetainedLeaseReaper {
+        token: token.clone(),
+    };
+    // Backdate the owner past the takeover bound (tmp+rename, the
+    // canonical publish form): the lease is stale by age while our pid
+    // stays alive — the interleaving's precondition.
+    let mut owner: Value = serde_json::from_slice(
+        &std::fs::read(std::path::Path::new(HOST_LOCK_DIR).join("owner.json"))
+            .expect("#2322 the fresh lease publishes its owner.json"),
+    )
+    .expect("#2322 the owner.json is valid");
+    let backdated = std::time::SystemTime::now()
+        .checked_sub(HOST_LOCK_MAX_AGE + Duration::from_secs(60))
+        .expect("#2322 the wall clock is past the takeover bound")
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("#2322 the wall clock is past the epoch")
+        .as_secs_f64();
+    owner["timestamp"] = json!(backdated);
+    let tmp = std::path::Path::new(HOST_LOCK_DIR).join("owner.json.tmp.backdate");
+    std::fs::write(
+        &tmp,
+        serde_json::to_string(&owner).expect("#2322 the backdated owner json"),
+    )
+    .expect("#2322 the backdate tmp write");
+    std::fs::rename(&tmp, std::path::Path::new(HOST_LOCK_DIR).join("owner.json"))
+        .expect("#2322 the backdate publish");
+    // Q holds the guard while P's release exhausts its bounded retry; the
+    // dropping happens on its own thread so the interleaving (a taker
+    // holding the guard across P's whole release) is deterministic.
+    let held = host_guard().expect("#2322 the guard is free under our own lease");
+    let dropper = std::thread::spawn(move || drop(lease));
+    dropper.join().expect("#2322 the dropping thread finished");
+    // P retained: the lock path still carries our complete stale lease...
+    crate::negative_assert!(
+        std::path::Path::new(HOST_LOCK_DIR).is_dir(),
+        "#2322 the guard-less release retains the stale lease on the lock path"
+    );
+    let retained_owner: Value = serde_json::from_slice(
+        &std::fs::read(std::path::Path::new(HOST_LOCK_DIR).join("owner.json"))
+            .expect("#2322 the retained stale lease keeps a readable owner.json"),
+    )
+    .expect("#2322 the retained owner.json is valid");
+    crate::negative_assert!(
+        retained_owner["token"].as_str() == Some(token.as_str()),
+        "#2322 the retained stale lease is still the dropping process's own"
+    );
+    // ...which the takeover side still sees whole and reclaimable.
+    crate::negative_assert!(
+        host_lease_is_stale(std::path::Path::new(HOST_LOCK_DIR)),
+        "#2322 the takeover rules still see the retained stale lease whole"
+    );
+    // Q's takeover, under its guard: reclaims ours and publishes a fresh
+    // lease — the interleaving ends with one live lease on the path, not
+    // a moved-away path two processes could each believe they hold.
+    drop(held);
+    let reclaimed =
+        try_take_host_lease().expect("#2322 the takeover reclaims the retained stale lease");
+    crate::negative_assert!(
+        reclaimed.token != token,
+        "#2322 the takeover publishes a fresh lease over the retained one"
+    );
+    drop(reclaimed); // the guard is free again: the clean release reaps it
+    crate::negative_assert!(
+        !std::path::Path::new(HOST_LOCK_DIR).exists(),
+        "#2322 the taken-over lease releases cleanly off the lock path"
+    );
     drop(in_process);
 }
 
