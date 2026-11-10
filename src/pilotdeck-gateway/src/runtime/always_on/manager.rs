@@ -243,8 +243,47 @@ struct RuntimeShared {
     /// after it.
     stopping: AtomicBool,
     stop_started: AtomicBool,
+    /// #2486: liveness marker for an in-flight `stop` drain. TS's
+    /// `stopPromise` runs to completion once called; the port's `stop`
+    /// future can be dropped at any await (the assembly's single-poll
+    /// builder drops the whole start chain, failure cleanup included), which
+    /// would leave `stop_started` latched with nobody left to send
+    /// `stop_finished`. The dropped drain's guard sets this, so the next
+    /// `stop` re-runs the drain instead of waiting on a signal that will
+    /// never come.
+    stop_abandoned: AtomicBool,
     stop_finished: tokio::sync::watch::Sender<bool>,
+    /// #2486: holds the channel's initial receiver, so a `stop_finished`
+    /// send always records — a `watch` send with zero receivers fails
+    /// without storing, which left a completed drain's settlement
+    /// invisible to a later sequential stop (and to the re-run of an
+    /// abandoned drain).
+    stop_finished_hold: tokio::sync::watch::Receiver<bool>,
     active_control_runs: Mutex<HashMap<String, ActiveControlRun>>,
+}
+
+/// #2486: the drain's drop guard — armed when the drain body begins,
+/// disarmed only at its `stop_finished` send. A drop in between marks the
+/// drain abandoned for the next `stop` to re-run (the body is idempotent:
+/// the scheduler slot and the run map are drained with `take`, and the
+/// remaining clears are plain overwrites).
+struct StopDrainGuard {
+    shared: Arc<RuntimeShared>,
+    armed: bool,
+}
+
+impl StopDrainGuard {
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for StopDrainGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            self.shared.stop_abandoned.store(true, Ordering::SeqCst);
+        }
+    }
 }
 
 /// `AlwaysOnRuntime` (AlwaysOnRuntime.ts:133-448): the lifecycle owner. The
@@ -294,7 +333,7 @@ impl AlwaysOnRuntime {
         let state_store = Arc::new(DiscoveryStateStore::new(paths.clone()));
         let plan_store = Arc::new(DiscoveryPlanStore::new(paths.clone()));
         let cycle_store = Arc::new(WorkCycleStore::new(paths.clone()));
-        let (stop_finished, _) = tokio::sync::watch::channel(false);
+        let (stop_finished, stop_finished_hold) = tokio::sync::watch::channel(false);
         Ok(Self {
             project_key: paths.project_key.clone(),
             config,
@@ -315,7 +354,9 @@ impl AlwaysOnRuntime {
                 scheduler: Mutex::new(None),
                 stopping: AtomicBool::new(false),
                 stop_started: AtomicBool::new(false),
+                stop_abandoned: AtomicBool::new(false),
                 stop_finished,
+                stop_finished_hold,
                 active_control_runs: Mutex::new(HashMap::new()),
             }),
         })
@@ -400,8 +441,16 @@ impl AlwaysOnRuntime {
     /// idempotency, the drain, and the project-scoped context sweep. An
     /// in-flight control run is waited out — its rejection is dropped without
     /// a log, the `allSettled` shape; nothing is ever aborted.
+    /// #2486: TS's `stopPromise` is never dropped mid-flight; the port's
+    /// stop future can be (the assembly's single-poll builder drops the
+    /// whole start chain at the failure cleanup's first yield), so a later
+    /// stop re-runs an abandoned drain rather than waiting on its
+    /// `stop_finished` — the compensating stop the builder's host teardown
+    /// performs must complete, not hang off a dead first drain.
     pub(crate) async fn stop(&self) {
-        if self.shared.stop_started.swap(true, Ordering::SeqCst) {
+        if self.shared.stop_started.swap(true, Ordering::SeqCst)
+            && !self.shared.stop_abandoned.swap(false, Ordering::SeqCst)
+        {
             let mut finished = self.shared.stop_finished.subscribe();
             while !*finished.borrow_and_update() {
                 if finished.changed().await.is_err() {
@@ -410,6 +459,10 @@ impl AlwaysOnRuntime {
             }
             return;
         }
+        let mut drain = StopDrainGuard {
+            shared: Arc::clone(&self.shared),
+            armed: true,
+        };
         self.shared.stopping.store(true, Ordering::SeqCst);
         // The guard is a temporary of the `if let` condition, which would
         // otherwise live across the await below and make this future
@@ -444,6 +497,9 @@ impl AlwaysOnRuntime {
         self.run_contexts.unregister_project(&self.project_key);
         self.log_info("always-on runtime stopped");
         let _ = self.shared.stop_finished.send(true);
+        // The send is the drain's completion point; only a drop before it
+        // marks the drain abandoned (#2486).
+        drain.disarm();
     }
 
     /// `rerunPlan` (AlwaysOnRuntime.ts:317-331).
@@ -1320,6 +1376,53 @@ mod tests {
             "#2294 start-before-bind message"
         );
         runtime.stop().await;
+    }
+
+    // #2486: the assembly's synchronous builder polls the automation start
+    // chain once, and a failing start's cleanup is dropped mid
+    // `AlwaysOnRuntime::stop` (the scheduler's ticker join). TS's
+    // `stopPromise` is never dropped mid-flight; the port's drain guard
+    // marks the dropped drain abandoned, so the compensating stop re-runs
+    // it to completion instead of waiting on a `stop_finished` nobody will
+    // ever send.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_dropped_stop_is_rerun_by_the_next_stop() {
+        use futures_util::FutureExt;
+        let home = scratch("dropped-stop");
+        let project_key = home.join("proj").to_string_lossy().into_owned();
+        let runtime = AlwaysOnRuntime::new(
+            config(&project_key),
+            &home,
+            &project_key,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("#2294 runtime");
+        let gateway: Arc<dyn AlwaysOnAgentGateway> = Arc::new(RecordingGateway {
+            calls: Mutex::new(Vec::new()),
+        });
+        runtime
+            .bind_agent_gateway(gateway, None)
+            .expect("#2294 bind");
+        runtime.start().await.expect("#2294 start");
+        // One poll of the stop cannot get past the ticker join — the exact
+        // yield the builder's `now_or_never` sees.
+        negative_assert_eq!(
+            std::pin::pin!(runtime.stop()).now_or_never().is_none(),
+            true,
+            "#2486 the ticker join yields under the single poll"
+        );
+        // The compensating stop re-runs the abandoned drain — without the
+        // guard this await would hang on `stop_finished` forever.
+        runtime.stop().await;
+        negative_assert_eq!(
+            *runtime.shared.stop_finished.subscribe().borrow(),
+            true,
+            "#2486 the re-run drain settles the stop signal for later waiters"
+        );
     }
 
     // Matrix §三 r3 / AlwaysOnRuntime.ts:296-315: stop waits out an in-flight

@@ -5,22 +5,29 @@ Usage: negative_controls.py --check
        negative_controls.py [--compile-only] NEW_OUT [mutation ...]
 Commit the tests and this script first. CARGO_TARGET_DIR is caller-owned.
 Every selected row is reported, including anchor/build/source-guard failures.
-`--check` only proves each mutation anchor is unique; it cannot prove the row's
-assertion string ever reaches a panic payload, so a full run is the only proof
-that a row can go KILLED.
+`--check` proves each mutation anchor is unique and that the hand-copied
+manifest numbers still describe their artifacts (check_manifest, the
+cron-schedule #1509 P2-2d depth): README group-table counts vs oracle.json,
+the README Rows list vs this table, every oracle scenario bound to a replay
+in the Rust sources, every row's bound test actually defined there. It cannot
+prove the row's assertion string ever reaches a panic payload, so a full run
+is the only proof that a row can go KILLED.
 
 Rows bind one mutation to one lib test (run with `--exact`); the kill evidence
-is that test's own panic payload carrying its `#2294` message. The five rows
+is that test's own panic payload carrying its `#2294` message. The six rows
 are the prev-plan §5 targets: the lock gate removed from the gate chain
 (g10), the stop order swapped (cron no longer drains before Always-On), the
 reload rebuilding an unchanged family, describe advertising the always-on
-family with no manager bound, and a fired tick keeping the discovery lock.
+family with no manager bound, and a fired tick keeping the discovery lock;
+plus the #2566 re-arm row: a failing watcher start swapped ahead of its slot
+store, pinning the dead watcher in the slot so ensure never re-arms.
 The bound replays need no Node: they read the committed oracle bytes, so
 every row runs on both platforms.
 """
 from pathlib import Path
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -42,6 +49,7 @@ NOT_ADVERTISED = (
     'always_on_methods_are_not_advertised_without_a_manager'
 )
 T1_REPLAY = 'runtime::always_on::scheduler::tests::t1_fires_with_state_and_lock_bookkeeping'
+REARM = 'runtime::always_on::scheduler::tests::a_failed_watch_start_re_arms_after_the_root_returns'
 mutations = [
     # The gate chain's lock gate is removed, so g10's held lock answers ok
     # instead of blocked/lock_busy (a held discovery lock no longer short-
@@ -118,12 +126,112 @@ mutations = [
      '                }\n',
      T1_REPLAY,
      '#2294 t1-fired: the full fire path matches the TS baseline'),
+    # #2566: the failing watcher start runs before the slot store, so the
+    # synchronous on_error -> dispose_watcher() takes from an empty slot and
+    # the dead watcher is stored after — the is_some() early return makes
+    # the failed start permanent (rearm's slot-empty assert kills it).
+    ('watch-start-before-slot-store', scheduler,
+     '        *self\n'
+     '            .shared\n'
+     '            .watcher\n'
+     '            .lock()\n'
+     '            .unwrap_or_else(|e| e.into_inner()) = Some(watcher.clone());\n'
+     '        watcher.start();\n',
+     '        watcher.start();\n'
+     '        *self\n'
+     '            .shared\n'
+     '            .watcher\n'
+     '            .lock()\n'
+     '            .unwrap_or_else(|e| e.into_inner()) = Some(watcher.clone());\n',
+     REARM,
+     '#2294 rearm: on_error disposes the failed watcher out of the slot'),
 ]
 
 
 def check_anchor(row, original):
     if original.count(row[2]) != 1 or row[2] == row[3]:
         raise ValueError(f'{row[0]}: stale or unchanged anchor (count={original.count(row[2])})')
+
+
+readme = Path(__file__).with_name('README.md')
+
+
+def bound_test_source(name):
+    """The file a `--exact` test name lives in: the module path minus its
+    trailing `tests` (or the module itself when that is the file)."""
+    base = root / 'src/pilotdeck-gateway/src'
+    parts = name.split('::')
+    for depth in (1, 2):
+        candidate = base.joinpath(*parts[:-depth]).with_suffix('.rs')
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def check_manifest():
+    """Every hand-copied number must equal the artifact it describes.
+
+    The README's group-table counts and `Rows:` list, and the `--exact` test
+    name of each mutation, are hand-maintained copies of oracle.json / this
+    file. A copy that drifts is invisible until the cell or row it names is
+    deleted, so `--check` derives them from the sources (#2488, the
+    cron-schedule #1509 P2-2d depth).
+    """
+    errors = []
+    manifest = json.loads(oracle.read_text())
+    counts = {}
+    for entry in manifest:
+        counts[entry['id'][0]] = counts.get(entry['id'][0], 0) + 1
+    text = readme.read_text()
+    # The prose total ("the 58 scenario records") and the group table's
+    # cells column: each row's backticked tokens name the oracle prefixes
+    # it covers (`g*` -> prefix g, `l1` -> prefix l), so the count must
+    # equal their summed cells and the covered prefixes must be exactly
+    # the oracle's — a deleted group row cannot silently pass.
+    total = re.search(r'the (\d+) scenario records', text)
+    if not total:
+        errors.append('README: no scenario-records total in the oracle paragraph')
+    elif int(total.group(1)) != len(manifest):
+        errors.append(f'README: says {total.group(1)} scenario records, oracle has {len(manifest)}')
+    covered = []
+    for line in text.splitlines():
+        row = re.match(r'^\|((?:\s*`[^`]+`,?)+)\s*\| (\d+) \|', line)
+        if not row:
+            continue
+        tokens = re.findall(r'`([^`]+)`', row.group(1))
+        expected = sum(counts.get(token.rstrip('*')[0], 0) for token in tokens)
+        covered.extend(token.rstrip('*')[0] for token in tokens)
+        if expected != int(row.group(2)):
+            errors.append(f'README: {" ".join(tokens)} says {row.group(2)} cells, oracle has {expected}')
+    if sorted(covered) != sorted(counts):
+        errors.append(f'README: group table covers {sorted(set(covered))}, oracle has {sorted(counts)}')
+    # The list lives in its own paragraph (`Rows: `a`, `b`, …`), so scope the
+    # scan to that paragraph: prose elsewhere in the README that mentions the
+    # list would otherwise be swept into `listed` and compared as rows.
+    blocks = [block for block in re.split(r'\n\s*\n', text) if 'Rows:' in block]
+    listed = (re.findall(r'`([a-z0-9-]+)`', blocks[0].split('Rows:', 1)[1])
+              if len(blocks) == 1 else [])
+    if len(blocks) != 1:
+        errors.append(f'README: expected exactly one Rows paragraph, found {len(blocks)}')
+    expected_rows = [row[0] for row in mutations]
+    if listed != expected_rows:
+        errors.append(f"README: Rows list {listed} != mutations {expected_rows}")
+    # Every scenario must be bound to a replay: the oracle id quoted in the
+    # always-on module or the assembly half that replays it.
+    replay = ''.join(p.read_text() for p in sorted(
+        (root / 'src/pilotdeck-gateway/src/runtime/always_on').glob('*.rs')))
+    replay += automation.read_text()
+    for entry in manifest:
+        if f'"{entry["id"]}"' not in replay:
+            errors.append(f'{entry["id"]}: no bound replay in the always-on sources')
+    for row in mutations:
+        ident = row[4].rsplit('::', 1)[-1]
+        source = bound_test_source(row[4])
+        if source is None:
+            errors.append(f'{row[0]}: no source file for bound test {ident}')
+        elif not re.search(rf'\bfn {re.escape(ident)}\(', source.read_text()):
+            errors.append(f'{row[0]}: bound test {ident} is not defined in {source.name}')
+    return errors
 
 
 def main():
@@ -135,7 +243,9 @@ def main():
                 check_anchor(row, row[1].read_text())
             except Exception as error:
                 errors.append(str(error))
-        print('\n'.join(errors) if errors else f'#2294 {len(mutations)} unique anchors checked')
+        errors.extend(check_manifest())
+        print('\n'.join(errors) if errors else
+              f'#2294 {len(mutations)} unique anchors and fixture manifest checked')
         return int(bool(errors))
     compile_only = '--compile-only' in args
     args = [arg for arg in args if arg != '--compile-only']
