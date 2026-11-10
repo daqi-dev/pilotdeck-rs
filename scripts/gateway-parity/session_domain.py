@@ -1015,7 +1015,7 @@ def validate_expectations(registration, observations):
     require(isinstance(document, dict)
             and isinstance(document.get('cases'), list)
             and document.get('baselineCommit') == BASELINE_COMMIT
-            and document.get('repeats') == REPEATS
+            and type(document.get('repeats')) is int and document.get('repeats') == REPEATS
             and document.get('phases') == ['model', 'tool'],
             'EXPECTATION_STRUCTURE', 'expectation document header')
     rows = document['cases']
@@ -1067,12 +1067,12 @@ def validate_expectations(registration, observations):
                 case + ': rust durable statuses differ from the D4-B canonical output')
         registry = row['rust']['registry']
         if canonical['eventLabels'] is None:
-            # fix-r33 (DS sibling#1/#4, probe-r33/folds.py): the registry
-            # block is an external document read — ``{'applicable': 0}``
-            # folded onto ``{'applicable': False}`` through the dict
-            # ``==`` and the derivation oracle passed; same_json is
-            # type-strict on booleans (#1372 semantics on numbers).
-            require(not native_evidence.same_json(registry, {'applicable': False}),
+            # fix-r33 (DS sibling#1/#4, probe-r33/folds.py): the dict
+            # ``==`` folded ``{'applicable': 0}`` onto ``{'applicable':
+            # False}``; same_json is type-strict on booleans.  fix-r34 (DS
+            # r33b boundary#1, P0): the r33 spelling carried a stray
+            # ``not`` (honest raised, folded passed) — pinned by the unit.
+            require(native_evidence.same_json(registry, {'applicable': False}),
                     'EXPECTATION_RUST_DERIVATION',
                     case + ': rust registry must be inapplicable without a run registry')
         else:
@@ -1099,8 +1099,8 @@ def calibration_coverage(registration, manifest):
             'CAPABILITY', 'registry configuration must match the fixed six-cell topology')
     # fix-r33 (DS sibling#5, probe-r33/folds.py): repeats is an external
     # document int — ``5.0`` folded onto ``5`` through the bare ``==``;
-    # the real-int gate (type() excludes bool and float) precedes both
-    # repeats comparisons in this file.
+    # the real-int gate (type() excludes bool and float) precedes all
+    # three repeats comparisons (header 1018, registration, manifest).
     require(registration['phases'] == ['model', 'tool']
             and type(registration['repeats']) is int and registration['repeats'] == REPEATS,
             'COVERAGE', 'model/tool x five repetitions required')

@@ -464,8 +464,11 @@ def disk_observation(source, identity, home):
         raise Incomplete('#1140 registry JSON malformed') from error
     need(isinstance(runs, dict), 'registry original malformed')
     key = f'{project}\0{session}\0{run}'
+    # fix-r34 (DS r33b sibling#1): the tuple display comparison let a
+    # ``True``/``1`` key fold through ``==`` and match the identity;
+    # same_json is type-strict on booleans (#1372 semantics on numbers).
     records = [record for record in runs.get('records', [])
-               if (record.get('projectKey'), record.get('sessionKey'), record.get('runId')) == (project, session, run)]
+               if same_json([record.get('projectKey'), record.get('sessionKey'), record.get('runId')], [project, session, run])]
     need(len(records) <= 1, 'duplicate full run key')
     events = runs.get('events', {}).get(key, [])
     record = records[0] if records else {}

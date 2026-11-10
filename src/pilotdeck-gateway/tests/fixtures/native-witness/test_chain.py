@@ -239,7 +239,9 @@ class ChainTests(unittest.TestCase):
         # trip the same oracle as NaN, not crash the walk.  The huge ints sit
         # at the *last* anchor so the window subtraction stays ≥ 300 — the
         # oracle that fires under a type-only revert is the gate itself.
-        bad_anchors = [(float('nan'), 'first', 0), (10**400, 'last', 500),
+        # fix-r34 (DS r33b boundary#5): the pair always places the anchor
+        # value in the *last* chunk — the NaN entry was mislabelled 'first'.
+        bad_anchors = [(float('nan'), 'last', 0), (10**400, 'last', 500),
                        (2**53 + 1, 'last', 500)]
         for anchor_value, anchor_slot, other_value in bad_anchors:
             elapsed_pair = [other_value, anchor_value]

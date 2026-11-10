@@ -236,8 +236,8 @@ def _stream_elapsed_real(value):
     validate() — a crash instead of a verdict, and the r32 except tuples
     do not catch ArithmeticError children.  An int outside +-2**53 cannot
     be a millisecond anchor any recording produces; the gate reads it as
-    not-a-real anchor and the oracle fails closed, matching the pre-r32
-    arithmetic which failed the <300 window on the same input.
+    not-a-real anchor and the oracle fails closed, firing where the pre-r32
+    <300 window would otherwise have stayed quiet (huge last, negative first).
     """
     if type(value) is int:
         return -2**53 <= value <= 2**53
@@ -467,7 +467,13 @@ def validate(path, local_methods=()):
         if response_map('permission').get('permission_decide', {}).get('delivered') is not True:
             fail('G3.oracle', 'permission decision must reach its pending owner')
         writes = response_map('writes')
-        if not writes.get('cron_create', {}).get('task', {}).get('taskId') or not all(
+        # fix-r34 (DS r33b sibling#3): the same native-archive statement's
+        # remaining truthy operands accepted ``true``/``1``/non-empty dict
+        # (``1.0`` folds through truthiness) — taskId is a real string,
+        # agents/items/entries/projects are real lists, all held to type
+        # first, matching the entryCount real-int gate in the same oracle.
+        if type(writes.get('cron_create', {}).get('task', {}).get('taskId')) is not str \
+                or not writes.get('cron_create', {}).get('task', {}).get('taskId') or not all(
                 writes.get(method, {}).get('ok') is True for method in ('skill_create', 'skill_write')):
             fail('G3.oracle', 'cron/skill writes must succeed')
         read_results = response_map('readonly')
@@ -478,7 +484,8 @@ def validate(path, local_methods=()):
         artifact = read_results.get('native_archive_artifact', {})
         if artifact.get('content') != base64.b64encode(b'gateway parity fixture artifact\n').decode() or artifact.get('encoding') != 'base64' or artifact.get('truncated') is not False:
             fail('G3.oracle', 'native artifact must succeed with the complete fixture bytes')
-        if not read_results.get('supported_agents', {}).get('agents') or not read_results.get('model_catalog_list', {}).get('items'):
+        if not (type(read_results.get('supported_agents', {}).get('agents')) is list and read_results.get('supported_agents', {}).get('agents')) \
+                or not (type(read_results.get('model_catalog_list', {}).get('items')) is list and read_results.get('model_catalog_list', {}).get('items')):
             fail('G3.oracle', 'agent / model catalog cannot be empty')
         if read_results.get('session_model_get', {}).get('effective', {}).get('model') != 'deterministic':
             fail('G3.oracle', 'session model must resolve the configured model')
@@ -488,7 +495,7 @@ def validate(path, local_methods=()):
         # the bare ``< 1`` and the native-archive oracle read clean; the
         # real-int gate (type() excludes bool and float) precedes it.
         entry_count = read_results.get('native_archive_manifest', {}).get('entryCount', 0)
-        if not read_results.get('native_archive_entries', {}).get('entries') \
+        if not (type(read_results.get('native_archive_entries', {}).get('entries')) is list and read_results.get('native_archive_entries', {}).get('entries')) \
                 or type(entry_count) is not int or entry_count < 1:
             fail('G3.oracle', 'native archive must contain the completed text turn')
         # Independent disk oracles prevent both-sides-the-same failed execution.
@@ -523,7 +530,7 @@ def validate(path, local_methods=()):
         if not native_evidence.same_json(json.loads(http[0]['body']), {'ok': True}) \
                 or json.loads(http[1]['body']).get('token') != (path / 'home/server-token').read_text().strip():
             fail('G3.oracle', 'health / local token body incorrect')
-        if not json.loads(http[2]['body']).get('projects') or json.loads(http[3]['body']).get('content') != 'gateway parity fixture\n':
+        if not (type(json.loads(http[2]['body']).get('projects')) is list and json.loads(http[2]['body']).get('projects')) or json.loads(http[3]['body']).get('content') != 'gateway parity fixture\n':
             fail('G3.oracle', 'HTTP projects / file read fixture missing')
         for row in http[-2:]:
             chunks = row['chunks']

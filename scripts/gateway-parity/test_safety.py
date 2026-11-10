@@ -2673,6 +2673,60 @@ class SameJsonSurfaces(unittest.TestCase):
         cls.native = _load('native_evidence', common.SCRIPT / 'native_evidence.py')
         cls.session = _load('session_domain', common.SCRIPT / 'session_domain.py')
 
+    def _expectations_document(self, rust_registry):
+        """Minimal one-case A5.4 input reaching the no-registry require.
+
+        fix-r34 (DS r33b boundary#1, P0): the r33 registry-inapplicability
+        fix carried a stray ``not`` — the honest ``{'applicable': False}``
+        raised EXPECTATION_RUST_DERIVATION while a folded value passed, and
+        no runnable guard existed on this branch (the expectations negative
+        control needs a fresh A5.2a calibration source).  This pin drives
+        validate_expectations directly with a crafted document so the same
+        spelling mistake can never pass quietly again: the honest case must
+        validate clean, and the r33 inverted spelling goes red here.
+        """
+        session = self.session
+        canonical = session.A19_CANONICAL_RUST['no-registry-timeout-final']
+        observation = {'id': 'no-registry/final/model/1',
+                       'frames': [{'type': 'agent_status', 'event': 'turn_timeout'},
+                                  {'type': 'error', 'event': 'turn_timeout'}],
+                       'durableStatus': {'entries': [{'event': 'turn_timeout'}]},
+                       'registry': {'applicable': False}}
+        row = {'case': 'no-registry/final/model', 'a19Class': 'no-registry-timeout-final',
+               'ts': session.project_observation(observation),
+               'rust': {'frames': list(canonical['frames']),
+                        'durableStatus': list(canonical['durableStatus']),
+                        'registry': rust_registry}}
+        document = {'cases': [row], 'baselineCommit': session.BASELINE_COMMIT,
+                    'repeats': session.REPEATS, 'phases': ['model', 'tool']}
+        registration = {'cells': [{'name': 'no-registry', 'variants': [{'name': 'final'}]}]}
+        return document, registration, [observation]
+
+    def test_validate_expectations_accepts_the_honest_inapplicable_registry(self):
+        document, registration, observations = \
+            self._expectations_document(rust_registry={'applicable': False})
+
+        def fake_read(path):
+            return {'cases': ['no-registry/final/model']} \
+                if path.name == 'session-calibration.json' else document
+
+        with patch.object(self.session, 'read', side_effect=fake_read):
+            # The r33 inverted spelling (``not same_json``) raised
+            # EXPECTATION_RUST_DERIVATION on exactly this honest input.
+            self.session.validate_expectations(registration, observations)
+
+    def test_validate_expectations_rejects_a_folded_registry_applicability(self):
+        document, registration, observations = \
+            self._expectations_document(rust_registry={'applicable': 0})
+
+        def fake_read(path):
+            return {'cases': ['no-registry/final/model']} \
+                if path.name == 'session-calibration.json' else document
+
+        with patch.object(self.session, 'read', side_effect=fake_read):
+            with self.assertRaises(self.session.EvidenceError):
+                self.session.validate_expectations(registration, observations)
+
     @staticmethod
     def _expectation(frames=('turn_completed:stop',), durable=('turn_timeout',),
                      registry=None):
@@ -5755,7 +5809,12 @@ def _comparison_doc_construction(node):
         # untracked and its ``!= 0`` compare was invisible to the ledger.
         if isinstance(node.func, ast.Attribute) and node.func.attr == 'get':
             return True
-    return isinstance(node, (ast.Dict, ast.List, ast.Set, ast.ListComp, ast.DictComp))
+    # fix-r34 (DS sibling#2): a tuple display carries document data just as
+    # a list display does — ``(record.get('projectKey'), ...) == identity``
+    # stayed outside the family because no walker recognised the shape.
+    return isinstance(node, (ast.Dict, ast.List, ast.Set, ast.Tuple,
+                             ast.ListComp, ast.SetComp, ast.DictComp,
+                             ast.GeneratorExp))
 
 
 def _comparison_doc_read(node, constructed):
@@ -5806,6 +5865,12 @@ def _comparison_doc_read(node, constructed):
                        or any(_comparison_doc_read(test, constructed)
                               for test in generator.ifs)
                        for generator in node.generators))
+    # fix-r34 (DS sibling#2): a tuple display reads the document through
+    # its elements — the pair judgment could not see either side of a
+    # ``(a.get('x'), b.get('y')) == (...)`` equality, fold or not.
+    if isinstance(node, ast.Tuple):
+        return any(_comparison_doc_read(element, constructed)
+                  for element in node.elts)
     return _comparison_doc_base(node, constructed)
 
 
@@ -5992,11 +6057,11 @@ _COMPARISON_POINT_REGISTRY = (
      'GATE', 'fix-r32: this IS the gate body for the afterExecs bound'),
     ('native_evidence.py', 'session_windows', 440, 'windows == [0] + [1] * len(cases)',
      'EXEMPT', 'windows is sum()-built over role tests, always plain ints'),
-    ('native_evidence.py', 'session_chain', 644, "type(frame.get('seq')) is int",
+    ('native_evidence.py', 'session_chain', 647, "type(frame.get('seq')) is int",
      'GATE', 'fix-r32: this IS the gate body for the frame seq =='),
-    ('native_evidence.py', 'session_chain', 645, "frame['seq'] == len(received[request_id])",
+    ('native_evidence.py', 'session_chain', 648, "frame['seq'] == len(received[request_id])",
      'GATE', 'type is int precedes inside the same condition'),
-    ('native_evidence.py', 'session_chain', 645, "type(frame.get('final')) is bool",
+    ('native_evidence.py', 'session_chain', 648, "type(frame.get('final')) is bool",
      'GATE', 'fix-r32: this IS the gate body for the final flag'),
     ('compare.py', 'wire_frame', 270, "type(row['wire']['opcode']) is not int",
      'GATE', 'fix-r32 (DS sibling#3): the independent real-int gate; the same_json metadata check subsumes the value'),
@@ -6034,11 +6099,11 @@ _COMPARISON_POINT_REGISTRY = (
      'GATE', 'type is int precedes inside the same condition'),
     ('compare.py', 'validate', 406, "type(frame.get('seq')) is not int",
      'GATE', 'fix-r32: this IS the gate body for the event seq'),
-    ('compare.py', 'validate', 518, "body != row['body']",
+    ('compare.py', 'validate', 525, "body != row['body']",
      'EXEMPT', 'string domain: decoded UTF-8 chunk text vs recorded body'),
-    ('compare.py', 'validate', 546, "chunks[-1]['elapsedMs'] - chunks[0]['elapsedMs'] < 300",
+    ('compare.py', 'validate', 553, "chunks[-1]['elapsedMs'] - chunks[0]['elapsedMs'] < 300",
      'GATE', 'fix-r31 real-number gate + fix-r32 isfinite gate precede in the same condition'),
-    ('compare.py', 'validate', 556, "row['connection'] == 4",
+    ('compare.py', 'validate', 563, "row['connection'] == 4",
      'GATE', 'quirks rows already passed the fix-r31 row gate above'),
     # fix-r33 (r33 structural closure - DS sibling#1/#2, probe-r33/folds.py):
     # the pair judgment now accepts a document-construction operand and the
@@ -6053,25 +6118,25 @@ _COMPARISON_POINT_REGISTRY = (
      'GATE', 'fix-r33: the any(type is int) real-int gate precedes in the same condition'),
     ('compare.py', 'validate', 463, "item.get('requestId') == value",
      'EXEMPT', 'string domain: elicitation request ids are identity strings'),
-    ('compare.py', 'validate', 492, 'type(entry_count) is not int',
+    ('compare.py', 'validate', 499, 'type(entry_count) is not int',
      'GATE', 'fix-r33: this IS the gate body for the manifest entryCount'),
-    ('compare.py', 'validate', 492, 'entry_count < 1',
+    ('compare.py', 'validate', 499, 'entry_count < 1',
      'GATE', 'fix-r33: the real-int gate precedes in the same condition'),
-    ('compare.py', 'validate', 513, "type(row.get('status')) is not int",
+    ('compare.py', 'validate', 520, "type(row.get('status')) is not int",
      'GATE', 'fix-r33: this IS the gate body for the http status list'),
-    ('compare.py', 'validate', 514, "[row.get('status') for row in http] != expected",
+    ('compare.py', 'validate', 521, "[row.get('status') for row in http] != expected",
      'GATE', 'fix-r33: the real-int gate precedes in the same condition'),
-    ('compare.py', 'validate', 550, "[row.get('kind') for row in quirks] != ['rsv', 'continuation', 'client-close', 'unmasked']",
+    ('compare.py', 'validate', 557, "[row.get('kind') for row in quirks] != ['rsv', 'continuation', 'client-close', 'unmasked']",
      'EXEMPT', 'string domain: quirk kinds are identity strings'),
-    ('compare.py', 'validate', 580, "type(row.get('seq')) is not int",
+    ('compare.py', 'validate', 587, "type(row.get('seq')) is not int",
      'GATE', 'fix-r33: the upstream.jsonl seq gate - the frames.jsonl twin is registered at 356'),
     ('native_evidence.py', 'session_profile', 385, "contract.get('externalEndpoints') == [endpoint]",
      'EXEMPT', 'string domain: endpoint urls'),
     ('native_evidence.py', 'session_profile', 386, "contract.get('capabilities') == {'provider': 'loopback-mock', 'tools': []}",
      'EXEMPT', 'string domain: provider name and tool list'),
-    ('native_evidence.py', 'project_envelopes', 600, "envelope.get('id') == request_id",
+    ('native_evidence.py', 'project_envelopes', 603, "envelope.get('id') == request_id",
      'EXEMPT', 'string domain: request ids'),
-    ('native_evidence.py', 'session_chain', 618, "[row.get('case') for row in rows] == cases",
+    ('native_evidence.py', 'session_chain', 621, "[row.get('case') for row in rows] == cases",
      'EXEMPT', 'string domain: case names'),
     ('session_domain.py', 'validate_expectations', 1019, "document.get('phases') == ['model', 'tool']",
      'EXEMPT', 'string domain: phase names'),
@@ -6089,6 +6154,28 @@ _COMPARISON_POINT_REGISTRY = (
      'EXEMPT', 'string domain: paths and sha256 hex digests'),
     ('session_domain.py', 'validate_calibration', 1142, "[o['id'] for o in rows] == expected_ids",
      'EXEMPT', 'string domain: observation ids'),
+    ('compare.py', 'validate', 487, "type(read_results.get('supported_agents', {}).get('agents')) is list",
+     'GATE', 'fix-r34 DS r33b sibling#3: catalog agents is a real list — '
+     'true/1/dict folded through the truthiness operand of the same oracle'),
+    ('compare.py', 'validate', 488, "type(read_results.get('model_catalog_list', {}).get('items')) is list",
+     'GATE', 'fix-r34 DS r33b sibling#3: catalog items is a real list — same truthiness fold'),
+    ('compare.py', 'validate', 498, "type(read_results.get('native_archive_entries', {}).get('entries')) is list",
+     'GATE', 'fix-r34 DS r33b sibling#3: native archive entries is a real list on '
+     'the same statement as the entryCount real-int gate'),
+    ('session_domain.py', 'validate_expectations', 1018, "type(document.get('repeats')) is int",
+     'GATE', 'fix-r34 DS r33b sibling#1: the third repeats comparison (header) — '
+     '5.0/True folded through the bare =='),
+    ('session_domain.py', 'process_tree', 293, 'children <= owned',
+     'GATE', 'fix-r34 DS r33b sibling#2: set of pids from int() parsing of '
+     '/proc text — a folded pid cannot survive the int() cast'),
+    ('session_domain.py', '_retirement_controls', 2620, "{_retirement_hashable(_retirement_census_pid(row)) for row in verdict.get('undeclared') or []} == undeclared_before | {_retirement_hashab...",
+     'GATE', 'fix-r34 DS r33b sibling#2: both sides pass the '
+     '_retirement_hashable projection — bool/float walk the repr path '
+     '(fix-r8 probe-verified), so set equality cannot fold types'),
+    ('session_domain.py', '_retirement_controls', 2720, "{_retirement_hashable(peer) for peer in verdict.get('undeclared') or []} == undeclared_before | {_retirement_hashable(injected_peer)}",
+     'GATE', 'fix-r34 DS r33b sibling#2: both sides pass the '
+     '_retirement_hashable projection (bool/float walk the repr path), '
+     'so set equality cannot fold types'),
     ('session_domain.py', '_retirement_round', 3215, "addresses == [f'127.0.0.1:{gateway_port}']",
      'EXEMPT', 'string domain: listen addresses'),
 )
@@ -6104,11 +6191,16 @@ class ComparisonPointLedger(unittest.TestCase):
         # lease — an unlocked read can see mutant bytes mid-batch and
         # either red on them or bless them.  The sweep holds the lease.
         # fix-r33 (DS concurrency#2/boundary#4 + MM concurrency#1/#2 +
-        # MM boundary#2, four role hits across two lineages): the
-        # mutation batches budget their lease hold at 900s, above the
-        # lock's 600s default wait — the test now waits past that bound
-        # instead of timing out red while a batch still owns the lease.
-        with common.parity_lock(timeout=1200):
+        # MM boundary#2, four role hits across two lineages): the lock's
+        # 600s default wait is below every batch's legal lease hold.
+        # fix-r34 (DS r33b concurrency#1): the wait bound is the protocol
+        # bound itself, not any one fixture's budget — session-domain-
+        # cleanup budgets 900s, same-json-surfaces 1800s plus a ≤580s
+        # tail (≈2380s legal hold), and the native-witness batches carry
+        # no budget at all; every legal holder sits under MAX_AGE and a
+        # cleanup-pending residue is never taken over, so MAX_AGE is the
+        # shortest wait that cannot time out red on a legal holder.
+        with common.parity_lock(timeout=common.MAX_AGE):
             sites = _comparison_family_sites()
         keys = {(entry[0], entry[1], entry[2], entry[3])
                 for entry in _COMPARISON_POINT_REGISTRY}
