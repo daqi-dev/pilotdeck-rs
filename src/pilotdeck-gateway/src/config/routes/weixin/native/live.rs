@@ -1173,7 +1173,23 @@ impl LiveSink<'_> {
         .await
         {
             Ok(true) => return Ok(()),
-            Ok(false) => eprintln!("weixin: attachment send failed: missing content"),
+            Ok(false) => {
+                if attachment.get("source").and_then(Value::as_str) == Some("local_path") {
+                    if let Some(path) = attachment
+                        .get("path")
+                        .and_then(Value::as_str)
+                        .filter(|path| !path.is_empty())
+                    {
+                        let msg = super::super::attachments::local_path_authorization_reply(path);
+                        let _ = self
+                            .owner
+                            .reply(self.credentials, self.chat, &msg, true)
+                            .await;
+                        return Ok(());
+                    }
+                }
+                eprintln!("weixin: attachment send failed: missing content");
+            }
             Err(error) => eprintln!(
                 "IM attachment send failed: {}",
                 super::super::attachments::format_im_attachment_error(&error)

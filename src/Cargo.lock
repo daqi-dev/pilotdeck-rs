@@ -1288,6 +1288,7 @@ dependencies = [
  "async-compression",
  "base64",
  "bytes",
+ "getrandom 0.3.4",
  "html5ever",
  "http-body",
  "http-body-util",

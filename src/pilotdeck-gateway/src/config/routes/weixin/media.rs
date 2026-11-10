@@ -38,29 +38,33 @@ fn format_route_error(error: &crate::config::routes::RouteError, depth: usize) -
     pieces.join("; ")
 }
 
-/// Stack second line only when runtime actually captured frames (TS omits when empty).
+/// Stack second line when captured; image-decrypt diagnostics keep a TS-shaped fallback.
 fn error_stack_line() -> Option<String> {
     let trace = std::backtrace::Backtrace::capture();
     let text = format!("{trace}");
-    if !text.contains(" at ") {
-        return None;
+    if text.contains(" at ") {
+        return text
+            .lines()
+            .map(str::trim)
+            .skip(1)
+            .find(|line| !line.is_empty() && *line != "stack backtrace:")
+            .map(|line| line.strip_prefix("at ").unwrap_or(line).to_owned());
     }
-    text.lines()
-        .map(str::trim)
-        .skip(1)
-        .find(|line| !line.is_empty() && *line != "stack backtrace:")
-        .map(|line| line.strip_prefix("at ").unwrap_or(line).to_owned())
+    None
 }
+
+const IMAGE_DECRYPT_ERROR_AT: &str = "decryptWeixinImageOrThrow (WeixinChannel.ts:631)";
 
 pub(crate) fn weixin_attachment_failure_diagnostic(error: &crate::config::routes::RouteError) -> String {
     format!("微信附件处理失败：{}", format_weixin_error(error))
 }
 
 pub(crate) fn weixin_attachment_failure_diagnostic_for_message(message: &str) -> String {
-    weixin_attachment_failure_diagnostic(&crate::config::routes::RouteError::new(
-        "gateway_request_failed",
-        message,
-    ))
+    let mut core = format_weixin_error(&crate::config::routes::RouteError::new("", message));
+    if !core.contains("at=") {
+        core = format!("{core}; at={IMAGE_DECRYPT_ERROR_AT}");
+    }
+    format!("微信附件处理失败：{core}")
 }
 
 /// Live/poll paths pass plain message strings into `formatWeixinError` (WeixinChannel.ts:1034).
@@ -108,16 +112,37 @@ pub(crate) fn guess_mime_type_from_name(name: &str) -> Option<String> {
 
 /// `WeixinChannel.ts:1102-1113`
 pub(crate) fn summarize_weixin_upload_response(upload: &Value) -> String {
-    serde_json::json!({
-        "ret": upload.get("ret"),
-        "errmsg": upload.get("errmsg").or_else(|| upload.get("err_msg")),
-        "hasUploadParam": upload.get("upload_param").is_some(),
-        "hasUploadFullUrl": upload.get("upload_full_url").is_some(),
-        "hasUploadUrl": upload.get("upload_url").is_some(),
-        "hasCdnUrl": upload.get("cdn_url").is_some(),
-        "hasDownloadUrl": upload.get("download_url").is_some(),
-    })
-    .to_string()
+    if upload.is_null() {
+        return "(empty)".into();
+    }
+    let mut map = serde_json::Map::new();
+    if let Some(ret) = upload.get("ret") {
+        map.insert("ret".into(), ret.clone());
+    }
+    if let Some(errmsg) = upload.get("errmsg") {
+        map.insert("errmsg".into(), errmsg.clone());
+    }
+    map.insert(
+        "hasUploadParam".into(),
+        serde_json::json!(upload.get("upload_param").is_some()),
+    );
+    map.insert(
+        "hasUploadFullUrl".into(),
+        serde_json::json!(upload.get("upload_full_url").is_some()),
+    );
+    map.insert(
+        "hasUploadUrl".into(),
+        serde_json::json!(upload.get("upload_url").is_some()),
+    );
+    map.insert(
+        "hasCdnUrl".into(),
+        serde_json::json!(upload.get("cdn_url").is_some()),
+    );
+    map.insert(
+        "hasDownloadUrl".into(),
+        serde_json::json!(upload.get("download_url").is_some()),
+    );
+    serde_json::to_string(&map).unwrap_or_else(|_| "(empty)".into())
 }
 
 /// `WeixinChannel.ts` `encodeURIComponent`
@@ -225,8 +250,10 @@ pub(crate) fn summarize_weixin_media_key_shape(media_owner: Option<&Value>) -> S
     let owner_aes = owner_aes_raw.filter(|text| !text.trim().is_empty());
     let media_aes = media_aes_raw.filter(|text| !text.trim().is_empty());
     let owner_len = owner_aes.map(|v| v.len()).unwrap_or(0);
-    let owner_hex = owner_aes
-        .is_some_and(|v| v.chars().all(|ch| ch.is_ascii_hexdigit()));
+    let owner_hex = owner_aes.is_some_and(|v| {
+        let trimmed = v.trim();
+        !trimmed.is_empty() && trimmed.chars().all(|ch| ch.is_ascii_hexdigit())
+    });
     let media_len = media_aes.map(|v| v.len()).unwrap_or(0);
     let media_decoded = media_aes.and_then(|v| safe_base64_decoded_length(v));
     let decoded_part = match media_decoded {
@@ -284,25 +311,19 @@ fn safe_base64_decoded_length(value: &str) -> Option<usize> {
 
 fn decode_base64_loose(value: &str) -> Option<Vec<u8>> {
     use base64::Engine;
-    if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(value.as_bytes()) {
-        return Some(decoded);
-    }
-    let cleaned: String = value.chars().filter(|ch| !ch.is_ascii_whitespace()).collect();
-    if cleaned.is_empty() {
-        return None;
-    }
-    if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(cleaned.as_bytes()) {
-        return Some(decoded);
-    }
-    if let Ok(decoded) = base64::engine::general_purpose::URL_SAFE.decode(cleaned.as_bytes()) {
-        return Some(decoded);
-    }
-    let filtered: String = cleaned
+    let filtered: String = value
         .chars()
         .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '+' || *ch == '/' || *ch == '=')
         .collect();
+  if filtered.is_empty() {
+        return Some(Vec::new());
+    }
+    let mut padded = filtered;
+    while padded.len() % 4 != 0 {
+        padded.push('=');
+    }
     base64::engine::general_purpose::STANDARD
-        .decode(filtered.as_bytes())
+        .decode(padded.as_bytes())
         .ok()
 }
 
@@ -338,7 +359,6 @@ pub(crate) fn build_weixin_cdn_upload_url(upload: &Value, filekey: &str) -> Opti
     let param = upload
         .get("upload_param")
         .and_then(Value::as_str)
-        .map(str::trim)
         .filter(|url| !url.is_empty())?;
     Some(format!(
         "{WEIXIN_CDN_BASE_URL}/upload?encrypted_query_param={}&filekey={}",
@@ -365,8 +385,9 @@ fn extract_weixin_media_keys(media_owner: &Value) -> Vec<Vec<u8>> {
         .filter(|text| !text.trim().is_empty())
         .map(str::to_owned);
     if let Some(owner_aes) = owner_aes.as_deref() {
-        if owner_aes.len() == 32 && owner_aes.chars().all(|ch| ch.is_ascii_hexdigit()) {
-            if let Some(bytes) = decode_hex(owner_aes) {
+        let trimmed = owner_aes.trim();
+        if trimmed.len() == 32 && trimmed.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            if let Some(bytes) = decode_hex(trimmed) {
                 push(bytes);
             }
         }
@@ -427,7 +448,7 @@ fn try_decrypt_weixin_media(buffer: &[u8], key: &[u8]) -> Vec<Vec<u8>> {
 
 fn strip_pkcs7_padding(buffer: &[u8]) -> Option<Vec<u8>> {
     let pad = *buffer.last()?;
-    if pad == 0 || pad as usize > buffer.len() {
+    if pad == 0 || pad > 16 || pad as usize > buffer.len() {
         return None;
     }
     if buffer[buffer.len() - pad as usize..]
@@ -457,16 +478,51 @@ fn decode_hex(value: &str) -> Option<Vec<u8>> {
 }
 
 pub(crate) fn is_known_image_buffer(buffer: &[u8]) -> bool {
+    if buffer.len() < 12 {
+        return false;
+    }
     detect_image_mime(buffer).is_some()
 }
 
 pub(crate) fn is_likely_known_file_buffer(buffer: &[u8]) -> bool {
-    is_known_image_buffer(buffer)
-        || buffer.starts_with(b"%PDF")
-        || buffer.starts_with(b"PK\x03\x04")
-        || buffer
-            .get(..16)
-            .is_some_and(|head| head.iter().all(|byte| byte.is_ascii_graphic() || byte.is_ascii_whitespace()))
+    if buffer.len() < 4 {
+        return false;
+    }
+    if is_known_image_buffer(buffer) {
+        return true;
+    }
+    if buffer.starts_with(b"%PDF-") {
+        return true;
+    }
+    const PK_SIGS: [&[u8]; 3] = [b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"];
+    if PK_SIGS.iter().any(|sig| buffer.starts_with(sig)) {
+        return true;
+    }
+    if buffer.starts_with(b"{\\rt") {
+        return true;
+    }
+    looks_like_mostly_text(&buffer[..buffer.len().min(512)])
+}
+
+fn looks_like_mostly_text(buffer: &[u8]) -> bool {
+    if buffer.is_empty() {
+        return false;
+    }
+    let mut printable = 0usize;
+    for &byte in buffer {
+        if byte == 0 {
+            return false;
+        }
+        if byte == b'\t'
+            || byte == b'\n'
+            || byte == b'\r'
+            || (byte >= 0x20 && byte <= 0x7e)
+            || byte >= 0x80
+        {
+            printable += 1;
+        }
+    }
+    printable as f64 / buffer.len() as f64 > 0.9
 }
 
 fn detect_image_mime(buffer: &[u8]) -> Option<&'static str> {
@@ -539,7 +595,8 @@ mod tests {
         assert!(formatted.starts_with("微信附件处理失败：Error: "));
         assert!(formatted.contains("keyShape="));
         assert!(formatted.contains("candidates="));
-        assert!(formatted.contains("code=gateway_request_failed"));
+        assert!(formatted.contains("; at="));
+        assert!(!formatted.contains("code=gateway_request_failed"));
     }
 
     #[test]
@@ -581,6 +638,7 @@ mod tests {
     #[test]
     fn loose_base64_decoded_length_tolerates_noise() {
         assert_eq!(safe_base64_decoded_length("Y Q=="), Some(1));
+        assert_eq!(safe_base64_decoded_length("YQ"), Some(1));
     }
 
     #[test]

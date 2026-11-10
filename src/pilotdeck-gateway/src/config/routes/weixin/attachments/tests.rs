@@ -285,8 +285,9 @@ fn merge_inbound_and_materialize_into_one_diagnostics_block() {
         assert!(
             diags.iter().any(|line| {
                 line.starts_with("微信附件处理失败：Error: 微信图片解密后仍不是可识别图片（")
-                    && line.contains("code=gateway_request_failed")
+                    && line.contains("; at=")
                     && line.contains("candidates=")
+                    && !line.contains("code=gateway_request_failed")
             }),
             "expected TS formatWeixinError diagnostic, got {diags:?}"
         );
@@ -669,20 +670,24 @@ fn merge_inbound_and_materialize_into_one_diagnostics_block() {
         .await
         .unwrap();
         assert!(!ok, "must not upload unauthorized local_path attachment");
+        assert_eq!(
+            super::local_path_authorization_reply("/tmp/secret.pdf"),
+            "附件 /tmp/secret.pdf 需要授权后才能发送。"
+        );
     }
 
     #[test]
-    fn attachment_store_dir_maps_empty_chat_to_unknown() {
+    fn attachment_store_dir_maps_whitespace_chat_to_safe_part() {
         let home = std::env::temp_dir().join(format!(
             "pdrs-weixin-attach-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&home).unwrap();
         let dir = attachment_store_dir(&home, "  ", "msg-1").unwrap();
+        let path = dir.to_string_lossy();
         assert!(
-            dir.to_string_lossy().contains("unknown"),
-            "expected unknown segment, got {}",
-            dir.display()
+            path.contains("weixin/_/msg-1"),
+            "expected TS safePathPart single underscore for spaces, got {path}"
         );
         let _ = std::fs::remove_dir_all(home);
     }

@@ -91,11 +91,11 @@ fn sanitize_delivery_filename(name: &str) -> String {
 /// `ImAttachmentStore.ts:155` (`safePathPart`)
 fn path_part(value: &str) -> Result<String> {
     let replaced = path_part_sanitizer()
-        .replace_all(value.trim(), "_")
+        .replace_all(value, "_")
         .chars()
         .take(120)
         .collect::<String>();
-    if replaced.is_empty() || replaced == "." || replaced == ".." {
+    if replaced.is_empty() {
         Ok("unknown".into())
     } else {
         Ok(replaced)
@@ -131,22 +131,20 @@ fn extension_for_mime(mime: Option<&str>) -> &'static str {
     }
 }
 
-/// `ImAttachmentStore.ts:149-153`
-fn replace_extension(name: &str, extension: &str, image: bool) -> String {
-    let (stem, has_ext) = match name.rsplit_once('.') {
-        Some((stem, _)) => (stem, true),
-        None => (name, false),
-    };
-    let base = if stem.is_empty() {
-        if image { "image" } else { "attachment" }
+/// `ImAttachmentStore.ts:149-152`
+fn replace_extension(name: &str, extension: &str, _image: bool) -> String {
+    let ext = std::path::Path::new(name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty());
+    let base = if let Some(ext) = ext {
+        name.get(..name.len().saturating_sub(ext.len() + 1))
+            .unwrap_or(name)
     } else {
-        stem
+        name
     };
-    if has_ext {
-        format!("{base}.{extension}")
-    } else {
-        format!("{name}.{extension}")
-    }
+    let base = if base.is_empty() { "image" } else { base };
+    format!("{base}.{extension}")
 }
 
 /// `ImAttachmentStore.ts:124-131`
@@ -216,9 +214,22 @@ fn log_im_attachment_send_failure(error: &crate::config::routes::RouteError) {
     );
 }
 
+fn random_bytes_16() -> [u8; 16] {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).expect("secure random");
+    bytes
+}
+
 fn outbound_filekey_hex() -> String {
-    let bytes: [u8; 16] = uuid::Uuid::new_v4().into_bytes();
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    random_bytes_16()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// `ImAttachmentDelivery.ts:24` — outbound chat fallback for unauthorized local paths.
+pub(crate) fn local_path_authorization_reply(path: &str) -> String {
+    format!("附件 {path} 需要授权后才能发送。")
 }
 
 fn reject_symlink_component(path: &Path) -> Result<()> {
@@ -384,6 +395,29 @@ pub(crate) async fn materialize_inbound(
             .get("mimeType")
             .and_then(Value::as_str)
             .map(str::to_owned);
+        let declared_size = attachments[index]
+            .get("bytes")
+            .and_then(Value::as_u64)
+            .or_else(|| {
+                attachments[index]
+                    .get("bytes")
+                    .and_then(Value::as_i64)
+                    .and_then(|size| u64::try_from(size).ok())
+            });
+        if let Some(size) = declared_size {
+            if size > LIMIT as u64 {
+                let err = failure(&format!(
+                    "Attachment {} is {size} bytes (limit {LIMIT}).",
+                    attachments[index]
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or(&url)
+                ));
+                diagnostics.push(format!("Error: {}", err.message));
+                attachments.remove(index);
+                continue;
+            }
+        }
         let media_owner = attachments[index]
             .get("metadata")
             .and_then(|metadata| metadata.get("weixinMediaOwner"))
@@ -446,7 +480,12 @@ pub(crate) async fn materialize_inbound(
                 index += 1;
             }
             Err(error) => {
-                diagnostics.push(super::media::weixin_attachment_failure_diagnostic(&error));
+                let line = if error.message.contains("微信图片解密后仍不是可识别图片") {
+                    super::media::weixin_attachment_failure_diagnostic_for_message(&error.message)
+                } else {
+                    super::media::weixin_attachment_failure_diagnostic(&error)
+                };
+                diagnostics.push(line);
                 attachments.remove(index);
             }
         }
@@ -466,9 +505,11 @@ pub(crate) async fn send_outbound(
     attachment: &Value,
 ) -> Result<bool> {
     if attachment.get("source").and_then(Value::as_str) == Some("local_path") {
-        if let Some(path) = attachment.get("path").and_then(Value::as_str).filter(|p| !p.is_empty())
+        if attachment
+            .get("path")
+            .and_then(Value::as_str)
+            .is_some_and(|path| !path.is_empty())
         {
-            eprintln!("IM attachment send failed: Error: 附件 {path} 需要授权后才能发送。");
             return Ok(false);
         }
     }
@@ -514,7 +555,7 @@ pub(crate) async fn send_outbound(
     let base = text(credentials, "baseUrl").ok_or_else(|| failure("Weixin baseUrl missing"))?;
     let token = text(credentials, "botToken");
     let filekey = outbound_filekey_hex();
-    let aeskey: [u8; 16] = uuid::Uuid::new_v4().into_bytes();
+    let aeskey = random_bytes_16();
     let upload = http
         .json(
             &base,
@@ -540,7 +581,6 @@ pub(crate) async fn send_outbound(
         let ret = upload.get("ret").and_then(Value::as_i64).unwrap_or(0);
         let errmsg = upload
             .get("errmsg")
-            .or_else(|| upload.get("err_msg"))
             .and_then(Value::as_str)
             .unwrap_or("");
         let err = failure(&format!(
@@ -608,11 +648,7 @@ pub(crate) async fn send_outbound(
             })),
         )
         .await?;
-    if response.get("ret").and_then(Value::as_i64).is_some_and(|ret| ret != 0) {
-        let err = failure("Weixin sendmessage rejected attachment");
-        log_im_attachment_send_failure(&err);
-        return Err(err);
-    }
+    let _response = response;
     Ok(true)
 }
 

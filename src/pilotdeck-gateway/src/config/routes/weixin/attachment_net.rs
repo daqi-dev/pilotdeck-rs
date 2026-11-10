@@ -5,7 +5,7 @@ use bytes::Bytes;
 use http_body_util::{BodyExt, Empty, Full};
 use hyper::{
     Method, Request, StatusCode,
-    header::{CONTENT_TYPE, HOST, LOCATION},
+    header::{CONTENT_LENGTH, CONTENT_TYPE, HOST, LOCATION},
 };
 use hyper_util::rt::TokioIo;
 use rustls::pki_types::ServerName;
@@ -481,7 +481,7 @@ pub(crate) async fn pinned_get(url: &str, limit: usize) -> Result<Vec<u8>> {
     let response = pinned_exchange(Method::GET, url, None, limit).await?;
     if !response.status.is_success() {
         return Err(failure(&format!(
-            "Attachment download HTTP {}",
+            "Attachment download failed HTTP {}.",
             response.status.as_u16()
         )));
     }
@@ -506,6 +506,18 @@ async fn pinned_exchange(
         let (response, pool_key, mut sender) = send_once(&target, &method, body.take()).await?;
         let status = response.status();
         let headers = response.headers().clone();
+        if let Some(length_header) = headers.get(CONTENT_LENGTH) {
+            if let Ok(length_text) = length_header.to_str() {
+                if let Ok(content_length) = length_text.parse::<usize>() {
+                    if content_length > limit {
+                        let _ = read_body(response.into_body(), limit).await;
+                        return Err(failure(&format!(
+                            "Attachment is {content_length} bytes (limit {limit})."
+                        )));
+                    }
+                }
+            }
+        }
         if redirect_status(status) {
             let Some(location) = headers.get(LOCATION).and_then(|value| value.to_str().ok()) else {
                 let _ = read_body(response.into_body(), limit).await;
