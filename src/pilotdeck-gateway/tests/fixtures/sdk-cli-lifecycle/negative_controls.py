@@ -13,7 +13,7 @@ sys.dont_write_bytecode = True
 root = Path(__file__).resolve().parents[5]
 shared = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path.insert(0, str(shared))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic
 from negative_suite import ReceiptRun, judge, passed
 run_tests = root / 'src/pilotdeck-cli/tests/sdk_run_exit.rs'
 settings = root / 'src/pilotdeck-cli/tests/sdk_settings_exit.rs'
@@ -125,6 +125,9 @@ def check(row):
 def main():
     args = sys.argv[1:]
     if args == ['--check']:
+        if not mutations:
+            # #1364: an empty manifest must fail closed, not "0/0 valid".
+            raise SystemExit('#1136 anchors: empty mutation manifest; refusing to pass')
         errors = []
         for row in mutations:
             try:
@@ -202,8 +205,11 @@ def main():
                                         ('SURVIVED' if passed(result, test) else 'INVALID'), reason=reason)
                     finally:
                         # Only restore bytes supplied by the official HEAD guard.
+                        # #1903: one atomic rename, never a truncating write --
+                        # a SIGKILL mid-restore must not leave a half-written
+                        # common module that fails every sibling suite.
                         try:
-                            path.write_bytes(originals[path])
+                            write_source_atomic(root, path, originals[path])
                             if path.read_bytes() != originals[path]:
                                 raise RestoreError('restoration mismatch')
                         except Exception as error:

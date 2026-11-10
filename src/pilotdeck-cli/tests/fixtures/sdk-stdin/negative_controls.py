@@ -16,7 +16,7 @@ sys.dont_write_bytecode = True
 root = Path(__file__).resolve().parents[5]
 shared = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path.insert(0, str(shared))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic
 from negative_suite import ReceiptRun, judge, passed
 
 # #1044/#1179: every family's fixture bodies live in tests/common/sdk_exit.rs;
@@ -187,7 +187,10 @@ def main():
                                     ('SURVIVED' if passed(result, test) else 'INVALID'), reason=reason)
                 finally:
                     # Only restore bytes supplied by the official HEAD guard.
-                    path.write_bytes(originals[path])
+                    # #1903: one atomic rename, never a truncating write -- a
+                    # SIGKILL mid-restore must not leave a half-written common
+                    # module that fails every sibling suite's baseline.
+                    write_source_atomic(root, path, originals[path])
                     if path.read_bytes() != originals[path]:
                         raise RuntimeError('restoration mismatch')
                 if not compile_only and not passed(run(name + '-restored', target, test, env), test):
