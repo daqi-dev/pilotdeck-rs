@@ -5,17 +5,23 @@
 The script refuses to run (exit 2, ``INVALID:`` on stderr) when its static
 roster has drifted, when the caller names an unknown or repeated mutation,
 when the caller target is unusable (absent / blank / dot — #2590 item 1), when
-the output directory already exists, when an anchor went stale, or when a
+the output directory already exists, when an anchor went stale, when a
 bound assertion is a ``format!`` template instead of a static literal
 (#2590 item 3: the receipt compares byte-for-byte, so a template can only
 come out NO_RECEIPT and the drift must be a ``--check`` failure, not a host
-round). Instead of duplicating the guard logic here, each case execs the real
+round), or when the tree lock stays busy past the guard's wait (fix-r2: a
+sibling mutation round can hold it far past the 900 s default, and that
+timeout is the same "never started" refusal, never an uncaught traceback
+a host reads as rc 1). Instead of duplicating the guard logic here, each
+case execs the real
 script with one source-level edit injected -- the same shape an accidental
 edit would take -- and checks the refusal message, the exit code and that no
 evidence directory was created (#2590 item 5, the settings-gateway shape).
 The summary denominator is the static roster (#2590 item 2): a row that
 records no verdict is a published roster mismatch, never a shorter green
-run, and the exit contract is the shared ``verdict_exit``.
+run, the exit contract is the shared ``verdict_exit``, and under
+``--compile-only`` the summary reports ``COMPILED=n/N`` -- the verdict the
+exit contract counts -- instead of a false ``KILLED=0/N`` (fix-r2).
 
 Run from this directory: ``python3 -m unittest issue-2495/test_negative_controls.py``.
 """
@@ -23,9 +29,11 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
@@ -293,6 +301,97 @@ class SharedExitContract(unittest.TestCase):
                        'roster-mismatch.json'):
             self.assertIn(needle, source,
                           f'the startup/exit contract lost its shared shape: {needle!r}')
+
+
+class TreeLockBusy(unittest.TestCase):
+    """fix-r2: a busy tree lock is a refusal (rc 2), never a traceback (rc 1)."""
+
+    def test_busy_tree_lock_is_refused_not_a_traceback(self):
+        # DS-boundary#1 / MM-concurrency#1 (取高 P1): a sibling mutation round
+        # holds the tree lock far past the 900 s default (every row is up to
+        # four cargo calls), so a --check guards run can queue behind it and
+        # time out. That timeout must be the same "never started" refusal
+        # every other startup guard produces: an uncaught TimeoutError exits
+        # 1 with a traceback and no evidence, which a host reads as a failed
+        # control. A real subprocess holds the flock (the same
+        # ROOT/.negative-source.lock the mutation round takes) and a patched
+        # --check keeps the case fast; the ready file is published atomically
+        # (tmp + replace) before the script under test is allowed to run.
+        base = Path(tempfile.mkdtemp(prefix='issue-2495-2590-lock-'))
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        ready = base / 'held'
+        holder = subprocess.Popen([
+            sys.executable, '-I', '-c',
+            'import sys, time\n'
+            'from pathlib import Path\n'
+            'sys.path.insert(0, sys.argv[1])\n'
+            'from negative_process import tree_lock\n'
+            'with tree_lock(sys.argv[2]):\n'
+            '    Path(sys.argv[3] + ".tmp").write_text("held")\n'
+            '    Path(sys.argv[3] + ".tmp").replace(sys.argv[3])\n'
+            '    time.sleep(600)\n',
+            str(FIXTURES), str(FIXTURES.parents[3]), str(ready)])
+        try:
+            deadline = time.monotonic() + 30
+            while not ready.exists():
+                self.assertIsNone(
+                    holder.poll(),
+                    '#2590 fix-r2 the lock holder died before holding the tree lock')
+                self.assertLess(
+                    time.monotonic(), deadline,
+                    '#2590 fix-r2 the lock holder never published its ready file')
+                time.sleep(0.05)
+            try:
+                result = run(
+                    '--check',
+                    patch_source=(
+                        '        with tree_lock(ROOT):\n'
+                        '            stale = stale_names()',
+                        '        with tree_lock(ROOT, timeout=2):\n'
+                        '            stale = stale_names()'))
+            except TimeoutError as error:
+                self.fail(f'#2590 fix-r2 a busy tree lock must refuse (rc 2), '
+                          f'not raise out of the script: {error!r}')
+            code, stdout, stderr, out = result
+            self.assertEqual(
+                code, 2,
+                f'#2590 fix-r2 the busy-lock timeout must be a refusal, got '
+                f'{code}: stderr={stderr!r} stdout={stdout!r}')
+            self.assertIn('INVALID:', stderr)
+            self.assertIn('TimeoutError', stderr,
+                          '#2590 fix-r2 the refusal must name the lock timeout')
+            self.assertIn('source lock busy', stderr)
+            self.assertFalse(out.exists())
+        finally:
+            holder.kill()
+            holder.wait(timeout=30)
+
+
+class SummaryWording(unittest.TestCase):
+    """fix-r2: --compile-only reports COMPILED, not a false ``KILLED=0/N``."""
+
+    def setUp(self):
+        self.module = load_module()
+
+    def test_compile_only_reports_compiled_not_a_false_killed_zero(self):
+        # DS-boundary#2: under --compile-only every row records COMPILED and
+        # the exit contract counts exactly that, so the summary line must
+        # not read `KILLED=0/N` ("everything survived") next to a green exit.
+        counts = {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 0, 'COMPILED': 7}
+        line = self.module.summary_line(counts, 7, True)
+        self.assertTrue(line.startswith('summary: COMPILED=7/7'),
+                        f'#2590 fix-r2 --compile-only must report COMPILED, '
+                        f'got {line!r}')
+        self.assertNotIn('KILLED=', line,
+                         '#2590 fix-r2 a COMPILED run must not read as '
+                         'all-survived')
+
+    def test_the_default_run_still_reports_killed(self):
+        counts = {'KILLED': 7, 'SURVIVED': 0, 'INVALID': 0, 'COMPILED': 7}
+        line = self.module.summary_line(counts, 7, False)
+        self.assertTrue(line.startswith('summary: KILLED=7/7'),
+                        f'#2590 fix-r2 the default run must keep KILLED, '
+                        f'got {line!r}')
 
 
 if __name__ == '__main__':

@@ -97,6 +97,10 @@ jobs:
           # 该自测桩掉 cargo 三件套与源守卫窗口后驱动真实 main()，跑批真名册、
           # 真锚点 mutate、真发布；不需要 cargo 名额。
           python3 -B -m unittest -v test_negative_roster_guards
+          # #2590 fix-r2（评审 P1 CI 接线，取高裁定）：issue-2495 的守卫机检同形进 CI
+          # （settings-gateway:88 / network-timing:94 同款），22 例纯 Python——含后台进程
+          # 真实占树锁、断言锁忙落 rc 2 + INVALID: 而非 traceback 的用例，不需要 cargo。
+          python3 -B -m unittest -v issue-2495/test_negative_controls.py
       # #1570：共享负控的副本清单从源码推导（src/ 之外被编译期读取的输入）。
       # 漏一份不会表现成「变异存活」，而是整条变异 INVALID——尺子静默失去判别力。
       # 这里跑推导与 fail-closed 边界的自测；不需要 cargo。
@@ -227,6 +231,11 @@ jobs:
           # 任一漂移即本步非零退出；全量杀灭轮（需要 cargo 与净树）仍由协调者在宿主跑。
           python3 -I src/pilotdeck-gateway/tests/fixtures/session-reservation-2391/negative_controls.py --check
           python3 -I src/pilotdeck-gateway/tests/fixtures/session-delete-2392/negative_controls.py --check
+          # #2590 fix-r2（评审 P1 CI 接线，同 #1433/#2391 先例）：issue-2495 负控夹具的
+          # --check 也进 CI——锚点 / 绑定 / 静态名册 / 模板断言任一漂移即本步非零退出
+          # （stale 扫描在树锁内读净树，锁忙本身也是 rc 2 拒跑）；全量杀灭轮（需要 cargo
+          # 与净树）仍由协调者在宿主跑。
+          python3 -I src/pilotdeck-gateway/tests/fixtures/issue-2495/negative_controls.py --check
       # #2516 fix-r1（P2-a 5）：槽位探针残余负控全量进 CI。纯 Python 零 cargo
       # （变异体经 published_module 内存发布，不写树、不需要净树），全量含基线
       # 17 例 + 七杀 + 名册核验，任一 SURVIVED / INVALID / 名册漂移即本步非零
