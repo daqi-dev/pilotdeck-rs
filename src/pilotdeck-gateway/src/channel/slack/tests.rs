@@ -730,6 +730,16 @@ const HOST_LOCK_GUARD: &str = "/tmp/pdrs-channel-slack.lock.guard";
 /// The canonical takeover bound (`MAX_AGE`); the port replay is bounded far
 /// below it, so this only fires on a wedged holder.
 const HOST_LOCK_MAX_AGE: Duration = Duration::from_secs(2400);
+/// The wait bound for a would-be taker. A lease governed by the takeover
+/// rules — a live holder that releases, a dead holder (every poll reads its
+/// pid dead), or an age past `HOST_LOCK_MAX_AGE` — always resolves within
+/// `HOST_LOCK_MAX_AGE` of the wait's start (the lease ages as the wait
+/// advances), so this deadline (max age plus margin) is only ever tripped by
+/// a lease outside those rules, e.g. a future-dated `timestamp`, and it
+/// fails by naming the manual recovery section instead of hanging the test
+/// process. The canonical gateway side raises `TimeoutError` rather than
+/// wait forever (`scripts/gateway-parity/common.py`).
+const HOST_LOCK_WAIT_LIMIT: Duration = Duration::from_secs(3000);
 
 /// The host lease. The guard flock is held only for the take (the canonical
 /// short-lived-helper shape); the directory is the lease across the replay.
@@ -740,14 +750,16 @@ struct HostLease {
 
 impl Drop for HostLease {
     fn drop(&mut self) {
-        // The canonical release: re-take the guard, verify the lease is
-        // still ours (a takeover could have renamed ours away), then rename
-        // the directory off the lock path before removing it — a crash
-        // mid-release leaves garbage off the lock path, never a bare
-        // directory a later taker would treat as a live lease.
-        let Some(_guard) = host_guard() else {
-            return; // fail-closed: retain for manual recovery per the README
-        };
+        // The canonical release: re-take the guard (bounded retry per the
+        // in-tree `release_guard` precedent — never stolen), verify the
+        // lease is still ours (a takeover could have renamed ours away),
+        // then rename the directory off the lock path before removing it —
+        // a crash mid-release leaves garbage off the lock path, never a
+        // live-looking lease a later taker would wait on. A release that
+        // could not regain the guard still renames, retaining `owner.json`
+        // for manual recovery: the lock path itself must never keep a
+        // lease its own process is done with.
+        let guard = release_host_guard();
         let still_ours = std::fs::read(self.dir.join("owner.json"))
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
@@ -757,20 +769,30 @@ impl Drop for HostLease {
                     .is_some_and(|token| token == self.token)
                     .then_some(owner)
             });
-        if still_ours.is_some() {
-            let retired = self.dir.with_extension(format!("releasing.{}", self.token));
-            if std::fs::rename(&self.dir, &retired).is_ok() {
-                let _ = std::fs::remove_file(retired.join("owner.json"));
-                let _ = std::fs::remove_dir(&retired);
-            }
+        if still_ours.is_none() {
+            return; // a takeover renamed ours away; nothing of ours to release
         }
+        let retired = self.dir.with_extension(format!("releasing.{}", self.token));
+        if std::fs::rename(&self.dir, &retired).is_err() {
+            return; // the takeover rules eventually reclaim what stayed put
+        }
+        if let Some(_held) = guard {
+            // The guard was held across the rename, as the canonical
+            // release holds it: safe to reap the retired directory.
+            let _ = std::fs::remove_file(retired.join("owner.json"));
+            let _ = std::fs::remove_dir(&retired);
+        }
+        // No guard: the retired lease keeps its `owner.json` for manual
+        // recovery per the README — the lock path is already free.
     }
 }
 
-/// Open the guard file and flock it non-blocking (another taker's critical
-/// section is short — creation and the owner.json publish — so the release
-/// retries briefly; `None` means held or not taken).
-fn host_guard() -> Option<std::fs::File> {
+/// Open the guard file in the canonical hardened form: `O_NOFOLLOW`, then a
+/// regular-file, single-link check on the open descriptor itself — a
+/// replaced or linked `.guard` would give each taker its own inode and
+/// silently drop the mutual exclusion, so damage fails closed. `Err` means
+/// the path could not be opened as a lone regular file.
+fn open_host_guard() -> std::io::Result<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt as _;
     let guard = std::fs::OpenOptions::new()
         .read(true)
@@ -778,28 +800,74 @@ fn host_guard() -> Option<std::fs::File> {
         .create(true)
         .truncate(false)
         .mode(0o600)
-        .open(HOST_LOCK_GUARD)
-        .expect("#2322 port segment guard file");
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+        .open(HOST_LOCK_GUARD)?;
+    let stat = rustix::fs::fstat(&guard)?;
+    if rustix::fs::FileType::from_raw_mode(stat.st_mode) != rustix::fs::FileType::RegularFile
+        || u64::from(stat.st_nlink) != 1
+    {
+        return Err(std::io::Error::other(format!(
+            "{HOST_LOCK_GUARD} is not a lone regular file"
+        )));
+    }
+    Ok(guard)
+}
+
+/// The take-side guard acquisition: one non-blocking flock — another taker's
+/// critical section is short (creation and the owner.json publish), so the
+/// caller's 50 ms loop is the retry. `None` means held; a damaged guard
+/// fails closed and loudly, pointing at the recovery section.
+fn host_guard() -> Option<std::fs::File> {
+    let guard = open_host_guard().unwrap_or_else(|error| {
+        panic!(
+            "#2322 port segment guard {HOST_LOCK_GUARD} is damaged ({error}); \
+             recover it per scripts/cli-parity/README.md 「锁被保留时怎么解」"
+        );
+    });
     rustix::fs::flock(&guard, rustix::fs::FlockOperation::NonBlockingLockExclusive)
         .is_ok()
         .then_some(guard)
 }
 
-/// The owner is dead when the kernel no longer knows the pid — the same
-/// verdict `kill(pid, 0)` returns `ESRCH` for. The workspace forbids `unsafe`,
-/// so the raw syscall is made through the `/proc/<pid>` existence the kernel
-/// answers it from; elsewhere the probe is unavailable and only the takeover
-/// bound reclaims (the tests themselves only run on Linux here).
+/// The release-side guard acquisition: a taker may be inside its critical
+/// section when the owner drops, so the release retries the non-blocking
+/// take against a 2 s deadline (the in-tree `release_guard` precedent in
+/// `sdk_sessions_list_exit.rs` — bounded, so a wedged guard holder cannot
+/// hang the test, and never stolen). `None` means the deadline passed or the
+/// guard is damaged — the caller must still move its lease off the lock
+/// path, which is why damage here is a quiet `None` and not the take side's
+/// loud panic: the lease removal needs no guard, only the lock path.
+fn release_host_guard() -> Option<std::fs::File> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let guard = open_host_guard().ok()?;
+        match rustix::fs::flock(&guard, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
+            Ok(()) => return Some(guard),
+            Err(rustix::io::Errno::WOULDBLOCK) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+/// The owner is dead when `kill(pid, 0)` answers ESRCH — through rustix's
+/// safe wrapper, since the workspace forbids `unsafe`. Every other verdict,
+/// including EPERM for another user's live process, keeps the lease. A pid
+/// above i32::MAX is `kill`'s ERR_INVALID_ARG_TYPE, which is not ESRCH: the
+/// `run_registry` precedent counts such an owner alive, so only the
+/// takeover bound reclaims it.
 fn owner_pid_is_dead(pid: u64) -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        !std::path::Path::new(&format!("/proc/{pid}")).exists()
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = pid;
-        false
-    }
+    let Some(pid) = i32::try_from(pid)
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+    else {
+        return false;
+    };
+    matches!(
+        rustix::process::test_kill_process(pid),
+        Err(rustix::io::Errno::SRCH)
+    )
 }
 
 /// The canonical takeover rules: a lease is reclaimable when its owner pid
@@ -891,21 +959,37 @@ fn try_take_host_lease() -> Option<HostLease> {
 }
 
 /// Wait for the host lease — the canonical "wait, not fail": the holder's
-/// release (or its death — the kernel drops its flock) ends the wait.
+/// release (or its death — the kernel drops its flock) ends the wait, and the
+/// `HOST_LOCK_WAIT_LIMIT` deadline turns a lease none of the takeover rules
+/// can resolve into a failure that names the recovery section.
 async fn host_port_segment_lease() -> HostLease {
+    let deadline = std::time::Instant::now() + HOST_LOCK_WAIT_LIMIT;
     loop {
         if let Some(lease) = try_take_host_lease() {
             return lease;
+        }
+        if std::time::Instant::now() >= deadline {
+            panic!(
+                "#2322 port segment lock {HOST_LOCK_DIR} is still held after \
+                 {} s of waiting — it sits outside the takeover rules (a \
+                 future-dated or foreign lease); recover it per \
+                 scripts/cli-parity/README.md 「锁被保留时怎么解」",
+                HOST_LOCK_WAIT_LIMIT.as_secs()
+            );
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
 /// Both halves of the port-segment serialization for one test: the
-/// in-process mutex first (cheap, process-local), then the host lease.
+/// in-process mutex first (cheap, process-local), then the host lease. The
+/// fields are declared in the opposite — release — order: the host lease
+/// drops first, so the lock path is free before the in-process mutex wakes
+/// the next same-process waiter, which must never poll a lease its own
+/// process still owns (drop order is declaration order).
 struct PortSegmentGuard {
-    _in_process: tokio::sync::MutexGuard<'static, ()>,
     _host: HostLease,
+    _in_process: tokio::sync::MutexGuard<'static, ()>,
 }
 
 async fn lock_port_segment() -> PortSegmentGuard {
@@ -915,6 +999,76 @@ async fn lock_port_segment() -> PortSegmentGuard {
         _in_process: in_process,
         _host: host,
     }
+}
+
+/// #2322: the release retries the guard past another taker's critical
+/// section instead of silently keeping a live lease. The guard is held
+/// across the drop on purpose — the r1 shape this fixes — and released
+/// shortly after, so the bounded retry must outlast it, re-take the guard
+/// and reap the retired lease inside the same drop. Before the fix the
+/// single non-blocking take missed the guard and returned, leaving the
+/// lease (a live pid, a fresh timestamp) on the lock path where no
+/// takeover rule ever reclaims it: the first assertion below was red.
+#[tokio::test]
+async fn host_lease_release_retries_past_a_held_guard() {
+    let in_process = FIXTURE_PORT_SEGMENT.lock().await;
+    let lease = host_port_segment_lease().await;
+    let retired = lease
+        .dir
+        .with_extension(format!("releasing.{}", lease.token));
+    // Another taker's critical section straddling our release.
+    let held = host_guard().expect("#2322 the guard is free under our own lease");
+    let releaser = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(200));
+        drop(held);
+    });
+    drop(lease);
+    releaser
+        .join()
+        .expect("#2322 the guard-holding thread finished");
+    crate::negative_assert!(
+        !std::path::Path::new(HOST_LOCK_DIR).exists(),
+        "#2322 the release moves the lease off the lock path"
+    );
+    crate::negative_assert!(
+        !retired.exists(),
+        "#2322 the release with the guard reaps the retired lease"
+    );
+    drop(in_process);
+}
+
+/// #2322: a release that cannot regain the guard within its bounded retry
+/// still moves the lease off the lock path — a live lease left on the lock
+/// path is the deadlock the fix closes — and retains the retired directory
+/// with its `owner.json` for manual recovery per the README.
+#[tokio::test]
+async fn host_lease_release_without_the_guard_retains_off_the_lock_path() {
+    let in_process = FIXTURE_PORT_SEGMENT.lock().await;
+    let lease = host_port_segment_lease().await;
+    let retired = lease
+        .dir
+        .with_extension(format!("releasing.{}", lease.token));
+    // The guard stays with another taker past the release's 2 s deadline.
+    let held = host_guard().expect("#2322 the guard is free under our own lease");
+    drop(lease);
+    crate::negative_assert!(
+        !std::path::Path::new(HOST_LOCK_DIR).exists(),
+        "#2322 even a guard-less release frees the lock path"
+    );
+    crate::negative_assert!(
+        retired.is_dir(),
+        "#2322 the guard-less release retains the retired lease"
+    );
+    crate::negative_assert!(
+        retired.join("owner.json").is_file(),
+        "#2322 the retained lease keeps its owner.json for manual recovery"
+    );
+    // Reap the retained lease by hand: this test is its only owner.
+    drop(held);
+    std::fs::remove_file(retired.join("owner.json"))
+        .expect("#2322 the retained owner.json is removable");
+    std::fs::remove_dir(&retired).expect("#2322 the retained lease is removable");
+    drop(in_process);
 }
 
 // ---------------------------------------------------------------------------
