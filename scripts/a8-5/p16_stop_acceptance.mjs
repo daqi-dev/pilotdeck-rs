@@ -144,11 +144,14 @@ async function partA() {
   // fix-r2（DS sibling#1 撞条）：note 不再断言「复用直测前提成立」——该断言在
   // 池被服务端空闲超时收空时与 A/SKIP-pool-drained-before-reuse / agentReuse
   // skipped 互为反证；收窄为「请求 1 已入池」，close 前是否仍占用指向 SKIP 行。
+  // fix-r3（Grok sibling P3）：指向改 A/pool-at-close 显式行（复检处无论结果都
+  // 落一行），不再以「SKIP 行未出现」作负证据推断（该行缺席与「仍占用」在
+  // SKIP 行本身缺席时不可辨）。
   log("A/agent-pooled-request1", {
     pooled1,
     pooledPremise,
     note: pooledPremise
-      ? "请求 1 已入池（close() 前经该 agent 完成）；close 前池内是否仍占用不作断言——见 A/SKIP-pool-drained-before-reuse（该行未出现即仍占用）"
+      ? "请求 1 已入池（close() 前经该 agent 完成）；close 前池内是否仍占用见 A/pool-at-close 显式行（不成立时另落 A/SKIP-pool-drained-before-reuse）"
       : "复用直测前提未成立（pooled1 失败或 Connection 非 keep-alive，socket 未入池）——见 A/SKIP-agent-reuse",
   });
   if (!pooledPremise) {
@@ -167,7 +170,11 @@ async function partA() {
   // 未被走到，观察 3 的复用直测退化为纯新连接（错误串可相同但解释失据）。复检
   // 必须在 close 前：server.close() 本身 ~11ms 内即 FIN 掉池内 socket（close 后
   // 池必空，实测见轮次证据 exp-close-pool.out 场景①）。
-  const pooledAtClose = pooledPremise && ka.freeSocketCount() > 0;
+  const freeSocketsAtClose = ka.freeSocketCount();
+  const pooledAtClose = pooledPremise && freeSocketsAtClose > 0;
+  // fix-r3（Grok sibling P3）：池占用复检无论结果都落显式行——close 前池状态
+  // 不再靠「SKIP 行未出现」负证据推断。
+  log("A/pool-at-close", { pooledAtClose, freeSocketsAtClose, pooledPremise });
   if (pooledPremise && !pooledAtClose) {
     log("A/SKIP-pool-drained-before-reuse", {
       reason: "池在 close 前被服务端空闲超时收尾（pooled1 入池后、close() 前池已空）",
