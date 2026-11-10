@@ -5844,3 +5844,8 @@ r76 fmt/strict clippy/四bin及35历史定向通过；已落盘r72四生产宿�
 ### 2026-11-11 03:30 CST · 完整替换三关持续推进（cb8 构建）
 
 用户要求继续直至完整Gateway替换通过，后续编译测试统一cb8，本机零构建；mbp2只读既有证据。r83已完成fmt/严格clippy/四bin，556定向554PASS/2FAIL，原9项插件回归全部通过；持久权限真实TS/Rust均0prompt/0permissionDecide、ASR/SRT/provider闭环一致且进程清理通过，仍非正式72通过。两剩余失败已逐SHA接收候选：cold status损坏lock按main#1873保留storage error、MCP SDK路径发现不抢先遮住已注册uv_cwd错误。整合主线固定3378，本次fetch最新8a7b0626a，新增产品代码无变化但装置/负控进展待批接。root独占正本，共3代理：core_finish修复/权限消费者，channels_finish收19渠道及SOP同头闭环，acceptance_finish收150入口与host/session/retirement实际接线。cb8本任务树旧231仅unsafe_boundary已知未提交改动将快照后接统一候选；不新开树、不清旧证据。源码快照主仓_tmp/20261111-gateway-closeout/checkpoint。完整验收、独立双谱系、正式冻结收货及人签未完成，所有历史FAIL保留。
+
+
+### 2026-11-11 03:50 CST · cb8 同头消费者与正式门接线（继续）
+
+本地已固定7a03fc440（main8a7装置增量），cb8仍固定59e以保全同头消费者窗口。59e fmt/严格clippy/四bin与33逐回合权限测试通过；初次误筛选0测试不计通过，正确过滤新日志另存。真实FunASR TS/Rust provider输入一致且无权限提示；9渠道业务exit0，旧runner误把87次禁io_uring拒绝计FAIL，原件保留，分类修复后复跑；SOP两端三次进程完成审批/恢复/去重。正式72首对、101+HTTP/后台采集正在接续。GLM与DeepSeek已恢复独立评审，发现两条生产/负控脱节及FunASR来源绑定P1，根与core修复中；MiniMax本轮仍429，未重试。Linux cleanup候选已开#2916，root仅收窄helper与入口，未重登记/未宣称正式通过，原14格+新8格cb8候选重放通过；两谱系与真实TS复算接续。根frozen目录未知pycache逐SHA挪入自有_tmp保全，未删除。新编译测试全部cb8；旧树/前端/快照未动。证据主仓_tmp/20261111-gateway-closeout/与三个finish包。

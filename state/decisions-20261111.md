@@ -17,3 +17,8 @@ main批次从cc85固定推进至3378fac118a9775f742597b044372d37adcf5c31。代�
 ## 持久权限逐回合读取与配置读取上限（AI代批，待人复核）
 
 固定TS每回合合并permissions.json，原生消费者漏接会使已保存allow重复询问。新候选每回合在阻塞池只读/解析设置，再在原执行器构造端口；用户规则为不可变本回合overlay，session动态grant保留，managed/policy拒绝优先。固定TS允许remembered session allow覆盖user deny的既有语义保留，不擅自把用户规则升格policy；fork不重新读全局设置以扩张父回合已准入规则。沿CLI既有8MiB读取上限，超限明确阻断工具目录/执行，不能抛弃deny后以空规则继续；普通缺失/读错/非法JSON沿TS默认。上限属于有界资源安全差异，仍需正式差异登记与独立评审，不提供评分豁免。原则：持久规则必须被真实回合消费，安全限额失败不能静默扩大权限；候选有逐回合重读、模式优先级、动态grant及上限测试，新组合实跑以r82后证据为准。
+
+
+## #2916 Linux cleanup 内核证明接线（AI 代批，待人复核）
+
+卡点：固定cb8执行平台的原session_domain只支持Darwin完整组枚举，Linux正常退出亦BLOCKED。依用户完整替换方案的Linux原生见证及冻结程序授权，接现有WNOWAIT/持有身份，不改分母、阈值或历史结果。/proc仅发现正向成员，最终通过仅接受组长reap后的kernel killpg0 ESRCH；未知/权限失败保持BLOCKED，身份丢失NOT_VERIFIED，任何实测残留清除后仍GROUP_NOT_EMPTY。可撤回代码，涉及正式装置，所以独立#2916、两非作者评审、真实TS复算及重登记全部必做；当前候选未登记、不可判正式通过。规则：不完全枚举不能证明无残留；可机检由隐藏成员、EPERM、身份丢失和reap后禁实信号负控钉住。证据主仓_tmp/20261111-gateway-acceptance-finish/HANDOFF.md。

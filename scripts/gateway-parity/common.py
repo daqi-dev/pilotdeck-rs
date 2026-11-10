@@ -108,6 +108,7 @@ A2_SCRIPTS = (
     'controls/run_all.py', 'controls/prerequisites.py', 'driver.mts', 'mock.mjs',
     'observer.py', 'retirement_driver.mts', 'run_round.py', 'test_safety.py', 'watcher.mjs',
     'session_domain.py', 'native_evidence.py', 'session_observations.mjs', 'controls/session_domain.py',
+    'linux_group_cleanup.py',
 )
 A3_SCRIPTS = ('check_schema.py', 'export_schema.mjs', 'validate_fixtures.mjs')
 

@@ -1131,11 +1131,10 @@ def cleanup_controls(output):
 
     def skip(name, reason):
         # A skipped platform-specific case is recorded as passed=None and is not
-        # counted as a pass; only Darwin gives the exact group census this
-        # apparatus proves.
+        # counted as a pass. Unsupported platforms remain explicit skips.
         results.append({'name': name, 'passed': None, 'skipped': reason, 'detail': reason})
 
-    exact_census = sys.platform == 'darwin'
+    cleanup_probe_supported = sys.platform in ('darwin', 'linux')
 
     def group_empty(pgid):
         # Signal-0 observation through the same ownership entry; it never
@@ -1152,7 +1151,7 @@ def cleanup_controls(output):
             time.sleep(.05)
         return group_empty(pgid)
 
-    if exact_census:
+    if cleanup_probe_supported:
         # 1. Leader exits as an unreaped zombie; empty group -> VERIFIED.
         child = subprocess.Popen([sys.executable, '-I', '-c', 'pass'], start_new_session=True)
         probe = probe_process_group(child, wait=10)
@@ -1169,9 +1168,9 @@ def cleanup_controls(output):
               probe=probe)
 
     else:
-        skip('cleanup-empty-group', 'non-darwin probe is BLOCKED (no exact group census)')
+        skip('cleanup-empty-group', 'platform has neither exact group census nor Linux kernel ESRCH cleanup proof')
 
-    if exact_census:
+    if cleanup_probe_supported:
         # 2. The launcher exits while a sleep grandchild stays in its group.  The
         # probe waits with WNOWAIT (leader stays a zombie, pgid cannot be reused),
         # reports GROUP_NOT_EMPTY, SIGTERMs that group, and reaps last.  The top
@@ -1197,7 +1196,7 @@ def cleanup_controls(output):
               f"grandchildGone={grandchild_gone} groupEmpty={group_empty_after}", probe=probe)
 
     else:
-        skip('cleanup-leftover-grandchild', 'non-darwin probe is BLOCKED (no exact group census)')
+        skip('cleanup-leftover-grandchild', 'platform has neither exact group census nor Linux kernel ESRCH cleanup proof')
 
     # 3. An inaccessible probe is BLOCKED and never a PASS.  Both killpg and
     # the leader kill(pid, 0) are denied, so the probe cannot mistake a sandbox
@@ -1226,7 +1225,7 @@ def cleanup_controls(output):
           and error is None,
           f"status={blocked.get('status')} top={blocked_top} error={error}", probe=blocked)
 
-    if exact_census:
+    if cleanup_probe_supported:
         # 4. EPERM alone is not "only the zombie leader remains": deny just the
         # group probe while a real live grandchild is in the group.  The independent
         # live-member census must find it, so the probe reports GROUP_NOT_EMPTY and
@@ -1265,7 +1264,7 @@ def cleanup_controls(output):
               f"error={error}", probe=eperm)
 
     else:
-        skip('cleanup-eperm-live-member', 'non-darwin probe is BLOCKED (no exact group census)')
+        skip('cleanup-eperm-live-member', 'platform has neither exact group census nor Linux kernel ESRCH cleanup proof')
 
     # 5. An already-reaped leader gives NOT_VERIFIED and provably no signal.
     child = subprocess.Popen([sys.executable, '-I', '-c', 'pass'], start_new_session=True)

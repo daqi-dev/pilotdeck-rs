@@ -364,9 +364,9 @@ def _group_snapshot(pgid):
     Linux ``/proc`` is mount-dependent: ``hidepid`` and dumpable/permission
     filters can omit live members from ``iterdir``/``getpgid`` without any error,
     so a visible set is not a complete set and an empty visible set is not an
-    empty group.  There is no portable proof of completeness here, so every
-    non-darwin platform stays unproven and ``probe_process_group`` fails closed
-    before reading a census or sending any signal.
+    empty group. Linux therefore retains None here; its separate cleanup
+    branch proves group absence through the kernel's post-reap ESRCH, without
+    calling this incomplete census or treating it as an emptiness oracle.
     """
     if sys.platform == 'darwin':
         return _darwin_group_pids(pgid)
@@ -546,6 +546,15 @@ def probe_process_group(child, wait=5):
                              'pgid ownership unprovable, no signal sent')
         return result
     result['leaderUnreaped'] = True
+    if sys.platform == 'linux':
+        # /proc supplies positive member findings only. The helper never
+        # treats a filtered scan as complete; only post-reap kernel ESRCH can
+        # prove emptiness, and every real signal stays behind held ownership.
+        linux_cleanup = _load('linux_group_cleanup', SCRIPT / 'linux_group_cleanup.py')
+        return linux_cleanup.probe(
+            child, held, result, verified=CLEANUP_VERIFIED,
+            not_empty=CLEANUP_GROUP_NOT_EMPTY, blocked=CLEANUP_BLOCKED,
+            not_verified=CLEANUP_NOT_VERIFIED)
     if sys.platform != 'darwin':
         # A filtered /proc can hide a live same-group descendant (hidepid,
         # EACCES/EPERM on a pid, a changing read) with no observable error.
@@ -711,9 +720,8 @@ def _cleanup_fixture(child, audit, leader_state, output):
 def fixture_lease_stopped(child, audit):
     """Prove lease release separately from the frozen cleanup score (#1221).
 
-    A non-Darwin census stays BLOCKED even after a clean exit. Like A2's
-    stop_owned, only final ESRCH after reaping our held leader proves that its
-    group is gone. This is a signal-0 observation, never TERM/KILL after reap;
+    When cleanup remains unverified, like A2's stop_owned, only final ESRCH
+    after reaping our held leader proves that its group is gone. This is a signal-0 observation, never TERM/KILL after reap;
     PID reuse can only retain the lease conservatively. No stale lease takeover
     or scoring field is changed. Unknown ownership/cleanup errors fail closed.
     """
