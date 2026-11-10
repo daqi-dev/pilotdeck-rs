@@ -6,15 +6,16 @@ original: D2-SKILLS-LOCALE-PARSE-001
 ## 类别
 
 同原条目 `D2-SKILLS-LOCALE-PARSE-001`（有意改进 · 登记不收敛）。本更正只同步
-#2170 扩容后的负控名册事实（四条 → 六条变异），不改变差异类别、登记范围与
+#2170 扩容后的负控名册事实（四条 → 七条变异），不改变差异类别、登记范围与
 「不收敛 CLI 行为」的结论。
 
 ## 基线依据
 
 同原条目：真实 Node 实测（宿主 Node v22.22.0 / ICU 78.2 钉版，
 `_tmp/20261109-issue-2140-2170/s1/node-pin.txt` 与
-`node-locale-probe.txt` 原始输出）。#2170 未新增分歧行基线：两条新变异
-（`probe-resolved-rewritten` / `probe-language-emptied`）钉的是 #2170 在
+`node-locale-probe.txt` 原始输出）。#2170 未新增分歧行基线：三条新变异
+（`probe-resolved-rewritten` / `probe-language-emptied` /
+`probe-resolved-prefix-poisoned`）钉的是 #2170 在
 `skills.rs` 探针测试里新增的 resolved 自审与空语言守卫本身，金样仍是
 `src/pilotdeck-cli/tests/fixtures/skills-fr-ca-probe.json` 的原 6 行 LANG
 （无新增行、无新金样）。
