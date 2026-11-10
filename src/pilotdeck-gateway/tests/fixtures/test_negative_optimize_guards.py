@@ -89,6 +89,15 @@ SCRIPTS = (
     # also wired into CI.
     ('session-reservation-2391/negative_controls.py', (), ()),
     ('session-delete-2392/negative_controls.py', (), ()),
+    # #2309 fix-r2: same entry shape after the migration off the shared
+    # `negative_suite.run_cases` loop (registered + select + claim_dir +
+    # missing_target/refuse_unusable_target + verdict_exit); its positional
+    # names and `--only a,b` both feed the shared selection rule.
+    ('manager-gateway/negative_controls.py', (), ()),
+    # #2131 fix-r3: same entry shape after the migration to negative_selection
+    # (registered + select + claim_dir + missing_target/refuse_unusable_target
+    # + verdict_exit).
+    ('utf16-residual-sort/negative_controls.py', (), ()),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption
@@ -98,8 +107,14 @@ SCRIPTS = (
 # `negative_process.target_environment` default the shared tree target when the
 # variable is *absent* (#1166) -- a present-but-blank value is refused by their
 # own `blank_target()` guard, so only `missing` is exempt -- and
-# `cli-parity-mock-gateway` and `same-json-surfaces` never compile Cargo, so all
-# four modes are moot for them.
+# `cli-parity-mock-gateway` and `same-json-surfaces` never read the target in
+# their own source (machine-checked below), while the `mutating_sources` window
+# they delegate to does read it (and may cold-boot the scanner with cargo
+# build, #2552 DS boundary#2): `missing` is not hostable for either (it would
+# start a full guarded batch past the 300s matrix subprocess), and the other
+# three modes are not hostable yet -- same-json refuses them rc 2 (live-probed
+# #2552 r1) but this registry has no shape for an entry whose own source never
+# calls target_environment; see the per-entry reasons for the rc shapes.
 MODES = ('missing', 'empty', 'blank', 'dot')
 TARGET_OPTIONAL = {
     'interaction-values/negative_controls.py':
@@ -109,10 +124,49 @@ TARGET_OPTIONAL = {
         ('target_environment defaults the shared tree target when the variable is absent (#1166)',
          'target_environment(', ('missing',)),
     'cli-parity-mock-gateway/negative_controls.py':
-        ('never compiles Cargo, so it has no target guard', None, MODES),
+        ('own source never reads the target in any spelling (machine-checked); the '
+         'delegated mutating_sources window does: _ensure_workspace_scanner reads '
+         'CARGO_TARGET_DIR through the shared rule (absent defaults to the shared tree '
+         'target, blank/dot are refused there) and may cargo-build the scanner, so '
+         '"never compiles Cargo" is false (#2552 DS boundary#2); missing starts a full '
+         'guarded batch past the 300s matrix subprocess, the others surface as this '
+         'entry\'s rc 1 with the startup exception recorded as INVALID rows and the '
+         'evidence directory left claimed (live-probed #2552 r1)', None, MODES),
     'same-json-surfaces/negative_controls.py':
-        ('never compiles Cargo, so it has no target guard', None, MODES),
+        ('own source never reads the target in any spelling (machine-checked); the '
+         'delegated mutating_sources window does: _ensure_workspace_scanner reads '
+         'CARGO_TARGET_DIR through the shared rule (absent defaults to the shared tree '
+         'target, blank/dot are refused there) and may cargo-build the scanner, so '
+         '"never compiles Cargo" is false (#2552 DS boundary#2); missing would start '
+         'a full guarded batch past the 300s matrix subprocess; empty/blank/dot are '
+         'refused rc 2 by that shared rule plus the started flag (#2431, live-probed '
+         '#2552 r1: rc 2, stderr names the target, no evidence directory) but this '
+         'registry has no shape for an entry whose own source never calls '
+         'target_environment, so they stay exempt until it does', None, MODES),
 }
+
+# #2309 fix-r3 (MM sibling P2): the entries that refuse an empty or blank
+# ``PDRS_BASELINE`` before claiming their evidence directory. The matrix used
+# to hardcode the one entry that carried the guard when it was written
+# (project-files-linux-dirent); manager-gateway grew the same
+# ``(os.environ.get('PDRS_BASELINE') or '').strip()`` refusal without joining
+# the denominator, so reverting its guard would not have failed anything. A
+# future entry with the same guard must join this list in the same change.
+BASELINE_GUARDED = (
+    'project-files-linux-dirent/negative_controls.py',
+    'manager-gateway/negative_controls.py',
+)
+
+# Any read of the baseline variable is the guard's subject. Matching the call
+# shapes (not one spelling) keeps the register honest the same way
+# ``TARGET_READ`` does for the target guard above.
+_BASELINE_NAME = r"""f?['"]PDRS_BASELINE['"]"""
+BASELINE_READ = re.compile(
+    r'\w+\.environ\s*\[\s*' + _BASELINE_NAME + r'\s*\]'
+    + r'| \w+\.(?:get|setdefault|pop)\s*\(\s*' + _BASELINE_NAME
+    + r'| \w+\s*\[\s*' + _BASELINE_NAME + r'\s*\]'
+    + r'| \w*getenv\s*\(\s*' + _BASELINE_NAME,
+    re.X)
 
 # Any read of the target variable is a target guard. Matching the call shapes
 # (not one spelling) keeps the exemption honest when a guard is reintroduced
@@ -446,20 +500,27 @@ class UnknownControlIsRefused(unittest.TestCase):
         The guard became ``(value or '').strip()`` in fix-r8, but this
         harness always supplies a real baseline path, so reverting it to a
         presence-only check would not have failed anything (#1666 fix-r9).
+        Every entry that carries the guard is in ``BASELINE_GUARDED`` (the
+        register itself stays honest: a listed entry really reads the
+        variable, so the list cannot grow a name whose guard disappeared).
         """
-        script = 'project-files-linux-dirent/negative_controls.py'
-        for name, value in (('empty', ''), ('blank', '   ')):
-            with self.subTest(mode=name):
-                result, out = run(script, [], optimize=True, base=self.base,
-                                  baseline=value)
-                self.assertEqual(
-                    result.returncode, 2,
-                    f'{script} must refuse a {name} PDRS_BASELINE: '
-                    f'stdout={result.stdout!r} stderr={result.stderr!r}')
-                self.assertIn('PDRS_BASELINE', result.stderr,
-                              f'{script} must name the unusable variable on stderr')
-                self.assertFalse(out.exists(),
-                                 f'{script} refused but still created {out}')
+        for script in BASELINE_GUARDED:
+            source = (FIXTURES / script).read_text()
+            self.assertTrue(BASELINE_READ.search(source) is not None,
+                            f'{script} is registered as baseline-guarded but '
+                            'no longer reads PDRS_BASELINE itself')
+            for name, value in (('empty', ''), ('blank', '   ')):
+                with self.subTest(script=script, mode=name):
+                    result, out = run(script, [], optimize=True, base=self.base,
+                                      baseline=value)
+                    self.assertEqual(
+                        result.returncode, 2,
+                        f'{script} must refuse a {name} PDRS_BASELINE: '
+                        f'stdout={result.stdout!r} stderr={result.stderr!r}')
+                    self.assertIn('PDRS_BASELINE', result.stderr,
+                                  f'{script} must name the unusable variable on stderr')
+                    self.assertFalse(out.exists(),
+                                     f'{script} refused but still created {out}')
 
     def test_optimize_and_plain_agree(self):
         # The point of the issue: the verdict must not depend on -O.
@@ -473,7 +534,7 @@ class UnknownControlIsRefused(unittest.TestCase):
 class BareAssertInventory(unittest.TestCase):
     """The class invariant has an explicit, shrink-only register (#1666).
 
-    The twenty-five entries migrated so far (twenty-four fixture directories;
+    The twenty-seven entries migrated so far (twenty-six fixture directories;
     ``network-timing`` counts two scripts) are not the whole family. Rather than
     let a hand-written list look like a closed set, the remaining debt is named
     here: a file in ``scanned_entries()`` that is not in

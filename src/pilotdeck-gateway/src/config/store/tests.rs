@@ -971,9 +971,9 @@ fn oversized_config_file_is_sampled_by_metadata_only() {
     let big = vec![b'#'; CONTENT_SAMPLE_LIMIT as usize + 1];
     std::fs::write(&path, &big).unwrap();
     let mut with_content = DefaultHasher::new();
-    hash_entry(&path, &mut with_content, true);
+    hash_entry(&path, &mut with_content, None, true);
     let mut metadata_only = DefaultHasher::new();
-    hash_entry(&path, &mut metadata_only, false);
+    hash_entry(&path, &mut metadata_only, None, false);
     assert_eq!(with_content.finish(), metadata_only.finish());
     let mut watched = WatchedPath::new(path.clone()).expect("file watched");
     std::fs::write(&path, &big).unwrap();
@@ -981,9 +981,9 @@ fn oversized_config_file_is_sampled_by_metadata_only() {
     // Negative control: at the limit the content is part of the sample.
     std::fs::write(&path, &big[..CONTENT_SAMPLE_LIMIT as usize]).unwrap();
     let mut with_content = DefaultHasher::new();
-    hash_entry(&path, &mut with_content, true);
+    hash_entry(&path, &mut with_content, None, true);
     let mut metadata_only = DefaultHasher::new();
-    hash_entry(&path, &mut metadata_only, false);
+    hash_entry(&path, &mut metadata_only, None, false);
     assert_ne!(with_content.finish(), metadata_only.finish());
 }
 
@@ -997,6 +997,13 @@ fn unchanged_metadata_skips_the_content_read() {
     root.write(BASE);
     let path = root.0.join("pilotdeck.yaml");
     let mut watched = WatchedPath::new(path.clone()).expect("#1739 file watched");
+    // #1987 A2: the startup sample commits no metadata shortcut, so the first
+    // tick re-samples in full — one content read — before the short-circuit
+    // takes over; the count baseline starts after it.
+    assert!(
+        !watched.changed(),
+        "#1739 the first re-sample of an unchanged file is quiet"
+    );
     let before = content_reads(&path);
     for tick in 0..50 {
         assert!(
@@ -1033,6 +1040,14 @@ fn restored_mtime_rewrite_still_reads_the_content() {
         .modified()
         .expect("#1739 initial mtime");
     let mut watched = WatchedPath::new(path.clone()).expect("#1739 file watched");
+    // #1987 A2: the startup sample commits no metadata shortcut, so without a
+    // quiet tick first this test's single sample re-reads the content
+    // unconditionally — the ctime mutant would survive. One quiet tick
+    // commits the shortcut, which is what this test is about.
+    assert!(
+        !watched.changed(),
+        "#1739 the first re-sample of an unchanged file is quiet"
+    );
     let before = content_reads(&path);
     // Same length as BASE ("deterministic" -> "deterministix"), mtime restored.
     root.write(&BASE.replace("deterministic", "deterministix"));
@@ -1128,9 +1143,14 @@ fn transient_read_failure_is_retried_until_the_content_is_seen() {
     );
     assert_eq!(content_reads(&path), before + 2);
     // The committed state matches a fresh complete sample of the same file.
+    // #1987 A2: a fresh startup commits no metadata shortcut anymore, so only
+    // the full fingerprints line up.
     let fresh = WatchedPath::new(path.clone()).expect("#1792 fresh watch");
     assert_eq!(fresh.fingerprint, watched.fingerprint);
-    assert_eq!(fresh.metadata_fingerprint, watched.metadata_fingerprint);
+    assert_eq!(
+        fresh.metadata_fingerprint, None,
+        "#1987 A2 a fresh startup sample commits no metadata shortcut"
+    );
     clear_content_read_failures(&path);
 }
 
@@ -1358,13 +1378,20 @@ fn missing_entry_is_a_complete_observation() {
     std::os::unix::fs::symlink(&target, dir.join("dangling"))
         .expect("#1792 dangling symlink to outside");
     let mut watched = WatchedPath::new(dir.clone()).expect("#1792 directory watched");
+    // #1987 A2: the startup sample commits no metadata shortcut; the first
+    // tick re-samples in full, is quiet, and commits — the dangling entry is
+    // a complete observation, not a permanent None.
+    assert!(
+        !watched.changed(),
+        "#1792 an unchanged dangling entry is quiet"
+    );
     assert!(
         watched.metadata_fingerprint.is_some(),
         "#1792 a dangling entry is a complete observation, not a permanent None"
     );
     assert!(
         !watched.changed(),
-        "#1792 an unchanged dangling entry is quiet"
+        "#1792 an unchanged dangling entry stays quiet on the shortcut"
     );
     assert!(
         watched.metadata_fingerprint.is_some(),
@@ -1613,6 +1640,286 @@ fn a_directory_replaced_by_a_file_is_seen() {
     assert!(
         watched.changed(),
         "#1792 r2 a later rewrite of the replacement file is still seen"
+    );
+}
+
+/// #1987 A1: the tick that transitions from a complete sample into an
+/// obstruction must not swallow a target rewrite landing on that same tick.
+/// Pre-fix, the transition tick had no obscured predecessor to compare
+/// against and the rewrite waited for the obstruction to clear before being
+/// reported (the ledger's "observable changes are still reported during a
+/// persistent obstruction" only held from the *second* obscured tick on).
+/// The watch is the parent-directory shape — the config file missing at
+/// startup, so it is the watched target — and the rewrite is the target's
+/// appearance; only the target is comparable across the transition (the
+/// other entries are hashed from failed reads).
+#[test]
+fn obscured_transition_reports_a_same_tick_target_rewrite() {
+    let root = Root::new();
+    // The config file is missing at startup: the parent directory is watched
+    // with the file as its target (`existsSync` -> `dirname` fallback).
+    let path = root.0.join("pilotdeck.yaml");
+    let obstructed = root.0.join("obstructed");
+    std::fs::write(&obstructed, "x").expect("#1987 A1 unreadable sibling");
+    let mut watched = WatchedPath::new(path.clone()).expect("#1987 A1 parent watched");
+    assert!(
+        watched.fingerprint.is_some(),
+        "#1987 A1 the startup sample is complete"
+    );
+    // The obstruction starts on the next tick; the target appears (and is
+    // written) before it, so the change lands on the transition tick itself.
+    // Each obscured tick consumes two armed sibling stats: the metadata-only
+    // and the folded sample.
+    arm_read_failures(&obstructed, ReadOp::Stat, 6);
+    std::fs::write(&path, other_model().as_str()).expect("#1987 A1 same-tick target rewrite");
+    assert!(
+        watched.changed(),
+        "#1987 A1 a target rewrite on the obstruction's first tick must be reported"
+    );
+    assert!(
+        !watched.changed(),
+        "#1987 A1 the same obstructed state reports at most once"
+    );
+    // Recovery still compares against the last complete sample, so the
+    // rewrite is reported once more there — the registered shape: the
+    // transition tick caught it early, recovery confirms it against the
+    // complete baseline.
+    clear_read_failures(&obstructed, ReadOp::Stat);
+    assert!(
+        watched.changed(),
+        "#1987 A1 recovery reports the difference against the last complete sample"
+    );
+}
+
+/// #1987 A2: a write landing between the startup's two samples must be
+/// reported. Pre-fix, the startup committed the *first* (metadata-only)
+/// sample's fingerprint while the full sample absorbed the write, so neither
+/// the short-circuit nor the full comparison ever reported it — the D11
+/// guard never reached the startup path.
+#[test]
+fn a_write_between_the_startup_samples_is_reported() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    // The gate fires between the startup's samples (pre-fix) / right after
+    // the startup sample (post-fix): the write it makes is the one the
+    // startup window can swallow.
+    *lock(&STARTUP_SAMPLE_WRITE) = Some((path.clone(), other_model().into_bytes()));
+    let mut watched = WatchedPath::new(path.clone()).expect("#1987 A2 file watched");
+    assert!(
+        watched.changed(),
+        "#1987 A2 a write between the startup samples is reported"
+    );
+    assert_eq!(
+        watched.metadata_fingerprint, None,
+        "#1987 A2 the startup sample commits no metadata shortcut"
+    );
+    // Back on the short-circuit: quiet, and the next tick commits.
+    assert!(
+        !watched.changed(),
+        "#1987 A2 the tick after the reported one is quiet"
+    );
+    assert!(
+        watched.metadata_fingerprint.is_some(),
+        "#1987 A2 the quiet re-read commits the metadata shortcut"
+    );
+    *lock(&STARTUP_SAMPLE_WRITE) = None;
+}
+
+/// #1987 A4: a mixed tick — the metadata sample fails but the same tick's
+/// folded sample succeeds — is a complete observation: it must be compared
+/// against the last complete fingerprint and committed as the new baseline,
+/// not routed through the obscured path. Pre-fix the complete folded sample
+/// was written into the obscured chain (the change was deferred a tick, and
+/// a later readability flap compared a complete folded value against an
+/// obscured one and false-reported).
+#[test]
+fn a_mixed_tick_compares_against_the_last_complete_fingerprint() {
+    let root = Root::new();
+    let dir = root.0.join("watched");
+    let file = dir.join("pilotdeck.yaml");
+    let flapping = dir.join("flapping");
+    std::fs::create_dir(&dir).expect("#1987 A4 watch directory");
+    std::fs::write(&file, BASE).expect("#1987 A4 config entry");
+    std::fs::write(&flapping, "x").expect("#1987 A4 flap-prone sibling");
+    let mut watched = WatchedPath::new(dir.clone()).expect("#1987 A4 directory watched");
+    // Mixed tick: the metadata sample's stat of the sibling fails, the folded
+    // sample's succeeds — exactly one armed failure — and the target is
+    // rewritten on that same tick.
+    arm_read_failures(&flapping, ReadOp::Stat, 1);
+    std::fs::write(&file, other_model().as_str()).expect("#1987 A4 same-tick target rewrite");
+    assert!(
+        watched.changed(),
+        "#1987 A4 a mixed tick reports against the last complete fingerprint"
+    );
+    assert!(
+        !watched.changed(),
+        "#1987 A4 the tick after the mixed one is quiet (the baseline was committed)"
+    );
+    // A readability flap with no real change must not report: the next
+    // obscured tick compares against the previous obscured sample, and the
+    // mixed tick no longer pollutes that chain with a complete folded value.
+    arm_read_failures(&flapping, ReadOp::Stat, 2);
+    assert!(
+        !watched.changed(),
+        "#1987 A4 a readability flap with no real change reports nothing"
+    );
+    clear_read_failures(&flapping, ReadOp::Stat);
+}
+
+/// #1987 B5: a startup sample that is already obscured commits the folded
+/// value into the obscured chain only — never into the complete fingerprint
+/// slot. The r1 shape (the reverse assignment) made every change during the
+/// obstruction invisible and the recovery report on D8 disappear; no test
+/// pinned that arm, so a regression to it stayed green.
+#[test]
+fn a_startup_obstruction_commits_no_complete_fingerprint() {
+    let root = Root::new();
+    let path = root.0.join("pilotdeck.yaml");
+    let obstructed = root.0.join("obstructed");
+    std::fs::write(&obstructed, "x").expect("#1987 B5 unreadable sibling");
+    // The sibling is unreadable from the very first startup sample on; the
+    // per-sample count covers the startup sample and two full ticks.
+    arm_read_failures(&obstructed, ReadOp::Stat, 5);
+    let mut watched = WatchedPath::new(path.clone()).expect("#1987 B5 parent watched");
+    assert_eq!(
+        watched.fingerprint, None,
+        "#1987 B5 an obscured startup sample commits no complete fingerprint"
+    );
+    assert!(
+        watched.obscured_fingerprint.is_some(),
+        "#1987 B5 an obscured startup sample seeds the obscured chain"
+    );
+    assert_eq!(
+        watched.metadata_fingerprint, None,
+        "#1987 B5 an obscured startup sample commits no metadata shortcut"
+    );
+    // A change during the obstruction is reported through the folded chain
+    // (the second obscured tick compares against the startup's).
+    std::fs::write(&path, other_model().as_str())
+        .expect("#1987 B5 the target appears during the obstruction");
+    assert!(
+        watched.changed(),
+        "#1987 B5 a change during the obstruction is reported through the folded chain"
+    );
+    assert!(
+        !watched.changed(),
+        "#1987 B5 the same obstructed state reports at most once"
+    );
+    // Recovery is D8's to report: no complete fingerprint was ever committed,
+    // so the first complete sample reports once more.
+    clear_read_failures(&obstructed, ReadOp::Stat);
+    assert!(
+        watched.changed(),
+        "#1987 B5 recovery reports against the never-committed complete baseline"
+    );
+    assert!(
+        watched.fingerprint.is_some(),
+        "#1987 B5 the recovered sample commits the complete fingerprint"
+    );
+}
+
+/// #1987 B6: a `read_dir` iteration that fails mid-listing — after yielding
+/// some entries, an EMFILE-class error — obscures the sample exactly like a
+/// failed open: no report while it fails (the folded sample is not evidence
+/// of a change), no metadata shortcut committed, and the entries the
+/// truncated listing did not reach must not be mistaken for vanished. An
+/// unchanged recovery is quiet (D9) and a later entry is still seen.
+#[test]
+fn read_dir_iteration_failure_obscures_the_sample() {
+    let root = Root::new();
+    let dir = root.0.join("watched");
+    std::fs::create_dir(&dir).expect("#1987 B6 watch directory");
+    std::fs::write(dir.join("a.yaml"), "a: 1\n").expect("#1987 B6 entry a");
+    std::fs::write(dir.join("b.yaml"), "b: 1\n").expect("#1987 B6 entry b");
+    let mut watched = WatchedPath::new(dir.clone()).expect("#1987 B6 directory watched");
+    assert!(
+        watched.fingerprint.is_some(),
+        "#1987 B6 the startup sample is complete"
+    );
+    // Both entries are swallowed before either sample of either of two ticks
+    // reaches them: the whole listing is poisoned per sample.
+    arm_read_failures(&dir, ReadOp::ReadDirEntry, 4);
+    assert!(
+        !watched.changed(),
+        "#1987 B6 an obscured sample reports nothing"
+    );
+    assert_eq!(
+        watched.metadata_fingerprint, None,
+        "#1987 B6 an obscured sample commits no metadata shortcut"
+    );
+    assert!(
+        !watched.changed(),
+        "#1987 B6 the second obscured tick stays quiet"
+    );
+    // Recovery: nothing really changed, so D9 keeps it quiet.
+    clear_read_failures(&dir, ReadOp::ReadDirEntry);
+    assert!(
+        !watched.changed(),
+        "#1987 B6 an unchanged recovery after obscured ticks reports nothing"
+    );
+    assert!(
+        watched.metadata_fingerprint.is_some(),
+        "#1987 B6 the recovered sample commits the metadata shortcut again"
+    );
+    std::fs::write(dir.join("c.yaml"), "c: 1\n").expect("#1987 B6 late entry");
+    assert!(
+        watched.changed(),
+        "#1987 B6 an entry created after recovery is still seen"
+    );
+}
+
+/// #1987 A3 (registration only): a startup probe failure on the *parent* of a
+/// missing config file keeps watching that parent (the `existsSync` ->
+/// `dirname` fallback's target) instead of dropping the path — the mode stays
+/// unknown until a probe succeeds. While the probe keeps failing nothing is
+/// observable — a fixture-level deviation, not yet in the diff ledger: the TS
+/// baseline falls back a single level
+/// (`existsSync(path) ? path : dirname(path)`, with no grandparent hop) and
+/// then `watch(dirname)` throws EACCES on the unreadable parent, which the
+/// bare `catch {}` swallows, so that path has **no watcher at all** (only a
+/// manual reload remains; measured on Node v22.22.0). Rust keeps the parent
+/// registered and reports the missed change once the probe recovers —
+/// aligning to TS turns the recovery assert red, not the mid-test one.
+#[test]
+fn startup_parent_probe_failure_watches_the_parent_dir() {
+    let root = Root::new();
+    let dir = root.0.join("watched");
+    let path = dir.join("pilotdeck.yaml");
+    std::fs::create_dir(&dir).expect("#1987 A3 watch directory");
+    // The config file is missing and its parent's stat fails (three armed
+    // failures: the startup probe plus the first two `changed()` re-probes).
+    arm_read_failures(&dir, ReadOp::Stat, 3);
+    let mut watched = WatchedPath::new(path.clone()).expect("#1987 A3 the parent is kept");
+    assert_eq!(
+        watched.path, dir,
+        "#1987 A3 the parent directory is watched, not dropped"
+    );
+    assert_eq!(
+        watched.directory, None,
+        "#1987 A3 the mode stays unknown while the probe fails"
+    );
+    assert_eq!(
+        watched.target.as_deref(),
+        Some(std::ffi::OsStr::new("pilotdeck.yaml")),
+        "#1987 A3 the config file stays the target"
+    );
+    // Registered gap (fixture-level, not yet in the diff ledger): a sibling
+    // change during the probe failure is not reported. TS has no watcher on
+    // this path at all (`watch(dirname)` throws EACCES and the bare `catch`
+    // swallows it), so aligning to the baseline turns the recovery assert
+    // below red, not this one.
+    std::fs::write(dir.join("sibling.yaml"), "x").expect("#1987 A3 sibling entry");
+    assert!(
+        !watched.changed(),
+        "#1987 A3 (registered gap) a sibling change during the probe failure is not reported"
+    );
+    // Recovery: the re-probe classifies the directory and the first sample
+    // (the sibling appeared while nothing was observable) reports.
+    clear_read_failures(&dir, ReadOp::Stat);
+    assert!(
+        watched.changed(),
+        "#1987 A3 recovery classifies the parent and reports the missed change"
     );
 }
 

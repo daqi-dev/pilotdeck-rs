@@ -234,14 +234,21 @@ pub(crate) async fn serve(
             },
         );
     }
-    Some(Ok(finalize(
-        send_json(
-            hyper::StatusCode::NOT_FOUND,
-            &not_found_body(&path),
-            keep_alive,
-        ),
-        version,
-    )))
+    let mut response = send_json(
+        hyper::StatusCode::NOT_FOUND,
+        &not_found_body(&path),
+        keep_alive,
+    );
+    // #2153 negative control: a HEAD 404 growing hyper's empty-body
+    // `content-length: 0` is the unregistered drift the narrowed replay
+    // must catch (`content_length_zero_stays_scoped_to_the_registered_gates`
+    // holds the wire bytes).
+    if crate::mutants::on("api-web-head-404-cl0") && request.method() == hyper::Method::HEAD {
+        response
+            .headers_mut()
+            .insert(hyper::header::CONTENT_LENGTH, "0".parse().expect("header"));
+    }
+    Some(Ok(finalize(response, version)))
 }
 
 /// The three file endpoints plus the branch-local 400s; `None` falls through

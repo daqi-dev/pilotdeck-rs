@@ -41,7 +41,7 @@ static UNDEFINED: JsValue = JsValue::Undefined;
 /// must send the whole request to the Node host instead of surfacing a
 /// synthesized error. `Error` carries a thrown TS error: the real
 /// `memoryList` / `memoryWipe` throw, the WS connection answers
-/// `{ok:false,error:{code,message}}` (`GatewayWsConnection.ts:231-260`), so the
+/// `{ok:false,error:{code,message}}` (`GatewayWsConnection.ts:223-255`), so the
 /// entry must return a request failure rather than a successful response whose
 /// body happens to be an error object (#1456).
 #[derive(Clone, Debug, PartialEq)]

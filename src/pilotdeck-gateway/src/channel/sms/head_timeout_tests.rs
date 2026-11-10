@@ -62,20 +62,26 @@ use super::*;
 /// 18800–18858  sms golden replay fixture (`tests/fixtures/channel-sms/`)
 /// 18900–18921  wecom-callback golden replay fixture (the
 ///              `missing-outbound-config` "no listener" port is 18921)
-/// 18922–18923  sms http10 pins (18922 the 200 pin, 18923 the 404 pin)
+/// 18922–18923  sms http10 pins (18922 the 404 pin, 18923 the 200 pin)
 /// 18924–18925  sms head-timeout pins (this module, the constants below)
 /// 18926        sms json-null cell
 /// 18927–18928  sms #2152 parser-admission pins
 /// 18929        sms #2773 CONNECT pin (the admission gate's zero-byte close)
-/// 18930–18959  free
+/// 18930–18932  sms #2691 port-guard cases (the v6-only occupier, the TOCTOU
+///              bind race, the dual-stack preflight, the replay-form
+///              post-start guard)
+/// 18933–18959  free
 /// 18960–18999  feishu registered segment — the feishu oracle replay binds
 ///              18960–18972 and its pins bind 18973/18980/18990–18993; the
-///              wecom suite binds 18995–18998 (the QYAPI fake on 18998)
+///              wecom suite binds 18990/18991/18994 and 18995–18998 (the
+///              QYAPI fake on 18998)
 /// ```
 ///
 /// **18973–18979 sit inside the feishu registered range** yet belong to this
-/// module: 18973 is `PORT_DEFAULT_WIRING`, the one actual cross-lane bind
-/// (the feishu NULL_PIN_ROUTER_PORT, tracked in #2446), and 18974–18979 are
+/// module: 18973 is `PORT_DEFAULT_WIRING`, one of the three actual cross-lane
+/// binds here (the feishu NULL_PIN_ROUTER_PORT, tracked in #2446 — the other
+/// two are 18990/18991, which the wecom suite binds against feishu's
+/// `LARK_PORT` / `NULL_PIN_LARK_PORT`); 18974–18979 are
 /// this module's `PORT_DEFAULT_DEADLINE` … `PORT_STOP_DROP` constants below
 /// (they predate the feishu registration; the feishu replay never binds
 /// them). Keep this ledger in sync when any pin moves: #2257 fix-r4, fix-r5

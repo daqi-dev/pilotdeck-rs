@@ -2432,6 +2432,55 @@ class WsProjection(unittest.TestCase):
             self.project(self.envelope(0, event, final='no'))
 
 
+def count_name_bindings(source, name):
+    """Count every binding of ``name`` in ``source``, semantically.
+
+    r5-r8 showed a lexical pin on one spelling of an assignment always
+    leaves an equivalent-spelling hole open (tail anchor, left space,
+    delimiter, no-space spelling -- the same spot four times).  r9's first
+    cut enumerated binding node types (Assign/AugAssign/AnnAssign/
+    NamedExpr) and DS r10 opened it a fifth time through the forms that
+    enumeration misses: tuple/list unpacking targets, ``for``/``with-as``
+    and comprehension targets, ``def``/``class`` names, ``import ... as``,
+    ``except ... as`` and match captures.  So this counts bindings by
+    context, not by node type: every ``ast.Name`` in ``Store`` context
+    (which covers plain/chained/unpacking assignment, augmented and
+    annotated assignment, the walrus, for/with/comprehension targets),
+    plus the str-field binding forms (function/class names, except and
+    match captures, import aliases -- ``import a.b`` binds ``a``).
+    Attribute/subscript targets (``self.clock``, ``globals()['clock']``)
+    are different names as far as binding goes and are not counted -- the
+    guarded fixtures carry a separate byte ban on dynamic-namespace writes
+    (``globals(`` / ``setattr(``) for those.  Function parameters are not
+    counted: a parameter binds the name in a new scope and cannot rebind
+    the outer name the pins read.
+    """
+    import ast
+    tree = ast.parse(source)
+    count = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            if node.id == name and isinstance(node.ctx, ast.Store):
+                count += 1
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name == name:
+                count += 1
+        elif isinstance(node, ast.ExceptHandler):
+            if node.name == name:
+                count += 1
+        elif isinstance(node, ast.alias):
+            bound = node.asname if node.asname is not None else node.name.split('.')[0]
+            if bound == name:
+                count += 1
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)):
+            if node.name == name:
+                count += 1
+        elif isinstance(node, ast.MatchMapping):
+            if node.rest == name:
+                count += 1
+    return count
+
+
 class SameJsonSurfaces(unittest.TestCase):
     """#2039: registered expectations and replay ledgers are JSON values, so
     their comparisons go through the strict ``same_json`` walk (#1372), never
@@ -2446,6 +2495,13 @@ class SameJsonSurfaces(unittest.TestCase):
     and the startup-refusal contract — a guard that fails before the first
     mutation is rc 2 with the claim directory withdrawn, never a red run
     (#2431).
+
+    #2552 (PR #2544 review follow-up, DS P2 six): the lease budget's tail
+    reserve is derived from the real exit-side worst case and carries its own
+    derivation pin, the budget guard itself refuses rc 2 on an unreadable
+    common.py, the spent-budget branch has a committed regression pin, and
+    the terminate handler body is pinned functionally, not just by the
+    call-site count.
     """
 
     @classmethod
@@ -2689,15 +2745,165 @@ class SameJsonSurfaces(unittest.TestCase):
         # #2425: the guarded branch installs terminate_cleanly on SIGTERM/
         # SIGHUP/SIGQUIT before the first mutation, so an interrupted batch
         # unwinds through the finally blocks and restores the tree instead of
-        # leaving a mutant behind under the parity lease.  The handler body
-        # is pinned too: installing a no-op or an unrelated handler would
-        # satisfy a call-site-only count.
+        # leaving a mutant behind under the parity lease.  The handler *body*
+        # is pinned separately, by
+        # test_terminate_cleanly_raises_the_signal_exit_code (#2552, DS
+        # boundary#1): this call-site count alone cannot tell a gutted body
+        # from a real one.  The depth-only count also cannot tell *where*
+        # the call sits: statements inside one()'s try block sit at the
+        # same 12-space depth, so the call is additionally pinned by
+        # adjacency to the mutating_sources entry
+        # line -- moving it past the restore window (DS r5 sibling#1, the
+        # same position-semantics gap the clock pin closed in r4) goes red.
+        # All three registration rows are pinned by bytes: a SIGTERM-only
+        # count let the SIGHUP/SIGQUIT hasattr blocks be deleted for a
+        # false green (DS r7 sibling#1, P1 -- the comment above claims all
+        # three signals).
         marker = '#2425 the guarded run installs terminate handlers before mutating'
         path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
         try:
             source = path.read_bytes().decode()
-            self.assertTrue(source.count('            install_terminate_handlers()\n') == 1
-                            and source.count('signal.signal(signal.SIGTERM, terminate_cleanly)') == 1, marker)
+            self.assertTrue(source.count('            install_terminate_handlers()') == 1
+                            and source.count('\n            install_terminate_handlers()\n'
+                                            '            with mutating_sources(root, GUARDED_PATHS,\n') == 1
+                            and source.count('signal.signal(signal.SIGTERM, terminate_cleanly)') == 1
+                            and source.count('signal.signal(signal.SIGHUP, terminate_cleanly)') == 1
+                            and source.count('signal.signal(signal.SIGQUIT, terminate_cleanly)') == 1, marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_install_terminate_handlers_leaves_live_registrations(self):
+        # #2552 (DS r8 sibling#1 + concurrency#1, Claude r7 sibling#1 +
+        # concurrency#1, two families converging): the byte counts above prove
+        # the registration rows exist in the file, not that
+        # install_terminate_handlers() executes them.  An 'if False:' guard,
+        # a renamed attribute ('SIGHUP_'), or a move into a dead function
+        # all keep every count at 1 while the guarded batch actually runs on
+        # default dispositions -- an interrupted run would leave the mutant
+        # behind, the exact failure #2425 pins.  Ask the signal table
+        # itself: exec the module, call install_terminate_handlers(), and
+        # require each handler to be live, restoring the saved dispositions
+        # afterwards (the save/restore form the #2431 pins already use).
+        #
+        # #2552 r9 (DS r9 sibling#2 + boundary#1, coordinator arbitration
+        # design-change round): two more legs.  (a) Binding drift -- the
+        # direct call above proves the *module-level* function registers;
+        # a local shadow inside main() (install_terminate_handlers =
+        # lambda: None before the call site), a globals()/setattr rebind,
+        # or a dead main would leave every pin green while the guarded
+        # batch runs on default dispositions.  So main() itself is driven
+        # through a guard that refuses at entry, and the live dispositions
+        # are *recorded* at that moment (asserting inside __enter__ would
+        # be swallowed by main's except into an rc2 refusal) and checked
+        # afterwards.  Scope note (DS r10 concurrency#2): the dispositions
+        # are sampled once, at guard entry -- overwriting a disposition
+        # *inside* the mutation window (signal.signal(SIGTERM, SIG_DFL)
+        # after entry) is a different, already-registered vector (#2624)
+        # and is NOT closed by this leg.
+        # (b) Structure -- count_name_bindings now counts
+        # every binding form (DS r10 concurrency#1/boundary#1/sibling#1:
+        # def/class names included), so the name must have exactly one
+        # binding in the whole file: the module-level def, with no
+        # expression binding, nested def, import alias or capture
+        # anywhere else.  The fixture must also not contain dynamic-
+        # namespace writes (globals( / setattr( / vars( / exec( /
+        # __dict__ -- zero in the healthy file), which would rebind
+        # names invisibly to every AST and byte pin here (the same
+        # vector as the clock count, DS r8 boundary#1).  These are
+        # substring bans and would fire on a comment mention too --
+        # fail-closed, preferred over the hole they close (DS r10
+        # boundary#2/#3).
+        import io
+        import signal
+        import sys
+        marker = '#2425/#2552 install_terminate_handlers registers all three signals'
+        path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
+        try:
+            source = path.read_bytes().decode()
+            spec = importlib.util.spec_from_file_location('samejson_install_pins', path)
+            module = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            names = [signal.SIGTERM] + [getattr(signal, name) for name in ('SIGHUP', 'SIGQUIT')
+                                        if hasattr(signal, name)]
+            saved = {name: signal.getsignal(name) for name in names}
+            try:
+                module.install_terminate_handlers()
+                self.assertTrue(all(signal.getsignal(name) is module.terminate_cleanly
+                                     for name in names), marker)
+            finally:
+                for name, disposition in saved.items():
+                    # getsignal returns None when a non-Python handler holds
+                    # the signal; signal.signal refuses None, so map that
+                    # back to the default disposition (Claude r8 boundary#1
+                    # P2b, DS r9 boundary#3 -- one-line guard).
+                    signal.signal(name, disposition if disposition is not None
+                                  else signal.SIG_DFL)
+
+            import ast
+            tree = ast.parse(source)
+            module_defs = [node for node in tree.body
+                           if isinstance(node, ast.FunctionDef)
+                           and node.name == 'install_terminate_handlers']
+            self.assertTrue(len(module_defs) == 1
+                           and count_name_bindings(source, 'install_terminate_handlers') == 1
+                           and 'globals(' not in source
+                           and 'setattr(' not in source
+                           and 'vars(' not in source
+                           and 'exec(' not in source
+                           and '__dict__' not in source, marker)
+
+            with tempfile.TemporaryDirectory(prefix='pdrs-2552-r9-') as folder:
+                out = Path(folder) / 'out'
+                spec = importlib.util.spec_from_file_location('samejson_install_main', path)
+                main_module = importlib.util.module_from_spec(spec)
+                exec(compile(path.read_bytes(), str(path), 'exec'), main_module.__dict__)
+                recorded = {}
+
+                class recording_guard:
+                    def __enter__(self):
+                        # plain subscript writes: a .update({...}) call here
+                        # reads as an incremental status write to the #991
+                        # aggregation audit, which then demands registration
+                        # for a test that aggregates nothing.
+                        for name in names:
+                            recorded[name] = signal.getsignal(name)
+                        raise RuntimeError('probe: refuse before the first mutation')
+
+                    def __exit__(self, *_exc):
+                        return False
+
+                try:
+                    with patch.object(main_module, 'preflight', lambda: True), \
+                            patch.object(main_module, 'mutating_sources',
+                                         lambda *_a, **_k: recording_guard()), \
+                            patch('sys.stdout', new_callable=io.StringIO), \
+                            patch('sys.stderr', new_callable=io.StringIO), \
+                            patch.object(sys, 'argv', [str(path), str(out),
+                                                       'surfaces-frames-bare-not-equal']):
+                        try:
+                            main_module.main()
+                            raised = None
+                        except (SystemExit, RuntimeError) as error:
+                            raised = error
+                    # A dead or shadowed call site records nothing (or records
+                    # the default dispositions); the guard refuses before the
+                    # first mutation, so main exits rc 2 either way and only
+                    # the recorded table tells the two apart.  The refusal is
+                    # pinned to SystemExit(2): a mid-window SIGTERM lands in
+                    # terminate_cleanly's SystemExit(128+signum), which must
+                    # not read as this leg's expected refusal (DS r10
+                    # concurrency#3 -- same shape as the #2431 sibling pins).
+                    self.assertTrue(isinstance(raised, SystemExit)
+                                    and raised.code == 2
+                                    and len(recorded) == len(names)
+                                    and all(recorded[name] is main_module.terminate_cleanly
+                                             for name in names), marker)
+                finally:
+                    # main() installs without uninstalling; restore so the
+                    # handler does not leak into the tests that follow.
+                    for name, disposition in saved.items():
+                        signal.signal(name, disposition if disposition is not None
+                                      else signal.SIG_DFL)
         except (Exception, SystemExit) as error:
             self.fail(marker + ': ' + repr(error))
 
@@ -2789,11 +2995,239 @@ class SameJsonSurfaces(unittest.TestCase):
                                 raised = exit_code
                     finally:
                         for name, disposition in saved.items():
-                            signal.signal(name, disposition)
+                            # getsignal returns None for a non-Python
+                            # handler; signal.signal refuses None (DS r10
+                            # sibling#2 -- guard propagated from the r9
+                            # legs above).
+                            signal.signal(name, disposition if disposition is not None
+                                          else signal.SIG_DFL)
                     self.assertTrue(raised is not None and raised.code == 2
                                     and not out.exists()
                                     and not (out / 'summary.json').exists()
                                     and 'guard refused to start' in stderr.getvalue(), marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_budget_guard_refuses_when_common_is_unreadable(self):
+        # #2552 (DS concurrency#2 + boundary#3, two independent hits):
+        # require_lease_budget_below_max_age sat outside the started zone
+        # with no handler of its own, so a common.py the guard could not
+        # read (missing file, syntax error, a renamed MAX_AGE) bubbled out
+        # of main() as a traceback and read as a red run (rc 1).  Every
+        # failure of that guard must be a startup refusal: rc 2, no
+        # evidence directory, before the claim.  preflight is stubbed like
+        # the #2431 pins so the kill lands on the rc2 semantics itself.
+        marker = '#2552 the budget guard refuses when common.py is unreadable'
+        path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
+        try:
+            import contextlib
+            import io
+            import signal
+            with tempfile.TemporaryDirectory(prefix='pdrs-2552-budget-') as folder:
+                folder = Path(folder)
+                missing = folder / 'missing-common.py'
+                renamed = folder / 'renamed-common.py'
+                renamed.write_text('LEASE_MAX_AGE = 2400\n')
+                # (label, common.py the guard reads, budget reader); the
+                # violating budget is read from the pristine constants the
+                # guard itself loads, never restated here (#2552 r1 DS
+                # concurrency#1: a restated 2400 drifts with common.py).
+                probes = (('missing common.py', missing, None),
+                          ('renamed MAX_AGE', renamed, None),
+                          ('budget above MAX_AGE', None,
+                           lambda module: module.load_pristine_common().MAX_AGE))
+                for label, common_path, budget_reader in probes:
+                    with self.subTest(label=label), \
+                            tempfile.TemporaryDirectory(prefix='pdrs-2552-out-') as out_folder:
+                        out = Path(out_folder) / 'out'
+                        spec = importlib.util.spec_from_file_location(
+                            'samejson_budget_' + label.replace(' ', '_').replace('-', '_'), path)
+                        module = importlib.util.module_from_spec(spec)
+                        exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+                        budget = budget_reader(module) if budget_reader is not None else None
+
+                        # Inert on the failure path (#2552 r1 DS concurrency#1
+                        # + boundary#4): every probe must die inside
+                        # require_lease_budget_below_max_age, before the claim
+                        # and before install_terminate_handlers.  Stub
+                        # mutating_sources with a sentinel that turns a broken
+                        # guard into this pin's own failure instead of letting
+                        # main() walk on and mutate this very tree, and
+                        # save/restore the signal dispositions like the #2431
+                        # pins.
+                        def sentinel(*_args, **_kwargs):
+                            raise RuntimeError('budget guard let main() reach mutating_sources')
+
+                        names = [signal.SIGTERM] + [getattr(signal, name) for name in ('SIGHUP', 'SIGQUIT')
+                                                     if hasattr(signal, name)]
+                        saved = {name: signal.getsignal(name) for name in names}
+                        try:
+                            with contextlib.ExitStack() as stack:
+                                stack.enter_context(patch.object(module, 'preflight', lambda: True))
+                                stack.enter_context(patch.object(module, 'mutating_sources', sentinel))
+                                if common_path is not None:
+                                    stack.enter_context(patch.object(module, 'common', common_path))
+                                if budget is not None:
+                                    stack.enter_context(patch.object(module, 'LEASE_BUDGET_SECONDS', budget))
+                                stack.enter_context(patch('sys.stdout', new_callable=io.StringIO))
+                                stderr = stack.enter_context(
+                                    patch('sys.stderr', new_callable=io.StringIO))
+                                stack.enter_context(patch.object(sys, 'argv', [str(path), str(out),
+                                                                               'surfaces-frames-bare-not-equal']))
+                                try:
+                                    module.main()
+                                    raised = None
+                                except BaseException as exit_code:
+                                    # BaseException, not just SystemExit: a
+                                    # mutant that lets the guard's error escape
+                                    # main() must fail this pin's own
+                                    # assertion below -- a ``with self.subTest``
+                                    # swallows anything raised through it into
+                                    # an unittest ERROR, which classify()
+                                    # reads as INVALID, never KILLED (#2552,
+                                    # same lesson as #2425's assertRaises
+                                    # note).  The sentinel's RuntimeError
+                                    # failing the 'lease budget' needle is
+                                    # the same protection for the opposite
+                                    # direction.
+                                    raised = exit_code
+                        finally:
+                            for name, disposition in saved.items():
+                                # getsignal returns None for a non-Python
+                                # handler; signal.signal refuses None (DS
+                                # r10 sibling#2 -- guard propagated from
+                                # the r9 legs above).
+                                signal.signal(name, disposition if disposition is not None
+                                              else signal.SIG_DFL)
+                        self.assertTrue(raised is not None
+                                        and isinstance(raised, SystemExit)
+                                        and raised.code == 2
+                                        and not out.exists()
+                                        and not (out / 'summary.json').exists()
+                                        and 'lease budget' in stderr.getvalue(), marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_lease_budget_marks_spent_cases_invalid(self):
+        # #2552 (DS concurrency#4): the spent-budget branch had no committed
+        # regression pin -- deleting it left every SameJsonSurfaces test
+        # green and the invariant had only a one-time drift probe.  Pin the
+        # call site and the INVALID marking by bytes -- including the
+        # append's 'status': 'INVALID' literal and the trailing continue,
+        # which a KILLED-swap or a break would otherwise survive as a false
+        # green (#2552 r1 DS concurrency#2 + boundary#2, two independent
+        # hits), and the mutating_sources call site's use of GUARDED_PATHS,
+        # so the reserve cannot drift from the guarded set (DS sibling#4) --
+        # the reserve arithmetic and the below-MAX_AGE invariant by value,
+        # and the tail reserve's derivation (guarded-path count times the
+        # real _git worst case, imported constants) so it cannot silently
+        # become a hand-picked number again (DS concurrency#1).  #2552 r2:
+        # the imported-constant derivation is only as real as the import,
+        # so the import line and the KILL_TIMEOUT alias are pinned by bytes
+        # and the constants are checked for identity against a fresh exec of
+        # negative_process itself (DS r2 concurrency#1 -- a local
+        # redefinition would shrink both sides of the derivation together
+        # and stay green), and the clock line is pinned so the branch
+        # cannot be made unreachable by shifting the clock origin
+        # (DS r2 boundary#1), by moving it (adjacency to the guarded
+        # for loop, whose first statement is the budget check -- the
+        # memory-mode loop at the same depth is followed by one(row)
+        # instead, so the anchor names the guarded branch, DS r4
+        # boundary#2), or by duplicating it inside the loop body, where
+        # a per-case reset would silently rearm the budget -- the
+        # duplicate is counted semantically, by AST bindings
+        # (count_name_bindings: every Store-context Name plus the
+        # str-field binding forms, so any spacing, right-hand spelling,
+        # unpacking target, for/with/comprehension target, def/class
+        # name, import alias or capture counts -- DS r8 boundary#1, the
+        # same spot a fourth time: no-space clock=time.monotonic() and
+        # the RHS alias clock = monotonic() both survived the r7 regex,
+        # live output in _tmp/20261109-2552-harvest/fix-r8-suspension-report.md;
+        # design-change round authorised by coordinator arbitration,
+        # fix-r9; DS r10 concurrency#1/boundary#1/sibling#1 reopened the
+        # first cut's node-type enumeration through tuple-unpacking and
+        # for-target resets, so the count is by binding context, not by
+        # node type), while a different name such as saved_clock
+        # (Claude r5 boundary#1) or an attribute form such as
+        # self.clock is not a binding of clock and cannot false-red
+        # it; the adjacency's clock and for
+        # lines are 16-space with-body lines and its budget-check line
+        # is a 20-space loop-body line, DS r4 simplify#2 + DS r5
+        # boundary#2).
+        marker = '#2552 a spent lease budget marks the remaining cases INVALID'
+        path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
+        try:
+            source = path.read_bytes().decode()
+            spec = importlib.util.spec_from_file_location('samejson_budget_drift', path)
+            module = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            negproc_path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/negative_process.py'
+            negproc_spec = importlib.util.spec_from_file_location(
+                'samejson_negproc_identity', negproc_path)
+            negproc = importlib.util.module_from_spec(negproc_spec)
+            exec(compile(negproc_path.read_bytes(), str(negproc_path), 'exec'), negproc.__dict__)
+            reserve = (3 * (module.RUN_TIMEOUT_SECONDS + 2 * module.KILL_GRACE_SECONDS)
+                       + module.TAIL_OVERHEAD_SECONDS)
+            self.assertTrue(
+                source.count('if lease_budget_left(clock, time.monotonic()) <= 0:') == 1
+                and source.count("'s parity lease budget before this case") == 1
+                and source.count("results.append({'name': row[0], 'status': 'INVALID',") == 1
+                and source.count("' by name'})\n                        continue") == 1
+                and source.count('mutating_sources(root, GUARDED_PATHS,') == 1
+                and count_name_bindings(source, 'clock') == 1
+                and source.count('\n                clock = time.monotonic()\n'
+                                '                for row in selected:\n'
+                                '                    if lease_budget_left(clock, '
+                                'time.monotonic()) <= 0:\n') == 1
+                and source.count('from negative_process import (GIT_TIMEOUT, KILL_TIMEOUT,') == 1
+                and source.count('KILL_GRACE_SECONDS = KILL_TIMEOUT') == 1
+                and module.GIT_TIMEOUT == negproc.GIT_TIMEOUT
+                and module.KILL_GRACE_SECONDS == negproc.KILL_TIMEOUT
+                and module.TAIL_OVERHEAD_SECONDS
+                    == len(module.GUARDED_PATHS) * (module.GIT_TIMEOUT
+                                                     + 2 * module.KILL_GRACE_SECONDS)
+                    + module.FSYNC_AND_LEASE_SLACK_SECONDS
+                and module.lease_budget_left(0, 0) == module.LEASE_BUDGET_SECONDS - reserve
+                and module.lease_budget_left(0, module.LEASE_BUDGET_SECONDS - reserve) == 0
+                and module.lease_budget_left(0, module.LEASE_BUDGET_SECONDS - reserve + 1) < 0
+                and module.LEASE_BUDGET_SECONDS + module.TAIL_OVERHEAD_SECONDS
+                    < module.load_pristine_common().MAX_AGE, marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_terminate_cleanly_raises_the_signal_exit_code(self):
+        # #2552 (DS boundary#1): terminate_cleanly's body had
+        # no pin at all, so replacing the raise with ``pass`` kept every
+        # SameJsonSurfaces test green while a comment claimed the body was
+        # pinned.  Call the real handler here for every signal it is
+        # registered for: outside a restore window it must raise
+        # SystemExit(128+signum) so the finally blocks still unwind, and
+        # while a signal is deferred (restore in progress) it must return
+        # without exiting -- negative_process re-raises it after the window
+        # closes.
+        marker = '#2552 terminate_cleanly exits 128+signum outside the restore window'
+        path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
+        try:
+            import signal
+            spec = importlib.util.spec_from_file_location('samejson_terminate_pin', path)
+            module = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            outcomes = []
+            for name in ('SIGTERM', 'SIGHUP', 'SIGQUIT'):
+                number = getattr(signal, name, None)
+                if number is None:
+                    continue
+                try:
+                    module.terminate_cleanly(number, None)
+                    outcomes.append((name, None))
+                except SystemExit as error:
+                    outcomes.append((name, error.code))
+            with patch.object(module, 'defer_signal_exit', lambda _signum: True):
+                deferred = module.terminate_cleanly(signal.SIGTERM, None)
+            expected = [(name, 128 + getattr(signal, name)) for name
+                        in ('SIGTERM', 'SIGHUP', 'SIGQUIT')
+                        if hasattr(signal, name)]
+            self.assertTrue(outcomes == expected and deferred is None, marker)
         except (Exception, SystemExit) as error:
             self.fail(marker + ': ' + repr(error))
 

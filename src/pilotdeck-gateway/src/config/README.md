@@ -47,7 +47,11 @@ watcher 依赖，改为按 `WatchOptions::poll_interval` 轮询被监视路径�
 失败，`NotFound` 除外：它是完整观测）不提交 metadata 指纹，下一 tick 重试直至完整样本落地
 （#1792）；stat / `read_dir` 失败的遮蔽采样不提交任何指纹（含折叠指纹），只与上一遮蔽采样
 比较后上报可观测变更，读恢复后与最后一次完整采样比较、有差才报（#1792 r2），同一不可读
-状态不会 reload 风暴、持续遮蔽也不会永久静默。唯一的漏检窗口是「改写后 ctime 未跨
+状态不会 reload 风暴、持续遮蔽也不会永久静默。#1987 在这段口径上收窄了三格
+（细节见 `store.rs` 模块文档）：启动采样不再提交 metadata 短路（A2）；遮蔽**过渡拍**
+额外把 target 与最后一次完整采样比较（A1，与 `A6.3-CONFIG-POLL-001-R1.md` 的字面差异
+待人批，见 issue #2094）；metadata 拍遮蔽、同拍折叠拍完整时按完整观测处理（A4）。
+唯一的漏检窗口是「改写后 ctime 未跨
 tick，且其余参与指纹的字段（len / is_dir / mtime / inode / dev）也都没变」；窗口宽度与采样间隔
 无关，具体表述见 `store.rs` 模块文档，登记与复算见
 `specs/gateway-parity/diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.md`，勘误见同目录

@@ -72,6 +72,19 @@ mutations = [
         "runtime::snapshot::tests::dispatch_routes_only_snapshot_methods",
         "#2194 snapshot_list failure must dispatch as SnapshotDispatch::Error",
     ),
+    # #2308: a host boundary is `Forward`, never a success response body
+    # (the memory-gateway family's `forward-mapped-to-response` row, mirrored).
+    (
+        "forward-mapped-to-response",
+        SOURCE / "runtime/snapshot.rs",
+        "            Err(error) if error.requires_host() => SnapshotDispatch::Forward,\n",
+        "            Err(error) if error.requires_host() => {\n"
+        "                SnapshotDispatch::Response(error.as_json())\n"
+        "            }\n",
+        "lib",
+        "runtime::snapshot::tests::dispatch_forwards_requires_host_boundary",
+        "#2308 snapshot_list must forward a requires_host boundary to the Node host",
+    ),
     (
         "resolver-general-always",
         SOURCE / "metadata.rs",
@@ -232,6 +245,7 @@ EXPECTED_NAMES = (
     "mkdtemp-eexist-fabricated",
     "requires-host-false",
     "error-mapped-to-response",
+    "forward-mapped-to-response",
     "resolver-general-always",
     "storage-id-ignores-marker",
     "storage-id-stats-normalized-marker",

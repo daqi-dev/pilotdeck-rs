@@ -1621,3 +1621,9 @@ fn native_collation_regenerates_identically() {
 fn transcript_collation_regenerates_identically() {
     baseline::regenerates_identically("transcript-collation");
 }
+
+#[test]
+#[ignore = "#2131 requires pinned Node v22.22.0 / ICU 78.2 and TS baseline"]
+fn utf16_residual_sort_regenerates_identically() {
+    baseline::regenerates_identically("utf16-residual-sort");
+}

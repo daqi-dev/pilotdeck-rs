@@ -8,8 +8,11 @@ unit tests of the same apparatus (``scripts/cli-parity/test_cli_parity.py``)
 plus this runner's own self-checks (``test_negative_controls.py``). Run with no
 other writers in this worktree, after the apparatus change is committed
 (``mutating_sources`` refuses files that differ from HEAD by design). Evidence
-goes in a new output folder. No cargo is involved, so no CARGO_TARGET_DIR is
-required. Run all mutants to completion; any non-KILLED row is a nonzero exit (a
+goes in a new output folder. This entry's own source never reads
+CARGO_TARGET_DIR; the shared ``mutating_sources`` window it delegates to does
+(absent defaults to the shared tree target, blank/dot are refused there) and
+may cargo-build the workspace scanner on a cold host (#2552), so no usable
+caller target is required. Run all mutants to completion; any non-KILLED row is a nonzero exit (a
 stale anchor or a broken run is INVALID, never SURVIVED): an INVALID row exits 2
 (fix-r2 P1-1, the #1038/#1063 semantics — a broken run must not share SURVIVED's
 "the apparatus held" exit 1), an empty row set exits 1 (fix-r2 P1 — an emptied or

@@ -12,7 +12,10 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import CARGO_SLOTS_WAIT_SECONDS, mutating_sources, run_owned, wait_for_slot
+from negative_process import (
+    CARGO_SLOTS_WAIT_SECONDS, mutating_sources, new_output_directory, run_owned, wait_for_slot,
+    write_source_atomic,
+)
 from negative_suite import Case, classify, passed
 
 root = Path(__file__).resolve().parents[5]
@@ -65,8 +68,7 @@ def main():
         parser.error('unknown or empty selection')
     if any(case[0] == 'regeneration' for case in selected) and not os.environ.get('PDRS_BASELINE'):
         parser.error('PDRS_BASELINE is required for regeneration')
-    out = args.output.resolve()
-    out.mkdir(parents=True, exist_ok=False)
+    out = new_output_directory(args.output.resolve())
     env = dict(os.environ)
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
                '-p', 'pilotdeck-gateway', '--test', 'web_tools']
@@ -98,14 +100,22 @@ def main():
                     raise ValueError(f'ANCHOR_EXPIRED {name}: {count} matches, expected {expected}')
                 if not passed(run(name + '-positive', arguments), test):
                     raise RuntimeError('positive control did not pass the bound test')
-                path.write_text(original.replace(before, after))
+                write_source_atomic(root, path,
+                                    original.replace(before, after).encode())
                 compiled = run(name + '-compile', ['--no-run'])
                 if compiled.returncode != 0:
                     raise RuntimeError('mutant failed to compile; not a runtime kill')
                 case = Case(name, path, before, after, test, messages[name])
                 status, reason = classify(run(name + '-negative', arguments), case)
-            if not passed(run(name + '-restored', arguments), test):
-                status, reason = 'INVALID', 'restored control did not pass the bound test'
+                # Restore and re-run inside the source guard: the restored
+                # control compiles the tree, so it must never race another
+                # runner that takes the same .negative-source.lock (#1440).
+                # #1908: one atomic rename; a truncating write_bytes here
+                # has the same SIGKILL half-write window as the mutation
+                # write itself.
+                write_source_atomic(root, path, originals[path])
+                if not passed(run(name + '-restored', arguments), test):
+                    status, reason = 'INVALID', 'restored control did not pass the bound test'
         except Exception as error:
             status, reason = 'INVALID', f'{type(error).__name__}: {error}'
         results.append({'mutation': name, 'test': test, 'assertion': messages[name],

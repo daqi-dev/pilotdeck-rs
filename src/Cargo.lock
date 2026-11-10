@@ -1075,6 +1075,7 @@ dependencies = [
  "serde_json",
  "sha1",
  "sha2",
+ "socket2",
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite",

@@ -47,6 +47,15 @@ pub(crate) fn websocket_response(mut headers: hyper::HeaderMap, accept: &str) ->
         header::SEC_WEBSOCKET_ACCEPT,
         accept.parse().expect("derived accept key"),
     );
+    if crate::mutants::on("native-ws-101-cl0") {
+        // #2153 negative control: an unregistered served cell growing a
+        // `content-length: 0` line is the drift the budget replay's raw pin
+        // must catch on the wire.
+        headers.insert(
+            hyper::header::CONTENT_LENGTH,
+            hyper::header::HeaderValue::from_static("0"),
+        );
+    }
     let mut response = Response::new(empty());
     *response.status_mut() = hyper::StatusCode::SWITCHING_PROTOCOLS;
     *response.headers_mut() = headers;
