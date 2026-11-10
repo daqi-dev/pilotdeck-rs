@@ -69,13 +69,15 @@ issue 正文两处勘误随单登记：#2720 合入后行号漂移（`:48`→`:4
 固定基线 `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`（`resources/PilotDeck`，
 只读），Node v22.22.0 / ICU 78.2。真实 IPG 方法体 + #1455 式桩装配探针
 `_tmp/20261110-issue-2068/probe/probe-2068.mjs`，原始输出同目录
-`probe-2068.out`（24 条记录）：`newSession` 直调真实 `InProcessGateway`
+`probe-2068.out`（29 条记录——newSession 7 / listSessions 8 /
+resolveProjectKey 7 / pathResolve 7，其中 served-string 对照 4 条与
+cursor-control 对照 1 条）：`newSession` 直调真实 `InProcessGateway`
 （无 router 依赖）；`listSessions` 用真实 `SessionRouter` + 真实
 `createGatewaySessionCatalogConsumer`，`resolveStorage` 一行镜像
 `ProjectRuntimeRegistry.ts:1542` 的 `resolve(projectKey ?? fallbackProjectRoot)`；
 delete/rename/tag 的前置用真实 `createDialogProjectRegistry.resolveProjectKey`
 （`projectRegistry.ts:41-58`，起点 `resolve()`）；外加裸 `path.resolve` 对照
-四条。fix-r1 补充探针 `probe-2068-r2.mjs` / `probe-2068-r2.out`（11 条记录）：
+7 格。fix-r1 补充探针 `probe-2068-r2.mjs` / `probe-2068-r2.out`（11 条记录）：
 裸 `path.resolve` 的 `-0` / 对象 / constructor 检视变体格 + 前缀读点的
 `String({toString: null})` 抛错面，每格都过 `GatewayWsConnection.ts:223-255`
 的边界序列化判定（`error.code` 是 string → 原样保留；否则
@@ -169,7 +171,8 @@ ToString 简化（number/bool only，非 projectKey 读点，#1457 fix-r2 已登
 
 行号为工作树（HEAD `e32966b5b` + fix-r1 final.patch）上的行号：
 
-- 用例（`session_dir.rs` tests 模块共五个——r1 四个 + fix-r1 一个）：
+- 用例（两族共五个——`session_dir.rs` 四个（r1 三 + fix-r1 一）+ `config.rs`
+  一个）：
   `list_sessions_non_string_project_key_answers_the_path_resolve_type_error`
   （`:1815`——fix-r1 扩格：number / `-0` / boolean / array / object 与
   constructor 检视变体（`[Object]` / `an instance of null` /
