@@ -11,8 +11,9 @@ fourth turns the fail-closed `setHost` read into a fail-open one, killed by
 the catch_unwind pin. Rows five and six (fix-r1) disconnect only the drain
 wirings the P1 fixes added — the admission early-exit's (#2773 P1-b) and the
 guard-431 mid-head trip's — so the bound pins' beat-write assertion fires
-first ("every dribble beat is written, none reset", the fix-r3 write axis)
-while the routed bytes still answer. One script holds both lanes because the
+first ("every dribble beat is written, none reset", the fix-r3 write axis —
+as observed in the ledger's N-run rounds; the read-side race arm is
+registered there too) while the routed bytes still answer. One script holds both lanes because the
 six rows are one mutation family of a single issue (#2773, review r2 +
 fix-r1): the same node_parser_admission gate. The fix-r1 drain wirings
 (rows five and six) exist only on the user_dialog side; the sms lane has no
@@ -102,13 +103,13 @@ cases = [
     # The admission gate's drain wiring alone, disconnected (#2773 fix-r1
     # P1-b): the early 400 still goes out, but the connection task no longer
     # drains the unread body, so the beats still in flight earn an RST. The
-    # kill rides the pin's beat-write assertion first — observed on Linux
-    # rounds 8-9 and macOS round 10; admissibility is the ledger's
-    # multi-round rule only (#2773 fix-r10, review DS r10; the earlier
-    # "platform-independent axis" wording withdrawn with it — fix-r11, review
-    # DS r11 sibling#2). On macOS the close-kind FIN assertion would also
-    # fire. This row is what makes the ledger's "double kill" claim
-    # machine-checked (review r2 simplify#7).
+    # kill rides the pin's beat-write assertion first — as observed in the
+    # ledger's N-run rounds (spec「N 跑协议」); admissibility is the ledger's
+    # multi-round rule only (the earlier "platform-independent axis"
+    # wording is withdrawn — fix-r11, review DS r11 sibling#2). On macOS
+    # the close-kind FIN assertion would also fire. This row is what makes
+    # the ledger's "double kill" claim machine-checked (review r2
+    # simplify#7).
     ('parser-admission-drain-unwired', HTTP_STORE,
      '                                    if body_pending\n'
      '                                        && rejection.headers().get(header::CONNECTION)\n'
@@ -129,9 +130,9 @@ cases = [
     # The guard-431 mid-head drain mark alone, disconnected (#2773 fix-r1):
     # the 431 still answers, but the unread head bytes turn the close into an
     # RST racing the response — the boundary pin's beat-write assertion fires
-    # first (observed on Linux rounds 8-9 and macOS round 10; admissibility
-    # is the ledger's multi-round rule only — fix-r10/fix-r11, reviews DS
-    # r10/r11), and on macOS the FIN expectation would also fail.
+    # first (same write-side anchor as the drain-unwired row above —
+    # observed rounds and admissibility per the ledger's multi-round rule),
+    # and on macOS the FIN expectation would also fail.
     ('guard-431-drain-unwired', HTTP_STORE,
      '                        this.timer.mark_unread_body_close();\n'
      '                        response = Some(NODE_431_RESPONSE);\n',
