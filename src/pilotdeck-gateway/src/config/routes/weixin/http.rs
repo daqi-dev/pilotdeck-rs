@@ -43,7 +43,7 @@ pub fn is_ilink_fetch_compatibility_installed() -> bool {
 /// Inspects target URL and conditionally strips Content-Length header if the URL
 /// contains `/ilink/bot/` or if the compatibility shim is active.
 pub fn apply_ilink_fetch_compatibility(url: &str, headers: &mut HeaderMap) -> bool {
-    if url.contains("/ilink/bot/") || is_ilink_fetch_compatibility_installed() {
+    if url.contains("/ilink/bot/") && is_ilink_fetch_compatibility_installed() {
         strip_content_length_header(headers);
         true
     } else {
@@ -53,9 +53,9 @@ pub fn apply_ilink_fetch_compatibility(url: &str, headers: &mut HeaderMap) -> bo
 
 /// `WeixinChannel.ts:1315-1331` (`installIlinkFetchCompatibility` generic wrapper logic).
 /// Given any target URL and header collection supporting `StripContentLengthHeader`,
-/// returns stripped headers if URL contains `/ilink/bot/` or compatibility shim is active.
+/// returns stripped headers if URL contains `/ilink/bot/` and compatibility shim is active.
 pub fn intercept_ilink_request<H: StripContentLengthHeader>(url: &str, headers: &H) -> Option<H::Output> {
-    if url.contains("/ilink/bot/") || is_ilink_fetch_compatibility_installed() {
+    if url.contains("/ilink/bot/") && is_ilink_fetch_compatibility_installed() {
         Some(headers.strip_content_length_header())
     } else {
         None
@@ -505,11 +505,13 @@ mod tests {
         assert_eq!(stripped.len(), 1);
         assert_eq!(stripped[0].0, "Authorization");
 
-        // Non-ilink URL when compatibility installed still applies stripping
+        // Non-ilink URL when compatibility installed:
+        // When url does not contain /ilink/bot/, intercept_ilink_request returns None
+        // and apply_ilink_fetch_compatibility returns false unless url contains /ilink/bot/.
         let mut h2 = HeaderMap::new();
         h2.insert(CONTENT_LENGTH, HeaderValue::from_static("99"));
-        assert!(apply_ilink_fetch_compatibility("https://example.com/other", &mut h2));
-        assert!(!h2.contains_key(CONTENT_LENGTH));
+        assert!(!apply_ilink_fetch_compatibility("https://example.com/other", &mut h2));
+        assert!(h2.contains_key(CONTENT_LENGTH));
     }
 
     #[test]
