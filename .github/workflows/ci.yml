@@ -575,6 +575,12 @@ jobs:
           bash scripts/test-disk-budget.sh
           python3 -I scripts/check-approval-provenance.py
           python3 -I scripts/ui-server-parity/check_frozen.py
+      - name: ASR 源码安装失败与并发边界
+        working-directory: .
+        shell: bash
+        run: |
+          python3 -I scripts/test-install-asr-owner.py scripts/install-asr.sh
+          python3 -I scripts/test-install-asr-jobs.py scripts/install-asr.sh
       # #1926：对拍归因装置的自测（含装置自身 sha256 pin，改判据必须显式 bump）。
       # 独立成一步：B2 步骤的命令序被 test_metadata_io_driver.py 逐字钉死，且失败归因要能一眼看出是装置自测。
       - name: 归因装置自测（scripts/parity-attrib）

@@ -433,18 +433,19 @@ async fn cancellation_reaps_a_non_exec_wrapper_worker() {
             .transcribe(object([("audio_path", "audio.wav".into())]), rx)
             .await
     });
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while !started.exists() || !worker.exists() {
+    let pid = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if started.exists()
+                && let Ok(text) = std::fs::read_to_string(&worker)
+                && let Ok(pid) = text.trim().parse::<i32>()
+            {
+                break pid;
+            }
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     })
     .await
     .unwrap();
-    let pid = std::fs::read_to_string(&worker)
-        .unwrap()
-        .trim()
-        .parse::<i32>()
-        .unwrap();
     let identity = live_worker_identity(pid).expect("worker must be live before cancellation");
     tx.send_replace(true);
     let result = tokio::time::timeout(Duration::from_secs(3), task)

@@ -93,7 +93,17 @@ pub struct ApiServerChannel(Arc<Inner>);
 impl ApiServerChannel {
     /// Reads `API_SERVER_*` at construction, like the TS constructor.
     pub fn new(options: ApiServerOptions) -> Self {
-        Self::with_env(options, std::env::vars().collect())
+        Self::with_env(
+            options,
+            std::env::vars_os()
+                .map(|(key, value)| {
+                    (
+                        key.to_string_lossy().into_owned(),
+                        value.to_string_lossy().into_owned(),
+                    )
+                })
+                .collect(),
+        )
     }
 
     pub fn with_env(options: ApiServerOptions, env: HashMap<String, String>) -> Self {

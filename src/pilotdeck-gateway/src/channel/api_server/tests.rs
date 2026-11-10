@@ -25,6 +25,58 @@ const ORACLE: &str = include_str!("../../../tests/fixtures/api-server-channel/or
 const FIXED_UUID: &str = "00000000-0000-4000-8000-000000000000";
 const FIXED_DATE: &str = "Thu, 01 Jan 1970 00:00:00 GMT";
 
+#[cfg(unix)]
+#[test]
+fn constructor_accepts_non_utf8_process_environment() {
+    use std::os::unix::ffi::OsStringExt;
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "channel::api_server::tests::non_utf8_environment_constructor_helper",
+            "--ignored",
+        ])
+        .env("PDRS_API_SERVER_ENV_HELPER", "1")
+        .env(
+            "PDRS_NON_UTF8_VALUE",
+            std::ffi::OsString::from_vec(vec![0xff]),
+        )
+        .env(
+            std::ffi::OsString::from_vec(b"PDRS_NON_UTF8_KEY_\xff".to_vec()),
+            "present",
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "isolated child of constructor_accepts_non_utf8_process_environment"]
+fn non_utf8_environment_constructor_helper() {
+    assert_eq!(
+        std::env::var("PDRS_API_SERVER_ENV_HELPER").as_deref(),
+        Ok("1")
+    );
+    let channel = ApiServerChannel::new(ApiServerOptions::default());
+    assert_eq!(
+        channel.0.env.get("PDRS_NON_UTF8_VALUE").map(String::as_str),
+        Some("\u{fffd}")
+    );
+    assert_eq!(
+        channel
+            .0
+            .env
+            .get("PDRS_NON_UTF8_KEY_\u{fffd}")
+            .map(String::as_str),
+        Some("present")
+    );
+}
+
 fn oracle() -> Value {
     crate::test_baseline::oracle(ORACLE);
     serde_json::from_str(ORACLE).expect("#1333 api-server oracle JSON")

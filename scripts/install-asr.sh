@@ -68,7 +68,8 @@ lock_identity_now() {
 }
 cleanup() {
     if [ -n "$stage" ]; then rm -rf -- "$stage"; fi
-    # A manually replaced lease belongs to another installer. Never remove it.
+    # Preserve an observed replacement. This is a check-then-remove sequence,
+    # not an atomic defence against an operator replacing the lock mid-cleanup.
     [ -n "$lock_identity" ] || return 0
     current_identity=$(lock_identity_now 2>/dev/null) || return 0
     [ "$current_identity" = "$lock_identity" ] || return 0
@@ -83,12 +84,12 @@ trap cleanup EXIT
 # Keep its private stage and lock rather than deleting an in-flight build tree.
 interrupted() {
     trap - EXIT
-    printf '%s\n' "[pilotdeck-asr] Interrupted; preserve $lock and $stage until the build is confirmed stopped." >&2
+    printf '%s\n' "[pilotdeck-asr] Interrupted; preserve $lock and ${stage:-(stage not yet created)} until the build is confirmed stopped." >&2
     exit 143
 }
 trap interrupted INT TERM HUP
-lock_identity=$(lock_identity_now)
-lock_marker=$(mktemp "$lock/.owner.XXXXXXXX")
+lock_identity=$(lock_identity_now) || fail "Cannot establish ownership of $lock; preserve it for inspection. No build started."
+lock_marker=$(mktemp "$lock/.owner.XXXXXXXX") || fail "Cannot mark ownership of $lock; preserve it for inspection. No build started."
 printf 'installerPid=%s\nstartedUtc=%s\nbirth=%s\n' "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(ps -p "$$" -o lstart=)" > "$lock/owner.txt"
 stage=$(mktemp -d "$cache/.source-build.XXXXXXXX")
 printf 'stage=%s\n' "$stage" >> "$lock/owner.txt"
