@@ -63,6 +63,11 @@ pub(crate) fn weixin_attachment_failure_diagnostic_for_message(message: &str) ->
     ))
 }
 
+/// Live/poll paths pass plain message strings into `formatWeixinError` (WeixinChannel.ts:1034).
+pub(crate) fn format_weixin_error_message(message: &str) -> String {
+    format_weixin_error(&crate::config::routes::RouteError::new("Error", message))
+}
+
 /// `WeixinChannel.ts:1094-1099`
 pub(crate) fn guess_mime_type_from_url(url: &str, fallback: Option<&str>) -> Option<String> {
     match url::Url::parse(url) {

@@ -1175,8 +1175,8 @@ impl LiveSink<'_> {
             Ok(true) => return Ok(()),
             Ok(false) => eprintln!("weixin: attachment send failed: missing content"),
             Err(error) => eprintln!(
-                "weixin: attachment send failed: {}",
-                super::super::media::format_weixin_error_message(&error.message)
+                "IM attachment send failed: {}",
+                super::super::attachments::format_im_attachment_error(&error)
             ),
         }
         let fallback = super::super::attachments::format_attachment_fallback(&attachment);
