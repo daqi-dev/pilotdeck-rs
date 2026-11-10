@@ -179,16 +179,17 @@ def held_tree_lock(root):
     boundary#5). Six drives each pass through this gate, so the wait would
     stack. 60 s names the cause instead.
     """
-    # Only the acquisition is rewritten (#2773 fix-r4, review DS r4
-    # boundary#2 / concurrency#2; r5 concurrency#1 / boundary#1 / simplify#1):
-    # wrapping the whole ``with`` would swallow a TimeoutError raised by the
-    # drive body itself, the acquisition must sit inside the finally-protected
-    # region so an async exception in the enter-to-finally window cannot leak
-    # the held lock at statement boundaries (a sub-instruction hit inside
-    # ``enter_context`` before the exit callback registers stays below this
-    # guarantee; #2773 fix-r6, review DS r6 concurrency#1), and ExitStack
-    # keeps the with-protocol exception forwarding for the body (a bare
-    # ``lock.__exit__(None, None, None)`` would always claim "no exception").
+    # #2773 fix-r4..r6 (review DS r4 boundary#2/concurrency#2, r5
+    # concurrency#1/boundary#1, r6 concurrency#1, r7 simplify#6): only the
+    # acquisition is rewritten -- wrapping the whole ``with`` would swallow
+    # a TimeoutError from the drive body itself; the acquisition sits in
+    # the finally-protected region, so an async exception in the
+    # enter-to-finally window cannot leak the held lock at statement
+    # boundaries (a sub-instruction hit inside ``enter_context`` before
+    # the exit callback registers stays below this guarantee); ExitStack
+    # keeps with-protocol exception forwarding for the body (a bare
+    # ``lock.__exit__(None, None, None)`` would always claim "no
+    # exception").
     stack = contextlib.ExitStack()
     try:
         try:
@@ -450,11 +451,10 @@ class SiblingRosterDefenceAnchorPins(unittest.TestCase):
         # review MM r3 boundary#6 / DS boundary#1): a bare ``source.find``
         # lets a commented-out copy of the defence satisfy the chain while
         # the real code is gone. Each anchor must appear, in order, on a
-        # line that is not a comment -- a copy inside a docstring or string
-        # literal still counts, the filter only rejects ``#``-prefixed
-        # lines (#2773 fix-r6, review DS r6 sibling#3 / boundary#3 /
-        # simplify#3); the full AST relocation of the scan is the #2804
-        # extension.
+        # line that is not a comment. The filter only rejects ``#``-prefixed
+        # lines -- a copy inside a docstring or string literal still counts
+        # (#2773 fix-r6, review DS r6 sibling#3/boundary#3/simplify#3); the
+        # full AST relocation of the scan is the #2804 extension.
         lines = source.splitlines()
         position = 0
         for anchor in SIBLING_DEFENCE_ANCHORS[name]:
