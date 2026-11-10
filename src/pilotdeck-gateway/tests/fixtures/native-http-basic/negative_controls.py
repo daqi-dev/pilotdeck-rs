@@ -236,6 +236,17 @@ switches = [
      '#2153 pin bad-method-foo: the registered bare 400 carries content-length: 0'),
     ('native-http-served-head-cl0', SOURCE, 'health_head',
      '#1209 cell health-head normalized response'),
+    # #1517: Node's response `finish` — the moment `_httpMessage` detaches and
+    # the 408 guard opens — needs the flush, not just the body's last frame
+    # handed to hyper (probe `probe-1517.out` T1: `end()` at +88 s with
+    # `writableLength` 2 097 167 still unflushed at the +90 s expiry; the
+    # destroy carries no 408, the client reads the flushed prefix then EOF).
+    # The mutant reverts the `_headerSent` mirror's clear to the in-flight
+    # slot alone — the pre-#1517 behavior — so the expiry arms the 408 ahead of
+    # the stuck tail and the cell reads its bytes behind the flushed prefix.
+    ('native-http-408-into-unflushed-tail', SOURCE_PROXY,
+     'unflushed_response_tail_headers_timeout_closes_silently_like_ts',
+     'the unflushed tail never carries the 51-byte 408 — Node destroys the started response instead'),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_ws.rs',
