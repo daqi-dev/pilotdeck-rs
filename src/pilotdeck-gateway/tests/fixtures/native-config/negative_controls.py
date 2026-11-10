@@ -783,6 +783,86 @@ mutations = [
      '            let dispatched = Ok::<_, tokio::task::JoinError>(cron::dispatch(cron.as_deref(), &dispatch_method, &params));',
      'native_process::methods::cron::cron_tests::cron_request_dispatches_off_the_async_worker',
      '#1509 cron dispatch must yield the async worker before answering'),
+    # ── #2068: the projectKey read the session_dir and config families now
+    # share (`input.projectKey ?? fallback` whose TS chains start at Node
+    # `path.resolve`, probe `_tmp/20261110-issue-2068/probe/probe-2068.out`).
+    # Re-adding the pre-#2068 shape where a non-string key silently folds
+    # onto the configured project turns the list_sessions TypeError cell's
+    # `.expect_err` red; re-adding the `to_utf8().ok()` fold (the lone
+    # surrogate falls back instead of staying a real unserved key) turns the
+    # real-keys test's surrogate cell red. The config rows re-bind the same
+    # code points to the config family's own test — the #2564
+    # one-code-point-many-bound-tests shape.
+    ('project-key-nonstring-folded', METHODS_MOD,
+     '        Some(JsValue::Number(n)) => Err(path_argument_type_error(format!(\n'
+     '            "type number ({})",\n'
+     '            crate::js_value::number_string(*n)\n'
+     '        ))),',
+     '        Some(JsValue::Number(_)) => Ok(fallback.to_string_lossy().into_owned()),',
+     DIR + 'list_sessions_non_string_project_key_answers_the_path_resolve_type_error',
+     '#2068 a non-string projectKey is the path.resolve TypeError'),
+    ('project-key-utf8-folded', METHODS_MOD,
+     '        Some(JsValue::String(key)) => Ok(String::from_utf16_lossy(key.units())),',
+     '        Some(JsValue::String(key)) => Ok(key\n'
+     '            .to_utf8()\n'
+     '            .unwrap_or_else(|_| fallback.to_string_lossy().into_owned())),',
+     DIR + 'list_sessions_string_project_keys_are_real_keys_not_the_fallback',
+     '#2068 a string projectKey is a real key, never the fallback'),
+    # Same two code points, config side: with the number folded, the
+    # session_model_set call reaches the sessionKey gate and answers
+    # INVALID_SESSION_KEY, so the TypeError-code assertion dies first; with
+    # the surrogate folded, the served fallback makes the call succeed past
+    # the capability gate, so the isolation-code assertion dies first.
+    ('config-project-key-nonstring-folded', METHODS_MOD,
+     '        Some(JsValue::Number(n)) => Err(path_argument_type_error(format!(\n'
+     '            "type number ({})",\n'
+     '            crate::js_value::number_string(*n)\n'
+     '        ))),',
+     '        Some(JsValue::Number(_)) => Ok(fallback.to_string_lossy().into_owned()),',
+     CFG + 'session_model_set_project_key_read_follows_the_ts_chain',
+     '#2068 the non-string projectKey answers the boundary TypeError code'),
+    ('config-project-key-utf8-folded', METHODS_MOD,
+     '        Some(JsValue::String(key)) => Ok(String::from_utf16_lossy(key.units())),',
+     '        Some(JsValue::String(key)) => Ok(key\n'
+     '            .to_utf8()\n'
+     '            .unwrap_or_else(|_| fallback.to_string_lossy().into_owned())),',
+     CFG + 'session_model_set_project_key_read_follows_the_ts_chain',
+     '#2068 the surrogate projectKey reaches the capability gate'),
+    # ── #2068: `newSession`'s prefix read is plain truthiness — the three
+    # mutants below restore the issue's suspected shapes: a trim gate (blank
+    # keys drop the prefix), the number arm always dropping it, and a lossy
+    # string rendering (the lone surrogate becomes U+FFFD instead of its
+    # raw unit). The lossy row's `collect::<Vec<u16>>` pin keeps the type
+    # identical to the original expression — an un-annotated `collect()` has
+    # no inferable target through `extend` and fails E0277 on `!` (cb8
+    # sandbox compile log, negctl-2068-samples/; the #2195 `Ok::<_, JoinError>`
+    # E0282 shape).
+    ('new-session-prefix-trim-gate', SESSION_DIR,
+     '        Some(JsValue::String(key)) if key.units().is_empty() => Ok(Vec::new()),',
+     '        Some(JsValue::String(key)) if crate::metadata::js_trim(\n'
+     '            &String::from_utf16_lossy(key.units()),\n'
+     '        )\n'
+     '        .is_empty() => Ok(Vec::new()),',
+     DIR + 'new_session_project_key_prefix_follows_ts_truthiness',
+     '#2068 the blank projectKey keeps its truthiness prefix'),
+    ('new-session-prefix-number-dropped', SESSION_DIR,
+     '        Some(JsValue::Number(n)) if *n == 0.0 || n.is_nan() => Ok(Vec::new()),',
+     '        Some(JsValue::Number(_)) => Ok(Vec::new()),',
+     DIR + 'new_session_project_key_prefix_follows_ts_truthiness',
+     '#2068 the number projectKey keeps its truthiness prefix'),
+    ('new-session-prefix-surrogate-stripped', SESSION_DIR,
+     '        Some(other) => {\n'
+     '            let rendered = crate::js_value::to_string_units_checked(other).map_err(|error| {\n'
+     '                RequestError::new(format!("{}: {}", error.name(), error.message()))\n'
+     '            })?;',
+     '        Some(other) => {\n'
+     '            let rendered = crate::js_value::to_string_units_checked(other)\n'
+     '                .map(|units| String::from_utf16_lossy(&units).encode_utf16().collect::<Vec<u16>>())\n'
+     '                .map_err(|error| {\n'
+     '                    RequestError::new(format!("{}: {}", error.name(), error.message()))\n'
+     '                })?;',
+     DIR + 'new_session_project_key_prefix_follows_ts_truthiness',
+     '#2068 the surrogate projectKey keeps its raw unit inside the prefix'),
 ]
 
 
@@ -885,6 +965,15 @@ LITERAL_ANCHORS = [
     (REVIEW_TESTS, '#1429 the acquire path restores the generated ask rule'),
     (REVIEW_TESTS, '#2146 the second acquire reports nothing: one miss report per assembly'),
     (CRON_TESTS, '#1509 cron dispatch must yield the async worker before answering'),
+    # #2068: both families' tests carry the shared TypeError anchor verbatim,
+    # so the string is registered once per file (the `#1457 transcript still
+    # loads` shape above).
+    (SESSION_DIR, '#2068 a non-string projectKey is the path.resolve TypeError'),
+    (CONFIG, '#2068 a non-string projectKey is the path.resolve TypeError'),
+    (SESSION_DIR, '#2068 a string projectKey is a real key, never the fallback'),
+    (CONFIG, '#2068 the non-string projectKey answers the boundary TypeError code'),
+    (CONFIG, '#2068 the surrogate projectKey reaches the capability gate'),
+    (SESSION_DIR, '#2068 the surrogate projectKey keeps its raw unit inside the prefix'),
 ]
 
 # Where an assertion can live: the mutated sources, the read-side files the
