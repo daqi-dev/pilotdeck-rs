@@ -861,6 +861,23 @@ class ManagerRosterGuard(unittest.TestCase):
         self.assertTrue(all(path.is_relative_to(run.module.root)
                             for path, _data in run.writes),
                         '#2309 the atomic writes must target the guarded tree only')
+        # Payload roles, not just counts (DS r3 sibling #3, fix-r4): per guarded
+        # source the atomic writes must alternate publish (mutant bytes)
+        # then restore (pristine bytes) -- a swapped pair publishes nothing
+        # and leaves a mutant on the tree, which the two asserts above
+        # cannot see. Manager-gateway has no window-external backstop, so
+        # the sequence must be strictly publish-restore pairs. The stub
+        # never writes, so the disk bytes stay pristine for the whole run.
+        pristine = {path: path.read_bytes() for path, _data in run.writes}
+        order = {}
+        for path, data in run.writes:
+            order.setdefault(path, []).append(data == pristine[path])
+        for path, sequence in order.items():
+            self.assertTrue(len(sequence) % 2 == 0
+                            and sequence == [False, True] * (len(sequence) // 2),
+                            f'#2309 atomic writes for {path.name} must alternate '
+                            f'mutant publish then pristine restore with no '
+                            f'dangling publish, got {sequence}')
         # The self-held window must hold terminate handlers for the whole
         # run, not only inside the shared guard's own restore window
         # (#2309 fix-r3, the mode-routing precedent).

@@ -9641,13 +9641,42 @@ class AggregationAudit(unittest.TestCase):
                     return raw_read(self.root / args[1].split(':', 1)[1]) if args[0] == 'show' else b''
 
                 write_text = Path.write_text
+                # #2743 (DS r3 sibling #1): every sentinel in this probe must
+                # record, not raise -- main()'s blanket `except Exception`
+                # swallows an AssertionError and resurfaces it as exactly the
+                # INVALID/BLOCKED shape this probe already asserts, so a
+                # raise can never turn the probe red. The empty-list
+                # assertions after main() are what make a busy-lock bypass
+                # visible on every write/launch path at once.
+                source_text_writes = []
+                source_byte_writes = []
+                run_calls = []
 
                 def evidence_only(path, *a, **k):
-                    self.assertTrue(path.is_relative_to(Path(temp).resolve()),
-                                    '#166 busy lock must never write source')
+                    resolved = Path(path)
+                    if not resolved.is_relative_to(Path(temp).resolve()):
+                        source_text_writes.append((resolved, a[0] if a else k.get('data')))
+                        return None
                     return write_text(path, *a, **k)
 
+                def record_bytes(path, value):
+                    source_byte_writes.append(Path(path))
+                    return len(value)
+
+                def record_run(*args, **kwargs):
+                    from types import SimpleNamespace
+                    run_calls.append(args)
+                    return SimpleNamespace(returncode=1, stdout='', stderr='')
+
                 atomic_calls = []
+                guard_atomic_calls = []
+
+                def record_guard_atomic(root, path, data, *, mode=None):
+                    # #2743 (DS r3 sibling #1): the guard-level global gets
+                    # the same record-then-assert treatment -- a raise here
+                    # is swallowed into INVALID just like the others.
+                    guard_atomic_calls.append(Path(path))
+                    return None
 
                 def record_fixture_atomic(root, path, data, *, mode=None):
                     # #2743 (DS r2 concurrency #2 / boundary #1): fixtures
@@ -9659,8 +9688,8 @@ class AggregationAudit(unittest.TestCase):
                     # the BLOCKED/INVALID this probe already asserts, so a
                     # raise cannot turn the probe red. The empty-list
                     # assertion below is what makes a busy-lock bypass
-                    # visible; `publish.call_count == 0` stays the
-                    # guard-attribute mirror of the same claim.
+                    # visible; the guard-level `guard_atomic_calls` assert
+                    # stays the guard-attribute mirror of the same claim.
                     atomic_calls.append(Path(path))
                     return None
 
@@ -9677,18 +9706,28 @@ class AggregationAudit(unittest.TestCase):
                         patch.object(guard, '_ensure_workspace_scanner'), \
                         patch.object(guard, 'tree_lock', return_value=contextlib.nullcontext()), \
                         patch.object(Path, 'write_text', evidence_only), \
-                        patch.object(Path, 'write_bytes', side_effect=AssertionError('#166 busy lock must not write source')), \
-                        patch.object(guard, 'write_source_atomic', side_effect=AssertionError('#166 busy lock must not publish source bytes')) as publish, \
+                        patch.object(Path, 'write_bytes', record_bytes), \
+                        patch.object(guard, 'write_source_atomic', record_guard_atomic), \
                         patch.object(module.sys, 'argv', argv), \
-                        patch.object(module, 'run_owned', side_effect=AssertionError('#166 busy lock must not launch a test')):
+                        patch.object(module, 'run_owned', record_run):
                     if hasattr(module, 'pgrep_launcher'):
                         module.pgrep_launcher = lambda: ''
                     if hasattr(module, 'write_source_atomic'):
                         module.write_source_atomic = record_fixture_atomic
+                    else:
+                        self.assertIn(folder, ('gateway-batch', 'gateway-entry-guard'),
+                                      '#166 only the pre-migration fixtures '
+                                      'lack the atomic publish global')
                     code = module.main()
                 self.assertEqual(atomic_calls, [],
                                  '#166 busy lock must not publish source '
                                  'bytes through the fixture global')
+                self.assertEqual(source_text_writes, [],
+                                 '#166 busy lock must never write source through Path.write_text')
+                self.assertEqual(source_byte_writes, [],
+                                 '#166 busy lock must never write source through Path.write_bytes')
+                self.assertEqual(run_calls, [],
+                                 '#166 busy lock must not launch a test through run_owned')
                 # #1903：还原改走 `write_source_atomic`（临时文件 + `os.replace`），不再经过
                 # `Path.write_text/bytes`；只钉那两个入口，这条「拒锁期间不得写源码」的探针
                 # 对还原路径就变成空转（r1 DeepSeek sibling / zai sibling P2）。
@@ -9697,7 +9736,7 @@ class AggregationAudit(unittest.TestCase):
                 self.assertEqual(restore_wiring_problems(guard), [],
                                  f'#166 busy lock {folder}: the restore must resolve '
                                  'write_source_atomic through the patched module global')
-                self.assertEqual(publish.call_count, 0,
+                self.assertEqual(guard_atomic_calls, [],
                                  '#166 busy lock must not publish source bytes')
                 self.assertEqual(calls, [True], '#166 both negative suites must request parity lock')
                 self.assertEqual(code, 1 if folder == 'gateway-entry-guard' else 2,
@@ -9738,11 +9777,37 @@ class AggregationAudit(unittest.TestCase):
                         return raw_read(self.root / args[1].split(':', 1)[1])
                     return b''  # clean tracked-product index fixture; no subprocess
 
+                # #2743 (DS r3 sibling #1): same record-then-assert fix as
+                # the busy-lock probe -- every raise sentinel here is
+                # swallowed by main()'s blanket `except Exception`, so each
+                # write/launch path records and the empty-list assertions
+                # below are what actually turn a bypass red.
+                source_text_writes = []
+                source_byte_writes = []
+                run_calls = []
+
                 def evidence_only(path, *args, **kwargs):
-                    self.assertTrue(path.is_relative_to(Path(temp).resolve()), '#166 dirty guard must never write source')
+                    resolved = Path(path)
+                    if not resolved.is_relative_to(Path(temp).resolve()):
+                        source_text_writes.append((resolved, args[0] if args else kwargs.get('data')))
+                        return None
                     return write_text(path, *args, **kwargs)
 
+                def record_bytes(path, value):
+                    source_byte_writes.append(Path(path))
+                    return len(value)
+
+                def record_run(*args, **kwargs):
+                    from types import SimpleNamespace
+                    run_calls.append(args)
+                    return SimpleNamespace(returncode=1, stdout='', stderr='')
+
                 atomic_calls = []
+                guard_atomic_calls = []
+
+                def record_guard_atomic(root, path, data, *, mode=None):
+                    guard_atomic_calls.append(Path(path))
+                    return None
 
                 def record_fixture_atomic(root, path, data, *, mode=None):
                     # #2743 (DS r2 concurrency #2 / boundary #1): same blind
@@ -9781,14 +9846,18 @@ class AggregationAudit(unittest.TestCase):
                             patch.object(guard, 'tree_lock', return_value=contextlib.nullcontext()), \
                             patch.object(Path, 'read_bytes', lambda p: residue if p == common_path else raw_read(p)), \
                             patch.object(Path, 'write_text', evidence_only), \
-                            patch.object(Path, 'write_bytes', side_effect=AssertionError('#166 dirty guard must never write')), \
-                            patch.object(guard, 'write_source_atomic', side_effect=AssertionError('#166 dirty guard must never publish')) as publish, \
-                            patch.object(module, 'run_owned', side_effect=AssertionError('#166 dirty guard must never run child')), \
+                            patch.object(Path, 'write_bytes', record_bytes), \
+                            patch.object(guard, 'write_source_atomic', record_guard_atomic), \
+                            patch.object(module, 'run_owned', record_run), \
                             patch.object(module.sys, 'argv', argv):
                         if hasattr(module, 'pgrep_launcher'):
                             module.pgrep_launcher = lambda: ''
                         if hasattr(module, 'write_source_atomic'):
                             module.write_source_atomic = record_fixture_atomic
+                        else:
+                            self.assertIn(folder, ('gateway-batch', 'gateway-entry-guard'),
+                                          '#166 only the pre-migration fixtures '
+                                          'lack the atomic publish global')
                         try:
                             code = module.main()
                         except Exception as error:
@@ -9796,12 +9865,18 @@ class AggregationAudit(unittest.TestCase):
                     self.assertEqual(atomic_calls, [],
                                      '#166 dirty guard must not publish source '
                                      'bytes through the fixture global')
+                    self.assertEqual(source_text_writes, [],
+                                     '#166 dirty guard must never write source through Path.write_text')
+                    self.assertEqual(source_byte_writes, [],
+                                     '#166 dirty guard must never write source through Path.write_bytes')
+                    self.assertEqual(run_calls, [],
+                                     '#166 dirty guard must not launch a child through run_owned')
                     # #1903：同 busy-lock 探针 —— 还原走 `write_source_atomic`，不经过
                     # `Path.write_bytes`，只钉旧入口等于没钉还原路径。
                     self.assertEqual(restore_wiring_problems(guard), [],
                                      f'#166 dirty {folder}: the restore must resolve '
                                      'write_source_atomic through the patched module global')
-                    self.assertEqual(publish.call_count, 0,
+                    self.assertEqual(guard_atomic_calls, [],
                                      '#166 dirty guard must not publish source bytes')
                     self.assertIn(common_path, supplied, '#166 common.py must be included in guarded sources')
                     self.assertEqual(imports, [], '#166 residual mapping must be guarded before import')
@@ -9842,10 +9917,25 @@ class AggregationAudit(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             output = Path(temp).resolve() / 'out'
             write_text = Path.write_text
+            # #2743 (DS r3 sibling #2): record instead of raise -- main()'s
+            # blanket `except Exception` swallows an AssertionError and
+            # resurfaces it as the INVALID verdict this test already expects,
+            # so a pre-validation publish through the legacy write paths
+            # would stay invisible. The post-main assertions make any such
+            # write red.
+            text_writes = []
+            byte_writes = []
 
             def evidence_only(path, *a, **k):
-                self.assertTrue(path.is_relative_to(output), '#166 invalid mutants must never write source')
+                resolved = Path(path)
+                if not resolved.is_relative_to(output):
+                    text_writes.append((resolved, a[0] if a else k.get('data')))
+                    return None
                 return write_text(path, *a, **k)
+
+            def record_bytes(path, value):
+                byte_writes.append((Path(path), bytes(value)))
+                return len(value)
 
             restored = SimpleNamespace(returncode=0, stdout='', stderr='')
             summary = {'status': 'PASS', 'results': [
@@ -9871,7 +9961,7 @@ class AggregationAudit(unittest.TestCase):
                     patch.object(module.sys, 'argv', ['negative_controls.py', '--output', str(output)]), \
                     patch.object(module.sys, 'platform', 'darwin'), \
                     patch.object(Path, 'write_text', evidence_only), \
-                    patch.object(Path, 'write_bytes', lambda path, value: len(value)):
+                    patch.object(Path, 'write_bytes', record_bytes):
                 code = module.main()
             self.assertEqual(len(atomic_writes), len(module.MUTATIONS) + len(originals),
                              '#2743 invalid mutants must restore every source through the '
@@ -9881,6 +9971,13 @@ class AggregationAudit(unittest.TestCase):
                                 for path, data in atomic_writes),
                             '#2743 the atomic writer must never carry mutated bytes for an '
                             'invalid mutant')
+            self.assertEqual(text_writes, [],
+                             '#166 invalid mutants must never write outside the '
+                             'output dir through Path.write_text')
+            self.assertTrue(all(path in originals and data == originals[path]
+                                for path, data in byte_writes),
+                            '#166 Path.write_bytes may only ever carry pristine '
+                            'source bytes for these invalid mutants')
             report = json.loads((output / 'summary.json').read_text())
             self.assertEqual([row['mutation'] for row in report['mutations']], names,
                              '#166 suite must record every selected invalid mutant')
