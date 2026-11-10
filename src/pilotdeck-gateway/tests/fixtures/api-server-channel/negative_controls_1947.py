@@ -34,6 +34,13 @@ GUARDED = [SERVER_DIR / 'tests.rs', SERVER_DIR / 'mod.rs', SERVER_DIR / 'server.
     # port (the old table mutates this file as `visible-failure-name`), so its
     # pristine guard covers it here too (Grok r1 sibling#2).
     ROOT / 'src/pilotdeck-gateway/src/channel/agent_status.rs',
+    # DS r2 sibling#6: this lane's transport closure actually runs through
+    # the native parser + proxy (server.rs:118), and the shared module
+    # declarations (the webhook lane's口径) — the receipts cannot prove which
+    # transport bytes they ran against without pinning them.
+    ROOT / 'src/pilotdeck-gateway/src/native_http.rs',
+    ROOT / 'src/pilotdeck-gateway/src/http_proxy.rs',
+    ROOT / 'src/pilotdeck-gateway/src/channel/mod.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',
@@ -59,6 +66,10 @@ def main():
         if args.check:
             if args.output or args.names:
                 raise ValueError('--check does not take output or names')
+            # DS r2 boundary#1: an empty table must fail closed, never print
+            # "0 anchors: ok" — that shape was ruled a P0 in #1364.
+            if not rows:
+                raise ValueError('empty switch table')
             print(f'{len(rows)} switch anchors and bindings checked')
             return 0
         if not args.output or not os.environ.get('CARGO_TARGET_DIR'):

@@ -1406,6 +1406,19 @@ fn recorded_request_modes_and_bytes_stay_legal() {
 
 /// One direct-test delivery: the same shape the recorder's `post()` built.
 fn post_body(delivery_id: Option<&str>, body: &str) -> String {
+    let mut request = post_body_keep_alive(delivery_id, body);
+    let head_end = request
+        .find("\r\n\r\n")
+        .expect("#1334 post head terminator");
+    request.replace_range(head_end..head_end, "\r\nConnection: close");
+    request
+}
+
+/// The same delivery without `Connection: close`, so a follow-up request
+/// can be pipelined on the same connection — the #1689 low-fd child pipes a
+/// literal-`null` body behind its normal delivery to reach the degraded
+/// null branch (DS r2 concurrency#1).
+fn post_body_keep_alive(delivery_id: Option<&str>, body: &str) -> String {
     let mut lines = vec![
         "POST /webhooks/main HTTP/1.1".to_owned(),
         "Host: 127.0.0.1".to_owned(),
@@ -1413,27 +1426,18 @@ fn post_body(delivery_id: Option<&str>, body: &str) -> String {
     if let Some(id) = delivery_id {
         lines.push(format!("x-delivery-id: {id}"));
     }
-    lines.push("Connection: close".to_owned());
     lines.push(format!("Content-Length: {}", body.len()));
     format!("{}\r\n\r\n{}", lines.join("\r\n"), body)
 }
 
-fn latin1_bytes(text: &str) -> Vec<u8> {
-    text.chars()
-        .map(|character| {
-            u8::try_from(u32::from(character))
-                .unwrap_or_else(|_| panic!("#1334 oracle char {character:?} is outside latin1"))
-        })
-        .collect()
-}
-
-/// The recorder's request transport (#1690, fixed in the Grok r1 review):
-/// Node writes the request string with the socket's default **utf8**
-/// encoding — `setEncoding('latin1')` only governs reads — so the whole
-/// request, head included, reaches the listener as real UTF-8 bytes. The
-/// old split (latin1 head / utf8 body) was identical only while every
-/// recorded head was ASCII and would diverge from the recorder on the first
-/// non-ASCII header.
+/// The recorder's request transport (#1690, fixed in the Grok r1 review and
+/// the DS r2 re-review for `raw_until_close`): Node writes the request string
+/// with the socket's default **utf8** encoding — `setEncoding('latin1')` only
+/// governs reads — so the whole request, head included, reaches the listener
+/// as real UTF-8 bytes. The old split (latin1 head / utf8 body) was identical
+/// only while every recorded head was ASCII and would diverge from the
+/// recorder on the first non-ASCII header; the same applied to the last
+/// latin1 writer, `raw_until_close`, fixed in the same round.
 fn wire_bytes(request: &str) -> Vec<u8> {
     request.as_bytes().to_vec()
 }
@@ -2998,7 +3002,10 @@ fn accept_error_backoff_ladder_is_bounded() {
 /// at every backoff wake (200+400+800 ms), the 4th failure logs one error
 /// line, and the storm keeps failing silently after that; at t≈4 s one
 /// last fd is freed, so the next wake accepts, `dup` finds nothing, and
-/// the probeless serve still answers the request. Under
+/// the probeless serve still answers the request. The same buffer also
+/// pipelines a literal-`null` request (DS r2 concurrency#1): on the
+/// probeless connection the degraded null branch must reclaim it within
+/// its bound instead of hanging the connection task. Under
 /// `webhook-accept-backoff-off` the log appears at ~0.3 s instead; under
 /// `webhook-dup-failure-drops` the accepted socket is dropped and the
 /// client sees a zero-byte close.
@@ -3072,6 +3079,19 @@ async fn dup_failure_serves_without_the_fin_probe() {
         "#1689 the EMFILE-failing dup degrades to a probeless serve instead of dropping the connection (child served: {})",
         served.clone().unwrap_or_default()
     );
+    // DS r2 concurrency#1: on the same probeless connection the pipelined
+    // literal-null must be reclaimed within the bound — before the fix the
+    // handler waited forever, the read loop timed out and the assertion
+    // above already failed with `served: timeout`.
+    let reclaim = marker("#1689-null-reclaim-ms=");
+    let reclaim: u128 = reclaim
+        .expect("#1689 null-reclaim marker")
+        .parse()
+        .expect("#1689 null-reclaim parses");
+    negative_assert!(
+        (7000..=19_000).contains(&reclaim),
+        "#1689 the probe-less literal-null body reclaims the connection within the bound (child: {reclaim} ms)"
+    );
 }
 
 /// The child half of [`dup_failure_serves_without_the_fin_probe`]: reports
@@ -3121,11 +3141,22 @@ async fn dup_failure_low_fd_child() {
     let mut client = TcpStream::connect(("127.0.0.1", port))
         .await
         .expect("#1689 child connects");
-    let request = wire_bytes(&post_body(Some("low-fd"), r#"{"message":"hi"}"#));
+    let request = wire_bytes(&post_body_keep_alive(Some("low-fd"), r#"{"message":"hi"}"#));
+    // DS r2 concurrency#1: pipeline a literal-`null` body plus a follow-up
+    // request into the same buffer and half-close, so once the degraded
+    // accept succeeds the probeless connection sits exactly on the branch
+    // that used to wait forever (hyper cannot see the FIN behind the
+    // buffered bytes). The reclaim must stay bounded instead.
+    let mut request = request;
+    request.extend_from_slice(&null_request_bytes(true));
     client
         .write_all(&request)
         .await
         .expect("#1689 child writes the request");
+    client
+        .shutdown()
+        .await
+        .expect("#1689 child half-closes for the pipelined null");
     // The storm window: under the ladder the log fires at ~1.4 s and the
     // failures after it stay silent; 4 s observes both halves.
     tokio::time::sleep(Duration::from_secs(4)).await;
@@ -3151,27 +3182,64 @@ async fn dup_failure_low_fd_child() {
         let mut buffer = [0u8; 4096];
         loop {
             match client.read(&mut buffer).await {
-                Ok(0) => return (true, seen),
+                Ok(0) => return (true, seen, Some(started.elapsed().as_millis())),
                 Ok(n) => seen.extend_from_slice(&buffer[..n]),
-                Err(error) => return (false, format!("{error}").into_bytes()),
+                Err(error) => return (false, format!("{error}").into_bytes(), None),
             }
         }
     })
     .await;
     let served = match reply {
-        Ok((true, bytes))
+        Ok((true, bytes, eof_elapsed))
             if String::from_utf8_lossy(&bytes).contains("\"status\":\"accepted\"") =>
         {
+            eprintln!("#1689-null-reclaim-ms={}", eof_elapsed.unwrap_or_default());
             "accepted"
         }
-        Ok((true, _)) => "closed",
-        Ok((false, text)) => {
+        Ok((true, _, _)) => "closed",
+        Ok((false, text, _)) => {
             eprintln!("#1689-read-error={}", String::from_utf8_lossy(&text));
             "read-error"
         }
         Err(_) => "timeout",
     };
     eprintln!("#1689-served={served}");
+}
+
+/// #1689 (fix-r1, Grok r2 concurrency#1): the probe duplicate must keep
+/// close-on-exec. A plain `dup(2)` fd would leak the inbound client socket
+/// into every spawned child (module hosts, tool runners), and the child then
+/// holds the open file description — the server's close no longer delivers
+/// the FIN, and the child can read the socket. This pins the
+/// `F_DUPFD_CLOEXEC` semantics of `std`'s `try_clone_to_owned` so the r1 P0
+/// cannot silently regress back to `rustix::io::dup`.
+#[tokio::test]
+async fn duplicate_socket_keeps_close_on_exec() {
+    let listener =
+        std::net::TcpListener::bind("127.0.0.1:0").expect("#1689 bind for the cloexec test");
+    let addr = listener
+        .local_addr()
+        .expect("#1689 local addr for the cloexec test");
+    let _client = std::net::TcpStream::connect(addr).expect("#1689 connect for the cloexec test");
+    let (server, _) = listener
+        .accept()
+        .expect("#1689 accept for the cloexec test");
+    // `from_std` refuses a blocking socket (tokio #7172); the production path
+    // reaches `duplicate_socket` through tokio's own accept, whose sockets are
+    // already non-blocking.
+    server
+        .set_nonblocking(true)
+        .expect("#1689 nonblocking for the cloexec test");
+    let server =
+        tokio::net::TcpStream::from_std(server).expect("#1689 tokio wrap for the cloexec test");
+    let probe = super::duplicate_socket(&server).expect("#1689 duplicate the accepted socket");
+    // The workspace forbids `unsafe`, so the flags come through rustix's safe
+    // `fcntl(F_GETFD)` — the same syscall a raw `libc::fcntl` would make.
+    let flags = rustix::io::fcntl_getfd(&probe).expect("#1689 fcntl(F_GETFD) for the cloexec test");
+    negative_assert!(
+        flags.contains(rustix::io::FdFlags::CLOEXEC),
+        "#1689 the probe fd keeps FD_CLOEXEC across exec (F_GETFD = {flags:?})"
+    );
 }
 
 /// #1614: a rejected `submit` must reach the reply and the log, must not be
@@ -3715,7 +3783,7 @@ async fn raw_until_close(port: u16, request: &str) -> (String, bool) {
         .await
         .expect("#1684 connect for the http10 pin");
     stream
-        .write_all(&latin1_bytes(request))
+        .write_all(&wire_bytes(request))
         .await
         .expect("#1684 write the http10 request");
     let mut raw = String::new();

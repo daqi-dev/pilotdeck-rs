@@ -507,6 +507,13 @@ fn accept_error_backoff(consecutive: u32, persistent: bool) -> Duration {
 
 /// The fixed pause a transient accept error keeps (the pre-#1689 behavior).
 const ACCEPT_TRANSIENT_PAUSE: Duration = Duration::from_millis(100);
+
+/// #1689 (fix, DS r2 concurrency#1): a literal-`null` body on a probe-less
+/// (degraded) connection — the duplicate failed, so the FIN cannot be
+/// observed — is reclaimed after this bound instead of waiting forever. See
+/// the call site for why an unbounded wait would hang `stop()` and leak the
+/// fd.
+const PROBELESS_NULL_RECLAIM: Duration = Duration::from_secs(5);
 /// The backoff ladder's ceiling: one retry per 5 s at most.
 const ACCEPT_BACKOFF_CAP: Duration = Duration::from_secs(5);
 /// Consecutive accept failures after which one error log fires per streak
@@ -575,11 +582,12 @@ async fn accept_loop(listener: TcpListener, ctx: Arc<Ctx>, mut stop: watch::Rece
         // connection never observes the FIN and the `pending()` request
         // future has no other wake source; `stop()` then waits on it forever.
         //
-        // #1689: a failed `dup(2)` must not drop the accepted connection —
+        // #1689: a failed duplicate must not drop the accepted connection —
         // TS owns one fd per connection and never loses one here. Degrade to
         // serving without the FIN probe instead: every other request is
-        // unchanged, and a literal-null body then hangs exactly like TS
-        // (which has no probe either). The
+        // unchanged, and a literal-null body is reclaimed within
+        // [`PROBELESS_NULL_RECLAIM`] (TS reclaims the same socket in +1 ms;
+        // waiting forever would hang `stop()`, see the null-body branch). The
         // `webhook-dup-failure-drops` mutant restores the old drop so the
         // negative control can watch the delivery disappear.
         let client_probe = match duplicate_socket(&socket) {
@@ -651,7 +659,7 @@ impl ChannelHandle for WebhookHandle {
 /// both halves stay usable by tokio.
 ///
 /// #1689: the duplicate is taken from the **borrowed** descriptor, so a
-/// failed `dup(2)` (EMFILE under a low descriptor limit) leaves the accepted
+/// failed duplicate (EMFILE under a low descriptor limit) leaves the accepted
 /// socket with its caller — the caller then serves without the probe instead
 /// of dropping a connection TS would serve.
 ///
@@ -664,6 +672,19 @@ impl ChannelHandle for WebhookHandle {
 fn duplicate_socket(socket: &TcpStream) -> io::Result<TcpStream> {
     let probe = std::net::TcpStream::from(std::os::fd::AsFd::as_fd(socket).try_clone_to_owned()?);
     TcpStream::from_std(probe)
+}
+
+/// #1689 (fix, DS r2 concurrency#1): the degraded half of the literal-null
+/// branch — reached only when `duplicate_socket` failed, so the connection
+/// has no FIN probe and hyper's buffered bytes hide the client's FIN. Waiting
+/// forever would hang the connection task, `stop()` and the fd; the bound
+/// reclaims it instead.
+async fn probeless_null_body_reclaim() -> io::Error {
+    tokio::time::sleep(PROBELESS_NULL_RECLAIM).await;
+    io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "webhook: reclaimed a probe-less connection after a literal-null body",
+    )
 }
 
 async fn handle_request(
@@ -745,7 +766,9 @@ async fn route_request(
 /// With an unknown size hyper cannot chunk a 1.0 connection, so it writes the
 /// body and closes, matching Node's bytes.
 /// Sibling: this is the one lane list — the same lanes are tabulated in
-/// `A8.3-CH-WEBHOOK-004`「范围」. The 1.0 version switch is kept in sync with
+/// `A8.3-CH-WEBHOOK-004`「范围」 (the -R2 revision's table; its stale "sms
+/// in flight" row is corrected by the appended -R3, DS r2 sibling#1). The
+/// 1.0 version switch is kept in sync with
 /// the `finalize` helpers in `src/module_host.rs`,
 /// `src/module_host/approvals.rs`, `src/api_web.rs` and
 /// `src/channel/sms/mod.rs` (the sms lane's pin and golden cell landed with
@@ -1083,49 +1106,58 @@ async fn handle_webhook(
                 keep_alive,
             ));
         }
-        if !crate::mutants::on("webhook-null-body-probe-off")
-            && let Some(probe) = client_probe
-        {
-            let mut discard = [0u8; 4096];
-            loop {
-                probe.readable().await?;
-                match probe.try_read(&mut discard) {
-                    Ok(0) => {
-                        // #1608: the probe — not some other teardown —
-                        // observed the FIN that reclaims the connection.
-                        if let Some(witness) = &ctx.null_body {
-                            witness.reclaimed();
+        if !crate::mutants::on("webhook-null-body-probe-off") {
+            if let Some(probe) = client_probe {
+                let mut discard = [0u8; 4096];
+                loop {
+                    probe.readable().await?;
+                    match probe.try_read(&mut discard) {
+                        Ok(0) => {
+                            // #1608: the probe — not some other teardown —
+                            // observed the FIN that reclaims the connection.
+                            if let Some(witness) = &ctx.null_body {
+                                witness.reclaimed();
+                            }
+                            return Err(io::Error::new(
+                                io::ErrorKind::UnexpectedEof,
+                                "webhook: client closed after a literal-null body",
+                            ));
                         }
-                        return Err(io::Error::new(
-                            io::ErrorKind::UnexpectedEof,
-                            "webhook: client closed after a literal-null body",
-                        ));
+                        Ok(_) => {
+                            // Neither `readable()` nor `try_read()` draws on the
+                            // task budget (tokio 1.48 `Registration::readiness` and
+                            // `Registration::try_io` call no `coop::poll_proceed`),
+                            // so a client that keeps this socket saturated would
+                            // otherwise spin this task without ever yielding to the
+                            // scheduler: measured on a current-thread runtime, a
+                            // 10 ms ticker fell from 175 ticks/2 s to 17 with one
+                            // stream and to ~1 tick/s with 32
+                            // (`_tmp/20261106-issue-1534/coop-probe/`). Spend one
+                            // unit per read so the loop yields once the budget runs
+                            // out, exactly as hyper's own reads do.
+                            tokio::task::coop::consume_budget().await;
+                        }
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                            ) =>
+                        {
+                            continue;
+                        }
+                        Err(error) => return Err(error),
                     }
-                    Ok(_) => {
-                        // Neither `readable()` nor `try_read()` draws on the
-                        // task budget (tokio 1.48 `Registration::readiness` and
-                        // `Registration::try_io` call no `coop::poll_proceed`),
-                        // so a client that keeps this socket saturated would
-                        // otherwise spin this task without ever yielding to the
-                        // scheduler: measured on a current-thread runtime, a
-                        // 10 ms ticker fell from 175 ticks/2 s to 17 with one
-                        // stream and to ~1 tick/s with 32
-                        // (`_tmp/20261106-issue-1534/coop-probe/`). Spend one
-                        // unit per read so the loop yields once the budget runs
-                        // out, exactly as hyper's own reads do.
-                        tokio::task::coop::consume_budget().await;
-                    }
-                    Err(error)
-                        if matches!(
-                            error.kind(),
-                            io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
-                        ) =>
-                    {
-                        continue;
-                    }
-                    Err(error) => return Err(error),
                 }
             }
+            // #1689 (fix, DS r2 concurrency#1): the probe is missing — the
+            // duplicate failed under fd exhaustion, so this connection is
+            // already degraded. hyper still hides the client's FIN behind any
+            // pipelined bytes, so an unbounded wait here would hang the
+            // connection task (and `stop()`, which awaits it) and leak the fd
+            // — the #1534 hang reached through the degraded path, while TS
+            // reclaims the same socket in +1 ms. Reclaim within the bound;
+            // only this already-degraded mode differs from TS.
+            return Err(probeless_null_body_reclaim().await);
         }
         return std::future::pending().await;
     } else {

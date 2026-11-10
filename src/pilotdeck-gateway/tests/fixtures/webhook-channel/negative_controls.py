@@ -219,6 +219,10 @@ def main():
         if args.check:
             if args.output or args.names:
                 raise ValueError('--check does not take output or names')
+            # DS r2 boundary#1: an empty table must fail closed, never print
+            # "0 anchors: ok" — that shape was ruled a P0 in #1364.
+            if not rows:
+                raise ValueError('empty switch table')
             print(f'{len(rows)} switch anchors and bindings checked')
             return 0
         if not args.output or not os.environ.get('CARGO_TARGET_DIR'):
