@@ -23,6 +23,18 @@ fn weixin_file_missing_url_diagnostic(media_owner: &Value) -> String {
     )
 }
 
+/// JS truthiness of a string-valued field: `""` (and `null`/`undefined`) is
+/// falsy. WeixinChannel.ts:585/608 writes
+/// `image?.cdn_url || image?.url ? "url" : "media.full_url"`, so an empty
+/// cdn_url must fall through to url instead of counting as present. Measured on
+/// node v22.23.3: `{cdn_url:"",url:"u"}` gives source "url";
+/// `{cdn_url:"",url:""}` gives "media.full_url" (logs/ts-nullish-vs-rust.txt).
+fn js_truthy_string(value: Option<&Value>) -> bool {
+    value
+        .and_then(Value::as_str)
+        .is_some_and(|text| !text.is_empty())
+}
+
 fn push_weixin_attachment(
     attachments: &mut Vec<Value>,
     message_id: &str,
@@ -60,8 +72,8 @@ fn push_weixin_attachment(
     // download URL came from ("url" for cdn_url/url, "media.full_url"
     // otherwise) and, for images, the declared width/height. weixinMediaOwner
     // stays because the Rust decrypt step needs the raw item object.
-    let source = if media_owner.get("cdn_url").and_then(Value::as_str).is_some()
-        || media_owner.get("url").and_then(Value::as_str).is_some()
+    let source = if js_truthy_string(media_owner.get("cdn_url"))
+        || js_truthy_string(media_owner.get("url"))
     {
         "url"
     } else {
@@ -351,5 +363,74 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(attachments[0]["name"], "image-mid-42.jpg");
+    }
+
+    // WeixinChannel.ts:585/608 — `image?.cdn_url || image?.url ? "url" :
+    // "media.full_url"`. An empty cdn_url is falsy, so the source must fall
+    // through to url. Measured on node v22.23.3: {cdn_url:"",url:"u"} -> "url",
+    // {cdn_url:"",url:""} -> "media.full_url" (logs/ts-nullish-vs-rust.txt).
+    #[test]
+    fn empty_cdn_url_falls_through_to_url_like_js_truthiness() {
+        let (_, attachments) = weixin_inbound_text_and_attachments(&json!({
+            "message_type": 1,
+            "item_list": [{
+                "type": 2,
+                "image_item": {"cdn_url": "", "url": "https://cdn.example/u.png"}
+            }]
+        }))
+        .unwrap();
+        assert_eq!(attachments[0]["metadata"]["source"], "url");
+        assert_eq!(attachments[0]["url"], "https://cdn.example/u.png");
+    }
+
+    // Both empty: TS's || chain is falsy and it reports media.full_url. The
+    // Rust side likewise must not claim a "url" source it never used.
+    #[test]
+    fn empty_cdn_url_and_url_report_the_media_full_url_source() {
+        let (text, attachments) = weixin_inbound_text_and_attachments(&json!({
+            "message_type": 1,
+            "item_list": [{
+                "type": 2,
+                "image_item": {
+                    "cdn_url": "",
+                    "url": "",
+                    "media": {"full_url": "https://cdn.example/full.png"}
+                }
+            }]
+        }))
+        .unwrap();
+        assert_eq!(attachments[0]["metadata"]["source"], "media.full_url");
+        assert_eq!(attachments[0]["url"], "https://cdn.example/full.png");
+        // No diagnostic: TS does find media.full_url, so it attaches.
+        assert!(!text.contains("缺少下载 URL"), "text={text}");
+    }
+
+    // Node's \\|\\| is falsy for "" but the TS nullish-pick at :568 keeps "".
+    // Rust is deliberately more forgiving there (it still uses url); that
+    // accepted difference is recorded in 最终报告.md, and this pins that the
+    // source label never lies about which branch produced the URL.
+    #[test]
+    fn source_label_matches_the_branch_that_supplied_the_url() {
+        let (_, a) = weixin_inbound_text_and_attachments(&json!({
+            "message_type": 1,
+            "item_list": [{"type": 4, "file_item": {
+                "file_name": "d.pdf", "cdn_url": "https://cdn.example/c.pdf",
+                "url": "https://cdn.example/u.pdf"
+            }}]
+        }))
+        .unwrap();
+        assert_eq!(a[0]["metadata"]["source"], "url");
+        assert_eq!(a[0]["url"], "https://cdn.example/c.pdf");
+
+        let (_, b) = weixin_inbound_text_and_attachments(&json!({
+            "message_type": 1,
+            "item_list": [{"type": 4, "file_item": {
+                "file_name": "d.pdf", "cdn_url": "",
+                "media": {"full_url": "https://cdn.example/full.pdf"}
+            }}]
+        }))
+        .unwrap();
+        assert_eq!(b[0]["metadata"]["source"], "media.full_url");
+        assert_eq!(b[0]["url"], "https://cdn.example/full.pdf");
     }
 }

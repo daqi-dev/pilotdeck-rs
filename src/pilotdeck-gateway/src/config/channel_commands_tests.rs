@@ -279,7 +279,18 @@ async fn status_reports_the_node_runtime_version_contract() {
         .await
         .expect("status must not require an external Node runtime");
     assert!(status.contains("\nNode: v"), "status={status:?}");
-    assert!(status.contains("\nNode: v22.22.0\n"), "status={status:?}");
+    // ChannelCommandRegistry.ts:190 renders process.version. On a host with Node
+    // the line must be that host's real version (measured: `node --version` =
+    // v22.23.3 here); on a host without Node it must fall back to the pinned
+    // fixture runtime. Both are legal; anything else is not.
+    let node_line = status
+        .lines()
+        .find_map(|line| line.strip_prefix("Node: "))
+        .unwrap_or_else(|| panic!("status has no Node line: {status:?}"));
+    assert!(
+        node_line == "v22.22.0" || node_line == host_node_version(),
+        "Node line must be the host process.version or the pinned fallback, got {node_line:?}"
+    );
     assert!(!status.contains("\nRust:"), "status={status:?}");
     assert!(status.starts_with("📊 PilotDeck Status\n\n"));
     assert!(status.contains("分支: "));
@@ -288,9 +299,35 @@ async fn status_reports_the_node_runtime_version_contract() {
     assert!(status.contains("平台: "));
 }
 
+/// The host's real `node --version`, or the pinned fallback when absent.
+fn host_node_version() -> &'static str {
+    match std::process::Command::new("node").arg("--version").output() {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            if version.starts_with('v') {
+                return Box::leak(version.into_boxed_str());
+            }
+            "v22.22.0"
+        }
+        _ => "v22.22.0",
+    }
+}
+
+// ChannelCommandRegistry.ts:190 — three probe outcomes, all measured on the
+// real operator: a real version is used verbatim, a failed probe falls back, and
+// junk output (no leading v) falls back rather than decorating /status.
+#[test]
+fn status_node_version_uses_the_host_version_and_falls_back_when_absent() {
+    assert_eq!(super::normalize_node_version(Some(b"v22.23.3\n")), "v22.23.3");
+    assert_eq!(super::normalize_node_version(None), "v22.22.0");
+    assert_eq!(super::normalize_node_version(Some(b"\n")), "v22.22.0");
+    assert_eq!(super::normalize_node_version(Some(b"command not found")), "v22.22.0");
+    assert_eq!(super::normalize_node_version(Some(b"v22.22.0")), "v22.22.0");
+}
+
 #[cfg(unix)]
 #[test]
-fn status_succeeds_without_invoking_external_node() {
+fn status_still_succeeds_when_the_node_probe_fails() {
     use std::os::unix::fs::{PermissionsExt, symlink};
 
     let git = std::env::split_paths(&std::env::var_os("PATH").unwrap())
@@ -333,7 +370,14 @@ fn status_succeeds_without_invoking_external_node() {
             output.status.success() && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
             "fake_node={fake_node}, output={output:?}"
         );
-        assert!(!marker.exists(), "status must never invoke the fake node");
+        // ChannelCommandRegistry.ts:190 surfaces process.version, so probing is
+        // expected. What must never happen is the probe taking /status down.
+        if fake_node {
+            assert!(
+                marker.exists(),
+                "a host with node must be asked for its real version"
+            );
+        }
     }
     std::fs::remove_dir_all(dir).unwrap();
 }

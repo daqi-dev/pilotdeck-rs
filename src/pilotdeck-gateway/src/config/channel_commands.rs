@@ -12,10 +12,44 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 #[path = "channel_commands_tests.rs"]
 mod tests;
 
-// TS cc7c4e6 ChannelCommandRegistry.ts:190 reads process.version, not PATH.
-// Rust embeds no Node; report the pinned TS runtime from
-// tests/common/node_provenance.rs:10 and native_archive/tests.rs:722.
-const STATUS_NODE_VERSION: &str = "v22.22.0";
+// TS cc7c4e6 ChannelCommandRegistry.ts:190 renders `process.version` — the version
+// of the runtime actually hosting the gateway. Measured on this host:
+// `node --version` is v22.23.3, so a hard-coded value is visibly wrong there.
+// The native gateway has no embedded Node, so probe the host and fall back to
+// the pinned fixture runtime (tests/common/node_provenance.rs:10) when no Node
+// is installed. Probing is best effort and time-boxed: TS never fails /status
+// because of the runtime probe, and neither may we.
+const STATUS_NODE_VERSION_FALLBACK: &str = "v22.22.0";
+const STATUS_NODE_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// `process.version` if this host has a usable Node, else the pinned fixture
+/// runtime. Never fails: /status must render on a host without Node.
+async fn status_node_version() -> String {
+    let mut command = tokio::process::Command::new("node");
+    command.arg("--version").kill_on_drop(true);
+    let probe = tokio::time::timeout(STATUS_NODE_PROBE_TIMEOUT, command.output()).await;
+    let stdout = match probe {
+        Ok(Ok(output)) if output.status.success() => Some(output.stdout),
+        _ => None,
+    };
+    normalize_node_version(stdout.as_deref())
+}
+
+/// Split out so the "probe succeeded / failed / printed junk" decisions are
+/// testable without touching PATH or spawning a process.
+fn normalize_node_version(stdout: Option<&[u8]>) -> String {
+    let Some(stdout) = stdout else {
+        return STATUS_NODE_VERSION_FALLBACK.into();
+    };
+    let version = String::from_utf8_lossy(stdout).trim().to_owned();
+    // Node prints `vMAJOR.MINOR.PATCH`; anything else is not a version.
+    let digits = version.strip_prefix('v').unwrap_or("");
+    if digits.starts_with(|c: char| c.is_ascii_digit()) {
+        version
+    } else {
+        STATUS_NODE_VERSION_FALLBACK.into()
+    }
+}
 
 pub trait ChannelGateway: Send + Sync {
     fn request<'a>(&'a self, method: &'a str, params: Value) -> ChannelCall<'a, Value>;
@@ -167,8 +201,12 @@ impl ChannelGateway for WsChannelGateway {
                 "windows" => "win32",
                 other => other,
             };
+            // ChannelCommandRegistry.ts:190 — the Node line is process.version,
+            // i.e. the host runtime's real version, with our pinned fixture
+            // runtime only as the no-Node fallback.
+            let node_version = status_node_version().await;
             Ok(format!(
-                "📊 PilotDeck Status\n\n分支: {branch}\n提交: {commit}\n运行时间: {uptime}\nNode: {STATUS_NODE_VERSION}\n平台: {platform}"
+                "📊 PilotDeck Status\n\n分支: {branch}\n提交: {commit}\n运行时间: {uptime}\nNode: {node_version}\n平台: {platform}"
             ))
         })
     }
