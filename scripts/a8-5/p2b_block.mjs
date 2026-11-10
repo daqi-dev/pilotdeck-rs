@@ -36,8 +36,12 @@ async function timedClose(server, label, holdMs, extra = {}) {
     },
   );
   await new Promise((r) => setTimeout(r, holdMs));
-  rec.log(label, { settledAfterHoldMs: settled, holdMs, ...extra });
-  return { p, settledAfterHoldMs: settled };
+  // fix-r2（Grok boundary#2 + DS concurrency#2 撞条加固）：skipped 降级行不落
+  // settledAfterHoldMs 实测值、返回值同取 null——是否降级由本函数显式决定，
+  // 不再依赖调用方以 null 经对象展开顺序覆盖实测值（记录与控制流同源）。
+  const settledAfterHoldMs = extra.skipped === true ? null : settled;
+  rec.log(label, { ...extra, holdMs, settledAfterHoldMs });
+  return { p, settledAfterHoldMs };
 }
 
 async function main() {
@@ -85,8 +89,12 @@ async function main() {
     // 轮次证据 exp-close-pool.out）。前提不成立时结论行记 skipped:true、
     // settledAfterHoldMs 置 null——与 p1_p2/p6/p16 三探针三态编码统一
     // （settled 原值不再落「A14② settle」证据位：该降级状态的 settle 属无连接
-    // 状态 A，已被 A 格覆盖）。
-    const premiseAtClose = premise && ka.freeSocketCount() > 0;
+    // 状态 A，已被 A 格覆盖）。fix-r2（DS concurrency#2 撞条）：复检位置不动
+    // （仲裁：timedClose 入口即发起 close，hold 是 close 后的观测窗）；但降级行
+    // premise（初始入池前提原值）与 premiseAtClose（close 前池状态）分立，不再
+    // 折叠成 premise:false；freeSocketCount 判定与记录同用一份局部快照。
+    const freeSocketsBeforeClose = ka.freeSocketCount();
+    const premiseAtClose = premise && freeSocketsBeforeClose > 0;
     if (premise && !premiseAtClose) {
       rec.log("C/SKIP-pool-drained-before-reuse", {
         reason: "池在 close 前被服务端空闲超时收尾（首次 /health 入池后、timedClose 前池已空）",
@@ -94,12 +102,13 @@ async function main() {
       });
     }
     const { p, settledAfterHoldMs } = premiseAtClose
-      ? await timedClose(s, "C:idle-keepalive", 2000, { premise: true, freeSocketsBeforeClose: ka.freeSocketCount() })
+      ? await timedClose(s, "C:idle-keepalive", 2000, { premise: true, premiseAtClose: true, freeSocketsBeforeClose })
       : await timedClose(s, "C:idle-keepalive", 2000, {
         skipped: true,
-        premise: false,
+        premise,
+        premiseAtClose: false,
+        freeSocketsBeforeClose,
         reason: premise ? "池在 close 前被服务端空闲超时收尾（见 C/SKIP-pool-drained-before-reuse）" : "入池前提未成立（见 C/SKIP-idle-keepalive）",
-        settledAfterHoldMs: null, // 覆盖 timedClose 实测值：降级行不占「A14② settle」证据位
       });
     say(premiseAtClose
       ? `C settled=${settledAfterHoldMs}`
