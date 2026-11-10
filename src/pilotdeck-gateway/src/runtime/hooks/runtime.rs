@@ -186,8 +186,13 @@ pub struct AsyncHookRegistration {
     pub invocation_id: JsString,
     pub timeout_ms: Option<f64>,
 }
+/// Fallible like the TS bridge: `InProcessGateway.registerAsyncHook` throws
+/// `ASYNC_HOOK_INVOCATION_CONFLICT` on a conflicting invocation id
+/// (InProcessGateway.ts:724-729) and `HookRuntime.run` does not catch it
+/// (HookRuntime.ts:170), so the registration failure must be able to fail the
+/// hook dispatch that produced the async output.
 pub trait AsyncHookRegistrationHandler: Send + Sync {
-    fn handle(&self, registration: AsyncHookRegistration);
+    fn handle(&self, registration: AsyncHookRegistration) -> Result<(), HostError>;
 }
 
 // ------------------------------------------------------------------ event bus
@@ -460,7 +465,7 @@ impl HookRuntime {
                                 hook_event: input.event.clone(),
                                 invocation_id: invocation_id.clone(),
                                 timeout_ms: r#async.timeout_ms,
-                            });
+                            })?;
                         }
                         _ => {
                             let id = {

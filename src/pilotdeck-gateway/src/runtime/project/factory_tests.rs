@@ -524,6 +524,7 @@ fn families(probe: &Arc<Probe>) -> Families {
         )),
         mcp: source(probe, Family::McpProvider, no_extra, true, false, &[]),
         memory: source(probe, Family::MemoryBundle, memory_bundle, true, true, &[]),
+        interaction_async_sink: Arc::default(),
     }
 }
 
@@ -1058,8 +1059,9 @@ async fn forwarding_decorator_keeps_interaction_layering() {
         stages: true,
         publishes: &[Resource::ExecutionWorld],
     });
-    let wrapped: Arc<dyn ResourceFamilySource> =
-        Arc::new(crate::runtime::project::interaction::InteractionFamilySource::new(custom));
+    let wrapped: Arc<dyn ResourceFamilySource> = Arc::new(
+        crate::runtime::project::interaction::InteractionFamilySource::new(custom, Arc::default()),
+    );
     let decorated: Arc<dyn ResourceFamilySource> = Arc::new(ForwardingDecorator(wrapped));
     let families = Families {
         execution_world: decorated,
@@ -1125,7 +1127,12 @@ async fn nonforwarding_decorator_is_replaced_or_rewrapped() {
         publishes: &[Resource::ExecutionWorld],
     });
     let decorated: Arc<dyn ResourceFamilySource> = Arc::new(NonForwardingDecorator {
-        inner: Arc::new(crate::runtime::project::interaction::InteractionFamilySource::new(custom)),
+        inner: Arc::new(
+            crate::runtime::project::interaction::InteractionFamilySource::new(
+                custom,
+                Arc::default(),
+            ),
+        ),
         staged: Arc::clone(&decorator_stages),
     });
     assert!(
@@ -1247,7 +1254,12 @@ async fn marker_added_by_with_interaction_survives_tools_replacement() {
         publishes: &[Resource::ExecutionWorld],
     });
     let decorated: Arc<dyn ResourceFamilySource> = Arc::new(NonForwardingDecorator {
-        inner: Arc::new(crate::runtime::project::interaction::InteractionFamilySource::new(custom)),
+        inner: Arc::new(
+            crate::runtime::project::interaction::InteractionFamilySource::new(
+                custom,
+                Arc::default(),
+            ),
+        ),
         staged: Arc::clone(&decorator_stages),
     });
     let layered = Families {

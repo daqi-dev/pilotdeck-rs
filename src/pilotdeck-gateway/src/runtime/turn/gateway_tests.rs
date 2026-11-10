@@ -2183,3 +2183,59 @@ impl SessionFactory for PendingCreationFactory {
         })
     }
 }
+
+/// #1438 (U9): `abort_turn` must be intercepted by
+/// `ConnectionTurnGateway::request` itself (gateway.rs:200-205). The #1891
+/// fix-r2 review deleted the unreachable `abort_turn` handler from the
+/// methods registry, leaving this interception as the sole implementation —
+/// the mock `Requests` answers every method with "unexpected method", so a
+/// removed interception would surface that error instead of the `ok:true`
+/// envelope. The session has no live turn, so the abort is a no-op that must
+/// still resolve Ok on the serial host.
+#[tokio::test]
+async fn abort_turn_request_is_intercepted_before_the_methods_registry() {
+    use crate::negative_assert_eq;
+    use crate::runtime::connection::ConnectionGateway;
+
+    let host = empty_gateway_with_clock(30_000, Arc::new(Clock::default()));
+    let gateway = host.gateway.clone();
+    let result = host
+        .call(async move {
+            gateway
+                .request("abort_turn".into(), object([("sessionKey", "s".into())]))
+                .await
+        })
+        .await
+        .expect("#1438 the intercepted abort_turn stays Ok");
+    // Receipt-wired form of expect (#1438 negative control M4 binds this
+    // exact oracle): the text and the pass/fail condition are unchanged.
+    let result = crate::test_negative_receipt::expect_ok(
+        result,
+        "#1438 abort_turn must not reach the erroring mock registry",
+    );
+    negative_assert_eq!(
+        result,
+        object([("ok", JsValue::Bool(true))]),
+        "#1438 the interception answers the ok:true envelope"
+    );
+    // Control: the same mock still errors for an unintercepted method, so
+    // the ok:true above proves the interception, not a permissive mock.
+    let gateway = host.gateway.clone();
+    let error = host
+        .call(async move {
+            gateway
+                .request("steer_turn".into(), object([("sessionKey", "s".into())]))
+                .await
+        })
+        .await
+        .expect("#1438 the mock registry call stays Ok at the boundary")
+        .expect_err("#1438 an unintercepted method reaches the erroring mock");
+    negative_assert_eq!(
+        error.message,
+        JsString::from(format!(
+            "unexpected method: {:?}",
+            JsString::from("steer_turn")
+        )),
+        "#1438 the mock registry refuses every method"
+    );
+}

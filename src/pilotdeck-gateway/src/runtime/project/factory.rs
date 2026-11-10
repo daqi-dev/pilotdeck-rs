@@ -472,6 +472,24 @@ pub struct Families {
     pub context_storage: Arc<dyn ResourceFamilySource>,
     pub compaction: Option<Arc<dyn ResourceFamilySource>>,
     pub prompt_cache_coordinator: Option<Arc<dyn ResourceFamilySource>>,
+    /// #1438: the cross-generation async-hook sink slot the interaction
+    /// family hands to every `InteractionHooks` it stages. Owned here (not
+    /// by the wrapper) because `with_tools_mcp` rebuilds the
+    /// `InteractionFamilySource` around a new kernel; the slot must survive
+    /// that rebuild so a project reload never strands the assembly's sink.
+    ///
+    /// Scope: one slot per `Families`, and this factory stages **every**
+    /// project of its registry through the same `Families` — the slot is
+    /// gateway-wide, not per project. Production today stages exactly one
+    /// project (the fallback root: every `acquire` passes `None`, and the
+    /// `sdkSessionProjects` writes that could map sessions to other roots
+    /// have no wire method in this slice). Once a slice wires non-default
+    /// projects, the slot must become per project (or the registry's turn
+    /// lookup must resolve by the session's project), or a non-default
+    /// project's bindings would register into the default project's
+    /// registry and their outputs would be silently dropped — tracked in
+    /// the #2908 followup.
+    pub interaction_async_sink: super::interaction_hooks::AsyncHookSinkSlot,
     pub session_title: Option<Arc<dyn ResourceFamilySource>>,
     pub mcp: Arc<dyn ResourceFamilySource>,
     pub memory: Arc<dyn ResourceFamilySource>,
@@ -502,6 +520,7 @@ impl Families {
         self.execution_world = if self.execution_world.layers_interaction() {
             Arc::new(super::interaction::InteractionFamilySource::new(
                 execution_world,
+                Arc::clone(&self.interaction_async_sink),
             ))
         } else {
             execution_world
@@ -537,6 +556,7 @@ impl Families {
             let execution_world = Arc::clone(&self.execution_world);
             self.execution_world = Arc::new(super::interaction::InteractionFamilySource::new(
                 execution_world,
+                Arc::clone(&self.interaction_async_sink),
             ));
         }
         self
@@ -585,6 +605,7 @@ impl Families {
             session_title: None,
             mcp: unsupported(Family::McpProvider, "A6.9-pr3c"),
             memory: unsupported(Family::MemoryBundle, "A6.9-pr3d"),
+            interaction_async_sink: Arc::default(),
         }
     }
 }

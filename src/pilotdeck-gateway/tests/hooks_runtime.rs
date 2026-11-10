@@ -2363,12 +2363,13 @@ impl pilotdeck_gateway::runtime::hooks::runtime::AsyncHookRegistrationHandler fo
     fn handle(
         &self,
         registration: pilotdeck_gateway::runtime::hooks::runtime::AsyncHookRegistration,
-    ) {
+    ) -> Result<(), pilotdeck_gateway::host::HostError> {
         self.0.lock().unwrap().push(SeenRegistration {
             hook_name: registration.hook_name.to_utf8().unwrap(),
             invocation_id: registration.invocation_id.to_utf8().unwrap(),
             timeout_ms: registration.timeout_ms,
         });
+        Ok(())
     }
 }
 

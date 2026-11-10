@@ -5577,3 +5577,244 @@ async fn active_turn_snapshot_misses_echo_the_raw_session_key() {
         .await
         .expect("#1604 registry fixture project shutdown");
 }
+
+// ------------------------------------------------------------------ #1438
+
+/// #1438 (U9, the steer-family behavior tests the issue asked for):
+/// `cancel_steer`'s round trip against the real mailbox. The positive side
+/// must both answer `cancelled:true` and actually remove the item — a cancel
+/// that answered true without removing would leave the drained mailbox
+/// non-empty. The negative side is `too_late`: once the run drained the
+/// mailbox (the item was offered to the turn), the same item id can no longer
+/// be cancelled (SessionRouter/SteerMailbox cancel: a non-pending, seen id is
+/// `SteerReason::TooLate`; the method layer's fallback default is also
+/// `too_late`).
+#[tokio::test]
+async fn cancel_steer_round_trip_empties_the_mailbox_and_reports_too_late_after_drain() {
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1438 registry fixture setup");
+    let session = "cancel-round-trip";
+    let _reservation = requests
+        .owner
+        .begin_turn(&session.into(), &"r1".into())
+        .expect("#1438 admission slot");
+    let steer = steer_resource(&requests);
+    let _turn = start_steer_run(&steer, session, "t", "r1");
+    let steer_params = |item: &str| {
+        crate::metadata::object([
+            ("sessionKey", session.into()),
+            ("runId", "r1".into()),
+            ("itemId", item.into()),
+            ("message", "m".into()),
+        ])
+    };
+    // Positive round trip: steer, cancel, and the mailbox is empty.
+    let result = requests
+        .request("steer_turn".into(), steer_params("i1"))
+        .await
+        .expect("#1438 steer stays Ok");
+    negative_assert_eq!(
+        result.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1438 the steer is accepted before the cancel"
+    );
+    let result = requests
+        .request("cancel_steer".into(), steer_params("i1"))
+        .await
+        .expect("#1438 cancel stays Ok");
+    negative_assert_eq!(
+        result.get("cancelled"),
+        Some(&JsValue::Bool(true)),
+        "#1438 the queued item is cancelled by its id"
+    );
+    negative_assert_eq!(
+        steer
+            .mailbox_for_test(&session.into())
+            .expect("#1438 session mailbox")
+            .drain(&"t".into())
+            .len(),
+        0,
+        "#1438 the cancelled item is gone from the mailbox"
+    );
+    // too_late: the run drained the item, so the same id can no longer be
+    // cancelled.
+    let result = requests
+        .request("steer_turn".into(), steer_params("i2"))
+        .await
+        .expect("#1438 second steer stays Ok");
+    negative_assert_eq!(
+        result.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1438 the second steer is accepted"
+    );
+    negative_assert_eq!(
+        steer
+            .mailbox_for_test(&session.into())
+            .expect("#1438 session mailbox")
+            .drain(&"t".into())
+            .len(),
+        1,
+        "#1438 the drain offered the second item to the run"
+    );
+    let result = requests
+        .request("cancel_steer".into(), steer_params("i2"))
+        .await
+        .expect("#1438 too-late cancel stays Ok");
+    negative_assert_eq!(
+        result.get("cancelled"),
+        Some(&JsValue::Bool(false)),
+        "#1438 a drained item can no longer be cancelled"
+    );
+    negative_assert_eq!(
+        result.get("reason").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("too_late")),
+        "#1438 the drained item reports too_late"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1438 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1438 registry fixture project shutdown");
+}
+
+/// #1438 (U9): the two stale shapes a same-text turn restart produces for
+/// `cancel_steer`. The method layer resolves the *current* steer info through
+/// the admission slot, so an old run id string takes the strict-equality
+/// `turn_mismatch` branch. The genuinely stale path is holding a run r1
+/// `ActiveSteerInfo` across the restart: its admission-locked check fails and
+/// the runtime answers `cancelled:false` / `turn_closing` in-band — the same
+/// fence shape `steer_turn` already pins (#1307).
+#[tokio::test]
+async fn cancel_steer_after_a_same_text_turn_restart_reports_the_stale_shapes() {
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1438 registry fixture setup");
+    let session = "cancel-restart";
+    let session_key = pilotdeck_protocol::JsString::from(session);
+    let reservation = requests
+        .owner
+        .begin_turn(&session_key, &"r1".into())
+        .expect("#1438 admission slot");
+    let steer = steer_resource(&requests);
+    let binding = steer
+        .bind_session(session_key.clone(), None)
+        .expect("#1438 steer session binding");
+    let first = binding
+        .start_turn(
+            "t".into(),
+            "r1".into(),
+            vec![],
+            crate::runtime::hooks::Cancellation::new(),
+            &mut crate::host::modules::ModuleRouter::default(),
+        )
+        .expect("#1438 first steer turn start");
+    // A queued item plus the captured r1 steer info, before the restart.
+    let result = requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session_key.clone())),
+                ("runId", "r1".into()),
+                ("itemId", "i1".into()),
+                ("message", "m".into()),
+            ]),
+        )
+        .await
+        .expect("#1438 steer stays Ok");
+    negative_assert_eq!(
+        result.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1438 the first run's steer is accepted"
+    );
+    let stale = steer
+        .active_steer_info(&session_key)
+        .expect("#1438 r1 steer info while the turn is live");
+    // r1 ends; the retry restarts the turn under the same textual turn ID.
+    first
+        .close()
+        .await
+        .expect("#1438 first turn closed and drained");
+    requests
+        .owner
+        .end_turn(&session_key, Some(&"r1".into()), Some(&reservation));
+    let _restart = requests
+        .owner
+        .begin_turn(&session_key, &"r2".into())
+        .expect("#1438 restarted admission slot");
+    let _second = binding
+        .start_turn(
+            "t".into(),
+            "r2".into(),
+            vec![],
+            crate::runtime::hooks::Cancellation::new(),
+            &mut crate::host::modules::ModuleRouter::default(),
+        )
+        .expect("#1438 restarted turn start");
+    // Method layer: the admission slot now holds r2, so the old run id
+    // string takes the strict-equality mismatch branch.
+    let result = requests
+        .request(
+            "cancel_steer".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session_key.clone())),
+                ("runId", "r1".into()),
+                ("itemId", "i1".into()),
+            ]),
+        )
+        .await
+        .expect("#1438 old-run cancel stays Ok");
+    negative_assert_eq!(
+        result.get("cancelled"),
+        Some(&JsValue::Bool(false)),
+        "#1438 the old run's id cannot cancel through the method layer"
+    );
+    negative_assert_eq!(
+        result.get("reason").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("turn_mismatch")),
+        "#1438 the old run id reports turn_mismatch"
+    );
+    // Runtime level: the captured r1 steer info is fenced by run identity
+    // under the admission lock — in-band cancelled:false / turn_closing, and
+    // the restarted run's mailbox stays clean of the old item.
+    let stale_result = stale
+        .cancel("i1".into())
+        .await
+        .expect("#1438 stale steer info cancel stays Ok");
+    negative_assert_eq!(
+        stale_result.cancelled,
+        false,
+        "#1438 the stale r1 steer info cannot cancel"
+    );
+    negative_assert_eq!(
+        stale_result.reason,
+        Some(crate::runtime::steer::SteerReason::TurnClosing),
+        "#1438 the stale r1 steer info reports turn_closing"
+    );
+    negative_assert_eq!(
+        steer
+            .mailbox_for_test(&session_key)
+            .expect("#1438 session mailbox")
+            .drain(&"t".into())
+            .len(),
+        0,
+        "#1438 the restarted run's mailbox stays clean of the old item"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1438 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1438 registry fixture project shutdown");
+}
