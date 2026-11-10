@@ -67,13 +67,51 @@ jobs:
       - name: CI 聚合门控与各 job 的 Node 前置守卫
         working-directory: src/pilotdeck-gateway/tests
         shell: bash
+        # #2136 fix-r39（DS sibling#1 / concurrency#2 P2）：本步真跑
+        # EnvironmentControls 全套（#994/#1570/#1666/#2133 四条真跑钉都在
+        # 其中，r38 实测本机 764 s），挂起时却占满 job 默认 360 分钟——
+        # 正是那四条钉注释里要消灭的场景搬到了本步；照 #2133 步同法声明
+        # 步级超时（30 min ≈ 2.4× 余量），由 driver 守卫钉住。
+        timeout-minutes: 30
         run: '"$RUNNER_TEMP/pyyaml-pinned/bin/python" -m unittest -v test_metadata_io_driver.EnvironmentControls'
       - name: metadata observer generation 正负控（自有文件）
         shell: bash
         run: node src/pilotdeck-gateway/tests/test_metadata_observer.mjs
       - name: 共享执行器隔离与候选正控回归（#994）
         shell: bash
+        # #2136 fix-r38（MM sibling P2）：本套件 r38 干净树实测 23 条约 354 s
+        #（CI 约 583 s），挂起时却占满 job 级 360 分钟默认上限，把同 job 别步
+        # 拖死；照 #2133 步同法声明步级超时（预算 + 余量），由
+        # test_metadata_io_driver 钉住（守卫 + 真跑钉 + 变异负控）。
+        timeout-minutes: 15
         run: python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_adaptive_isolation.py
+      # #2133：宿主负控清单由 neg-for-diff.sh 按 diff 推导，它用字面串
+      # `目录/文件名` 去 fixtures 里 `git grep -F`。表里写成「常量 / 裸文件名」
+      # 时这个字面串根本不在文件里 → 改产品文件时该表不进负控 → 假 PASS。
+      # 本步逐表复算裸文件名拼接的键（含 .json/.mts 等夹具文件，发现循环对
+      # `src/*.rs` 与 `fixtures/**` 都生成键），断言每张表声明的 DISCOVERY_ANCHORS 与之
+      # 完全一致且每个键确实字面出现在该表文本中；解析不了的仓库路径、起点能证明是
+      # 仓库根的字符串 `+` / f-string 拼法、不支持的调用形状、仓库目录枚举按失败处理，
+      # 不静默跳过（全字面量的 `'sms' + '/' + 'mod.rs'` 是 README 登记的静默盲区：
+      # 同一形状在 network-timing/negative_private.py 里拼的是单元测试标签）；
+      # 表 import 的每个本地模块（顶层助手、`_shared` / `_negkit` 库模块、同目录模块、
+      # 包的 `__init__.py`、相对 import）同样要求锚点，且沿 import 传递（助手自己
+      # import 的助手也算）；全目录扫描的跳过清单与宿主 `grep -vE` 逐项相同，
+      # 只 import 助手的新表同样变红。
+      # 判别力由负控自证：
+      # 逐条删掉锚点、注入一条新行、`TABLES` 为空、锚点重复赋值、新盲表 / 新不可解表
+      # 未登记、登记条数过期。纯静态，不需要 cargo。
+      # 当前登记 #2133 点名的 4 张表；其余同类盲表逐张记在测试的 KNOWN_BLIND 登记里
+      # （约定见 fixtures/README.md，逐表清单见 #2141），新盲表出现即本步变红。
+      - name: 网关负控发现锚点自检（#2133）
+        working-directory: src/pilotdeck-gateway/tests/fixtures
+        shell: bash
+        # #2136 fix-r37（MM concurrency P2a）：本步纯静态、实测约 1 分钟，
+        # 挂起时却占满 job 级 360 分钟默认上限，别的步骤全被拖死；
+        # 卡死须当轮失败，不许慢慢烧。真跑钉（Ran N / 无 skip）在
+        # test_metadata_io_driver.py，与本步守卫互补。
+        timeout-minutes: 10
+        run: python3 -B -m unittest -v test_negative_discovery_anchors
       # #1666 / #1734：负控脚本的守卫不得依赖 assert —— `python3 -O` /
       # `PYTHONOPTIMIZE=1` 会把 assert 整条剥离，靠 assert 的守卫在优化解释器下静默
       # 放行（未知变异名 → `0/0 killed`、rc=0）。这两个自测在加与不加 `-O` 的解释器下
@@ -83,6 +121,11 @@ jobs:
       - name: 网关负控守卫 -O 不变性自测（#1666/#1734）
         working-directory: src/pilotdeck-gateway/tests/fixtures
         shell: bash  # #1809 r9：合并带入的步骤补钉（r7 P0 执行层守卫）
+        # #2136 fix-r38（MM sibling P2）：五个模块 r37 实测合计约 15 s，
+        # 挂起时同样占满 job 默认 360 分钟；由 driver 守卫钉住。
+        # r41（合并 main）：#2590 fix-r2 增第六模块（issue-2495，实测
+        # Ran 30、约 4 s），真跑钉与守卫已同步扩到六模块。
+        timeout-minutes: 5
         run: |
           python3 -B -m unittest -v test_negative_optimize_guards
           python3 -B -m unittest -v settings-gateway/test_negative_controls.py
@@ -109,6 +152,8 @@ jobs:
       - name: 共享副本清单推导自测（#1570）
         working-directory: src/pilotdeck-gateway/tests/fixtures
         shell: bash  # #1809 r9：合并带入的步骤补钉（r7 P0 执行层守卫）
+        # #2136 fix-r38（MM sibling P2）：r37 实测约 21 s，同上钉住。
+        timeout-minutes: 5
         run: python3 -B -m unittest -v _shared.test_compile_inputs
       # #1203：CLI fixtures 的负控脚本自带 --check 锚点自检，但此前没有任何闸门跑它——
       # #1145 重构 transport.rs 后 stream-event-field 锚点过期（6 条里 5 条有效），CI、
