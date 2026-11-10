@@ -1171,15 +1171,26 @@ def run_control(control, out_root, oracle):
     except Exception as error:  # noqa: BLE001 - 记录为 INVALID，不中止其余控件
         record.update(verdict='INVALID', reason=f'build failed: {error!r}')
         return record
-    for name, (rows, frames) in bundles.items():
-        write_round(out_root, control.id, name, rows, frames)
+    # #2573 双谱系评审 P2（DS+MM sibling 两家撞上）：输出侧故障与 build 同为
+    # 「这条控件没跑成」，run_positive 已收口，run_control 的同形调用不收会让
+    # 同一故障在正控路径局部化、在负控路径整批 rc2——对称收 INVALID + return。
+    try:
+        for name, (rows, frames) in bundles.items():
+            write_round(out_root, control.id, name, rows, frames)
+    except Exception as error:  # noqa: BLE001 - 记录为 INVALID，不中止其余控件
+        record.update(verdict='INVALID', reason=f'write round failed: {error!r}')
+        return record
     # 旧产物不留在目录里冒充本轮输出（缺失即失败）。相对**持有的**控制目录 fd 操作，
     # 不按路径重新解析（父目录被换成链接时不误删别处文件）。
-    control_fd = open_output_dir(out_root, (control.id,))
     try:
-        remove_at(control_fd, 'check-output.json')
-    finally:
-        os.close(control_fd)
+        control_fd = open_output_dir(out_root, (control.id,))
+        try:
+            remove_at(control_fd, 'check-output.json')
+        finally:
+            os.close(control_fd)
+    except Exception as error:  # noqa: BLE001 - 记录为 INVALID，不中止其余控件
+        record.update(verdict='INVALID', reason=f'cannot prepare the output dir: {error!r}')
+        return record
     # 第一步：注入是否落地（重读落盘文件核对）。
     try:
         reread = {name: reread_round(out_dir / name) for name in bundles}
@@ -1202,11 +1213,16 @@ def run_control(control, out_root, oracle):
                       reason=f'checker timed out after {CHECK_TIMEOUT_SECONDS}s')
         return record
     record['rc'] = result.returncode
-    control_fd = open_output_dir(out_root, (control.id,))
+    # #2573：同 run_positive——check 输出落盘失败收 INVALID，不穿出控件循环。
     try:
-        write_at(control_fd, 'check-output.json', result.stdout)
-    finally:
-        os.close(control_fd)
+        control_fd = open_output_dir(out_root, (control.id,))
+        try:
+            write_at(control_fd, 'check-output.json', result.stdout)
+        finally:
+            os.close(control_fd)
+    except Exception as error:  # noqa: BLE001 - 记录为 INVALID，不中止其余控件
+        record.update(verdict='INVALID', reason=f'cannot record the check output: {error!r}')
+        return record
     if result.stderr.strip():
         record['stderr'] = result.stderr.strip()[:2000]
     if result.returncode == 0:
