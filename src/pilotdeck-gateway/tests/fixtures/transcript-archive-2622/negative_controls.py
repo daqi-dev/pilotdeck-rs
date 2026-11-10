@@ -121,7 +121,15 @@ mutations = [
     ('restore-rename-to-staging-name', ADAPTER,
      'fs::rename(&cleanup.0, path).map_err(|e| path_error(e, "rename", path))?;',
      'fs::rename(&cleanup.0, path.with_extension("jsonl2")).map_err(|e| path_error(e, "rename", path))?;',
-     CHAT_TREE, '#2622 chat.files holds exactly the final transcripts'),
+     CHAT_TREE, [
+         # The mutant renames onto a `.jsonl2` name, which the earlier
+         # staging-files assertion (transcript_archive.rs:1633-1649)
+         # rejects first — a panic stops the test before the later
+         # final-transcript assertion, so either bound marker kills
+         # (#818 fix-r4 list-of-alternatives semantics).
+         '#2622 no restore staging files remain',
+         '#2622 chat.files holds exactly the final transcripts',
+     ]),
     # --- capability row ------------------------------------------------------
     ('capability-archive-name-unwired', CAPABILITIES,
      'name: "session_transcript_archive",',

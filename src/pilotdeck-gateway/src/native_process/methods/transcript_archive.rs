@@ -351,11 +351,14 @@ fn stringify_portable_value(value: &JsValue) -> Result<Vec<u16>, RequestError> {
 }
 
 /// `toolResultContentBlockToText` over `block.content` joined with "\n"
-/// (toolResultContent.ts:19-27): inner text pushes the raw value (the join
-/// coerces), images and pdfs interpolate `data` or `data.length`, and an
-/// inner block whose `type` is none of the three renders the stringified
-/// `undefined` the join coerces. A nullish inner block throws reading
-/// `type`, like every other raw property read here.
+/// (toolResultContent.ts:19-27): inner text pushes the raw value, images
+/// and pdfs interpolate `data` or `data.length` (template interpolation
+/// stringifies `undefined`), and an inner block whose `type` is none of the
+/// three falls out of the switch as `undefined`. `Array.prototype.join`
+/// then coerces `undefined`/`null` elements to the **empty string** —
+/// unlike the interpolations above, a joined nullish element renders no
+/// text at all. A nullish inner block throws reading `type`, like every
+/// other raw property read here.
 fn flatten_tool_result_text(block: &JsValue) -> Result<Vec<u16>, RequestError> {
     let mut parts: Vec<Vec<u16>> = Vec::new();
     // The replay's clone proved `content` is an array before the message
@@ -367,7 +370,14 @@ fn flatten_tool_result_text(block: &JsValue) -> Result<Vec<u16>, RequestError> {
             }
             let kind = field(inner, "type");
             if is(kind, "text") {
-                parts.push(to_units(field(inner, "text"))?);
+                let text = field(inner, "text");
+                // `block.text` returns as-is; a nullish or absent `text` is
+                // then coerced to the empty string by the join below.
+                parts.push(if nullish(text) {
+                    Vec::new()
+                } else {
+                    to_units(text)?
+                });
             } else if is(kind, "image") {
                 let mut part = "[Image: ".encode_utf16().collect::<Vec<_>>();
                 part.extend(to_units(field(inner, "mimeType"))?);
@@ -395,7 +405,9 @@ fn flatten_tool_result_text(block: &JsValue) -> Result<Vec<u16>, RequestError> {
                 part.push(b']' as u16);
                 parts.push(part);
             } else {
-                parts.push("undefined".encode_utf16().collect());
+                // Unknown `type` falls out of the TS switch as `undefined`;
+                // the join coerces that element to the empty string.
+                parts.push(Vec::new());
             }
         }
     }
@@ -1948,6 +1960,51 @@ mod tests {
             units.len()
         );
         assert_eq!(units.last(), Some(&u16::from(b']')));
+    }
+
+    /// #2622 fix-r3 (DS r3b boundary P2): `Array.prototype.join` coerces
+    /// `undefined`/`null` elements to the empty string, unlike the template
+    /// interpolations around them which stringify `undefined`
+    /// (toolResultContent.ts:22). An inner block whose `type` is none of
+    /// text/image/pdf falls out of the TS switch as `undefined`, and a text
+    /// block whose `text` is absent or null renders the same empty element —
+    /// neither may leak a literal `undefined` into the export. A nullish
+    /// inner block still throws reading `type`, like every other raw
+    /// property read.
+    #[test]
+    fn flatten_joins_nullish_and_unknown_inner_blocks_as_empty_strings() {
+        let block = pilotdeck_protocol::parse_json(
+            r#"{"content": [
+                {"type": "audio"},
+                {"type": "text", "text": "kept"},
+                {"type": "text"},
+                {"type": "text", "text": null}
+            ]}"#,
+        )
+        .expect("#2622 the joined block parses");
+        let units = flatten_tool_result_text(&block)
+            .expect("#2622 the nullish-free joins never throw");
+        let text = String::from_utf16(&units).expect("#2622 joined units");
+        negative_assert_eq!(
+            text,
+            "\nkept\n\n".to_string(),
+            "#2622 join semantics: unknown types and missing text coerce to the empty string"
+        );
+        let nullish = pilotdeck_protocol::parse_json(
+            r#"{"content": [{"type": "text", "text": "first"}, null]}"#,
+        )
+        .expect("#2622 the nullish block parses");
+        let error = flatten_tool_result_text(&nullish)
+            .expect_err("#2622 a nullish inner block throws reading type");
+        negative_assert!(
+            error
+                .message
+                .to_utf8()
+                .map(|text| text.contains("Cannot read properties of null (reading 'type')"))
+                .unwrap_or(false),
+            "#2622 the raw property read surfaces (got {})",
+            error.message.to_utf8().unwrap_or_default()
+        );
     }
 
     /// #2622 fix-r2 (sibling P2 pairing the depth half of the fallback): one
