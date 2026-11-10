@@ -7,8 +7,10 @@
 //! through `parser_admission` — the api-web parser-admission gates only, so
 //! an unregistered answer that grows the line replays red instead of
 //! normalizing away. Extracted verbatim from the api-web replay (the third
-//! copy of the #1209/#1350 rules); the module_host and approvals copies are
-//! deliberately untouched and migrate on their own lanes.
+//! copy of the #1209/#1350 rules); the module_host and approvals copies stay
+//! where they are — they already compare `content-length` verbatim with their
+//! own #2153 pins (`content_length_zero_compares_verbatim`), so they have no
+//! #2153 drop to migrate.
 //!
 //! Included with `#[path]` from a test module (see the api-web replay), the
 //! same pattern the lib's other `tests/common/` modules use.

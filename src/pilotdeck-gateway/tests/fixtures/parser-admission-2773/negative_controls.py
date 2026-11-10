@@ -13,7 +13,10 @@ wirings the P1 fixes added — the admission early-exit's (#2773 P1-b) and the
 guard-431 mid-head trip's — so the bound lib pins' own FIN expectations fail
 while the routed bytes still answer. One script holds both lanes because the
 six rows are one mutation family of a single issue (#2773, review r2 +
-fix-r1): the same node_parser_admission gate and its close-kind drains.
+fix-r1): the same node_parser_admission gate. The fix-r1 drain wirings
+(rows five and six) exist only on the user_dialog side; the sms lane has no
+drain wiring and no close-kind pin — its twins pin the bare 400 shape and
+the CONNECT zero-byte destroy.
 
 Run after committing the candidate (the mutating_sources guard refuses a
 dirty tree). Each mutant is applied to the original one at a time, never

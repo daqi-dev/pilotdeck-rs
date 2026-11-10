@@ -425,6 +425,48 @@ async fn exchange_until_eof(port: u16, request: &[u8], limit: Duration) -> (Vec<
     (response, closed)
 }
 
+/// Like [`exchange_until_eof`], but for the close-kind axis: the client reads
+/// the full response first, then dribbles the declared body in bounded beats
+/// that finish well inside `drain_after_early_close`'s 1 s cap. A server that
+/// drains (the #2773 fix-r1 wiring) absorbs every beat, waits out the 100 ms
+/// silence, and FINs; a server that closes without draining has beats still
+/// in flight, so its close degenerates into an RST the client reads —
+/// deterministic on both sides where the old upfront `write_all` left the
+/// kill to a timing race (#2773 fix-r2, review anthropic concurrency#1). The
+/// response is read before the dribble starts so a dropped drain cannot
+/// RST-flush the response bytes out of the client's receive queue: the
+/// byte-shape assertions stay green and the close-kind assertion is the one
+/// that turns red.
+async fn exchange_dribbled_after_response(
+    port: u16,
+    head: &[u8],
+    body: usize,
+    beat_bytes: usize,
+    beat_every: Duration,
+    limit: Duration,
+) -> (Vec<u8>, ServerClose) {
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("connect");
+    let _ = tokio::time::timeout(limit, stream.write_all(head)).await;
+    let response = read_response(&mut stream).await;
+    let beat = vec![b'a'; beat_bytes];
+    let mut sent = 0;
+    while sent < body {
+        let take = beat.len().min(body - sent);
+        let _ = tokio::time::timeout(limit, stream.write_all(&beat[..take])).await;
+        sent += take;
+        tokio::time::sleep(beat_every).await;
+    }
+    let mut rest = Vec::new();
+    let closed = match tokio::time::timeout(limit, stream.read_to_end(&mut rest)).await {
+        Ok(Ok(_)) => ServerClose::Fin,
+        Ok(Err(_)) => ServerClose::Reset,
+        Err(_) => ServerClose::StillOpen,
+    };
+    (response, closed)
+}
+
 /// A chunked request; the body is sent as `chunks` so `Limited` can reject it
 /// mid-stream (there is no Content-Length for the precheck to catch).
 fn chunked_request(
@@ -1115,10 +1157,25 @@ async fn header_guard_beats_hyper_buffer_cap_at_the_boundary() {
     let mut request =
         format!("GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: h\r\n{completed}X-Pad: ")
             .into_bytes();
-    // 16,368 value bytes, no CRLF: the head is still incomplete when hyper's
-    // old 32 KiB buffer filled, but Node's count already exceeded 16,384.
-    request.extend(std::iter::repeat_n(b'a', 16_368));
-    let (response, closed) = exchange_until_eof(port, &request, Duration::from_secs(5)).await;
+    // The first write alone crosses the counted 16,384 budget while the line
+    // is still incomplete (9,824-ish counted completed-line bytes + `X-Pad`
+    // + 6,600 value bytes), so the guard answers before any dribble starts
+    // and the server's receive queue is empty at its close. The remaining
+    // 16,368 - 6,600 value bytes then dribble in beats — the #2773 fix-r2
+    // construction that makes the close-kind pin deterministic instead of the
+    // upfront-write timing race (review anthropic concurrency#1). The total
+    // head is still 16,368 value bytes with no CRLF, so hyper's old 32 KiB
+    // buffer would have filled first pre-fix.
+    request.extend(std::iter::repeat_n(b'a', 6_600));
+    let (response, closed) = exchange_dribbled_after_response(
+        port,
+        &request,
+        16_368 - 6_600,
+        1_024,
+        Duration::from_millis(1),
+        Duration::from_secs(5),
+    )
+    .await;
     assert_eq!(
         response,
         NODE_431,
@@ -1632,20 +1689,44 @@ async fn oversized_chunked_body_rejection_closes_connection() {
 /// #2774 arbitration probe, `_tmp/20261026-issue-2773/node-arbitration/`)
 /// delivers the 400/431 first and then RSTs once the unread body exceeds the
 /// parser buffer (`frob-body-1m` / `header-no-colon-body-1m` cells), while
-/// the missing-Host family drains and FINs; Rust delivers the response and
-/// closes with a plain FIN in every cell — the strictly more graceful side
-/// of the registered `A7.4-HTTPSTORE-PARSER-ADMISSION-001-R1` deviation. A
-/// regression that loses the rejection bytes to an RST turns this red; the
-/// no-op admission mutant that lets these cells reach the handler is killed
-/// by both this test and the socket-request replay below it.
+/// the missing-Host family drains and FINs. Rust's pre-fix close kind was
+/// itself a timing race (the same cells flipped FIN/RST across three
+/// measurement rounds — macOS, Linux CI, see the matrix in
+/// `A7.4-HTTPSTORE-PARSER-ADMISSION-001-R1`); the fix-r1 drain wiring makes
+/// the answered-then-drained close a deterministic FIN for every body the
+/// drain cap can absorb. The FROB cell below pins it by dribbling the body
+/// after the response, so a regression that unwires the drain eats an RST
+/// (#2773 fix-r2, review anthropic concurrency#1); the withheld, headless
+/// and CONNECT cells pin shape and delivery, whose receive queues are empty
+/// at close. The no-op admission mutant that lets these cells reach the
+/// handler is killed by both this test and the socket-request replay below
+/// it.
 #[tokio::test]
 async fn parser_rejection_with_unread_body_delivers_and_closes() {
     let body = vec![b'a'; UNREAD_BODY_BYTES];
     let (store, directory) = file_store("unread-admission");
     let (server, port) = start_limited(store, ServeLimits::default()).await;
 
-    let frob = http_request("FROB", &format!("{STORE_PATH_PREFIX}list"), &[], &body);
-    let (response, closed) = exchange_until_eof(port, &frob, Duration::from_secs(10)).await;
+    // The FROB head declares the 1 MiB body but sends none of it, so the
+    // admission 400 is written while the server's receive queue is empty;
+    // the ruler reads that response first and only then dribbles the body in
+    // 32 KiB beats that finish well inside `drain_after_early_close`'s 1 s
+    // cap (#2773 fix-r2, review anthropic concurrency#1: a drained close
+    // absorbs every beat and FINs, a close without the drain wiring eats an
+    // RST from the beats still in flight — the kill is deterministic).
+    let frob_head = format!(
+        "FROB {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+         Content-Length: {UNREAD_BODY_BYTES}\r\n\r\n"
+    );
+    let (response, closed) = exchange_dribbled_after_response(
+        port,
+        frob_head.as_bytes(),
+        UNREAD_BODY_BYTES,
+        32 * 1024,
+        Duration::from_millis(1),
+        Duration::from_secs(10),
+    )
+    .await;
     assert_close_without_keep_alive(&response, 400, "#2774 unread-admission-frob");
     assert_eq!(
         closed,
@@ -1655,6 +1736,9 @@ async fn parser_rejection_with_unread_body_delivers_and_closes() {
 
     // Withheld body: the peer declared a body it never sent; the rejection
     // still answers and closes (Node's `frob-head` cell measured the same).
+    // Shape and delivery only — the receive queue is empty at close, so the
+    // FIN holds regardless of the drain wiring; the close-kind axis against
+    // an unwired drain is the dribbled FROB cell above (DS boundary#6).
     let withheld = format!(
         "FROB {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n\
          Content-Length: {UNREAD_BODY_BYTES}\r\n\r\n"
@@ -1704,6 +1788,60 @@ async fn parser_rejection_with_unread_body_delivers_and_closes() {
 
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #2773 fix-r2 (review DS sibling#4): the `ServerClose` mapping itself —
+/// `Ok(Err(..)) => Reset` and `Err(_) => StillOpen` — had no committed
+/// coverage; only the macOS negative controls exercised those arms
+/// indirectly, so a refactor that collapsed them back into one `bool`
+/// (`Ok(_) => closed`) would have passed every committed test. Pin both
+/// without any admission race: a listener that answers and then closes with
+/// `SO_LINGER 0` must classify as `Reset`, and one that never closes as
+/// `StillOpen` under a short limit. The `Reset` arm asserts no response
+/// bytes: an RST may flush queued data, so the response shape is not a
+/// deterministic property of that close kind.
+#[tokio::test]
+async fn server_close_ruler_pins_reset_and_still_open() {
+    use std::io::{Read as _, Write as _};
+    let head = b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+
+    let reset_listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind reset");
+    let reset_port = reset_listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        let (mut stream, _) = reset_listener.accept().expect("accept");
+        let mut buffer = [0u8; 1024];
+        let _ = stream.read(&mut buffer);
+        let _ = stream.write_all(
+            b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        );
+        let _ = stream.flush();
+        let _ =
+            socket2::SockRef::from(&stream).set_linger(Some(std::time::Duration::from_millis(0)));
+    });
+
+    let (_response, closed) = exchange_until_eof(reset_port, head, Duration::from_secs(5)).await;
+    assert_eq!(
+        closed,
+        ServerClose::Reset,
+        "a close with SO_LINGER 0 must classify as Reset, not Fin"
+    );
+
+    let open_listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind open");
+    let open_port = open_listener.local_addr().unwrap().port();
+    let (release, hold) = std::sync::mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        let (stream, _) = open_listener.accept().expect("accept");
+        // Hold the accepted stream open until the assertion is done.
+        let _ = hold.recv();
+        drop(stream);
+    });
+    let (_response, closed) = exchange_until_eof(open_port, head, Duration::from_millis(300)).await;
+    assert_eq!(
+        closed,
+        ServerClose::StillOpen,
+        "a peer that never closes must classify as StillOpen under the ruler's limit"
+    );
+    let _ = release.send(());
 }
 
 /// Node v22.22.0 answers HTTP/1.0 with `Connection: close` even when the

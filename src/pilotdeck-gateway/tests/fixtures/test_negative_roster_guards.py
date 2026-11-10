@@ -186,7 +186,13 @@ class ManagerRosterGuard(unittest.TestCase):
             installed = signal.getsignal(signal.SIGTERM) is module.terminate_cleanly
         finally:
             for name, handler in saved_handlers.items():
-                signal.signal(getattr(signal, name), handler)
+                # getsignal returns None when the disposition is held by
+                # non-Python code, and signal.signal(..., None) would raise
+                # TypeError (same guard as test_safety.py's restore site);
+                # restore SIG_DFL there so the cleanup cannot mask the real
+                # result with an unrelated exception (DS/anthropic 同撞).
+                signal.signal(getattr(signal, name),
+                              handler if handler is not None else signal.SIG_DFL)
         return module, code, out, stdout.getvalue(), stderr.getvalue(), writes, installed
 
     def test_full_run_publishes_only_after_passing_the_roster_recheck(self):
