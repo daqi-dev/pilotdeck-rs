@@ -5,9 +5,8 @@ This runner mutates the tracked apparatus source in place and requires the
 behavior check to turn red for the specific mutation, not for an unrelated
 error.  It must run only after the #164 changes are committed:
 ``mutating_sources`` proves the named file is byte-identical to its baseline
-before writing anything, and refuses otherwise.  The new check/launcher files
-beside this script are not mutated, so their pre-commit absence from HEAD does
-not matter.
+before writing anything, and refuses otherwise.  The check_linux.py summary is a mutation target; every selected source must
+match committed HEAD before the existing snapshot guard admits mutation.
 
 Run only after the coordinator commits the patch; never substitute a worktree
 snapshot for HEAD to bypass the pristine-source guard.
@@ -1829,6 +1828,10 @@ def controls_nested_same_name(rows):
 # JUDGES below: #820's anchor selfcheck reads literal replacement tables only,
 # so callables stay out of MUTATIONS.
 MUTATIONS = [
+    ('empty-eligible-guard-removed', NEGATIVE,
+     "    if (not eligible or len(MUTATIONS)!=EXPECTED_DECLARED\n            or len({row[0]for row in MUTATIONS})!=EXPECTED_DECLARED\n            or len(eligible)!=EXPECTED_APPLICABLE.get(sys.platform,EXPECTED_APPLICABLE['other'])):",
+     '    if False:'),
+
     ('linux-initial-identity-gate-removed', LINUX_SOURCE,
      "    if held._state() != 'EXITED':\n        result.update(status=not_verified, reason='Linux leader identity was lost before cleanup proof')",
      "    if False:\n        result.update(status=not_verified, reason='Linux leader identity was lost before cleanup proof')"),
@@ -4314,6 +4317,7 @@ def linux_kernel_regression(rows,case,field,want):
 
 
 JUDGES = {
+    'empty-eligible-guard-removed':('batch-aggregation',lambda rows:match(rows,'batch-aggregation',{'negativeRestored.emptyStatus':'PASS','negativeRestored.emptyReturncode':0}),False,()),
     'linux-initial-identity-gate-removed':('linux-kernel-controls',lambda rows:linux_kernel_regression(rows,'helper-initial-identity','observerCalls',1),False,()),
     'linux-pre-reap-identity-gate-removed':('linux-kernel-controls',lambda rows:linux_kernel_regression(rows,'helper-pre-reap-identity','result.status','VERIFIED'),False,()),
     'linux-refusal-erases-finding':('linux-kernel-controls',lambda rows:linux_kernel_regression(rows,'signal-refused-positive-finding','result.status','NOT_VERIFIED'),False,()),
@@ -5077,6 +5081,10 @@ def require_restored(source, digest):
         raise RuntimeError(f'source restore hash mismatch: {source.name}')
 
 
+EXPECTED_DECLARED=238
+EXPECTED_APPLICABLE={'linux':233,'darwin':230,'other':225}
+
+
 DARWIN_ONLY = frozenset(('empty-group-probe-removed','sigterm-removed',
     'sigkill-escalation-removed','eperm-census-ignored','blocked-branch-removed'))
 LINUX_ONLY = frozenset(('linux-initial-identity-gate-removed','linux-pre-reap-identity-gate-removed','linux-refusal-erases-finding','linux-empty-group-probe-removed','linux-sigterm-removed',
@@ -5104,6 +5112,11 @@ def main():
     _install_terminate_handlers()
     eligible = applicable_mutations(sys.platform)
     known = {row[0] for row in eligible}
+    if (not eligible or len(MUTATIONS)!=EXPECTED_DECLARED
+            or len({row[0]for row in MUTATIONS})!=EXPECTED_DECLARED
+            or len(eligible)!=EXPECTED_APPLICABLE.get(sys.platform,EXPECTED_APPLICABLE['other'])):
+        common=committed_status_contract(ROOT)
+        return common.aggregate_status('BLOCKED')[1]
     if set(args.only) - known or len(args.only) != len(set(args.only)):
         common = committed_status_contract(ROOT)
         return common.aggregate_status('BLOCKED')[1]
@@ -5230,7 +5243,7 @@ def main():
                                       f'rows={len(rows)} wiring={bool(wiring)}')
             (output / 'pgrep-after.txt').write_text(pgrep_launcher())
             # The restored positive is a child of the same batch: a PASS_WITH_SKIPS
-            # child (non-Darwin platform skips) can never become PASS/0.
+            # child (unsupported-platform skips) can never become PASS/0.
             top_status, exit_code = common.aggregate_status(
                 *(MUTATION_STATUS.get(entry['verdict'], 'FAIL') for entry in summary),
                 restored_summary.get('status') if restored_ok else 'FAIL')

@@ -796,6 +796,56 @@ def linux_filtered_proc_control(md):
     return result
 
 
+def run_kernel_cli_process(command, timeout=90):
+    """Own only this strict CLI child; TERM lets its kernel registry unwind."""
+    process=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                             text=True,start_new_session=True)
+    fd=None
+    try:
+        fd=os.pidfd_open(process.pid,0)
+        try:stdout,stderr=process.communicate(timeout=timeout)
+        except BaseException as error:
+            if fd is not None:
+                try:signal.pidfd_send_signal(fd,signal.SIGTERM)
+                except ProcessLookupError:pass
+            try:stdout,stderr=process.communicate(timeout=15)
+            except subprocess.TimeoutExpired:
+                signal.pidfd_send_signal(fd,signal.SIGKILL)
+                stdout,stderr=process.communicate(timeout=5)
+            if isinstance(error,subprocess.TimeoutExpired):
+                raise subprocess.TimeoutExpired(command,timeout,output=stdout,stderr=stderr) from error
+            raise
+        return SimpleNamespace(returncode=process.returncode,stdout=stdout,stderr=stderr)
+    finally:
+        if fd is not None:os.close(fd)
+        elif process.poll() is None:
+            process.terminate();process.wait(timeout=15)
+
+
+def linux_kernel_controls(md, output):
+    """In-process counterpart of the strict standalone kernel control CLI.
+
+    Source mutation controls use the existing mutating_sources guard; this
+    mode deliberately does not launch a second HEAD-gated CLI on a mutant.
+    The normal --mode all path below retains that independent strict CLI.
+    """
+    path=Path(__file__).with_name('check_linux.py')
+    spec=importlib.util.spec_from_file_location('linux_kernel_fixture',path)
+    fixture=importlib.util.module_from_spec(spec)
+    sys.modules[spec.name]=fixture
+    source=path.read_bytes();exec(compile(source,str(path),'exec'),fixture.__dict__)
+    fixture._apparatus_source=source
+    folder=output/'linux-kernel-controls'
+    result,stable=fixture.execute_controls(md,folder)
+    document=fixture.summarize_controls(result,stable)
+    report=folder/'report.json'
+    report.write_text(json.dumps(document,indent=2))
+    return {'mode':'linux-kernel-controls','passed':bool(
+        document.get('status')=='PASS' and document.get('testsRun')==11
+        and not document.get('skipped') and document.get('sourceUnchanged') is True),
+        'report':str(report),'execution':'in-process registered source-mutation controls'}
+
+
 def _blocked_case(md, killpg_error, kill_error=None):
     child = _zombie_child()
     patches = [patch.object(md.os, 'killpg', side_effect=killpg_error)]
@@ -7312,7 +7362,10 @@ def negative_restored_replays(output):
     restored PASS_WITH_SKIPS child must make the batch non-PASS, never PASS/0.
     """
     nc = load_negative_controls()
-    name = nc.MUTATIONS[0][0]
+    name = 'batch-status-relaxed'
+    if not all(name in {row[0]for row in nc.applicable_mutations(platform)}
+               for platform in ('linux','darwin','freebsd')):
+        raise RuntimeError('negative-restored replay method must be cross-platform')
     sources = {nc.COMMON_SOURCE, *(Path(row[1]) for row in nc.MUTATIONS)}
     real_write_text = Path.write_text
     real_write_bytes = Path.write_bytes
@@ -7333,6 +7386,7 @@ def negative_restored_replays(output):
 
     cases = (
         ('pass', 'darwin', 'PASS', 0, 'KILLED', True, ('PASS', 0)),
+        ('empty', 'darwin', 'PASS', 0, 'KILLED', True, ('BLOCKED', 2)),
         ('skip', 'freebsd', 'PASS_WITH_SKIPS', 1, 'KILLED', True,
          ('PASS_WITH_SKIPS', 1)),
         ('survived', 'darwin', 'PASS', 0, 'SURVIVED', True, ('FAIL', 1)),
@@ -7349,21 +7403,24 @@ def negative_restored_replays(output):
         fake_summary = {'status': restored_status, 'results': result_rows}
         fake = SimpleNamespace(returncode=restored_code, stdout='', stderr='')
         saved = (nc.sys.argv, nc.sys.platform, nc.mutating_sources, nc.run_check,
-                 nc.read_summary, nc.classify, nc.pgrep_launcher, nc.MUTATIONS)
-        nc.MUTATIONS = [row for row in nc.MUTATIONS if row[0] == name]
+                 nc.read_summary, nc.classify, nc.pgrep_launcher, nc.applicable_mutations)
+        if tag == 'empty':nc.applicable_mutations=lambda _platform: []
         nc.mutating_sources = fake_mutating
         nc.run_check = lambda *_a, **_k: fake
         nc.read_summary = lambda *_a, **_k: (fake_summary, None)
         nc.classify = lambda *_a, **_k: (verdict, 'injected')
         nc.pgrep_launcher = lambda: ''
-        nc.sys.argv = ['negative_controls.py', '--output', str(case), '--only', name]
+        nc.sys.argv = ['negative_controls.py', '--output', str(case)] + ([] if tag=='empty' else ['--only',name])
         nc.sys.platform = platform
         try:
             with patch.object(Path, 'write_text', guarded_write_text), \
                     patch.object(Path, 'write_bytes', guarded_write_bytes):
                 code = nc.main()
-            report = json.loads((case / 'summary.json').read_text())
-            observed = (report.get('status'), code)
+            if tag=='empty' and code==2 and not case.exists():
+                observed=('BLOCKED',code)
+            else:
+                report=json.loads((case/'summary.json').read_text())
+                observed=(report.get('status'),code)
             failures = [] if observed == want else [
                 f'#164-fix-r7 negative-restored {tag}: {observed!r}, want {want!r}']
         except Exception as error:
@@ -7372,7 +7429,7 @@ def negative_restored_replays(output):
                         f'{type(error).__name__}: {error}']
         finally:
             (nc.sys.argv, nc.sys.platform, nc.mutating_sources, nc.run_check,
-             nc.read_summary, nc.classify, nc.pgrep_launcher, nc.MUTATIONS) = saved
+             nc.read_summary, nc.classify, nc.pgrep_launcher, nc.applicable_mutations) = saved
         rows[f'{tag}Status'] = observed[0]
         rows[f'{tag}Returncode'] = observed[1]
         rows[f'{tag}Passed'] = not failures
@@ -7538,6 +7595,7 @@ def batch_aggregation_control(md, output):
                              'returncode': 2},
         'negativeRestored': {
             'passStatus': 'PASS', 'passReturncode': 0,
+                             'emptyStatus':'BLOCKED','emptyReturncode':2,
             'skipStatus': 'PASS_WITH_SKIPS', 'skipReturncode': 1,
             'survivedStatus': 'FAIL', 'survivedReturncode': 1,
             'invalidStatus': 'BLOCKED', 'invalidReturncode': 2,
@@ -7578,10 +7636,13 @@ def main():
                                            'aggregation-audit', 'all'),
                         default='all')
     args = parser.parse_args()
-    output = args.output.resolve()
-    output.mkdir(parents=True, exist_ok=False)
     global md
     md = load_session_domain()
+    if args.mode=='linux-kernel-controls' and sys.platform!='linux':
+        print(json.dumps({'mode':args.mode,'reason':'Linux kernel controls are not applicable on this platform'}))
+        return md.common.aggregate_status('BLOCKED')[1]
+    output = args.output.resolve()
+    output.mkdir(parents=True, exist_ok=False)
     results = []
     modes = ('clean', 'leak', 'ignore') if args.mode == 'all' else (
         () if args.mode in ('linux-kernel-controls', 'status', 'runtime-negative', 'blocked', 'wiring',
@@ -7666,12 +7727,18 @@ def main():
             result = control_failure('batch-aggregation', error)
         results.append(result)
         print(json.dumps(result, ensure_ascii=False), flush=True)
-    if args.mode in ('linux-kernel-controls', 'all') and sys.platform == 'linux':
+    if args.mode == 'linux-kernel-controls' and sys.platform == 'linux':
+        try:
+            result=linux_kernel_controls(md,output)
+        except Exception as error:
+            result=control_failure('linux-kernel-controls',error)
+        results.append(result)
+        print(json.dumps(result,ensure_ascii=False),flush=True)
+    if args.mode == 'all' and sys.platform == 'linux':
         linux_output = output / 'linux-kernel-controls'
         try:
-            child = subprocess.run([sys.executable, '-I', '-B',
-                                    str(Path(__file__).with_name('check_linux.py')),
-                                    '--output', str(linux_output)], capture_output=True, text=True, timeout=90)
+            child=run_kernel_cli_process([sys.executable,'-I','-B',
+                str(Path(__file__).with_name('check_linux.py')),'--output',str(linux_output)])
             (output / 'linux-kernel-controls.log').write_text(child.stdout + child.stderr)
             document = json.loads((linux_output / 'report.json').read_text())
             result = {'mode': 'linux-kernel-controls', 'passed': bool(
@@ -7679,6 +7746,11 @@ def main():
                 and document.get('testsRun') == 11 and not document.get('skipped')
                 and document.get('sourceUnchanged') is True), 'report': str(linux_output / 'report.json')}
         except Exception as error:
+            if isinstance(error,subprocess.TimeoutExpired):
+                stdout=error.stdout or '';stderr=error.stderr or ''
+                if isinstance(stdout,bytes):stdout=stdout.decode(errors='replace')
+                if isinstance(stderr,bytes):stderr=stderr.decode(errors='replace')
+                (output/'linux-kernel-controls.log').write_text(stdout+stderr)
             result = control_failure('linux-kernel-controls', error)
         results.append(result)
         print(json.dumps(result, ensure_ascii=False), flush=True)
