@@ -4744,6 +4744,20 @@ class DiscoveryAnchorTests(unittest.TestCase):
                 sum(1 for rows in blind['channel-sms-head-timeout/'
                                         'negative_controls.py'].values()
                     if rows == [IMPORTED_HELPER_REASON])),
+            # fix-r35（DS sibling P2）：同段的「其中 N 处是宿主键 grep 够不到
+            # 的表本身——N 张顶层 + N 张 negative 前置目录」是最后一批手抄数字，
+            # 与 sweep 的两条不可解标记（top-level / host key grep cannot reach）
+            # 逐项可复算——按标记的判据（'/' 不在 rel / fnmatch 不中）计数绑定，
+            # 与本测试其余数字同漂移类、同绑法。
+            'host-grep-unreachable tables': (
+                sum(1 for rel in unresolvable if '/' not in rel)
+                + sum(1 for rel in unresolvable
+                      if '/' in rel
+                      and not fnmatch.fnmatch(rel, '*/*negative*.py')),
+                sum(1 for rel in unresolvable if '/' not in rel),
+                sum(1 for rel in unresolvable
+                    if '/' in rel
+                    and not fnmatch.fnmatch(rel, '*/*negative*.py'))),
         }
         patterns = {
             'registered files': r'KNOWN_BLIND` 登记 \*\*(\d+) 个文件\*\*',
@@ -4760,6 +4774,9 @@ class DiscoveryAnchorTests(unittest.TestCase):
             'registered table count': r'只登记 #2133 点名的 (\d+) 张表',
             'head-timeout split': (r'量到 (\d+) 条键（(\d+) 条裸文件名、'
                                    r'(\d+) 条 import）'),
+            'host-grep-unreachable tables': (
+                r'（其中 (\d+) 处是宿主键 grep 够不到的表本身'
+                r'——(\d+) 张顶层 \+ (\d+) 张 negative 前置目录'),
         }
         text = (FIXTURES / 'README.md').read_text(encoding='utf-8')
         for label, pattern in patterns.items():
@@ -6703,10 +6720,16 @@ class DiscoveryAnchorTests(unittest.TestCase):
         """``import_module('x')`` names the same helper as ``import x``.
 
         Tables reach for it to import a helper by name at runtime; the module
-        path is still a literal, so the key is known.
+        path is still a literal, so the key is known. The module alias
+        ``im.import_module('x')`` is registered as a keyed shape (README
+        follow-up list, fix-r34 blind class), so it needs its own positive
+        control here — otherwise a later tightening of the receiver check
+        could silently drop it and widen the registered blind class
+        (fix-r35, DS sibling P2).
         """
         shapes = {
             'importlib': "import importlib\nhelper = importlib.import_module('_shared.scope')\n",
+            'module alias': "import importlib as im\nhelper = im.import_module('_shared.scope')\n",
             'dunder': "helper = __import__('_shared.scope')\n",
         }
         for label, line in shapes.items():
