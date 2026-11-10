@@ -54,21 +54,47 @@ use tokio::net::TcpStream;
 use super::super::protocol::{ChannelLog, ChannelStartDeps};
 use super::*;
 
-/// Ports sit in the free gap above the wecom-callback golden replay segment
-/// (18900–18921) and below the feishu segment (18960–18999: the feishu
-/// oracle replay binds 18960–18972, its pins bind 18973/18980/18990–18993).
-/// Within the gap the sms lane owns 18922–18923 (the http10 pins), 18924–18925
-/// (this module's head-timeout pins, the constants right below), 18926 (the
-/// json-null cell), 18927–18928 (the #2152 parser-admission pins) and
-/// 18929–18932 (the #2691 port-guard cases: the v6-only occupier, the
-/// TOCTOU bind race, the dual-stack preflight and the replay-form
-/// post-start guard) — keep
-/// this ledger in sync when an sms pin moves: #2257 fix-r4, fix-r5 and
-/// #2152 fix-r1 each caught a port collision in this gap. fix-r5 moved the
-/// head-timeout pins here off 18971/18972, which the feishu replay binds
-/// (same class as the 18904 wecom overlap fixed in fix-r4). 18973–18979
-/// remain inside the feishu registered range; only 18973 has an actual
-/// cross-lane bind (the feishu NULL_PIN_ROUTER), tracked in #2446.
+/// The 189xx port-segment ledger — the **single source of truth** for this
+/// gap (#2773 A2); the port comments in `sms/tests.rs` point here instead of
+/// restating the layout.
+///
+/// ```text
+/// 18800–18858  sms golden replay fixture (`tests/fixtures/channel-sms/`)
+/// 18859–18899  free
+/// 18900–18921  wecom-callback golden replay fixture (the
+///              `missing-outbound-config` "no listener" port is 18921)
+/// 18922–18923  sms http10 pins (18922 the 404 pin, 18923 the 200 pin)
+/// 18924–18925  sms head-timeout pins (this module, the constants below)
+/// 18926        sms json-null cell
+/// 18927–18928  sms #2152 parser-admission pins
+/// 18929–18932  sms #2691 port-guard cases (the v6-only occupier on 18929,
+///              the TOCTOU bind race on 18930, the dual-stack preflight on
+///              18931, the replay-form post-start guard on 18932)
+/// 18933        sms #2773 CONNECT pin (the admission gate's zero-byte close;
+///              moved off 18929 — #2691 took it on main after this PR's
+///              draft had claimed it)
+/// 18934–18959  free
+/// 18960–18999  feishu registered segment — the feishu oracle replay binds
+///              18960–18972 and its pins bind 18973/18980/18990–18993; the
+///              wecom suite binds 18990/18991/18994 and 18995–18998 (the
+///              QYAPI fake on 18998), and its concurrent-dispatch test
+///              dials 18993 as a "nothing listens here" qyapi address
+///              while the feishu TOKEN_PIN binds it (#2446 tracks that
+///              bind-vs-dial overlap too)
+/// ```
+///
+/// **18973–18979 sit inside the feishu registered range** yet belong to this
+/// module: 18973 is `PORT_DEFAULT_WIRING`, one of the three bind-vs-bind
+/// cross-lane overlaps in this gap (the feishu NULL_PIN_ROUTER_PORT, tracked
+/// in #2446 — the other two are 18990/18991, which the wecom suite binds
+/// against feishu's `LARK_PORT` / `NULL_PIN_LARK_PORT`; #2446 also carries
+/// the fourth, bind-vs-dial 18993 overlap recorded above); 18974–18979 are
+/// this module's `PORT_DEFAULT_DEADLINE` … `PORT_STOP_DROP` constants below
+/// (they predate the feishu registration; the feishu replay never binds
+/// them). Keep this ledger in sync when any pin moves: #2257 fix-r4, fix-r5
+/// and #2152 fix-r1 each caught a port collision in this gap; fix-r5 moved
+/// the head-timeout pins here off 18971/18972, which the feishu replay binds
+/// (same class as the 18904 wecom overlap fixed in fix-r4).
 const PORT_HALF_HEAD: u16 = 18924;
 const PORT_POSITIVE: u16 = 18925;
 const PORT_DEFAULT_WIRING: u16 = 18973;

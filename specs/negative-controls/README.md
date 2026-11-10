@@ -151,6 +151,21 @@ utf16 `startup_refusal` 先例，证据目录既不发 summary 也不留认领�
 `_shared/negative_control.py`（`mutation_suite` 与 `run()` 的判杀守卫）。
 `negative.py` / `*_negative.py` 命名的同族入口仍不在扫描面内（#1666 后续批次）。
 
+**名册防线机检的入口覆盖（#2773 fix-r3 登记）**：`manager-gateway` 的「先核对 verdict
+名册后发布」防线由 `test_negative_roster_guards.py` 行为级驱动机检（stub 执行层、
+真 `main()`；fix-r3 起驱动持 `tree_lock`、60 s 测试预算，见该文件 docstring）。
+`memory-gateway` ·
+`snapshot-projection` · `sdk-mcp-session-tools` 三条同族入口带同形防线
+（`recorded != expected` ⇒ 只发 `roster-mismatch.json`、退 1、不发 summary），由同文件的
+**源锚点钉**机检：静态分母 `EXPECTED_SIBLINGS`（表键即循环域，删键即红）+ 行锚（按序、
+跳过注释行）+ 双杀伤自检（`if recorded != expected:` 常量化、防线锚行整块注释化均须红）。
+行为级驱动仍只覆盖 manager-gateway——memory-gateway / snapshot-projection 的变异写入是
+裸 `Path.write_text`（窗口内对产品源的截断式原地写，SIGKILL 半写会留下半截源并让下一轮
+preflight 整树拒跑，即 #1903 引入 `write_source_atomic` 的那个风险）；
+sdk-mcp-session-tools 写入走共享 `mutating_sources` 窗口、可行为级驱动，是 #2804 的首个
+扩展项（登记表驱动的行为级扩展、三态注入与锚扫描的 AST 化同见 #2804；三入口 summary
+载荷缺 `selected` 见 #2805）。
+
 1. **分母是静态字面量，不是运行期表长度**。表后写 `EXPECTED_NAMES`，启动即
    `registered(表, EXPECTED_NAMES)` 逐项（含顺序与重复）比对，漂移就拒跑。用 `len(表)`
    当分母时，删掉一行只是把这一轮悄悄变短：summary 仍报 `N/N killed`；整表被清空则打印

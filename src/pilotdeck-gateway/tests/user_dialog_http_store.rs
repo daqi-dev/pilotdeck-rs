@@ -1150,17 +1150,17 @@ async fn socket_requests_match_typescript_framing() {
         assert_eq!(
             status,
             case["response"]["status"].as_u64().unwrap() as u16,
-            "{name}: status"
+            "{name}: #2773 admission replay status differs"
         );
         assert_eq!(
             content_type.as_deref(),
             case["response"]["contentType"].as_str(),
-            "{name}: content type"
+            "{name}: #2773 admission replay content type differs"
         );
         assert_eq!(
             wire_body.as_slice(),
             case["response"]["body"].as_str().unwrap().as_bytes(),
-            "{name}: body"
+            "{name}: #2773 admission replay body differs"
         );
     }
     server.close().await;
@@ -1214,17 +1214,31 @@ fn recorded_set_host(request: &Value, name: &str) -> bool {
 
 /// #2152 fix-r1 (review r1): the fail-closed `setHost` read has its own
 /// unit pin, the api-server lane's `req_spec_refuses_a_non_boolean_set_host`
-/// rule — the read is only embedded in the big replay otherwise.
+/// rule — the read is only embedded in the big replay otherwise. #2773
+/// reshaped it from `should_panic` to `catch_unwind`: a fail-open mutation
+/// of the read makes a `should_panic` test fail with the runner's own
+/// "did not panic" message, which carries no issue marker a negative
+/// control can bind to; the caught-panic shape below asserts the payload
+/// itself.
 #[test]
-#[should_panic(expected = "#2152 request `setHost` must be a boolean, found String(\"no\"")]
 fn socket_request_set_host_refuses_a_non_boolean() {
     // fix-r2 (review r2): `parse_json` returns `pilotdeck_protocol::JsValue`,
     // while `recorded_set_host` reads a `serde_json::Value` — round-trip
     // through the file's own `js`/`json` helpers, like every other reader
     // here, so the pin both compiles and keeps the serde Debug shape the
-    // `should_panic` message asserts.
+    // refusal message asserts.
     let request = json(&js(r#"{"path": "/x", "setHost": "no"}"#));
-    recorded_set_host(&request, "negative");
+    let panic = std::panic::catch_unwind(|| recorded_set_host(&request, "negative"))
+        .expect_err("#2773 the non-boolean `setHost` must be refused fail-closed");
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or_default();
+    assert!(
+        message.contains("#2152 request `setHost` must be a boolean, found String(\"no\")"),
+        "#2773 the refusal must keep the fail-closed payload: {message}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

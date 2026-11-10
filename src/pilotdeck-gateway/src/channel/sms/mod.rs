@@ -7,6 +7,7 @@
 //! option ([`SmsChannelOptions::gateway`]). #1333's api-server port later added
 //! `turn_gateway` to the deps; the sms adapter still does not read it — the
 //! difference is recorded in the #1339 diffs ledger (A8.3-CH-SMS-004).
+mod admission;
 pub mod elicitation;
 pub mod gateway;
 #[cfg(test)]
@@ -1059,21 +1060,11 @@ async fn route_request(
     request: Request<Incoming>,
     shared: Arc<SmsShared>,
 ) -> Result<Response<crate::Body>, DestroyConnection> {
-    // #2152: the TS channel is a bare `http.createServer` (SmsChannel.ts:89,
-    // no options), so llhttp / `_http_server.js` reject a bad method, a
-    // non-ASCII or malformed target, an over-budget header block and an
-    // HTTP/1.1 request without `Host` *before* the handler runs — the same
-    // gate the webhook and api-server channels already run (#1683). The
-    // rejection flows through the same `finalize` as every other response.
-    // The gate's `Err` is the zero-byte socket close a CONNECT to a plain
-    // `http.Server` performs — the same wire outcome as the payload guard,
-    // so it maps explicitly onto the connection destroy hyper already
-    // performs for this error type (the serve result is discarded); the
-    // mapping stays at the call site instead of a blanket `From` so a future
-    // io error in here cannot silently become a connection destroy.
-    if let Some(rejection) =
-        crate::native_http::node_parser_admission(&request).map_err(|_| DestroyConnection)?
-    {
+    // #2773: the call and its rationale live in `admission.rs` — extracted
+    // there so the no-op negative controls can mutate it without touching
+    // this file (the switch-family scripts hash `mod.rs` in their GUARDED
+    // lists).
+    if let Some(rejection) = admission::admit(&request)? {
         return Ok(rejection);
     }
     let (path, port, auth_token, host, public_url) = {

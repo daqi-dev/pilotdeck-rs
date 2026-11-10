@@ -396,18 +396,98 @@ async fn exchange_within(port: u16, request: &[u8], limit: Duration) -> std::io:
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "no response"))?
 }
 
-/// Like [`exchange_lenient`], but reports whether the server actually ended the
-/// connection (EOF or reset) instead of leaving it idle until `limit`.
-async fn exchange_until_eof(port: u16, request: &[u8], limit: Duration) -> (Vec<u8>, bool) {
+/// How the server ended the connection, as seen from a bare socket: a clean
+/// FIN (`read_to_end` returns `Ok`), a reset (`Ok(Err(..))` — typically
+/// `ECONNRESET`, what a close with unread bytes still in the kernel receive
+/// queue degenerates into), or no end within `limit` at all (#2773 fix-r1
+/// P1-a: the old `bool` counted a reset as a clean close, so a pin could not
+/// tell a FIN from an RST — the very axis the #2774 arbitration needed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ServerClose {
+    Fin,
+    Reset,
+    StillOpen,
+}
+
+/// Whether every dribble beat's write completed against the server
+/// (`exchange_dribbled_after_response`, #2773 fix-r3, review MM r3
+/// concurrency#1 / boundary#3): the write side of the dribble is the
+/// platform-independent drain discriminator. A non-draining close leaves the
+/// beats in flight against a socket the peer has fully closed, and the RST
+/// that earns fails every later write on both POSIX platforms — regardless of
+/// which of the already-queued FIN and the late RST the client's
+/// `read_to_end` consumes first (on Linux the queued FIN wins that read race,
+/// so the close-kind axis alone cannot discriminate there: cb8 rounds
+/// `negctl6` / `negctl7`, both drain-unwired rows SURVIVED).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DribbleWrites {
+    AllAbsorbed,
+    Errored,
+}
+
+/// Like [`exchange_lenient`], but reports how the server ended the
+/// connection instead of leaving it idle until `limit`.
+async fn exchange_until_eof(port: u16, request: &[u8], limit: Duration) -> (Vec<u8>, ServerClose) {
     let mut stream = TcpStream::connect(("127.0.0.1", port))
         .await
         .expect("connect");
     let _ = tokio::time::timeout(limit, stream.write_all(request)).await;
     let mut response = Vec::new();
-    let closed = tokio::time::timeout(limit, stream.read_to_end(&mut response))
-        .await
-        .is_ok();
+    let closed = match tokio::time::timeout(limit, stream.read_to_end(&mut response)).await {
+        Ok(Ok(_)) => ServerClose::Fin,
+        Ok(Err(_)) => ServerClose::Reset,
+        Err(_) => ServerClose::StillOpen,
+    };
     (response, closed)
+}
+
+/// Like [`exchange_until_eof`], but for the close-kind axis: the client reads
+/// the full response first, then dribbles the declared body in bounded beats
+/// that finish well inside `drain_after_early_close`'s 1 s cap. A server that
+/// drains (the #2773 fix-r1 wiring) absorbs every beat, waits out the 100 ms
+/// silence, and FINs; a server that closes without draining has beats still
+/// in flight, so its close degenerates into an RST the client reads —
+/// deterministic on both sides where the old upfront `write_all` left the
+/// kill to a timing race (#2773 fix-r2, review anthropic concurrency#1). The
+/// response is read before the dribble starts so a dropped drain cannot
+/// RST-flush the response bytes out of the client's receive queue: the
+/// byte-shape assertions stay green and the close-kind / beat-write
+/// assertions are the ones that turn red.
+async fn exchange_dribbled_after_response(
+    port: u16,
+    head: &[u8],
+    body: usize,
+    beat_bytes: usize,
+    beat_every: Duration,
+    limit: Duration,
+) -> (Vec<u8>, ServerClose, DribbleWrites) {
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("connect");
+    let _ = tokio::time::timeout(limit, stream.write_all(head)).await;
+    let response = read_response(&mut stream).await;
+    let beat = vec![b'a'; beat_bytes];
+    let mut sent = 0;
+    let mut beats = DribbleWrites::AllAbsorbed;
+    while sent < body {
+        let take = beat.len().min(body - sent);
+        match tokio::time::timeout(limit, stream.write_all(&beat[..take])).await {
+            Ok(Ok(())) => {}
+            // A beat that times out or errors means the peer is no longer
+            // reading: the drain race is settled on the write side, on every
+            // platform (#2773 fix-r3, review MM r3 concurrency#1).
+            _ => beats = DribbleWrites::Errored,
+        }
+        sent += take;
+        tokio::time::sleep(beat_every).await;
+    }
+    let mut rest = Vec::new();
+    let closed = match tokio::time::timeout(limit, stream.read_to_end(&mut rest)).await {
+        Ok(Ok(_)) => ServerClose::Fin,
+        Ok(Err(_)) => ServerClose::Reset,
+        Err(_) => ServerClose::StillOpen,
+    };
+    (response, closed, beats)
 }
 
 /// A chunked request; the body is sent as `chunks` so `Limited` can reject it
@@ -748,8 +828,9 @@ async fn leading_value_ows_beyond_the_raw_cap_reaches_the_handler() {
             !response.starts_with(NODE_431),
             "#1555 uncounted leading OWS must not be answered with Node's 431"
         );
-        assert!(
+        assert_eq!(
             closed,
+            ServerClose::Fin,
             "#1555 the OWS request closes with its `Connection: close` response"
         );
     }
@@ -784,8 +865,9 @@ async fn four_thousand_ninety_seven_small_fields_reach_the_handler() {
         !response.starts_with(NODE_431),
         "#1555 a Node-legal field count must not be answered with 431"
     );
-    assert!(
+    assert_eq!(
         closed,
+        ServerClose::Fin,
         "#1555 the many-field request closes with its `Connection: close` response"
     );
     server.close().await;
@@ -831,7 +913,11 @@ async fn small_field_count_is_bounded_by_the_node_budget_not_a_field_cap() {
         response, NODE_431,
         "#1555 one more field reaches Node's `>=` budget and must be the exact 67-byte 431"
     );
-    assert!(closed, "#1555 the budget 431 must end the connection");
+    assert_eq!(
+        closed,
+        ServerClose::Fin,
+        "#1555 the budget 431 must end the connection"
+    );
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
 }
@@ -855,8 +941,9 @@ async fn leading_ows_does_not_exempt_the_counted_budget() {
         response, NODE_431,
         "#1555 dropped OWS padding must not exempt the counted value bytes"
     );
-    assert!(
+    assert_eq!(
         closed,
+        ServerClose::Fin,
         "#1555 the counted-budget 431 must end the connection"
     );
     server.close().await;
@@ -923,8 +1010,9 @@ async fn cr_in_value_is_rejected_like_node() {
             "#1555 a CR inside a field value must be rejected like Node ({shape:?}): {}",
             String::from_utf8_lossy(&response)
         );
-        assert!(
+        assert_eq!(
             closed,
+            ServerClose::Fin,
             "#1555 the parser 400 must end the connection ({shape:?})"
         );
     }
@@ -956,7 +1044,11 @@ async fn cr_in_value_past_the_raw_bound_keeps_the_registered_431() {
         "#1555 past the raw bound the CR-in-value shape is the guard's 431 \
          (Node answers its 400 for every length; registered in R7)"
     );
-    assert!(closed, "#1555 the guard 431 must end the connection");
+    assert_eq!(
+        closed,
+        ServerClose::Fin,
+        "#1555 the guard 431 must end the connection"
+    );
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
 }
@@ -994,7 +1086,7 @@ async fn header_guard_counts_name_and_value_like_node() {
         response, NODE_431,
         "2,730x `aaaaa: x` count 16,380 bytes plus the target/Host/Connection"
     );
-    assert!(closed, "the 431 must end the connection");
+    assert_eq!(closed, ServerClose::Fin, "the 431 must end the connection");
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
 }
@@ -1019,7 +1111,11 @@ async fn header_guard_boundary_matches_node_16384() {
     let pass = request("aa");
     let (response, closed) =
         exchange_until_eof(port, pass.as_bytes(), Duration::from_secs(5)).await;
-    assert!(closed, "Connection: close must end the pass case");
+    assert_eq!(
+        closed,
+        ServerClose::Fin,
+        "Connection: close must end the pass case"
+    );
     assert_eq!(
         status(&response),
         405,
@@ -1031,7 +1127,7 @@ async fn header_guard_boundary_matches_node_16384() {
     let (response, closed) =
         exchange_until_eof(port, fail.as_bytes(), Duration::from_secs(5)).await;
     assert_eq!(response, NODE_431, "16,384 counted bytes must be 431");
-    assert!(closed, "the 431 must end the connection");
+    assert_eq!(closed, ServerClose::Fin, "the 431 must end the connection");
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
 }
@@ -1084,17 +1180,43 @@ async fn header_guard_beats_hyper_buffer_cap_at_the_boundary() {
     let mut request =
         format!("GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: h\r\n{completed}X-Pad: ")
             .into_bytes();
-    // 16,368 value bytes, no CRLF: the head is still incomplete when hyper's
-    // old 32 KiB buffer filled, but Node's count already exceeded 16,384.
-    request.extend(std::iter::repeat_n(b'a', 16_368));
-    let (response, closed) = exchange_until_eof(port, &request, Duration::from_secs(5)).await;
+    // The first write alone crosses the counted 16,384 budget while the line
+    // is still incomplete (9,824-ish counted completed-line bytes + `X-Pad`
+    // + 6,600 value bytes), so the guard answers before any dribble starts
+    // and the server's receive queue is empty at its close. The remaining
+    // 16,368 - 6,600 value bytes then dribble in beats — the #2773 fix-r2
+    // construction that makes the close-kind pin deterministic instead of the
+    // upfront-write timing race (review anthropic concurrency#1). The total
+    // head is still 16,368 value bytes with no CRLF, so hyper's old 32 KiB
+    // buffer would have filled first pre-fix.
+    request.extend(std::iter::repeat_n(b'a', 6_600));
+    let (response, closed, beats) = exchange_dribbled_after_response(
+        port,
+        &request,
+        16_368 - 6_600,
+        1_024,
+        Duration::from_millis(1),
+        Duration::from_secs(5),
+    )
+    .await;
     assert_eq!(
         response,
         NODE_431,
         "guard bytes, not hyper's 123-byte 431: {:?}",
         String::from_utf8_lossy(&response)
     );
-    assert!(closed, "the 431 must end the connection");
+    // The write side before the close kind (#2773 fix-r3, review MM r3
+    // concurrency#1 / boundary#3): the beat writes discriminate the drain
+    // mark on every platform, so the guard-431 unwired mutant dies here on
+    // Linux too, where the close-kind assertion below stays green (the
+    // queued FIN wins the read race there).
+    assert_eq!(
+        beats,
+        DribbleWrites::AllAbsorbed,
+        "#2773 the 431 must drain the unread head before closing: \
+         every dribble beat is written, none reset"
+    );
+    assert_eq!(closed, ServerClose::Fin, "the 431 must end the connection");
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
 }
@@ -1121,7 +1243,7 @@ async fn header_guard_raw_cap_uses_node_431_bytes() {
         response, NODE_431,
         "#1555 the guard must own the 431 bytes for whitespace it still forwards"
     );
-    assert!(closed, "the 431 must end the connection");
+    assert_eq!(closed, ServerClose::Fin, "the 431 must end the connection");
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
 }
@@ -1475,9 +1597,10 @@ async fn early_response_raw(tag: &str, request: &[u8], expected: u16) {
     let (server, port) = start_limited(store, ServeLimits::default()).await;
     let (response, closed) = exchange_until_eof(port, request, Duration::from_secs(10)).await;
     assert_close_without_keep_alive(&response, expected, tag);
-    assert!(
+    assert_eq!(
         closed,
-        "{tag}: the server left the connection open after an unread-body response"
+        ServerClose::Fin,
+        "{tag}: the early answer must close with a clean FIN after draining the unread body"
     );
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
@@ -1585,9 +1708,185 @@ async fn oversized_chunked_body_rejection_closes_connection() {
     let (server, port) = start_limited(store, ServeLimits::default()).await;
     let (response, closed) = exchange_until_eof(port, &request, Duration::from_secs(10)).await;
     assert_close_without_keep_alive(&response, 413, "unread-413-chunked");
-    assert!(closed, "the connection stayed open after a chunked 413");
+    assert_eq!(
+        closed,
+        ServerClose::Fin,
+        "the connection stayed open after a chunked 413"
+    );
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #2774 (arbitration pin): a parser-level rejection written before the
+/// request body was consumed must still deliver its bytes and close the
+/// connection. Node v22.22.0 measured against a bare `createServer` (the
+/// #2774 arbitration probe, `_tmp/20261026-issue-2773/node-arbitration/`)
+/// delivers the 400/431 first and then RSTs once the unread body exceeds the
+/// parser buffer (`frob-body-1m` / `header-no-colon-body-1m` cells), while
+/// the missing-Host family drains and FINs. Rust's pre-fix close kind was
+/// itself a timing race (the same cells flipped FIN/RST across three
+/// measurement rounds — macOS, Linux CI, see the matrix in
+/// `A7.4-HTTPSTORE-PARSER-ADMISSION-001-R1`); the fix-r1 drain wiring makes
+/// the answered-then-drained close a deterministic FIN for every body the
+/// drain cap can absorb. The FROB cell below pins it by dribbling the body
+/// after the response, so a regression that unwires the drain eats an RST
+/// (#2773 fix-r2, review anthropic concurrency#1); the withheld, headless
+/// and CONNECT cells pin shape and delivery, whose receive queues are empty
+/// at close. The no-op admission mutant that lets these cells reach the
+/// handler is killed by both this test and the socket-request replay below
+/// it.
+#[tokio::test]
+async fn parser_rejection_with_unread_body_delivers_and_closes() {
+    let body = vec![b'a'; UNREAD_BODY_BYTES];
+    let (store, directory) = file_store("unread-admission");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+
+    // The FROB head declares the 1 MiB body but sends none of it, so the
+    // admission 400 is written while the server's receive queue is empty;
+    // the ruler reads that response first and only then dribbles the body in
+    // 32 KiB beats that finish well inside `drain_after_early_close`'s 1 s
+    // cap (#2773 fix-r2, review anthropic concurrency#1: a drained close
+    // absorbs every beat and FINs, a close without the drain wiring eats an
+    // RST from the beats still in flight — the kill is deterministic).
+    let frob_head = format!(
+        "FROB {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+         Content-Length: {UNREAD_BODY_BYTES}\r\n\r\n"
+    );
+    let (response, closed, beats) = exchange_dribbled_after_response(
+        port,
+        frob_head.as_bytes(),
+        UNREAD_BODY_BYTES,
+        32 * 1024,
+        Duration::from_millis(1),
+        Duration::from_secs(10),
+    )
+    .await;
+    assert_close_without_keep_alive(&response, 400, "#2774 unread-admission-frob");
+    // The write side before the close kind (#2773 fix-r3, review MM r3
+    // concurrency#1 / boundary#3): the beat writes discriminate the drain
+    // wiring on every platform, so the admission unwired mutant dies here on
+    // Linux too, where the close-kind assertion below stays green (the queued
+    // FIN wins the read race there — cb8 rounds negctl6/negctl7).
+    assert_eq!(
+        beats,
+        DribbleWrites::AllAbsorbed,
+        "#2774 the admission 400 must drain the unread body: \
+         every dribble beat is written, none reset"
+    );
+    assert_eq!(
+        closed,
+        ServerClose::Fin,
+        "#2774 the admission 400 must close the connection, not park it after an unread body"
+    );
+
+    // Withheld body: the peer declared a body it never sent; the rejection
+    // still answers and closes (Node's `frob-head` cell measured the same).
+    // Shape and delivery only — the receive queue is empty at close, so the
+    // FIN holds regardless of the drain wiring; the close-kind axis against
+    // an unwired drain is the dribbled FROB cell above (DS boundary#6).
+    let withheld = format!(
+        "FROB {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+         Content-Length: {UNREAD_BODY_BYTES}\r\n\r\n"
+    );
+    let (response, closed) =
+        exchange_until_eof(port, withheld.as_bytes(), Duration::from_secs(10)).await;
+    assert_close_without_keep_alive(&response, 400, "#2774 unread-admission-withheld");
+    assert_eq!(
+        closed,
+        ServerClose::Fin,
+        "#2774 the withheld-body 400 must close the connection"
+    );
+
+    // The headless 400 family: Node drains this one and FINs even at 1 MiB
+    // (`get-body-1m` cell); Rust answers the same full 400 shape.
+    let hostless = format!(
+        "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nContent-Length: {UNREAD_BODY_BYTES}\r\n\r\n{}",
+        String::from_utf8_lossy(&body)
+    );
+    let (response, closed) =
+        exchange_until_eof(port, hostless.as_bytes(), Duration::from_secs(10)).await;
+    assert_close_without_keep_alive(&response, 400, "#2774 unread-admission-hostless");
+    assert_eq!(
+        closed,
+        ServerClose::Fin,
+        "#2774 the headless 400 must close the connection"
+    );
+
+    // CONNECT: the gate's `Err` is the zero-byte close — Node measured the
+    // same zero bytes (`connect` cell); the sms lane pins its own twin
+    // (`connect_pin_is_the_zero_byte_destroy`, #2773).
+    let (response, closed) = exchange_until_eof(
+        port,
+        b"CONNECT 127.0.0.1:80 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+        Duration::from_secs(10),
+    )
+    .await;
+    assert!(
+        response.is_empty(),
+        "#2774 CONNECT must destroy the connection with zero response bytes: {response:?}"
+    );
+    assert_eq!(
+        closed,
+        ServerClose::Fin,
+        "#2774 the CONNECT destroy must close the connection"
+    );
+
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #2773 fix-r2 (review DS sibling#4): the `ServerClose` mapping itself —
+/// `Ok(Err(..)) => Reset` and `Err(_) => StillOpen` — had no committed
+/// coverage; only the macOS negative controls exercised those arms
+/// indirectly, so a refactor that collapsed them back into one `bool`
+/// (`Ok(_) => closed`) would have passed every committed test. Pin both
+/// without any admission race: a listener that answers and then closes with
+/// `SO_LINGER 0` must classify as `Reset`, and one that never closes as
+/// `StillOpen` under a short limit. The `Reset` arm asserts no response
+/// bytes: an RST may flush queued data, so the response shape is not a
+/// deterministic property of that close kind.
+#[tokio::test]
+async fn server_close_ruler_pins_reset_and_still_open() {
+    use std::io::{Read as _, Write as _};
+    let head = b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+
+    let reset_listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind reset");
+    let reset_port = reset_listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        let (mut stream, _) = reset_listener.accept().expect("accept");
+        let mut buffer = [0u8; 1024];
+        let _ = stream.read(&mut buffer);
+        let _ = stream.write_all(
+            b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        );
+        let _ = stream.flush();
+        let _ =
+            socket2::SockRef::from(&stream).set_linger(Some(std::time::Duration::from_millis(0)));
+    });
+
+    let (_response, closed) = exchange_until_eof(reset_port, head, Duration::from_secs(5)).await;
+    assert_eq!(
+        closed,
+        ServerClose::Reset,
+        "a close with SO_LINGER 0 must classify as Reset, not Fin"
+    );
+
+    let open_listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind open");
+    let open_port = open_listener.local_addr().unwrap().port();
+    let (release, hold) = std::sync::mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        let (stream, _) = open_listener.accept().expect("accept");
+        // Hold the accepted stream open until the assertion is done.
+        let _ = hold.recv();
+        drop(stream);
+    });
+    let (_response, closed) = exchange_until_eof(open_port, head, Duration::from_millis(300)).await;
+    assert_eq!(
+        closed,
+        ServerClose::StillOpen,
+        "a peer that never closes must classify as StillOpen under the ruler's limit"
+    );
+    let _ = release.send(());
 }
 
 /// Node v22.22.0 answers HTTP/1.0 with `Connection: close` even when the
@@ -1612,7 +1911,11 @@ async fn http_10_requests_close_like_node() {
         let (response, closed) =
             exchange_until_eof(port, request.as_bytes(), Duration::from_secs(5)).await;
         assert_close_without_keep_alive(&response, 405, request);
-        assert!(closed, "{request:?}: HTTP/1.0 connection stayed open");
+        assert_eq!(
+            closed,
+            ServerClose::Fin,
+            "{request:?}: HTTP/1.0 connection stayed open"
+        );
         assert_http10_store_reply(
             &response,
             405,
@@ -1630,7 +1933,11 @@ async fn http_10_requests_close_like_node() {
     request.extend_from_slice(&list);
     let (response, closed) = exchange_until_eof(port, &request, Duration::from_secs(5)).await;
     assert_close_without_keep_alive(&response, 200, "http-1.0-list");
-    assert!(closed, "http-1.0-list: HTTP/1.0 connection stayed open");
+    assert_eq!(
+        closed,
+        ServerClose::Fin,
+        "http-1.0-list: HTTP/1.0 connection stayed open"
+    );
     assert_http10_store_reply(
         &response,
         200,
@@ -1650,7 +1957,11 @@ async fn http_10_requests_close_like_node() {
         &list,
     );
     let (response, closed) = exchange_until_eof(port, &request, Duration::from_secs(5)).await;
-    assert!(closed, "the 1.1 close response ended the connection");
+    assert_eq!(
+        closed,
+        ServerClose::Fin,
+        "the 1.1 close response ended the connection"
+    );
     let head = String::from_utf8_lossy(&response).to_ascii_lowercase();
     assert!(
         head.contains("content-length: 25"),
