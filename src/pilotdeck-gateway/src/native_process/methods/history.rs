@@ -27,16 +27,6 @@ fn replacement_error(error: ReplacementError) -> RequestError {
     }
 }
 
-fn unavailable(method: &str, label: &str) -> RequestError {
-    RequestError {
-        code: "CAPABILITY_UNAVAILABLE".into(),
-        message: format!("{label} is not configured. Wire `{method}` via createLocalGateway.")
-            .into(),
-        details: None,
-        validation: None,
-    }
-}
-
 impl Requests {
     pub(in crate::native_process) fn history_request(
         &self,
@@ -47,14 +37,8 @@ impl Requests {
         let coordinator = self.coordinator.clone();
         Box::pin(async move {
             match method.as_str() {
-                "export_session_transcript" => Err(unavailable(
-                    "exportSessionTranscript",
-                    "export_session_transcript",
-                )),
-                "restore_session_transcript" => Err(unavailable(
-                    "restoreSessionTranscript",
-                    "restore_session_transcript",
-                )),
+                "export_session_transcript" => self.export_session_transcript(&params).await,
+                "restore_session_transcript" => self.restore_session_transcript(&params).await,
                 "read_session_messages" => read::read_session_messages(
                     &coordinator,
                     None::<&dyn SessionHistoryReader>,

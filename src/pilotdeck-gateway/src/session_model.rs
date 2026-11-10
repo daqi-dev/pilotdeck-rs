@@ -4,6 +4,19 @@ mod path_error;
 mod replay;
 #[cfg(test)]
 pub(crate) mod tests;
+/// The shared replay fold (TS `replayTranscriptEntries` →
+/// `projectAgentTranscriptEntries`), for consumers outside this module:
+/// `session_model_get` keeps reading it through [`Self::execute`], and the
+/// portable transcript archive (#2622) needs the same halves — the projected
+/// conversation messages and the merged `title`/`aiTitle` — from one fold.
+pub(crate) use replay::Replay as TranscriptReplay;
+
+/// Replay the four agent-transcript projections over parsed transcript
+/// entries. Same entry preparation as [`Self::execute`] produces
+/// (`readTranscript`'s shape filter and sort) is the caller's contract.
+pub(crate) fn transcript_replay(entries: &[JsValue]) -> Result<TranscriptReplay, Error> {
+    replay::replay(entries)
+}
 use crate::{
     config::{self, Env, Error},
     metadata::{Files, Metadata, object, resolve},

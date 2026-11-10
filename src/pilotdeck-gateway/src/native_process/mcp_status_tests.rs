@@ -296,6 +296,7 @@ fn harness() -> Harness {
         always_on: None,
         settings: Requests::stub_settings(&owner),
         session_overrides: Arc::default(),
+        restoring_session_keys: Arc::default(),
     };
     Harness {
         requests,

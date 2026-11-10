@@ -70,13 +70,21 @@ mutations = [
     ('capability-unwired-method-advertised', CAPABILITIES,
      'Capability { name: "commands_list", methods: &[], wired: compiled_in },',
      'Capability { name: "commands_list", methods: &["unwired_skill_scan"], wired: compiled_in },', TABLE, '#1352 commands_list promises a method'),
-    # #1352: registered-but-unserved methods (history.rs answers
-    # CAPABILITY_UNAVAILABLE) must not be promised by any row.
+    # #2622: the transcript-archive pair is served since the port, but by
+    # exactly one row — session_transcript_archive. A second row promising
+    # export_session_transcript (commands_list here) must not survive.
     ('capability-unserved-history-method', CAPABILITIES,
      'Capability { name: "commands_list", methods: &[], wired: compiled_in },',
      'Capability { name: "commands_list", methods: &["export_session_transcript"], wired: compiled_in },',
-     'native_process::capabilities::tests::unserved_history_methods_are_not_promised',
-     '#1352 export_session_transcript answers CAPABILITY_UNAVAILABLE'),
+     'native_process::capabilities::tests::only_the_archive_row_promises_the_transcript_archive_methods',
+     '#2622 only the session_transcript_archive row may promise export_session_transcript'),
+    # #2622 restore-side symmetric variant: the same single-row rule for
+    # restore_session_transcript (output_styles_list carries the mutant here).
+    ('capability-unserved-restore-method', CAPABILITIES,
+     'Capability { name: "output_styles_list", methods: &[], wired: compiled_in },',
+     'Capability { name: "output_styles_list", methods: &["restore_session_transcript"], wired: compiled_in },',
+     'native_process::capabilities::tests::only_the_archive_row_promises_the_transcript_archive_methods',
+     '#2622 restore_session_transcript is promised only by the session_transcript_archive row'),
     ('capability-registry-filter-ignored', CAPABILITIES,
      '    promised(capability).all(|method| registered.contains(&method))',
      '    let _ = (capability, registered); false', HOST, '#1231 exact wired capability set'),
@@ -465,7 +473,7 @@ def skipped_on_this_platform(rows, platform=None):
 # and the run still reported "{n}/{n}" and read green. Pin the row count and the
 # roster (order and repeats included) as literals so a dropped, renamed or
 # duplicated mutation is refused before anything runs or compiles.
-EXPECTED_TOTAL = 97
+EXPECTED_TOTAL = 98
 EXPECTED_NAMES = (
     'omit-snapshot',
     'omit-manager',
@@ -484,6 +492,7 @@ EXPECTED_NAMES = (
     'capability-commands_list',
     'capability-unwired-method-advertised',
     'capability-unserved-history-method',
+    'capability-unserved-restore-method',
     'capability-registry-filter-ignored',
     'skills-restart-refused',
     'snapshot-storage-omitted',

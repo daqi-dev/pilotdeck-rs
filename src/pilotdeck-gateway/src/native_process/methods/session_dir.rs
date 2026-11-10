@@ -45,8 +45,13 @@ fn gateway_error(code: &'static str, message: impl Into<String>) -> RequestError
 }
 
 /// Resolves `projectKey` from params, falling back to the configured project.
-/// Returns the resolved path string.
-fn resolve_project(requests: &Requests, params: &JsValue) -> Result<String, RequestError> {
+/// Returns the resolved path string. Shared with the transcript-archive
+/// family (#2622), whose delegates resolve the same `input.projectKey ??
+/// fallback` before their own guards.
+pub(super) fn resolve_project(
+    requests: &Requests,
+    params: &JsValue,
+) -> Result<String, RequestError> {
     let project = params
         .get("projectKey")
         .and_then(JsValue::as_string)

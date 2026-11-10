@@ -19,6 +19,7 @@ use crate::{
     user_dialog::GatewayUserDialogBus,
 };
 use pilotdeck_protocol::{JsString, JsValue};
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
@@ -71,6 +72,12 @@ pub struct Requests {
     /// `set_output_style`) write and the session factory's prepare closure
     /// reads back. One instance shared with the factory.
     pub session_overrides: Arc<SessionOverrides>,
+    /// #2622: the TS gateway's `restoringSessionKeys` set
+    /// (createLocalGateway.ts:1306-1307). `restore_session_transcript` reads
+    /// membership where TS does (before the storage work) and rides its
+    /// add/remove pair inside the fenced blocking write, so a cancelled
+    /// request cannot strand a key.
+    pub restoring_session_keys: Arc<Mutex<HashSet<JsString>>>,
 }
 
 #[cfg(test)]
