@@ -19,6 +19,7 @@ carry their own function-internal mutant.
 """
 from pathlib import Path
 import os
+import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -1100,6 +1101,64 @@ def write_atomic(path, data):
         tmp.unlink(missing_ok=True)
 
 
+def _shared_target_roots(root):
+    """Repository-shared cargo targets this runner must refuse.
+
+    ``<root>/_build/cargo-target`` is the shared default when the fixture runs
+    in the primary checkout. A worktree deployment (this runner's normal
+    shape, ``_build/wt-<N>``) additionally shares the primary checkout's
+    ``_build/cargo-target``, which the worktree-local path never equals, so
+    the primary root is derived from the git common dir (#1651: DS r2 P1).
+    """
+    roots = [root / '_build' / 'cargo-target']
+    try:
+        common = subprocess.run(
+            ['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+            cwd=str(root), capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return roots
+    common_dir = Path(common)
+    if common_dir.name == '.git' and common_dir.parent not in (root, root.resolve()):
+        primary = common_dir.parent / '_build' / 'cargo-target'
+        if primary not in roots:
+            roots.append(primary)
+    return roots
+
+
+def _shared_target_collision(value, root):
+    """Return the shared target `value` collides with, or None.
+
+    Values are resolved on cargo's basis — cargo runs with ``cwd=ROOT``, so a
+    relative spelling is joined to ROOT, never to the caller's cwd — then
+    rejected on equality with, or containment inside, any shared target
+    (#1651: subpath and relative spellings cannot slip past on a different
+    resolution basis). Existing spellings are also compared by inode
+    (``samefile``), so symlink aliases and case-insensitive spellings of a
+    shared root cannot bypass while the directory exists; paths that do not
+    exist yet fall back to the textual comparison alone.
+    """
+    raw = Path(value)
+    resolved = raw if raw.is_absolute() else root / raw
+    for shared in _shared_target_roots(root):
+        if resolved == shared:
+            return shared
+        try:
+            resolved.relative_to(shared)
+            return shared
+        except ValueError:
+            pass
+        probe = resolved
+        while probe != probe.parent:
+            try:
+                if probe.exists() and shared.exists() and probe.samefile(shared):
+                    return shared
+            except OSError:
+                pass
+            probe = probe.parent
+    return None
+
+
 def main():
     args = sys.argv[1:]
     compile_only = '--compile-only' in args
@@ -1126,17 +1185,21 @@ def main():
     env = dict(os.environ)
     if not env.get('CARGO_TARGET_DIR'):
         raise SystemExit('#1457 CARGO_TARGET_DIR must be supplied by the caller')
-    # #1651: an equality refusal, not the shared defaulting rule — the entry
-    # this runner needs is a caller-owned tree-external target (the README's
-    # "a target of its own"), and a value equal to the repository's shared
-    # in-tree `_build/cargo-target` means that isolation has failed. Refuse
-    # here, before the evidence directory is claimed; any other value — the
-    # runner's out-of-tree build dir included — proceeds untouched. The
-    # shared presence/defaulting rules live in `negative_process
-    # .target_environment` (#1166) and are not re-listed here.
-    if Path(env['CARGO_TARGET_DIR']).resolve() == (ROOT / '_build' / 'cargo-target').resolve():
-        raise SystemExit('#1651 CARGO_TARGET_DIR is the repository-shared '
-                         '_build/cargo-target; supply a tree-external target')
+    # #1651: a shared-target refusal, not the shared defaulting rule — the
+    # entry this runner needs is a caller-owned tree-external target (the
+    # README's "a target of its own"), and a value that resolves to — or
+    # inside — the repository's shared in-tree `_build/cargo-target` (of the
+    # worktree itself or, in a worktree deployment, of the primary checkout)
+    # means that isolation has failed. Refuse here, before the evidence
+    # directory is claimed; any other value — the runner's out-of-tree build
+    # dir included — proceeds untouched. The shared presence/defaulting rules
+    # live in `negative_process.target_environment` (#1166) and are not
+    # re-listed here.
+    collision = _shared_target_collision(env['CARGO_TARGET_DIR'], ROOT)
+    if collision is not None:
+        raise SystemExit('#1651 CARGO_TARGET_DIR resolves to the '
+                         f'repository-shared target {collision}; supply a '
+                         'tree-external target')
     for key in ('PDRS_NEGATIVE_RECEIPTS', 'PDRS_NEGATIVE_PARENT_TEST', 'PDRS_MUTANT'):
         env.pop(key, None)
     selected = args[1:]

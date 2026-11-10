@@ -12,7 +12,7 @@ CARGO_TARGET_DIR=<本树独立 target> \
 ```
 
 - `<NEW_OUTPUT_DIR>` 必须不存在（独占创建，不覆盖历史证据）。
-- `CARGO_TARGET_DIR` 必须由调用方提供（脚本不猜，避免复用陈旧 target 把环境问题报成「变异没杀死」）；且不得等于仓内共享的 `<ROOT>/_build/cargo-target`（#1651：相等即「隔离失效才拒」的入口拒绝，进证据目录之前就退——本装置要求树外独立 target，等值断言不动共享的 `negative_process.target_environment` 默认规则）。
+- `CARGO_TARGET_DIR` 必须由调用方提供（脚本不猜，避免复用陈旧 target 把环境问题报成「变异没杀死」）；且解析后不得落在仓内共享的 `_build/cargo-target` 之内或之上——共享根按部署形态取**两个**：本树（或本 worktree）的 `<ROOT>/_build/cargo-target`，以及 worktree 部署下主 checkout 的同一路径（由 git common dir 推导）；相对值按 cargo 的口径（`cwd=ROOT`）解析，已存在的拼写另按 inode（`samefile`）比对，符号链接别名与大小写重拼都拦（#1651：入口拒绝发生在进证据目录之前——本装置要求树外独立 target，该本地规则不动共享的 `negative_process.target_environment` 默认规则）。
 - 只跑某几条：在输出目录后追加变异名（见脚本 `mutations` 表），可配合 `--compile-only` 只验编译。
 
 只校验锚点、不执行：
@@ -23,7 +23,7 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/native-config/negative_controls.
 
 正跑也会在起 cargo 之前无条件跑同一条守卫（只读 17 个文件、秒级），坏锚当场拒跑，不会烧掉整轮编译预算；`--check` 的用处是不进变异、不起进程的预检，CI 与宿主链都不会替你跑它（gateway 夹具不在 CI 的 negative-controls 作业里）。
 
-这条自检自己的红侧由同目录 `test_literal_anchors.py` 钉住（正控跑真 `--check` 并核输出两串计数；十二条负控各破坏一个不变式，要求对应的拒绝语——含 #1651 的「`CARGO_TARGET_DIR` 等于仓内共享 `_build/cargo-target` 时拒绝且不落证据目录」；其中两条钉「定点重跑只校验被选中的行、但 pin 仍按全表绑定」）：
+这条自检自己的红侧由同目录 `test_literal_anchors.py` 钉住（正控跑真 `--check` 并核输出两串计数；十五条负控各破坏一个不变式，要求对应的拒绝语——含 #1651 的「`CARGO_TARGET_DIR` 解析到共享 target（等值 / 子路径 / 相对拼写 / worktree 主 checkout / 符号链接别名）时拒绝且不落证据目录」；其中两条钉「定点重跑只校验被选中的行、但 pin 仍按全表绑定」）：
 
 ```
 python3 -m unittest -v src/pilotdeck-gateway/tests/fixtures/native-config/test_literal_anchors.py

@@ -18,6 +18,7 @@ import importlib.util
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -150,6 +151,78 @@ class LiteralAnchorGuard(unittest.TestCase):
                 os.environ.pop('CARGO_TARGET_DIR', None)
             else:
                 os.environ['CARGO_TARGET_DIR'] = saved_target
+
+    def test_main_refuses_subpath_and_relative_spellings_of_the_shared_target(self):
+        # #1651: the refusal is not one exact spelling — a subpath of the
+        # shared target still lands cargo's products inside it, and a relative
+        # spelling is resolved on cargo's basis (cwd=ROOT), never the
+        # caller's, so neither form can slip past on a different resolution
+        # basis. The chdir proves the caller cwd is irrelevant to the refusal.
+        saved_argv = sys.argv
+        saved_target = os.environ.get('CARGO_TARGET_DIR')
+        saved_cwd = os.getcwd()
+        try:
+            for value in (str(nc.ROOT / '_build' / 'cargo-target' / 'debug'),
+                          '_build/cargo-target'):
+                with tempfile.TemporaryDirectory() as outside:
+                    os.chdir(outside)
+                    sys.argv = ['negative_controls.py',
+                                '/tmp/never-created-target-refusal', BAD_ROW]
+                    os.environ['CARGO_TARGET_DIR'] = value
+                    with self.assertRaises(SystemExit) as caught:
+                        nc.main()
+                    self.assertIn('repository-shared', str(caught.exception))
+                    self.assertFalse(
+                        Path('/tmp/never-created-target-refusal').exists())
+        finally:
+            os.chdir(saved_cwd)
+            sys.argv = saved_argv
+            if saved_target is None:
+                os.environ.pop('CARGO_TARGET_DIR', None)
+            else:
+                os.environ['CARGO_TARGET_DIR'] = saved_target
+
+    def test_shared_target_roots_cover_worktree_deployments(self):
+        # #1651 (DS r2 P1): in a worktree, the shared target that can poison a
+        # run is the *primary* checkout's `_build/cargo-target`, which never
+        # equals the worktree-local path; the roots must cover both.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            primary = tmp / 'primary'
+            subprocess.run(['git', 'init', '-q', str(primary)], check=True)
+            subprocess.run(['git', '-C', str(primary), '-c', 'user.email=t@t',
+                            '-c', 'user.name=t', 'commit', '-q',
+                            '--allow-empty', '-m', 'x'], check=True)
+            worktree = tmp / 'wt'
+            subprocess.run(['git', '-C', str(primary), 'worktree', 'add', '-q',
+                            str(worktree)], check=True)
+            roots = nc._shared_target_roots(worktree)
+            # git reports resolved paths; compare both sides resolved.
+            self.assertEqual(
+                {r.resolve() for r in roots},
+                {(worktree / '_build' / 'cargo-target').resolve(),
+                 (primary / '_build' / 'cargo-target').resolve()})
+            self.assertEqual(len(roots), 2)
+            # The primary checkout itself dedupes to a single root.
+            self.assertEqual(
+                [r.resolve() for r in nc._shared_target_roots(primary)],
+                [(primary / '_build' / 'cargo-target').resolve()])
+
+    def test_shared_target_collision_sees_symlink_aliases(self):
+        # #1651: samefile comparison — a symlink alias of the shared target
+        # (or, on a case-insensitive filesystem, a re-spelling of it) is
+        # refused even though it is not textually equal to the shared root.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shared = root / '_build' / 'cargo-target'
+            shared.mkdir(parents=True)
+            alias = root / 'alias-target'
+            alias.symlink_to(shared)
+            self.assertEqual(
+                nc._shared_target_collision(str(alias), root), shared)
+            # A tree-external target proceeds untouched.
+            self.assertIsNone(
+                nc._shared_target_collision(str(root / 'elsewhere'), root))
 
 
 if __name__ == '__main__':
