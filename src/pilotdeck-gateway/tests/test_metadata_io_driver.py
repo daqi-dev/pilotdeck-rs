@@ -1345,37 +1345,48 @@ class EnvironmentControls(unittest.TestCase):
                          'so it runs from the fixtures dir')
 
     def test_the_discovery_anchor_self_check_collects_real_tests(self):
-        # #2136 fix-r35（DS boundary P2）：上面的守卫只钉「步存在 + 无条件 +
-        # cwd」，钉不住该步真的执行了非零且非 skip 的测试——把模块掏空或整类
-        # @unittest.skip 后，`python3 -B -m unittest -v` 收集 0 个测试仍退 0，
-        # CI 绿而 #2133 闸门静默为空，正是守卫注释要防的「闸门在 CI 静默不跑」。
-        # 这里按 CI 同一入口装载该模块，钉住测试条数下限与「无 skip」；
-        # 判别力红侧实测见 _tmp/20261110-pr2136-revival/collect-pin-kill-demo.log。
-        module_path = (Path(__file__).resolve().parent / 'fixtures'
-                       / 'test_negative_discovery_anchors.py')
-        spec = importlib.util.spec_from_file_location(
-            'discovery_anchors_gate', module_path)
-        gate = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(gate)
-        suite = unittest.defaultTestLoader.loadTestsFromModule(gate)
-        stack, total, skipped = [suite], 0, []
-        while stack:
-            item = stack.pop()
-            if isinstance(item, unittest.TestSuite):
-                stack.extend(item)
-            else:
-                total += 1
-                if getattr(item, '__unittest_skip__', False):
-                    skipped.append(str(item))
+        # #2136 fix-r35（DS boundary P2）→ fix-r36（MiniMax r35 boundary P0）：
+        # 上面的守卫只钉「步存在 + 无条件 + cwd」，钉不住该步真的执行了非零且
+        # 非 skip 的测试——把模块掏空或整类 @unittest.skip 后，
+        # `python3 -B -m unittest -v` 收集 0 个测试仍退 0，CI 绿而 #2133 闸门
+        # 静默为空。r35 的旧钉（装载模块走 suite 栈 + 实例 __unittest_skip__）
+        # 探不到 setUpModule / setUpClass 抛 SkipTest 的**结果通道**——那条路径
+        # unittest 打「Ran 0 tests / OK (skipped=1)」退 0，旧钉仍见 total=201、
+        # skipped=[]（实测 _tmp/20261110-pr2136-revival/p0-repro-r36.log）。只有
+        # 真跑一遍并看「Ran N tests」与「skipped=」才能同时覆盖方法级 / 类级 /
+        # fixture 级 skip 与整体掏空；全套件实测约 60 s。
+        fixtures = Path(__file__).resolve().parent / 'fixtures'
+        try:
+            cp = subprocess.run(
+                [sys.executable, '-B', '-m', 'unittest', '-v',
+                 'test_negative_discovery_anchors'],
+                cwd=fixtures, capture_output=True, text=True, timeout=900)
+        except subprocess.TimeoutExpired:
+            self.fail('#2133 the self-check subprocess timed out (>900 s); '
+                      'a hung or stalled gate must not pass silently')
+        out = cp.stdout + cp.stderr
+        ran = re.search(r'^Ran (\d+) tests? in ', out, re.M)
+        self.assertIsNotNone(
+            ran,
+            '#2133 the self-check run must print a "Ran N tests" summary '
+            'line; a broken or empty entry point must not pass. Tail: '
+            + out[-800:])
+        total = int(ran.group(1))
         self.assertGreaterEqual(
             total, 201,
-            '#2133 the self-check module must collect at least 201 tests; '
-            'an emptied or renamed-away module exits 0 and the gate is '
-            'silently empty')
+            '#2133 the self-check must run at least 201 tests; an emptied, '
+            'renamed-away, or fixture-skipped module still exits 0 and the '
+            'gate is silently empty (ran %d)' % total)
+        skipped = re.search(r'skipped=(\d+)', out)
+        self.assertFalse(
+            skipped and int(skipped.group(1)),
+            '#2133 every self-check test must actually run; skipped tests '
+            'make unittest exit 0 and the gate silently pass (%s)'
+            % (skipped.group(0) if skipped else ''))
         self.assertEqual(
-            skipped, [],
-            '#2133 every collected self-check test must run; a skip '
-            'decorator makes unittest exit 0 and the gate silently pass')
+            cp.returncode, 0,
+            '#2133 the self-check suite itself must pass (rc=%d). Tail: %s'
+            % (cp.returncode, out[-800:]))
 
     def test_required_job_runs_the_optimize_guards_self_tests(self):
         # #2136 fix-r35（DS sibling P1）：-O 不变性自测步（#1666/#1734）与
