@@ -128,6 +128,12 @@ impl LiveOwner {
             .map(|s| s.pending_len(chat))
             .unwrap_or(0)
     }
+    /// r20 merge (AG poll §3): `clear_pending_turns(chat_id)` for `/new` — drops ImChatSessionState queue.
+    pub(crate) fn clear_pending_turns(&self, chat_id: &str) {
+        if let Some(session) = self.sessions().get_mut(chat_id) {
+            session.clear_pending_turns(chat_id);
+        }
+    }
     fn active_run(&self, chat: &str) -> Option<ActiveRun> {
         self.sessions().get(chat).and_then(|s| s.active_run(chat))
     }
@@ -400,6 +406,7 @@ impl LiveOwner {
             } else {
                 let previous_generation = self.reset_chat(chat_id).await;
                 let previous = previous_generation.0;
+                self.clear_pending_turns(chat_id);
                 self.delivery.clear_pending_replies(chat_id);
                 let previous = previous
                     .unwrap_or_else(|| self.mapper.lock().unwrap().session("weixin", chat_id));

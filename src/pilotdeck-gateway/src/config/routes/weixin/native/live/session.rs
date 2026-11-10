@@ -66,13 +66,18 @@ impl ChatSessionState {
         self.generation(chat) == generation
     }
 
+    /// WeixinChannel.ts:524 — `resetChatInteractionState` drops pendingTurns for the chat.
+    pub(crate) fn clear_pending_turns(&mut self, chat: &str) {
+        self.pending.remove(chat);
+        self.active_runs.remove(chat);
+    }
+
     /// ImChatSessionState.ts:32-36 — /new bumps the generation and drops the queued
     /// turns and the active run (WeixinChannel.ts:524-529).
     pub(crate) fn reset_for_new_session(&mut self, chat: &str) {
         let next = self.generation(chat) + 1;
         self.generations.insert(chat.into(), next);
-        self.pending.remove(chat);
-        self.active_runs.remove(chat);
+        self.clear_pending_turns(chat);
     }
 
     /// ImChatSessionState.ts:38-45 — FIFO with the oldest turn dropped past the cap.
