@@ -343,6 +343,52 @@ fn stopped_manager_create_does_not_restart_runtimes() {
     assert!(run_history(&harness.home, "/proj").is_empty());
 }
 
+// #2494: the shared stop latch re-arms with a new lifecycle. No production
+// path restarts a stopped manager (the reload ladder stages fresh ones via
+// the factories), but the latch flips in the same place `started` does, so
+// a stopped-then-started manager must remain stoppable — that second stop
+// is then the only one a later caller observes.
+#[test]
+fn a_restarted_manager_stops_again() {
+    let harness = harness(false);
+    let body = Arc::new(RecordingBody::default());
+    let gateway: Arc<dyn CronAgentGateway> = Arc::new(SessionAdmissionCronGateway::new(
+        Arc::new(SessionAdmission::default()),
+        body.clone(),
+    ));
+    harness.manager.bind_agent_gateway(gateway).unwrap();
+    seed_project(&harness.home, "/proj", &seeded_running_task());
+    harness.manager.start().unwrap();
+    assert_eq!(
+        harness.manager.runtime_count(),
+        1,
+        "#2494 the started manager discovered the seeded project"
+    );
+    harness.manager.stop().unwrap();
+    assert_eq!(
+        harness.manager.runtime_count(),
+        0,
+        "#2494 the first stop cleared the runtimes"
+    );
+    // A second stop through any path observes the first.
+    harness
+        .manager
+        .stop()
+        .expect("#2494 the second stop observes the first");
+    harness.manager.start().unwrap();
+    assert_eq!(
+        harness.manager.runtime_count(),
+        1,
+        "#2494 the restart re-discovers the project"
+    );
+    harness.manager.stop().unwrap();
+    assert_eq!(
+        harness.manager.runtime_count(),
+        0,
+        "#2494 the restarted manager stops again"
+    );
+}
+
 // Matrix cell 18: none of the six management methods needs a bound gateway;
 // only the two `start`s gate on it.
 #[test]

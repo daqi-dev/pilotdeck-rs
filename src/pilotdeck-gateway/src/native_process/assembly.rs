@@ -1118,6 +1118,22 @@ async fn start_assembly(
                     is_project_busy: Some(is_project_busy),
                     update_subsystems: Arc::new(|_| ()),
                 })?;
+                // #2486: the slot is filled before the start poll, not after
+                // it. `start()`'s failure cleanup stops the always-on half by
+                // joining its spawned ticker, which yields — so under the
+                // single poll below a failing start reads as `None` and the
+                // real provider error is lost with the dropped future. The
+                // error that crosses here sends the host down
+                // `dispose_initialization` (gateway.rs), which awaits this
+                // cleanup future properly, and the bundle's `stop()` drains
+                // the half-started generation (the `attempted` bookkeeping,
+                // automation.rs) — that is the compensating stop, on the one
+                // runtime that can join the ticker. Blocking on it here
+                // instead (`Handle::block_on`) would panic inside the
+                // runtime thread the builder already runs on.
+                build_automation_slot.set(automation.clone()).map_err(|_| {
+                    std::io::Error::other("automation bundle slot already occupied")
+                })?;
                 match std::pin::pin!(automation.start()).now_or_never() {
                     Some(result) => {
                         // The started status is the bundle's own bookkeeping;
@@ -1130,9 +1146,6 @@ async fn start_assembly(
                         ));
                     }
                 }
-                build_automation_slot.set(automation.clone()).map_err(|_| {
-                    std::io::Error::other("automation bundle slot already occupied")
-                })?;
                 // #1353 A8.5-pr2: the machine's S1 face stops the bundle's
                 // cron manager through the shared handle, reading the abort
                 // rejections the recording wrapper above accumulated. Without
@@ -1185,11 +1198,13 @@ async fn start_assembly(
                 // The bundle's stop order is cron first, then always-on, so
                 // producer dependencies drain in reverse startup order; a stop
                 // failure is observed but never blocks the remaining teardown.
-                // #1353: the machine's S1 face may have stopped the bundle's
-                // cron manager earlier through the shared handle; the
-                // bundle's own cron stop then repeats benignly (no active
-                // runs remain, the release pairs are idempotent), and
-                // always-on still gets its stop here.
+                // #1353/#2494: the machine's S1 face may have stopped the
+                // bundle's cron manager earlier through the shared handle;
+                // the bundle's own cron stop then observes that earlier stop
+                // as a no-op Ok through `CronManager::stop`'s shared
+                // once-latch — including after a failed face stop, which the
+                // teardown must not retry — and always-on still gets its
+                // stop here.
                 let automation_stop = match cleanup_automation_slot.get() {
                     Some(automation) => {
                         let outcome = automation.stop().await.map_err(|error| error.to_string());

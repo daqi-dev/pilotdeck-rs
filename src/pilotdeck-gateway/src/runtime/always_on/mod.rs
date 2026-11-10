@@ -31,6 +31,10 @@ mod paths;
 mod scheduler;
 mod state;
 mod watcher;
+// #2488: the closed-set pin over the always-on-2294 negative-control
+// fixture's row table — test-only, like the replay modules' own `tests`.
+#[cfg(test)]
+mod negative_controls_manifest;
 
 pub(crate) use cycles::{DiscoveryPlanRecord, DiscoveryPlanStore, WorkCycleRecord, WorkCycleStore};
 pub(crate) use fire::{

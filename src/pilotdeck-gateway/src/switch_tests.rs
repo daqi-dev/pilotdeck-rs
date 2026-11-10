@@ -653,6 +653,72 @@ async fn cron_stop_face_surfaces_manager_rejection() {
     handle
         .stop_once()
         .expect("#1353 the failed stop is still observed as done");
+    // #2494: the flag on the *handle* only governs this handle. The host
+    // teardown stops the same manager through the automation bundle's
+    // provider — a direct `CronManager::stop` — and that path must observe
+    // the failed stop the same way: the shared latch was taken on entry,
+    // so the teardown neither retries the failing stop nor reports it as a
+    // teardown failure.
+    manager
+        .stop()
+        .expect("#2494 the direct stop observes the failed face stop");
+}
+
+/// #2494: the once-semantics span both stop paths, not just the handle.
+/// Since #2294 the host teardown stops the cron manager through the
+/// automation bundle's provider (`NativeCronProvider::stop` → a direct
+/// `CronManager::stop`), so the shared latch lives in the manager: after
+/// the S1 face's stop, the teardown's direct stop observes the earlier
+/// stop — no second abort round, `Ok` across, runtimes still cleared.
+#[tokio::test]
+async fn a_face_stop_then_the_teardowns_direct_stop_observes_it() {
+    let scratch = Scratch::new("switch-cron-s1-direct");
+    seed_cron_project(&scratch);
+    let manager = cron_manager(&scratch);
+    let recording = crate::switch::RecordingCronGateway::wrap(Arc::new(RejectingGateway));
+    let failures = recording.failures();
+    manager
+        .bind_agent_gateway(Arc::new(recording))
+        .expect("#2494 test gateway binds");
+    load_cron_runtime(&manager);
+    let runtime = manager
+        .loaded_runtime("/proj")
+        .expect("#2494 the create loaded the runtime");
+    runtime.register_active_run(CronActiveRun {
+        run_id: JsString::from("run-1"),
+        task_id: JsString::from("task-1"),
+        session_key: JsString::from("cron:task-1"),
+        schedule_type: JsString::from("once"),
+        stop_requested: false,
+    });
+    let handle = Arc::new(crate::switch::CronStopHandle::new(
+        manager.clone(),
+        failures,
+    ));
+    handle
+        .stop_face()
+        .await
+        .expect("#2494 the S1 face stops the manager once");
+    assert_eq!(
+        handle.abort_failures().len(),
+        1,
+        "#2494 the face's stop aborted the in-flight run once"
+    );
+    // The teardown's path: the bundle's provider calls `manager.stop()`
+    // directly — no handle flag is consulted.
+    manager
+        .stop()
+        .expect("#2494 the direct stop observes the face's earlier stop");
+    assert_eq!(
+        handle.abort_failures().len(),
+        1,
+        "#2494 no second abort round through the direct stop"
+    );
+    assert_eq!(
+        manager.runtime_count(),
+        0,
+        "#2494 the face's stop stays the effective one"
+    );
 }
 
 /// A gateway whose first `abort_turn` parks until the test releases it and
