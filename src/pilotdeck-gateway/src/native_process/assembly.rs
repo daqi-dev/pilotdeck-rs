@@ -433,6 +433,10 @@ async fn start_assembly(
     // both writers (the three selector methods on `Requests`) and the reader
     // (the prepare closure composing each session's agent config).
     let session_overrides: Arc<super::SessionOverrides> = Arc::default();
+    // #2622: the TS gateway's restoringSessionKeys set — one instance for the
+    // restore delegate's in-progress gate.
+    let restoring_session_keys: Arc<std::sync::Mutex<std::collections::HashSet<JsString>>> =
+        Arc::default();
     let prepare_overrides = session_overrides.clone();
     let prepare_project = project.clone();
     let prepare_options = options.clone();
@@ -1060,6 +1064,7 @@ async fn start_assembly(
                 always_on: automation.always_on_manager(),
                 settings: settings.gateway,
                 session_overrides,
+                restoring_session_keys,
             });
             let submitter = Arc::new(TurnSubmitter {
                 owner,

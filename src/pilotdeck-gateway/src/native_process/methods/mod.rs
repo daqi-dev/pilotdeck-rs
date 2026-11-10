@@ -27,6 +27,7 @@ pub(crate) use cron::dispatch_under_management_gate;
 mod sop;
 mod steer;
 mod tools;
+mod transcript_archive;
 mod upload;
 mod user_dialog;
 mod weixin_login;

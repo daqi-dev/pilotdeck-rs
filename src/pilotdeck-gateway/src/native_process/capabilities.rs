@@ -92,6 +92,15 @@ pub(super) const CAPABILITIES: &[Capability] = &[
     Capability { name: "session_model_set", methods: &[], wired: compiled_in },
     Capability { name: "session_model_clear", methods: &[], wired: compiled_in },
     Capability { name: "delete_session", methods: &[], wired: compiled_in },
+    // The name covers the A7.5 delegate pair #2622 ported: both methods are
+    // routed by the history family (`methods/transcript_archive.rs`), in the
+    // position the TS baseline records (between `delete_session` and
+    // `native_transcript_archive`).
+    Capability {
+        name: "session_transcript_archive",
+        methods: &["export_session_transcript", "restore_session_transcript"],
+        wired: compiled_in,
+    },
     // The name covers two requests: the manifest and its entries. TS records
     // this name in every config state (`oracle.json` contract capabilities);
     // both methods are routed by `dispatch::route` from `LOCAL_METHODS`.
@@ -173,10 +182,6 @@ pub(super) const CAPABILITIES: &[Capability] = &[
 // exception list sits next to the table it excuses
 #[allow(dead_code)]
 pub(super) const NOT_ADVERTISED: &[(&str, &str)] = &[
-    (
-        "session_transcript_archive",
-        "export/restore_session_transcript are not ported (methods/history.rs answers CAPABILITY_UNAVAILABLE)",
-    ),
     (
         "apply_flag_settings",
         "settings delegate not bound in this process; porting tracked by #1671",
@@ -313,21 +318,24 @@ mod tests {
         }
     }
 
-    /// The other half of the same rule, for the methods that *are* registered
-    /// but not served: `native_process/methods/history.rs:50-58` answers
-    /// `CAPABILITY_UNAVAILABLE` for both transcript-archive methods, which is
-    /// why `session_transcript_archive` sits in [`NOT_ADVERTISED`]. The
-    /// registry check alone cannot see that, so without this test a row
-    /// promising `export_session_transcript` would advertise a call that can
-    /// only fail.
+    /// The transcript-archive methods are served since #2622, but by exactly
+    /// one row: `session_transcript_archive`. A second row promising
+    /// `export_session_transcript` / `restore_session_transcript` (the
+    /// `capability-unserved-history-method` mutant adds one to
+    /// `commands_list`) would double-advertise the pair and detach the
+    /// promise from the row the registry gate drives.
     #[test]
-    fn unserved_history_methods_are_not_promised() {
+    fn only_the_archive_row_promises_the_transcript_archive_methods() {
         for method in ["export_session_transcript", "restore_session_transcript"] {
-            negative_assert!(
-                !CAPABILITIES
-                    .iter()
-                    .any(|capability| promised(capability).any(|declared| declared == method)),
-                "#1352 {method} answers CAPABILITY_UNAVAILABLE and must not be promised"
+            let promising: Vec<&str> = CAPABILITIES
+                .iter()
+                .filter(|capability| promised(capability).any(|declared| declared == method))
+                .map(|capability| capability.name)
+                .collect();
+            negative_assert_eq!(
+                promising,
+                vec!["session_transcript_archive"],
+                "#2622 {method} is promised only by the session_transcript_archive row"
             );
         }
     }

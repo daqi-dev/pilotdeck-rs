@@ -258,6 +258,7 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             always_on: None,
             settings: requests::Requests::stub_settings(&owner),
             session_overrides: Arc::default(),
+            restoring_session_keys: Arc::default(),
         }
     })
 }

@@ -941,6 +941,7 @@ async fn project_path_boundaries_worker() {
         always_on: None,
         settings: requests::Requests::stub_settings(&owner),
         session_overrides: Arc::default(),
+        restoring_session_keys: Arc::default(),
     };
     let services = services::Services {
         options: options.clone(),

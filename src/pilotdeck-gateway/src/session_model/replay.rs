@@ -221,7 +221,29 @@ fn user_request(m: &JsValue) -> Result<bool, Error> {
     }
     Ok(false)
 }
+/// One replay over the agent-transcript projections, the shared fold behind
+/// both `session_model_get` (the saved model selection) and the portable
+/// transcript archive export (the conversation messages plus the merged
+/// title). #297 P2#3: the two halves read one fold, so a port change cannot
+/// drift between them.
+pub(crate) struct Replay {
+    /// Conversation finalize output (the replayed `messages`).
+    pub(crate) messages: Vec<JsValue>,
+    /// `mergeMetadata`'s `title` (`second.title ?? first.title`, so nullish
+    /// values keep the previous one) and `aiTitle` (object spread: a present
+    /// key overrides with any value, an absent one keeps the old). The
+    /// archive's title chain is `title ?? aiTitle` over the merged values.
+    pub(crate) title: Option<JsValue>,
+    pub(crate) ai_title: Option<JsValue>,
+    /// The saved model selection this module was written for.
+    pub(crate) model_selection: JsValue,
+}
+
 pub(super) fn selection(entries: &[JsValue]) -> Result<JsValue, Error> {
+    Ok(replay(entries)?.model_selection)
+}
+
+pub(super) fn replay(entries: &[JsValue]) -> Result<Replay, Error> {
     let mut included = vec![];
     let mut completed = HashSet::new();
     let mut boundary_index = None;
@@ -349,11 +371,24 @@ pub(super) fn selection(entries: &[JsValue]) -> Result<JsValue, Error> {
         }
     }
     let mut saved = JsValue::Undefined;
+    let mut title: Option<JsValue> = None;
+    let mut ai_title: Option<JsValue> = None;
     for e in entries {
         if is(field(e, "type"), "session_metadata") {
             let metadata = field(e, "metadata");
             property(metadata, "title")?;
             property(metadata, "linkedPullRequest")?;
+            // mergeMetadata's title keeps the previous value while the new one
+            // is nullish; aiTitle follows the spread (a present key wins, any
+            // value, so only a present key replaces it).
+            if !matches!(field(metadata, "title"), JsValue::Undefined | JsValue::Null) {
+                title = Some(field(metadata, "title").clone());
+            }
+            if let JsValue::Object(object) = metadata
+                && let Some(value) = object.get("aiTitle")
+            {
+                ai_title = Some(value.clone());
+            }
             if !field(metadata, "modelSelection").is_undefined() {
                 saved = field(metadata, "modelSelection").clone();
             }
@@ -369,7 +404,12 @@ pub(super) fn selection(entries: &[JsValue]) -> Result<JsValue, Error> {
             }
         }
     }
-    Ok(saved)
+    Ok(Replay {
+        messages,
+        title,
+        ai_title,
+        model_selection: saved,
+    })
 }
 
 #[cfg(test)]

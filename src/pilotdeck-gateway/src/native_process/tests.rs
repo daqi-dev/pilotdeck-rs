@@ -1941,6 +1941,7 @@ async fn requests_registry_switch_gates_run_reads() {
             always_on: None,
             settings: requests::Requests::stub_settings(&owner),
             session_overrides: Arc::default(),
+            restoring_session_keys: Arc::default(),
         };
         let described = requests
             .describe_server()

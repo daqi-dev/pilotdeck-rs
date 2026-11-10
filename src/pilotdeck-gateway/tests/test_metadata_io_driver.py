@@ -140,7 +140,8 @@ class EnvironmentControls(unittest.TestCase):
         'test(=storage::tests::transcript_open_failure_renders_node_eacces_with_the_supplied_path) | '
         'test(=native_process::services_tests::direct_content_with_an_unopenable_path_stays_silent) | '
         'test(=test_process::an_unreadable_stat_of_a_possible_child_fails_the_child_audit) | '
-        'test(=test_process::an_unreadable_holder_of_this_user_fails_the_data_dir_audit)')
+        'test(=test_process::an_unreadable_holder_of_this_user_fails_the_data_dir_audit) | '
+        'test(=native_process::methods::transcript_archive::tests::restore_refuses_on_an_unwritable_chat_directory_and_retries_clean)')
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
