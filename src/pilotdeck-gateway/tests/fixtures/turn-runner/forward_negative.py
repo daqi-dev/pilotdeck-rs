@@ -19,7 +19,7 @@ test_prefix = 'runtime::turn::live::stream_tests::forwarding::'
 # suite's multi-Case form (negative_suite case_labels gives every Case its
 # own evidence stem). The shared anchor text lives once, here.
 gates_prefix = 'runtime::turn::live::stream_tests::gates_tests::'
-gates_wait = '    timeout(Duration::from_secs(15), async {\n        while session\n            .state\n            .lock()\n            .expect("#855: pump gate setup/read/cleanup must succeed")\n            .active\n            .is_some()\n            || runtime.lease_count() != 0\n            || handler.disposed.load(Ordering::SeqCst) == 0\n        {\n            tokio::task::yield_now().await;\n        }\n    })\n    .await\n    .expect("#855: owned cleanup must release slot, lease and handler");'
+gates_wait = '    timeout(Duration::from_secs(70), async {\n        while session\n            .state\n            .lock()\n            .expect("#855: pump gate setup/read/cleanup must succeed")\n            .active\n            .is_some()\n            || runtime.lease_count() != 0\n            || handler.disposed.load(Ordering::SeqCst) == 0\n        {\n            tokio::task::yield_now().await;\n        }\n    })\n    .await\n    .expect("#855: owned cleanup must release slot, lease and handler");'
 gates_compensate = gates_wait + '\n    let _ = crate::storage::TranscriptStore::append(\n        &*store,\n        &key,\n        &crate::metadata::object([\n            ("type", JsValue::String("turn_result".into())),\n            ("result", crate::metadata::object([("type", JsValue::String("error".into()))])),\n        ]),\n    );'
 cases = [
     ('cleanup-skip-lease', base / 'forward_tests.rs',
