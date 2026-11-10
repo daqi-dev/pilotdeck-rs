@@ -255,14 +255,17 @@ mod tests {
     /// #2157. The caller of `resolve` only refreshes *after* it returns
     /// (`set_mcp_servers`), so the lease must travel with the resolved
     /// project: an invalidate between the two must not dispose the plugin
-    /// runtime. The assertions run behaviour first: the refresh either still
-    /// works or names the disposed runtime, then retirement must still be
-    /// blocked, and `lease_count` is the deterministic backstop under both
-    /// timings. The claim that the resolver must hold the lease is registered
-    /// as the `mcp-resolver-lease` executable mutation
+    /// runtime. The deterministic claim runs first: right after the
+    /// invalidate, `lease_count` still reports the resolver's lease under
+    /// both cleanup timings, before the 500 ms window can make the outcome
+    /// depend on how far the disposal task got. The behavioural assertions
+    /// follow: the refresh either still works or names the disposed runtime,
+    /// and retirement must still be blocked. The claim that the resolver
+    /// must hold the lease is registered as the `mcp-resolver-lease`
+    /// executable mutation
     /// (`tests/fixtures/mcp-resolver-lease/negative_controls.py`), which must
-    /// stay red at the refresh assertion; this prose no longer carries the
-    /// proof on its own.
+    /// stay red at the `lease_count` assertion; this prose no longer carries
+    /// the proof on its own.
     #[tokio::test]
     async fn resolved_project_holds_the_generation_lease_through_refresh() {
         let scratch = Scratch::new();
@@ -275,10 +278,18 @@ mod tests {
         // Retire the generation in the window between `resolve` and the
         // caller's `refresh` (`set_mcp_servers`).
         project.invalidate(None);
+        // Deterministic under both cleanup timings: the count only tracks the
+        // lease the resolver returned with, and neither "the disposal task
+        // has not been scheduled yet" nor "it already finished" changes it.
+        crate::negative_assert_eq!(
+            runtime.lease_count(),
+            1,
+            "#2157 the resolved project must own the generation lease"
+        );
         // 500 ms only bounds "cleanup had its chance": with the lease held the
         // disposal cannot finish at any duration, and without it the
-        // deterministic `lease_count` assertion below still catches the early
-        // drop when a slow machine lets the disposal outlast this window.
+        // deterministic `lease_count` assertion above has already caught the
+        // early drop, whatever a slow machine does to this window.
         let retired = timeout(Duration::from_millis(500), runtime.wait_disposed()).await;
         crate::test_negative_receipt::expect_ok(
             resolved.refresh().await,
@@ -287,11 +298,6 @@ mod tests {
         crate::negative_assert!(
             retired.is_err(),
             "#2157 retirement must wait for the resolver's lease; the returned project dropped it"
-        );
-        crate::negative_assert_eq!(
-            runtime.lease_count(),
-            1,
-            "#2157 the resolved project must own the generation lease"
         );
         drop(resolved);
         runtime
