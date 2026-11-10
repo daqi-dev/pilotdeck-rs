@@ -546,6 +546,9 @@ impl ForkApi {
             #[cfg(unix)]
             self.turn.sandbox.clone(),
         );
+        if let Some(root) = self.turn.history_root.get() {
+            detached.bind_history_root(root.clone());
+        }
         if let Some(emit) = self.turn.session_emit.get() {
             detached.bind_session_emitter(emit.clone());
         }

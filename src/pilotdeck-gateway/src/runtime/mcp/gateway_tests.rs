@@ -281,15 +281,20 @@ struct SessionPluginsSource {
     probe: Probe,
 }
 impl SdkMcpSessionPlugins for SessionPluginsSource {
-    fn plugins(&self, session_key: &JsValue) -> Vec<Arc<plugins::LoadedPlugin>> {
-        let Some(key) = session_key.as_string().and_then(|key| key.to_utf8().ok()) else {
-            return Vec::new();
-        };
-        lock(&self.probe.0.plugins)
-            .iter()
-            .find(|(existing, _)| existing == &key)
-            .map(|(_, plugins)| plugins.clone())
-            .unwrap_or_default()
+    fn plugins<'a>(
+        &'a self,
+        session_key: &'a JsValue,
+    ) -> crate::runtime::mcp::sdk::SdkMcpFuture<'a, Vec<Arc<plugins::LoadedPlugin>>> {
+        Box::pin(async move {
+            let Some(key) = session_key.as_string().and_then(|key| key.to_utf8().ok()) else {
+                return Vec::new();
+            };
+            lock(&self.probe.0.plugins)
+                .iter()
+                .find(|(existing, _)| existing == &key)
+                .map(|(_, plugins)| plugins.clone())
+                .unwrap_or_default()
+        })
     }
 }
 

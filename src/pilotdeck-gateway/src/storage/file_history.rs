@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use std::{
     fmt, fs,
     fs::OpenOptions,
-    io,
+    io::{self, Read},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
@@ -236,10 +236,408 @@ pub struct FileHistoryState {
     pub tracked_files: Vec<String>,
 }
 
+/// Native backup access remains beneath a pinned, already-authorized chat dir.
+/// Open the configured home as the trust anchor, then walk every chat path
+/// component without following links. The configured home itself may be a
+/// symlink; canonicalize it alone, never the untrusted descendant.
+#[cfg(unix)]
+pub(crate) fn open_trusted_chat_dir(home: &Path, chat_dir: &Path) -> io::Result<fs::File> {
+    let relative = chat_dir
+        .strip_prefix(home)
+        .map_err(|_| io::Error::from_raw_os_error(libc::EACCES))?;
+    if relative
+        .components()
+        .any(|part| !matches!(part, std::path::Component::Normal(_)))
+    {
+        return Err(io::Error::from_raw_os_error(libc::EACCES));
+    }
+    let trusted_home = fs::canonicalize(home)?;
+    crate::project_files::open_directory_beneath(&trusted_home, &trusted_home.join(relative))
+}
+#[cfg(not(unix))]
+pub(crate) fn open_trusted_chat_dir(_: &Path, _: &Path) -> io::Result<fs::File> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "secure file history is unavailable",
+    ))
+}
+
+/// Derive a fork chat directory only beneath its parent's pinned store root.
+#[cfg(unix)]
+pub(crate) fn open_inherited_chat_dir(
+    root: &fs::File,
+    root_path: &Path,
+    child: &Path,
+) -> io::Result<fs::File> {
+    use rustix::fs::{Mode, OFlags, openat};
+    let relative = child
+        .strip_prefix(root_path)
+        .map_err(|_| io::Error::from_raw_os_error(libc::EACCES))?;
+    if relative
+        .components()
+        .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err(io::Error::from_raw_os_error(libc::EACCES));
+    }
+    crate::project_files::create_directories_at(root, relative, Mode::from_raw_mode(0o700))?;
+    let mut current = root.try_clone()?;
+    for part in relative.components() {
+        let std::path::Component::Normal(name) = part else {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        };
+        current = fs::File::from(
+            openat(
+                &current,
+                name,
+                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+            .map_err(io::Error::from)?,
+        );
+    }
+    Ok(current)
+}
+#[cfg(not(unix))]
+pub(crate) fn open_inherited_chat_dir(_: &fs::File, _: &Path, _: &Path) -> io::Result<fs::File> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "secure file history is unavailable",
+    ))
+}
+
+struct SecureBackup {
+    root: Arc<fs::File>,
+    relative: PathBuf,
+}
+impl SecureBackup {
+    #[cfg(unix)]
+    fn directory(&self, create: bool) -> io::Result<fs::File> {
+        use rustix::fs::{Mode, OFlags, openat};
+        if create {
+            crate::project_files::create_directories_at(
+                &self.root,
+                &self.relative,
+                Mode::from_raw_mode(0o700),
+            )?;
+        }
+        let mut current = self.root.try_clone()?;
+        for component in self.relative.components() {
+            let std::path::Component::Normal(name) = component else {
+                return Err(io::Error::from_raw_os_error(libc::EACCES));
+            };
+            let fd = openat(
+                &current,
+                name,
+                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+            .map_err(io::Error::from)?;
+            current = fs::File::from(fd);
+        }
+        Ok(current)
+    }
+    #[cfg(not(unix))]
+    fn directory(&self, _: bool) -> io::Result<fs::File> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "secure file history is unavailable",
+        ))
+    }
+    #[cfg(unix)]
+    fn open_backup(&self, name: &str, write: bool) -> io::Result<fs::File> {
+        use rustix::fs::{FileType, Mode, OFlags, fstat, openat};
+        let mut components = Path::new(name).components();
+        let Some(std::path::Component::Normal(leaf)) = components.next() else {
+            return Err(io::Error::from_raw_os_error(libc::EACCES));
+        };
+        if components.next().is_some() {
+            return Err(io::Error::from_raw_os_error(libc::EACCES));
+        }
+        let directory = self.directory(write)?;
+        let access = if write {
+            OFlags::WRONLY | OFlags::CREATE
+        } else {
+            OFlags::RDONLY
+        };
+        let fd = openat(
+            &directory,
+            leaf,
+            access | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o600),
+        )
+        .map_err(io::Error::from)?;
+        let file = fs::File::from(fd);
+        let stat = fstat(&file).map_err(io::Error::from)?;
+        if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile || stat.st_nlink != 1 {
+            return Err(io::Error::from_raw_os_error(libc::EACCES));
+        }
+        Ok(file)
+    }
+    #[cfg(not(unix))]
+    fn open_backup(&self, _: &str, _: bool) -> io::Result<fs::File> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "secure file history is unavailable",
+        ))
+    }
+    fn write_backup(&self, source: &Path, name: &str, mode: u32) -> FileHistoryResult<()> {
+        let mut target = self.open_backup(name, true)?;
+        target.set_len(0)?;
+        io::copy(&mut fs::File::open(source)?, &mut target)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            target.set_permissions(fs::Permissions::from_mode(mode & 0o777))?;
+        }
+        Ok(())
+    }
+    fn read_text(&self, name: &str) -> FileHistoryResult<Option<String>> {
+        let mut file = match self.open_backup(name, false) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+    }
+    #[cfg(unix)]
+    fn remove(&self, name: &str) -> io::Result<()> {
+        use rustix::fs::{AtFlags, unlinkat};
+        let mut components = Path::new(name).components();
+        let Some(std::path::Component::Normal(leaf)) = components.next() else {
+            return Err(io::Error::from_raw_os_error(libc::EACCES));
+        };
+        if components.next().is_some() {
+            return Err(io::Error::from_raw_os_error(libc::EACCES));
+        }
+        unlinkat(&self.directory(false)?, leaf, AtFlags::empty()).map_err(io::Error::from)
+    }
+    #[cfg(not(unix))]
+    fn remove(&self, _: &str) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "secure file history is unavailable",
+        ))
+    }
+}
+
+/// Native rewind authority: project root is pinned before any transcript path
+/// is inspected. Session transcript paths are data, never authority.
+struct SecureTarget {
+    root: Arc<fs::File>,
+    project: PathBuf,
+    canonical_project: PathBuf,
+}
+impl SecureTarget {
+    #[cfg(unix)]
+    fn new(project: &Path) -> io::Result<Self> {
+        let canonical = fs::canonicalize(project)?;
+        let root = crate::project_files::open_directory_beneath(&canonical, &canonical)?;
+        Ok(Self {
+            root: Arc::new(root),
+            project: project.to_path_buf(),
+            canonical_project: canonical,
+        })
+    }
+    #[cfg(not(unix))]
+    fn new(_: &Path) -> io::Result<Self> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "secure rewind is unavailable",
+        ))
+    }
+    fn relative(&self, path: &str) -> io::Result<PathBuf> {
+        let rel = Path::new(path)
+            .strip_prefix(&self.project)
+            .or_else(|_| Path::new(path).strip_prefix(&self.canonical_project))
+            .map_err(|_| io::Error::from_raw_os_error(libc::EACCES))?;
+        if rel.as_os_str().is_empty()
+            || rel
+                .components()
+                .any(|v| !matches!(v, std::path::Component::Normal(_)))
+        {
+            return Err(io::Error::from_raw_os_error(libc::EACCES));
+        }
+        Ok(rel.to_path_buf())
+    }
+    #[cfg(not(unix))]
+    fn validate(&self, _: &str) -> io::Result<()> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+    #[cfg(not(unix))]
+    fn bytes(&self, _: &str) -> io::Result<Option<(Vec<u8>, u32)>> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+    #[cfg(not(unix))]
+    fn delete(&self, _: &str) -> io::Result<()> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+    #[cfg(not(unix))]
+    fn restore(&self, _: &str, _: &mut fs::File, _: Option<u32>) -> io::Result<()> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+
+    #[cfg(unix)]
+    fn parent(&self, rel: &Path, create: bool) -> io::Result<fs::File> {
+        use rustix::fs::{Mode, OFlags, openat};
+        let path = rel.parent().ok_or(io::ErrorKind::InvalidInput)?;
+        if create {
+            crate::project_files::create_directories_at(
+                &self.root,
+                path,
+                Mode::from_raw_mode(0o700),
+            )?;
+        }
+        let mut dir = self.root.try_clone()?;
+        for part in path.components() {
+            let std::path::Component::Normal(name) = part else {
+                return Err(io::ErrorKind::PermissionDenied.into());
+            };
+            dir = fs::File::from(
+                openat(
+                    &dir,
+                    name,
+                    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                    Mode::empty(),
+                )
+                .map_err(io::Error::from)?,
+            );
+        }
+        Ok(dir)
+    }
+    #[cfg(unix)]
+    fn open_checked(&self, rel: &Path) -> io::Result<Option<fs::File>> {
+        use rustix::fs::{FileType, Mode, OFlags, fstat, openat};
+        let parent = match self.parent(rel, false) {
+            Ok(p) => p,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let leaf = rel.file_name().ok_or(io::ErrorKind::InvalidInput)?;
+        let fd = match openat(
+            &parent,
+            leaf,
+            OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        ) {
+            Ok(f) => f,
+            Err(e) if e == rustix::io::Errno::NOENT => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        let file = fs::File::from(fd);
+        let st = fstat(&file).map_err(io::Error::from)?;
+        if FileType::from_raw_mode(st.st_mode) != FileType::RegularFile || st.st_nlink != 1 {
+            return Err(io::Error::from_raw_os_error(libc::EACCES));
+        }
+        Ok(Some(file))
+    }
+    #[cfg(unix)]
+    fn validate(&self, path: &str) -> io::Result<()> {
+        let rel = self.relative(path)?;
+        self.open_checked(&rel).map(|_| ())
+    }
+    #[cfg(unix)]
+    fn bytes(&self, path: &str) -> io::Result<Option<(Vec<u8>, u32)>> {
+        let rel = self.relative(path)?;
+        let Some(mut f) = self.open_checked(&rel)? else {
+            return Ok(None);
+        };
+        let mode = metadata_mode(&f.metadata()?) & 0o777;
+        let mut data = Vec::new();
+        f.read_to_end(&mut data)?;
+        Ok(Some((data, mode)))
+    }
+    #[cfg(unix)]
+    fn delete(&self, path: &str) -> io::Result<()> {
+        let rel = self.relative(path)?;
+        if self.open_checked(&rel)?.is_none() {
+            return Ok(());
+        }
+        crate::project_files::unlink_at(&self.root, &rel)
+    }
+    #[cfg(unix)]
+    fn restore(&self, path: &str, source: &mut fs::File, mode: Option<u32>) -> io::Result<()> {
+        self.restore_with_hook(path, source, mode, || {})
+    }
+
+    #[cfg(unix)]
+    fn restore_with_hook(
+        &self,
+        path: &str,
+        source: &mut fs::File,
+        mode: Option<u32>,
+        hook: impl FnOnce(),
+    ) -> io::Result<()> {
+        use rustix::fs::{
+            AtFlags, FileType, Mode, OFlags, fstat, openat, renameat, statat, unlinkat,
+        };
+        use std::io::Write;
+        let rel = self.relative(path)?;
+        self.open_checked(&rel)?;
+        let dir = self.parent(&rel, true)?;
+        let leaf = rel.file_name().ok_or(io::ErrorKind::InvalidInput)?;
+        let name = format!(".pilotdeck-rewind-{}", uuid::Uuid::new_v4());
+        let fd = openat(
+            &dir,
+            name.as_str(),
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o600),
+        )
+        .map_err(io::Error::from)?;
+        let mut temp = fs::File::from(fd);
+        let temp_identity = fstat(&temp).map_err(io::Error::from)?;
+        let is_owned_temp = || -> io::Result<bool> {
+            match statat(&dir, name.as_str(), AtFlags::SYMLINK_NOFOLLOW) {
+                Ok(named) => Ok(
+                    FileType::from_raw_mode(named.st_mode) == FileType::RegularFile
+                        && temp_identity.st_dev == named.st_dev
+                        && temp_identity.st_ino == named.st_ino,
+                ),
+                Err(rustix::io::Errno::NOENT) => Ok(false),
+                Err(error) => Err(error.into()),
+            }
+        };
+        let result = (|| {
+            io::copy(source, &mut temp)?;
+            temp.flush()?;
+            hook();
+            let current = self.parent(&rel, false)?;
+            let opened = fstat(&dir).map_err(io::Error::from)?;
+            let resolved = fstat(&current).map_err(io::Error::from)?;
+            if opened.st_dev != resolved.st_dev || opened.st_ino != resolved.st_ino {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "rewind parent directory changed",
+                ));
+            }
+            self.open_checked(&rel)?;
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = mode.unwrap_or(metadata_mode(&source.metadata()?) & 0o777);
+                temp.set_permissions(fs::Permissions::from_mode(mode & 0o777))?;
+            }
+            if !is_owned_temp()? {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "rewind temporary file changed",
+                ));
+            }
+            renameat(&dir, name.as_str(), &dir, leaf).map_err(io::Error::from)
+        })();
+        if result.is_err() && is_owned_temp().unwrap_or(false) {
+            let _ = unlinkat(&dir, name.as_str(), AtFlags::empty());
+        }
+        result
+    }
+}
+
 pub struct FileHistoryStore {
     options: FileHistoryOptions,
     state: Mutex<FileHistoryState>,
     mtime_cache: Mutex<Vec<(String, Option<f64>)>>,
+    secure_backup: Option<SecureBackup>,
+    secure_target: Option<SecureTarget>,
 }
 
 impl FileHistoryStore {
@@ -248,7 +646,23 @@ impl FileHistoryStore {
             options,
             state: Mutex::new(FileHistoryState::default()),
             mtime_cache: Mutex::new(Vec::new()),
+            secure_backup: None,
+            secure_target: None,
         }
+    }
+    /// Native-only: pin the trusted chat directory and resolve every backup
+    /// component beneath it without following symlinks.
+    pub(crate) fn with_project_target(mut self, project: &Path) -> io::Result<Self> {
+        self.secure_target = Some(SecureTarget::new(project)?);
+        Ok(self)
+    }
+
+    pub(crate) fn with_trusted_root(mut self, root: fs::File, relative: PathBuf) -> Self {
+        self.secure_backup = Some(SecureBackup {
+            root: Arc::new(root),
+            relative,
+        });
+        self
     }
     pub fn backup_dir(&self) -> &Path {
         &self.options.backup_dir
@@ -306,6 +720,7 @@ impl FileHistoryStore {
         let clock = || self.now();
         let result = create_backup(
             &self.options.backup_dir,
+            self.secure_backup.as_ref(),
             &abs_path,
             1,
             self.max_file_bytes(),
@@ -385,6 +800,7 @@ impl FileHistoryStore {
             let clock = || self.now();
             let result = create_backup(
                 &self.options.backup_dir,
+                self.secure_backup.as_ref(),
                 &abs_path,
                 previous_version + 1,
                 self.max_file_bytes(),
@@ -446,7 +862,7 @@ impl FileHistoryStore {
             .rev()
             .find(|snapshot| snapshot.message_id.as_deref() == Some(message_id))
             .ok_or_else(|| FileHistoryError::NoSnapshot(message_id.to_string()))?;
-        find_conflict_paths(snapshot)
+        find_conflict_paths(snapshot, self.secure_target.as_ref())
     }
 
     /// F8/F9 — restore every backup of the last snapshot for `messageId`.
@@ -461,7 +877,18 @@ impl FileHistoryStore {
             .find(|snapshot| snapshot.message_id.as_deref() == Some(message_id))
             .ok_or_else(|| FileHistoryError::NoSnapshot(message_id.to_string()))?
             .clone();
-        let conflicts = find_conflict_paths(&snapshot)?;
+        if let Some(backup_root) = &self.secure_backup {
+            for (_, backup) in &snapshot.tracked_file_backups {
+                if let BackupFileName::Named(name) = &backup.backup_file_name {
+                    match backup_root.open_backup(name, false) {
+                        Ok(_) => {}
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+            }
+        }
+        let conflicts = find_conflict_paths(&snapshot, self.secure_target.as_ref())?;
         if !conflicts.is_empty() {
             return Ok(RewindOutcome {
                 files_changed: Vec::new(),
@@ -472,7 +899,13 @@ impl FileHistoryStore {
         let mut files_changed = Vec::new();
         let mut missing = Vec::new();
         for (abs_path, backup) in &snapshot.tracked_file_backups {
-            match restore_backup(&self.options.backup_dir, abs_path, backup)? {
+            match restore_backup(
+                &self.options.backup_dir,
+                self.secure_backup.as_ref(),
+                self.secure_target.as_ref(),
+                abs_path,
+                backup,
+            )? {
                 RestoreOutcome::Restored | RestoreOutcome::Deleted => {
                     files_changed.push(abs_path.clone());
                 }
@@ -504,6 +937,14 @@ impl FileHistoryStore {
             .find(|snapshot| snapshot.message_id.as_deref() == Some(message_id))
             .ok_or_else(|| FileHistoryError::NoSnapshot(message_id.to_string()))?
             .clone();
+        if let Some(target) = &self.secure_target {
+            for (path, _) in &snapshot.tracked_file_backups {
+                target.validate(path)?;
+            }
+            for (path, _) in &snapshot.expected_file_states {
+                target.validate(path)?;
+            }
+        }
         let mut insertions = 0usize;
         let mut deletions = 0usize;
         let mut files_changed = 0usize;
@@ -514,7 +955,11 @@ impl FileHistoryStore {
             let before = if backup.backup_file_name.is_truthy() {
                 match &backup.backup_file_name {
                     BackupFileName::Named(name) => {
-                        safe_read_text(&self.options.backup_dir.join(name))?
+                        if let Some(secure) = &self.secure_backup {
+                            secure.read_text(name)?
+                        } else {
+                            safe_read_text(&self.options.backup_dir.join(name))?
+                        }
                     }
                     other => {
                         let message = other
@@ -526,7 +971,13 @@ impl FileHistoryStore {
             } else {
                 None
             };
-            let after = safe_read_text(Path::new(abs_path))?;
+            let after = if let Some(target) = &self.secure_target {
+                target
+                    .bytes(abs_path)?
+                    .map(|(bytes, _)| String::from_utf8_lossy(&bytes).into_owned())
+            } else {
+                safe_read_text(Path::new(abs_path))?
+            };
             match (before, after) {
                 (None, None) => {}
                 (None, Some(after)) => {
@@ -695,8 +1146,11 @@ impl FileHistoryStore {
                 if still_referenced {
                     continue;
                 }
-                if let Err(error) = fs::remove_file(self.options.backup_dir.join(name))
-                    && error.kind() != io::ErrorKind::NotFound
+                if let Err(error) = if let Some(secure) = &self.secure_backup {
+                    secure.remove(name)
+                } else {
+                    fs::remove_file(self.options.backup_dir.join(name))
+                } && error.kind() != io::ErrorKind::NotFound
                 {
                     self.warn(format!("file-history: failed to evict {name}: {error}"));
                 }
@@ -782,6 +1236,7 @@ fn private_backup_error(path: &Path) -> FileHistoryError {
 
 fn create_backup(
     backup_dir: &Path,
+    secure: Option<&SecureBackup>,
     file_path: &str,
     version: u64,
     max_file_bytes: u64,
@@ -801,13 +1256,21 @@ fn create_backup(
         return Ok(null_backup(version, now(), true));
     }
     let backup_file_name = get_backup_file_name(file_path, version);
-    fs::create_dir_all(backup_dir)?;
     let backup_path = backup_dir.join(&backup_file_name);
-    write_private_backup(
-        Path::new(file_path),
-        &backup_path,
-        metadata_mode(&metadata) & 0o777,
-    )?;
+    if let Some(secure) = secure {
+        secure.write_backup(
+            Path::new(file_path),
+            &backup_file_name,
+            metadata_mode(&metadata) & 0o777,
+        )?;
+    } else {
+        fs::create_dir_all(backup_dir)?;
+        write_private_backup(
+            Path::new(file_path),
+            &backup_path,
+            metadata_mode(&metadata) & 0o777,
+        )?;
+    }
     Ok(BackupResult {
         backup: FileHistoryBackup {
             backup_file_name: BackupFileName::Named(backup_file_name),
@@ -898,11 +1361,17 @@ const PATH_JOIN_UNDEFINED: &str =
 
 fn restore_backup(
     backup_dir: &Path,
+    secure: Option<&SecureBackup>,
+    target_guard: Option<&SecureTarget>,
     file_path: &str,
     backup: &FileHistoryBackup,
 ) -> FileHistoryResult<RestoreOutcome> {
     let backup_file_name = match &backup.backup_file_name {
         BackupFileName::Null => {
+            if let Some(target) = target_guard {
+                target.delete(file_path)?;
+                return Ok(RestoreOutcome::Deleted);
+            }
             match fs::remove_file(file_path) {
                 Ok(()) => {}
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -922,13 +1391,35 @@ fn restore_backup(
         }
     };
     let backup_path = backup_dir.join(backup_file_name);
-    match fs::metadata(&backup_path) {
+    let mut secured_source = if let Some(secure) = secure {
+        match secure.open_backup(backup_file_name, false) {
+            Ok(file) => Some(file),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(RestoreOutcome::Missing);
+            }
+            Err(error) => return Err(node_fs_error(error, "access", &backup_path)),
+        }
+    } else {
+        None
+    };
+    match if secured_source.is_some() {
+        Ok(())
+    } else {
+        fs::metadata(&backup_path).map(|_| ())
+    } {
         Ok(_) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return Ok(RestoreOutcome::Missing);
         }
         // TS probes the backup with `fs.access`.
         Err(error) => return Err(node_fs_error(error, "access", &backup_path)),
+    }
+    if let Some(target) = target_guard {
+        let source = secured_source
+            .as_mut()
+            .ok_or_else(|| FileHistoryError::Fs("Secure backup source missing.".into()))?;
+        target.restore(file_path, source, backup.mode)?;
+        return Ok(RestoreOutcome::Restored);
     }
     let target = Path::new(file_path);
     let target_dir = target.parent().unwrap_or(Path::new("/"));
@@ -939,8 +1430,22 @@ fn restore_backup(
         .unwrap_or_else(|| "file".into());
     let temporary = target_dir.join(format!(".{base}.pilotdeck-rewind-{}", uuid::Uuid::new_v4()));
     let result = (|| -> FileHistoryResult<()> {
-        fs::copy(&backup_path, &temporary)
-            .map_err(|error| node_two_path_error(error, "copyfile", &backup_path, &temporary))?;
+        if let Some(source) = secured_source.as_mut() {
+            let mut target = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)
+                .map_err(|error| {
+                    node_two_path_error(error, "copyfile", &backup_path, &temporary)
+                })?;
+            io::copy(source, &mut target).map_err(|error| {
+                node_two_path_error(error, "copyfile", &backup_path, &temporary)
+            })?;
+        } else {
+            fs::copy(&backup_path, &temporary).map_err(|error| {
+                node_two_path_error(error, "copyfile", &backup_path, &temporary)
+            })?;
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -994,10 +1499,32 @@ fn read_expected_file_state(file_path: &str) -> FileHistoryResult<ExpectedFileSt
     })
 }
 
-fn find_conflict_paths(snapshot: &FileHistorySnapshot) -> FileHistoryResult<Vec<String>> {
+fn find_conflict_paths(
+    snapshot: &FileHistorySnapshot,
+    target: Option<&SecureTarget>,
+) -> FileHistoryResult<Vec<String>> {
+    if let Some(target) = target {
+        // Validate the complete set before any mutation or reading contents.
+        for (path, _) in &snapshot.tracked_file_backups {
+            target.validate(path)?;
+        }
+        for (path, _) in &snapshot.expected_file_states {
+            target.validate(path)?;
+        }
+    }
     let mut conflicts = Vec::new();
     for (path, expected) in &snapshot.expected_file_states {
-        let actual = read_expected_file_state(path)?;
+        let actual = if let Some(target) = target {
+            match target.bytes(path)? {
+                None => ExpectedFileState::Missing,
+                Some((bytes, mode)) => ExpectedFileState::Present {
+                    sha256: format!("{:x}", Sha256::digest(&bytes)),
+                    mode: Some(mode),
+                },
+            }
+        } else {
+            read_expected_file_state(path)?
+        };
         if actual != *expected {
             conflicts.push(path.clone());
         }
@@ -1205,7 +1732,14 @@ mod tests {
             backup_time_ms: 0,
             mode: None,
         };
-        let error = restore_backup(root.path(), directory.to_str().unwrap(), &backup).unwrap_err();
+        let error = restore_backup(
+            root.path(),
+            None,
+            None,
+            directory.to_str().unwrap(),
+            &backup,
+        )
+        .unwrap_err();
         let message = error.to_string();
         assert!(!message.contains("os error"), "{message}");
         // unlink(dir) is EPERM on macOS and EISDIR on Linux; both carry the
@@ -1237,7 +1771,8 @@ mod tests {
             mode: Some(0o644),
         };
         let target = parent.join("a.txt");
-        let error = restore_backup(&backup_dir, target.to_str().unwrap(), &backup).unwrap_err();
+        let error =
+            restore_backup(&backup_dir, None, None, target.to_str().unwrap(), &backup).unwrap_err();
         assert_eq!(
             error.to_string(),
             format!("EEXIST: file already exists, mkdir '{}'", parent.display())
@@ -1397,5 +1932,475 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .expect("second track_edit completed after release");
         second.join().unwrap();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod secure_backup_tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+    struct TempDir(PathBuf);
+    impl TempDir {
+        fn new() -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("pdrs-file-history-secure-{}", uuid::Uuid::new_v4()));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn descriptor_root_rejects_symlink_and_hardlink_without_changing_victim() {
+        let temp = TempDir::new();
+        let root_path = temp.path().join("root");
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(&root_path).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let victim = outside.join("victim");
+        let source = temp.path().join("source");
+        fs::write(&victim, b"protected").unwrap();
+        fs::write(&source, b"new").unwrap();
+        let secure = SecureBackup {
+            root: Arc::new(fs::File::open(&root_path).unwrap()),
+            relative: PathBuf::from("session/file-history"),
+        };
+        symlink(&outside, root_path.join("session")).unwrap();
+        assert!(secure.write_backup(&source, "victim", 0o600).is_err());
+        assert_eq!(fs::read(&victim).unwrap(), b"protected");
+        fs::remove_file(root_path.join("session")).unwrap();
+        fs::create_dir_all(root_path.join("session/file-history")).unwrap();
+        let leaf = root_path.join("session/file-history/victim");
+        symlink(&victim, &leaf).unwrap();
+        assert!(secure.write_backup(&source, "victim", 0o600).is_err());
+        assert!(secure.open_backup("victim", false).is_err());
+        fs::remove_file(&leaf).unwrap();
+        fs::hard_link(&victim, &leaf).unwrap();
+        assert!(secure.write_backup(&source, "victim", 0o600).is_err());
+        assert!(secure.open_backup("victim", false).is_err());
+        assert_eq!(fs::read(&victim).unwrap(), b"protected");
+    }
+
+    #[test]
+    fn native_rewind_preserves_project_alias_and_canonical_paths() {
+        let temp = TempDir::new();
+        let project = temp.path().join("project");
+        let alias = temp.path().join("alias");
+        fs::create_dir_all(&project).unwrap();
+        symlink(&project, &alias).unwrap();
+        let canonical = fs::canonicalize(&project).unwrap();
+        let alias_history = alias.join("alias-history");
+        let canonical_history = canonical.join("canonical-history");
+        fs::write(&alias_history, b"first").unwrap();
+        fs::write(&canonical_history, b"second").unwrap();
+        let backup = FileHistoryBackup {
+            backup_file_name: BackupFileName::Null,
+            version: 1,
+            backup_time_ms: 0,
+            mode: None,
+        };
+        let store = FileHistoryStore::new(FileHistoryOptions::new(temp.path().join("backups")))
+            .with_project_target(&alias)
+            .unwrap();
+        for (id, path) in [
+            ("canonical", canonical.join("alias-history")),
+            ("alias", alias.join("canonical-history")),
+        ] {
+            store
+                .state
+                .lock()
+                .unwrap()
+                .snapshots
+                .push(FileHistorySnapshot {
+                    message_id: Some(id.into()),
+                    tracked_file_backups: vec![(
+                        path.to_string_lossy().into_owned(),
+                        backup.clone(),
+                    )],
+                    expected_file_states: vec![],
+                    timestamp_ms: 0,
+                });
+            assert!(store.rewind(id).unwrap().missing.is_empty());
+            assert!(!path.exists());
+        }
+        let spoof = temp.path().join("alias-suffix").join("victim");
+        fs::create_dir_all(spoof.parent().unwrap()).unwrap();
+        fs::write(&spoof, b"keep").unwrap();
+        assert!(
+            store
+                .secure_target
+                .as_ref()
+                .unwrap()
+                .relative(spoof.to_str().unwrap())
+                .is_err()
+        );
+        assert_eq!(fs::read(spoof).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn native_rewind_checks_entire_snapshot_before_any_delete() {
+        let temp = TempDir::new();
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        let first = project.join("first");
+        let outside = temp.path().join("outside");
+        fs::write(&first, b"keep first").unwrap();
+        fs::write(&outside, b"keep outside").unwrap();
+        let backup = FileHistoryBackup {
+            backup_file_name: BackupFileName::Null,
+            version: 1,
+            backup_time_ms: 0,
+            mode: None,
+        };
+        let store = FileHistoryStore::new(FileHistoryOptions::new(temp.path().join("backups")))
+            .with_project_target(&project)
+            .unwrap();
+        store
+            .state
+            .lock()
+            .unwrap()
+            .snapshots
+            .push(FileHistorySnapshot {
+                message_id: Some("m".into()),
+                tracked_file_backups: vec![
+                    (first.to_string_lossy().into_owned(), backup.clone()),
+                    (outside.to_string_lossy().into_owned(), backup),
+                ],
+                expected_file_states: vec![],
+                timestamp_ms: 0,
+            });
+        assert!(store.rewind("m").is_err());
+        assert_eq!(fs::read(first).unwrap(), b"keep first");
+        assert_eq!(fs::read(outside).unwrap(), b"keep outside");
+    }
+
+    #[test]
+    fn native_store_blocks_forged_expected_and_link_targets() {
+        let temp = TempDir::new();
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        let victim = temp.path().join("victim");
+        fs::write(&victim, b"private").unwrap();
+        let symlink_path = project.join("symlink");
+        let hardlink_path = project.join("hardlink");
+        symlink(&victim, &symlink_path).unwrap();
+        fs::hard_link(&victim, &hardlink_path).unwrap();
+        let store = FileHistoryStore::new(FileHistoryOptions::new(temp.path().join("backups")))
+            .with_project_target(&project)
+            .unwrap();
+        for (id, path, expected_only) in [
+            ("outside", &victim, true),
+            ("symlink", &symlink_path, false),
+            ("hardlink", &hardlink_path, false),
+        ] {
+            let backup = FileHistoryBackup {
+                backup_file_name: BackupFileName::Null,
+                version: 1,
+                backup_time_ms: 0,
+                mode: None,
+            };
+            let path = path.to_string_lossy().into_owned();
+            let mut snapshot = FileHistorySnapshot {
+                message_id: Some(id.into()),
+                tracked_file_backups: vec![],
+                expected_file_states: vec![],
+                timestamp_ms: 0,
+            };
+            if expected_only {
+                snapshot
+                    .expected_file_states
+                    .push((path, ExpectedFileState::Missing));
+            } else {
+                snapshot.tracked_file_backups.push((path, backup));
+            }
+            store.state.lock().unwrap().snapshots.push(snapshot);
+            assert!(store.get_conflict_paths(id).is_err());
+            assert!(store.get_diff_stats(id).is_err());
+            assert!(store.rewind(id).is_err());
+            assert_eq!(fs::read(&victim).unwrap(), b"private");
+        }
+    }
+
+    #[test]
+    fn native_rewind_mode_none_preserves_backup_mode_for_existing_and_missing() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = TempDir::new();
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        let backup = temp.path().join("source");
+        fs::write(&backup, b"restored").unwrap();
+        fs::set_permissions(&backup, fs::Permissions::from_mode(0o640)).unwrap();
+        let guard = SecureTarget::new(&project).unwrap();
+        for old_mode in [Some(0o400), Some(0o640), None] {
+            let destination = project.join(format!("file-{old_mode:?}"));
+            if let Some(mode) = old_mode {
+                fs::write(&destination, b"previous").unwrap();
+                fs::set_permissions(&destination, fs::Permissions::from_mode(mode)).unwrap();
+            }
+            guard
+                .restore(
+                    destination.to_str().unwrap(),
+                    &mut fs::File::open(&backup).unwrap(),
+                    None,
+                )
+                .unwrap();
+            assert_eq!(
+                fs::metadata(destination).unwrap().permissions().mode() & 0o777,
+                0o640
+            );
+        }
+    }
+
+    #[test]
+    fn rewind_does_not_commit_or_remove_replaced_temporary() {
+        let temp = TempDir::new();
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        let target = project.join("target");
+        let backup = temp.path().join("backup");
+        let saved = project.join("owned-saved");
+        fs::write(&target, b"old").unwrap();
+        fs::write(&backup, b"secret").unwrap();
+        let guard = SecureTarget::new(&project).unwrap();
+        let mut replacement = None;
+        let result = guard.restore_with_hook(
+            target.to_str().unwrap(),
+            &mut fs::File::open(&backup).unwrap(),
+            Some(0o600),
+            || {
+                let name = fs::read_dir(&project)
+                    .unwrap()
+                    .map(|e| e.unwrap().path())
+                    .find(|p| {
+                        p.file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .starts_with(".pilotdeck-rewind-")
+                    })
+                    .unwrap();
+                fs::rename(&name, &saved).unwrap();
+                fs::write(&name, b"foreign").unwrap();
+                replacement = Some(name);
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(fs::read(target).unwrap(), b"old");
+        assert_eq!(fs::read(replacement.unwrap()).unwrap(), b"foreign");
+        assert_eq!(fs::read(saved).unwrap(), b"secret");
+    }
+
+    #[test]
+    fn rewind_temporary_is_private_and_parent_swap_aborts() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = TempDir::new();
+        let project = temp.path().join("project");
+        let parent = project.join("sub");
+        let moved = temp.path().join("moved");
+        fs::create_dir_all(&parent).unwrap();
+        let target = parent.join("target");
+        let backup = temp.path().join("backup");
+        fs::write(&target, b"old").unwrap();
+        fs::write(&backup, b"secret").unwrap();
+        let guard = SecureTarget::new(&project).unwrap();
+        let result = guard.restore_with_hook(
+            target.to_str().unwrap(),
+            &mut fs::File::open(&backup).unwrap(),
+            Some(0o644),
+            || {
+                let entry = fs::read_dir(&parent)
+                    .unwrap()
+                    .map(|e| e.unwrap().path())
+                    .find(|p| {
+                        p.file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .starts_with(".pilotdeck-rewind-")
+                    })
+                    .unwrap();
+                assert_eq!(
+                    fs::metadata(entry).unwrap().permissions().mode() & 0o777,
+                    0o600
+                );
+                fs::rename(&parent, &moved).unwrap();
+                fs::create_dir(&parent).unwrap();
+                fs::write(parent.join("target"), b"replacement").unwrap();
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(fs::read(moved.join("target")).unwrap(), b"old");
+        assert_eq!(fs::read(parent.join("target")).unwrap(), b"replacement");
+        assert!(fs::read_dir(moved).unwrap().all(|e| {
+            !e.unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".pilotdeck-rewind-")
+        }));
+    }
+
+    #[test]
+    fn native_rewind_replays_real_alias_and_canonical_edit_history() {
+        let temp = TempDir::new();
+        let project = temp.path().join("project");
+        let alias = temp.path().join("alias");
+        fs::create_dir_all(&project).unwrap();
+        symlink(&project, &alias).unwrap();
+        let canonical = fs::canonicalize(&project).unwrap();
+        let store = FileHistoryStore::new(FileHistoryOptions::new(temp.path().join("history")))
+            .with_trusted_root(
+                fs::File::open(temp.path()).unwrap(),
+                PathBuf::from("history"),
+            )
+            .with_project_target(&alias)
+            .unwrap();
+        for (id, path) in [
+            ("alias-edit", alias.join("first")),
+            ("canonical-edit", canonical.join("second")),
+        ] {
+            fs::write(&path, b"before").unwrap();
+            store.track_edit(path.to_str().unwrap(), id).unwrap();
+            fs::write(&path, b"after").unwrap();
+            store
+                .mark_edit_committed(path.to_str().unwrap(), id)
+                .unwrap();
+            assert!(store.rewind(id).unwrap().missing.is_empty());
+            assert_eq!(fs::read(path).unwrap(), b"before");
+        }
+    }
+
+    #[test]
+    fn rewind_target_rejects_untrusted_paths_and_preserves_all_targets() {
+        let temp = TempDir::new();
+        let project = temp.path().join("project");
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let victim = outside.join("victim");
+        let first = project.join("first");
+        fs::write(&victim, b"outside").unwrap();
+        fs::write(&first, b"inside").unwrap();
+        let guard = SecureTarget::new(&project).unwrap();
+        let backup = FileHistoryBackup {
+            backup_file_name: BackupFileName::Null,
+            version: 1,
+            backup_time_ms: 0,
+            mode: None,
+        };
+        let snapshot = FileHistorySnapshot {
+            message_id: Some("m".into()),
+            tracked_file_backups: vec![
+                (first.to_string_lossy().into_owned(), backup.clone()),
+                (victim.to_string_lossy().into_owned(), backup.clone()),
+            ],
+            expected_file_states: vec![],
+            timestamp_ms: 0,
+        };
+        assert!(find_conflict_paths(&snapshot, Some(&guard)).is_err());
+        assert_eq!(fs::read(&first).unwrap(), b"inside");
+        assert_eq!(fs::read(&victim).unwrap(), b"outside");
+        let ancestor = project.join("linked");
+        symlink(&outside, &ancestor).unwrap();
+        assert!(
+            guard
+                .bytes(ancestor.join("victim").to_str().unwrap())
+                .is_err()
+        );
+        let leaf = project.join("leaf");
+        symlink(&victim, &leaf).unwrap();
+        assert!(guard.validate(leaf.to_str().unwrap()).is_err());
+        assert!(guard.delete(leaf.to_str().unwrap()).is_err());
+        fs::remove_file(&leaf).unwrap();
+        fs::hard_link(&victim, &leaf).unwrap();
+        assert!(guard.bytes(leaf.to_str().unwrap()).is_err());
+        assert!(guard.delete(leaf.to_str().unwrap()).is_err());
+        assert_eq!(fs::read(&victim).unwrap(), b"outside");
+    }
+
+    #[test]
+    fn rewind_target_normal_restore_and_null_delete() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = TempDir::new();
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        let target = project.join("nested/file");
+        let backup = temp.path().join("backup");
+        fs::write(&backup, b"restored").unwrap();
+        let guard = SecureTarget::new(&project).unwrap();
+        guard
+            .restore(
+                target.to_str().unwrap(),
+                &mut fs::File::open(&backup).unwrap(),
+                Some(0o640),
+            )
+            .unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"restored");
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+        guard.delete(target.to_str().unwrap()).unwrap();
+        guard.delete(target.to_str().unwrap()).unwrap();
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn inherited_history_root_is_descriptor_bounded_for_forks() {
+        let temp = TempDir::new();
+        let parent = temp.path().join("parent");
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(&parent).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let pinned = fs::File::open(&parent).unwrap();
+        let child = parent.join("session/subagents");
+        let opened = open_inherited_chat_dir(&pinned, &parent, &child).unwrap();
+        assert!(opened.metadata().unwrap().is_dir());
+        assert!(open_inherited_chat_dir(&pinned, &parent, &outside).is_err());
+        let link = parent.join("linked");
+        symlink(&outside, &link).unwrap();
+        assert!(open_inherited_chat_dir(&pinned, &parent, &link.join("subagents")).is_err());
+        assert!(!outside.join("subagents").exists());
+    }
+
+    #[test]
+    fn chat_root_rejects_symlink_leaf_and_ancestor() {
+        let temp = TempDir::new();
+        let home = temp.path().join("home");
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(home.join("projects/p/chats")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let chats = home.join("projects/p/chats");
+        assert!(open_trusted_chat_dir(&home, &chats).is_ok());
+        fs::remove_dir(&chats).unwrap();
+        symlink(&outside, &chats).unwrap();
+        assert!(open_trusted_chat_dir(&home, &chats).is_err());
+        fs::remove_file(&chats).unwrap();
+        fs::remove_dir(home.join("projects/p")).unwrap();
+        symlink(&outside, home.join("projects/p")).unwrap();
+        assert!(open_trusted_chat_dir(&home, &chats).is_err());
+        assert!(open_trusted_chat_dir(&home, &outside).is_err());
+    }
+
+    #[test]
+    fn descriptor_root_writes_and_reads_normal_backup() {
+        let temp = TempDir::new();
+        let source = temp.path().join("source");
+        fs::write(&source, b"snapshot").unwrap();
+        let secure = SecureBackup {
+            root: Arc::new(fs::File::open(temp.path()).unwrap()),
+            relative: PathBuf::from("session/file-history"),
+        };
+        secure.write_backup(&source, "backup", 0o600).unwrap();
+        assert_eq!(
+            secure.read_text("backup").unwrap().as_deref(),
+            Some("snapshot")
+        );
+        secure.remove("backup").unwrap();
+        assert!(secure.read_text("backup").unwrap().is_none());
     }
 }

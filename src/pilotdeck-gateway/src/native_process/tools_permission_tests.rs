@@ -34,6 +34,8 @@ fn make_tools(
     };
     let recorder = crate::runtime::turn::live::test_recorder();
     let binding = SessionBinding {
+        file_history: None,
+        history_root: None,
         context: SessionContext {
             session_key: "session".into(),
             project_key: None,

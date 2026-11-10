@@ -39,13 +39,20 @@ pub struct RewindFilesInput<'a> {
 /// Runs one `rewind_files` request. Every error path is the TS `catch` branch:
 /// `{ canRewind: false, error }` with the original `Error.message` text.
 pub fn rewind_files(input: RewindFilesInput<'_>) -> JsValue {
-    match run(input) {
+    match run(input, false) {
         Ok(result) => JsValue::Object(result),
         Err(error) => JsValue::Object(failure(&error)),
     }
 }
 
-fn run(input: RewindFilesInput<'_>) -> Result<JsObject, String> {
+pub(crate) fn rewind_files_native(input: RewindFilesInput<'_>) -> JsValue {
+    match run(input, true) {
+        Ok(result) => JsValue::Object(result),
+        Err(error) => JsValue::Object(failure(&error)),
+    }
+}
+
+fn run(input: RewindFilesInput<'_>, secure: bool) -> Result<JsObject, String> {
     let storage = input
         .adapter
         .create_session_storage(SessionStorageInput {
@@ -64,7 +71,22 @@ fn run(input: RewindFilesInput<'_>) -> Result<JsObject, String> {
     }
     let mut options = FileHistoryOptions::new(storage.file_history_dir.clone());
     options.now = input.now.clone();
-    let history = FileHistoryStore::new(options);
+    let mut history = FileHistoryStore::new(options);
+    if secure {
+        let root_path = storage
+            .transcript_path
+            .parent()
+            .ok_or("Session transcript has no parent directory.")?;
+        let root = crate::storage::file_history::open_trusted_chat_dir(input.pilot_home, root_path)
+            .map_err(|e| e.to_string())?;
+        let relative =
+            std::path::PathBuf::from(crate::storage::sanitize_session_id(input.session_key))
+                .join("file-history");
+        history = history
+            .with_trusted_root(root, relative)
+            .with_project_target(input.project_root)
+            .map_err(|e| e.to_string())?;
+    }
     history.replay_from_transcript(&snapshots);
 
     let conflicts = history
@@ -162,7 +184,7 @@ fn strings(values: Vec<String>) -> JsValue {
 
 /// TS `snapshots.filter(...).map(...)`; property order comes from
 /// `Object.entries`, i.e. the transcript JSON object's own key order.
-fn snapshot_entries(entries: &[JsValue]) -> Result<Vec<SnapshotRecordedEntry>, String> {
+pub(crate) fn snapshot_entries(entries: &[JsValue]) -> Result<Vec<SnapshotRecordedEntry>, String> {
     let mut snapshots = Vec::new();
     for entry in entries {
         if entry

@@ -131,8 +131,11 @@ impl SdkMcpProjectResolver for ProbeResolver {
 /// the production `NoSessionPlugins` (assembly/mcp.rs).
 struct NoSessionPlugins;
 impl SdkMcpSessionPlugins for NoSessionPlugins {
-    fn plugins(&self, _session_key: &JsValue) -> Vec<Arc<LoadedPlugin>> {
-        Vec::new()
+    fn plugins<'a>(
+        &'a self,
+        _session_key: &'a JsValue,
+    ) -> crate::runtime::mcp::sdk::SdkMcpFuture<'a, Vec<Arc<LoadedPlugin>>> {
+        Box::pin(async move { Vec::new() })
     }
 }
 

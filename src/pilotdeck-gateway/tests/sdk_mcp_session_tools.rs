@@ -159,8 +159,11 @@ impl SdkMcpProjectResolver for FakeResolver {
 
 struct NoPlugins;
 impl SdkMcpSessionPlugins for NoPlugins {
-    fn plugins(&self, _session_key: &JsValue) -> Vec<Arc<LoadedPlugin>> {
-        Vec::new()
+    fn plugins<'a>(
+        &'a self,
+        _session_key: &'a JsValue,
+    ) -> pilotdeck_gateway::runtime::mcp::sdk::SdkMcpFuture<'a, Vec<Arc<LoadedPlugin>>> {
+        Box::pin(async move { Vec::new() })
     }
 }
 

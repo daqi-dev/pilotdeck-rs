@@ -148,6 +148,7 @@ pub(super) struct ForkScope {
     pub prompt_session: JsString,
     pub store: Arc<dyn TranscriptStore>,
     pub key: TranscriptKey,
+    pub history_root: Option<crate::runtime::session::factory::HistoryRoot>,
     pub skills: super::skills::NativeSkills,
     pub generation: Weak<crate::runtime::project::RuntimeLease>,
     pub sdk_async_registration: Option<ParentAsyncRegistration>,
@@ -197,6 +198,7 @@ pub(super) struct ForkTurn {
     tools: ToolRegistry,
     skills: super::skills::NativeSkills,
     generation: OnceLock<Arc<crate::runtime::project::RuntimeLease>>,
+    history_root: OnceLock<crate::runtime::session::factory::HistoryRoot>,
     owner: Option<Weak<NativeForkOwner>>,
     detached: bool,
     #[cfg(unix)]
@@ -251,6 +253,7 @@ impl ForkTurn {
             tools,
             skills,
             generation: OnceLock::new(),
+            history_root: OnceLock::new(),
             owner: owner.map(Arc::downgrade),
             detached: false,
             #[cfg(unix)]
@@ -269,6 +272,10 @@ impl ForkTurn {
             owned_hooks: OnceLock::new(),
         })
     }
+    pub(super) fn bind_history_root(&self, root: crate::runtime::session::factory::HistoryRoot) {
+        let _ = self.history_root.set(root);
+    }
+
     pub(super) fn bind_session_emitter(&self, emit: super::session_events::SessionEmit) {
         assert!(
             self.session_emit.set(emit).is_ok(),
@@ -1093,6 +1100,7 @@ impl ForkApi {
             seed,
             store,
             key,
+            history_root: self.turn.history_root.get().cloned(),
             skills,
             sdk_async_registration: self.turn.parent_async_registration(),
             generation: self

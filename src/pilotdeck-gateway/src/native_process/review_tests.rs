@@ -30,6 +30,8 @@ fn production_turn_ports_share_cancellation() {
     let options = Options::parse(scratch.args()).expect("#1071 cancellation options");
     let recorder = crate::runtime::turn::live::test_recorder();
     let binding = SessionBinding {
+        file_history: None,
+        history_root: None,
         context: SessionContext {
             session_key: "session".into(),
             project_key: None,
@@ -107,6 +109,8 @@ fn session_tools_admission_mode_follows_the_store_each_turn() {
         turn_id: "turn".into(),
     };
     let binding = || SessionBinding {
+        file_history: None,
+        history_root: None,
         context: SessionContext {
             session_key: "session".into(),
             project_key: None,
@@ -478,6 +482,8 @@ async fn top_level_hooks_are_ignored_like_ts() {
         use crate::runtime::session::{SessionContext, factory::SessionBinding};
         let recorder = crate::runtime::turn::live::test_recorder();
         let binding = SessionBinding {
+            file_history: None,
+            history_root: None,
             context: SessionContext {
                 session_key: "hook-source-probe".into(),
                 project_key: None,

@@ -657,6 +657,24 @@ impl Recorder {
         }
         Ok(())
     }
+    /// Append the same session-owned file-history event as the TS writer.
+    pub(crate) fn record_file_history_snapshot(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        snapshot: JsObject,
+        kind: &str,
+    ) -> RecorderResult<()> {
+        let inner = self.lock();
+        self.require_recording(&inner, turn_id)?;
+        let mut event = draft("file_snapshot_recorded");
+        event.insert("snapshotKind".into(), kind.into());
+        for (key, value) in snapshot.own_entries() {
+            event.insert(key.clone(), value.clone());
+        }
+        self.append(session_id, turn_id, event)
+    }
+
     fn append(
         &self,
         session_id: &JsString,

@@ -1048,6 +1048,11 @@ async fn start_assembly(
                         .context_runtime,
                 );
                 let mut retained = PreparedResources::default();
+                let history_root = match &fork_scope {
+                    Some(scope) => scope.history_root.clone(),
+                    None => ephemeral_root.as_ref().map(|root| root.history_root()).transpose()?,
+                };
+                retained.enable_file_history(options.home.clone(), history_root);
                 let fork_owner = super::agent::NativeForkOwner::new(lease);
                 // Every native session, not just a fork, runs the exact
                 // project generation that prepared its tools and permissions.
@@ -1782,6 +1787,7 @@ async fn start_assembly(
                 upload_store: upload_store.clone(),
             });
             let mcp_gateway = mcp::build_mcp_gateway(
+                sdk_port.clone(),
                 &owner,
                 &build_project,
                 &permission_rule_sets,

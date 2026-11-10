@@ -194,15 +194,20 @@ struct SessionPluginsSource {
     entries: Arc<Mutex<SessionPluginMap>>,
 }
 impl SdkMcpSessionPlugins for SessionPluginsSource {
-    fn plugins(&self, session_key: &JsValue) -> Vec<Arc<LoadedPlugin>> {
-        let Some(session_key) = session_key.as_string() else {
-            return Vec::new();
-        };
-        lock(&self.entries)
-            .iter()
-            .find(|(key, _)| key == session_key)
-            .map(|(_, plugins)| plugins.clone())
-            .unwrap_or_default()
+    fn plugins<'a>(
+        &'a self,
+        session_key: &'a JsValue,
+    ) -> pilotdeck_gateway::runtime::mcp::sdk::SdkMcpFuture<'a, Vec<Arc<LoadedPlugin>>> {
+        Box::pin(async move {
+            let Some(session_key) = session_key.as_string() else {
+                return Vec::new();
+            };
+            lock(&self.entries)
+                .iter()
+                .find(|(key, _)| key == session_key)
+                .map(|(_, plugins)| plugins.clone())
+                .unwrap_or_default()
+        })
     }
 }
 

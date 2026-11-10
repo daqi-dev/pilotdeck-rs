@@ -552,6 +552,9 @@ impl SessionTools {
             )
         });
         if let Some(turn) = &fork_turn {
+            if let Some(root) = &self.binding.history_root {
+                turn.bind_history_root(root.clone());
+            }
             if let Some(emit) = &self.session_emit {
                 turn.bind_session_emitter(emit.clone());
             }
@@ -748,6 +751,11 @@ impl SessionTools {
             Arc::new(dialog.port.with_options(options)) as capability::RuntimeContext
         });
         let tool_ports = ToolContextPorts {
+            file_history: self
+                .binding
+                .file_history
+                .clone()
+                .map(|history| history as crate::host::modules::capability::RuntimeContext),
             // ToolRuntimeContext creates this callback only when the frozen
             // session config enables includeToolProgress.  Project exactly
             // the gateway tool_progress shape before the owned turn emitter.
@@ -1733,8 +1741,14 @@ mod tests {
     }
     struct NoPlugins;
     impl SdkMcpSessionPlugins for NoPlugins {
-        fn plugins(&self, _: &JsValue) -> Vec<Arc<crate::runtime::plugins::LoadedPlugin>> {
-            Vec::new()
+        fn plugins<'a>(
+            &'a self,
+            _: &'a JsValue,
+        ) -> crate::runtime::mcp::sdk::SdkMcpFuture<
+            'a,
+            Vec<Arc<crate::runtime::plugins::LoadedPlugin>>,
+        > {
+            Box::pin(async move { Vec::new() })
         }
     }
     struct FixtureEnvironment;

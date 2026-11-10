@@ -207,7 +207,7 @@ impl Requests {
                 Arc::new(JsonlTranscriptStore::new_bounded()),
                 Arc::new(move |_: &crate::storage::ProjectKey| chat_dir.clone()),
             );
-            let result = rewind::rewind_files(RewindFilesInput {
+            let result = rewind::rewind_files_native(RewindFilesInput {
                 adapter: &adapter,
                 project_root: &project,
                 pilot_home: &home,

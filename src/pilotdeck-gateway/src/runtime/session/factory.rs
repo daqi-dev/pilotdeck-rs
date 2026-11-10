@@ -562,9 +562,20 @@ pub struct PreparedResources {
     // Opt-in session composition: storage is selected from the same prepared
     // project generation as model/tools, rather than resolving a second one.
     storage_factory: Option<CreateStorage>,
+    file_history_home: Option<std::path::PathBuf>,
+    file_history_inherited: Option<HistoryRoot>,
     admission: Option<Admission>,
 }
 impl PreparedResources {
+    /// Enable the native per-session file-history consumer.
+    pub fn enable_file_history(
+        &mut self,
+        home: std::path::PathBuf,
+        inherited: Option<HistoryRoot>,
+    ) {
+        self.file_history_home = Some(home);
+        self.file_history_inherited = inherited;
+    }
     /// Register cleanup on the executor captured by the first registration.
     ///
     /// # Panics
@@ -660,11 +671,21 @@ pub struct PreparedSession {
     pub host: HostBuilder,
     pub tail: TailConfig,
 }
+/// Authority for the directory containing a session's transcript, pinned by
+/// the storage owner. Forks inherit it; external path strings never confer it.
+#[derive(Clone)]
+pub struct HistoryRoot {
+    pub path: std::path::PathBuf,
+    pub directory: Arc<std::fs::File>,
+}
+
 #[derive(Clone)]
 pub struct SessionBinding {
     pub context: SessionContext,
     pub recorder: Arc<Recorder>,
     pub checkpoint: HostToolCheckpoint,
+    pub file_history: Option<Arc<crate::storage::file_history::FileHistoryStore>>,
+    pub history_root: Option<HistoryRoot>,
     pub projection: Arc<SessionProjection>,
 }
 
@@ -672,6 +693,7 @@ pub struct SessionBinding {
 /// callers use `new`; explicit restore/checkpoint/dispose hooks support external
 /// providers without reporting success for an unavailable capability.
 pub struct FactoryStorage {
+    pub history_root: OnceLock<HistoryRoot>,
     writer_lease: SharedWriterLease,
     pub recorder: Arc<Recorder>,
     pub projection: Arc<SessionProjection>,
@@ -764,6 +786,7 @@ impl FactoryStorage {
         let recorder = Arc::new(Recorder::new(projected, key.clone()));
         let close_writer = recorder.writer().clone();
         Self {
+            history_root: OnceLock::new(),
             writer_lease,
             cwd: key.project_root.clone(),
             recorder,
@@ -1150,10 +1173,71 @@ impl ProjectSessionFactory {
             }
             let checkpoint = HostToolCheckpoint::new(reload.as_ref().map(|r| &r.file_state), &[])
                 .map_err(|e| RuntimeError::new(e.to_string()))?;
+            let file_history = if let Some(home) = &prepared.resources.file_history_home {
+                let parent = storage.recorder.writer().path().parent().ok_or_else(|| {
+                    RuntimeError::new("Session transcript has no parent directory.")
+                })?;
+                let backup_dir = parent
+                    .join(crate::storage::sanitize_session_id(&context.session_key))
+                    .join("file-history");
+                let mut options = crate::storage::file_history::FileHistoryOptions::new(backup_dir);
+                let recorder = storage.recorder.clone();
+                let session = context.session_key.clone();
+                options.on_snapshot_recorded = Some(Arc::new(move |snapshot, kind| {
+                    let turn = snapshot
+                        .get("messageId")
+                        .and_then(JsValue::as_string)
+                        .cloned()
+                        .unwrap_or_default();
+                    recorder
+                        .record_file_history_snapshot(&session, &turn, snapshot, kind)
+                        .map_err(|error| {
+                            crate::storage::file_history::FileHistoryError::Fs(error.to_string())
+                        })
+                }));
+                let root = if let Some(inherited) = &prepared.resources.file_history_inherited {
+                    crate::storage::file_history::open_inherited_chat_dir(
+                        &inherited.directory,
+                        &inherited.path,
+                        parent,
+                    )
+                    .map_err(|e| RuntimeError::new(e.to_string()))?
+                } else {
+                    crate::storage::file_history::open_trusted_chat_dir(home, parent)
+                        .map_err(|e| RuntimeError::new(e.to_string()))?
+                };
+                let authority = HistoryRoot {
+                    path: parent.to_path_buf(),
+                    directory: Arc::new(
+                        root.try_clone()
+                            .map_err(|e| RuntimeError::new(e.to_string()))?,
+                    ),
+                };
+                storage
+                    .history_root
+                    .set(authority)
+                    .map_err(|_| RuntimeError::new("History root already bound."))?;
+                let relative = std::path::PathBuf::from(crate::storage::sanitize_session_id(
+                    &context.session_key,
+                ))
+                .join("file-history");
+                let history = Arc::new(
+                    crate::storage::file_history::FileHistoryStore::new(options)
+                        .with_trusted_root(root, relative),
+                );
+                let entries = crate::runtime::rewind::snapshot_entries(&read.entries)
+                    .map_err(RuntimeError::new)?;
+                history.replay_from_transcript(&entries);
+                Some(history)
+            } else {
+                None
+            };
             let binding = SessionBinding {
                 context: context.clone(),
                 recorder: storage.recorder.clone(),
                 checkpoint: checkpoint.clone(),
+                file_history,
+                history_root: storage.history_root.get().cloned(),
                 projection: storage.projection.clone(),
             };
             // #897: TS composes the session-context bundle — whose first

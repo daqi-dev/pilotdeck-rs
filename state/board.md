@@ -5547,3 +5547,13 @@ r55完整Gateway/CLI回归已结束：7845运行、7841通过、4失败、771跳
 ### 2026-11-10 · r65 会话消费者与并行缺口修复（未收口）
 
 整合树仍由根协调者独占，HEAD910abe7c6，Draft2786仍cdc7aa735；main批次固定cc85b315f。r65清单cbafc4a2通过mbp2格式/严格clippy/四bin，582定向在跑；真实S6文件写入→重启→冲突检查/回退及MCP会话插件→状态/隔离/拒覆盖→模型审批→stdio工具结果两条闭环通过，未计正式suite。真实clean2b9的7923 Gateway+CLI全回归仍在跑，不预填通过。三协作子代理外已完成6路Codex专项审计、SMS/微信Cron两路修复候选和网络/安装三路候选；根逐SHA真合并，未另开树。已收upload同门清理/取消/迟到写入修复及8确定性用例、SMS/微信trait后台投递、SOP跨三次进程恢复/receipt幂等fixture，待r66。S6安全复核补备份上级pin与native目标路径权限，项目外单次历史审批无可信授权凭据的限制明确保留在决策卡，不改冻结尺子、不宣称等价。第三方GLM/DeepSeek正式新评审仍实际401，Codex额度可用且持续并行，二者不混同；cb8原生见证仍阻塞，最终双谱系/host/session/retirement与人工签字未闭合。所有Rust构建在mbp2，本机只源码/静态/提交；原CLI/app/GPUI/file_edit树和快照未动。下一步收r65回归、r66安全与上传/渠道定向、真实WS附件和停机网络，并以同一头继续正式证据。
+
+
+### 2026-11-10 · 14:08 UTC 两小时交接后继续（未收口）
+
+本地已提交5f2437e7a的native因果终态保护，Draft2786仍cdc7aa735；本轮未迁移、未本机构建。mbp2 r65严格检查/四bin与582项全过；r66 455中453过，SMS平台假设及upload孤儿EEXIST已修；r67同字节重复测试编译失败保留并去重复；r68严格检查/四bin、150中149过，上传全部、真实SMS Server Cron及S6/SDK通过，Feishu后续断言待根收口。真实clean2b9 7923全回归仍跑，不能计最终成绩。三代理分别接技能builtin顺序/正式provider合同、Weixin真实Cron、ephemeral/fork及source fd安全；当前未提交源码、证据/持有人/资源/下一步已保全主仓 `_tmp/20261110-gateway-integration/handoff-20261110-1408/`。r66真实双端provider同投影但双方都不符合旧controlled72期望，正式仍FAIL；限定32技能token已同，默认第33Windows技能另列。r66临时会话保护回归已实证，r68正复验；source限project候选未合以免破坏外部已审批写。第三方评审401、cb8不可达及正式host/session/retirement未闭合，所有历史FAIL不改写。Weixin夹具曾误走官方QR（无真实账号），自有进程已停并新增only-loopback测试护栏后续跑；不记通过。交接已写，继续产品修复与验证。
+
+
+### 2026-11-10 Gateway 整合 r71 产品检查点（Codex，继续开发）
+
+已分边界本地提交上传4770228fa、SMS/微信Cron与飞书生命周期5c137a43d、真实builtin技能优先级130940f66；仍未合并/迁移。本机无Rust构建。mbp2 r71源清单443fa5de严格clippy/四bin/9定向全PASS，含飞书两轮落盘后重载/停机；同r68的上传全量、S6/SDK及SMS实际Server Cron已通过。真实clean2b9旧头完整回归7923执行=7921PASS/2FAIL，另773skipped，原失败不重写、不并入当前头成绩。r71限定32技能的双端真实模型/工具HTTP body逐字段完全一致，read_skill真实内容/路径进入模型，公开browser-use=false仍正确读取standalone；默认第33Windows贡献正补，旧controlled72判据仍2FAIL/70NOT_RUN。Weixin固定TS/r71均真实Cron→A7→首发送HTTP500→新poll后重送200且仅1模型请求、公开禁用后第二Cron完成但无回送、shutdown0；TS需真实项目注册marker，原缺前提失败保留。更正旧网络记录：初版未guard的TS夹具仅证明至少一次官方QR请求、后续轮询次数未知，未用真实账号；所有自有进程已停，后续guard轮非回环deny计数0。临时会话真实seed/read/write/permission/子会话/退出清理及获批项目外文件均已实测通过。S6 source备份fd权限/回放重新授权仍有P0候选待收，不能称安全门关闭；tmp preview resultPath装配差异已定位、另批修。cb8已恢复，复用本任务旧clean8072树保留snapshot分支后接同r71源码，Linux严格clippy/四binPASS；该机无nextest，原错误保留，改用现有cargo test继续，不下载二进制。源码安装独立worker正在mbp2真实两代release；原离线公共regress缓存缺失已隔离补齐，不触用户配置。MiniMax独立上传四角色正在跑；Claude钥当前未配置、此前GLM/DS401不混同Codex额度。正式host/session/retirement、最终同头全回归/双谱系/人签字尚未齐。下一步收sourcefd、默认Windows与实际安装，运行exactHEAD上传负控和Linux进程网络见证。

@@ -46,6 +46,15 @@ impl TemporaryRoot {
         }
         result
     }
+    pub(crate) fn history_root(
+        &self,
+    ) -> Result<crate::runtime::session::factory::HistoryRoot, RuntimeError> {
+        self.verify()?;
+        Ok(crate::runtime::session::factory::HistoryRoot {
+            path: self.path.clone(),
+            directory: Arc::new(self.identity.try_clone().map_err(io_error)?),
+        })
+    }
     pub(crate) fn verify(&self) -> Result<(), RuntimeError> {
         use std::os::unix::fs::MetadataExt;
         let path = std::fs::symlink_metadata(&self.path).map_err(io_error)?;

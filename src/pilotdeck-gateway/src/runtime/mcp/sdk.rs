@@ -230,14 +230,14 @@ pub trait SdkMcpProjectResolver: Send + Sync {
 
 /// `this.sdkSessionPlugins.get(sessionKey) ?? []`.
 pub trait SdkMcpSessionPlugins: Send + Sync {
-    fn plugins(&self, session_key: &JsValue) -> Vec<Arc<LoadedPlugin>>;
+    fn plugins<'a>(&'a self, session_key: &'a JsValue) -> SdkMcpFuture<'a, Vec<Arc<LoadedPlugin>>>;
 }
 impl<F> SdkMcpSessionPlugins for F
 where
     F: Fn(&JsValue) -> Vec<Arc<LoadedPlugin>> + Send + Sync,
 {
-    fn plugins(&self, session_key: &JsValue) -> Vec<Arc<LoadedPlugin>> {
-        self(session_key)
+    fn plugins<'a>(&'a self, session_key: &'a JsValue) -> SdkMcpFuture<'a, Vec<Arc<LoadedPlugin>>> {
+        Box::pin(async move { self(session_key) })
     }
 }
 
@@ -309,7 +309,7 @@ impl SdkMcpConfig {
         for plugin in &project_plugins {
             collect_plugin_mcp_names(plugin.mcp_servers.as_ref(), &mut reserved);
         }
-        for plugin in self.options.session_plugins.plugins(&session_key) {
+        for plugin in self.options.session_plugins.plugins(&session_key).await {
             collect_plugin_mcp_names(plugin.mcp_servers.as_ref(), &mut reserved);
         }
 
@@ -540,7 +540,7 @@ impl SdkMcpConfig {
         runtime.refresh().await?;
         let mut servers: Vec<(JsString, bool)> = Vec::new();
         if let Some(session_key) = input.get("sessionKey").filter(|value| js_truthy(value)) {
-            for plugin in self.options.session_plugins.plugins(session_key) {
+            for plugin in self.options.session_plugins.plugins(session_key).await {
                 let mut names = Vec::new();
                 collect_plugin_mcp_names(plugin.mcp_servers.as_ref(), &mut names);
                 for name in names {
