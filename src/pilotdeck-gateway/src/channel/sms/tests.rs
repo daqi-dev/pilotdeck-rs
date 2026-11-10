@@ -4271,9 +4271,12 @@ async fn missing_host_is_the_headless_parser_400() {
 /// `sms-admission-err-responds` makes).
 #[tokio::test]
 async fn connect_pin_is_the_zero_byte_destroy() {
-    // Port ledger: 18929, right after the two #2152 admission pins — see the
-    // 189xx segment ledger in `head_timeout_tests.rs`.
-    const PORT: u16 = 18929;
+    // Port ledger: 18933 — #2691's port-guard block took 18929–18932 on
+    // main while this PR's earlier draft held 18929; the pin moves to the
+    // next free slot so the two never race under nextest parallelism (same
+    // collision class #2691 fix-r2 fixed for 18927). See the 189xx segment
+    // ledger in `head_timeout_tests.rs`.
+    const PORT: u16 = 18933;
     let case = case_by_name("unknown-method");
     let handle = pin_channel(&case, PORT).await;
     // #2773: the label carries the pin's marker — under the

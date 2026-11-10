@@ -8,9 +8,12 @@ Two no-op rows revert the #2152 wiring — the extracted sms call
 at its own assertion. The third row flips the gate's `Err` (CONNECT's
 zero-byte close) into a routed answer, killed by the #2773 CONNECT pin; the
 fourth turns the fail-closed `setHost` read into a fail-open one, killed by
-the catch_unwind pin. One script holds both lanes because the four rows are
-one mutation family of a single issue (#2773, review r2): the same
-node_parser_admission gate.
+the catch_unwind pin. Rows five and six (fix-r1) disconnect only the drain
+wirings the P1 fixes added — the admission early-exit's (#2773 P1-b) and the
+guard-431 mid-head trip's — so the bound lib pins' own FIN expectations fail
+while the routed bytes still answer. One script holds both lanes because the
+six rows are one mutation family of a single issue (#2773, review r2 +
+fix-r1): the same node_parser_admission gate and its close-kind drains.
 
 Run after committing the candidate (the mutating_sources guard refuses a
 dirty tree). Each mutant is applied to the original one at a time, never
@@ -60,16 +63,71 @@ cases = [
      'channel::sms::tests::connect_pin_is_the_zero_byte_destroy',
      '#2773 pin connect'),
     # The user_dialog call, no-op'd: the unknown-method replay cell draws a
-    # routed 405 against its recorded 400.
+    # routed 405 against its recorded 400. The anchor spans the fix-r1 drain
+    # wiring (#2773 P1-b) so the mutant removes it together with the call; the
+    # bound assertion is cell-specific (`unknown-method:` prefix in the panic
+    # payload), so a regression in another replay cell cannot satisfy this
+    # row's anchor (review r2 boundary#3).
     ('parser-admission-noop', HTTP_STORE,
      '                                if let Some(rejection) =\n'
      '                                    parser_admission(&request, &timer)?\n'
      '                                {\n'
+     '                                    // #2773 fix-r1 (P1-b): this early return\n'
+     '                                    // is the one "close with an unread body"\n'
+     '                                    // path that skipped the drain wiring the\n'
+     '                                    // served responses get below — the unread\n'
+     '                                    // bytes in the kernel queue turned the\n'
+     '                                    // close into an RST instead of the FIN\n'
+     '                                    // the serve path delivers (#702 P2).\n'
+     '                                    // Mirror that wiring so the connection\n'
+     '                                    // task drains before closing.\n'
+     '                                    if body_pending\n'
+     '                                        && rejection.headers().get(header::CONNECTION)\n'
+     '                                            .is_some_and(|value| {\n'
+     '                                                value.as_bytes()\n'
+     '                                                    .eq_ignore_ascii_case(b"close")\n'
+     '                                            })\n'
+     '                                    {\n'
+     '                                        timer.mark_unread_body_close();\n'
+     '                                    }\n'
      '                                    return Ok(rejection);\n'
      '                                }\n',
      '                                // mutant: parser admission disconnected\n',
      'socket_requests_match_typescript_framing',
-     '#2773 admission replay status differs'),
+     'unknown-method: #2773 admission replay status differs'),
+    # The admission gate's drain wiring alone, disconnected (#2773 fix-r1
+    # P1-b): the early 400 still goes out, but the connection task no longer
+    # drains the unread body, so the close degenerates into an RST and the
+    # #2774 lib pin's own FIN expectation fails. This row is what makes the
+    # ledger's "double kill" claim machine-checked (review r2 simplify#7).
+    ('parser-admission-drain-unwired', HTTP_STORE,
+     '                                    if body_pending\n'
+     '                                        && rejection.headers().get(header::CONNECTION)\n'
+     '                                            .is_some_and(|value| {\n'
+     '                                                value.as_bytes()\n'
+     '                                                    .eq_ignore_ascii_case(b"close")\n'
+     '                                            })\n'
+     '                                    {\n'
+     '                                        timer.mark_unread_body_close();\n'
+     '                                    }\n',
+     '                                    if body_pending {\n'
+     '                                        // mutant: drain wiring disconnected\n'
+     '                                    }\n',
+     'user_dialog::http_store::http_store_tests::'
+     'parser_rejection_with_unread_body_delivers_and_closes',
+     '#2774 the admission 400 must close the connection, '
+     'not park it after an unread body'),
+    # The guard-431 mid-head drain mark alone, disconnected (#2773 fix-r1):
+    # the 431 still answers, but the unread head bytes turn the close into an
+    # RST racing the response — the boundary pin's FIN expectation fails.
+    ('guard-431-drain-unwired', HTTP_STORE,
+     '                        this.timer.mark_unread_body_close();\n'
+     '                        response = Some(NODE_431_RESPONSE);\n',
+     '                        response = Some(NODE_431_RESPONSE); '
+     '// mutant: guard drain disconnected\n',
+     'user_dialog::http_store::http_store_tests::'
+     'header_guard_beats_hyper_buffer_cap_at_the_boundary',
+     'the 431 must end the connection'),
     # The setHost read, fail-open: the non-boolean is no longer refused, so
     # the catch_unwind pin finds no panic and fails at its own expectation.
     ('set-host-fail-open', INTEGRATION,

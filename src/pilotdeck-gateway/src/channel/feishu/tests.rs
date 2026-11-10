@@ -53,7 +53,9 @@ const FIXED_UUID: &str = "aaaa1111-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 /// parallel pins never race for one listener.
 const LARK_PORT: u16 = 18990;
 /// The component pins take their own ports inside the 18960-18999 feishu
-/// block the task reserved (wecom owns 18997-18998, weixin 18800-18921).
+/// block the task reserved (wecom owns 18997-18998; 18800-18921 is the sms
+/// golden replay's 18800-18858 plus the wecom-callback fixture's 18900-18921,
+/// per the 189xx ledger in `channel/sms/head_timeout_tests.rs`).
 const NULL_PIN_ROUTER_PORT: u16 = 18973;
 const NULL_PIN_LARK_PORT: u16 = 18991;
 const DEDUP_PIN_LARK_PORT: u16 = 18992;

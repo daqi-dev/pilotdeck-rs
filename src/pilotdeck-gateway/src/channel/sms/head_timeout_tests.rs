@@ -60,17 +60,20 @@ use super::*;
 ///
 /// ```text
 /// 18800–18858  sms golden replay fixture (`tests/fixtures/channel-sms/`)
+/// 18859–18899  free
 /// 18900–18921  wecom-callback golden replay fixture (the
 ///              `missing-outbound-config` "no listener" port is 18921)
 /// 18922–18923  sms http10 pins (18922 the 404 pin, 18923 the 200 pin)
 /// 18924–18925  sms head-timeout pins (this module, the constants below)
 /// 18926        sms json-null cell
 /// 18927–18928  sms #2152 parser-admission pins
-/// 18929        sms #2773 CONNECT pin (the admission gate's zero-byte close)
-/// 18930–18932  sms #2691 port-guard cases (the v6-only occupier, the TOCTOU
-///              bind race, the dual-stack preflight, the replay-form
-///              post-start guard)
-/// 18933–18959  free
+/// 18929–18932  sms #2691 port-guard cases (the v6-only occupier on 18929,
+///              the TOCTOU bind race on 18930, the dual-stack preflight on
+///              18931, the replay-form post-start guard on 18932)
+/// 18933        sms #2773 CONNECT pin (the admission gate's zero-byte close;
+///              moved off 18929 — #2691 took it on main after this PR's
+///              draft had claimed it)
+/// 18934–18959  free
 /// 18960–18999  feishu registered segment — the feishu oracle replay binds
 ///              18960–18972 and its pins bind 18973/18980/18990–18993; the
 ///              wecom suite binds 18990/18991/18994 and 18995–18998 (the

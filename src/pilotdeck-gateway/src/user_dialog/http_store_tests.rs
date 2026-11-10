@@ -396,17 +396,32 @@ async fn exchange_within(port: u16, request: &[u8], limit: Duration) -> std::io:
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "no response"))?
 }
 
-/// Like [`exchange_lenient`], but reports whether the server actually ended the
-/// connection (EOF or reset) instead of leaving it idle until `limit`.
-async fn exchange_until_eof(port: u16, request: &[u8], limit: Duration) -> (Vec<u8>, bool) {
+/// How the server ended the connection, as seen from a bare socket: a clean
+/// FIN (`read_to_end` returns `Ok`), a reset (`Ok(Err(..))` — typically
+/// `ECONNRESET`, what a close with unread bytes still in the kernel receive
+/// queue degenerates into), or no end within `limit` at all (#2773 fix-r1
+/// P1-a: the old `bool` counted a reset as a clean close, so a pin could not
+/// tell a FIN from an RST — the very axis the #2774 arbitration needed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ServerClose {
+    Fin,
+    Reset,
+    StillOpen,
+}
+
+/// Like [`exchange_lenient`], but reports how the server ended the
+/// connection instead of leaving it idle until `limit`.
+async fn exchange_until_eof(port: u16, request: &[u8], limit: Duration) -> (Vec<u8>, ServerClose) {
     let mut stream = TcpStream::connect(("127.0.0.1", port))
         .await
         .expect("connect");
     let _ = tokio::time::timeout(limit, stream.write_all(request)).await;
     let mut response = Vec::new();
-    let closed = tokio::time::timeout(limit, stream.read_to_end(&mut response))
-        .await
-        .is_ok();
+    let closed = match tokio::time::timeout(limit, stream.read_to_end(&mut response)).await {
+        Ok(Ok(_)) => ServerClose::Fin,
+        Ok(Err(_)) => ServerClose::Reset,
+        Err(_) => ServerClose::StillOpen,
+    };
     (response, closed)
 }
 
@@ -748,8 +763,9 @@ async fn leading_value_ows_beyond_the_raw_cap_reaches_the_handler() {
             !response.starts_with(NODE_431),
             "#1555 uncounted leading OWS must not be answered with Node's 431"
         );
-        assert!(
+        assert_eq!(
             closed,
+            ServerClose::Fin,
             "#1555 the OWS request closes with its `Connection: close` response"
         );
     }
@@ -784,8 +800,9 @@ async fn four_thousand_ninety_seven_small_fields_reach_the_handler() {
         !response.starts_with(NODE_431),
         "#1555 a Node-legal field count must not be answered with 431"
     );
-    assert!(
+    assert_eq!(
         closed,
+        ServerClose::Fin,
         "#1555 the many-field request closes with its `Connection: close` response"
     );
     server.close().await;
@@ -831,7 +848,11 @@ async fn small_field_count_is_bounded_by_the_node_budget_not_a_field_cap() {
         response, NODE_431,
         "#1555 one more field reaches Node's `>=` budget and must be the exact 67-byte 431"
     );
-    assert!(closed, "#1555 the budget 431 must end the connection");
+    assert_eq!(
+        closed,
+        ServerClose::Fin,
+        "#1555 the budget 431 must end the connection"
+    );
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
 }
@@ -855,8 +876,9 @@ async fn leading_ows_does_not_exempt_the_counted_budget() {
         response, NODE_431,
         "#1555 dropped OWS padding must not exempt the counted value bytes"
     );
-    assert!(
+    assert_eq!(
         closed,
+        ServerClose::Fin,
         "#1555 the counted-budget 431 must end the connection"
     );
     server.close().await;
@@ -923,8 +945,9 @@ async fn cr_in_value_is_rejected_like_node() {
             "#1555 a CR inside a field value must be rejected like Node ({shape:?}): {}",
             String::from_utf8_lossy(&response)
         );
-        assert!(
+        assert_eq!(
             closed,
+            ServerClose::Fin,
             "#1555 the parser 400 must end the connection ({shape:?})"
         );
     }
@@ -956,7 +979,11 @@ async fn cr_in_value_past_the_raw_bound_keeps_the_registered_431() {
         "#1555 past the raw bound the CR-in-value shape is the guard's 431 \
          (Node answers its 400 for every length; registered in R7)"
     );
-    assert!(closed, "#1555 the guard 431 must end the connection");
+    assert_eq!(
+        closed,
+        ServerClose::Fin,
+        "#1555 the guard 431 must end the connection"
+    );
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
 }
@@ -994,7 +1021,7 @@ async fn header_guard_counts_name_and_value_like_node() {
         response, NODE_431,
         "2,730x `aaaaa: x` count 16,380 bytes plus the target/Host/Connection"
     );
-    assert!(closed, "the 431 must end the connection");
+    assert_eq!(closed, ServerClose::Fin, "the 431 must end the connection");
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
 }
@@ -1019,7 +1046,11 @@ async fn header_guard_boundary_matches_node_16384() {
     let pass = request("aa");
     let (response, closed) =
         exchange_until_eof(port, pass.as_bytes(), Duration::from_secs(5)).await;
-    assert!(closed, "Connection: close must end the pass case");
+    assert_eq!(
+        closed,
+        ServerClose::Fin,
+        "Connection: close must end the pass case"
+    );
     assert_eq!(
         status(&response),
         405,
@@ -1031,7 +1062,7 @@ async fn header_guard_boundary_matches_node_16384() {
     let (response, closed) =
         exchange_until_eof(port, fail.as_bytes(), Duration::from_secs(5)).await;
     assert_eq!(response, NODE_431, "16,384 counted bytes must be 431");
-    assert!(closed, "the 431 must end the connection");
+    assert_eq!(closed, ServerClose::Fin, "the 431 must end the connection");
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
 }
@@ -1094,7 +1125,7 @@ async fn header_guard_beats_hyper_buffer_cap_at_the_boundary() {
         "guard bytes, not hyper's 123-byte 431: {:?}",
         String::from_utf8_lossy(&response)
     );
-    assert!(closed, "the 431 must end the connection");
+    assert_eq!(closed, ServerClose::Fin, "the 431 must end the connection");
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
 }
@@ -1121,7 +1152,7 @@ async fn header_guard_raw_cap_uses_node_431_bytes() {
         response, NODE_431,
         "#1555 the guard must own the 431 bytes for whitespace it still forwards"
     );
-    assert!(closed, "the 431 must end the connection");
+    assert_eq!(closed, ServerClose::Fin, "the 431 must end the connection");
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
 }
@@ -1475,9 +1506,10 @@ async fn early_response_raw(tag: &str, request: &[u8], expected: u16) {
     let (server, port) = start_limited(store, ServeLimits::default()).await;
     let (response, closed) = exchange_until_eof(port, request, Duration::from_secs(10)).await;
     assert_close_without_keep_alive(&response, expected, tag);
-    assert!(
+    assert_eq!(
         closed,
-        "{tag}: the server left the connection open after an unread-body response"
+        ServerClose::Fin,
+        "{tag}: the early answer must close with a clean FIN after draining the unread body"
     );
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
@@ -1585,7 +1617,11 @@ async fn oversized_chunked_body_rejection_closes_connection() {
     let (server, port) = start_limited(store, ServeLimits::default()).await;
     let (response, closed) = exchange_until_eof(port, &request, Duration::from_secs(10)).await;
     assert_close_without_keep_alive(&response, 413, "unread-413-chunked");
-    assert!(closed, "the connection stayed open after a chunked 413");
+    assert_eq!(
+        closed,
+        ServerClose::Fin,
+        "the connection stayed open after a chunked 413"
+    );
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
 }
@@ -1611,8 +1647,9 @@ async fn parser_rejection_with_unread_body_delivers_and_closes() {
     let frob = http_request("FROB", &format!("{STORE_PATH_PREFIX}list"), &[], &body);
     let (response, closed) = exchange_until_eof(port, &frob, Duration::from_secs(10)).await;
     assert_close_without_keep_alive(&response, 400, "#2774 unread-admission-frob");
-    assert!(
+    assert_eq!(
         closed,
+        ServerClose::Fin,
         "#2774 the admission 400 must close the connection, not park it after an unread body"
     );
 
@@ -1625,8 +1662,9 @@ async fn parser_rejection_with_unread_body_delivers_and_closes() {
     let (response, closed) =
         exchange_until_eof(port, withheld.as_bytes(), Duration::from_secs(10)).await;
     assert_close_without_keep_alive(&response, 400, "#2774 unread-admission-withheld");
-    assert!(
+    assert_eq!(
         closed,
+        ServerClose::Fin,
         "#2774 the withheld-body 400 must close the connection"
     );
 
@@ -1639,7 +1677,11 @@ async fn parser_rejection_with_unread_body_delivers_and_closes() {
     let (response, closed) =
         exchange_until_eof(port, hostless.as_bytes(), Duration::from_secs(10)).await;
     assert_close_without_keep_alive(&response, 400, "#2774 unread-admission-hostless");
-    assert!(closed, "#2774 the headless 400 must close the connection");
+    assert_eq!(
+        closed,
+        ServerClose::Fin,
+        "#2774 the headless 400 must close the connection"
+    );
 
     // CONNECT: the gate's `Err` is the zero-byte close — Node measured the
     // same zero bytes (`connect` cell); the sms lane pins its own twin
@@ -1654,8 +1696,9 @@ async fn parser_rejection_with_unread_body_delivers_and_closes() {
         response.is_empty(),
         "#2774 CONNECT must destroy the connection with zero response bytes: {response:?}"
     );
-    assert!(
+    assert_eq!(
         closed,
+        ServerClose::Fin,
         "#2774 the CONNECT destroy must close the connection"
     );
 
@@ -1685,7 +1728,11 @@ async fn http_10_requests_close_like_node() {
         let (response, closed) =
             exchange_until_eof(port, request.as_bytes(), Duration::from_secs(5)).await;
         assert_close_without_keep_alive(&response, 405, request);
-        assert!(closed, "{request:?}: HTTP/1.0 connection stayed open");
+        assert_eq!(
+            closed,
+            ServerClose::Fin,
+            "{request:?}: HTTP/1.0 connection stayed open"
+        );
         assert_http10_store_reply(
             &response,
             405,
@@ -1703,7 +1750,11 @@ async fn http_10_requests_close_like_node() {
     request.extend_from_slice(&list);
     let (response, closed) = exchange_until_eof(port, &request, Duration::from_secs(5)).await;
     assert_close_without_keep_alive(&response, 200, "http-1.0-list");
-    assert!(closed, "http-1.0-list: HTTP/1.0 connection stayed open");
+    assert_eq!(
+        closed,
+        ServerClose::Fin,
+        "http-1.0-list: HTTP/1.0 connection stayed open"
+    );
     assert_http10_store_reply(
         &response,
         200,
@@ -1723,7 +1774,11 @@ async fn http_10_requests_close_like_node() {
         &list,
     );
     let (response, closed) = exchange_until_eof(port, &request, Duration::from_secs(5)).await;
-    assert!(closed, "the 1.1 close response ended the connection");
+    assert_eq!(
+        closed,
+        ServerClose::Fin,
+        "the 1.1 close response ended the connection"
+    );
     let head = String::from_utf8_lossy(&response).to_ascii_lowercase();
     assert!(
         head.contains("content-length: 25"),

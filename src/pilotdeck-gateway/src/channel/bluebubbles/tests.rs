@@ -41,7 +41,10 @@ use tokio::{net::TcpListener, time::timeout};
 const ORACLE: &str = include_str!("../../../tests/fixtures/channel-bluebubbles/oracle.json");
 /// The loopback BlueBubbles fake the generator ran on (`MOCK_PORT` in
 /// `generate.mts`); every case's `serverUrl` points here. The block sits
-/// outside feishu's 18960-18999 and weixin's 18800-18921 reservations.
+/// outside feishu's 18960-18999 and the 18800-18921 block (the sms golden
+/// replay's 18800-18858 plus the wecom-callback fixture's 18900-18921;
+/// single source of truth: the 189xx ledger in
+/// `channel/sms/head_timeout_tests.rs`).
 const MOCK_PORT: u16 = 19461;
 /// Every blocking step is bounded so a regression fails instead of hanging
 /// the suite; one poll interval is 2500 ms and no case waits out more than

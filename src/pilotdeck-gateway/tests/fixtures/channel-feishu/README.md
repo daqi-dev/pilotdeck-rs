@@ -13,7 +13,9 @@ Lark Open API（`https://open.feishu.cn` 重写为 127.0.0.1:18990 环回假服�
 端口段是**宿主全局**资源：webhook 用例端口 18960-18972、重放 Lark 假服务
 18990、组件钉子专用 18973（null-body 路由）/18991/18992/18993（钉子 Lark）。
 与既有 fixture 避开的区间：wecom-callback 18900-18921 与坏端口 18997-18998、
-weixin 18800-18921。重放前若端口被占，测试报的是金样失败而不是被测代码
+sms 金样重放 18800-18858（189xx 端口段唯一正本见
+`src/pilotdeck-gateway/src/channel/sms/head_timeout_tests.rs` 的台账）。
+重放前若端口被占，测试报的是金样失败而不是被测代码
 回归，先按 `lsof -nP -iTCP:18960-18993` 核占用方。
 
 13 个场景的输入步骤与 TS 结果都在 `oracle.json`：url-verification、verify token

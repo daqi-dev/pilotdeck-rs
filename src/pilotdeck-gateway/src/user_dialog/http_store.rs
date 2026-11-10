@@ -3089,6 +3089,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for TimeoutStream<S> {
                     }
                     this.timer.read_activity();
                     if this.header_guard.push(filled) {
+                        // #2773 fix-r1: the trip fires mid-head, so the
+                        // kernel receive queue can still hold bytes the
+                        // guard will never hand to hyper; closing with them
+                        // unread degenerates into an RST that races the 431
+                        // bytes themselves (Node v22.22.0 measured a clean
+                        // FIN here, 5/5 — `r1/node-guard431-close.txt`).
+                        // Arm the same drain the serve path uses (#702 P2).
+                        this.timer.mark_unread_body_close();
                         response = Some(NODE_431_RESPONSE);
                         break;
                     }
@@ -3383,6 +3391,24 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                                 if let Some(rejection) =
                                     parser_admission(&request, &timer)?
                                 {
+                                    // #2773 fix-r1 (P1-b): this early return
+                                    // is the one "close with an unread body"
+                                    // path that skipped the drain wiring the
+                                    // served responses get below — the unread
+                                    // bytes in the kernel queue turned the
+                                    // close into an RST instead of the FIN
+                                    // the serve path delivers (#702 P2).
+                                    // Mirror that wiring so the connection
+                                    // task drains before closing.
+                                    if body_pending
+                                        && rejection.headers().get(header::CONNECTION)
+                                            .is_some_and(|value| {
+                                                value.as_bytes()
+                                                    .eq_ignore_ascii_case(b"close")
+                                            })
+                                    {
+                                        timer.mark_unread_body_close();
+                                    }
                                     return Ok(rejection);
                                 }
                                 let mut response =
