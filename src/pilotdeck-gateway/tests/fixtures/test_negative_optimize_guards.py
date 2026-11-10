@@ -540,7 +540,7 @@ class UnknownControlIsRefused(unittest.TestCase):
 class BareAssertInventory(unittest.TestCase):
     """The class invariant has an explicit, shrink-only register (#1666).
 
-    The twenty-seven entries migrated so far (twenty-six fixture directories;
+    The twenty-eight entries migrated so far (twenty-seven fixture directories;
     ``network-timing`` counts two scripts) are not the whole family. Rather than
     let a hand-written list look like a closed set, the remaining debt is named
     here: a file in ``scanned_entries()`` that is not in
