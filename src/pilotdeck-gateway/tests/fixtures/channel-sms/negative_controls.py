@@ -28,6 +28,27 @@ ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 SMS = ROOT / 'src/pilotdeck-gateway/src/channel/sms'
 PREFIX = 'channel::sms::tests::'
+# #2133: neg-for-diff.sh finds the tables a diff needs by the literal
+# `dir/file` of every changed file (`git grep -F 'sms/mod.rs'`). Rows below
+# concatenate a bare file name onto `SMS`, so `sms/<file>` never appears on its
+# own and a change under `channel/sms/` would schedule no mutation at all.
+# The imported shared helpers (`_shared/mutant_switch.py` and every `fixtures/`
+# module its import chain reaches, directly or transitively) and this
+# directory's own oracle, generator and README are listed for the same reason:
+# the table reads them, and the discovery loop keys on any changed file under
+# `fixtures/**`.
+# Every bare-filename key this table mutates is declared here; the rows and
+# this tuple must agree (fixtures/test_negative_discovery_anchors.py).
+DISCOVERY_ANCHORS = (
+    'sms/mod.rs', 'sms/gateway.rs', 'sms/mapper.rs', 'sms/render.rs',
+    'sms/elicitation.rs', 'sms/permission.rs', 'sms/sender.rs', 'sms/tests.rs',
+    'channel-sms/oracle.json', 'channel-sms/generate.mts', 'channel-sms/README.md',
+    'fixtures/negative_process.py', 'fixtures/negative_suite.py',
+    'fixtures/negative_panic.py', 'fixtures/negative_selection.py',
+    'fixtures/pending_reanchor.py', 'fixtures/anchor_selfcheck.py',
+    'fixtures/negative_scope.py',
+    '_shared/mutant_switch.py',
+)
 switches = [
     # stop reason replaced by the default: the drain stop of the stop-during-
     # turn cell logs "no reason" instead of the recorded reason.
