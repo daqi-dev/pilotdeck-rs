@@ -180,13 +180,31 @@ _CJK_CLOSURE_RE = re.compile('|'.join(
 # trailing separator run both consumed the same comma run through an empty
 # word group, a quadratic split tree; the classes stay complements, so one
 # parse exists and possessive loses nothing).
-_EN_CLOSURE_GUARDS = {'passed': r'(?![\s,;:，。、；：！？.!?/()\[\]-]*+'
-                                 r'(?:(?:on(?:\s+to)?|onto|to)\b|for\s+now\b))',
-                      'accepted': r'(?![\s,;:，。、；：！？.!?/()\[\]-]*+(?:'
-                                  r'(?:[^\s,;:，。、；：！？.!?/()\[\]-]+'
-                                  r'[\s,;:，。、；：！？.!?/()\[\]-]++)*'
-                                  r'[\s,;:，。、；：！？.!?/()\[\]-]*+risks?\b'
-                                  r'|for\s+now\b))'}
+# r16 (DS r15 boundary#1 P0, measured live:
+# _handling_closed('accepted【risk noted】') was True — the CJK brackets
+# glued risk into a word unit the window could not see, the THIRD
+# same-shape miss on this family in a row (r14 passed/accepted desync,
+# r15 missed .!?/-, r16 missed 【】「」（）), so the class is now spelled
+# ONCE and every guard copy derives from it. The control side cross-walks
+# it against the CJK clause-break family (review_r1.py,
+# en-closure-sep-matches-cjk-breaks): the English closure family is the
+# CJK breaks plus the hyphen, so the two sides can no longer drift apart
+# either (the r14/r15/r16 misses were all drift between hand copies).
+# The hyphen is LAST in the class — a bare '-' between two members is a
+# RANGE operator, and '\]-【' silently swallows every ASCII letter into
+# the separator class (the same silent-mangling trap the r15 ']'-escape
+# note on _CJK_CLAUSE_BREAKS warns about; caught live by the r16 probe).
+_EN_CLOSURE_SEP_CHARS = r'\s,;:，。、；：！？.!?/()\[\]【】「」（）-'
+_EN_CLOSURE_SEP = '[' + _EN_CLOSURE_SEP_CHARS + ']'
+_EN_CLOSURE_NOTSEP = '[^' + _EN_CLOSURE_SEP_CHARS + ']'
+_EN_CLOSURE_GUARDS = {
+    'passed': (r'(?!' + _EN_CLOSURE_SEP + r'*+'
+               r'(?:(?:on(?:\s+to)?|onto|to)\b|for\s+now\b))'),
+    'accepted': (r'(?!' + _EN_CLOSURE_SEP + r'*+(?:'
+                 r'(?:' + _EN_CLOSURE_NOTSEP + r'+'
+                 + _EN_CLOSURE_SEP + r'++)*'
+                 + _EN_CLOSURE_SEP + r'*+risks?\b'
+                 r'|for\s+now\b))')}
 _EN_CLOSURE_RE = re.compile(r'\b(?:' + '|'.join(
     word + _EN_CLOSURE_GUARDS.get(word, '') for word in _ENGLISH_VERBS)
     + r'|wontfix)\b')
@@ -409,14 +427,21 @@ _EN_SCOPE_LEFT_GUARD = (r'(?<!impact\son\s)(?<!impacts\son\s)'
                         r'(?<!impact\s)(?<!impacts\s)(?<!impacting\s)'
                         r'(?<!impacted\s)(?<!affect\s)(?<!affects\s)'
                         r'(?<!affecting\s)(?<!affected\s)')
-_EN_PARTIAL_LEFT_GUARDS = {
-    word: _EN_SCOPE_LEFT_GUARD for word in
-    ('partially', 'partial', 'partly', 'halfway', 'half', 'incomplete',
-     'unfinished')}
-_EN_PARTIAL_GUARDS = {'almost': r'(?!\s*no\b)', 'nearly': r'(?!\s*no\b)',
-                      'half': r'(?!-open\b)'}
+# r16 (DS r15 sibling#7 P3 + simplify#5 P3): the guarded membership is
+# DERIVED from the frozen word tuple, not a hand copy — 'almost' /
+# 'nearly' keep only their no-exclusion right guard (impact on almost
+# everything reads pending — the known conservative boundary, mirrored by
+# 几乎), and a future word joins the guard set by joining the tuple. The
+# control side cross-walks the derivation (review_r1.py,
+# en-partial-left-guard-derivation) and every guarded member carries an
+# open polarity row (r16 rows E).
 _EN_PARTIAL_WORDS = ('partially', 'partial', 'partly', 'almost', 'nearly',
                      'halfway', 'half', 'incomplete', 'unfinished')
+_EN_PARTIAL_LEFT_GUARDS = {
+    word: _EN_SCOPE_LEFT_GUARD for word in _EN_PARTIAL_WORDS
+    if word not in ('almost', 'nearly')}
+_EN_PARTIAL_GUARDS = {'almost': r'(?!\s*no\b)', 'nearly': r'(?!\s*no\b)',
+                      'half': r'(?!-open\b)'}
 _EN_PARTIAL_RE = re.compile('|'.join(
     _EN_PARTIAL_LEFT_GUARDS.get(word, '') + r'\b' + re.escape(word)
     + _EN_PARTIAL_GUARDS.get(word, '') + r'\b'
@@ -427,8 +452,21 @@ _EN_PARTIAL_RE = re.compile('|'.join(
 # PASS) while the Chinese mirror 等待回归 pends. They join the explicit
 # pending words: the object names an outstanding action regardless of any
 # gate verb, exactly like 待's await construction.
+# r16 (DS r15 sibling#1 P1, measured live: fixed for now / verified for
+# now read CLOSED — 'for now' pended only after the closure verbs r15 had
+# happened to guard one at a time): the deferral is an explicit pending
+# word here — ANY closure verb plus the deferral pends, one place, no
+# verb list to keep in step. The awaiting / waiting family has NO closed
+# polarity anywhere by design — no attested closed shape carries the
+# words (the Chinese mirror 等待回归 alike), so every occurrence pends:
+# the known fail-closed boundary.
+# r16 (DS r15 boundary#3 P3): the await construction takes a space too
+# (待 办事项 reads pending) — a typo'd spelling of the r9 待办 noun pin
+# on the conservative side; the r16 row control
+# open-已修复，待 办事项 pins the current value.
 _EN_PENDING_RE = re.compile(r'\bin[ -]?progress\b|\bpending\b|\btodo\b|\btbd\b'
-                            r'|\bwip\b|\bawaiting\b|\bwaiting\s+(?:for|on)\b',
+                            r'|\bwip\b|\bawaiting\b|\bwaiting\s+(?:for|on)\b'
+                            r'|\bfor\s+now\b',
                             re.IGNORECASE)
 _EN_UNDONE_RE = re.compile(r'\bun[- _]?(?:' + '|'.join(_ENGLISH_VERBS) + r')\b',
                            re.IGNORECASE)

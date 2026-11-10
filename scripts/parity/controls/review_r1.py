@@ -34,6 +34,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import subprocess
@@ -1299,6 +1300,59 @@ class ReviewControls(unittest.TestCase):
             ('closed-已完成 ١٠٠% (unicode nd digits)',
              '| 1 | DS | P1：foo | 已完成 ١٠٠% |\n', True),
         ]
+        # r16 rows (fix-r16, DS r15 review): one row per element.
+        row_cases_r16 = [
+            # A. the separator class is spelled once and takes the CJK
+            #    bracket members (DS boundary#1 P0, measured live:
+            #    _handling_closed('accepted【risk noted】') was True — the
+            #    third same-shape family miss in a row; the deferral now
+            #    reads through them on both guarded closure verbs).
+            ('open-accepted【risk noted】',
+             '| 1 | DS | P1: foo | accepted【risk noted】 |\n', False),
+            ('open-accepted「risk noted」',
+             '| 1 | DS | P1: foo | accepted「risk noted」 |\n', False),
+            ('open-passed【to next round】',
+             '| 1 | DS | P1: foo | passed【to next round】 |\n', False),
+            # B. 'for now' is an explicit pending word — every closure verb
+            #    plus the deferral pends, no guarded-verb list to keep in
+            #    step (DS sibling#1 P1, measured: fixed / verified for now
+            #    read CLOSED on the r15 guards alone).
+            ('open-fixed for now',
+             '| 1 | DS | P1: foo | fixed for now |\n', False),
+            ('open-verified for now',
+             '| 1 | DS | P1: foo | verified for now |\n', False),
+            # C. the 「」 break-family twin gets a behavior row (DS
+            #    sibling#5 P3 — the family carried the corner quotes since
+            #    r15 with only the 【】 twin attested).
+            ('closed-已修复中断「回归通过」',
+             '| 1 | DS | P1：foo | 已修复中断「回归通过」 |\n', True),
+            # D. the await construction with a space before the noun (DS
+            #    boundary#3 P3): glued 待办事项 is a noun (the r9 pin),
+            #    the spaced spelling reads pending — pinned at its current
+            #    value, the conservative side.
+            ('open-已修复，待 办事项',
+             '| 1 | DS | P1：foo | 已修复，待 办事项 |\n', False),
+            # E. every left-guarded partial member carries an open polarity
+            #    row (DS sibling#7 P3 — r15 attested partial/half only
+            #    through the scope-prose CLOSURES); the guarded words'
+            #    membership itself is derived (the derivation assertion
+            #    below).
+            ('open-fixed, partially applied',
+             '| 1 | DS | P1: foo | fixed, partially applied |\n', False),
+            ('open-fixed; partial rollout',
+             '| 1 | DS | P1: foo | fixed; partial rollout |\n', False),
+            ('open-fixed, partly applied',
+             '| 1 | DS | P1: foo | fixed, partly applied |\n', False),
+            ('open-fixed, halfway applied',
+             '| 1 | DS | P1: foo | fixed, halfway applied |\n', False),
+            ('open-fixed, half applied',
+             '| 1 | DS | P1: foo | fixed, half applied |\n', False),
+            ('open-fixed, incomplete coverage',
+             '| 1 | DS | P1: foo | fixed, incomplete coverage |\n', False),
+            ('open-fixed, unfinished work',
+             '| 1 | DS | P1: foo | fixed, unfinished work |\n', False),
+        ]
+        assert_rows('r16', row_cases_r16)
         assert_rows('r15', row_cases_r15)
         assert_rows('r14', row_cases_r14)
         assert_rows('r13', row_cases_r13)
@@ -1743,19 +1797,55 @@ class ReviewControls(unittest.TestCase):
         # the ASCII sentence punctuation and the hyphen, and the separator
         # runs are POSSESSIVE (the two adjacent separator consumers were a
         # quadratic split tree — measured 9.1 s at 20000 commas).
+        # r16 (DS r15 boundary#1 P0, measured live): the class takes the
+        # CJK bracket members and is spelled ONCE — every guard copy
+        # derives from _EN_CLOSURE_SEP_CHARS (the hyphen stays LAST in
+        # the class; a bare '-' between two members is a range operator).
         self.assertEqual(check_ruler._EN_CLOSURE_GUARDS['accepted'],
-                         r'(?![\s,;:，。、；：！？.!?/()\[\]-]*+(?:'
-                         r'(?:[^\s,;:，。、；：！？.!?/()\[\]-]+'
-                         r'[\s,;:，。、；：！？.!?/()\[\]-]++)*'
-                         r'[\s,;:，。、；：！？.!?/()\[\]-]*+risks?\b'
+                         r'(?![\s,;:，。、；：！？.!?/()\[\]【】「」（）-]*+(?:'
+                         r'(?:[^\s,;:，。、；：！？.!?/()\[\]【】「」（）-]+'
+                         r'[\s,;:，。、；：！？.!?/()\[\]【】「」（）-]++)*'
+                         r'[\s,;:，。、；：！？.!?/()\[\]【】「」（）-]*+risks?\b'
                          r'|for\s+now\b))',
-                         '#2245-r15 accepted-guard-window-frozen')
+                         '#2245-r16 accepted-guard-window-frozen')
         # r15 (DS r14 sibling#1 P1, MM r13 boundary#6 P2): 'passed' gains the
         # for-now deferral branch on the same possessive separator family.
         self.assertEqual(check_ruler._EN_CLOSURE_GUARDS['passed'],
-                         r'(?![\s,;:，。、；：！？.!?/()\[\]-]*+'
+                         r'(?![\s,;:，。、；：！？.!?/()\[\]【】「」（）-]*+'
                          r'(?:(?:on(?:\s+to)?|onto|to)\b|for\s+now\b))',
-                         '#2245-r15 passed-guard-deferral-frozen')
+                         '#2245-r16 passed-guard-deferral-frozen')
+        # r16 (DS r15 boundary#1 P0 + simplify#1 P2): the separator class
+        # is one module constant composed into every guard copy, and it
+        # is cross-walked against the CJK clause-break family — the
+        # English closure family is the CJK breaks plus the hyphen (\s
+        # stands for the whitespace members), so neither side can gain a
+        # member the other lacks; the r14/r15/r16 misses were all drift
+        # between hand copies of the same family.
+        self.assertGreaterEqual(
+            set(check_ruler._EN_CLOSURE_SEP_CHARS
+                .replace(r'\s', ' \t\n\r\x0b\x0c')
+                .replace(r'\[', '[').replace(r'\]', ']')),
+            set(check_ruler._CJK_CLAUSE_BREAKS) | {'-'},
+            '#2245-r16 en-closure-sep-matches-cjk-breaks')
+        # r16 (DS r15 sibling#1 P1, measured): 'for now' is an explicit
+        # pending word — the deferral no longer rides the closure-guard
+        # verb table (fixed / verified for now read CLOSED on the r15
+        # guards alone).
+        self.assertEqual(check_ruler._EN_PENDING_RE.pattern,
+                         r'\bin[ -]?progress\b|\bpending\b|\btodo\b|\btbd\b'
+                         r'|\bwip\b|\bawaiting\b|\bwaiting\s+(?:for|on)\b'
+                         r'|\bfor\s+now\b',
+                         '#2245-r16 en-pending-pattern-frozen')
+        self.assertTrue(check_ruler._EN_PENDING_RE.flags & re.IGNORECASE,
+                        '#2245-r16 en-pending-flags-frozen')
+        # r16 (DS r15 sibling#7 P3 + simplify#5 P3): the guarded membership
+        # is DERIVED from the frozen word tuple — almost / nearly keep
+        # only their no-exclusion right guard, and a new word joins the
+        # guard set by joining the tuple (the hand copy is gone).
+        self.assertEqual(set(check_ruler._EN_PARTIAL_LEFT_GUARDS),
+                         set(check_ruler._EN_PARTIAL_WORDS)
+                         - {'almost', 'nearly'},
+                         '#2245-r16 en-partial-left-guard-derivation')
         # r13: the disposal filter's clause-break family is a fixed literal
         # too — a widened set (a letter reaching it) would re-close the r11
         # pin 已修复中等待回归, and a dropped separator would re-pend the
@@ -1966,6 +2056,17 @@ class ReviewControls(unittest.TestCase):
             self.assertFalse(check_ruler._handling_closed(form),
                             '#2245-r14 en-closure-guard-family:' + form)
 
+    @unittest.skipUnless(
+        sys.version_info >= (3, 14),
+        '#2245-r16 (DS r15 concurrency#1 P2): the SIGALRM interrupt of '
+        'the C-level backtrack loop is verified on CPython 3.14.3 only '
+        '(r15 probe: TimeoutError after 0.303 s mid-backtrack); the '
+        'apparatus itself requires just >= 3.11, and an interpreter that '
+        'does not return to the eval loop mid-backtrack would leave this '
+        'control hanging for hours instead of failing at 5 s. The '
+        'structural fix (subprocess isolation with an outside-the-'
+        'interpreter hard kill) is tracked as a follow-up — see the r17 '
+        'event file.')
     def test_pct_gap_backtracks_linearly(self):
         """#2245 r14 (DS r13 concurrency#1 + MM r13 concurrency#1, both
         lineages, the SAME finding, measured live): the r13 unit
@@ -1994,20 +2095,25 @@ class ReviewControls(unittest.TestCase):
         Nd case pins the r15 single-branch fix (Arabic-Indic digits matched
         BOTH \\d++ and the fallback class pre-r15: 0.004 s at L=28,
         0.018 s at L=32, doubling per 4 chars — a different alphabet
-        replayed the r14 exponential)."""
+        replayed the r14 exponential).
+        r16 (DS r15 concurrency#2 P3): the itimer is saved and restored
+        per measurement — a pre-existing ITIMER_REAL is no longer
+        silently disarmed, and the 5 s timer is armed inside the try so
+        no path leaves it running."""
         def _hang(signum, frame):
             raise TimeoutError('pct-gap hang: >5s')
         prev_handler = signal.signal(signal.SIGALRM, _hang)
         self.addCleanup(signal.signal, signal.SIGALRM, prev_handler)
 
         def _timed(cell):
-            signal.setitimer(signal.ITIMER_REAL, 5.0)
+            prev = signal.getitimer(signal.ITIMER_REAL)
             try:
+                signal.setitimer(signal.ITIMER_REAL, 5.0)
                 t0 = time.monotonic()
                 check_ruler._handling_pending(cell)
                 return time.monotonic() - t0
             finally:
-                signal.setitimer(signal.ITIMER_REAL, 0)
+                signal.setitimer(signal.ITIMER_REAL, *prev)
 
         def _timed_min3(cell):
             return min(_timed(cell) for _ in range(3))
@@ -2040,6 +2146,12 @@ class ReviewControls(unittest.TestCase):
             self.fail('#2245-r15 pct-gap-unicode-nd (hang: >5s)')
         self.assertLess(elapsed3, 1.0, '#2245-r15 pct-gap-unicode-nd')
 
+    @unittest.skipUnless(
+        sys.version_info >= (3, 14),
+        '#2245-r16 (DS r15 concurrency#1 P2): the SIGALRM interrupt of '
+        'the C-level backtrack loop is verified on CPython 3.14.3 only; '
+        'below 3.14 this control could hang for hours instead of failing '
+        'at 5 s — see the pct control above and the r17 event file.')
     def test_separator_runs_backtrack_linearly(self):
         """#2245 r15 (DS r14 concurrency#3 P2 + sibling#5 P1 / boundary#2
         P2, all measured live on 87871a970, raw output in
@@ -2057,20 +2169,25 @@ class ReviewControls(unittest.TestCase):
         verdict changes anywhere — only wall clock — so, like the pct
         control above, only a timer catches a regression. The SIGALRM
         interrupt of the C-level loop is verified (r15 probe: TimeoutError
-        after 0.303 s mid-backtrack)."""
+        after 0.303 s mid-backtrack).
+        r16 (DS r15 concurrency#2 P3): the itimer is saved and restored
+        per measurement (getitimer before, setitimer back in the finally)
+        — a pre-existing ITIMER_REAL is no longer silently disarmed, and
+        the 5 s timer is armed inside the try."""
         def _hang(signum, frame):
             raise TimeoutError('separator-run hang: >5s')
         prev_handler = signal.signal(signal.SIGALRM, _hang)
         self.addCleanup(signal.signal, signal.SIGALRM, prev_handler)
 
         def _timed(fn, cell):
-            signal.setitimer(signal.ITIMER_REAL, 5.0)
+            prev = signal.getitimer(signal.ITIMER_REAL)
             try:
+                signal.setitimer(signal.ITIMER_REAL, 5.0)
                 t0 = time.monotonic()
                 fn(cell)
                 return time.monotonic() - t0
             finally:
-                signal.setitimer(signal.ITIMER_REAL, 0)
+                signal.setitimer(signal.ITIMER_REAL, *prev)
 
         # (1) closure-guard separators: _handling_closed on a 120k-comma
         # cell took ~20 s greedy (quadratic extrapolation of the measured
