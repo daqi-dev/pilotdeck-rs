@@ -143,6 +143,10 @@ utf16 `startup_refusal` 先例，证据目录既不发 summary 也不留认领�
 取得之后含还原窗口的失败作废已跑行、发布 summary 并退 1），
 名册不符只发 `roster-mismatch.json`（原子写）并退出 1、`--check` 带位置
 参数、空输出槽或 `--compile-only` 即拒跑）。
+`native-config` 自 #2739 起落名册防线：`EXPECTED_NAMES` 静态名册 +
+启动 `registered()` 比对（漂移走 `refuse()` rc 2），`--check` 另跑
+`check_manifest()` 互证自家 README 的两处手抄计数与 `SOURCE_TEXTS`
+逐文件枚举（红侧在同目录 `test_literal_anchors.py`）。
 **其余同族入口尚未迁移**，
 由 #1666 按目录分批推进，名单是机器可检的：`tests/fixtures/test_negative_optimize_guards.py`
 的 `PENDING_BARE_ASSERTS` 登记每个仍含裸 `assert` 的 `*/negative_controls.py` 及理由，

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # anchor-selfcheck: unsupported unit tests of the fixture's own literal-anchor guard; no product source mutation table
-"""#2065: red-side tests for the fixture's own literal-anchor guard.
+"""#2065/#2739: red-side tests for the fixture's own guards.
 
 `check_literal_anchors` refuses a run whose literal anchor is verbatim source
 text yet unregistered, or a pin no row asserts; a guard with no red side is
@@ -9,15 +9,23 @@ itself unverified (same contract as `session-assembly-1316
 breaks exactly one invariant of `check_literal_anchors` and demands the matching
 refusal; the first case runs the real `--check` and pins its output counts.
 
+The #2739 cases do the same for the two newer guards: `main()` must refuse to
+start (rc 2) when the runtime table drifts off the static `EXPECTED_NAMES`
+roster, and `check_manifest()` must report the README hand-copy it can no
+longer vouch for (file count, mutation count, `SOURCE_TEXTS` enumeration).
+
 Run from the repo root:
 
     python3 -m unittest -v src/pilotdeck-gateway/tests/fixtures/native-config/test_literal_anchors.py
 """
+import contextlib
 import dataclasses
 import importlib.util
+import io
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -126,6 +134,52 @@ class LiteralAnchorGuard(unittest.TestCase):
                 os.environ['CARGO_TARGET_DIR'] = saved_target
         self.assertEqual([case.mutation for case in seen['cases']], [BAD_ROW])
         self.assertEqual(len(seen['bound']), len(ROWS))
+
+    def test_roster_drift_refuses_before_any_run(self):
+        # #2739: a dropped row must be a startup refusal (rc 2, "never
+        # started"), never a silently shorter run that still reports
+        # "N/N killed" off a runtime denominator.
+        saved_table = nc.mutations
+        saved_argv = sys.argv
+        nc.mutations = nc.mutations[:-1]
+        stderr = io.StringIO()
+        try:
+            sys.argv = ['negative_controls.py', '--check']
+            with contextlib.redirect_stderr(stderr):
+                with self.assertRaises(SystemExit) as caught:
+                    nc.main()
+        finally:
+            nc.mutations = saved_table
+            sys.argv = saved_argv
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn('mutation roster drifted', stderr.getvalue())
+
+    def test_check_refuses_a_drifted_readme_hand_copy(self):
+        # #2739: each case drifts exactly one of the README's three
+        # hand-maintained copies; `check_manifest` must name the drifted one.
+        drifts = [
+            ('只读 22 个文件', '只读 21 个文件', 'SOURCE_TEXTS has 22'),
+            ('当前 74 条变异', '当前 73 条变异', 'the table has 74'),
+            ('`src/pilotdeck-gateway/src/host/modules/model_port.rs`、'
+             '`src/pilotdeck-gateway/src/host/tests/model.rs`',
+             '`src/pilotdeck-gateway/src/host/modules/model_port.rs`',
+             '锚点 enumeration != SOURCE_TEXTS'),
+        ]
+        text = nc.README.read_text()
+        for find, replace, needle in drifts:
+            with self.subTest(needle=needle):
+                self.assertIn(find, text)
+                with tempfile.TemporaryDirectory() as scratch:
+                    drifted = Path(scratch) / 'README.md'
+                    drifted.write_text(text.replace(find, replace))
+                    saved = nc.README
+                    nc.README = drifted
+                    try:
+                        errors = nc.check_manifest()
+                    finally:
+                        nc.README = saved
+                self.assertTrue(errors)
+                self.assertIn(needle, '; '.join(errors))
 
 
 if __name__ == '__main__':

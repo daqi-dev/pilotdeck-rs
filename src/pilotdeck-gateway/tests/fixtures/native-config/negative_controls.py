@@ -16,13 +16,24 @@ output style), each compose-step read (permission, thinking, style merge),
 the live adapter's per-turn permission-mode source, the host session tools'
 per-turn admission source, and the `output_styles_list` selected echo each
 carry their own function-internal mutant.
+
+#2744/#2745 extend the fixture past the config family: the cron dispatch's
+thread-id control gets a `yield_now` mutant proving an unrelated suspension
+cannot satisfy it, and the three blocking-pool handoffs (the store HTTP
+server's `dispatch_request`, the router's token estimate, the durable
+recorder's write) each get an inline-revert mutant bound to the control that
+pins the handoff. #2739 adds the `EXPECTED_NAMES` roster and the README
+manifest cross-check, so the run's denominator is a static literal and the
+README's hand-copied counts cannot drift silently.
 """
 from pathlib import Path
 import os
+import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import refuse, registered
 from negative_suite import Case, classify, invalidate_completed, passed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -75,6 +86,19 @@ REVIEW_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/review_tests.rs'
 # the mutated source, CRON_TESTS carries the bound assertion literal (#2065).
 CRON = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/cron.rs'
 CRON_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/cron/cron_tests.rs'
+# #2745: the blocking-pool handoffs outside the config family. The store
+# HTTP server's `serve` wraps `handler.dispatch_request` in `spawn_blocking`
+# (the file store is synchronous by contract); HTTP_STORE is the mutated
+# source, HTTP_STORE_TESTS carries the bound thread-id assertion.
+HTTP_STORE = ROOT / 'src/pilotdeck-gateway/src/user_dialog/http_store.rs'
+HTTP_STORE_TESTS = ROOT / 'src/pilotdeck-gateway/src/user_dialog/http_store_tests.rs'
+# #2745: the two `cpu::run` call sites — the router's cache-policy token
+# estimate (POLICY) and the durable recorder's off-thread write (MODEL_PORT).
+# ROUTER_TESTS / HOST_MODEL_TESTS carry the bound permit-wait assertions.
+POLICY = ROOT / 'src/pilotdeck-gateway/src/runtime/model/router/policy.rs'
+ROUTER_TESTS = ROOT / 'src/pilotdeck-gateway/src/runtime/model/router/tests.rs'
+MODEL_PORT = ROOT / 'src/pilotdeck-gateway/src/host/modules/model_port.rs'
+HOST_MODEL_TESTS = ROOT / 'src/pilotdeck-gateway/src/host/tests/model.rs'
 CFG = 'native_process::methods::config::tests::'
 FT = 'runtime::session::factory::tests::'
 DIR = 'native_process::methods::session_dir::tests::'
@@ -756,10 +780,11 @@ mutations = [
     # ── #2195 (P2-跟进 #1509): the cron dispatch's blocking-pool handoff was
     # pinned only by the structural positive control — no mutant proved that
     # control could go red. This row inlines the dispatch onto the async
-    # worker (the management family's `memory-inline-sync` shape, #1322): on
-    # the single-threaded runtime the `join!` polls `create` to completion on
-    # its first poll, the sibling never runs in between, and `ran_before`
-    # stays false at the bound assertion. The `Ok::<_, JoinError>` pin keeps
+    # worker (the management family's `memory-inline-sync` shape, #1322): the
+    # inlined body runs on the single-threaded runtime's worker itself, the
+    # injected `now` clock (#2682) records that same thread id from inside
+    # `create_task`, and the bound `negative_assert!` dies. The
+    # `Ok::<_, JoinError>` pin keeps
     # the value's type identical to the `spawn_blocking` form — plain `Ok(...)`
     # leaves the error type uninferred (E0282, cb8 r1 compile log in
     # _tmp/20261026-issue-2195/review-r1/); the issue's recipe said the bare
@@ -775,6 +800,11 @@ mutations = [
     # assertion; the gate also has its own race test in `switch_tests.rs`, so
     # bypassing it here leaves no dead code (turbofish kept for the same
     # E0282 reason as above).
+    # #2682/#2744 re-bound: the positive control's criterion changed from the
+    # sibling/`ran_before` interleave (tokio promises nothing about a
+    # `spawn_blocking` `JoinHandle`'s first poll being pending — the false-red
+    # direction) to the recorded dispatch-thread id, so this row's assertion
+    # string follows the new `negative_assert!` message.
     ('cron-inline-sync', CRON,
      '            let dispatched = tokio::task::spawn_blocking(move || {\n'
      '                dispatch_under_management_gate(&cron, &dispatch_method, &params)\n'
@@ -782,7 +812,83 @@ mutations = [
      '            .await;',
      '            let dispatched = Ok::<_, tokio::task::JoinError>(cron::dispatch(cron.as_deref(), &dispatch_method, &params));',
      'native_process::methods::cron::cron_tests::cron_request_dispatches_off_the_async_worker',
-     '#1509 cron dispatch must yield the async worker before answering'),
+     '#1509 cron dispatch must run off the async worker thread'),
+    # ── #2744: the #2682 thread-id criterion must not be satisfiable by an
+    # unrelated suspension on the route→dispatch path (the fail-open
+    # direction). This row inserts exactly that — `yield_now().await` ahead
+    # of the same inlined dispatch — and the criterion still dies: the yield
+    # parks the worker, the dispatch then runs on it, and the recorded
+    # thread id equals the one the assertion compares against. Under the
+    # pre-#2682 sibling/`ran_before` criterion this same shape survived (the
+    # yield let the sibling run first — the false green that motivated the
+    # rewrite; the surviving demo log sits in the #2682 round dir). Same
+    # `Ok::<_, JoinError>` pin and same inline-the-bare-call rule as the row
+    # above (E0282 / wrong-panic, #2195 r1/r4).
+    ('cron-inline-sync-yield-now', CRON,
+     '            let dispatched = tokio::task::spawn_blocking(move || {\n'
+     '                dispatch_under_management_gate(&cron, &dispatch_method, &params)\n'
+     '            })\n'
+     '            .await;',
+     '            tokio::task::yield_now().await;\n'
+     '            let dispatched = Ok::<_, tokio::task::JoinError>(cron::dispatch(cron.as_deref(), &dispatch_method, &params));',
+     'native_process::methods::cron::cron_tests::cron_request_dispatches_off_the_async_worker',
+     '#1509 cron dispatch must run off the async worker thread'),
+    # ── #2745: the same blocking-pool handoff shape at the store HTTP server.
+    # `serve` wraps `handler.dispatch_request` in `spawn_blocking` (the file
+    # store is synchronous by contract and may sleep on its 5 s lock retry);
+    # inlining it runs the recording store's `put` on the worker itself, so
+    # the bound thread-id control dies. The issue's first candidate binding,
+    # `concurrent_blocking_puts_do_not_stall_the_accept_loop`, cannot take
+    # this mutant: its `BlockingStore` parks the single runtime thread in a
+    # condvar wait, the 500 ms timer can never fire, and the row would end
+    # as a 900 s timeout INVALID instead of a red assertion — hence the new
+    # deterministic control bound below. Turbofish for the same E0282 reason
+    # as the cron rows.
+    ('http-store-inline-sync', HTTP_STORE,
+     '    match tokio::task::spawn_blocking(move || handler.dispatch_request(operation, request)).await {',
+     '    match Ok::<_, tokio::task::JoinError>(handler.dispatch_request(operation, request)) {',
+     'user_dialog::http_store::http_store_tests::store_dispatch_runs_off_the_async_worker',
+     '#2745 the store call must run off the async worker thread'),
+    # ── #2745: `cache_policy_select`'s token estimate goes through the shared
+    # 4-permit CPU pool; reverting to the inline call skips the permit wait
+    # while the bound test holds all four permits, so its timeout assertion
+    # dies instead of expiring.
+    ('cache-policy-estimate-inline-revert', POLICY,
+     '    let messages = messages.to_vec();\n'
+     '    let estimated_input_tokens =\n'
+     '        super::super::cpu::run(move || Ok::<_, HostError>(estimate_input_tokens(&messages)))\n'
+     '            .await?;',
+     '    let messages = messages.to_vec();\n'
+     '    let estimated_input_tokens = Ok::<_, HostError>(estimate_input_tokens(&messages))?;',
+     'runtime::model::router::tests::cache_policy_estimate_shares_the_cpu_permit_pool',
+     'cache_policy_select must wait for a cpu permit while all four are held'),
+    # ── #2745: the durable recorder's `record_off_thread` — the same inline
+    # revert, bound to the first-pull permit-wait control (the row keeps the
+    # two-stage `map_err` so the types match the `cpu::run` form's flattened
+    # `Result<T, HostError>`).
+    ('durable-record-inline-revert', MODEL_PORT,
+     '    cpu::run(move || {\n'
+     '        let recorded = match &call {\n'
+     '            RecordCall::Request(request) => recorder\n'
+     '                .record_model_request(&session_id, &turn_id, request.clone())\n'
+     '                .map(|_| ()),\n'
+     '            RecordCall::Event(event) => recorder.record_model_event(&session_id, &turn_id, event),\n'
+     '        };\n'
+     '        recorded.map_err(|error| crate::host::HostError::from(recorder_error(error)))\n'
+     '    })\n'
+     '    .await\n'
+     '    .map_err(|error| ModuleError::new(error.message.clone()))',
+     '    let recorded = match &call {\n'
+     '        RecordCall::Request(request) => recorder\n'
+     '            .record_model_request(&session_id, &turn_id, request.clone())\n'
+     '            .map(|_| ()),\n'
+     '        RecordCall::Event(event) => recorder.record_model_event(&session_id, &turn_id, event),\n'
+     '    };\n'
+     '    recorded\n'
+     '        .map_err(|error| crate::host::HostError::from(recorder_error(error)))\n'
+     '        .map_err(|error| ModuleError::new(error.message.clone()))',
+     'host::tests::model::durable_stream_recording_shares_the_cpu_permit_pool',
+     'the recording first pull must wait for a cpu permit while all four are held'),
 ]
 
 
@@ -822,6 +928,14 @@ mutations = [
 # the derived counts in the paragraph above describe the #2065 table as it was.
 # #2195: CRON / CRON_TESTS joined the scanned files with the row above, so
 # the counts moved to 51 rows / 41 literal-anchor entries.
+# #2744/#2745: the yield-now row reuses the cron assertion (one pin covers
+# both rows), HTTP_STORE / HTTP_STORE_TESTS / POLICY / ROUTER_TESTS /
+# MODEL_PORT / HOST_MODEL_TESTS joined the scanned files with the rows above
+# and the #2682 reword replaced the cron pin, so the counts are now 74 rows /
+# 63 literal-anchor entries. The intermediate hand-copied counts above had
+# already drifted before this (the table grew without them); the current
+# truth is what `--check` prints, and #2739's `check_manifest` now refuses
+# README drift instead of leaving it for a reader to notice.
 LITERAL_ANCHORS = [
     (CONFIG, '#1457 session_model_set accepts the fixture selection'),
     (CONFIG, '#1457 session_model_clear succeeds'),
@@ -884,8 +998,93 @@ LITERAL_ANCHORS = [
     (REVIEW_TESTS, '#1864 the stored mode reaches the host admission context'),
     (REVIEW_TESTS, '#1429 the acquire path restores the generated ask rule'),
     (REVIEW_TESTS, '#2146 the second acquire reports nothing: one miss report per assembly'),
-    (CRON_TESTS, '#1509 cron dispatch must yield the async worker before answering'),
+    (CRON_TESTS, '#1509 cron dispatch must run off the async worker thread'),
+    (HTTP_STORE_TESTS, '#2745 the store call must run off the async worker thread'),
+    (ROUTER_TESTS, 'cache_policy_select must wait for a cpu permit while all four are held'),
+    (HOST_MODEL_TESTS, 'the recording first pull must wait for a cpu permit while all four are held'),
 ]
+
+# The denominator is this literal, never `len(mutations)` (#2739,
+# specs/negative-controls/README.md invariant 1; session-reservation-2391
+# shape): `registered()` compares the two in order and refuses on any drift,
+# so a dropped, renamed, duplicated or reordered row is a startup refusal
+# (rc 2) instead of a silently shorter run that still reports "N/N killed".
+EXPECTED_NAMES = (
+    'set-stub-revert',
+    'clear-stub-revert',
+    'permission-stub-revert',
+    'thinking-stub-revert',
+    'styles-list-stub-revert',
+    'styles-set-stub-revert',
+    'seed-stub-revert',
+    'selection-shape-gate-removed',
+    'session-key-gate-code',
+    'permission-mode-gate-removed',
+    'mode-whitelist-narrowed',
+    'thinking-shape-message',
+    'seed-mtime-boundary',
+    'seed-path-gate-code',
+    'transcript-clear-null',
+    'transcript-fence-removed-config',
+    'transcript-fence-removed-rename',
+    'transcript-live-bypass-config',
+    'transcript-live-bypass-rename',
+    'transcript-live-bypass-status',
+    'transcript-hydrate-fence-removed',
+    'transcript-cold-lease-skipped',
+    'transcript-cold-lease-skipped-status',
+    'transcript-cold-lease-skipped-config',
+    'model-set-checked-append-reverted',
+    'rename-checked-append-reverted',
+    'status-checked-append-reverted',
+    'writer-lease-folded-to-busy',
+    'set-alias-owner-busy-removed',
+    'set-busy-gate-blank-key-guard-removed',
+    'set-blank-key-busy-reverted-to-gate-skip',
+    'permission-blank-key-busy-skipped',
+    'clear-blank-key-require-weakened',
+    'set-blank-key-owner-reservation-restored',
+    'clear-blank-key-owner-reservation-restored',
+    'permission-blank-key-require-weakened',
+    'clear-alias-owner-busy-removed',
+    'set-alias-owner-reservation-skipped',
+    'clear-alias-owner-reservation-skipped',
+    'close-owner-fallback-busy-skipped',
+    'set-closes-owner-target-reverted',
+    'seed-mtime-wiring',
+    'set-busy-message',
+    'clear-busy-message',
+    'permission-busy-message',
+    'thinking-busy-message',
+    'style-busy-message',
+    'seed-busy-message',
+    'shared-trim-dropped',
+    'session-dir-blank-gate-removed',
+    'session-dir-surrogate-rejected',
+    'session-dir-project-key-domain-message',
+    'session-dir-project-key-surrogate-rejected',
+    'admission-null-refused',
+    'submit-null-refused',
+    'admission-null-refused-close-project',
+    'admission-null-refused-list-sessions',
+    'admission-null-refused-new-session',
+    'permission-store-write-removed',
+    'thinking-store-write-removed',
+    'style-store-write-removed',
+    'compose-permission-readback-removed',
+    'compose-thinking-readback-removed',
+    'compose-style-merge-removed',
+    'styles-list-selected-removed',
+    'submit-permission-source-removed',
+    'tools-admission-source-removed',
+    'acquire-ask-sync-removed',
+    'acquire-miss-dedup-removed',
+    'cron-inline-sync',
+    'cron-inline-sync-yield-now',
+    'http-store-inline-sync',
+    'cache-policy-estimate-inline-revert',
+    'durable-record-inline-revert',
+)
 
 # Where an assertion can live: the mutated sources, the read-side files the
 # #1864 rows assert on, and the test files those rows bind to (the #1860 row
@@ -894,7 +1093,53 @@ LITERAL_ANCHORS = [
 # scan does not read would be a guard with a blind spot.
 SOURCE_TEXTS = (CONFIG, SESSION_DIR, METHODS_MOD, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS,
                 REVIEW_TESTS, FACTORY, FACTORY_TESTS, REQUESTS, SERVICES,
-                MANAGEMENT_TESTS, CRON, CRON_TESTS, TRANSCRIPT_LOCKS)
+                MANAGEMENT_TESTS, CRON, CRON_TESTS, TRANSCRIPT_LOCKS,
+                HTTP_STORE, HTTP_STORE_TESTS, POLICY, ROUTER_TESTS,
+                MODEL_PORT, HOST_MODEL_TESTS)
+
+README = Path(__file__).resolve().with_name('README.md')
+
+
+def check_manifest():
+    """#2739: every hand-copied count and enumeration in the README must
+    equal the table it describes (cron-schedule shape).
+
+    The README's `只读 <N> 个文件` and `当前 <N> 条变异` counts and the
+    `锚点` paragraph's backticked `SOURCE_TEXTS` enumeration are
+    hand-maintained copies of this file. A copy that drifts is invisible
+    until the row or file it names is deleted, so `--check` derives all three
+    from the sources and refuses on any mismatch instead of leaving the
+    drift for a reader to notice (the header's six-file list was already
+    three additions behind when #2739 landed).
+    """
+    errors = []
+    text = README.read_text()
+    files = re.search(r'只读 (\d+) 个文件', text)
+    if not files:
+        errors.append('README: no 只读 <N> 个文件 sentence')
+    elif int(files.group(1)) != len(SOURCE_TEXTS):
+        errors.append(f'README: 只读 {files.group(1)} 个文件, '
+                      f'SOURCE_TEXTS has {len(SOURCE_TEXTS)}')
+    rows = re.search(r'当前 (\d+) 条变异', text)
+    if not rows:
+        errors.append('README: no 当前 <N> 条变异 sentence')
+    elif int(rows.group(1)) != len(mutations):
+        errors.append(f'README: 当前 {rows.group(1)} 条变异, '
+                      f'the table has {len(mutations)}')
+    # The enumeration lives in its own paragraph, so scope the scan to it:
+    # prose elsewhere that mentions a file name would otherwise be swept
+    # into the comparison.
+    blocks = [block for block in re.split(r'\n\s*\n', text) if '逐一枚举如下' in block]
+    if len(blocks) != 1:
+        errors.append(f'README: expected exactly one 逐一枚举如下 paragraph, '
+                      f'found {len(blocks)}')
+    else:
+        listed = re.findall(r'`([^`]+\.rs)`', blocks[0])
+        expected = sorted(str(path.relative_to(ROOT)) for path in SOURCE_TEXTS)
+        if sorted(listed) != expected:
+            errors.append('README: 锚点 enumeration != SOURCE_TEXTS '
+                          f'({len(listed)} listed, {len(expected)} expected)')
+    return errors
 
 
 def _assertions(case):
@@ -993,7 +1238,21 @@ def main():
     # table itself; refuse the whole run (including `--check`) instead.
     if len({case.mutation for case in every_row}) != len(every_row):
         raise SystemExit('#1457 duplicate mutation name in the table')
+    # #2739: every refusal below happens before any mutation, so it is rc 2
+    # ("this run never started", printed by `negative_selection.refuse`) and
+    # not rc 1 ("ran, not green") — the four-way exit table in
+    # `specs/negative-controls/README.md`.
+    try:
+        registered(mutations, EXPECTED_NAMES)
+    except (ValueError, OSError) as error:
+        refuse(f'mutation roster drifted: {error}')
     if args == ['--check']:
+        # #2739: the README's hand-copied counts and enumeration are
+        # cross-checked before the anchor probe, so a drifted copy is a clean
+        # refusal too.
+        manifest_errors = check_manifest()
+        if manifest_errors:
+            refuse('#2739 README manifest drift: ' + '; '.join(manifest_errors))
         # Guard first: it reports an unreadable scanned file as a clean refusal,
         # while the anchor probe below would raise a bare OSError on the same tree.
         check_literal_anchors(selected_rows)
