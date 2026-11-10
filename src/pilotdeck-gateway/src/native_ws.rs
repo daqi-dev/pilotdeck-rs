@@ -586,9 +586,14 @@ impl PhasedRun {
     /// #2557: the post-halt walk's synchronous re-issue of the host teardown
     /// request after its shared deadline dropped a first `finish()` mid-body —
     /// the walk returns on the timeout and the process exits, so no revisit
-    /// is coming, and the cancelled future owns the inner mutex, so the
-    /// re-issue cannot go through `finish()`. Idempotent like every other
-    /// request site (`send_if_modified` keeps the first budget).
+    /// is coming. The re-issue cannot go through `finish()`: the cut run
+    /// left its in-progress marker, so a re-call would only observe the
+    /// interrupted verdict (#2363, once-only), and `finish()` re-enters the
+    /// same awaits — close-notice window, host cleanup — the deadline just
+    /// cut off, with the walk's own owner bound already spent. The direct
+    /// synchronous request on the host gate is the bounded path. Idempotent
+    /// like every other request site (`send_if_modified` keeps the first
+    /// budget).
     pub fn request_host_shutdown(&self) {
         self.host.request_shutdown(self.drain_budget);
     }
