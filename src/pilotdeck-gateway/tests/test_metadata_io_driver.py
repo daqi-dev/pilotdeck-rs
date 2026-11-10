@@ -9647,6 +9647,16 @@ class AggregationAudit(unittest.TestCase):
                                     '#166 busy lock must never write source')
                     return write_text(path, *a, **k)
 
+                def refuse_fixture_atomic(*_args, **_kwargs):
+                    # #2743 (DS boundary P2a): fixtures migrated to
+                    # write_source_atomic bind their own global at import, so
+                    # patching the guard's attribute never intercepts their
+                    # publish/restore; a mutant that skips the busy lock and
+                    # reaches the on-disk mutation must fail here, not
+                    # silently rename the guarded sources.
+                    raise AssertionError('#166 busy lock must not publish source '
+                                         'bytes through the fixture global')
+
                 # #1166: the pristine admission now runs a real external
                 # scanner that needs genuine git; these #166 wiring probes
                 # mock _git, so the scanner admission is pinned out here
@@ -9666,6 +9676,8 @@ class AggregationAudit(unittest.TestCase):
                         patch.object(module, 'run_owned', side_effect=AssertionError('#166 busy lock must not launch a test')):
                     if hasattr(module, 'pgrep_launcher'):
                         module.pgrep_launcher = lambda: ''
+                    if hasattr(module, 'write_source_atomic'):
+                        module.write_source_atomic = refuse_fixture_atomic
                     code = module.main()
                 # #1903：还原改走 `write_source_atomic`（临时文件 + `os.replace`），不再经过
                 # `Path.write_text/bytes`；只钉那两个入口，这条「拒锁期间不得写源码」的探针
@@ -9720,6 +9732,13 @@ class AggregationAudit(unittest.TestCase):
                     self.assertTrue(path.is_relative_to(Path(temp).resolve()), '#166 dirty guard must never write source')
                     return write_text(path, *args, **kwargs)
 
+                def refuse_fixture_atomic(*_args, **_kwargs):
+                    # #2743 (DS boundary P2a): same blind spot as the busy-lock
+                    # probe -- the fixture's own write_source_atomic global is
+                    # invisible to the guard-level patch above.
+                    raise AssertionError('#166 dirty guard must not publish source '
+                                         'bytes through the fixture global')
+
                 with patch.object(importlib.machinery.SourceFileLoader, 'get_data', data):
                     spec = importlib.util.spec_from_file_location('negative_166_' + folder, path)
                     module = importlib.util.module_from_spec(spec)
@@ -9753,6 +9772,8 @@ class AggregationAudit(unittest.TestCase):
                             patch.object(module.sys, 'argv', argv):
                         if hasattr(module, 'pgrep_launcher'):
                             module.pgrep_launcher = lambda: ''
+                        if hasattr(module, 'write_source_atomic'):
+                            module.write_source_atomic = refuse_fixture_atomic
                         try:
                             code = module.main()
                         except Exception as error:

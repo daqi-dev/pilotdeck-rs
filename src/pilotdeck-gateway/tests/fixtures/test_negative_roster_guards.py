@@ -999,6 +999,22 @@ class ModeRoutingGuard(unittest.TestCase):
         # test interpreter must keep its own dispositions afterwards.
         saved_handlers = {name: signal.getsignal(getattr(signal, name))
                           for name in TERMINATE_SIGNALS if hasattr(signal, name)}
+        window_entry = {}
+
+        @contextlib.contextmanager
+        def recording_window(root, paths, **kwargs):
+            # #2425's strong shape (frozen test_safety.py:2862-2900, DS
+            # concurrency #1/#2): record the live dispositions when the
+            # window opens. A late install -- after the window entry --
+            # leaves the batch unprotected while a post-return sample would
+            # still see the handler; and every TERMINATE_SIGNALS member must
+            # be bound, not just SIGTERM (the SIGTERM-only shape was judged
+            # P1 on the frozen side once already).
+            window_entry.update({name: signal.getsignal(getattr(signal, name))
+                                 for name in TERMINATE_SIGNALS
+                                 if hasattr(signal, name)})
+            yield {path: path.read_bytes() for path in paths}
+
         installed = False
         stdout, stderr = io.StringIO(), io.StringIO()
         wrapper = base / 'wrapper-launch.py'
@@ -1007,7 +1023,7 @@ class ModeRoutingGuard(unittest.TestCase):
                        'LANG': 'en_US.UTF-8'}
         try:
             with patch.dict(os.environ, environment), \
-                 patch.object(module, 'mutating_sources', stubbed_window), \
+                 patch.object(module, 'mutating_sources', recording_window), \
                  patch.object(module, 'write_source_atomic', fake_write_atomic), \
                  patch.object(module, 'wait_for_slot', fake_slot), \
                  patch.object(module, 'run_owned', fake_run_owned), \
@@ -1019,12 +1035,18 @@ class ModeRoutingGuard(unittest.TestCase):
                  contextlib.redirect_stdout(stdout), \
                  contextlib.redirect_stderr(stderr):
                 code = module.main()
-            # Sampled before the restore below puts the interpreter's own
-            # dispositions back.
-            installed = signal.getsignal(signal.SIGTERM) is module.terminate_cleanly
+            # Judged from the window-entry recording above, before the
+            # restore below puts the interpreter's own dispositions back.
+            installed = bool(window_entry) and all(
+                handler is module.terminate_cleanly
+                for handler in window_entry.values())
         finally:
             for name, handler in saved_handlers.items():
-                signal.signal(getattr(signal, name), handler)
+                # getsignal returns None when a non-Python handler held the
+                # signal; signal.signal refuses None (frozen side fixed this
+                # in test_safety.py:2834-2840; DS concurrency #3).
+                signal.signal(getattr(signal, name),
+                              handler if handler is not None else signal.SIG_DFL)
         return module, code, out, stdout.getvalue(), stderr.getvalue(), writes, installed
 
     def test_full_run_publishes_and_restores_through_one_rename(self):
@@ -1051,12 +1073,30 @@ class ModeRoutingGuard(unittest.TestCase):
         self.assertTrue(all(path.is_relative_to(module.ROOT)
                             for path, _data in writes),
                         '#2743 the atomic writes must target the guarded tree only')
+        # Payload roles, not just counts (DS concurrency #4): per guarded
+        # source the atomic writes must alternate publish (mutant bytes) then
+        # restore (pristine bytes) -- a swapped pair publishes nothing and
+        # restores a mutant, which the count above cannot see. The stub
+        # never writes, so the disk bytes stay pristine for the whole run.
+        pristine = {path: path.read_bytes() for path, _data in writes}
+        order = {}
+        for path, data in writes:
+            order.setdefault(path, []).append(data == pristine[path])
+        for path, sequence in order.items():
+            expected = ([False, True] * (len(sequence) // 2)
+                        + ([True] if len(sequence) % 2 else []))
+            self.assertTrue(sequence == expected,
+                            f'#2743 atomic writes for {path.name} must alternate '
+                            f'mutant publish then pristine restore, got {sequence}')
         # The self-held window must hold terminate handlers for the whole
         # run (#2425's install-and-bind pin; the handler bodies themselves
         # are pinned by the shared restore window's own defer contract).
+        # Judged at the window entry, for every TERMINATE_SIGNALS member --
+        # a late install or a dropped SIGHUP/SIGQUIT line stays red.
         self.assertTrue(installed,
                         '#2743 main() must install its terminate handler for '
-                        'SIGTERM while the window is self-held')
+                        'every TERMINATE_SIGNALS member before the window '
+                        'is self-held')
 
 
 class SessionDomainCleanupGuard(unittest.TestCase):
@@ -1095,10 +1135,24 @@ class SessionDomainCleanupGuard(unittest.TestCase):
         # test interpreter must keep its own dispositions afterwards.
         saved_handlers = {name: signal.getsignal(getattr(signal, name))
                           for name in TERMINATE_SIGNALS if hasattr(signal, name)}
+        window_entry = {}
+
+        @contextlib.contextmanager
+        def recording_window(root, paths, **kwargs):
+            # #2425's strong shape (frozen test_safety.py:2862-2900, DS
+            # concurrency #1/#2): record the live dispositions when the
+            # window opens, for every TERMINATE_SIGNALS member -- not a
+            # post-return SIGTERM-only sample (both weaker shapes were
+            # judged insufficient on the frozen side already).
+            window_entry.update({name: signal.getsignal(getattr(signal, name))
+                                 for name in TERMINATE_SIGNALS
+                                 if hasattr(signal, name)})
+            yield {path: path.read_bytes() for path in paths}
+
         installed = False
         stdout, stderr = io.StringIO(), io.StringIO()
         try:
-            with patch.object(module, 'mutating_sources', stubbed_window), \
+            with patch.object(module, 'mutating_sources', recording_window), \
                     patch.object(module, 'write_source_atomic', fake_write_atomic), \
                     patch.object(module, 'pgrep_launcher', return_value=''), \
                     patch.object(module, 'run_check', return_value=restored), \
@@ -1112,10 +1166,16 @@ class SessionDomainCleanupGuard(unittest.TestCase):
                     contextlib.redirect_stdout(stdout), \
                     contextlib.redirect_stderr(stderr):
                 code = module.main()
-            installed = signal.getsignal(signal.SIGTERM) is module.terminate_cleanly
+            installed = bool(window_entry) and all(
+                handler is module.terminate_cleanly
+                for handler in window_entry.values())
         finally:
             for name, handler in saved_handlers.items():
-                signal.signal(getattr(signal, name), handler)
+                # getsignal returns None when a non-Python handler held the
+                # signal; signal.signal refuses None (frozen side fixed this
+                # in test_safety.py:2834-2840; DS concurrency #3).
+                signal.signal(getattr(signal, name),
+                              handler if handler is not None else signal.SIG_DFL)
         return module, code, out, stdout.getvalue(), stderr.getvalue(), writes, installed
 
     def test_full_run_publishes_and_restores_through_one_rename(self):
@@ -1150,12 +1210,31 @@ class SessionDomainCleanupGuard(unittest.TestCase):
                         '#2743 the atomic writes must target the guarded tree only')
         self.assertTrue(all(path in expected_sources for path, _data in writes),
                         '#2743 the atomic writes must target guarded sources only')
+        # Payload roles, not just counts (DS concurrency #4): per guarded
+        # source the writes must alternate publish (mutant bytes) then
+        # restore (pristine bytes), with the window-exit backstop's one
+        # pristine rewrite allowed at the tail. A swapped pair publishes
+        # nothing and restores a mutant, which the count above cannot see.
+        pristine = {path: path.read_bytes() for path, _data in writes}
+        order = {}
+        for path, data in writes:
+            order.setdefault(path, []).append(data == pristine[path])
+        for path, sequence in order.items():
+            expected = ([False, True] * (len(sequence) // 2)
+                        + ([True] if len(sequence) % 2 else []))
+            self.assertTrue(sequence == expected,
+                            f'#2743 atomic writes for {path.name} must alternate '
+                            f'mutant publish then pristine restore (plus one '
+                            f'backstop), got {sequence}')
         # The batch loop must run under terminate handlers: an interrupted
         # batch unwinds through the finally blocks instead of leaving a
         # mutant behind under the parity lease (#892 r23 origin, #2425 pin).
+        # Judged at the window entry, for every TERMINATE_SIGNALS member --
+        # a late install or a dropped SIGHUP/SIGQUIT line stays red.
         self.assertTrue(installed,
                         '#2743 main() must install its terminate handler for '
-                        'SIGTERM while the window is self-held')
+                        'every TERMINATE_SIGNALS member before the window '
+                        'is self-held')
 
 
 if __name__ == '__main__':
