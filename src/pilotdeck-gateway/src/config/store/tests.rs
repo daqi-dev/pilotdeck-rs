@@ -83,6 +83,14 @@ async fn settle() {
 /// cleanly stopped watcher would be reported as a timeout on that path.
 const STOP_TIMEOUT: Duration = Duration::from_secs(90);
 
+/// #1920: pin that relation at compile time, so a future ceiling change
+/// cannot silently invert it and turn every clean stop into a timeout
+/// report on the slowest-poll path. `Duration`'s `PartialOrd` is not a
+/// `const fn`, so the pin compares whole seconds — both constants are whole
+/// seconds — and can only fire conservatively (a sub-second relation it
+/// cannot resolve fails loudly rather than passing silently).
+const _: () = assert!(STOP_TIMEOUT.as_secs() > MAX_POLL_INTERVAL.as_secs());
+
 /// #1899: wait for the detached watcher task and report how it ended.
 async fn watcher_stop(task: Option<JoinHandle<()>>) -> Result<(), String> {
     let Some(task) = task else {
@@ -571,10 +579,12 @@ fn two_hour_debounce_is_clamped_to_the_one_hour_ceiling() {
 
 /// #1736: `Instant + Duration` panics once `debounce` stops being
 /// representable, and the panic happens inside the detached watcher task —
-/// `WatchHandle::stop` swallows the `JoinError` and `Drop` only aborts, so
-/// hot reload dies with the handle still "alive" (the same silent death as
-/// #1650's zero period). The clamp keeps the deadline representable, and
-/// `deadline_after` is the second line of defence.
+/// `Drop` only aborts and a `stop` that has not been called yet cannot report
+/// a death it has not joined (its report, #1920's [`WatchStop::Panicked`],
+/// arrives only if someone stops the watcher afterwards), so hot reload dies
+/// with the handle still "alive" (the same silent death as #1650's zero
+/// period). The clamp keeps the deadline representable, and `deadline_after`
+/// is the second line of defence.
 #[tokio::test(start_paused = true)]
 async fn overflowing_debounce_does_not_kill_the_watcher() {
     let root = Root::new();
@@ -707,10 +717,9 @@ async fn stop_cancels_pending_reload_and_leaves_no_task() {
     watch.notify_change();
     settle().await;
     advance(100).await;
-    // #1899: `WatchHandle::stop` aborts and then swallows the `JoinError`; a
-    // watcher that died before the stop would leave the same `weak_count == 0`
-    // and "no reload", so prove it was still running (and had already ticked)
-    // before the stop.
+    // #1899: `weak_count == 0` and "no reload" are also true for a watcher that
+    // died before the stop, so prove it was still running (and had already
+    // ticked) before the stop.
     assert!(
         !watch
             .task
@@ -719,19 +728,75 @@ async fn stop_cancels_pending_reload_and_leaves_no_task() {
             .is_finished(),
         "#1899 the watcher must still be running before stop"
     );
-    watch.stop().await;
+    // #1920: the stop's own report is the "stopped" evidence. A watcher that
+    // died by panic before the abort joins `Err(JoinError::Panic)` and comes
+    // back `Panicked` (and one that returned on its own, `Finished`), so the
+    // release and "no reload" below can no longer be produced by a dead
+    // watcher alone — they are corroboration, not the proof.
+    assert_eq!(
+        watch.stop().await,
+        WatchStop::Cancelled,
+        "#1920 stop must report the watcher alive until its own abort"
+    );
     assert_eq!(
         Arc::weak_count(&store.inner),
         0,
-        "watcher task released the store"
+        "#1920 the stopped watcher task released the store"
     );
     root.write(&other_model());
     tokio::time::sleep(Duration::from_millis(2000)).await;
-    assert_eq!(loads.load(Ordering::SeqCst), 1, "no reload after stop");
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        1,
+        "#1920 no reload after stop"
+    );
 }
 
+/// #1920: `WatchHandle::stop`'s panic arm needs a watcher that really died by
+/// panic; the hook makes exactly this store's watcher panic on its first poll
+/// (no public input does that anymore — #1650/#1736 clamp every option that
+/// used to). The stop must report the panic, not swallow it the way
+/// `let _ = task.await` did — #1650's silent hot-reload death. The two
+/// assertions after it pin why the old evidence was false green: a dead
+/// watcher releases the store and never reloads exactly like a stopped one.
 #[tokio::test(start_paused = true)]
-async fn dropping_the_handle_or_the_store_ends_the_task() {
+async fn stop_reports_a_watcher_that_died_by_panic() {
+    let root = Root::new();
+    root.write(BASE);
+    let (store, loads) = store(&root);
+    arm_watch_loop_panic(&store.inner);
+    let watch = store
+        .start_watching(WatchOptions::default())
+        .expect("#879 healthy watcher paths");
+    // The watcher's first poll runs the gate's panic.
+    settle().await;
+    assert_eq!(
+        watch.stop().await,
+        WatchStop::Panicked,
+        "#1920 stop must report a watcher that died by panic, not a clean stop"
+    );
+    assert_eq!(
+        Arc::weak_count(&store.inner),
+        0,
+        "#1920 a panicked watcher releases the store too"
+    );
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        1,
+        "#1920 a panicked watcher does not reload either"
+    );
+}
+
+/// #1899/#1920: the handle half of the old two-in-one drop test. Dropping the
+/// handle aborts the task and detaches it, so the terminal shape cannot be
+/// joined here — the evidence chain is the liveness precondition above plus
+/// the release below, and the window between them is what keeps a panic from
+/// slipping through: the precondition, `notify_change` and the drop are all
+/// synchronous, with no await — no scheduler turn — in between on this
+/// single-threaded runtime, so a watcher that was alive at the check cannot
+/// die before the abort lands.
+#[tokio::test(start_paused = true)]
+async fn dropping_the_handle_ends_the_task() {
     let root = Root::new();
     root.write(BASE);
     let (store, loads) = store(&root);
@@ -755,14 +820,33 @@ async fn dropping_the_handle_or_the_store_ends_the_task() {
     drop(watch);
     settle().await;
     tokio::time::sleep(Duration::from_millis(1000)).await;
-    assert_eq!(loads.load(Ordering::SeqCst), 1);
-    assert_eq!(Arc::weak_count(&store.inner), 0);
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        1,
+        "#1920 no reload after the handle is dropped"
+    );
+    assert_eq!(
+        Arc::weak_count(&store.inner),
+        0,
+        "#1920 the aborted watcher released the store"
+    );
+}
 
+/// #1899/#1920: the store half of the old two-in-one drop test. Here the
+/// terminal shape *is* observable — the handle's task is joined directly —
+/// so the clean return is asserted, not inferred from `weak_count`.
+#[tokio::test(start_paused = true)]
+async fn dropping_the_store_ends_the_task() {
+    let root = Root::new();
+    root.write(BASE);
+    let (store, loads) = store(&root);
     let mut watch = store
         .start_watching(WatchOptions::default())
         .expect("#879 healthy watcher paths");
     settle().await;
     advance(100).await;
+    // #1899: prove the watcher was running (past its first in-loop tick)
+    // before the store is dropped.
     assert!(
         !watch
             .task
@@ -777,7 +861,11 @@ async fn dropping_the_handle_or_the_store_ends_the_task() {
         Ok(()),
         "#1899 dropping the store must stop the watcher cleanly"
     );
-    assert_eq!(loads.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        1,
+        "#1920 no reload after the store is gone"
+    );
 }
 
 #[test]

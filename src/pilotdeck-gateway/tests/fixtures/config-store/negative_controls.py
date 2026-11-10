@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""#1736 / #1739 / #1792 / #1794 / #1899 / #1987 HEAD-only controls on the
-shared suite runner (negative_suite.run_cases): each mutation must be killed
-by its named test's own panic marker, then the tree is restored and
+"""#1736 / #1739 / #1792 / #1794 / #1899 / #1920 / #1987 HEAD-only controls on
+the shared suite runner (negative_suite.run_cases): each mutation must be
+killed by its named test's own panic marker, then the tree is restored and
 re-verified.
 
 Usage: negative_controls.py --check
@@ -39,16 +39,20 @@ and commits no metadata shortcut; a mixed tick is a complete observation,
 not an obscured one; an obscured startup sample commits the folded value
 into the obscured chain only; a ``read_dir`` iteration error mid-listing
 obscures the sample; a failed startup probe on the parent of a missing
-config file keeps that parent watched); six pin #1899's watcher-stop
-evidence (the
+config file keeps that parent watched); nine pin the #1899/#1920
+watcher-stop evidence (the
 join-based check reverted to ``JoinHandle::is_finished()``, which tokio also
 reports for a task that died by panic; a panicking watcher loop that an
-``is_finished()``-only check accepts as a clean stop; one that returns
-cleanly right after spawn; one that exits on its first in-loop tick, before
-``stop`` and before ``drop(store)``; and one that never stops at all — all of
-them are #1650's silent-death path) plus the #1736 pair that must be restored
-together (debounce ceiling + unchecked deadline add — the double-restoration
-regression that kills the watcher task).
+``is_finished()``-only check accepts as a clean stop, against the handle half
+of the split drop test and against the stop test; one that returns cleanly
+right after spawn, against the handle half and the stop test; one that exits
+on its first in-loop tick, against the store half and before ``stop``; one
+that never stops at all; and #1920's own regression — ``WatchHandle::stop``
+swallowing the ``JoinError`` again, so a watcher that died by panic is
+reported as a clean stop — all of them are #1650's silent-death path) plus
+the #1736 pair that must be restored together (debounce ceiling + unchecked
+deadline add — the double-restoration regression that kills the watcher
+task).
 
 ``PDRS_NEGATIVE_BASELINE`` may name another commit object (the sandbox
 verification pass pins a ``git stash create`` commit of the reviewed tree,
@@ -454,31 +458,37 @@ mutations = [
     # path. The drop test must fail instead of passing on a task that is merely
     # "finished": the injected panic kills it at the first liveness check, and
     # the later ones are listed because they are the same defect seen one step
-    # apart (`classify` accepts the first marker that shows up).
+    # apart (`classify` accepts the first marker that shows up). #1920: the old
+    # two-in-one drop test is split (`dropping_the_handle_ends_the_task` /
+    # `dropping_the_store_ends_the_task`); this row keeps the handle half and
+    # the store half is covered by `watch-loop-exits-after-first-tick` /
+    # `watch-loop-never-stops`. The stop-test twin is
+    # `watch-loop-panic-injected-before-stop`.
     ('watch-loop-panic-injected', source,
      '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
      '    panic!("#1899 injected: simulated watch_loop failure");\n'
      '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
-     TESTS + 'dropping_the_handle_or_the_store_ends_the_task',
-     ['#1899 the watcher must still be running before the handle is dropped',
-      '#1899 the watcher must still be running before the store is dropped',
-      '#1899 dropping the store must stop the watcher cleanly']),
+     TESTS + 'dropping_the_handle_ends_the_task',
+     '#1899 the watcher must still be running before the handle is dropped'),
     # #1899 review P2-2: a watcher that returns cleanly right after spawn also
     # joins with `Ok(())`, so the drop-the-store evidence only means something
     # once the watcher is proven alive before the drop. This mutant is that
     # counterexample — the silent-death shape #1650 is about, with a clean exit
-    # instead of a panic — and it must die at the liveness assertion.
+    # instead of a panic — and it must die at the liveness assertion. #1920:
+    # the split keeps this row on the handle half; the stop-test twin is
+    # `watch-loop-clean-early-exit-before-stop`.
     ('watch-loop-clean-early-exit', source,
      '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
      '    return;\n'
      '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
-     TESTS + 'dropping_the_handle_or_the_store_ends_the_task',
-     ['#1899 the watcher must still be running before the handle is dropped',
-      '#1899 the watcher must still be running before the store is dropped']),
+     TESTS + 'dropping_the_handle_ends_the_task',
+     '#1899 the watcher must still be running before the handle is dropped'),
     # #1899 review P2 (boundary): a liveness check taken at spawn time proves
     # nothing about a watcher that returns on its first in-loop tick — still
     # #1650's silent death, one tick later. Each check advances one poll interval
-    # first, and this mutant is what that advance is there to catch.
+    # first, and this mutant is what that advance is there to catch. #1920: the
+    # split moves this row to the store half, so each half of the old combined
+    # test keeps an own-death row.
     ('watch-loop-exits-after-first-tick', source,
      '                if inner.strong_count() == 0 {\n'
      '                    return;\n'
@@ -489,9 +499,8 @@ mutations = [
      '                }\n'
      '                return;\n'
      '                let mut changed = false;',
-     TESTS + 'dropping_the_handle_or_the_store_ends_the_task',
-     ['#1899 the watcher must still be running before the handle is dropped',
-      '#1899 the watcher must still be running before the store is dropped']),
+     TESTS + 'dropping_the_store_ends_the_task',
+     '#1899 the watcher must still be running before the store is dropped'),
     # #1899 review P2 (sibling): the same mutant against `WatchHandle::stop`,
     # which aborts and swallows the `JoinError` — `weak_count == 0` and "no
     # reload" alone would accept a watcher that died before the stop.
@@ -507,20 +516,66 @@ mutations = [
      '                let mut changed = false;',
      TESTS + 'stop_cancels_pending_reload_and_leaves_no_task',
      '#1899 the watcher must still be running before stop'),
+    # #1920: the two #1899 death shapes re-bound to the stop test, where the
+    # "stopped" evidence is now `stop()`'s own report — the liveness check
+    # fires first, and the #1920 stop-report marker is listed because the same
+    # mutation reaching the join (a multi-thread runtime, a future refactor)
+    # must be killed by the report assertion too, not only by the check.
+    ('watch-loop-panic-injected-before-stop', source,
+     '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
+     '    panic!("#1899 injected: simulated watch_loop failure");\n'
+     '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
+     TESTS + 'stop_cancels_pending_reload_and_leaves_no_task',
+     ['#1899 the watcher must still be running before stop',
+      '#1920 stop must report the watcher alive until its own abort']),
+    # #1920: the clean-exit twin of the row above, on the same reasoning —
+    # a watcher that never watched a single tick must not pass the stop test
+    # as though `stop` had ended it.
+    ('watch-loop-clean-early-exit-before-stop', source,
+     '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
+     '    return;\n'
+     '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
+     TESTS + 'stop_cancels_pending_reload_and_leaves_no_task',
+     ['#1899 the watcher must still be running before stop',
+      '#1920 stop must report the watcher alive until its own abort']),
     # #1899 review P2 (concurrency): every other row dies before the join, so
     # the timeout arm of `watcher_stop` (and with it the "90 s clears the 60 s
     # poll ceiling" invariant) had no receipt. Removing the owner-gone return
     # makes the watcher keep ticking after `drop(store)`: the suspended clock
     # walks the whole 90 s at no wall-clock cost and the test fails at the
     # clean-stop assertion instead of hanging or being called a clean stop.
+    # #1920: the split keeps this row on the store half, whose evidence is
+    # the `watcher_stop` join.
     ('watch-loop-never-stops', source,
      '                if inner.strong_count() == 0 {\n'
      '                    return;\n'
      '                }\n'
      '                let mut changed = false;',
      '                let mut changed = false;',
-     TESTS + 'dropping_the_handle_or_the_store_ends_the_task',
+     TESTS + 'dropping_the_store_ends_the_task',
      '#1899 dropping the store must stop the watcher cleanly'),
+    # #1920: the stop triage itself regresses — `stop()` aborts, swallows the
+    # `JoinError` and unconditionally reports the cancelled shape, the pre-fix
+    # body. The hook-armed test then sees a watcher that died by panic reported
+    # as a clean stop, and dies at its own marker: the exact #1650 silent
+    # hot-reload death the triage exists to surface.
+    ('stop-panic-swallowed-again', source,
+     '        task.abort();\n'
+     '        match task.await {\n'
+     '            // Measured on this runtime (tokio 1.48): abort-then-join joins\n'
+     '            // `Err(JoinError::Cancelled)` and a task that died by panic joins\n'
+     '            // `Err(JoinError::Panic(..))`, so `is_panic()` — checked first,\n'
+     '            // like #1899\'s `watcher_stop` — leaves `is_cancelled()` as the\n'
+     '            // only other shape.\n'
+     '            Err(err) if err.is_panic() => WatchStop::Panicked,\n'
+     '            Err(_) => WatchStop::Cancelled,\n'
+     '            Ok(()) => WatchStop::Finished,\n'
+     '        }',
+     '        task.abort();\n'
+     '        let _ = task.await;\n'
+     '        WatchStop::Cancelled',
+     TESTS + 'stop_reports_a_watcher_that_died_by_panic',
+     '#1920 stop must report a watcher that died by panic, not a clean stop'),
     # #1946: the join window. The baseline claims the in-flight slot
     # synchronously but starts the load on a microtask
     # (`Promise.resolve().then`), so `run_or_wait` hops once before the first
@@ -669,7 +724,10 @@ EXPECTED_NAMES = (
     'watch-loop-clean-early-exit',
     'watch-loop-exits-after-first-tick',
     'watch-loop-exits-after-first-tick-before-stop',
+    'watch-loop-panic-injected-before-stop',
+    'watch-loop-clean-early-exit-before-stop',
     'watch-loop-never-stops',
+    'stop-panic-swallowed-again',
     'join-window-hop-removed',
     'obscured-transition-target-not-compared',
     'startup-metadata-shortcut-committed',
@@ -700,7 +758,7 @@ def check_anchor(row, original):
 def mutate(content, scope, replacements):
     for old, new in replacements:
         if content.count(old) != 1 or old == new:
-            raise RuntimeError('#1736/#1739/#1792/#1794/#1899/#1987 expired or ineffective mutation anchor')
+            raise RuntimeError('#1736/#1739/#1792/#1794/#1899/#1920/#1987 expired or ineffective mutation anchor')
         content = content.replace(old, new, 1)
     return content
 
@@ -723,7 +781,7 @@ def main():
             print('\n'.join(errors))
             return 1
         distinct = len({(str(row[1]), row[2]) for row in mutations})
-        print(f'#1736/#1739/#1792/#1794/#1899/#1987 {len(mutations)} rows / {distinct} distinct anchors checked')
+        print(f'#1736/#1739/#1792/#1794/#1899/#1920/#1987 {len(mutations)} rows / {distinct} distinct anchors checked')
         return 0
     if not args:
         raise SystemExit('provide NEW_OUT and optional mutation names, or --check')
