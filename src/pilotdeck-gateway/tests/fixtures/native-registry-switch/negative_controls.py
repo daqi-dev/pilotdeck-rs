@@ -5,6 +5,11 @@ Usage: negative_controls.py --check
        negative_controls.py [--compile-only] NEW_OUTPUT_DIR [mutation ...]
 Every mutation must compile, fail at its bound nonce receipt, and pass again
 after restoration. Source bytes must equal HEAD; no alternate baseline exists.
+The execution table is verified against the static EXPECTED_NAMES roster with
+the shared `negative_selection.registered` in every mode (--check, the default
+full run, and an explicit subset) before anything runs, so a row dropped from
+`mutations` cannot silently shrink the denominator, and a drift is a
+never-started refusal (exit 2), not a shorter run that still reads green.
 """
 import argparse
 import json
@@ -26,6 +31,7 @@ PROCESS_TEST = ROOT / 'src/pilotdeck-gateway/tests/native_registry_switch.rs'
 PROCESS = Path(__file__).resolve().parent / 'process.mts'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import refuse, registered, verdict_exit
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
 
 mutations = [
@@ -94,6 +100,36 @@ mutations = [
      'executable_native_registry_switch', '#1369 executable off registry receipt'),
 ]
 
+# #2572: `mutations` is both the registry and the execution table, so a row
+# dropped from the table silently shrank the denominator — `--check` printed a
+# smaller count and still said OK, the full run judged only the survivors, and
+# the tail `any(status != KILLED)` read green over the remainder. The
+# denominator is this static roster instead, checked with the shared
+# `negative_selection.registered` before anything runs: a dropped, renamed,
+# duplicated or reordered row is a never-started refusal (exit 2), never a
+# shorter green run (#1666 family, same fix shape as issue-2495).
+EXPECTED_TOTAL = 7
+EXPECTED_NAMES = (
+    'registry-switch-ignored',
+    'registry-switch-opens-when-off',
+    'registry-default-off',
+    'registry-invalid-accepted',
+    'registry-capabilities-ungated',
+    'registry-reader-always-none',
+    'registry-receipt-not-published',
+)
+
+
+def check_roster():
+    """Every mode enters here first: roster drift is a refusal, never a run."""
+    try:
+        names = registered(mutations, EXPECTED_NAMES)
+    except ValueError as error:
+        refuse(str(error))
+    if len(names) != EXPECTED_TOTAL:
+        refuse(f'#1369 fixed mutation denominator: expected {EXPECTED_TOTAL}, '
+               f'found {len(names)}')
+
 
 def test_body(test, texts=None):
     if texts is None:
@@ -122,6 +158,7 @@ def main():
     parser.add_argument('selected', nargs='*')
     args = parser.parse_args()
     check_binding_scope()
+    check_roster()
     stale = []
     for name, path, old, new, test, assertion in mutations:
         text = path.read_text()
@@ -132,7 +169,9 @@ def main():
     if stale:
         raise SystemExit('#1369 stale anchor/test/assertion bindings: ' + ', '.join(stale))
     if args.check:
-        print(f'#1369 {len(mutations)} unique anchors and assertion bindings: OK')
+        print(f'#1369 {EXPECTED_TOTAL} registered mutations present '
+              f'(EXPECTED_NAMES roster matched); {EXPECTED_TOTAL} unique anchors '
+              f'and assertion bindings: OK')
         return 0
     selected = [row for row in mutations if not args.selected or row[0] in args.selected]
     if not selected or (args.selected and len(selected) != len(args.selected)):
@@ -230,11 +269,15 @@ def main():
               for state in ['KILLED', 'SURVIVED', 'INVALID', 'COMPILED']}
     temporary = output / 'summary.json.tmp'
     temporary.write_text(json.dumps(
-        {'controls': results, 'counts': counts, 'guardedSha256': guarded_sha256, 'sidecarSha256': sidecar_sha256}, indent=2) + '\n')
+        {'controls': results, 'counts': counts, 'rosterTotal': EXPECTED_TOTAL,
+         'guardedSha256': guarded_sha256, 'sidecarSha256': sidecar_sha256}, indent=2) + '\n')
     temporary.replace(output / 'summary.json')
     print(json.dumps({'controls': results, 'counts': counts}), flush=True)
+    # #2572: the tail verdict is the shared `verdict_exit`, so an empty result
+    # list (a future branch that records nothing) is a failure, never `any()`
+    # over nothing reading green — invariant 2 of specs/negative-controls.
     success = 'COMPILED' if args.compile_only else 'KILLED'
-    return int(any(row['status'] != success for row in results))
+    return verdict_exit(results, key='status', killed=success)
 
 
 if __name__ == '__main__':
