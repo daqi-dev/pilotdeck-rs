@@ -967,10 +967,16 @@ fn migration_blocked_dir_tasks_eacces_matches_ts() {
             "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but this caller is root; the \
              migration/blocked-dir-tasks-eacces cell needs an unprivileged host (需要非特权宿主)"
         );
-        crate::test_skip_line::stderr_skip_line(
-            "#1263 skip: migration/blocked-dir-tasks-eacces: chmod(0) does not deny access \
-             to root; the EACCES cell needs an unprivileged host\n",
-        );
+        // #1637 fix-r1 (DS sibling#2): marker-prefixed through the shared
+        // constant, the same shape as the two #1637 emission points above —
+        // this last bare `#1263 skip:` line kept the shared marker grammar
+        // from seeing a root-host self-skip of this cell.
+        crate::test_skip_line::stderr_skip_line(&format!(
+            "{}migration_blocked_dir_tasks_eacces_matches_ts: skipped, \
+             chmod(0) does not deny access to root; the EACCES cell needs an \
+             unprivileged host\n",
+            crate::test_skip_line::TEST_SKIPPED_MARKER,
+        ));
         return;
     }
     replay_migration_cell(cell("migration", "blocked-dir-tasks-eacces"));
@@ -1172,27 +1178,55 @@ fn migration_non_utf8_home_keeps_one_physical_key() {
 fn probe_eacces_from_a_read_only_scratch_fails_closed() {
     use std::os::unix::fs::PermissionsExt;
     use std::panic::{AssertUnwindSafe, catch_unwind};
-    if rustix::process::geteuid().as_raw() == 0 {
-        // #1900: chmod 500 cannot stop root from creating the probe; the
-        // same CI switch + printed skip shape as
+    // #1637 fix-r1 (DS sibling#3 + Grok boundary#2): probe the behaviour,
+    // not the uid — the pre-fix `geteuid() == 0` shortcut matched neither
+    // the #1461 r6 rule nor its two siblings (native_process/
+    // services_tests.rs, test_process.rs): a mode-enforced root host (NFS
+    // root_squash) would have been skipped although its chmod 0500 really
+    // bites, while a CAP_DAC_OVERRIDE runner that is not root would have
+    // false-failed. The chmod-0500-then-probe shape below covers every
+    // permission-blind runner exactly like the siblings' read probes.
+    let scratch = Scratch::new("cron-probe-eacces");
+    fs::set_permissions(scratch.path(), fs::Permissions::from_mode(0o500))
+        .expect("#1637 chmod the scratch read-only");
+    // The deciding probe mirrors the probed operation's own shape (a
+    // create_dir_all chain plus a non-empty file write) with a plain
+    // name: chmod 0500 only removes the write permission on the scratch,
+    // and the permission check runs before name validation (the invariant
+    // this test exists to pin), so a UTF-8 name answers "did the mode bits
+    // bind this caller" exactly where the raw bytes would.
+    let decided = triage_probe(|| {
+        let chain = scratch.path().join("writable-probe/cron/projects");
+        fs::create_dir_all(&chain)
+            .and_then(|()| fs::write(chain.join("tasks.json"), b"{\"probe\": true}"))
+    });
+    if let NonUtf8Probe::Writable = decided {
+        // #1900: the same CI switch + printed skip shape as
         // `temporary_create_failure_reports_the_transcript_not_the_staging_name`.
+        // #1900/#1637: restore an explicit 0700, never the mode umask handed
+        // us, so `Scratch`'s Drop can still remove the tree on every host.
+        fs::set_permissions(scratch.path(), fs::Permissions::from_mode(0o700))
+            .expect("#1637 restore the scratch permissions");
         assert!(
             !crate::test_permission_faults::require_permission_faults(),
             "#1637 PDRS_REQUIRE_PERMISSION_FAULTS is set but chmod 500 did not stop the probe \
-             (root or CAP_DAC_OVERRIDE); this arm needs an unprivileged host (需要非特权宿主)"
+             (root or a permission-blind runner); this arm needs a host that enforces mode bits \
+             (需要强制 mode 位的宿主)"
         );
         // #1637: marker-prefixed, so negative_suite.py's passed() does not
         // count this self-skip as a passing positive control.
         crate::test_skip_line::stderr_skip_line(&format!(
             "{}probe_eacces_from_a_read_only_scratch_fails_closed: skipped, \
-             running as root (chmod 500 is not a write error for root)\n",
+             chmod 500 is not a write error for this runner (root or \
+             CAP_DAC_OVERRIDE)\n",
             crate::test_skip_line::TEST_SKIPPED_MARKER,
         ));
         return;
     }
-    let scratch = Scratch::new("cron-probe-eacces");
-    fs::set_permissions(scratch.path(), fs::Permissions::from_mode(0o500))
-        .expect("#1637 chmod the scratch read-only");
+    // Everything else runs the assertion: the expected `Failed(EACCES)` —
+    // the mode bits bound this caller, so the real probe below must hit the
+    // fail-closed arm — and any other failure, which the real probe fails
+    // closed on with its own #1400 diagnosis instead of being swallowed.
     let panicked = catch_unwind(AssertUnwindSafe(|| non_utf8_names_writable(scratch.path())));
     // #1900: restore an explicit 0700, never the mode umask handed us, so
     // `Scratch`'s Drop can still remove the tree on every host.

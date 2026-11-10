@@ -32,9 +32,14 @@ panic — a kill whose positive control had certified nothing on that host
 (the vacuous positive #1637 closes). #1637 makes the self-skip
 machine-readable (`PDRS_TEST_SKIPPED`, tests/common/skip_line.rs): the
 runner now records the row SKIPPED whenever the positive run carries the
-marker — the rejecting-host vacuous-positive scenario is recognized
-instead of being read as a pass — so that row is SKIPPED on every host
-and the probe's real failure behavior is carried by the rows below.
+marker and completed green (exit 0 plus the test's own ok line; a run
+that printed the marker and then died never reached the skip it
+describes and stays INVALID) — the rejecting-host vacuous-positive
+scenario is recognized instead of being read as a pass — so that row is
+SKIPPED on every host and the probe's real failure behavior is carried
+by the rows below. #1637 fix-r1: the marker predicate itself is the one
+shared `negative_suite.self_skipped()` — the local hand-copied twin is
+gone, so the runner's accounting and `passed()`'s veto cannot drift.
 
 #1672 adds four rows that mutate the probe triage itself (the errno
 decision, its #1672 fd-limit arm, and the retry condition, now tested
@@ -47,18 +52,19 @@ registered as a follow-up: fail-closed-arm-skips-real-eacces binds the
 same fail-closed arm to a test that feeds the probe a *real* EACCES (a
 0500 scratch; measured on darwin/APFS the permission check precedes the
 name validation, so even the non-UTF-8 name reports EACCES), killable on
-any unprivileged unix host.
+any host whose mode bits bind the caller (fix-r1 made the test decide by
+probing, not by uid, so a mode-enforced root host kills too; a
+permission-blind runner records SKIPPED at the marker branch).
 """
 from pathlib import Path
 import json
 import os
-import re
 import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import Case, classify, passed
+from negative_suite import Case, classify, named_test_ok, passed, self_skipped
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/cron/store.rs'
@@ -333,8 +339,10 @@ mutations = [
     # `probe_eacces_from_a_read_only_scratch_fails_closed` requires the
     # panic. With the arm folded into `false` the probe silently reports
     # "not writable" and the test dies at its own #1637 marker instead.
-    # Killable on any unprivileged unix host; under root the bound test
-    # self-skips with the #1637 marker and the loop records SKIPPED.
+    # Killable on any host whose mode bits bind the caller (#1637 fix-r1
+    # made the test decide by probing, not by uid); on a permission-blind
+    # runner (root, CAP_DAC_OVERRIDE) the bound test self-skips with the
+    # #1637 marker and the loop records SKIPPED.
     ('fail-closed-arm-skips-real-eacces', tests,
      '        NonUtf8Probe::Failed(error) => panic!(\n'
      '            "#1400 non-UTF-8 home: probing {} failed for a reason other than the file name: {error}",\n'
@@ -475,20 +483,6 @@ class _SelfSkipped(Exception):
     """#1637: control flow, not a fault — the row's positive self-skipped."""
 
 
-def self_skipped(result, test):
-    """#1637: whether the bound test skipped itself in this run's log.
-
-    Mirrors the marker exclusion negative_suite.passed() applies (kept as a
-    local twin so this call site cannot drift from the shared contract):
-    the skip line is written straight to the stderr handle with the
-    `PDRS_TEST_SKIPPED` prefix, so it can only appear in the combined log
-    of a run that really executed — and self-skipped — this test.
-    """
-    log = result.stdout + result.stderr
-    return re.search(r'^PDRS_TEST_SKIPPED ' + re.escape(test.rsplit('::', 1)[-1]) + r'\b',
-                     log, re.MULTILINE) is not None
-
-
 def main():
     args = sys.argv[1:]
     if args == ['--check']:
@@ -599,13 +593,24 @@ def main():
                         # vacuous positive this marker exists to expose).
                         # Record SKIPPED, like the platform-absent rows
                         # above; never a pass, never a silent walk into the
-                        # mutant.
-                        item.update(status='SKIPPED', compiled=False,
-                                    reason='positive control self-skipped on '
-                                            'this host (#1637 '
-                                            'PDRS_TEST_SKIPPED marker): the '
-                                            'row certified nothing here')
-                        raise _SelfSkipped()
+                        # mutant. #1637 fix-r1 (DS sibling#4): only a green
+                        # completion reads as platform-absence — the run
+                        # must have exited 0 and printed this test's own ok
+                        # line. A run that printed the marker and then died
+                        # (nonzero exit, no ok line) never reached the skip
+                        # it describes, so it falls through to the
+                        # passed() refusal below and stays INVALID, not
+                        # SKIPPED.
+                        if (positive.returncode == 0
+                                and named_test_ok(positive, test)):
+                            item.update(status='SKIPPED', compiled=False,
+                                        reason='positive control self-skipped on '
+                                                'this host (#1637 '
+                                                'PDRS_TEST_SKIPPED marker): the '
+                                                'row certified nothing here')
+                            print(f'{name}: SKIPPED: positive control '
+                                  'self-skipped (#1637 marker)', flush=True)
+                            raise _SelfSkipped()
                     if not passed(positive, test):
                         raise RuntimeError('bound positive control did not pass')
                 try:

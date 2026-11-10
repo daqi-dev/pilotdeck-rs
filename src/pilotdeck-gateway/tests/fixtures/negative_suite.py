@@ -234,25 +234,48 @@ def case_labels(cases):
     return labels
 
 
+def named_test_ok(result, test):
+    """Whether the run's log carries this test's own `test <name> ... ok` line.
+
+    `--nocapture` can interleave a test's stdout between the name and the
+    status word (#938 r14), so accept the exact name but not an arbitrary
+    suffix after `... ok`. #1637 fix-r1: also the shared "the run completed
+    green" half of a legitimate self-skip — the runners' SKIPPED accounting
+    requires it next to the marker (Grok boundary#1: a run that printed the
+    marker and then died never reached the skip it describes, so it is
+    INVALID, not platform-absent).
+    """
+    log = result.stdout + result.stderr
+    return re.search(r'^test ' + re.escape(test) + r' \.\.\..* ok$', log,
+                     re.MULTILINE) is not None
+
+
+def self_skipped(result, test):
+    """#1637: whether the bound test skipped itself in this run's log.
+
+    A test that skipped *itself* also prints the marker line
+    `PDRS_TEST_SKIPPED <short-name>: skipped, …` (tests/common/skip_line.rs
+    `TEST_SKIPPED_MARKER`, written straight to the stderr handle so the
+    harness capture cannot hide it) and exits green. That is not a passing
+    positive control: on this host the row certified nothing, and counting
+    it as a pass is the vacuous positive #1637 closes. Only whole-test
+    self-skips carry the marker; a test that ran and skipped one scenario
+    of many has no marker line and still passes on its own merits.
+    #1637 fix-r1 (Grok simplify#1, DS P3#4): this is the one shared
+    predicate — `passed()`'s veto and every runner's SKIPPED accounting call
+    it, so the marker grammar cannot drift between them (the cron-store local
+    twin that hand-copied the literal plus its own short-name derivation is
+    gone; the twin was exactly the drift channel the review flagged).
+    """
+    log = result.stdout + result.stderr
+    return re.search(r'^PDRS_TEST_SKIPPED ' + re.escape(short_test(test)) + r'\b',
+                     log, re.MULTILINE) is not None
+
+
 def passed(result, test):
     log = result.stdout + result.stderr
-    # `--nocapture` can interleave a test's stdout between the name and the
-    # status word (#938 r14), so accept the exact name but not an arbitrary
-    # suffix after `... ok`.
-    named_ok = re.search(r'^test ' + re.escape(test) + r' \.\.\..* ok$', log,
-                         re.MULTILINE)
-    # #1637: a bound test that skipped *itself* also prints the marker line
-    # `PDRS_TEST_SKIPPED <short-name>: skipped, …` (tests/common/skip_line.rs
-    # `TEST_SKIPPED_MARKER`, written straight to the stderr handle so the
-    # harness capture cannot hide it) and exits green. That is not a passing
-    # positive control: on this host the row certified nothing, and counting
-    # it as a pass is the vacuous positive #1637 closes. Only whole-test
-    # self-skips carry the marker; a test that ran and skipped one scenario
-    # of many has no marker line and still passes on its own merits.
-    self_skipped = re.search(r'^PDRS_TEST_SKIPPED ' + re.escape(short_test(test)) + r'\b',
-                             log, re.MULTILINE)
-    return (result.returncode == 0 and named_ok is not None
-            and self_skipped is None
+    return (result.returncode == 0 and named_test_ok(result, test)
+            and not self_skipped(result, test)
             and 'test result: ok. 1 passed;' in log)
 
 

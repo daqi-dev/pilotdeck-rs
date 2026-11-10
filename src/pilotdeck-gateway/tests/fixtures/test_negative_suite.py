@@ -2,6 +2,7 @@
 """Harness fault injection only; no cargo or product source mutation here."""
 import contextlib
 import errno
+import importlib.util
 import io
 import json
 from pathlib import Path
@@ -313,6 +314,45 @@ class SuiteTests(unittest.TestCase):
             'PDRS_TEST_SKIPPED unrelated_test: skipped, filesystem rejects non-UTF-8 file names\n')
         self.assertTrue(suite.passed(sibling_marker, TEST),
                         '#1637 a sibling marker line must not veto this test\'s own pass')
+
+    def test_self_skipped_binds_the_exact_short_name(self):
+        # #1637 fix-r1 (Grok simplify#1, DS P3#4): self_skipped() is the one
+        # shared predicate behind passed()'s veto and both runners' SKIPPED
+        # accounting, so its grammar is pinned here on its own: a longer
+        # test whose short name merely starts with this one's must not
+        # match, and the word boundary must not swallow a suffix.
+        short = suite.short_test(TEST)
+        own = subprocess.CompletedProcess([], 0, '',
+                                        f'PDRS_TEST_SKIPPED {short}: skipped, mode 000 is readable\n')
+        self.assertTrue(suite.self_skipped(own, TEST),
+                        '#1637 fix-r1 the bound test\'s own marker line must read as a self-skip')
+        for other in (f'{short}_suffix', f'{short}extended', 'unrelated_test'):
+            with self.subTest(marker=other):
+                run = subprocess.CompletedProcess([], 0, '',
+                                                  f'PDRS_TEST_SKIPPED {other}: skipped, mode 000 is readable\n')
+                self.assertFalse(suite.self_skipped(run, TEST),
+                                 '#1637 fix-r1 a longer or sibling marker line must not read '
+                                 'as this test\'s self-skip')
+
+    def test_named_test_ok_needs_this_test_and_a_terminal_ok(self):
+        # #1637 fix-r1: named_test_ok() is the green-completion half of a
+        # legitimate self-skip (the runners' SKIPPED accounting requires it
+        # next to the marker), so pin the same two edges passed() applies:
+        # interleaved stdout between the name and the status word still
+        # reads green (#938 r14), while a sibling's or a longer name's ok
+        # line does not.
+        between = subprocess.CompletedProcess(
+            [], 0, f'test {TEST} ... captured stdout without a newline ok\ntest result: ok. 1 passed;\n', '')
+        self.assertTrue(suite.named_test_ok(between, TEST),
+                        '#1637 fix-r1 stdout interleaved before the status word must still read green')
+        for line in (f'test {TEST}_suffix ... ok', 'test unrelated_test ... ok',
+                     f'test {TEST} ... FAILED'):
+            with self.subTest(line=line):
+                run = subprocess.CompletedProcess(
+                    [], 0, f'{line}\ntest result: ok. 1 passed;\n', '')
+                self.assertFalse(suite.named_test_ok(run, TEST),
+                                 '#1637 fix-r1 only this test\'s own terminal ok line counts '
+                                 'as the green completion')
 
 
 class EvidenceLabelTests(unittest.TestCase):
@@ -1761,6 +1801,219 @@ class BaselineDefaultTests(unittest.TestCase):
         # half-broken glob would still clear.
         self.assertGreaterEqual(len(scanned), 250,
                                 '#1890 the baseline scan must keep the *_negative.py family')
+
+
+CRON_STORE_RUNNER = Path(__file__).resolve().parent / 'cron-store' / 'negative_controls.py'
+ATTACH_TWOPASS_RUNNER = Path(__file__).resolve().parent / 'attach-twopass-1460' / 'negative_controls.py'
+
+
+def load_runner(path, name):
+    """Import a fixture runner by explicit path for in-process driving."""
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class SelfSkipAccountingTests(unittest.TestCase):
+    """#1637 fix-r1: both runners' marker accounting, driven through main().
+
+    The shared predicates (negative_suite.self_skipped/named_test_ok/passed)
+    run for real against synthetic cargo results; only the process boundary
+    (run_owned/wait_for_slot/mutating_sources) is mocked. Stage labels come
+    from the mocked runs' own shape — a `--no-run` command is the compile,
+    the mutation file's current text separates negative from positive and
+    restored — so an accounting branch that skips or adds a stage shows up
+    as the wrong stage list, never as a silent pass.
+    """
+
+    TEST = 'runtime::synthetic::tests::self_skip_accounting_cell'
+    SHORT = TEST.rsplit('::', 1)[-1]
+
+    def green(self, marker=False):
+        stderr = (f'PDRS_TEST_SKIPPED {self.SHORT}: skipped, mode 000 is readable\n'
+                  if marker else '')
+        return subprocess.CompletedProcess(
+            [], 0, f'test {self.TEST} ... ok\ntest result: ok. 1 passed; 0 failed;\n', stderr)
+
+    def killed(self):
+        return subprocess.CompletedProcess(
+            [], 101, f'test {self.TEST} ... FAILED\ntest result: FAILED\n',
+            f"thread '{self.TEST}' panicked at fixture.rs:1:1:\n{ANCHOR}\n")
+
+    def assert_skipped_row(self, code, report, text, stages, mutated):
+        """The green self-skip: SKIPPED, no stage after the positive, rc 1."""
+        row = report['controls'][0] if 'controls' in report else report[0]
+        self.assertTrue(code == 1 and row['status'] == 'SKIPPED'
+                        and stages == ['positive'] and not mutated,
+                        '#1637 fix-r1 a green self-skipped positive must record SKIPPED '
+                        'without ever touching the mutation (no compile, no negative, '
+                        'no restored), and the zero-kill exit rule must stay nonzero')
+        self.assertTrue(row['compiled'] is False
+                        and 'PDRS_TEST_SKIPPED' in row['reason'],
+                        '#1637 fix-r1 the SKIPPED row must say it certified nothing here')
+        self.assertIn('synthetic: SKIPPED: positive control self-skipped (#1637 marker)',
+                      text,
+                      '#1637 fix-r1 the SKIPPED accounting must echo on the console like '
+                      'the platform-absent rows')
+
+    def assert_invalid_row(self, code, report, _text, stages, mutated, why):
+        """A marker without the green completion: INVALID, never SKIPPED.
+
+        The mutation phases must never run (`mutated` stays false, no compile
+        and no negative stage); the restored control's presence after a
+        failed positive is a per-runner shape, so only the positive leads.
+        """
+        row = report['controls'][0] if 'controls' in report else report[0]
+        self.assertTrue(code == 1 and row['status'] == 'INVALID'
+                        and stages[0] == 'positive' and not mutated
+                        and 'compile' not in stages and 'negative' not in stages,
+                        '#1637 fix-r1 a marker run that did not complete green must stay '
+                        'INVALID (' + why + '), never platform-absent SKIPPED, and must '
+                        'never walk into the mutant')
+
+    def assert_full_row(self, code, report, _text, stages, _mutated, status):
+        row = report['controls'][0] if 'controls' in report else report[0]
+        self.assertTrue(stages == ['positive', 'compile', 'negative', 'restored'],
+                        '#1637 fix-r1 an unmarked positive must still run every stage')
+        self.assertTrue(row['status'] == status and code == (0 if status == 'KILLED' else 1),
+                        f'#1637 fix-r1 the unmarked row must stay a full {status} row')
+
+
+class CronStoreSelfSkipAccountingTests(SelfSkipAccountingTests):
+    """#1637 fix-r1 (DS sibling#4): the cron-store runner's marker branch."""
+
+    def drive(self, positive):
+        runner = load_runner(CRON_STORE_RUNNER, 'pdrs_1637_cron_store_runner')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'store.rs'
+            source.write_text('original')
+            out = root / 'evidence'
+            stages = []
+
+            def run_owned(command, **_kwargs):
+                self.assertEqual(command[:5],
+                                 ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway'],
+                                 '#1637 fix-r1 the drive must only mock real runner commands')
+                if '--no-run' in command:
+                    stages.append('compile')
+                    return self.green()
+                if source.read_text() == 'mutant':
+                    stages.append('negative')
+                    return self.killed()
+                stages.append('positive' if 'positive' not in stages else 'restored')
+                return positive if stages[-1] == 'positive' else self.green()
+
+            @contextlib.contextmanager
+            def guard(_root, _paths):
+                yield {source: b'original'}
+
+            with patch.object(runner, 'mutations',
+                              [('synthetic', source, 'original', 'mutant',
+                                self.TEST, ANCHOR)]), \
+                    patch.object(runner, 'mutating_sources', new=guard), \
+                    patch.object(runner, 'wait_for_slot', return_value=self.green()), \
+                    patch.object(runner, 'run_owned', run_owned), \
+                    patch.object(sys, 'argv', ['negative_controls.py', str(out)]), \
+                    patch.dict('os.environ', {'CARGO_TARGET_DIR': str(root / 'target')}), \
+                    contextlib.redirect_stdout(io.StringIO()) as stdout:
+                code = runner.main()
+            mutated = source.read_text() != 'original'
+            report = json.loads((out / 'summary.json').read_text())
+        return code, report, stdout.getvalue(), stages, mutated
+
+    def test_green_self_skip_records_skipped(self):
+        self.assert_skipped_row(*self.drive(self.green(marker=True)))
+
+    def test_self_skip_without_a_zero_exit_stays_invalid(self):
+        dead = subprocess.CompletedProcess(
+            [], 101, f'test {self.TEST} ... FAILED\ntest result: FAILED\n',
+            f'PDRS_TEST_SKIPPED {self.SHORT}: skipped, mode 000 is readable\n')
+        self.assert_invalid_row(*self.drive(dead), why='nonzero exit')
+
+    def test_self_skip_without_the_named_ok_line_stays_invalid(self):
+        silent = subprocess.CompletedProcess(
+            [], 0, 'test result: ok. 1 passed; 0 failed;\n',
+            f'PDRS_TEST_SKIPPED {self.SHORT}: skipped, mode 000 is readable\n')
+        self.assert_invalid_row(*self.drive(silent), why='no named ok line')
+
+    def test_unmarked_positive_still_runs_every_stage(self):
+        self.assert_full_row(*self.drive(self.green()), status='KILLED')
+
+
+class AttachTwopassSelfSkipAccountingTests(SelfSkipAccountingTests):
+    """#1637 fix-r1 (DS sibling#1): the attach-twopass runner's marker branch."""
+
+    def drive(self, positive):
+        # The runner hashes every guarded file relative to the real repo
+        # ROOT, so the synthetic sources live under this test's own
+        # temporary directory inside fixtures/ (cleaned up on exit).
+        workspace = tempfile.TemporaryDirectory(
+            prefix='pdrs-1637-selfskip-', dir=str(Path(__file__).resolve().parent))
+        self.addCleanup(workspace.cleanup)
+        folder = Path(workspace.name)
+        services = folder / 'services.rs'
+        services.write_text('original')
+        tests_file = folder / 'services_tests.rs'
+        tests_file.write_text(f'fn {self.SHORT}() {{\n    assert!(false, "{ANCHOR}");\n}}\n')
+        runner = load_runner(ATTACH_TWOPASS_RUNNER, 'pdrs_1637_attach_twopass_runner')
+        out = folder / 'evidence'
+        stages = []
+
+        def run_owned(command, **_kwargs):
+            self.assertEqual(command[:4],
+                             ['cargo', 'test', '--offline', '--manifest-path'],
+                             '#1637 fix-r1 the drive must only mock real runner commands')
+            if '--no-run' in command:
+                stages.append('compile')
+                return self.green()
+            if services.read_text() == 'mutant':
+                stages.append('negative')
+                # A green mutant: judge() refuses it and the row records
+                # SURVIVED — enough to prove the mutation phases ran without
+                # forging this run's assertion receipt.
+                return self.green()
+            stages.append('positive' if 'positive' not in stages else 'restored')
+            return positive if stages[-1] == 'positive' else self.green()
+
+        @contextlib.contextmanager
+        def guard(_root, paths):
+            yield {path: path.read_bytes() for path in paths}
+
+        with patch.object(runner, 'mutations',
+                          [('synthetic', services, 'original', 'mutant',
+                            self.TEST, ANCHOR)]), \
+                patch.object(runner, 'SERVICES', services), \
+                patch.object(runner, 'TESTS', tests_file), \
+                patch.object(runner, 'mutating_sources', new=guard), \
+                patch.object(runner, 'wait_for_slot', return_value=self.green()), \
+                patch.object(runner, 'run_owned', run_owned), \
+                patch.object(sys, 'argv', ['negative_controls.py', str(out)]), \
+                patch.dict('os.environ', {'CARGO_TARGET_DIR': str(folder / 'target')}), \
+                contextlib.redirect_stdout(io.StringIO()) as stdout:
+            code = runner.main()
+        mutated = services.read_text() != 'original'
+        report = json.loads((out / 'summary.json').read_text())
+        return code, report, stdout.getvalue(), stages, mutated
+
+    def test_green_self_skip_records_skipped(self):
+        self.assert_skipped_row(*self.drive(self.green(marker=True)))
+
+    def test_self_skip_without_a_zero_exit_stays_invalid(self):
+        dead = subprocess.CompletedProcess(
+            [], 101, f'test {self.TEST} ... FAILED\ntest result: FAILED\n',
+            f'PDRS_TEST_SKIPPED {self.SHORT}: skipped, mode 000 is readable\n')
+        self.assert_invalid_row(*self.drive(dead), why='nonzero exit')
+
+    def test_self_skip_without_the_named_ok_line_stays_invalid(self):
+        silent = subprocess.CompletedProcess(
+            [], 0, 'test result: ok. 1 passed; 0 failed;\n',
+            f'PDRS_TEST_SKIPPED {self.SHORT}: skipped, mode 000 is readable\n')
+        self.assert_invalid_row(*self.drive(silent), why='no named ok line')
+
+    def test_unmarked_positive_still_runs_every_stage(self):
+        self.assert_full_row(*self.drive(self.green()), status='SURVIVED')
 
 
 if __name__ == '__main__':
