@@ -912,8 +912,11 @@ class ReviewControls(unittest.TestCase):
              '| 1 | DS | P1：foo | 已合并，还剩 0 项 |\n', True),
             ('closed-已修复，另有说明',
              '| 1 | DS | P1：foo | 已修复，另有说明 |\n', True),
-            ('closed-已修复，另有风险',
-             '| 1 | DS | P1：foo | 已修复，另有风险 |\n', True),
+            # r12 (DS sibling#5 P1): the r11 pin was itself the regression —
+            # 另有风险 names an additional RISK, so the noun anchor reopens
+            # it; the flipped expectation registers the direction.
+            ('open-已修复，另有风险 (r12 flip of the r11 pin)',
+             '| 1 | DS | P1：foo | 已修复，另有风险 |\n', False),
             ('closed-已修复，half-open ticket',
              '| 1 | DS | P1: foo | 已修复，half-open ticket |\n', True),
             ('open-已修复不通过的用例，还有 3 个 (r11 walk)',
@@ -941,6 +944,113 @@ class ReviewControls(unittest.TestCase):
             ('open-completed 50  percent (double space)',
              '| 1 | DS | P1: foo | completed 50  percent |\n', False),
         ]
+        # fix-r12 (DS r11 review, head 5f037b6e1): one row per P0/P1 element
+        # and each cheap P2 folded into the same line — the MM r11 review
+        # died on a 429 Token Plan exhaustion (rev-r11-mm-429), so the r12
+        # round is re-reviewed from the same base with both lineages.
+        row_cases_r12 = [
+            # A. residual nouns ride the quantifier family (DS b#1 P0,
+            #    s#5 P1 — 另有风险 flips, the r11 pin was the regression).
+            ('open-已修复，还有问题',
+             '| 1 | DS | P1：foo | 已修复，还有问题 |\n', False),
+            ('open-已修复，仍有风险',
+             '| 1 | DS | P1：foo | 已修复，仍有风险 |\n', False),
+            ('open-已修复，还有隐患',
+             '| 1 | DS | P1：foo | 已修复，还有隐患 |\n', False),
+            ('closed-已修复，另有说明 (r12 walk)',
+             '| 1 | DS | P1：foo | 已修复，另有说明 |\n', True),
+            ('closed-已修复，剩余风险已接受 (r12 walk)',
+             '| 1 | DS | P1：foo | 已修复，剩余风险已接受 |\n', True),
+            # B. the count-word class covers the numeral family (DS b#2 P0,
+            #    s#2 P1).
+            ('open-已修复，还有两处未覆盖',
+             '| 1 | DS | P1：foo | 已修复，还有两处未覆盖 |\n', False),
+            ('open-已修复，还有两个问题',
+             '| 1 | DS | P1：foo | 已修复，还有两个问题 |\n', False),
+            ('open-已修复，还有多个用例',
+             '| 1 | DS | P1：foo | 已修复，还有多个用例 |\n', False),
+            ('open-已修复，还有数处',
+             '| 1 | DS | P1：foo | 已修复，还有数处 |\n', False),
+            ('closed-已修，还有 0 个 (r12 walk)',
+             '| 1 | DS | P1：foo | 已修，还有 0 个 |\n', True),
+            # C. 遗留 negation covers the multi-char form (DS s#4 P1, and
+            #    the left guard finally has a row that exercises it, s#9).
+            ('closed-已修复，没有遗留问题',
+             '| 1 | DS | P1：foo | 已修复，没有遗留问题 |\n', True),
+            ('closed-已修，无遗留 (r12 walk)',
+             '| 1 | DS | P1：foo | 已修，无遗留 |\n', True),
+            ('open-已修复，遗留问题 (r12 walk)',
+             '| 1 | DS | P1：foo | 已修复，遗留问题 |\n', False),
+            # D. English zero excluded, bounded noun gap, prepend form
+            #    (DS b#5 P1 / s#6 P1 / b#6 P2).
+            ('closed-fixed, 0 remaining',
+             '| 1 | DS | P1: foo | 已修，fixed, 0 remaining |\n', True),
+            ('closed-still 0 open',
+             '| 1 | DS | P1: foo | 已修，still 0 open |\n', True),
+            ('open-fixed, 3 issues remaining',
+             '| 1 | DS | P1: foo | fixed, 3 issues remaining |\n', False),
+            ('open-fixed, 3 findings left',
+             '| 1 | DS | P1: foo | fixed, 3 findings left |\n', False),
+            ('open-fixed, remaining 3',
+             '| 1 | DS | P1: foo | fixed, remaining 3 |\n', False),
+            # E. half blocks only the attested closed compound (DS b#3 P0,
+            #    s#1 P1, simplify#1 P2).
+            ('open-half-way done',
+             '| 1 | DS | P1: foo | half-way done |\n', False),
+            ('open-half-fixed',
+             '| 1 | DS | P1: foo | half-fixed |\n', False),
+            ('closed-已修复，half-open ticket (r12 walk)',
+             '| 1 | DS | P1: foo | 已修复，half-open ticket |\n', True),
+            # F. accepted blocks the quantifier determiners (DS b#4 P1).
+            ('open-accepted every risk',
+             '| 1 | DS | P1: foo | accepted every risk |\n', False),
+            ('open-accepted each risk',
+             '| 1 | DS | P1: foo | accepted each risk |\n', False),
+            ('open-accepted several risks',
+             '| 1 | DS | P1: foo | accepted several risks |\n', False),
+            ('open-accepted 3 risks',
+             '| 1 | DS | P1: foo | accepted 3 risks |\n', False),
+            ('closed-bare accepted (r12 walk)',
+             '| 1 | DS | P1: foo | accepted |\n', True),
+            ('closed-accepted the change (r12 walk)',
+             '| 1 | DS | P1: foo | accepted the change |\n', True),
+            # G. 断/部/控 carry continuation guards (DS s#3 P1, folds b#9).
+            ('open-修复中断，等待回归',
+             '| 1 | DS | P1：foo | 修复中断，等待回归 |\n', False),
+            ('open-修复中部署新版本',
+             '| 1 | DS | P1：foo | 修复中部署新版本 |\n', False),
+            ('open-修复中控制变量',
+             '| 1 | DS | P1：foo | 修复中控制变量 |\n', False),
+            ('closed-已测试中断场景 (r12 walk)',
+             '| 1 | DS | P1：foo | 已测试中断场景 |\n', True),
+            ('closed-已关闭中断 (r12 walk)',
+             '| 1 | DS | P1：foo | 已关闭中断 |\n', True),
+            ('closed-已完成中部审计 (r12 walk)',
+             '| 1 | DS | P1：foo | 已完成中部审计 |\n', True),
+            ('closed-已修复中控服务 (r12 walk)',
+             '| 1 | DS | P1：foo | 已修复中控服务 |\n', True),
+            # H. nearly mirrors the almost no-exclusion (DS s#7 P1).
+            ('closed-已修复（nearly no impact）',
+             '| 1 | DS | P1: foo | 已修复（nearly no impact） |\n', True),
+            ('open-nearly finished',
+             '| 1 | DS | P1: foo | nearly finished |\n', False),
+            # I. the y→i stem family binds the bare infinitive (DS s#8 P1,
+            #    folds b#7 P2).
+            ("open-didn't verify the fix, merged upstream",
+             "| 1 | DS | P1: foo | didn't verify the fix, merged upstream |\n", False),
+            ("open-didn't modify the API, merged",
+             "| 1 | DS | P1: foo | didn't modify the API, merged |\n", False),
+            ("open-can't fix, merged (r12 walk)",
+             "| 1 | DS | P1: foo | can't fix, merged |\n", False),
+            # J. the blank run before 中 is unbounded (DS b#8 P2).
+            ('open-修复   中 (triple space)',
+             '| 1 | DS | P1：foo | 修复   中 |\n', False),
+            # K. the pct gap exclusion covers the inflected impact family
+            #    (DS b#10 P2, false FAIL).
+            ('closed-fixed impacted 30% of users',
+             '| 1 | DS | P1: foo | fixed impacted 30% of users |\n', True),
+        ]
+        assert_rows('r12', row_cases_r12)
         assert_rows('r11', row_cases_r11)
         assert_rows('r10', row_cases_r10)
         assert_rows('r7', row_cases)
@@ -1299,13 +1409,32 @@ class ReviewControls(unittest.TestCase):
                           'halfway', 'half', 'incomplete', 'unfinished'),
                          '#2245-r11 en-partial-words-frozen')
         self.assertEqual(check_ruler._EN_PARTIAL_GUARDS,
-                         {'almost': r'(?!\s*no\b)', 'half': r'(?!-)'},
-                         '#2245-r11 en-partial-guard-keys-frozen')
+                         {'almost': r'(?!\s*no\b)', 'nearly': r'(?!\s*no\b)',
+                          'half': r'(?!-open\b)'},
+                         '#2245-r12 en-partial-guard-keys-frozen')
         self.assertEqual(check_ruler._CJK_COMPOUND_RULES,
-                         ('断', '心', '文', '层', '期(?=指标)', '端', '部', '档',
-                          '国', '华', '台', '控', '南', '西',
-                          '间(?=件|层|态)', '等(?=[级严优])'),
-                         '#2245-r11 compound-rules-frozen')
+                         ('断(?=分析|场景|的|$)', '心', '文', '层', '期(?=指标)',
+                          '端', '部(?=审计)', '档', '国', '华', '台', '控(?=服务)',
+                          '南', '西', '间(?=件|层|态)', '等(?=[级严优])'),
+                         '#2245-r12 compound-rules-frozen')
+        # r12: the residual count-word class is a fixed literal too — a
+        # dropped numeral (两) is invisible to a live char-class walk.
+        self.assertEqual(check_ruler._CJK_COUNT_WORDS,
+                         '1-9一二三四五六七八九十百千万两几多数待',
+                         '#2245-r12 residual-count-words-frozen')
+        # r12 (DS sibling#10 P2): the intent markers and their guard dict are
+        # the same self-source blindness — a dropped marker (将) simply stops
+        # the live iteration without failing anything, so the attested set
+        # is pinned as a fixed literal, negation-marker-frozen style.
+        self.assertEqual(check_ruler._INTENT_WORDS,
+                         ('待', '计划', '拟', '暂缓', '暂时', '暂且', '无法',
+                          '不能', '推迟', '延后', '后续', '稍后', '下周', '本周',
+                          '需', '会', '将'),
+                         '#2245-r12 intent-words-frozen')
+        self.assertEqual(check_ruler._MARKER_GUARDS,
+                         {'需': r'(?<![无不])需(?!求)',
+                          '会': r'(?<!不)(?<![机社体])会(?!议|话)'},
+                         '#2245-r12 marker-guards-frozen')
         self.assertEqual(set(check_ruler._PENDING_GUARDS),
                          {'不通过', '待办', '保留意见'},
                          '#2245-r10 pending-guard-keys-frozen')
@@ -1374,12 +1503,14 @@ class ReviewControls(unittest.TestCase):
                      '已升级中端节点', '已完成中部审计', '已修复中档配置',
                      '已修复中等严重', '已升级中国区网关', '已合并中华分支',
                      '已修复中台服务', '已修复中控服务', '已修复中南区网关',
-                     '已修复中西部节点', '已升级中间件'):
+                     '已修复中西部节点', '已升级中间件', '已关闭中断',
+                     '已修复中断的会话', '已修，进行中断分析'):
             self.assertFalse(check_ruler._handling_pending(form),
                             '#2245-r11 compound-attested:' + form)
         for form in ('修复中等待回归', '修复中等待 CI', '修复中期评估',
                      '已修复，修复中间发现新问题', '已修复中毒', '修复中（',
-                     '修复中/', '修复中发现新问题', '修复  中'):
+                     '修复中/', '修复中发现新问题', '修复  中', '修复   中',
+                     '修复中断，等待回归', '修复中部署新版本', '修复中控制变量'):
             self.assertTrue(check_ruler._handling_pending(form),
                             '#2245-r11 compound-guarded:' + form)
         # every attested English partial word keeps the row open on its own.
@@ -1433,18 +1564,29 @@ class ReviewControls(unittest.TestCase):
         # bilingual — the quantifier, the noun set and the English mirror
         # are walked from fixed literals so a shrink of any of them fails
         # here, not in a review.
+        # r12 (DS b#1 + b#2 P0 / s#2 + s#5 + s#6 P1 / b#5 + b#6): the noun
+        # set rides the whole quantifier family — 另有风险 flips to pending
+        # (the r11 walk below pinned the closed side of the regression
+        # itself), the numeral class covers 两/多/数, the English side
+        # excludes zero, takes a bounded noun gap and the prepend form.
         for form in ('已修复，还有 3 个', '已修复，还剩 5 个', '已修复，仍有 1 项',
                      '已修复，剩余 2 项', '已修复，尚余 2 个', '已修复，余下 3 个',
                      '已修复，另有 2 项', '已修复，遗留 2 项', '已修复，遗留问题',
                      'fixed, 3 remaining', 'fixed, 3 outstanding',
                      'fixed, 3 left', 'still 3 unresolved, fixed',
-                     '已修复，还有待回归'):
+                     '已修复，还有待回归',
+                     '已修复，还有问题', '已修复，仍有风险', '已修复，还有隐患',
+                     '已修复，另有风险', '已修复，还有两处未覆盖',
+                     '已修复，还有两个问题', '已修复，还有多个用例',
+                     '已修复，还有数处', 'fixed, 3 issues remaining',
+                     'fixed, 3 findings left', 'fixed, remaining 3'):
             self.assertTrue(check_ruler._handling_pending(form),
                             '#2245-r11 residual-family:' + form)
         for form in ('已修，无剩余', '已修，没有剩余', '已修，还有 0 个',
-                     '已合并，还剩 0 项', '已修复，另有说明', '已修复，另有风险',
+                     '已合并，还剩 0 项', '已修复，另有说明',
                      '已修复，遗留 0%', '已修，无遗留', '已修，无任何剩余',
-                     '已修复，剩余风险已接受'):
+                     '已修复，剩余风险已接受', '已修复，没有遗留问题',
+                     '已修，fixed, 0 remaining', '已修，still 0 open'):
             self.assertFalse(check_ruler._handling_pending(form),
                             '#2245-r11 residual-anchor-guards:' + form)
         # the closure guards block their whole attested extension family
