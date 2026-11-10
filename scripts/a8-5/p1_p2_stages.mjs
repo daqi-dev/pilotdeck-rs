@@ -49,7 +49,20 @@ async function main() {
   rec.log("ws@S0/describe_server", await wsA.request("describe_server"));
   const wsB = await wsConnect(BASE, port, TOKEN); // 只建连不 hello，留到 close 后再 hello（闸门格）
   const ka = await keepAliveProbe(port);
-  rec.log("ka@S0/first", await ka.once("/health"));
+  // #2756（同 p16 #2662 守门形状）：建池前提守门——首次请求失败或响应 Connection
+  // 非 keep-alive（缺头按完整 HTTP/1.1 隐式）时 agent 池空，close 后的
+  // ka@after-close/reuse* 是新连接撞已关 listener（错误串相同但「复用已关连接」
+  // 解释无依据，matrix.md §4.2 该格结论失据），故记 SKIP 行、reuse 两行跳过。
+  const kaFirst = await ka.once("/health");
+  const kaPool = kaFirst.premise === true;
+  rec.log("ka@S0/first", kaFirst);
+  if (!kaPool) {
+    rec.log("ka/SKIP-after-close-reuse", {
+      reason: kaFirst.premiseReason,
+      kaFirst,
+      note: "建池前提未成立：ka@after-close/reuse* 跳过（新连接对照已由 http@after-close/health 覆盖，不重复产出），「关闭后复用报 ECONNREFUSED」结论不作对照",
+    });
+  }
 
   // ---- 组装 shutdown，三步受控 ----
   const autoStop = deferred();
@@ -103,8 +116,14 @@ async function main() {
   rec.log("http@after-close/health", await httpProbe(port, "/health"));
   rec.log("ws@after-close/existing-describe", await wsA.request("describe_server"));
   rec.log("ws@after-close/existing-hello", await wsB.hello());
-  rec.log("ka@after-close/reuse", await ka.once("/health"));
-  rec.log("ka@after-close/reuse2", await ka.once("/api/web/projects"));
+  // #2756：前提未成立时跳过（池空时测到的是新连接而非复用，证据无效——同 p16 观察 3 形状）。
+  if (kaPool) {
+    rec.log("ka@after-close/reuse", await ka.once("/health"));
+    rec.log("ka@after-close/reuse2", await ka.once("/api/web/projects"));
+  } else {
+    rec.log("ka@after-close/reuse", { skipped: true, reason: "建池前提未成立（见 ka/SKIP-after-close-reuse）" });
+    rec.log("ka@after-close/reuse2", { skipped: true, reason: "建池前提未成立（见 ka/SKIP-after-close-reuse）" });
+  }
   try {
     await server.reconcileChannels({ channels: [], managedChannelKeys: [] });
     rec.log("reconcile@after-close", { ok: true });

@@ -24,7 +24,7 @@ async function freshServer(port) {
   });
 }
 
-async function timedClose(server, label, holdMs) {
+async function timedClose(server, label, holdMs, extra = {}) {
   const t0 = Date.now();
   let settled = false;
   const p = server.close().then(
@@ -36,7 +36,7 @@ async function timedClose(server, label, holdMs) {
     },
   );
   await new Promise((r) => setTimeout(r, holdMs));
-  rec.log(label, { settledAfterHoldMs: settled, holdMs });
+  rec.log(label, { settledAfterHoldMs: settled, holdMs, ...extra });
   return { p, settledAfterHoldMs: settled };
 }
 
@@ -66,9 +66,21 @@ async function main() {
   {
     const s = await freshServer(39876);
     const ka = await keepAliveProbe(39876);
-    await ka.once("/health");
-    const { p, settledAfterHoldMs } = await timedClose(s, "C:idle-keepalive", 2000);
-    say(`C settled=${settledAfterHoldMs}`);
+    // #2756（升 P1，同 p16 #2662 守门形状）：入池前提守门——首次请求失败或响应
+    // Connection 非 keep-alive（缺头按完整 HTTP/1.1 隐式，RFC 7230 §6.3）时 agent
+    // 池内无 idle socket，本格退化成「无连接」状态 A，settled 仍会 true——仍按
+    // A14②「空闲 keep-alive settle」引用即假证据，故记 SKIP 行、结论行降级。
+    const first = await ka.once("/health");
+    const premise = first.premise === true;
+    if (!premise) {
+      rec.log("C/SKIP-idle-keepalive", {
+        reason: first.premiseReason,
+        first,
+        note: "入池前提未成立（首次请求失败或响应 Connection 非 keep-alive，agent 池内无 idle socket）——C 格退化成无连接状态 A，settled 不作 A14②「空闲 keep-alive settle」对照",
+      });
+    }
+    const { p, settledAfterHoldMs } = await timedClose(s, "C:idle-keepalive", 2000, { premise });
+    say(`C settled=${settledAfterHoldMs}${premise ? "" : "（前提未成立，见 C/SKIP-idle-keepalive——不作 A14② 空闲 keep-alive settle 对照）"}`);
     if (!settledAfterHoldMs) {
       ka.destroy();
       await p;

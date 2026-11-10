@@ -229,7 +229,47 @@ export async function httpProbe(port, pathName, { method, headers, timeoutMs = 3
   }
 }
 
-/** keep-alive 连接探测：同一条 TCP 上的连续请求（观察 close 后旧连接行为）。 */
+/** Connection 头值（裸层取「connection:」后的值串、node 层取头原值）→ 是否含
+ * keep-alive token：小写、去 OWS、按逗号切分（容忍 `Connection:keep-alive`、
+ * 行尾空白、多值列表）。close 优先（RFC 7230 §6.1：close 出现即收尾不持久，
+ * 即使同列表还有 keep-alive）。头缺失的语义不在本函数——由调用方结合
+ * 「完整 HTTP/1.1 响应头」按 RFC 7230 §6.3 判隐式 keep-alive。
+ * #2756 自 p16 内联收敛入 common（原 #2662 fix-r2/r3 形状逐字保留）。 */
+export function keepAliveToken(v) {
+  const tokens = v.toLowerCase().split(",").map((t) => t.trim());
+  return !tokens.includes("close") && tokens.includes("keep-alive");
+}
+
+/** keep-alive 入池前提判定（#2756，#2662 p16 fix-r2 三态形状的推广）：
+ * 输入 keepAliveProbe.once 的返回值，输出 { premise, premiseReason }。
+ * - 请求失败（ok !== true）→ premise:false, reason:"request-failed"（与连接头失败分立可辨）；
+ * - 成功且 Connection 含 keep-alive token（close 优先）→ premise:true, reason:"connection-keep-alive"；
+ * - 成功、缺 Connection 头、HTTP/1.1 响应 → premise:true, reason:"implicit-keep-alive-http/1.1"
+ *   （RFC 7230 §6.3：完整 HTTP/1.1 响应缺头按隐式 keep-alive，agent 会入池）；
+ * - 成功、缺头但非 HTTP/1.1（如 1.0 缺省 close）→ premise:false, reason:"no-header-non-http/1.1"；
+ * - 成功且 Connection 显式非 keep-alive（close 等）→ premise:false, reason:"connection-not-keep-alive"。
+ * 前提不成立 = agent 池内不会有该 socket 的 idle 复用，后续同 agent 请求是
+ * 新连接——「复用已关连接 / 既有 keep-alive 被拆」类结论失据，调用方须降级。 */
+function keepAlivePremise(r) {
+  if (r?.ok !== true) {
+    return { premise: false, premiseReason: "request-failed" };
+  }
+  const connection = typeof r.connection === "string" ? r.connection : undefined;
+  if (connection === undefined) {
+    return String(r.httpVersion) === "1.1"
+      ? { premise: true, premiseReason: "implicit-keep-alive-http/1.1" }
+      : { premise: false, premiseReason: "no-header-non-http/1.1" };
+  }
+  return keepAliveToken(connection)
+    ? { premise: true, premiseReason: "connection-keep-alive" }
+    : { premise: false, premiseReason: "connection-not-keep-alive" };
+}
+
+/** keep-alive 连接探测：同一条 TCP 上的连续请求（观察 close 后旧连接行为）。
+ * #2756：once 返回值带前提判定（premise/premiseReason，见 keepAlivePremise）——
+ * 首次请求 ok 且响应可保持连接（Connection: keep-alive，或完整 HTTP/1.1 缺头
+ * 按隐式）才会入池；后续「复用」结论以该前提成立为前提。错误路径带 code/message
+ * 分立字段（connect 相位判定用）。 */
 export async function keepAliveProbe(port) {
   const http = await import("node:http");
   const agent = new http.Agent({ keepAlive: true, keepAliveMsecs: 1000 });
@@ -240,16 +280,16 @@ export async function keepAliveProbe(port) {
         (r) => {
           let body = "";
           r.on("data", (c) => (body += c));
-          r.on("end", () => res({ ok: true, status: r.statusCode, connection: r.headers.connection, body: body.slice(0, 120) }));
+          r.on("end", () => res({ ok: true, status: r.statusCode, httpVersion: r.httpVersion, connection: r.headers.connection, body: body.slice(0, 120) }));
         },
       );
       req.on("timeout", () => {
         req.destroy();
         res({ ok: false, error: "timeout" });
       });
-      req.on("error", (e) => res({ ok: false, error: `${e.code ?? e.name}: ${e.message}` }));
+      req.on("error", (e) => res({ ok: false, code: e.code, message: e.message, error: `${e.code ?? e.name}: ${e.message}` }));
       req.end();
-    });
+    }).then((r) => ({ ...r, ...keepAlivePremise(r) }));
   return { once, destroy: () => agent.destroy() };
 }
 
