@@ -32,27 +32,9 @@ Only install the browser when all of the following are true:
 
 The one-line installer uses the same check. If Chrome for Testing is already present, it prints `Chrome for Testing already installed` and does not download it again.
 
-Install it from a PilotDeck source checkout or installed app directory:
+For a Rust source installation, use the configured SDK and existing browser paths described in `../.builtin-plugins/browser-use/skills/browser-use-install/SKILL.md`. The source-built generation does not ship the old npm/browser download installer. Point the Gateway at already prepared third-party dependencies and verify an actual browser-use launch.
 
-```bash
-cd /path/to/PilotDeck
-corepack pnpm install --frozen-lockfile --filter pilotdeck --filter pilotdeck-ui
-corepack pnpm run install:browser
-```
-
-For an installed one-line setup, use the app directory shown by `pilotdeck status`:
-
-```bash
-pilotdeck status
-cd ~/.pilotdeck/app
-corepack pnpm run install:browser
-```
-
-To let the one-line installer install it during setup, opt in explicitly:
-
-```bash
-PILOTDECK_SKIP_BROWSER_INSTALL=0 bash install.sh
-```
+Separately packaged TypeScript installations may still provide their own browser installation command. Use that command only from the matching runtime directory when the referenced installer exists.
 
 Repeated installs are safe only when the installer can confirm the cache first. In task containers or time-limited jobs, avoid ad hoc commands such as `playwright install chromium` unless the missing-browser error is confirmed and installation time is acceptable.
 

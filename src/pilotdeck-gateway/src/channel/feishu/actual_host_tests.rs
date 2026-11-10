@@ -21,6 +21,9 @@ struct Wire {
     acks: AtomicUsize,
     phase: AtomicUsize,
     generation: AtomicUsize,
+    delayed_release: tokio::sync::Notify,
+    delayed_released: AtomicUsize,
+    delayed_write_result: AtomicUsize,
     http: Mutex<Vec<(String, String, Vec<u8>)>>,
     models: Mutex<Vec<Value>>,
     sent: Mutex<Vec<Value>>,
@@ -36,6 +39,9 @@ impl Default for Wire {
             acks: AtomicUsize::new(0),
             phase: AtomicUsize::new(0),
             generation: AtomicUsize::new(0),
+            delayed_release: tokio::sync::Notify::new(),
+            delayed_released: AtomicUsize::new(0),
+            delayed_write_result: AtomicUsize::new(0),
             http: Mutex::new(vec![]),
             models: Mutex::new(vec![]),
             sent: Mutex::new(vec![]),
@@ -224,7 +230,7 @@ async fn peer(
             let mut raw=vec![];while !raw.ends_with(b"\r\n\r\n"){let mut b=[0];if socket.read_exact(&mut b).await.is_err(){return}raw.push(b[0]);assert!(raw.len()<65536);}
             let header=String::from_utf8(raw).unwrap();let path=header.lines().next().unwrap().split_whitespace().nth(1).unwrap().to_owned();let authorization=header.lines().find_map(|l|l.split_once(':').filter(|(k,_)|k.eq_ignore_ascii_case("authorization")).map(|(_,v)|v.trim().to_owned())).unwrap_or_default();let size=header.lines().find_map(|l|l.to_ascii_lowercase().strip_prefix("content-length:").map(|v|v.trim().parse::<usize>().unwrap())).unwrap_or(0);let mut raw=vec![0;size];if socket.read_exact(&mut raw).await.is_err(){return}state.http.lock().unwrap().push((path.clone(),authorization,raw.clone()));
             let body:Value=serde_json::from_slice(&raw).unwrap_or(Value::Null);
-            let(status,mime,data)=if path=="/callback/ws/endpoint"{("200 OK","application/json",json!({"code":0,"data":{"URL":format!("ws://{address}/feishu?service_id=77&device_id=fixture"),"ClientConfig":{"PingInterval":1,"ReconnectCount":2,"ReconnectInterval":0.01,"ReconnectNonce":0}}}).to_string().into_bytes())
+            let mut delayed_write=false;let(status,mime,data)=if path=="/callback/ws/endpoint"{("200 OK","application/json",json!({"code":0,"data":{"URL":format!("ws://{address}/feishu?service_id=77&device_id=fixture"),"ClientConfig":{"PingInterval":1,"ReconnectCount":2,"ReconnectInterval":0.01,"ReconnectNonce":0}}}).to_string().into_bytes())
             }else if path.contains("tenant_access_token"){("200 OK","application/json",json!({"code":0,"tenant_access_token":"mock-tenant-token","expire":7200}).to_string().into_bytes())
             }else if path.contains("/resources/img-bad"){("404 Not Found","application/json",b"{}".to_vec())
             }else if path.contains("/resources/img-key"){use base64::Engine;("200 OK","image/png",base64::engine::general_purpose::STANDARD.decode(PNG).unwrap())
@@ -236,12 +242,13 @@ async fn peer(
             state.models.lock().unwrap().push(body);let phase=state.phase.fetch_add(1,Ordering::SeqCst);let generation=state.generation.load(Ordering::SeqCst);
             let(delta,finish)=match phase{
             0=>(json!({"role":"assistant","tool_calls":[{"index":0,"id":"feishu-send-file","type":"function","function":{"name":"send_attachment","arguments":json!({"file_path":output,"name":"reply.txt","mime_type":"text/plain"}).to_string()}},{"index":1,"id":"feishu-send-image","type":"function","function":{"name":"send_attachment","arguments":json!({"file_path":output.with_extension("png"),"name":"reply.png","mime_type":"image/png"}).to_string()}}]}),"tool_calls"),
-            2|5|10=>{let path=if phase==2{approved}else{denied};(json!({"role":"assistant","tool_calls":[{"index":0,"id":format!("feishu-permission-{phase}"),"type":"function","function":{"name":"bash","arguments":json!({"command":format!("printf approved > '{}'",path.display())}).to_string()}}]}),"tool_calls")},
+            2|5|12|14=>{let path=if phase==2{approved}else{denied};(json!({"role":"assistant","tool_calls":[{"index":0,"id":format!("feishu-permission-{phase}"),"type":"function","function":{"name":"bash","arguments":json!({"command":format!("printf approved > '{}'",path.display())}).to_string()}}]}),"tool_calls")},
             3=>(json!({"role":"assistant","tool_calls":[{"index":0,"id":"feishu-question","type":"function","function":{"name":"ask_user_question","arguments":json!({"questions":[{"header":"Choice","question":"Feishu choose mock option","options":[{"label":"One","description":"Mock one"},{"label":"Two","description":"Mock two"}],"multiSelect":false}]}).to_string()}}]}),"tool_calls"),
             _=>(json!({"role":"assistant","content":format!("feishu-actual-final-{generation}-{phase}")}),"stop")};
+            if phase==10 { delayed_write=true; state.delayed_release.notified().await; state.delayed_released.fetch_add(1,Ordering::SeqCst); }
             ("200 OK","text/event-stream",format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",json!({"id":"mock","choices":[{"index":0,"delta":delta,"finish_reason":null}]}),json!({"id":"mock","choices":[{"index":0,"delta":{},"finish_reason":finish}]})).into_bytes())
             }else{("200 OK","application/json",json!({"choices":[{"message":{"role":"assistant","content":"{\"title\":\"Feishu media actual\"}"},"finish_reason":"stop"}]}).to_string().into_bytes())};
-            let headers=format!("HTTP/1.1 {status}\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",data.len());let _=socket.write_all(headers.as_bytes()).await;let _=socket.write_all(&data).await;
+            let headers=format!("HTTP/1.1 {status}\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",data.len());let header_write=socket.write_all(headers.as_bytes()).await;let body_write=socket.write_all(&data).await;if delayed_write { let status=if header_write.is_ok()&&body_write.is_ok(){1}else{2};eprintln!("held Feishu provider write outcome={status}; header={header_write:?}; body={body_write:?}");state.delayed_write_result.store(status,Ordering::SeqCst); }
             });},Some(_)=tasks.join_next(),if !tasks.is_empty()=>{}
             }
         }
@@ -556,6 +563,96 @@ async fn feishu_actual_server_media_a7_upload_interactions_new_reload_shutdown()
     // /plan persists read-only mode in this session. Use the real reset command
     // before the independent shutdown scenario that requires a writable tool gate.
     command(&peer, "/new", "已创建新会话").await;
+    let prompts = peer
+        .state
+        .sent
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|frame| frame.to_string().contains("回复 1 允许一次"))
+        .count();
+    peer.state.text("reload-delayed-final");
+    until(&peer.state, "old turn reaches held model response", || {
+        peer.state.models.lock().unwrap().len() >= 11
+    })
+    .await;
+    config["adapters"]["feishu"]["enabled"] = false.into();
+    std::fs::write(&path, config.to_string()).unwrap();
+    connection.receive(json!({"type":"request","id":"disable-feishu-held","method":"reload_config","params":{}}).to_string()).await.unwrap();
+    until(
+        &peer.state,
+        "held turn reload closes prior transport",
+        || peer.state.sockets.load(Ordering::SeqCst) == 0,
+    )
+    .await;
+    config["adapters"]["feishu"]["enabled"] = true.into();
+    std::fs::write(&path, config.to_string()).unwrap();
+    connection.receive(json!({"type":"request","id":"enable-feishu-held","method":"reload_config","params":{}}).to_string()).await.unwrap();
+    until(
+        &peer.state,
+        "held turn reload starts fresh transport",
+        || peer.state.sockets.load(Ordering::SeqCst) == 1,
+    )
+    .await;
+    peer.state.delayed_release.notify_one();
+    until(&peer.state, "held provider response released", || {
+        peer.state.delayed_released.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    until(
+        &peer.state,
+        "held provider response write attempted",
+        || peer.state.delayed_write_result.load(Ordering::SeqCst) != 0,
+    )
+    .await;
+    peer.state.text("after-late-response");
+    until(
+        &peer.state,
+        "fresh turn completes after late response",
+        || peer.state.sent("feishu-actual-final-1-11"),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        !peer.state.sent("feishu-actual-final-1-10"),
+        "prior transport must not emit the delayed final after reload"
+    );
+    peer.state.text("reload-pending-permission");
+    until(
+        &peer.state,
+        "real owned A7 waits before second reload",
+        || {
+            peer.state
+                .sent
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|frame| frame.to_string().contains("回复 1 允许一次"))
+                .count()
+                > prompts
+        },
+    )
+    .await;
+    config["adapters"]["feishu"]["enabled"] = false.into();
+    std::fs::write(&path, config.to_string()).unwrap();
+    connection.receive(json!({"type":"request","id":"disable-feishu-pending","method":"reload_config","params":{}}).to_string()).await.unwrap();
+    until(&peer.state, "pending reload closes prior transport", || {
+        peer.state.sockets.load(Ordering::SeqCst) == 0
+    })
+    .await;
+    config["adapters"]["feishu"]["enabled"] = true.into();
+    std::fs::write(&path, config.to_string()).unwrap();
+    connection.receive(json!({"type":"request","id":"enable-feishu-pending","method":"reload_config","params":{}}).to_string()).await.unwrap();
+    until(&peer.state, "pending reload starts new transport", || {
+        peer.state.sockets.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    peer.state.text("1");
+    until(&peer.state, "late approval becomes new input", || {
+        peer.state.sent("feishu-actual-final-1-13")
+    })
+    .await;
+    assert!(!denied.exists(), "late approval must not execute old turn");
     let prompts = peer
         .state
         .sent

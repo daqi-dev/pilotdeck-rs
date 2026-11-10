@@ -1,39 +1,61 @@
 {
-  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
-  "source": "src/extension/plugins/builtin/funasr/funasr-local-mcp.mjs",
-  "sourceSha256": "c6996290437c7084d34a7d62f5425a6e854e5d93dc72bc94371110aece477cb7",
-  "versions": {
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/extension/plugins/builtin/funasr/funasr-local-mcp.mjs": "c6996290437c7084d34a7d62f5425a6e854e5d93dc72bc94371110aece477cb7",
+    "src/extension/plugins/builtin/funasr/funasr-runtime.mjs": "869da5f9c069422de2761dfbc31d1fb61390bfdc121d0853c9c7d9b2613ee961",
+    "src/extension/plugins/builtin/funasr/plugin.json": "dd3f38ef8bef7659f92e401f72912cb5c17d1e1a285297dffc563be0c8aabe98",
+    "src/extension/plugins/builtin/browser-use/plugin.json": "f13b8373058d24646994462449e42c6b3e71d183e97de2c2fc8d4f255fe4754b"
+  },
+  "nodeVersions": {
     "node": "22.22.0",
-    "acorn": "8.15.0",
-    "ada": "2.9.2",
-    "amaro": "1.1.4",
-    "ares": "1.34.6",
-    "brotli": "1.1.0",
-    "cjs_module_lexer": "2.1.0",
-    "cldr": "48.0",
     "icu": "78.2",
-    "llhttp": "9.3.0",
-    "modules": "127",
-    "napi": "10",
-    "nbytes": "0.1.1",
-    "ncrypto": "0.0.1",
-    "nghttp2": "1.64.0",
-    "openssl": "3.5.4",
-    "simdjson": "3.13.0",
-    "simdutf": "6.4.2",
-    "sqlite": "3.50.4",
-    "tz": "2025c",
-    "undici": "6.23.0",
-    "unicode": "17.0",
-    "uv": "1.52.1",
-    "uvwasi": "0.0.23",
-    "v8": "12.4.254.21-node.33",
-    "zlib": "1.3.1-470d3a2",
-    "zstd": "1.5.7"
+    "uv": "1.52.1"
+  },
+  "collectorSha256": "4acee9b7c73702f39bfe1d99c4f963ccf3fe91fe6a3b0b1c9c779e434947da33",
+  "normalization": "Only absolute collector command paths become <NODE>, <BASELINE>, <OUT>; protocol requests/responses, stderr and exit codes are unchanged. Raw capture is retained separately.",
+  "declarations": {
+    "funasr": {
+      "funasr": {
+        "command": "__PILOTDECK_NODE_EXECUTABLE__",
+        "args": [
+          "__PILOTDECK_FUNASR_MCP_ENTRYPOINT__",
+          "--project-root",
+          "__PILOTDECK_PROJECT_ROOT__",
+          "--runtime-root",
+          "__PILOTDECK_FUNASR_RUNTIME_ROOT__",
+          "--install-command",
+          "__PILOTDECK_FUNASR_INSTALL_COMMAND__"
+        ],
+        "perSession": true,
+        "callTimeoutMs": 300000
+      }
+    },
+    "browser-use": {
+      "browser-use": {
+        "command": "__PILOTDECK_NODE_EXECUTABLE__",
+        "args": [
+          "__PILOTDECK_PLAYWRIGHT_MCP_ENTRYPOINT__",
+          "--browser",
+          "chromium",
+          "--allow-unrestricted-file-access"
+        ],
+        "perSession": true
+      }
+    }
   },
   "cases": [
     {
       "case": "initialize",
+      "command": [
+        "<NODE>",
+        "<BASELINE>/src/extension/plugins/builtin/funasr/funasr-local-mcp.mjs",
+        "--project-root",
+        "<OUT>/project",
+        "--runtime-root",
+        "<OUT>/asr",
+        "--install-command",
+        "mock install"
+      ],
       "request": {
         "jsonrpc": "2.0",
         "id": 1,
@@ -56,10 +78,22 @@
           },
           "instructions": "Use transcribe_audio only with an audio path inside the active PilotDeck project."
         }
-      }
+      },
+      "stderr": "",
+      "exitCode": 0
     },
     {
       "case": "tools-list",
+      "command": [
+        "<NODE>",
+        "<BASELINE>/src/extension/plugins/builtin/funasr/funasr-local-mcp.mjs",
+        "--project-root",
+        "<OUT>/project",
+        "--runtime-root",
+        "<OUT>/asr",
+        "--install-command",
+        "mock install"
+      ],
       "request": {
         "jsonrpc": "2.0",
         "id": 1,
@@ -97,10 +131,22 @@
             }
           ]
         }
-      }
+      },
+      "stderr": "",
+      "exitCode": 0
     },
     {
       "case": "success",
+      "command": [
+        "<NODE>",
+        "<BASELINE>/src/extension/plugins/builtin/funasr/funasr-local-mcp.mjs",
+        "--project-root",
+        "<OUT>/project",
+        "--runtime-root",
+        "<OUT>/asr",
+        "--install-command",
+        "mock install"
+      ],
       "request": {
         "jsonrpc": "2.0",
         "id": 1,
@@ -133,10 +179,22 @@
             ]
           }
         }
-      }
+      },
+      "stderr": "",
+      "exitCode": 0
     },
     {
       "case": "language-before-path",
+      "command": [
+        "<NODE>",
+        "<BASELINE>/src/extension/plugins/builtin/funasr/funasr-local-mcp.mjs",
+        "--project-root",
+        "<OUT>/project",
+        "--runtime-root",
+        "<OUT>/asr",
+        "--install-command",
+        "mock install"
+      ],
       "request": {
         "jsonrpc": "2.0",
         "id": 1,
@@ -160,10 +218,22 @@
           ],
           "isError": true
         }
-      }
+      },
+      "stderr": "",
+      "exitCode": 0
     },
     {
       "case": "escape",
+      "command": [
+        "<NODE>",
+        "<BASELINE>/src/extension/plugins/builtin/funasr/funasr-local-mcp.mjs",
+        "--project-root",
+        "<OUT>/project",
+        "--runtime-root",
+        "<OUT>/asr",
+        "--install-command",
+        "mock install"
+      ],
       "request": {
         "jsonrpc": "2.0",
         "id": 1,
@@ -187,10 +257,22 @@
           ],
           "isError": true
         }
-      }
+      },
+      "stderr": "",
+      "exitCode": 0
     },
     {
       "case": "missing-file",
+      "command": [
+        "<NODE>",
+        "<BASELINE>/src/extension/plugins/builtin/funasr/funasr-local-mcp.mjs",
+        "--project-root",
+        "<OUT>/project",
+        "--runtime-root",
+        "<OUT>/asr",
+        "--install-command",
+        "mock install"
+      ],
       "request": {
         "jsonrpc": "2.0",
         "id": 1,
@@ -214,10 +296,22 @@
           ],
           "isError": true
         }
-      }
+      },
+      "stderr": "",
+      "exitCode": 0
     },
     {
       "case": "url",
+      "command": [
+        "<NODE>",
+        "<BASELINE>/src/extension/plugins/builtin/funasr/funasr-local-mcp.mjs",
+        "--project-root",
+        "<OUT>/project",
+        "--runtime-root",
+        "<OUT>/asr",
+        "--install-command",
+        "mock install"
+      ],
       "request": {
         "jsonrpc": "2.0",
         "id": 1,
@@ -241,10 +335,22 @@
           ],
           "isError": true
         }
-      }
+      },
+      "stderr": "",
+      "exitCode": 0
     },
     {
       "case": "exit-error",
+      "command": [
+        "<NODE>",
+        "<BASELINE>/src/extension/plugins/builtin/funasr/funasr-local-mcp.mjs",
+        "--project-root",
+        "<OUT>/project",
+        "--runtime-root",
+        "<OUT>/asr",
+        "--install-command",
+        "mock install"
+      ],
       "request": {
         "jsonrpc": "2.0",
         "id": 1,
@@ -268,10 +374,22 @@
           ],
           "isError": true
         }
-      }
+      },
+      "stderr": "",
+      "exitCode": 0
     },
     {
       "case": "empty-srt",
+      "command": [
+        "<NODE>",
+        "<BASELINE>/src/extension/plugins/builtin/funasr/funasr-local-mcp.mjs",
+        "--project-root",
+        "<OUT>/project",
+        "--runtime-root",
+        "<OUT>/asr",
+        "--install-command",
+        "mock install"
+      ],
       "request": {
         "jsonrpc": "2.0",
         "id": 1,
@@ -295,10 +413,18 @@
           ],
           "isError": true
         }
-      }
+      },
+      "stderr": "",
+      "exitCode": 0
     },
     {
       "case": "no-runtime-precedes-language",
+      "command": [
+        "<NODE>",
+        "<BASELINE>/src/extension/plugins/builtin/funasr/funasr-local-mcp.mjs",
+        "--install-command",
+        "mock install"
+      ],
       "request": {
         "jsonrpc": "2.0",
         "id": 1,
@@ -322,10 +448,22 @@
           ],
           "isError": true
         }
-      }
+      },
+      "stderr": "",
+      "exitCode": 0
     },
     {
       "case": "unknown-tool",
+      "command": [
+        "<NODE>",
+        "<BASELINE>/src/extension/plugins/builtin/funasr/funasr-local-mcp.mjs",
+        "--project-root",
+        "<OUT>/project",
+        "--runtime-root",
+        "<OUT>/asr",
+        "--install-command",
+        "mock install"
+      ],
       "request": {
         "jsonrpc": "2.0",
         "id": 1,
@@ -346,10 +484,22 @@
           ],
           "isError": true
         }
-      }
+      },
+      "stderr": "",
+      "exitCode": 0
     },
     {
       "case": "unknown-method",
+      "command": [
+        "<NODE>",
+        "<BASELINE>/src/extension/plugins/builtin/funasr/funasr-local-mcp.mjs",
+        "--project-root",
+        "<OUT>/project",
+        "--runtime-root",
+        "<OUT>/asr",
+        "--install-command",
+        "mock install"
+      ],
       "request": {
         "jsonrpc": "2.0",
         "id": 1,
@@ -362,10 +512,22 @@
           "code": -32601,
           "message": "Method not found: ping"
         }
-      }
+      },
+      "stderr": "",
+      "exitCode": 0
     },
     {
       "case": "missing-model",
+      "command": [
+        "<NODE>",
+        "<BASELINE>/src/extension/plugins/builtin/funasr/funasr-local-mcp.mjs",
+        "--project-root",
+        "<OUT>/project",
+        "--runtime-root",
+        "<OUT>/asr",
+        "--install-command",
+        "mock install"
+      ],
       "request": {
         "jsonrpc": "2.0",
         "id": 1,
@@ -389,7 +551,9 @@
           ],
           "isError": true
         }
-      }
+      },
+      "stderr": "",
+      "exitCode": 0
     }
   ]
 }

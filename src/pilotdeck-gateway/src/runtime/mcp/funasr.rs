@@ -250,28 +250,29 @@ async fn cancelled(mut signal: watch::Receiver<bool>) {
         }
     }
 }
-async fn stop_child(child: &mut Child) -> io::Result<()> {
-    if child.try_wait()?.is_some() {
-        return Ok(());
-    }
+async fn stop_child(
+    child: &mut Child,
+    guard: &mut crate::process_group::GroupGuard,
+) -> io::Result<()> {
     #[cfg(unix)]
-    if let Some(id) = child
-        .id()
-        .and_then(|id| i32::try_from(id).ok())
-        .and_then(rustix::process::Pid::from_raw)
     {
-        let _ = rustix::process::kill_process(id, rustix::process::Signal::TERM);
+        // Keep the leader unreaped until the last signal: its PID reserves the
+        // entire process-group identity even when a wrapper exits first.
+        guard.signal(rustix::process::Signal::TERM);
+        let _ = crate::process_group::wait_for_exit_unreaped(guard.0, Duration::from_secs(1)).await;
+        guard.signal(rustix::process::Signal::KILL);
     }
-    if let Ok(result) = tokio::time::timeout(Duration::from_secs(1), child.wait()).await {
-        result?;
-        return Ok(());
-    }
+    #[cfg(not(unix))]
     child.start_kill()?;
-    tokio::time::timeout(Duration::from_secs(2), child.wait())
+    let result = tokio::time::timeout(Duration::from_secs(2), child.wait())
         .await
-        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "FunASR child did not reap"))??;
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "FunASR child did not reap"))?;
+    // No group signal after wait has reaped the identity.
+    guard.disarm();
+    result?;
     Ok(())
 }
+
 impl FunasrOptions {
     pub async fn transcribe(&self, input: JsValue, signal: watch::Receiver<bool>) -> JsValue {
         let Some(root) = &self.runtime_root else {
@@ -320,7 +321,10 @@ impl FunasrOptions {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         #[cfg(unix)]
-        pilotdeck_child_signals::install_child_signal_reset(command.as_std_mut());
+        {
+            pilotdeck_child_signals::install_child_detach_session(command.as_std_mut());
+            pilotdeck_child_signals::install_child_signal_reset(command.as_std_mut());
+        }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -340,13 +344,45 @@ impl FunasrOptions {
                 ));
             }
         };
+        #[cfg(unix)]
+        let group = child
+            .id()
+            .and_then(|id| i32::try_from(id).ok())
+            .and_then(rustix::process::Pid::from_raw);
+        #[cfg(not(unix))]
+        let group = None;
+        let mut guard = crate::process_group::GroupGuard(group);
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
         let result = {
-            tokio::select! {result=async{tokio::try_join!(child.wait(),read_output(stdout),read_output(stderr))}=>Some(result),_=cancelled(signal)=>None}
+            tokio::select! {
+                result=async {
+                    #[cfg(unix)]
+                    let status = async {
+                        let group = group.ok_or_else(|| io::Error::other("FunASR process group is unavailable"))?;
+                        crate::process_group::wait_exit_unreaped(group).await.map_err(io::Error::from)?
+                            .ok_or_else(|| io::Error::other("FunASR process exit observation is unavailable"))?;
+                        // A completed wrapper may still have a pipe-holding worker.
+                        // Signal before reaping the leader, while PGID is reserved.
+                        guard.signal(rustix::process::Signal::KILL);
+                        Ok::<(), io::Error>(())
+                    };
+                    #[cfg(unix)]
+                    let (_, out, err) = tokio::try_join!(status, read_output(stdout), read_output(stderr))?;
+                    #[cfg(unix)]
+                    let status = child.wait().await;
+                    #[cfg(unix)]
+                    guard.disarm();
+                    #[cfg(unix)]
+                    return Ok::<_,io::Error>((status?,out,err));
+                    #[cfg(not(unix))]
+                    tokio::try_join!(child.wait(), read_output(stdout), read_output(stderr))
+                }=>Some(result),
+                _=cancelled(signal)=>None
+            }
         };
         let Some(result) = result else {
-            let cleanup = stop_child(&mut child).await;
+            let cleanup = stop_child(&mut child, &mut guard).await;
             return text_error(match cleanup {
                 Ok(()) => "FunASR transcription cancelled.".to_owned(),
                 Err(e) => format!("FunASR cancellation could not reap runtime: {e}"),
@@ -355,7 +391,7 @@ impl FunasrOptions {
         let (status, stdout, stderr) = match result {
             Ok(v) => v,
             Err(e) => {
-                return text_error(match stop_child(&mut child).await {
+                return text_error(match stop_child(&mut child, &mut guard).await {
                     Ok(()) => e.to_string(),
                     Err(cleanup) => format!("{e}; FunASR runtime cleanup failed: {cleanup}"),
                 });

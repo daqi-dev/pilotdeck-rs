@@ -5849,3 +5849,6 @@ r76 fmt/strict clippy/四bin及35历史定向通过；已落盘r72四生产宿�
 ### 2026-11-11 03:50 CST · cb8 同头消费者与正式门接线（继续）
 
 本地已固定7a03fc440（main8a7装置增量），cb8仍固定59e以保全同头消费者窗口。59e fmt/严格clippy/四bin与33逐回合权限测试通过；初次误筛选0测试不计通过，正确过滤新日志另存。真实FunASR TS/Rust provider输入一致且无权限提示；9渠道业务exit0，旧runner误把87次禁io_uring拒绝计FAIL，原件保留，分类修复后复跑；SOP两端三次进程完成审批/恢复/去重。正式72首对、101+HTTP/后台采集正在接续。GLM与DeepSeek已恢复独立评审，发现两条生产/负控脱节及FunASR来源绑定P1，根与core修复中；MiniMax本轮仍429，未重试。Linux cleanup候选已开#2916，root仅收窄helper与入口，未重登记/未宣称正式通过，原14格+新8格cb8候选重放通过；两谱系与真实TS复算接续。根frozen目录未知pycache逐SHA挪入自有_tmp保全，未删除。新编译测试全部cb8；旧树/前端/快照未动。证据主仓_tmp/20261111-gateway-closeout/与三个finish包。
+
+
+04:08增记：稳定59e已经gitleaks推到Draft2786并核远端头，PR说明保留未完成门。cb8 19渠道对应9外部消费者+23真实Server/生命周期通过，SOP双端三进程通过；额外3HTTP模型列表/OPTIONS/企微GET已真实TS/Rust对齐，逐入口仍保留部分/未验证。网络隔离用现有本地Docker镜像network-none（不下载），四类非回环负控+loopback/Node/strace/pidfd/冻结校验均通过后，原sampler已重新采集。根宿主59e permission oracle6PASS/1忽略、Gateway完整lib在跑，后续CLI。新本地产品批收FunASR真实13case标准fixture/legacy marker原生适配/子孙进程组取消、唯一skills根发现、源安装脚本与飞书迟到模型写回屏障测试；固定FunASR/llama真源码cb8编译与安装后ldd通过，无预编译或模型下载。#2916两家首审发现旧负控/聚合/平台登记脱节，acceptance正在整组补齐，冻结未注册不假PASS。所有新源码待同头cb8编译，原正式FAIL保留。

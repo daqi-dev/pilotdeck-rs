@@ -535,3 +535,13 @@ mod weixin_media_host_tests;
 
 #[cfg(unix)]
 mod session_history;
+
+/// Shared native source/installation asset discovery. The runtime plugin loader
+/// uses the same candidate order as startup without importing private assembly.
+pub(crate) fn builtin_skills_root_at(
+    project: &std::path::Path,
+    env: &crate::config::Env,
+    executable_dir: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
+    assembly::builtin_skills_root_at(project, env, executable_dir)
+}

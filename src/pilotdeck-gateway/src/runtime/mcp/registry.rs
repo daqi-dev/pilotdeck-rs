@@ -304,6 +304,9 @@ pub(crate) fn resolve_path(path: &str) -> std::io::Result<String> {
 }
 
 fn cwd_runtime_error(error: std::io::Error) -> RuntimeError {
+    if error.kind() == std::io::ErrorKind::Unsupported {
+        return RuntimeError::new(error.to_string());
+    }
     let (code, message) = crate::metadata::process_cwd_diagnostic(&error);
     RuntimeError::new(&message).with_js_error(crate::runtime::project::RuntimeJsError {
         name: "Error".into(),
@@ -347,6 +350,66 @@ pub fn patch_project_scoped_mcp_spec(
     } = &spec.transport
     else {
         return Ok(spec);
+    };
+    let mut native_command = None;
+    let mut native_args = None;
+    if spec.id == "funasr"
+        && paths.funasr_mcp_entrypoint.is_empty()
+        && (command.contains(PILOTDECK_FUNASR_MCP_ENTRYPOINT_MARKER)
+            || args.as_ref().is_some_and(|args| {
+                args.iter()
+                    .any(|arg| arg.contains(PILOTDECK_FUNASR_MCP_ENTRYPOINT_MARKER))
+            }))
+    {
+        let is_node = command == PILOTDECK_NODE_EXECUTABLE_MARKER
+            || (!paths.node_executable.is_empty() && command == &paths.node_executable)
+            || Path::new(command)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    matches!(name.to_ascii_lowercase().as_str(), "node" | "node.exe")
+                });
+        let is_known_entry = args.as_ref().is_some_and(|args| {
+            args.first()
+                .is_some_and(|arg| arg == PILOTDECK_FUNASR_MCP_ENTRYPOINT_MARKER)
+                && args
+                    .iter()
+                    .skip(1)
+                    .all(|arg| !arg.contains(PILOTDECK_FUNASR_MCP_ENTRYPOINT_MARKER))
+        });
+        if !is_node || !is_known_entry {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "The configured FunASR wrapper embeds a retired JavaScript entrypoint marker in an unsupported position. Use node with that marker as its first argument, the native builtin, or an explicit external MCP command.",
+            ));
+        }
+        let executable = std::env::current_exe()?;
+        native_command = Some(
+            super::native_builtins::sibling_gateway(&executable)
+                .to_str()
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "Native FunASR gateway path is not UTF-8",
+                    )
+                })?
+                .to_owned(),
+        );
+        let mut adapted = vec!["--builtin-mcp".to_owned(), "funasr".to_owned()];
+        adapted.extend(
+            args.as_ref()
+                .expect("known entry has args")
+                .iter()
+                .skip(1)
+                .cloned(),
+        );
+        native_args = Some(adapted);
+    }
+    let command = native_command.as_ref().unwrap_or(command);
+    let args = if native_command.is_some() {
+        &native_args
+    } else {
+        args
     };
     let replacements: Vec<(&str, String)> = match spec.id.as_str() {
         "browser-use" => {
@@ -1557,5 +1620,88 @@ mod tests {
             "/a/c"
         );
         assert_eq!(resolve_path("/").expect("#879 healthy registry path"), "/");
+    }
+}
+
+#[cfg(test)]
+mod native_retirement_marker_tests {
+    use super::*;
+    fn spec(command: &str, args: Vec<String>) -> McpServerSpec {
+        McpServerSpec {
+            id: "funasr".into(),
+            transport: McpTransportSpec::Stdio {
+                command: command.into(),
+                args: Some(args),
+                env: None,
+                cwd: None,
+                per_session: true,
+            },
+            call_timeout_ms: Some(123.0),
+        }
+    }
+    #[test]
+    fn known_user_funasr_marker_adapts_to_the_same_generation_native_gateway() {
+        let input = spec(
+            PILOTDECK_NODE_EXECUTABLE_MARKER,
+            vec![
+                PILOTDECK_FUNASR_MCP_ENTRYPOINT_MARKER.into(),
+                "--project-root".into(),
+                PILOTDECK_PROJECT_ROOT_MARKER.into(),
+                "--runtime-root".into(),
+                "/external/asr".into(),
+                "--install-command".into(),
+                "user install".into(),
+            ],
+        );
+        let patched =
+            patch_project_scoped_mcp_spec(input, "/project", "/home", &BuiltinMcpPaths::default())
+                .unwrap();
+        let McpTransportSpec::Stdio {
+            command,
+            args,
+            cwd,
+            per_session,
+            ..
+        } = patched.transport
+        else {
+            panic!("stdio")
+        };
+        assert_eq!(
+            command,
+            crate::runtime::mcp::native_builtins::sibling_gateway(
+                &std::env::current_exe().unwrap()
+            )
+            .to_string_lossy()
+        );
+        assert_eq!(
+            args.unwrap(),
+            vec![
+                "--builtin-mcp",
+                "funasr",
+                "--project-root",
+                "/project",
+                "--runtime-root",
+                "/external/asr",
+                "--install-command",
+                "user install"
+            ]
+        );
+        assert_eq!(cwd, Some("/project".into()));
+        assert!(per_session);
+        assert_eq!(patched.call_timeout_ms, Some(123.0));
+    }
+    #[test]
+    fn unknown_embedded_funasr_marker_is_explicit_instead_of_an_empty_argument() {
+        let input = spec(
+            "wrapper",
+            vec![format!("prefix{PILOTDECK_FUNASR_MCP_ENTRYPOINT_MARKER}")],
+        );
+        let error =
+            patch_project_scoped_mcp_spec(input, "/project", "/home", &BuiltinMcpPaths::default())
+                .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+        assert!(error.to_string().contains("unsupported position"));
+        let expected = error.to_string();
+        assert_eq!(cwd_runtime_error(error).message, expected);
     }
 }

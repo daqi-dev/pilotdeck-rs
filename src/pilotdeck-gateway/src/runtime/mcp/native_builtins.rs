@@ -42,6 +42,38 @@ pub fn node_from_path(env: &Env) -> PathBuf {
     }
     PathBuf::from(node)
 }
+/// The diagnostic must name the installer shipped by the same source generation,
+/// rather than an npm script in the user's unrelated project working directory.
+fn install_command(env: &Env, executable: &Path, cwd: &Path) -> io::Result<String> {
+    if let Some(command) = env
+        .get("PILOTDECK_FUNASR_INSTALL_COMMAND")
+        .filter(|value| !value.trim().is_empty())
+    {
+        return Ok(command.clone());
+    }
+    let parent = executable.parent().unwrap_or(cwd);
+    let generation = parent.parent().unwrap_or(cwd);
+    let mut candidates = vec![generation.join("source/scripts/install-asr.sh")];
+    let is_native_source = |directory: &Path| {
+        directory.join("src/Cargo.toml").is_file()
+            && directory.join("src/pilotdeck-gateway/Cargo.toml").is_file()
+    };
+    for directory in parent
+        .ancestors()
+        .filter(|directory| is_native_source(directory))
+    {
+        candidates.push(directory.join("scripts/install-asr.sh"));
+    }
+    if is_native_source(cwd) {
+        candidates.push(cwd.join("scripts/install-asr.sh"));
+    }
+    let script = candidates
+        .iter()
+        .find(|path| path.is_file())
+        .unwrap_or(&candidates[0]);
+    // POSIX single-quote escaping also protects spaces, dollar signs and backticks.
+    Ok(format!("sh '{}'", utf8(script)?.replace('\'', "'\"'\"'")))
+}
 /// Runtime-root is the installed third-party SDK package root. The fallback
 /// probes equivalent generation/source/cwd node_modules layouts, never the
 /// retired first-party Gateway or FunASR JS implementation.
@@ -68,7 +100,7 @@ pub fn builtin_paths(env: &Env, executable: &Path, cwd: &Path) -> io::Result<Bui
         // through this legacy compatibility field. User plugin marker expansion is
         // retained by the existing registry; no internal JS fallback is configured.
         funasr_mcp_entrypoint: String::new(),
-        install_command: "npm run install:asr".into(),
+        install_command: install_command(env, executable, cwd)?,
     })
 }
 pub fn browser_servers() -> JsValue {

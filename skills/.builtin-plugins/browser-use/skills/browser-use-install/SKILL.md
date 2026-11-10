@@ -9,44 +9,34 @@ PilotDeck Desktop ships browser-use without a bundled Chrome browser. When brows
 
 ## Install
 
-Run this from any working directory:
+The Rust source generation keeps Playwright MCP as a separately prepared third-party SDK. It does not ship the old `dist/src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs` entrypoint. Do not run that missing path in a Rust source installation.
 
-```bash
-node "$PILOTDECK_RUNTIME_ROOT/dist/src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs"
+If an existing SDK package and browser are available, configure their absolute executable paths in the project's `.pilotdeck/mcp.json` (or the intended PilotDeck data directory's `mcp.json`). Merge the `browser-use` entry with other configured servers:
+
+```json
+{
+  "mcpServers": {
+    "browser-use": {
+      "command": "/absolute/path/to/node",
+      "args": [
+        "/absolute/path/to/node_modules/@playwright/mcp/cli.js",
+        "--browser", "chromium",
+        "--executable-path", "/absolute/path/to/chrome-or-chromium",
+        "--allow-unrestricted-file-access"
+      ],
+      "perSession": true
+    }
+  }
+}
 ```
 
-In PowerShell, use:
-
-```powershell
-node "$env:PILOTDECK_RUNTIME_ROOT/dist/src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs"
-```
-
-If `PILOTDECK_RUNTIME_ROOT` is not set, find the PilotDeck runtime root first. It is the directory that contains `node_modules/@playwright/mcp/cli.js` and `dist/src/cli/pilotdeck.js`, then run:
-
-```bash
-PILOTDECK_RUNTIME_ROOT="/path/to/runtime" node "/path/to/runtime/dist/src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs"
-```
-
-PowerShell equivalent:
-
-```powershell
-$env:PILOTDECK_RUNTIME_ROOT = 'C:\Path\To\PilotDeck\resources\runtime'
-node "$env:PILOTDECK_RUNTIME_ROOT/dist/src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs"
-```
+Alternatively, `PILOTDECK_RUNTIME_ROOT` can point to an existing third-party SDK package root containing `node_modules/@playwright/mcp/cli.js` before the Gateway starts. This discovers the SDK, but does not install a browser. Confirm that browser-use can actually launch before treating it as ready.
 
 ## Mirrors And Offline
 
-Use the same environment variables as desktop packaging when the default network is blocked:
+For an offline Rust source installation, supply the existing SDK and browser paths above. This path performs no automatic downloads. If either dependency is absent, obtain an approved local dependency installation first; do not claim that configuring the MCP entry installed it.
 
-```bash
-PILOTDECK_DESKTOP_DOWNLOAD_MIRROR=china node "$PILOTDECK_RUNTIME_ROOT/dist/src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs"
-```
-
-For fully offline installs, point to a directory containing the matching `chrome-*.zip` archive:
-
-```bash
-PILOTDECK_DESKTOP_PLAYWRIGHT_ARCHIVE_DIR="/path/to/playwright-archives" node "$PILOTDECK_RUNTIME_ROOT/dist/src/extension/plugins/builtin/browser-use/scripts/install-browser.mjs"
-```
+Separately packaged TypeScript desktop runtimes retain their own browser installer and mirror/archive settings. Use those runtime-specific commands only when their referenced installer actually exists in that runtime.
 
 ## After Install
 

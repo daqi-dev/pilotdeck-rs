@@ -7,17 +7,21 @@ description: Transcribe a project-local audio recording, generate subtitles, ana
 
 Use this Skill only when the user explicitly asks to transcribe audio, create subtitles, analyze a recording, or make meeting notes from a recording. Do not invoke ASR merely because an audio attachment is present.
 
-PilotDeck provides this Skill itself; there is no Skill file to install. First check whether `mcp__funasr__transcribe_audio` is available. If its local runtime or models are missing, run the exact installation command shown by the attachment or MCP diagnostic. Source checkouts use npm:
+PilotDeck provides this Skill itself; there is no Skill file to install. First check whether `mcp__funasr__transcribe_audio` is available. If its local runtime or models are missing, run the exact installation command shown by the attachment or MCP diagnostic.
+
+A Rust source installation ships `scripts/install-asr.sh` in the same generation's source directory. Its displayed command is absolute and can be run from the project directory. Prepare local source checkouts and model files first, then supply their locations:
 
 ```bash
-npm --prefix "<PilotDeck directory>" run install:asr
+PILOT_HOME="<PilotDeck data directory>" \
+PILOTDECK_FUNASR_SOURCE="<FunASR runtime-llamacpp-v0.2.0 checkout>" \
+PILOTDECK_LLAMA_SOURCE="<pinned llama.cpp checkout>" \
+PILOTDECK_FUNASR_MODELS_DIR="<local GGUF model directory>" \
+sh "<installed generation>/source/scripts/install-asr.sh"
 ```
 
-Installed desktop apps invoke their bundled Node and `scripts/install-asr.mjs` directly. Use the displayed command through the Bash tool; do not substitute a system Node or npm installation.
+The source installer checks the pinned source revisions, builds the external ASR executable locally, and imports the already prepared model files into `$PILOT_HOME/funasr`. It does not download runtimes or models. Existing runtime/model files are retained. To use a separately managed installer, configure `PILOTDECK_FUNASR_INSTALL_COMMAND` before starting the Gateway; the diagnostic displays that exact command. After installation, retry `mcp__funasr__transcribe_audio` in the same session.
 
-The installer downloads the platform-specific official FunASR llama.cpp runtime and the local models. It does not require Docker, Python, or a cloud API. After it completes, retry `mcp__funasr__transcribe_audio` in the same session.
-
-For platform, cache, download-source, and network troubleshooting details, read `../../docs/funasr-installation.md` relative to this Skill directory.
+Separately packaged TypeScript desktop runtimes may still display their own bundled Node installation command; use the exact command shown by that runtime. The Rust source generation does not contain the old npm installation script.
 
 ## Workflow
 

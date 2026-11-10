@@ -606,11 +606,22 @@ fn stage_native_builtin_skills(
     };
     let executable = std::env::current_exe()
         .map_err(|e| PluginRuntimeError::gateway("NATIVE_MCP_PATH", e.to_string()))?;
-    let fallback = executable
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join("../skills");
-    let root = options.builtin_skills_root.as_deref().unwrap_or(&fallback);
+    let executable = fs::canonicalize(&executable).unwrap_or(executable);
+    let fallback = crate::native_process::builtin_skills_root_at(
+        &options.project_root,
+        &crate::config::Env::new(),
+        executable.parent(),
+    );
+    let root = options
+        .builtin_skills_root
+        .as_deref()
+        .or(fallback.as_deref())
+        .ok_or_else(|| {
+            PluginRuntimeError::gateway(
+                "NATIVE_SKILL_PATH",
+                "Builtin skills root could not be resolved.",
+            )
+        })?;
     // Only these inert first-party declarations may contribute builtin MCP.
     // No executable plugin entry/callback or arbitrary on-disk manifest loads.
     for (name, directory, skill_relative) in [
@@ -1006,3 +1017,33 @@ mod native_hook_loading_tests {
 #[cfg(test)]
 #[path = "builtin_priority_tests.rs"]
 mod builtin_priority_tests;
+
+#[cfg(test)]
+mod native_builtin_root_tests {
+    use super::*;
+    #[test]
+    fn installed_builtin_root_uses_the_same_two_generation_layouts_as_startup() {
+        let root =
+            std::env::temp_dir().join(format!("pdrs-native-builtin-root-{}", uuid::Uuid::new_v4()));
+        let exe = root.join("generations/current/bin");
+        let first = root.join("generations/current/skills");
+        let second = root.join("generations/skills");
+        fs::create_dir_all(&exe).unwrap();
+        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(&second).unwrap();
+        let project = root.join("project");
+        fs::create_dir(&project).unwrap();
+        let resolve = || {
+            crate::native_process::builtin_skills_root_at(
+                &project,
+                &crate::config::Env::new(),
+                Some(&exe),
+            )
+            .unwrap()
+        };
+        assert_eq!(resolve(), first);
+        fs::remove_dir(&first).unwrap();
+        assert_eq!(resolve(), second);
+        fs::remove_dir_all(root).unwrap();
+    }
+}

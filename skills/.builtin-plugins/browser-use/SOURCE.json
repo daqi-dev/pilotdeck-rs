@@ -3,11 +3,12 @@
   "source": "src/extension/plugins/builtin/browser-use/skills/browser-use-install/SKILL.md",
   "sourceSha256": "f5bbbd426f3e6465578ec12ece1ebd5601568b211e7378cdd7313ec6d49015f7",
   "license": "AGPL-3.0-only; repository LICENSE; only model-visible skill Markdown, no TS/script code copied",
-  "scope": "actual builtin browser-use-install; not the standalone browser-use replacement",
+  "scope": "builtin browser-use-install text retained except absent legacy installer entry/path instructions, adapted for native source installation",
   "notCopied": [
     "scripts/install-browser.mjs"
   ],
-  "missingBehavior": "installer script referenced by model-visible original text is not copied; native installer handoff remains explicit gap",
+  "missingBehavior": "No automatic browser/SDK provisioning in native source install. Existing third-party SDK and browser are configured explicitly; actual launch remains a separate acceptance requirement.",
   "licenseFile": "../../../LICENSE",
-  "sourceLicenseSha256": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0"
+  "sourceLicenseSha256": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
+  "adaptation": "Rust source installation uses the existing configured MCP server override; original baseline source/hash above remain provenance, not a claim of byte-identical adapted skill text."
 }

@@ -242,8 +242,8 @@ async fn actual_browser_builtin_asset_mcp_disable_and_whole_plugin_override() {
         use sha2::Digest as _;
         assert_eq!(
             format!("{:x}", sha2::Sha256::digest(skills[0].content.as_bytes())),
-            "7f08d42435047c552676a5a03ab92b32696f7ad1e22f574186dcc6567ed0ffd3",
-            "actual fixed TS builtin loadSkillPrompt body"
+            "bcac88f26a6fa11eddc788ca80b1b1047d1d879318cdef20567071f61318da9c",
+            "native source installer path adaptation; model-visible TS text difference is declared"
         );
     }
 

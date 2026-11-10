@@ -34,3 +34,43 @@ fn browser_spec_retains_third_party_mcp_and_per_session_contract() {
     assert!(text.contains("--allow-unrestricted-file-access"));
     assert!(text.contains("\"perSession\":true"));
 }
+
+#[test]
+fn explicit_asr_install_command_survives_unrelated_cwd() {
+    let mut env = Env::new();
+    env.insert(
+        "PILOTDECK_FUNASR_INSTALL_COMMAND".into(),
+        "local-installer --offline".into(),
+    );
+    let paths = builtin_paths(
+        &env,
+        Path::new("/generation/bin/pilotdeck-gateway"),
+        Path::new("/project"),
+    )
+    .unwrap();
+    assert_eq!(paths.install_command, "local-installer --offline");
+}
+#[test]
+fn source_generation_asr_installer_is_resolved_and_shell_quoted() {
+    let root =
+        std::env::temp_dir().join(format!("pdrs-asr-install-{}-' space", uuid::Uuid::new_v4()));
+    let generation = root.join("generation");
+    let scripts = generation.join("source/scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("install-asr.sh"), "#!/bin/sh\n").unwrap();
+    let executable = generation.join("bin/pilotdeck-gateway");
+    let paths = builtin_paths(&Env::new(), &executable, Path::new("/unrelated-project")).unwrap();
+    assert_eq!(
+        paths.install_command,
+        format!(
+            "sh '{}'",
+            scripts
+                .join("install-asr.sh")
+                .to_str()
+                .unwrap()
+                .replace('\'', "'\"'\"'")
+        )
+    );
+    assert!(!paths.install_command.contains("npm run"));
+    std::fs::remove_dir_all(root).unwrap();
+}
