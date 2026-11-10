@@ -184,9 +184,11 @@ def held_tree_lock(root):
     # wrapping the whole ``with`` would swallow a TimeoutError raised by the
     # drive body itself, the acquisition must sit inside the finally-protected
     # region so an async exception in the enter-to-finally window cannot leak
-    # the held lock, and ExitStack keeps the with-protocol exception
-    # forwarding for the body (a bare ``lock.__exit__(None, None, None)``
-    # would always claim "no exception").
+    # the held lock at statement boundaries (a sub-instruction hit inside
+    # ``enter_context`` before the exit callback registers stays below this
+    # guarantee; #2773 fix-r6, review DS r6 concurrency#1), and ExitStack
+    # keeps the with-protocol exception forwarding for the body (a bare
+    # ``lock.__exit__(None, None, None)`` would always claim "no exception").
     stack = contextlib.ExitStack()
     try:
         try:
@@ -448,8 +450,11 @@ class SiblingRosterDefenceAnchorPins(unittest.TestCase):
         # review MM r3 boundary#6 / DS boundary#1): a bare ``source.find``
         # lets a commented-out copy of the defence satisfy the chain while
         # the real code is gone. Each anchor must appear, in order, on a
-        # line that is not a comment; the full AST relocation of the scan
-        # is the #2804 extension.
+        # line that is not a comment -- a copy inside a docstring or string
+        # literal still counts, the filter only rejects ``#``-prefixed
+        # lines (#2773 fix-r6, review DS r6 sibling#3 / boundary#3 /
+        # simplify#3); the full AST relocation of the scan is the #2804
+        # extension.
         lines = source.splitlines()
         position = 0
         for anchor in SIBLING_DEFENCE_ANCHORS[name]:
