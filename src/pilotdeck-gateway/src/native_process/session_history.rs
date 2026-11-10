@@ -6,7 +6,7 @@ use crate::{
         replacement::{ReplacementError, ReplacementResult, ReplacementStorage, StorageOperation},
         session::SessionOwner,
     },
-    storage::{self, sanitize_session_id},
+    storage::{self, replacement_artifacts::valid_uuid, sanitize_session_id},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use rustix::fs::{AtFlags, Mode, OFlags, linkat, mkdirat, openat, renameat, unlinkat};
@@ -116,7 +116,6 @@ fn now() -> Result<String, ReplacementError> {
 fn uuid() -> String {
     uuid::Uuid::new_v4().to_string()
 }
-use crate::storage::replacement_artifacts::valid_uuid;
 fn parent(path: &Path) -> Result<(File, &std::ffi::OsStr), ReplacementError> {
     let directory = path.parent().ok_or_else(|| io("Artifact has no parent."))?;
     let fd = crate::project_files::open_directory_beneath(Path::new("/"), directory).map_err(io)?;
@@ -138,6 +137,13 @@ fn new_dir(path: &Path) -> Result<(), ReplacementError> {
 }
 fn read_bytes(path: &Path) -> Result<Vec<u8>, ReplacementError> {
     read_open_artifact(crate::project_files::open_beneath(Path::new("/"), path).map_err(io)?)
+}
+fn require_current_transcript(path: &Path) -> Result<(), ReplacementError> {
+    let file = crate::project_files::open_beneath(Path::new("/"), path).map_err(io)?;
+    if !file.metadata().map_err(io)?.is_file() {
+        return Err(io("Transcript artifact must be a regular file."));
+    }
+    Ok(())
 }
 fn read_open_artifact(f: File) -> Result<Vec<u8>, ReplacementError> {
     if !f.metadata().map_err(io)?.is_file() {
@@ -537,7 +543,9 @@ fn finalize(input: &JsValue, chat: &Path, path: &Path) -> ReplacementResult {
         // Deletion may have committed before a crash interrupted sidecar
         // cleanup. A late rollback must not recreate that deleted lifetime.
         // The caller retains the canonical writer lease and mutation fence.
-        read_bytes(path).map_err(|e| {
+        // Existence/type, not the archive reader's size limit: a current
+        // transcript may have grown since prepare without being deleted.
+        require_current_transcript(path).map_err(|e| {
             error(
                 "replace_transaction_missing",
                 format!("The current transcript could not be safely restored: {e}"),

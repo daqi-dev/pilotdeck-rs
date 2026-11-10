@@ -1118,14 +1118,18 @@ async fn witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append() {
         .expect("#1370 fifo blocked append finishes within the observation cap")
         .expect("#1370 fifo blocked append did not panic")
         .expect("#1370 fifo blocked append persists");
-    tokio::time::timeout(OBSERVE, witnessed)
-        .await
-        .expect("#1370 fifo witnessed append finishes within the observation cap")
-        .expect("#1370 fifo witnessed append persists after the blocked one");
+    // Poll the later append first. Every armed append now has an admission
+    // ticket, so awaiting in call order would also pass when BOTH jobs are
+    // incorrectly queued only on first poll. Eager FIFO must finish the
+    // witnessed job without polling its returned waiter.
     tokio::time::timeout(OBSERVE, plain)
         .await
         .expect("#1370 fifo plain append finishes within the observation cap")
         .expect("#1370 fifo plain append persists");
+    tokio::time::timeout(OBSERVE, witnessed)
+        .await
+        .expect("#1370 fifo witnessed append finishes within the observation cap")
+        .expect("#1370 fifo witnessed append persists after the blocked one");
     // The third append entered after the release cleared the hold, so it owes
     // no queued receipt. Without this reverse assertion a regression that
     // published `release` before clearing the hold would stamp `cancelled` with

@@ -41,6 +41,25 @@ const HELPERS: [(&str, bool); 8] = [
     ("glob", true),
     ("bash", false),
 ];
+const EXECUTE_CODE_DEFAULT_DESCRIPTION: &str = "Run a local Python 3 script that can call a small allow-list of PilotDeck tools via `import pilotdeck_tools`. The script runs from the workspace cwd and inherits the same runtime environment as normal tools such as bash, including configured API, proxy, PATH, virtualenv, and conda variables; do not print secrets or dump the full environment. Only the script's final stdout/stderr summary is returned to the model; intermediate tool results stay inside the script. Available helper functions: web_fetch, read_file, write_file, edit_file, grep, glob, bash. Use normal Python control flow to orchestrate tools: loops for batch work, conditionals for branching, data structures for aggregation, and try/except around individual helper calls when one failure should not abort the whole script. Helper failures raise RuntimeError. You can chain helper results, e.g. grep -> read_file -> edit_file. Print only the concise final result needed by the agent. Before modifying an existing file, call read_file first so PilotDeck can verify freshness. Prefer edit_file for targeted changes and write_file for new files or complete rewrites. Notebook edits, agent, task tools, MCP tools, and execute_code itself are not available.";
+fn execute_code_description(mode: Option<&str>, web_search: bool) -> String {
+    let mut description = EXECUTE_CODE_DEFAULT_DESCRIPTION.to_owned();
+    if web_search {
+        description = description.replacen(
+            "Available helper functions: web_fetch",
+            "Available helper functions: web_search, web_fetch",
+            1,
+        );
+    }
+    if let Some(mode @ ("read-only" | "workspace-write")) = mode {
+        description = description.replacen(
+            "The script runs from the workspace cwd and inherits the same runtime environment",
+            &format!("The script runs from the workspace cwd with the host {mode} file-effect policy. It inherits the same runtime environment"), 1,
+        );
+    }
+    description
+}
+
 const MAX_CODE_BYTES: usize = 1024 * 1024;
 pub struct ExecuteCodeTool {
     fields: JsObject,
@@ -56,26 +75,26 @@ impl ExecuteCodeTool {
         Self::with_sandbox(None)
     }
     pub fn with_sandbox(sandbox: Option<Arc<NativeSandbox>>) -> Self {
+        Self::with_sandbox_and_web_search(sandbox, true)
+    }
+    pub fn with_sandbox_and_web_search(
+        sandbox: Option<Arc<NativeSandbox>>,
+        web_search: bool,
+    ) -> Self {
+        let description = execute_code_description(
+            sandbox.as_ref().map(|value| value.mode().as_str()),
+            web_search,
+        );
         Self {
             sandbox,
             fields: object([
                 ("name", string("execute_code")),
                 ("kind", string("custom")),
-                (
-                    "description",
-                    string(format!(
-                        "Run a local Python 3 script using import pilotdeck_tools. Helpers: {}. Helpers re-enter this turn's permission, hooks and file-freshness checks. Only the final stdout/stderr summary returns to the model. Agent, task, notebook, MCP and recursive execute_code helpers are unavailable. Python inherits the tool environment; never print secrets. Read-only automatic permissions are enforced by a real filesystem sandbox; approved executions still obey the project sandbox.",
-                        HELPERS
-                            .iter()
-                            .map(|(name, _)| *name)
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )),
-                ),
+                ("description", string(description)),
                 (
                     "inputSchema",
                     JsValue::Object(schema(
-                        r#"{"type":"object","required":["code"],"additionalProperties":false,"properties":{"code":{"type":"string"},"description":{"type":"string"},"timeout_seconds":{"type":"integer"},"max_tool_calls":{"type":"integer"}}}"#,
+                        r###"{"type":"object","required":["code"],"additionalProperties":false,"properties":{"code":{"type":"string","description":"Python 3 source code to execute. Use `from pilotdeck_tools import ...` to call allowed PilotDeck tools."},"description":{"type":"string","description":"Optional human-readable note; ignored by execution."},"timeout_seconds":{"type":"integer","description":"Maximum execution time in seconds. Defaults to 300; maximum 300."},"max_tool_calls":{"type":"integer","description":"Maximum number of PilotDeck tool calls the script may make. Defaults to 50; maximum 50."}}}"###,
                     )),
                 ),
                 (

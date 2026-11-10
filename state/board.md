@@ -5503,3 +5503,8 @@ Draft #2786 已推6c3277c19，当前继续本地共同候选。r49 mbp2严格cli
 ### 2026-11-10 · r55 渠道控制与数据保护接续（未收口）
 
 共同候选已逐块接main至ad3710106，后续main51844eaa0另批接收，未混为已合。r52严格clippy/四bin通过，308定向305过3失败；r54修共享取消等待、run未命中Undefined与孤儿事务保全后47定向46过1失败，末项实证为fixture在/plan持久模式下错误期待写权限提示。r55通过真实/new隔离场景后47项全过，四bin/严格检查通过；同源Gateway+CLI 7845项回归正在mbp2运行，编译边界Linux专测单列，不能预填总通过。cb8 clean8072目录句柄5项、native journal4项、background_archive真实18项通过；18源码负控初轮15杀/1幸存/2INVALID，后2项补固定baseline环境后均杀死，FIFO幸存待强化用例与新clean head。正式原生14WITNESSED仍是14FAIL、58NOT_RUN，不算阶段验收；已有R5#2737复用，#1355现役r26尚待交付，禁止并写冻结入口。用户现已批准模型输入兼容资产窄范围复用，Sol/Terra额度恢复继续三车道；用户要求阶段完成节点再讨论迁移，旧CLI/app/GPUI/file_edit树与快照未动。本机只编辑、静态检查和提交，Rust构建在mbp2/Linux cb8。证据仍主仓_tmp/20261110-gateway-integration/；下一步收当前回归、兼容资产与Linux迟到timeout修复，再完成同头验收和独立审阅。
+
+
+### 2026-11-10 · r56/r57 模型输入兼容与真实冷切换（未收口）
+
+main 已逐块整合至51844eaa0，提交8545768da保留双方增量；Draft #2786远端仍9a02c701，尚未入队。r55同源19渠道已取得9条外部消费者与10渠道22项实际Server消费者通过；完整7845项仍在mbp2跑，已发现3条旧断言（run未命中Null×2、未配置manager_browsers的能力oracle），用固定TS真实capture修正，原失败不改。r55精确Node22/ICU78两格冷切换：正常5阶段PASS；真实drain失败阻止下一writer并保全数据；另补upload_cancel实际消费，均不是正式retirement判分。用户已授权的提示/工具Schema窄范围资产完成前像校验接线，AGPL来源与同字节根LICENSE记录保留。r56严格检查发现1条失效ChatDigest import并修，r57正在独立probe目标编译；mbp2新空间534GiB，接手probe前已把4878项源码（含原缺失记录）归档逐SHA验证，_tmp原件及_build未清理，未新开工作树；checks-r24全量不被改写。本机无Rust构建。数据长名孤儿隔离、超限当前文件回滚、FIFO负控及迟到timeout候选待新头测试；native取消/压缩子信号缺口并行补修。全部正式host/session/retirement/最终回归与人签字仍未闭合，原统一目录与前端改动未迁移。下一步收r57及真实模型请求、精确timeout落盘，再同头负控与独立复核，继续后台实际触发闭环。

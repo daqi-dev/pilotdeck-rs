@@ -128,23 +128,13 @@ impl WorkspacePhase {
         let lease = handlers
             .install(&self.contexts, session.as_str().into())
             .map_err(|e| failure("workspace_prepare_failed", e.to_string()))?;
-        let mut prompt = if self.chinese {
-            "为该计划创建隔离工作区："
-                .encode_utf16()
-                .collect::<Vec<_>>()
-        } else {
-            "Prepare an isolated workspace for this plan: "
-                .encode_utf16()
-                .collect::<Vec<_>>()
-        };
-        prompt.extend_from_slice(title.units());
-        prompt.extend(format!("\nProject root: {project}\nRun: {run_id}\nUse always_on_prepare_workspace to create the workspace.").encode_utf16());
+        let prompt = super::prompt_compat::workspace(self.chinese, &project, &title);
         let request = PhaseRequest {
             project_key: self.project.clone(),
             session_key: session.as_str().into(),
             channel_key: "always-on/workspace".into(),
             run_id: format!("{run_id}.workspace").as_str().into(),
-            message: JsString::from_utf16(prompt),
+            message: prompt,
             cwd: project.as_str().into(),
             permission_mode: "bypassPermissions".into(),
             bypass_available: true,

@@ -413,6 +413,62 @@ fn late_rollback_after_interrupted_delete_preserves_backup_without_resurrection(
     assert_eq!(fs::read(&journal).unwrap(), journal_bytes);
 }
 #[test]
+fn explicit_rollback_accepts_a_current_transcript_that_grew_past_read_limit() {
+    let scratch = Scratch::new();
+    let (path, backup, journal) = transaction(&scratch.0, b"original-data", b"current", None);
+    let record = parse_json(fs::read_to_string(&journal).unwrap().trim()).unwrap();
+    File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(MAX_BYTES + 1)
+        .unwrap();
+    let input = object([
+        ("sessionKey", string("session")),
+        ("transactionId", field(&record, "transactionId").clone()),
+        ("action", string("rollback")),
+    ]);
+    finalize(&input, &scratch.0, &path).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), b"original-data");
+    assert!(!backup.exists() && !journal.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn explicit_rollback_rejects_nonregular_current_without_consuming_backups() {
+    for symlink in [false, true] {
+        let scratch = Scratch::new();
+        let (path, backup, journal) = transaction(&scratch.0, b"original-data", b"current", None);
+        let record = parse_json(fs::read_to_string(&journal).unwrap().trim()).unwrap();
+        let journal_bytes = fs::read(&journal).unwrap();
+        fs::remove_file(&path).unwrap();
+        let outside = scratch.0.join("outside");
+        fs::write(&outside, b"outside-data").unwrap();
+        if symlink {
+            std::os::unix::fs::symlink(&outside, &path).unwrap();
+        } else {
+            fs::create_dir(&path).unwrap();
+        }
+        let input = object([
+            ("sessionKey", string("session")),
+            ("transactionId", field(&record, "transactionId").clone()),
+            ("action", string("rollback")),
+        ]);
+        assert!(finalize(&input, &scratch.0, &path).is_err());
+        assert_eq!(fs::read(&backup).unwrap(), b"original-data");
+        assert_eq!(fs::read(&journal).unwrap(), journal_bytes);
+        assert_eq!(fs::read(&outside).unwrap(), b"outside-data");
+        assert_eq!(
+            fs::symlink_metadata(&path)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            symlink
+        );
+    }
+}
+
+#[test]
 fn error_message_and_requested_ids_preserve_raw_utf16_units() {
     let value = JsValue::String(JsString::from_utf16(vec![0xd800]));
     let message = prefixed_value("Transcript entry not found: ", &value).unwrap();

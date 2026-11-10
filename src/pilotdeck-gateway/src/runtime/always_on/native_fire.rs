@@ -2,7 +2,7 @@
 use super::{
     AlwaysOnError, DiscoveryFirePort,
     apply::{ApplyPhase, ApplyWorkspace, WorkspaceDiff},
-    chat_digest::{self, ChatDigest},
+    chat_digest,
     chat_tool::{ChatHandler, NativeChatCatalog},
     event_sink::PhaseEventSink,
     fire::{
@@ -205,62 +205,6 @@ impl NativeFire {
     fn chinese(&self) -> bool {
         self.input.config.language.as_deref() == Some("zh-CN")
     }
-    fn discovery_prompt(
-        &self,
-        digest: &ChatDigest,
-        plans: &[super::DiscoveryPlanRecord],
-    ) -> JsString {
-        let intro = if self.chinese() {
-            format!(
-                "检查项目 {}，使用 always_on_discovery_plan 提出最多一个有用计划。请用简体中文撰写计划。\n",
-                self.input.project_key
-            )
-        } else {
-            format!(
-                "Inspect project {} and propose at most one useful plan with always_on_discovery_plan.\n",
-                self.input.project_key
-            )
-        };
-        let mut out = intro.encode_utf16().collect::<Vec<_>>();
-        for plan in plans {
-            out.extend(
-                if self.chinese() {
-                    "已有计划："
-                } else {
-                    "Existing plan: "
-                }
-                .encode_utf16(),
-            );
-            out.extend_from_slice(plan.id.units());
-            if let Some(title) = &plan.title {
-                out.extend(" — ".encode_utf16());
-                out.extend_from_slice(title.units());
-            }
-            out.push(10);
-        }
-        for session in &digest.sessions {
-            out.extend(
-                if self.chinese() {
-                    "会话 "
-                } else {
-                    "Session "
-                }
-                .encode_utf16(),
-            );
-            out.extend_from_slice(session.alias.units());
-            out.extend(" — ".encode_utf16());
-            out.extend_from_slice(session.title.units());
-            out.extend(" [".encode_utf16());
-            out.extend_from_slice(session.modified.units());
-            out.extend("]\n".encode_utf16());
-            for prompt in &session.prompts {
-                out.extend("  > ".encode_utf16());
-                out.extend_from_slice(prompt.units());
-                out.push(10);
-            }
-        }
-        JsString::from_utf16(out)
-    }
     async fn update_plan(
         &self,
         plan: &JsString,
@@ -389,8 +333,12 @@ impl NativeFire {
             .await
             .map_err(|e| failure("internal", e.to_string()))?;
         let cwd = PathBuf::from(js(&ws.handle.cwd)?);
-        let mut body = if self.chinese() { "在当前隔离工作区执行这个计划。禁止推送或更改远端。请用简体中文说明执行结果。\n\n" } else { "Execute this plan in the current isolated workspace. Do not push or change remotes.\n\n" }.encode_utf16().collect::<Vec<_>>();
-        body.extend_from_slice(markdown.units());
+        let body = super::prompt_compat::execution(
+            self.chinese(),
+            ws.handle.strategy.as_str(),
+            &ws.handle.cwd,
+            &markdown,
+        );
         self.emit(
             run,
             "execution_started",
@@ -405,7 +353,7 @@ impl NativeFire {
                 run,
                 "execute",
                 cwd.clone(),
-                JsString::from_utf16(body),
+                body,
                 Arc::new(PhaseHandlers::Execution),
             ))
             .await?;
@@ -477,21 +425,19 @@ impl NativeFire {
             state: report_state.clone(),
             pending: Arc::<ReportPending>::default(),
         });
-        let mut prompt = if self.chinese() {
-            "用简体中文描述已完成的工作，并使用 always_on_report 保存报告。\n\n"
-        } else {
-            "Describe the completed work and use always_on_report to save the report.\n\n"
-        }
-        .encode_utf16()
-        .collect::<Vec<_>>();
-        prompt.extend_from_slice(markdown.units());
+        let prompt = super::prompt_compat::report(
+            self.chinese(),
+            ws.handle.strategy.as_str(),
+            &ws.handle.cwd,
+            &markdown,
+        );
         let result = self
             .phase_runner()
             .run(self.phase_spec(
                 run,
                 "report",
                 cwd,
-                JsString::from_utf16(prompt),
+                prompt,
                 Arc::new(PhaseHandlers::Report(handler)),
             ))
             .await?;
@@ -640,7 +586,6 @@ impl DiscoveryFirePort for NativeFire {
                 let plans = storage::run(move || store.list_records())
                     .await
                     .map_err(|e| failure("internal", e.to_string()))?;
-                let prompt = self.discovery_prompt(&digest, &plans);
                 let plan_state = Arc::new(tokio::sync::Mutex::new(PlanState::default()));
                 let plan_handler = Arc::new(PlanHandler {
                     run_id: input.run_id.into(),
@@ -648,15 +593,9 @@ impl DiscoveryFirePort for NativeFire {
                     state: plan_state.clone(),
                     pending: Arc::<PlanPending>::default(),
                 });
-                let chat_handler = Arc::new(ChatHandler {
-                    run_id: input.run_id.into(),
-                    files: self.history.clone(),
-                    aliases: digest.aliases,
-                    catalog: self.catalog.clone(),
-                    max_frame_bytes: self.max_frame_bytes,
-                });
                 let mut cwd = PathBuf::from(&self.input.project_key);
                 let mut has_workspace = false;
+                let mut prompt_workspace = None;
                 if let Some(id) = state.get("activeWorkCycleId").and_then(JsValue::as_string) {
                     let cycles = self.input.cycle_store.clone();
                     let id = id.clone();
@@ -668,6 +607,8 @@ impl DiscoveryFirePort for NativeFire {
                         match self.workspace.authorize_cycle(cycle).await {
                             Ok(handle) => {
                                 cwd = PathBuf::from(js(&handle.cwd)?);
+                                prompt_workspace =
+                                    Some((handle.cwd.clone(), handle.strategy.as_str().to_owned()));
                                 has_workspace = true;
                             }
                             Err(e) if e.is_missing() => {}
@@ -682,11 +623,33 @@ impl DiscoveryFirePort for NativeFire {
                         .cloned()
                 {
                     match self.workspace.authorize_legacy(legacy).await {
-                        Ok(handle) => cwd = PathBuf::from(js(&handle.cwd)?),
+                        Ok(handle) => {
+                            cwd = PathBuf::from(js(&handle.cwd)?);
+                            prompt_workspace =
+                                Some((handle.cwd.clone(), handle.strategy.as_str().to_owned()));
+                        }
                         Err(e) if e.is_missing() => {}
                         Err(e) => return Err(workspace_error(e)),
                     }
                 }
+                let prompt = super::prompt_compat::discovery(
+                    self.chinese(),
+                    &self.input.project_key,
+                    &input.run_id.into(),
+                    &iso(input.started_at_ms),
+                    prompt_workspace
+                        .as_ref()
+                        .map(|(cwd, strategy)| (cwd, strategy.as_str())),
+                    &digest,
+                    &plans,
+                );
+                let chat_handler = Arc::new(ChatHandler {
+                    run_id: input.run_id.into(),
+                    files: self.history.clone(),
+                    aliases: digest.aliases,
+                    catalog: self.catalog.clone(),
+                    max_frame_bytes: self.max_frame_bytes,
+                });
                 let spec = self.phase_spec(
                     input.run_id,
                     "discovery",
@@ -910,18 +873,18 @@ mod tests {
                 self.0.lock().unwrap().push(phase.clone());
                 let prompt = request.message.to_utf8().unwrap();
                 let expected = match (phase.as_str(), self.1) {
-                    ("always-on/discovery", true) => "检查项目",
-                    ("always-on/discovery", false) => "Inspect project",
-                    ("always-on/workspace", true) => "创建隔离工作区",
-                    ("always-on/workspace", false) => "Prepare an isolated workspace",
-                    ("always-on/execute", true) => "在当前隔离工作区",
-                    ("always-on/execute", false) => "Execute this plan",
-                    ("always-on/report", true) => "用简体中文描述",
-                    ("always-on/report", false) => "Describe the completed work",
+                    ("always-on/discovery", true) => "你正在为项目执行自主 Always-On 发现任务:",
+                    ("always-on/discovery", false) => "You are running an autonomous Always-On discovery for project:",
+                    ("always-on/workspace", true) => "你正在为 Always-On 计划执行准备一个隔离工作区。",
+                    ("always-on/workspace", false) => "You are preparing an isolated workspace for an Always-On plan execution.",
+                    ("always-on/execute", true) => "你正在隔离工作区内执行一个 Always-On 发现计划。",
+                    ("always-on/execute", false) => "You are executing an Always-On discovery plan inside an isolated workspace.",
+                    ("always-on/report", true) => "你正在为已完成的 Always-On 计划执行撰写工作报告。",
+                    ("always-on/report", false) => "You are writing a work report for a completed Always-On plan execution.",
                     _ => panic!("unexpected phase"),
                 };
                 assert!(
-                    prompt.contains(expected),
+                    prompt.starts_with(expected),
                     "actual {phase} request: {prompt}"
                 );
                 let registry = ToolRegistry::default();

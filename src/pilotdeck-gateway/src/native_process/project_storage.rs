@@ -74,7 +74,7 @@ mod tests {
     use super::*;
     use crate::runtime::session::SessionContext;
     #[tokio::test]
-    async fn missing_native_transcript_discards_orphans_but_reopen_preserves_live_sidecars() {
+    async fn missing_native_transcript_quarantines_orphans_but_reopen_preserves_live_sidecars() {
         let (_scratch, requests) = crate::native_process::management_tests::setup();
         let registry = super::super::assembly::project_registry(&requests.options, &requests.env);
         let generation = Arc::new(registry.acquire(None).unwrap());
@@ -107,6 +107,33 @@ mod tests {
         assert!(!path.exists());
         let opened = (plan.open)().unwrap();
         assert!(!backup.exists() && !journal.exists());
+        let quarantine_snapshot = || -> std::collections::BTreeMap<_, _> {
+            std::fs::read_dir(path.parent().unwrap())
+                .unwrap()
+                .map(Result::unwrap)
+                .filter_map(|entry| {
+                    let name = entry.file_name().into_string().unwrap();
+                    name.starts_with(".pdrs-orphan.")
+                        .then(|| (name, std::fs::read(entry.path()).unwrap()))
+                })
+                .collect()
+        };
+        let preserved = quarantine_snapshot();
+        assert_eq!(
+            preserved.len(),
+            2,
+            "both recovery artifacts survive quarantine"
+        );
+        assert!(
+            preserved
+                .values()
+                .any(|bytes| bytes == b"old deleted lifetime backup")
+        );
+        assert!(
+            preserved
+                .values()
+                .any(|bytes| bytes == b"old deleted lifetime journal")
+        );
         assert!(opened.read().unwrap().entries.is_empty());
         opened
             .recorder
@@ -122,6 +149,11 @@ mod tests {
         assert_eq!(
             std::fs::read(&journal).unwrap(),
             b"live replacement journal"
+        );
+        assert_eq!(
+            quarantine_snapshot(),
+            preserved,
+            "reopen preserves exact quarantine names and bytes without duplicates"
         );
         drop(reopened);
         drop(plan);

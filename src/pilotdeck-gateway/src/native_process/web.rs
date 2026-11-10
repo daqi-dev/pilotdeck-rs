@@ -33,6 +33,9 @@ pub(super) struct NativeWebTools {
     transport: Arc<dyn ModelHttpTransport>,
 }
 impl NativeWebTools {
+    pub(super) fn search_enabled(&self) -> bool {
+        self.search.is_some()
+    }
     pub fn new(
         router: Arc<RouterRuntime>,
         model_config: JsValue,

@@ -148,6 +148,7 @@ fn stream(
     // been observed by the hook; finish() then rejects any Terminal unless
     // the test also drives the StreamHandler's validate_event in host order.
     LiveTurnStream {
+        timeout_run_id: None,
         execution: Some(execution),
         result: None,
         events,

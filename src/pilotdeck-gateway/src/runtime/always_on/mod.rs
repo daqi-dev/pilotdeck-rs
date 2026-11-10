@@ -203,3 +203,5 @@ impl AlwaysOnConfig {
 
 mod native_fire;
 pub(crate) use native_fire::NativeFire;
+
+mod prompt_compat;

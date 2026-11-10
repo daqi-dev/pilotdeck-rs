@@ -822,13 +822,14 @@ impl ContextRuntime for DefaultContextRuntime {
     fn prepare_for_model(&self, input: ContextInput) -> HostFuture<JsValue> {
         let runtime = self.clone();
         // `ContextInput` carries cancellation opaquely, like the tool runtime.
-        // Adopt the host's one-shot `Cancellation`; an unrelated capability is
-        // ignored, exactly like an `AbortSignal` that is never aborted.
-        let abort = input
-            .abort_signal
-            .as_ref()
-            .and_then(|signal| signal.downcast_ref::<Cancellation>())
-            .cloned();
+        // Observe either host or native-network cancellation without granting
+        // a context child permission to cancel its owning turn.
+        let abort = input.abort_signal.as_ref().and_then(|signal| {
+            signal.downcast_ref::<Cancellation>().cloned().or_else(|| {
+                signal.downcast_ref::<crate::runtime::network::Cancellation>()
+                    .cloned().map(Cancellation::from_network_parent)
+            })
+        });
         Box::pin(async move { runtime.prepare(input.fields, abort).await })
     }
 }

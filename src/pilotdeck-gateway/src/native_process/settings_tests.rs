@@ -1939,6 +1939,7 @@ async fn settings_busy_gate_matrix() {
         ["agent.maxContextTokens"],
         "#1320 busy-gate: update_settings must not gate on the active turn (the TS closure has no busy gate)"
     );
+    drain(&stack.settling).await;
     let reload = call(
         &stack.requests,
         &primary,
@@ -1953,6 +1954,8 @@ async fn settings_busy_gate_matrix() {
         Vec::<String>::new(),
         "#1320 busy-gate: reload_config must not gate on the active turn"
     );
+
+    drain(&stack.settling).await;
 
     // The production matrix assembly: the three registry-bound methods
     // answer CAPABILITY_UNAVAILABLE, resolve and the two reloads stay
@@ -2028,6 +2031,12 @@ async fn settings_busy_gate_matrix() {
         ["agent.model.id", "agent.model.model"],
         "#1320 busy-gate: the matrix assembly must reload the real store"
     );
+    drain(&stack.settling).await;
+    let changed = r#"broadcast:config_changed:{"changedPaths":["agent.model.id","agent.model.model"],"changeClasses":["next-request"]}"#;
+    assert!(
+        stack.probe.events().iter().any(|event| event == changed),
+        "#1320 busy-gate: the matrix reload must finish its broadcast settlement"
+    );
     let extensions = call(
         &stack.requests,
         &matrix_connection,
@@ -2042,6 +2051,7 @@ async fn settings_busy_gate_matrix() {
         Vec::<String>::new(),
         "#1320 busy-gate: the matrix assembly must serve reload_extensions"
     );
+    drain(&stack.settling).await;
 }
 
 /// The isolation refusal the full route answers for a `projectKey` it does

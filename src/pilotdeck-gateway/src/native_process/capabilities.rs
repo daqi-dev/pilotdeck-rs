@@ -6,7 +6,8 @@
 //! The recorded output of the baseline for the three fixture config states is
 //! `tests/fixtures/native-management/oracle.json` (`contract.capabilities`,
 //! `contract.emptyStorage.capabilities`, `contract.missingStorage.capabilities`
-//! — the same 50 names in all three).
+//! — the same names in all three). Optional manager/settings callbacks are
+//! also captured independently in `optional-capabilities.json`.
 //!
 //! One entry per advertised name; `methods` is the wire set the name promises
 //! and `wired` is the provider probe. A name is advertised only when **every**
@@ -172,8 +173,8 @@ pub(super) const CAPABILITIES: &[Capability] = &[
     Capability { name: "supported_agents", methods: &[], wired: compiled_in },
     // TS splices these six right after the snapshot triplet, gated on
     // `options.cron` (`InProcessGateway.ts:2114-2123`); the fixture does not
-    // configure cron, which is why they are the only table names the recorded
-    // state does not contain. `CRON_METHODS` owns both sides (#1325).
+    // configure cron. `CRON_METHODS` owns both sides (#1325); optional
+    // provider captures separately cover manager/settings callbacks.
     Capability { name: "cron_create", methods: &[], wired: cron },
     Capability { name: "cron_list", methods: &[], wired: cron },
     Capability { name: "cron_update", methods: &[], wired: cron },
@@ -265,6 +266,57 @@ mod tests {
             .iter()
             .map(|value| value.as_str().expect("#1352 oracle capability string"))
             .collect()
+    }
+
+    fn optional_provider_capture() -> &'static serde_json::Value {
+        static PARSED: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+        PARSED.get_or_init(|| {
+            serde_json::from_str(include_str!(
+                "../../tests/fixtures/native-management/optional-capabilities.json"
+            ))
+            .expect("optional TS capability capture parses")
+        })
+    }
+
+    fn optional_provider_names() -> Vec<&'static str> {
+        optional_provider_capture()["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["name"] == "all")
+            .unwrap()["added"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|name| name.as_str().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn optional_provider_capture_pins_each_callback_independently() {
+        let capture = optional_provider_capture();
+        assert_eq!(
+            capture["sourceCommit"],
+            "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"
+        );
+        let rows = capture["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 6);
+        let all = optional_provider_names();
+        for (option, capability) in [
+            ("managerBrowsers", "manager_browsers"),
+            ("applyFlagSettings", "apply_flag_settings"),
+            ("updateSettings", "update_settings"),
+            ("reloadOutputStyles", "reload_output_styles"),
+        ] {
+            let row = rows.iter().find(|row| row["name"] == option).unwrap();
+            assert_eq!(row["options"], serde_json::json!([option]));
+            assert_eq!(row["added"], serde_json::json!([capability]));
+            assert_eq!(row["removed"], serde_json::json!([]));
+            assert!(all.contains(&capability));
+            assert!(table_names().contains(&capability));
+        }
+        assert_eq!(all.len(), 4);
+        assert_eq!(capture["providerInvocations"], 0);
     }
 
     /// The names the TS baseline recorded in `contract.capabilities`.
@@ -371,10 +423,9 @@ mod tests {
 
     /// The acceptance-narrowing invariant: advertised == recorded − declared
     /// exceptions. Every recorded name either is advertised or carries a
-    /// reason, and no advertised name is invented — the only table entries the
-    /// recorded state does not contain are the six cron names, which TS gates
-    /// on `options.cron` (a delegate the fixture does not configure) and which
-    /// `CRON_METHODS` owns for both sides.
+    /// reason, and no advertised name is invented. Separately configured
+    /// provider captures supplement the original management fixture. Cron and
+    /// always-on retain their independently tested runtime-owned method sets.
     #[test]
     fn capability_table_covers_every_recorded_name() {
         // The module header claims all three recorded config states carry the
@@ -400,12 +451,14 @@ mod tests {
                 "#1352 recorded TS name {name} is neither advertised nor declared in NOT_ADVERTISED"
             );
         }
+        let optional = optional_provider_names();
         for name in &table {
             negative_assert!(
                 recorded.contains(name)
+                    || optional.contains(name)
                     || crate::runtime::cron::CRON_METHODS.contains(name)
                     || crate::runtime::always_on::ALWAYS_ON_METHODS.contains(name),
-                "#1352 {name} is advertised but the TS baseline does not record it and it is neither a cron nor an always-on name"
+                "#1352 {name} is advertised but neither TS capture records it and it is neither a cron nor an always-on name"
             );
         }
         for name in crate::runtime::cron::CRON_METHODS {

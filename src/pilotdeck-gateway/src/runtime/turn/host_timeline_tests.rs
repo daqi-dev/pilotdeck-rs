@@ -249,6 +249,7 @@ async fn replay_case(case: &JsValue, name: &str) {
         (None, None)
     };
     let turn = LiveTurnStream {
+        timeout_run_id: None,
         execution: None,
         result: None,
         events: mpsc::channel(1).1,

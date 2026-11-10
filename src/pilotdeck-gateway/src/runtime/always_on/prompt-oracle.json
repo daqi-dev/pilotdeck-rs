@@ -1,0 +1,23 @@
+{
+  "input": {
+    "projectRoot": "/fixture/project",
+    "runId": "fixture-run",
+    "planTitle": "测试 plan",
+    "planMarkdown": " \n## Plan\n- action\n ",
+    "workspaceCwd": "/fixture/worktree",
+    "workspaceStrategy": "git-worktree",
+    "plan": {}
+  },
+  "results": {
+    "en-US": {
+      "workspace": "You are preparing an isolated workspace for an Always-On plan execution.\n\nProject root: /fixture/project\nPlan: \"测试 plan\"\n\nAvailable workspace strategies:\n  - `git-worktree`: Creates a git worktree on a new branch. Fast and space-efficient (hard-links).\n    Requires a git repo with at least one commit. If the working tree is dirty, Always-On\n    checkpoints all current changes before creating the worktree.\n  - `snapshot-copy`: Copies the project directory (CoW on APFS/btrfs). Works for any directory\n    but uses more disk space. Ignores .git, node_modules, dist by default.\n\nPermissions: this turn runs in `bypassPermissions` mode — every tool call is auto-allowed.\n\n## What to do\n1. Check the project root state (e.g. `git status --porcelain` if it looks like a git repo, or `ls` otherwise).\n2. Call `always_on_prepare_workspace` with the chosen strategy, or `auto` to let the runtime decide.",
+      "execution": "You are executing an Always-On discovery plan inside an isolated workspace.\nWorkspace strategy: git-worktree.\nWorkspace cwd: /fixture/worktree\n\nPermissions: this turn runs in `bypassPermissions` mode — every tool call is auto-allowed.\nSafety boundary is the workspace itself; do NOT cd outside it, do NOT touch the user's project root.\n\n## Plan\n## Plan\n- action\n\n## What to do\n1. Execute the Execution Steps in order.\n2. Run the Verification list and record results.\n3. Respond with a summary of what was done and the verification outcomes.",
+      "report": "You are writing a work report for a completed Always-On plan execution.\nWorkspace strategy: git-worktree.\nWorkspace cwd: /fixture/worktree\n\nPermissions: this turn runs in `bypassPermissions` mode — every tool call is auto-allowed.\n\n## Plan that was executed\n## Plan\n- action\n\n## What to do\n1. Review the workspace to see what changed (e.g. `git diff --stat`, `ls`, read relevant files).\n2. Summarize the execution: what steps were performed, which files were changed, command outputs, and verification results.\n3. Call `always_on_report` exactly once with the full work-report markdown.\n\nEach section MUST use `##` (h2) headers — e.g. `## Plan Reference`, `## Steps Performed`, etc.\nRequired sections in order: Plan Reference, Steps Performed, Files Changed, Command Output, Verification Results, Follow-ups, Notes.\nMissing sections will be filled by the runtime fallback."
+    },
+    "zh-CN": {
+      "workspace": "你正在为 Always-On 计划执行准备一个隔离工作区。\n\n项目根目录: /fixture/project\n计划: \"测试 plan\"\n\n可用的工作区策略:\n  - `git-worktree`: 在新分支上创建 git worktree。速度快、空间占用少 (使用硬链接)。\n    要求项目是 git 仓库且至少有一次提交。若工作区存在未提交更改，Always-On\n    会先提交当前全部改动作为 checkpoint，再创建 worktree。\n  - `snapshot-copy`: 复制项目目录 (在 APFS/btrfs 上使用 CoW)。适用于任何目录,\n    但占用更多磁盘空间。默认忽略 .git、node_modules、dist。\n\n权限: 本轮运行在 `bypassPermissions` 模式下——所有工具调用均自动允许。\n\n## 执行步骤\n1. 检查项目根目录状态 (如 git 仓库可执行 `git status --porcelain`, 否则执行 `ls`)。\n2. 调用 `always_on_prepare_workspace`, 传入选定的策略, 或传入 `auto` 让运行时自动选择。",
+      "execution": "你正在隔离工作区内执行一个 Always-On 发现计划。\n工作区策略: git-worktree\n工作区路径: /fixture/worktree\n\n权限: 本轮运行在 `bypassPermissions` 模式下——所有工具调用均自动允许。\n安全边界为工作区本身; 请勿 cd 到工作区外部, 请勿修改用户的项目根目录。\n\n## 计划\n## Plan\n- action\n\n## 执行步骤\n1. 按顺序执行 Execution Steps 中的各项步骤。\n2. 运行 Verification 列表中的检查项并记录结果。\n3. 回复执行总结及验证结果。",
+      "report": "你正在为已完成的 Always-On 计划执行撰写工作报告。\n工作区策略: git-worktree\n工作区路径: /fixture/worktree\n\n权限: 本轮运行在 `bypassPermissions` 模式下——所有工具调用均自动允许。\n\n## 已执行的计划\n## Plan\n- action\n\n## 执行步骤\n1. 查看工作区中的变更 (如 `git diff --stat`、`ls`、阅读相关文件)。\n2. 总结执行情况: 执行了哪些步骤、修改了哪些文件、命令输出、验证结果。\n3. 调用 `always_on_report` 恰好一次, 提交完整的工作报告 markdown。\n\n每个章节必须使用 `##`（h2）标题——例如 `## Plan Reference`、`## Steps Performed` 等。\n报告章节按以下顺序排列: Plan Reference, Steps Performed, Files Changed, Command Output, Verification Results, Follow-ups, Notes。\n缺失的章节将由运行时自动补全。"
+    }
+  }
+}

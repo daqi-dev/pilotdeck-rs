@@ -219,11 +219,17 @@ mod tests {
         let live = Arc::new(Sink::default());
         let closed = Arc::new(Sink::default());
         let unauthenticated = Arc::new(Sink::default());
+        let late_authenticated = Arc::new(Sink::default());
         let mut connections = Vec::new();
         let mut registrations = Vec::new();
-        for (index, sink) in [live.clone(), closed.clone(), unauthenticated.clone()]
-            .into_iter()
-            .enumerate()
+        for (index, sink) in [
+            live.clone(),
+            closed.clone(),
+            unauthenticated.clone(),
+            late_authenticated.clone(),
+        ]
+        .into_iter()
+        .enumerate()
         {
             let connection = Arc::new(GatewayConnection::new(
                 sink,
@@ -231,10 +237,12 @@ mod tests {
                 "token".into(),
                 "test".into(),
             ));
+            // Production registers before the handshake; authentication is
+            // evaluated when the host executes the queued notification.
+            registrations.push(owner.register(&connection));
             if index < 2 {
                 connection.receive(r#"{"type":"hello","protocolVersion":"1.2","clientName":"ui","clientVersion":"test","token":"token"}"#).await.unwrap();
             }
-            registrations.push(owner.register(&connection));
             connections.push(connection);
         }
         let external = owner.clone();
@@ -244,9 +252,15 @@ mod tests {
         // Closing after admission but before the host executes the job must
         // prevent delivery. The live connection proves the queued job ran.
         registrations[1].close();
+        connections[3].receive(r#"{"type":"hello","protocolVersion":"1.2","clientName":"ui","clientVersion":"test","token":"token"}"#).await.unwrap();
         rx.try_recv().unwrap().await;
         assert!(rx.try_recv().is_err());
-        for (sink, expected) in [(live, 1), (closed, 0), (unauthenticated, 0)] {
+        for (sink, expected) in [
+            (live, 1),
+            (closed, 0),
+            (unauthenticated, 0),
+            (late_authenticated, 1),
+        ] {
             let frames = sink.frames.lock().unwrap();
             assert_eq!(
                 frames

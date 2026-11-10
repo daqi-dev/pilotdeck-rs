@@ -5480,9 +5480,9 @@ async fn run_family_reads_the_registry_key_like_the_ts_template() {
         .await
         .expect("#1604 array sessionKey joins, no error");
     negative_assert_eq!(
-        matches!(result, JsValue::Null),
+        matches!(result, JsValue::Undefined),
         true,
-        "#1604 the joined key misses and run_get answers null"
+        "#1604 the joined key misses and run_get answers undefined"
     );
     // r7: cursor validation precedes the key template reads.
     let error = requests

@@ -463,3 +463,38 @@ hashbrown 0.16.1 / allocator-api2 等其余同名条目属既有 workspace 依�
 非本单新增。`scripts/smoke/probe` 独立 workspace 不依赖本 crate，
 锁文件经 `cargo metadata --offline` 核对无变化。验收记录见
 `_tmp/20261107-issue-1265/RESULT.md`（任务书指定证据目录）。
+
+
+## Gateway 模型输入兼容资产（2026-11-10 人批窄范围复用）
+
+固定来源为 OpenBMB/PilotDeck `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`。
+仅复用模型可见提示文本、工具描述和 JSON Schema，不复用 TypeScript 业务实现；
+动态字段、工作区授权与执行仍由 Rust 运行时生成和处理。上游 AGPL-3.0 许可
+完整保留于仓根 `LICENSE`，与上游许可证逐字节相同，SHA-256 为
+`0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0`。
+
+提示资产位于 `pilotdeck-gateway/src/runtime/always_on/prompt_compat.rs` 与
+`discovery-static.json`；同目录 `prompt-oracle.json`、`discovery-templates.json`
+是固定 TS 实际函数的对照数据，仅由测试引用。四阶段覆盖 discovery、workspace、
+execution、report 的英中提示；动态值采用 JS UTF-16 和 trim 语义。
+
+来源路径（相对于固定 TS 仓）与源文件 SHA-256：
+
+| 来源 | SHA-256 |
+| --- | --- |
+| src/always-on/runtime/discoveryPrompts.ts | 4ca69404da72a1e6de9f7909630f0d6b441fc640dacc724b8f74609c5c059996 |
+| src/always-on/runtime/discoveryPrompts.zh.ts | 65864951d4114d4e3e4217c99748c793fbe364ccb4d977d83ef19b44b9c49a62 |
+| src/always-on/tool/AlwaysOnChatHistoryTool.ts | f2fca39c13eae7f110c0cf3b0be8956c94a129c0850d66841476d5d7381e45cb |
+| src/always-on/tool/AlwaysOnDiscoveryPlanTool.ts | 74868f63a02480592cf1b28c3919fdcf15f65f336d72b4f504616ed5d225061d |
+| src/always-on/tool/AlwaysOnReportTool.ts | 41586794c03d1200e7353b605a89c6e70a8c60d8da0eb1028deedceb50cb44ec |
+| src/always-on/tool/AlwaysOnWorkspaceTool.ts | 01379d216c3f2f87bbe1c400434c6d3fa1c4dd789312351f1a76270a351bb5b8 |
+| src/tool/builtin/readSkill.ts | f6a9b52028bd87e7d06b1190e1e299bd40acdf437174984008b7ceb8ac3cd48e |
+| src/tool/builtin/sendAttachment.ts | a026acc24d732070a4be128099e82fed0cc3fe2f6efe0d72f6f814965913e516 |
+| src/tool/builtin/todoWrite.ts | d2cd5edbe16d377cb7c98c27e9c9e3c722176e7280a53bf1d7f3bbc334ca92a6 |
+| src/tool/builtin/subagentContinuation.ts | 4e2743fa14d2d69249709a0d05b60e691aefd4e70b2c733d186e0acd11c59374 |
+| src/tool/builtin/agent.ts | 0527caf471592397ef677c421741f831850b3e0adeb28b33845b3cd1022b10c0 |
+| src/tool/builtin/executeCode.ts | ccb317d7666d9a0f312967bdc9c068943fcb9fff64a122eb0c751d39d064b2ea |
+
+工具资产就地嵌入 `runtime/always_on/tools.rs`、`native_process/{skills,agent,agent_continuation}.rs`
+及 `runtime/tools/builtin/{send_attachment,plan_todo,execute_code}.rs`；agent 深度、
+execute_code 的搜索配置及 sandbox 模式文案按实际运行状态生成，不使用某次请求的固定捕获替代配置。

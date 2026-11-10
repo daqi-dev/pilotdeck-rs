@@ -420,9 +420,11 @@ impl SessionTools {
             .as_ref()
             .map(|a| a.emit.clone())
             .unwrap_or_else(|| Arc::new(|_| false));
+        let execute_code_web_search = self.web.as_ref().is_some_and(|web| web.search_enabled());
         #[cfg(unix)]
         let tools = if let Some(sandbox) = &self.native_sandbox {
             native_tools_with_sandbox(
+                execute_code_web_search,
                 self.binding.context.allowed_tools.clone(),
                 self.binding.context.disallowed_tools.clone(),
                 self.lsp.clone(),
@@ -430,7 +432,8 @@ impl SessionTools {
                 &self.mcp,
             )
         } else {
-            native_tools(
+            native_tools_profile(
+                execute_code_web_search,
                 self.binding.context.allowed_tools.clone(),
                 self.binding.context.disallowed_tools.clone(),
                 self.lsp.clone(),
@@ -438,7 +441,8 @@ impl SessionTools {
             )
         };
         #[cfg(not(unix))]
-        let tools = native_tools(
+        let tools = native_tools_profile(
+            execute_code_web_search,
             self.binding.context.allowed_tools.clone(),
             self.binding.context.disallowed_tools.clone(),
             self.lsp.clone(),
@@ -1238,24 +1242,39 @@ impl MutationRecorder for Durable {
     }
 }
 
+#[cfg(test)]
 pub(super) fn native_tools(
     allowed: Option<Vec<JsString>>,
     denied: Option<Vec<JsString>>,
     lsp: Arc<super::families::DefaultLsp>,
     mcp: &SessionMcpTools,
 ) -> ToolRegistry {
+    native_tools_profile(true, allowed, denied, lsp, mcp)
+}
+fn native_tools_profile(
+    web_search: bool,
+    allowed: Option<Vec<JsString>>,
+    denied: Option<Vec<JsString>>,
+    lsp: Arc<super::families::DefaultLsp>,
+    mcp: &SessionMcpTools,
+) -> ToolRegistry {
+    #[cfg(not(unix))]
+    let _ = web_search;
     native_tools_with_definitions(allowed, denied, lsp, mcp, {
         let mut definitions = builtin::read_only_tools();
         definitions.extend(builtin::write_tools());
         #[cfg(unix)]
         definitions.extend(builtin::shell_tools());
         #[cfg(unix)]
-        definitions.push(Arc::new(builtin::execute_code::ExecuteCodeTool::new()));
+        definitions.push(Arc::new(
+            builtin::execute_code::ExecuteCodeTool::with_sandbox_and_web_search(None, web_search),
+        ));
         definitions
     })
 }
 #[cfg(unix)]
 fn native_tools_with_sandbox(
+    web_search: bool,
     allowed: Option<Vec<JsString>>,
     denied: Option<Vec<JsString>>,
     lsp: Arc<super::families::DefaultLsp>,
@@ -1265,7 +1284,10 @@ fn native_tools_with_sandbox(
     let mut definitions = builtin::read_only_tools();
     definitions.extend(builtin::write_tools());
     definitions.push(Arc::new(
-        builtin::execute_code::ExecuteCodeTool::with_sandbox(Some(sandbox.clone())),
+        builtin::execute_code::ExecuteCodeTool::with_sandbox_and_web_search(
+            Some(sandbox.clone()),
+            web_search,
+        ),
     ));
     definitions.push(Arc::new(builtin::bash::BashTool::with_options(
         builtin::bash::BashToolOptions {

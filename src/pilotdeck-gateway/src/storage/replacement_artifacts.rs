@@ -1,6 +1,7 @@
 //! Invalidation of stale last-turn replacement sidecars, shared by native reopen and portable restore.
 //! Caller owns the transcript writer lease and mutation fence. Never infer absence from read failure.
 use rustix::fs::{AtFlags, Dir, Mode, OFlags, openat, statat, unlinkat};
+use sha2::{Digest, Sha256};
 use std::{fs::File, io, path::Path};
 fn parent(path: &Path) -> io::Result<File> {
     let parent = path
@@ -12,6 +13,40 @@ pub(crate) fn valid_uuid(s: &str) -> bool {
     uuid::Uuid::parse_str(s).is_ok_and(|id| {
         matches!(id.get_version_num(), 1..=5) && matches!(id.get_variant(), uuid::Variant::RFC4122)
     }) && s.len() == 36
+}
+fn quarantine_prefix(path: &Path) -> io::Result<String> {
+    use std::os::unix::ffi::OsStrExt;
+    let stem = path
+        .file_stem()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Transcript has no name"))?;
+    Ok(format!(
+        ".pdrs-orphan.{:x}.",
+        Sha256::digest(stem.as_bytes())
+    ))
+}
+fn active_transaction(name: &str, prefix: &str) -> Option<(String, &'static str)> {
+    let rest = name.strip_prefix(prefix)?;
+    for kind in ["bak", "json"] {
+        let suffix = format!(".replace.{kind}");
+        if let Some(id) = rest.strip_suffix(&suffix).filter(|id| valid_uuid(id)) {
+            return Some((id.to_owned(), kind));
+        }
+    }
+    None
+}
+fn is_quarantined(name: &str, active_prefix: &str, quarantine_prefix: &str) -> bool {
+    if let Some(rest) = name.strip_prefix(quarantine_prefix) {
+        let fields: Vec<_> = rest.split('.').collect();
+        return fields.len() == 3
+            && valid_uuid(fields[0])
+            && matches!(fields[1], "bak" | "json")
+            && valid_uuid(fields[2]);
+    }
+    // Also clean artifacts quarantined by the earlier long-name format.
+    name.rsplit_once(".orphaned.")
+        .is_some_and(|(active, nonce)| {
+            valid_uuid(nonce) && active_transaction(active, active_prefix).is_some()
+        })
 }
 fn invalidate_at(directory: &File, path: &Path, preserve: bool) -> io::Result<()> {
     // A traversal/search descriptor is not necessarily readable. In particular
@@ -32,37 +67,41 @@ fn invalidate_at(directory: &File, path: &Path, preserve: bool) -> io::Result<()
         .file_stem()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Transcript has no name"))?;
     let prefix = format!(".{}.", stem.to_string_lossy());
-    let mut removed = false;
+    let quarantine_prefix = quarantine_prefix(path)?;
+    // Collect before mutating: rename may change directory iterator offsets.
+    // The caller's writer lease/fence excludes cooperating sidecar producers.
+    let mut selected = Vec::new();
     for entry in Dir::read_from(directory).map_err(io::Error::from)? {
         let entry = entry.map_err(io::Error::from)?;
-        let Some(name) = entry.file_name().to_str().ok() else {
+        let Ok(name) = entry.file_name().to_str() else {
             continue;
         };
-        let id = name.strip_prefix(&prefix).and_then(|rest| {
-            rest.strip_suffix(".replace.bak")
-                .or_else(|| rest.strip_suffix(".replace.json"))
-        });
-        if id.is_some_and(valid_uuid) {
-            removed = true;
-            let result = if preserve {
-                // Missing is not proof of an intentional delete: these may
-                // be the only recovery bytes left after a crash. Remove the
-                // transaction from automatic recovery without discarding it.
-                let quarantine = format!("{name}.orphaned.{}", uuid::Uuid::new_v4());
-                rustix::fs::renameat_with(
-                    directory,
-                    entry.file_name(),
-                    directory,
-                    quarantine.as_str(),
-                    rustix::fs::RenameFlags::NOREPLACE,
-                )
-            } else {
-                unlinkat(directory, entry.file_name(), AtFlags::empty())
-            };
-            match result {
-                Ok(()) | Err(rustix::io::Errno::NOENT) => {}
-                Err(error) => return Err(error.into()),
-            }
+        let active = active_transaction(name, &prefix);
+        if active.is_some() || (!preserve && is_quarantined(name, &prefix, &quarantine_prefix)) {
+            selected.push((entry.file_name().to_owned(), active));
+        }
+    }
+    let mut removed = false;
+    for (name, transaction) in selected {
+        let result = if preserve {
+            let (id, kind) = transaction.expect("only active transactions are quarantined");
+            // Fixed length even when the session stem is near NAME_MAX.
+            // Retain the original transaction ID and kind for forensic recovery.
+            let quarantine = format!("{quarantine_prefix}{id}.{kind}.{}", uuid::Uuid::new_v4());
+            rustix::fs::renameat_with(
+                directory,
+                name.as_c_str(),
+                directory,
+                quarantine.as_str(),
+                rustix::fs::RenameFlags::NOREPLACE,
+            )
+        } else {
+            unlinkat(directory, name.as_c_str(), AtFlags::empty())
+        };
+        match result {
+            Ok(()) => removed = true,
+            Err(rustix::io::Errno::NOENT) => {}
+            Err(error) => return Err(error.into()),
         }
     }
     if removed {
@@ -170,14 +209,18 @@ mod tests {
         assert!(cleanup_if_missing(&s.0.join("session.jsonl")).unwrap());
         assert!(sidecars.iter().all(|p| !p.exists()));
         for original in &sidecars {
-            let prefix = format!(
-                "{}.orphaned.",
-                original.file_name().unwrap().to_str().unwrap()
-            );
+            let prefix = quarantine_prefix(&s.0.join("session.jsonl")).unwrap();
+            let (_, kind) =
+                active_transaction(original.file_name().unwrap().to_str().unwrap(), ".session.")
+                    .unwrap();
             let quarantined: Vec<_> = std::fs::read_dir(&s.0)
                 .unwrap()
                 .map(Result::unwrap)
-                .filter(|entry| entry.file_name().to_str().unwrap().starts_with(&prefix))
+                .filter(|entry| {
+                    let name = entry.file_name();
+                    let name = name.to_str().unwrap();
+                    name.starts_with(&prefix) && name.contains(&format!(".{kind}."))
+                })
                 .collect();
             assert_eq!(quarantined.len(), 1);
             assert_eq!(std::fs::read(quarantined[0].path()).unwrap(), b"old data");
@@ -189,6 +232,93 @@ mod tests {
             assert_eq!(std::fs::read(p).unwrap(), b"keep");
         }
     }
+    #[test]
+    fn hundreds_of_long_names_quarantine_once_then_delete_only_exact_session() {
+        let s = Scratch::new();
+        let stem = "x".repeat(200);
+        let path = s.0.join(format!("{stem}.jsonl"));
+        let other = s.0.join(format!("{stem}-other.jsonl"));
+        let mut originals = Vec::new();
+        for index in 0..512 {
+            let id = uuid::Uuid::new_v4();
+            for kind in ["bak", "json"] {
+                let name = format!(".{stem}.{id}.replace.{kind}");
+                let bytes = format!("precious-{index}-{kind}").into_bytes();
+                std::fs::write(s.0.join(&name), &bytes).unwrap();
+                originals.push((id.to_string(), kind, bytes));
+            }
+        }
+        let other_id = uuid::Uuid::new_v4();
+        let other_prefix = quarantine_prefix(&other).unwrap();
+        let other_name = format!("{other_prefix}{other_id}.bak.{}", uuid::Uuid::new_v4());
+        std::fs::write(s.0.join(&other_name), b"other session").unwrap();
+        let legacy = format!(
+            ".{stem}.{}.replace.bak.orphaned.{}",
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4()
+        );
+        // The old format fits only shorter stems; use an independent short session.
+        let short = s.0.join("legacy.jsonl");
+        let legacy = legacy.replace(&stem, "legacy");
+        std::fs::write(s.0.join(&legacy), b"legacy quarantine").unwrap();
+        assert!(cleanup_if_missing(&path).unwrap());
+        let prefix = quarantine_prefix(&path).unwrap();
+        let snapshot = || -> std::collections::BTreeMap<_, _> {
+            std::fs::read_dir(&s.0)
+                .unwrap()
+                .map(Result::unwrap)
+                .filter_map(|e| {
+                    let name = e.file_name().into_string().unwrap();
+                    name.starts_with(&prefix)
+                        .then(|| (name, std::fs::read(e.path()).unwrap()))
+                })
+                .collect()
+        };
+        let first = snapshot();
+        assert_eq!(
+            first.len(),
+            1024,
+            "all names captured before directory mutation"
+        );
+        for (id, kind, bytes) in originals {
+            assert!(!s.0.join(format!(".{stem}.{id}.replace.{kind}")).exists());
+            let matches: Vec<_> = first
+                .iter()
+                .filter(|(name, _)| name.starts_with(&format!("{prefix}{id}.{kind}.")))
+                .collect();
+            assert_eq!(matches.len(), 1);
+            assert_eq!(matches[0].1, &bytes);
+            assert!(matches[0].0.len() <= 255);
+        }
+        assert!(cleanup_if_missing(&path).unwrap());
+        assert_eq!(
+            snapshot(),
+            first,
+            "reopen neither duplicates nor discards recovery bytes"
+        );
+        std::fs::write(&path, b"new lifetime").unwrap();
+        std::fs::remove_file(&path).unwrap();
+        discard(&path).unwrap();
+        assert!(
+            snapshot().is_empty(),
+            "intentional delete clears this session quarantine"
+        );
+        assert_eq!(
+            std::fs::read(s.0.join(&other_name)).unwrap(),
+            b"other session"
+        );
+        assert_eq!(
+            std::fs::read(s.0.join(&legacy)).unwrap(),
+            b"legacy quarantine"
+        );
+        discard(&short).unwrap();
+        assert!(!s.0.join(&legacy).exists());
+        assert_eq!(
+            std::fs::read(s.0.join(&other_name)).unwrap(),
+            b"other session"
+        );
+    }
+
     #[test]
     fn existing_file_directory_and_dangling_link_preserve_all_sidecars() {
         use std::os::unix::fs::symlink;

@@ -516,6 +516,7 @@ pub(super) struct LiveTurnStream {
     pending_event: Option<(JsValue, bool, StatusReceipt)>,
     pending_durable: Option<(JsValue, StatusReceipt)>,
     callback_cancel: Option<Cancellation>,
+    timeout_run_id: Option<JsString>,
     host_loop: bool,
     accepted: bool,
     preflight: u8,
@@ -692,6 +693,18 @@ impl LiveTurn for LiveTurnStream {
                     continue;
                 }
                 let result = self.result.take();
+                // TS TurnRunner.ts:422,701-705 rethrows only a typed unknown
+                // operation after this execution run's timeout abort. The
+                // gateway already owns its visible/durable timeout outcome.
+                if let Some(Err(error)) = result.as_ref()
+                    && self.is_timed_out_unknown(error)
+                {
+                    let Some(Err(error)) = result else {
+                        unreachable!()
+                    };
+                    self.release();
+                    return Err(map_host_error(error));
+                }
                 if self.accepted
                     && let Some(Err(error)) = &result
                     && let Some(detail) = &error.native_terminal_error
@@ -1018,6 +1031,14 @@ impl LiveTurnStream {
             self.release();
         }
         Ok(Some(event))
+    }
+
+    fn is_timed_out_unknown(&self, error: &HostError) -> bool {
+        timed_out_unknown(
+            error,
+            self.timeout_run_id.as_ref(),
+            self.callback_cancel.as_ref(),
+        )
     }
 
     fn finish(
@@ -2234,6 +2255,7 @@ mod tests {
         let integrity = Arc::new(StreamIntegrity::new());
         *integrity.module_id.lock().expect("#748 terminal module") = Some("fixture".into());
         let turn = LiveTurnStream {
+            timeout_run_id: None,
             execution: None,
             result: None,
             events: mpsc::channel(1).1,
@@ -2829,7 +2851,13 @@ impl LiveSessionAdapter {
         let (session_sender, session_ready) = oneshot::channel();
         let session_id = identity.session_id.clone();
         let session_owner = active.clone();
+        let timeout_run_id = options
+            .get("execution")
+            .and_then(|execution| execution.get("runId"))
+            .and_then(JsValue::as_string)
+            .cloned();
         let turn = LiveTurnStream {
+            timeout_run_id,
             callback_cancel: Some(cancellation.clone()),
             execution: Some(Box::pin(async move {
                 let (
@@ -3043,3 +3071,27 @@ impl LiveSessionAdapter {
         )))
     }
 }
+
+// TurnRunner.ts:701-705 uses the original execution.runId, not the fallback
+// transport turnId. Public abort reasons deliberately follow the same rule.
+fn timed_out_unknown(
+    error: &HostError,
+    run_id: Option<&JsString>,
+    cancel: Option<&Cancellation>,
+) -> bool {
+    if error.kind != HostErrorKind::ResultUnknown {
+        return false;
+    }
+    let (Some(run_id), Some(cancel)) = (run_id, cancel) else {
+        return false;
+    };
+    let mut units = "timeout:".encode_utf16().collect::<Vec<_>>();
+    units.extend_from_slice(run_id.units());
+    cancel
+        .reason()
+        .is_some_and(|reason| reason.units() == units)
+}
+
+#[cfg(test)]
+#[path = "late_timeout_tests.rs"]
+mod late_timeout_tests;

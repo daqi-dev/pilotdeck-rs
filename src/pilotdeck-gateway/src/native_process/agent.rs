@@ -608,21 +608,31 @@ impl ToolExecution for ForkExecution {
     }
 }
 
+const AGENT_DESCRIPTION: &str = "Launch a new subagent to handle a focused multi-step task.\n\nUse this tool when a bounded piece of work would benefit from an autonomous helper instead of keeping every intermediate step in the parent agent's context.\n\nProvide:\n- `description`: a short 3-5 word label for the task.\n- `prompt`: the full directive for the subagent. Write it like a complete briefing: include the goal, relevant context, constraints, and what good output looks like.\n- `subagent_type` (optional): choose a built-in preset. If omitted, `general-purpose` is used.\n\nAvailable built-in subagent types:\n- general-purpose: General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access except nested subagent launch. Tools: all parent tools except nested agent launch.\n- explore: Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files. Tools: read_file, grep, glob, bash.\n- plan: Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan. Tools: read_file, grep, glob.\n\nThe subagent returns one structured report with these sections: `Scope`, `Result`, `Key files`, `Files changed`, and `Issues`.\n\nRuntime behavior:\n- Multiple independent agent calls in one assistant message may run concurrently; batch sibling investigations when their scopes do not depend on each other.\n- Inside the AgentLoop, this runs a real forked subagent with its own scoped tool loop.\n- In stand-alone runtimes and some tests, it falls back to a single model call that preserves the same high-level subagent intent.";
+const AGENT_CLOSED: &str = "General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access except nested subagent launch. Tools: all parent tools except nested agent launch.";
+const AGENT_OPEN: &str = "General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access; nested delegation follows the configured depth cap. Tools: all parent tools; nested delegation is available within the configured depth cap.";
+
 struct AgentTool {
     fields: JsObject,
 }
 impl AgentTool {
     fn for_config(config: &JsObject) -> Self {
         let mut tool = Self::new();
-        if config.get("subagentDefinitions").is_some() {
-            let names = definitions(config)
-                .entries()
-                .iter()
-                .map(|(name, _)| String::from_utf16_lossy(name.units()))
-                .collect::<Vec<_>>()
-                .join(", ");
-            tool.fields.insert("description".into(),JsValue::String(format!("Delegate a bounded task to a real child agent loop. Supply description and prompt. Available subagent types: {names}. Each child inherits the parent policy and recursion cap.").into()));
-        }
+        let depth = config
+            .get("subagentDepth")
+            .and_then(JsValue::as_number)
+            .unwrap_or(0.0);
+        let max = config
+            .get("maxSubagentDepth")
+            .and_then(JsValue::as_number)
+            .unwrap_or(1.0);
+        let description = if depth.max(0.0) + 1.0 < max {
+            AGENT_DESCRIPTION.replace(AGENT_CLOSED, AGENT_OPEN)
+        } else {
+            AGENT_DESCRIPTION.to_owned()
+        };
+        tool.fields
+            .insert("description".into(), JsValue::String(description.into()));
         tool
     }
     fn new() -> Self {
@@ -631,7 +641,7 @@ impl AgentTool {
             ("description","Delegate a bounded task to a real child agent loop. Supply a short description and a complete directive. Built-in types: general-purpose, explore, plan, verify. Children inherit the parent's tool restrictions; nested delegation obeys maxSubagentDepth.".into()),
             ("kind","agent".into()),("isOpenWorld",JsValue::Bool(true)),("maxResultBytes",JsValue::Number(200_000.0)),
             ("requiredRuntimeCapabilities",JsValue::Array(vec!["subagent_fork".into()])),
-            ("inputSchema",pilotdeck_protocol::parse_json(r#"{"type":"object","required":["description","prompt"],"additionalProperties":false,"properties":{"description":{"type":"string"},"prompt":{"type":"string"},"subagent_type":{"type":"string"},"subagentType":{"type":"string"}}}"#).expect("static agent schema")),
+            ("inputSchema",pilotdeck_protocol::parse_json(r###"{"type":"object","required":["description","prompt"],"additionalProperties":false,"properties":{"description":{"type":"string","description":"Short 3-5 word task summary used to label the subagent run."},"prompt":{"type":"string","description":"Detailed directive for the subagent. Include the goal, relevant context, constraints, and desired output; do not assume the subagent already knows why the task matters."},"subagent_type":{"type":"string","description":"Optional subagent preset. Public built-ins: 'general-purpose' (full tool access), 'explore' (read-only investigation with read_file/grep/glob/bash), or 'plan' (read-only planning with read_file/grep/glob). Some runtimes may also expose additional presets such as 'verify'. Defaults to 'general-purpose' when omitted. Legacy 'general_purpose' is still accepted for compatibility."},"subagentType":{"type":"string","description":"Deprecated legacy alias for subagent_type. Prefer subagent_type."}}}"###).expect("static agent schema")),
         ]).as_object().unwrap().clone();
         fields.insert("requiresUserInteraction".into(), JsValue::Bool(false));
         Self { fields }

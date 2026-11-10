@@ -672,6 +672,33 @@ mod tests {
             !orphan_backup.exists() && !orphan_journal.exists(),
             "a genuinely new portable restore invalidates orphan replacement state"
         );
+        let quarantine_snapshot = || -> std::collections::BTreeMap<_, _> {
+            std::fs::read_dir(target_path.parent().unwrap())
+                .unwrap()
+                .map(Result::unwrap)
+                .filter_map(|entry| {
+                    let name = entry.file_name().into_string().unwrap();
+                    name.starts_with(".pdrs-orphan.")
+                        .then(|| (name, std::fs::read(entry.path()).unwrap()))
+                })
+                .collect()
+        };
+        let preserved = quarantine_snapshot();
+        assert_eq!(
+            preserved.len(),
+            2,
+            "both recovery artifacts survive quarantine"
+        );
+        assert!(
+            preserved
+                .values()
+                .any(|bytes| bytes == b"deleted old lifetime")
+        );
+        assert!(
+            preserved
+                .values()
+                .any(|bytes| bytes == b"old restore rollback")
+        );
         let path = super::super::reader::history_path(&files, &session).unwrap();
         let read = crate::storage::read_transcript_bounded(&path).unwrap().read;
         let disk = oracle
@@ -748,6 +775,11 @@ mod tests {
         assert_eq!(
             std::fs::read(&orphan_journal).unwrap(),
             b"current live journal"
+        );
+        assert_eq!(
+            quarantine_snapshot(),
+            preserved,
+            "second restore neither duplicates quarantine nor unlinks recovery bytes"
         );
         assert_eq!(
             export_guarded(files.clone(), session, ()).await.unwrap(),

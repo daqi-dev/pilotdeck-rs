@@ -1257,9 +1257,9 @@ impl ContinuationTool {
     fn new(followup: bool) -> Self {
         let name = if followup { "send_message" } else { "subagent" };
         let schema = if followup {
-            r#"{"type":"object","required":["subagent_id","message"],"additionalProperties":false,"properties":{"subagent_id":{"type":"string"},"message":{"type":"string"}}}"#
+            r###"{"type":"object","required":["subagent_id","message"],"additionalProperties":false,"properties":{"subagent_id":{"type":"string","description":"Stable continuable subagent id."},"message":{"type":"string","description":"Message to enqueue for the subagent."}}}"###
         } else {
-            r#"{"type":"object","required":["description","prompt"],"additionalProperties":false,"properties":{"description":{"type":"string"},"prompt":{"type":"string"},"subagent_type":{"type":"string"}}}"#
+            r###"{"type":"object","required":["description","prompt"],"additionalProperties":false,"properties":{"description":{"type":"string","description":"Short label for the delegated task."},"prompt":{"type":"string","description":"Initial directive for the background subagent."},"subagent_type":{"type":"string","description":"Subagent definition. Available: general-purpose, explore, plan, verify."}}}"###
         };
         let mut fields=object([
             ("name",name.into()),("kind","agent".into()),

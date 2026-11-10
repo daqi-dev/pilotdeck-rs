@@ -118,9 +118,9 @@ impl ReadSkill {
         for (key, value) in [
             ("name", JsValue::from("read_skill")),
             ("aliases", JsValue::Array(vec!["ReadSkill".into()])),
-            ("description", JsValue::from("Read the selected skill recipe and its exact SKILL.md path. Use a name listed in available-skills; resolve its references against the returned skill directory.")),
+            ("description", JsValue::from("Load a skill recipe by name and return its resolved SKILL.md path with the full content. Use this when the system prompt lists an available skill relevant to the current task.")),
             ("kind", JsValue::from("session")),
-            ("inputSchema", pilotdeck_protocol::parse_json(r#"{"type":"object","required":["skillName"],"additionalProperties":false,"properties":{"skillName":{"type":"string","description":"The name shown in available-skills."}}}"#).expect("static skill schema")),
+            ("inputSchema", pilotdeck_protocol::parse_json(r###"{"type":"object","required":["skillName"],"additionalProperties":false,"properties":{"skillName":{"type":"string","description":"The skill name as listed in <available-skills>."}}}"###).expect("static skill schema")),
         ] { fields.insert(key.into(), value); }
         Self { fields, skills }
     }

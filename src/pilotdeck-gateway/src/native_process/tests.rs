@@ -2011,8 +2011,8 @@ async fn requests_registry_switch_gates_run_reads() {
                 "#1369 run_get with a registry resolves",
             );
             negative_assert!(
-                matches!(result, JsValue::Null),
-                "#1369 run_get for an unregistered run is null"
+                matches!(result, JsValue::Undefined),
+                "#1369 run_get for an unregistered run is undefined"
             );
             let error = crate::test_negative_receipt::expect_err(
                 requests

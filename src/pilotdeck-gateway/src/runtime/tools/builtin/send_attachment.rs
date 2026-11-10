@@ -38,13 +38,13 @@ impl SendAttachmentTool {
                 (
                     "description",
                     string(
-                        "Send an existing local file through the current host/channel when supported. Use this when the user asks to send, upload, return or share a file; binary files do not need read_file first. Files inside PILOTDECK_WORK_DIR or workspace .pilotdeck/work cannot be sent: publish the reviewed final artifact outside the internal work directory first. Workspace and registered attachment files are allowed; external paths require permission.",
+                        "Send a local file back to the user through the current host/channel when supported. Use this when the user asks you to send, upload, return, or share an existing local file. Do not call read_file first just to send binary files; this tool sends the file bytes as an attachment without parsing them. Files under PILOTDECK_WORK_DIR or workspace .pilotdeck/work are internal candidates and cannot be sent directly; publish the reviewed final artifact outside the internal work directory first. Workspace files and registered IM attachment files can be sent directly; paths outside the workspace require explicit user permission before execution.",
                     ),
                 ),
                 (
                     "inputSchema",
                     JsValue::Object(schema(
-                        r#"{"type":"object","required":["file_path"],"additionalProperties":false,"properties":{"file_path":{"type":"string"},"name":{"type":"string"},"mime_type":{"type":"string"}}}"#,
+                        r###"{"type":"object","required":["file_path"],"additionalProperties":false,"properties":{"file_path":{"type":"string","description":"Workspace-relative or absolute path to the file to send."},"name":{"type":"string","description":"Optional filename to display to the recipient."},"mime_type":{"type":"string","description":"Optional MIME type for the file."}}}"###,
                     )),
                 ),
                 (

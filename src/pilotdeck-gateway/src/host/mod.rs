@@ -423,15 +423,21 @@ pub enum ExecuteResult {
 /// One-shot cancellation, like AbortSignal. The first reason wins; empty/absent
 /// reasons are transmitted as host_abort (TS client:931-958).
 #[derive(Clone)]
-pub struct Cancellation(watch::Sender<Option<JsString>>);
+pub struct Cancellation {
+    signal: watch::Sender<Option<JsString>>,
+    network_parent: Option<crate::runtime::network::Cancellation>,
+}
 impl Default for Cancellation {
     fn default() -> Self {
-        Self(watch::channel(None).0)
+        Self { signal: watch::channel(None).0, network_parent: None }
     }
 }
 impl Cancellation {
+    pub(crate) fn from_network_parent(parent: crate::runtime::network::Cancellation) -> Self {
+        Self { signal: watch::channel(None).0, network_parent: Some(parent) }
+    }
     pub fn cancel(&self, reason: Option<JsString>) {
-        self.0.send_if_modified(|current| {
+        self.signal.send_if_modified(|current| {
             if current.is_some() {
                 return false;
             }
@@ -440,20 +446,24 @@ impl Cancellation {
         });
     }
     pub fn is_cancelled(&self) -> bool {
-        self.0.borrow().is_some()
+        self.signal.borrow().is_some() || self.network_parent.as_ref().is_some_and(crate::runtime::network::Cancellation::is_cancelled)
     }
     /// Resolves once cancelled; watch retains a cancellation that happened
     /// before the call, so no polling task or timer is involved.
     pub async fn cancelled(&self) {
-        let mut receiver = self.0.subscribe();
-        while receiver.borrow_and_update().is_none() {
-            if receiver.changed().await.is_err() {
-                return;
+        let own = async {
+            let mut receiver = self.signal.subscribe();
+            while receiver.borrow_and_update().is_none() {
+                if receiver.changed().await.is_err() { return; }
             }
-        }
+        };
+        let parent = async {
+            match &self.network_parent { Some(parent) => parent.cancelled().await, None => std::future::pending().await }
+        };
+        tokio::select! { _ = own => {}, _ = parent => {} }
     }
-    pub(super) fn reason(&self) -> Option<JsString> {
-        self.0.borrow().clone()
+    pub(crate) fn reason(&self) -> Option<JsString> {
+        self.signal.borrow().clone()
     }
 }
 

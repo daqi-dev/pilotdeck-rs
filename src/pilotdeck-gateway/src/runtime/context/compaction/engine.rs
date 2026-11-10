@@ -495,13 +495,14 @@ impl CompactionEngine {
             result = self.options.model.prepare(PrepareInput { request, context: JsObject::new() }) => result?,
         };
         // Host and transport cancellation are distinct; forward before close.
-        let provider_abort = input
-            .transport_signal
-            .clone()
-            .or_else(|| signal.map(|_| crate::runtime::network::Cancellation::new()));
+        // Own the child: provider failure must never abort the enclosing turn.
+        let provider_abort = Some(crate::runtime::network::Cancellation::new());
         let mut stream = tokio::select! { biased;
             _ = &mut aborted => { if let Some(abort) = &provider_abort { abort.abort(); } return Err(abort_failure(signal)); },
-            result = self.options.model.stream(StreamInput { prepared, context: JsObject::new(), abort: provider_abort.clone() }) => result?,
+            result = self.options.model.stream(StreamInput { prepared, context: JsObject::new(), abort: provider_abort.clone() }) => match result {
+                Ok(stream) => stream,
+                Err(error) => { if let Some(abort) = &provider_abort { abort.abort(); } return Err(error.into()); }
+            },
         };
         let mut units = Vec::new();
         let mut usage = None;
@@ -538,9 +539,7 @@ impl CompactionEngine {
             }
         };
         if outcome.is_err() {
-            if input.transport_signal.is_none()
-                && let Some(abort) = &provider_abort
-            {
+            if let Some(abort) = &provider_abort {
                 abort.abort();
             }
             // Async-iterator return() is part of the error/abort path.
