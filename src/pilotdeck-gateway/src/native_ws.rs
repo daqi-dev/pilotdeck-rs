@@ -545,9 +545,9 @@ pub struct PhasedRun {
     /// bounds its own close join with it (`switch_wiring.rs`).
     drain_budget: Duration,
     /// #2557: the host handle, duplicated like the budget above — the
-    /// post-halt walk re-issues the teardown request synchronously after its
-    /// shared deadline cut a first `finish()` short, and the cancelled
-    /// future took the inner mutex with it, so there is no lock to take.
+    /// post-halt walk re-issues the teardown request synchronously after
+    /// its shared deadline cut a first `finish()` short, without going
+    /// through `finish()` again (see `request_host_shutdown`).
     host: TurnGateway,
 }
 
@@ -584,16 +584,15 @@ impl PhasedRun {
     }
 
     /// #2557: the post-halt walk's synchronous re-issue of the host teardown
-    /// request after its shared deadline dropped a first `finish()` mid-body —
+    /// request after its shared deadline cut a first `finish()` mid-body —
     /// the walk returns on the timeout and the process exits, so no revisit
-    /// is coming. The re-issue cannot go through `finish()`: the cut run
-    /// left its in-progress marker, so a re-call would only observe the
-    /// interrupted verdict (#2363, once-only), and `finish()` re-enters the
-    /// same awaits — close-notice window, host cleanup — the deadline just
-    /// cut off, with the walk's own owner bound already spent. The direct
-    /// synchronous request on the host gate is the bounded path. Idempotent
-    /// like every other request site (`send_if_modified` keeps the first
-    /// budget).
+    /// is coming. The re-issue cannot go through `finish()`: it first awaits
+    /// the inner lock, which a concurrent holder can hold past the deadline
+    /// the walk just exhausted; and the revisit branch inside, once entered,
+    /// would itself re-issue and then only report the interrupted verdict
+    /// (#2363, once-only) — the direct synchronous request on the host gate
+    /// needs neither. Idempotent like every other request site
+    /// (`send_if_modified` keeps the first budget).
     pub fn request_host_shutdown(&self) {
         self.host.request_shutdown(self.drain_budget);
     }

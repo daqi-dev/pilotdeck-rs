@@ -3164,8 +3164,9 @@ async fn a_cancelled_owner_finish_still_requests_the_host_teardown() {
             "#2557 the revisit records the interrupted verdict"
         );
         // The #2557 direct-deletion witness (the revisit branch's re-issue
-        // deleted — no optional switch here, per the #2363 fix-r2 R2 ledger
-        // entry these two re-issue sites carry no fixture row): with it
+        // deleted — no optional switch here, per the R6 correction entry
+        // (A8.5-SWITCH-MACHINE-001-R6) these two direct-deletion
+        // witnesses carry no fixture row): with it
         // gone, no request ever goes out — the first run died inside the
         // window and the unawaited `StopHost` drop request is all that is
         // left while the phased run is alive.
@@ -3234,8 +3235,9 @@ async fn a_cancelled_owner_finish_still_requests_the_host_teardown() {
             "#2557 the first finish parks in the abort join past the request"
         );
         // The #2557 direct-deletion witness (the first run's re-issue
-        // deleted — no optional switch here, per the #2363 fix-r2 R2 ledger
-        // entry these two re-issue sites carry no fixture row): with it
+        // deleted — no optional switch here, per the R6 correction entry
+        // (A8.5-SWITCH-MACHINE-001-R6) these two direct-deletion
+        // witnesses carry no fixture row): with it
         // gone, no request has gone out — the half was cut before
         // `host.shutdown`'s own request was reached, and the revisit below
         // is what would have sent one. Anchored before that.
