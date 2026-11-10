@@ -5940,4 +5940,5 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 ### 巡场增记（04:5x，coord2/e7，红灯处置滚动）
 
 - 红灯 9 收场：#2692/#2696 判「已交付待收」（差补推开 PR）→ 补收车道已派；#1517 判真积压（r1 超时被杀、patch 已应用、3 个 channel:: FAILED 待证基线）→ 基线核实补收车道已派；#2743/#2637 有车道不动。核场明细 `_tmp/20261107-coord/harvest-check-0441.md`。
-- 红灯 7 收场：看板 18/18 对齐零告警（4 CLOSED 标 Done、14 open 标 In Review；12 张 claude/ 前缀经署名核实 GLM 实现，--impl 显式带）。记录 `_tmp/20261107-coord/project-mark-0441.md`。
+- 红灯 7 收场：看板 18/18 对齐零告警（4 CLOSED 标 Done、14 open 标 In Review；12 张 claude/ 前缀经署名核实 GLM 实现，--impl 显式带）。记录 `_tmp/20261107-coord/project-mark-0441.md`。- 磁盘清理收场：`_build`+`_tmp` 173.4 GiB → **127.2 GiB**（df 前后差实测释放 ≈46 GiB：wt-1438 cargo-target 37.9 GiB + cargo-target-probe 4.8 GiB + wt-2313 cargo-target 3.1 GiB，均无在跑 worker 的可重建缓存；活动车道/工具树/证据目录全跳过）。清单 `_tmp/20261107-coord/disk-trim-0441.md`，WARN 解除。
+- hop-batch 车道在飞口径（05:0x）：#2927 双家评审齐（无 P0/P1）、fix-r1 已派 cb8、跟进批 #2928 已开；#2913 fix-r2 收货推送（冻结门独立复跑全绿）、fix-r3（第 3 轮上限内）已派；#2912 fix-r1 收货推送、DS 四角色在跑；74 行负控 63/74 KILLED 进行中；cb8 6/6 满载。
