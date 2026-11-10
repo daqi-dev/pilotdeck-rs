@@ -25,8 +25,10 @@ pub fn cron_protocol_channel_key(key: &str) -> &str {
 
 pub fn origin_channel_matches(delivery: &Value, channel: &str) -> bool {
     match delivery.get("originChannelKey") {
-        Some(Value::String(key)) if !key.is_empty() => key == channel,
-        _ => true,
+        None | Some(Value::Null) => true,
+        Some(Value::String(key)) if key.is_empty() => false,
+        Some(Value::String(key)) => key == channel,
+        _ => false,
     }
 }
 
@@ -243,12 +245,12 @@ mod tests {
 
     #[test]
     fn origin_channel_matches_ts_contract() {
-        // Empty string behavior: empty originChannelKey does not reject delivery (continues delivery)
-        assert!(origin_channel_matches(
+        // Empty string behavior: empty originChannelKey matches no channel
+        assert!(!origin_channel_matches(
             &json!({"originChannelKey": ""}),
             "telegram"
         ));
-        assert!(origin_channel_matches(
+        assert!(!origin_channel_matches(
             &json!({"originChannelKey": ""}),
             "weixin"
         ));
@@ -294,46 +296,27 @@ mod tests {
             "telegram"
         ));
 
-        // Non-string originChannelKey: does not reject (continues delivery)
-        assert!(origin_channel_matches(
+        // Non-string originChannelKey: returns false
+        assert!(!origin_channel_matches(
             &json!({"originChannelKey": 123}),
             "telegram"
         ));
-        assert!(origin_channel_matches(
+        assert!(!origin_channel_matches(
             &json!({"originChannelKey": false}),
             "telegram"
         ));
-        assert!(origin_channel_matches(
+        assert!(!origin_channel_matches(
             &json!({"originChannelKey": true}),
             "telegram"
         ));
-        assert!(origin_channel_matches(
+        assert!(!origin_channel_matches(
             &json!({"originChannelKey": {}}),
             "telegram"
         ));
-        assert!(origin_channel_matches(
+        assert!(!origin_channel_matches(
             &json!({"originChannelKey": []}),
             "telegram"
         ));
-    }
-
-    #[test]
-    fn origin_channel_matches_allows_empty_or_non_string() {
-        // Matches TS: `if (delivery.originChannelKey && delivery.originChannelKey !== channelKey) return false;`
-        // Empty string
-        assert!(origin_channel_matches(&json!({"originChannelKey": ""}), "slack"));
-        // Numbers
-        assert!(origin_channel_matches(&json!({"originChannelKey": 0}), "slack"));
-        assert!(origin_channel_matches(&json!({"originChannelKey": 42}), "slack"));
-        // Booleans
-        assert!(origin_channel_matches(&json!({"originChannelKey": false}), "slack"));
-        assert!(origin_channel_matches(&json!({"originChannelKey": true}), "slack"));
-        // Objects and Arrays
-        assert!(origin_channel_matches(&json!({"originChannelKey": { "nested": "val" }}), "slack"));
-        assert!(origin_channel_matches(&json!({"originChannelKey": [1, 2, 3]}), "slack"));
-        // Only reject when non-empty string mismatches
-        assert!(!origin_channel_matches(&json!({"originChannelKey": "telegram"}), "slack"));
-        assert!(origin_channel_matches(&json!({"originChannelKey": "slack"}), "slack"));
     }
 
     #[test]
