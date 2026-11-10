@@ -47,15 +47,20 @@ differ: manager-gateway loses the last selected row through a patched
 without failing their startup roster first, so the first stubbed cargo call
 drops the last ``EXPECTED_NAMES`` name mid-run -- the run then records a
 verdict the static roster no longer knows, the same ``recorded != expected``
-predicate the guard exists to enforce.
+predicate the guard exists to enforce. Every family also carries the
+same-length form (``renamed=True``: the last roster name is changed in
+place, so the recorded and expected lists disagree without any length
+difference), because the entries' predicate compares names, not counts.
 
 The kill variants this register is designed to catch, each demonstrated
 red/green in the delivery evidence: replacing ``if recorded != expected:``
 with ``if False:`` (a mismatched run publishes a green summary and exits 0),
 dropping one ``EXPECTED_NAMES`` entry (the startup roster refuses, rc 2,
 no evidence directory), deleting the whole mismatch branch (a mismatched
-run publishes summary.json and exits 0), and deleting one register row (the
-scan below finds the unregistered defence and fails).
+run publishes summary.json and exits 0), deleting one register row (the
+scan below finds the unregistered defence and fails), and weakening the
+predicate to a length comparison (the rename case above survives it, so
+the rename case must exit 1).
 
 Run from this directory: ``python3 -m unittest test_negative_roster_guards``.
 """
@@ -471,7 +476,9 @@ def _drive_sdk(testcase, *, perturbed=False, renamed=False,
 
 def _drive_manager_entry(testcase, *, perturbed=False, renamed=False,
                          shrink_roster=False, argv=()):
-    """The register's manager-gateway row: the perturbation is the lost row."""
+    """The register's manager-gateway row: the perturbation is the lost
+    or renamed row (``perturbed`` drops the last selected row through
+    ``select``; ``renamed`` keeps the row but changes its name)."""
     return _drive_manager(testcase, argv, drop_last=perturbed, renamed=renamed,
                           shrink_roster=shrink_roster)
 
@@ -493,12 +500,15 @@ ROSTER_GUARDED = {
     'sdk-mcp-session-tools/negative_controls.py': _drive_sdk,
 }
 
-# The line each entry prints on its way out of a *clean* run. A mismatched
+# The lines each entry prints on its way out of a *clean* run. A mismatched
 # run must leave none of them behind (r5: the shrunken run used to print
-# the green count line after the summary was unlinked).
+# the green count line after the summary was unlinked). The full-run case
+# asserts each marker IS present on the clean run, so a wording change in
+# an entry turns the register red instead of silently disarming the
+# mismatch assertions.
 SUCCESS_LINE = {
     MANAGER_SCRIPT: ('summary:',),
-    'memory-gateway/negative_controls.py': ('summary:',),
+    'memory-gateway/negative_controls.py': ('summary:', ' killed; '),
     'snapshot-projection/negative_controls.py': (' KILLED; see ',),
     'sdk-mcp-session-tools/negative_controls.py': ('"controls"',),
 }
@@ -540,10 +550,17 @@ class RegisteredEntryRosterGuard(unittest.TestCase):
                 summary = json.loads((run.out / 'summary.json').read_text())
                 rows = summary['controls'] if isinstance(summary, dict) else summary
                 key = 'mutation' if script == MANAGER_SCRIPT else 'name'
-                names = sorted(row[key] for row in rows)
-                self.assertTrue(names == sorted(run.module.EXPECTED_NAMES),
+                # Order-sensitive, like the production predicate: a run that
+                # records the right names in the wrong order is a mismatch
+                # the entries' ``recorded != expected`` would refuse.
+                names = [row[key] for row in rows]
+                self.assertTrue(names == list(run.module.EXPECTED_NAMES),
                                 f'#2804 {script}: the full run must record exactly '
-                                f'the roster names, got {names}')
+                                f'the roster names in roster order, got {names}')
+                for marker in SUCCESS_LINE[script]:
+                    self.assertIn(marker, run.stdout,
+                                  f'#2804 {script}: the clean run must print its '
+                                  f'green line ({marker!r})')
                 self.assertTrue(all(row['status'] == 'KILLED' for row in rows),
                                 f'#2804 {script}: every stubbed-kill row must be '
                                 f'recorded KILLED')
