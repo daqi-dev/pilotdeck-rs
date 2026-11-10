@@ -89,7 +89,12 @@ fn require_session_key(params: &JsValue) -> Result<JsString, RequestError> {
 /// probe: `project=7:` / `project= :` / `project=﻿:` all measured). The
 /// rendering is the shared JS `String(value)` walk, and the prefix keeps the
 /// key's raw UTF-16 units, so a lone surrogate survives into the sessionKey
-/// the way the TS template literal keeps it.
+/// the way the TS template literal keeps it. A rendering that throws (an own
+/// non-callable `toString`, a too-deep array) is the boundary's
+/// `gateway_request_failed` with the **bare** V8 text — the TS boundary
+/// serializes `error.message` only, no `name:` prefix
+/// (GatewayWsConnection.ts:252; probe `probe-2068-r2.out`; `runs.rs`
+/// `template_text` gives its run-key template the same mapping).
 fn project_prefix_units(params: &JsValue) -> Result<Vec<u16>, RequestError> {
     match super::input_property(params, "projectKey")?.as_ref() {
         None | Some(JsValue::Undefined) | Some(JsValue::Null) => Ok(Vec::new()),
@@ -97,9 +102,8 @@ fn project_prefix_units(params: &JsValue) -> Result<Vec<u16>, RequestError> {
         Some(JsValue::Bool(false)) => Ok(Vec::new()),
         Some(JsValue::Number(n)) if *n == 0.0 || n.is_nan() => Ok(Vec::new()),
         Some(other) => {
-            let rendered = crate::js_value::to_string_units_checked(other).map_err(|error| {
-                RequestError::new(format!("{}: {}", error.name(), error.message()))
-            })?;
+            let rendered = crate::js_value::to_string_units_checked(other)
+                .map_err(|error| RequestError::new(error.message()))?;
             let mut units: Vec<u16> = "project=".encode_utf16().collect();
             units.extend(rendered);
             units.push(u16::from(b':'));
@@ -1796,19 +1800,75 @@ mod tests {
     // #2068: the family's projectKey read is the shared `?? fallback` shape —
     // every TS chain that consumes it (`ProjectRuntimeRegistry.resolve` for
     // listSessions, `dialog.projects.resolveProjectKey` for delete/rename/tag)
-    // starts at Node's `path.resolve`, so a non-string key answers the bare
-    // ERR_INVALID_ARG_TYPE TypeError the boundary serializes as
-    // `gateway_request_failed` (probe `_tmp/20261110-issue-2068/probe/
-    // probe-2068.out`), never the configured-project fallback the old
-    // `to_utf8().ok()` chain silently gave.
+    // starts at Node's `path.resolve`, so a non-string key answers the
+    // `TypeError [ERR_INVALID_ARG_TYPE]` whose `code` the boundary preserves
+    // (`hasStructuredErrorCode`; the frozen oracle's `project-number` WS
+    // original is `ERR_INVALID_ARG_TYPE`), never the configured-project
+    // fallback the old `to_utf8().ok()` chain silently gave. The received
+    // descriptions come from the shared `argument_received` port: the `-0` and
+    // constructor spellings below are the shapes `runtime/manager/tests.rs`
+    // and the `probe-2068-r2.out` cells pinned (a hand-written frame keeps
+    // `-0`'s sign through JSON), and the last two cells are Node's
+    // description phase throwing its own bare TypeError — no `code`, so the
+    // boundary answers `gateway_request_failed` with the bare message.
     #[tokio::test]
     async fn list_sessions_non_string_project_key_answers_the_path_resolve_type_error() {
         let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#1310 fixture");
         for (label, value, received) in [
             ("number", JsValue::Number(7.0), "type number (7)"),
+            ("negative-zero", JsValue::Number(-0.0), "type number (-0)"),
             ("boolean", JsValue::Bool(true), "type boolean (true)"),
             ("array", JsValue::Array(Vec::new()), "an instance of Array"),
+            ("object", object([]), "an instance of Object"),
+            (
+                "constructor-null",
+                object([("constructor", JsValue::Null)]),
+                "[Object]",
+            ),
+            (
+                "constructor-name-null",
+                object([("constructor", object([("name", JsValue::Null)]))]),
+                "an instance of null",
+            ),
+            (
+                "constructor-name-array",
+                object([(
+                    "constructor",
+                    object([("name", JsValue::Array(Vec::new()))]),
+                )]),
+                "an instance of ",
+            ),
+        ] {
+            let error = r
+                .session_dir_request("list_sessions".into(), object([("projectKey", value)]))
+                .await
+                .expect_err("#2068 a non-string projectKey is the path.resolve TypeError");
+            negative_assert_eq!(
+                error.code.as_str(),
+                "ERR_INVALID_ARG_TYPE",
+                "#2068 the {label} projectKey answers the Node TypeError code"
+            );
+            negative_assert_eq!(
+                key_message(&error),
+                format!("The \"paths[0]\" argument must be of type string. Received {received}"),
+                "#2068 the {label} projectKey keeps the path.resolve TypeError message"
+            );
+        }
+        for (label, value, message) in [
+            (
+                "constructor-number",
+                object([("constructor", JsValue::Number(5.0))]),
+                "Cannot use 'in' operator to search for 'name' in 5",
+            ),
+            (
+                "constructor-name-tostring-shadow",
+                object([(
+                    "constructor",
+                    object([("name", object([("toString", "x".into())]))]),
+                )]),
+                "Cannot convert object to primitive value",
+            ),
         ] {
             let error = r
                 .session_dir_request("list_sessions".into(), object([("projectKey", value)]))
@@ -1817,12 +1877,12 @@ mod tests {
             negative_assert_eq!(
                 error.code.as_str(),
                 "gateway_request_failed",
-                "#2068 the {label} projectKey answers the boundary TypeError code"
+                "#2068 the {label} projectKey's description throw answers the boundary code"
             );
             negative_assert_eq!(
                 key_message(&error),
-                format!("The \"paths[0]\" argument must be of type string. Received {received}"),
-                "#2068 the {label} projectKey keeps the path.resolve TypeError message"
+                message,
+                "#2068 the {label} projectKey's description throw keeps the bare message"
             );
         }
         r.owner.shutdown().await.expect("#1310 shutdown");
@@ -1941,11 +2001,12 @@ mod tests {
             ),
             "#2068 the surrogate projectKey keeps its raw unit inside the prefix"
         );
-        // Falsy spellings: the nullish pair, the empty string, 0 and false.
+        // Falsy spellings: the nullish pair, the empty string, 0, NaN and false.
         for (label, value) in [
             ("null", JsValue::Null),
             ("empty", JsValue::from("")),
             ("zero", JsValue::Number(0.0)),
+            ("nan", JsValue::Number(f64::NAN)),
             ("false", JsValue::Bool(false)),
         ] {
             let units = key_units(
@@ -1958,6 +2019,42 @@ mod tests {
                 "#2068 the {label} projectKey drops the prefix"
             );
         }
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #2068 fix-r1: a truthy projectKey whose JS `String()` rendering throws
+    // (an own non-callable `toString` shadowing the inherited one — JSON
+    // cannot carry a callable, so any wire-visible one is the shadow) fails
+    // `new_session` with the boundary's `gateway_request_failed` and the
+    // **bare** V8 text: the TS boundary serializes `error.message` only, no
+    // `name:` prefix (GatewayWsConnection.ts:252; probe `probe-2068-r2.out`;
+    // the #1604 q3/q7 probes pinned the same mapping for the run-key
+    // template).
+    #[tokio::test]
+    async fn new_session_throwing_project_key_prefix_answers_the_boundary_typeerror() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        let error = r
+            .session_dir_request(
+                "new_session".into(),
+                object([
+                    ("channelKey", "pdrs-2068".into()),
+                    ("projectKey", object([("toString", JsValue::Null)])),
+                ]),
+            )
+            .await
+            .expect_err("#2068 a throwing projectKey rendering fails new_session");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "gateway_request_failed",
+            "#2068 the ToPrimitive failure answers the boundary code"
+        );
+        negative_assert_eq!(
+            key_message(&error),
+            "Cannot convert object to primitive value",
+            "#2068 the ToPrimitive failure keeps the bare V8 text"
+        );
         r.owner.shutdown().await.expect("#1310 shutdown");
         r.project.dispose().await.expect("#1310 dispose");
     }

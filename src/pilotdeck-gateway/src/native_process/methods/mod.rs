@@ -181,26 +181,23 @@ pub(super) fn require_text(
     }
 }
 
-/// Node `path.resolve`'s ERR_INVALID_ARG_TYPE text for a non-string segment —
-/// the first statement every TS projectKey chain runs (`ProjectRuntimeRegistry
-/// .resolve` and `dialog.projects.resolveProjectKey` both start at it), so a
-/// non-string key surfaces this bare TypeError before any project logic.
-fn path_argument_type_error(received: String) -> RequestError {
-    RequestError::new(format!(
-        "The \"paths[0]\" argument must be of type string. Received {received}"
-    ))
-}
-
 /// `input.projectKey ?? fallbackProjectRoot` — the projectKey read the
-/// session_dir and config families share (#2068; probe
-/// `_tmp/20261110-issue-2068/probe/probe-2068.out`, Node v22.22.0). Only the
-/// nullish spellings fall back to the configured project; a string is a real
-/// key, converted lossily for the configured-project comparison (#2083's
-/// treatment — a lone surrogate reaches the unserved-key refusal, it does not
-/// fold onto the configured project); anything else reproduces the
-/// `path.resolve` TypeError above, which the boundary serializes as
-/// `gateway_request_failed` instead of the silent fallback the old
-/// `to_utf8().ok()` chain gave.
+/// session_dir and config families share (#2068; probes
+/// `_tmp/20261110-issue-2068/probe/probe-2068.out` and `probe-2068-r2.out`,
+/// Node v22.22.0). Only the nullish spellings fall back to the configured
+/// project; a string is a real key, converted lossily for the
+/// configured-project comparison (#2083's treatment — a lone surrogate
+/// reaches the unserved-key refusal, it does not fold onto the configured
+/// project); anything else is Node `path.resolve`'s `TypeError
+/// [ERR_INVALID_ARG_TYPE]`, built from the shared `argument_received` /
+/// `invalid_arg_type_message` ports so the wording and the `-0` /
+/// constructor spellings cannot drift from the family's other `paths[0]`
+/// guards (`session_model.rs` `path_argument`, `skills/mod.rs` `path_arg`,
+/// `management.rs` `validate_command_project`). The code survives the
+/// boundary (`hasStructuredErrorCode`; the frozen oracle's `project-number`
+/// WS original is `ERR_INVALID_ARG_TYPE`), and Node's description-phase
+/// throws are bare TypeErrors that serialize as `gateway_request_failed`
+/// with the bare message.
 pub(super) fn resolve_project_key(
     params: &JsValue,
     fallback: &std::path::Path,
@@ -210,13 +207,23 @@ pub(super) fn resolve_project_key(
             Ok(fallback.to_string_lossy().into_owned())
         }
         Some(JsValue::String(key)) => Ok(String::from_utf16_lossy(key.units())),
-        Some(JsValue::Number(n)) => Err(path_argument_type_error(format!(
-            "type number ({})",
-            crate::js_value::number_string(*n)
-        ))),
-        Some(JsValue::Bool(b)) => Err(path_argument_type_error(format!("type boolean ({b})"))),
-        Some(JsValue::Array(_)) => Err(path_argument_type_error("an instance of Array".into())),
-        Some(JsValue::Object(_)) => Err(path_argument_type_error("an instance of Object".into())),
+        // Node's description phase can itself throw (a truthy primitive
+        // `constructor` or an unconvertible `constructor.name`), and that
+        // bare TypeError/RangeError escapes before `ERR_INVALID_ARG_TYPE` is
+        // ever built: it carries no `code`, and the boundary keeps only
+        // `error.message` — the same Throws mapping `management.rs`
+        // `validate_command_project` gives this arm.
+        Some(other) => match crate::metadata::argument_received(other) {
+            crate::metadata::ArgumentReceived::Text(received) => Err(RequestError {
+                code: "ERR_INVALID_ARG_TYPE".into(),
+                message: crate::metadata::invalid_arg_type_message("paths[0]", &received),
+                details: None,
+                validation: None,
+            }),
+            crate::metadata::ArgumentReceived::Throws { message, .. } => {
+                Err(RequestError::new(message))
+            }
+        },
     }
 }
 
