@@ -12,6 +12,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import textwrap
 import tomllib
 import types
@@ -50,7 +51,16 @@ class EnvironmentControls(unittest.TestCase):
     # 子进程的超时。r37 的旧值 900 s 比步预算 600 s 松：扫描面涨到 601–900 s
     # 时守钉仍绿（它只证明「900 s 内跑完」）而 CI 步先被 600 s 掐红，守钉给出
     # 与实际步相反的结论。两处从同一常量派生后不会再各自漂移。
+    # fix-r39（DS sibling#2 / boundary#2 / concurrency#3 / simplify#1，四家同源）：
+    # 其余被钉的步照此各设常量——r38 只改了 #2133 一处，#1666/#1570 的真跑钉
+    # 仍写死 900 s（步预算 300 s；模块退化到 301–900 s 时守钉仍绿而 CI 步先
+    # 红，假 PASS 方向）；#994 手抄 900 s 恰与步预算同值但无派生。driver 步
+    # 自身（本类全套 86 条，r38 实测本机 764 s）同样按实测 + 余量钉 30 min。
     discovery_anchor_step_budget = 600
+    optimize_guards_step_budget = 300
+    copy_manifest_step_budget = 300
+    isolation_step_budget = 900
+    driver_step_budget = 1800
     nextest_command = ('cargo nextest run --workspace --no-fail-fast --profile ci '
                        '--config-file ../.config/nextest.toml')
     doctest_command = 'cargo test --workspace --doc'
@@ -1307,11 +1317,13 @@ class EnvironmentControls(unittest.TestCase):
                       '#994 isolation CI step must run from repository root')
         # #2136 fix-r38（MM sibling P2）：套件 r38 干净树实测 23 条约 354 s
         #（CI 约 583 s），挂起时占满 job 默认 360 分钟；步级超时须声明且被钉住。
+        # r39（DS boundary#2 P2）：值从 isolation_step_budget 同源派生，不再手抄。
         self.assertEqual(
-            fields.get('timeout-minutes'), ('15', []),
-            '#994 the isolation CI step must declare timeout-minutes: 15; '
+            fields.get('timeout-minutes'),
+            (str(self.isolation_step_budget // 60), []),
+            '#994 the isolation CI step must declare timeout-minutes: %d; '
             'without it a hung suite silently falls back to the 360-minute '
-            'job default')
+            'job default' % (self.isolation_step_budget // 60))
 
     def test_required_job_runs_the_copy_manifest_self_test(self):
         # #1570: the fix is a derivation, and the only thing that runs its
@@ -1333,11 +1345,14 @@ class EnvironmentControls(unittest.TestCase):
                          ('src/pilotdeck-gateway/tests/fixtures', []),
                          '#1570 the self-test imports _shared, so it runs from the fixtures dir')
         # #2136 fix-r38（MM sibling P2）：r37 实测约 21 s，同 -O 步钉住步级超时。
+        # r39（DS boundary#2 P2）：值从 copy_manifest_step_budget 同源派生。
         self.assertEqual(
-            fields.get('timeout-minutes'), ('5', []),
+            fields.get('timeout-minutes'),
+            (str(self.copy_manifest_step_budget // 60), []),
             '#1570 the copy-manifest self-test step must declare '
-            'timeout-minutes: 5; without it a hung step silently falls back '
-            'to the 360-minute job default')
+            'timeout-minutes: %d; without it a hung step silently falls back '
+            'to the 360-minute job default'
+            % (self.copy_manifest_step_budget // 60))
 
     def test_required_job_runs_the_discovery_anchor_self_check(self):
         # #2133 fix-r34（MM 评审 P1）：「网关负控发现锚点自检」是唯一执行 #2133 闸门
@@ -1376,6 +1391,142 @@ class EnvironmentControls(unittest.TestCase):
             'default and drags the whole job'
             % (self.discovery_anchor_step_budget // 60))
 
+    # #2136 fix-r39（DS sibling#3 P1 / boundary#1 P1，两家独立撞上同条）：
+    # `unittest -v` 的 skip 行有三种实测形状（_tmp/20261110-pr2136-revival/
+    # r39-skip-format.log，Python 3.14 实跑）：
+    #   ① 无 docstring：`test_x (mod.C.test_x) ... skipped 'reason'`——名字
+    #      与 skipped 同行，r38 的正则只认这一种；
+    #   ② 带 docstring：runner 先单打一行 `test_x (mod.C.test_x)`，再在
+    #      docstring 首行那行打 `Doc first line. ... skipped 'reason'`——
+    #      名字在前一行，r38 的行首正则两行都抓不到（假 PASS：skip 检查
+    #      静默失效，被钉套件里带 docstring 的测试被 skip 不会红）；
+    #   ③ subTest 子项：两空格缩进且 `)` 与 `...` 之间多 `[msg]`：
+    #      `  test_x (mod.C.test_x) [child] ... skipped 'reason'`——行首
+    #      `^(\S+)` 抓不到缩进行。
+    # 解析成 (名字, 原因) 列表；解析不了的 `... skipped` 行一律 fail-closed
+    # 抛错，格式再漂移时红而不是静默漏判。自身的正反例单测见
+    # test_the_verbose_skip_reading_covers_every_channel。
+    @staticmethod
+    def _verbose_skipped_tests(out):
+        skipped = []
+        lines = [line.rstrip() for line in out.splitlines()]
+        for index, line in enumerate(lines):
+            tail = re.search(r" \.\.\. skipped (['\"])(.*)\1$", line)
+            if tail is None:
+                continue
+            reason = tail.group(2)
+            # 形状 ① / ③：名字与 skipped 同行（③ 带缩进与 `[msg]`）。
+            same = re.match(
+                r'\s*(test_\S+) \([^)]*\)(?: \[[^\]]*\])? \.\.\. skipped', line)
+            if same is not None:
+                skipped.append((same.group(1), reason))
+                continue
+            # 形状 ②：名字在紧邻的上一行（`test_x (mod.C.test_x)` 独占一行）。
+            if index and re.fullmatch(r'(test_\S+) \([^)]*\)', lines[index - 1]):
+                skipped.append(
+                    (re.match(r'(test_\S+) \(', lines[index - 1]).group(1), reason))
+                continue
+            raise AssertionError(
+                '#2136 unparseable unittest skip line: %r' % line)
+        return skipped
+
+    def _assert_skip_channels_agree(self, out, skipped, tag):
+        # r39（DS boundary#1 P1）：名字解析与汇总计数两通道互证——
+        # `OK (skipped=N)` 把三种形状全部计入；解析漏形（格式漂移）时两者
+        # 不等即红，单靠任何一通道都不许。
+        counted = re.search(r'skipped=(\d+)', out)
+        total = int(counted.group(1)) if counted else 0
+        self.assertEqual(
+            len(skipped), total,
+            '%s the parsed skip lines (%d) must equal the unittest summary '
+            'skipped=%d; a mismatch means the verbose format drifted and one '
+            'of the two channels is blind' % (tag, len(skipped), total))
+
+    def _assert_suite_really_runs(self, tag, module, minimum, timeout,
+                                  allowed_skips=()):
+        # r39（DS simplify#1 P2）：四条真跑钉的同构断言抽成一处——r38 前是四份
+        # 约 45 行的拷贝，超时值与 skip 判法已经各漂各的。真跑一遍被钉套件并核：
+        # 「Ran N」下限（掏空 / 整类 skip 后退 0 的洞）、skip 名字 ⊆ 白名单
+        # （条目 = (名字, 原因文本)，无条件 @unittest.skip 冒充条件跳过会因原因
+        # 不匹配而红）、两通道计数相等、无 expectedFailure / unexpected
+        # successes、套件自身 rc=0。白名单默认为空：无登记条件跳过的套件
+        # 任何 skip 都红。
+        fixtures = Path(__file__).resolve().parent / 'fixtures'
+        try:
+            cp = subprocess.run(
+                [sys.executable, '-B', '-m', 'unittest', '-v', module],
+                cwd=fixtures, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self.fail('%s the %s subprocess timed out (>%d s, the CI step '
+                      'budget); a hung or stalled gate must not pass silently'
+                      % (tag, module, timeout))
+        out = cp.stdout + cp.stderr
+        ran = re.search(r'^Ran (\d+) tests? in ', out, re.M)
+        self.assertIsNotNone(
+            ran,
+            '%s the %s run must print a "Ran N tests" summary line; a broken '
+            'or empty entry point must not pass. Tail: %s'
+            % (tag, module, out[-800:]))
+        self.assertGreaterEqual(
+            int(ran.group(1)), minimum,
+            '%s %s must run at least %d tests; an emptied, renamed-away, or '
+            'skipped module still exits 0 and the gate is silently empty '
+            '(ran %s)' % (tag, module, minimum, ran.group(1)))
+        skipped = self._verbose_skipped_tests(out)
+        self._assert_skip_channels_agree(out, skipped, tag)
+        self.assertTrue(
+            set(skipped) <= set(allowed_skips),
+            '%s only the registered host-conditional skips in %s may be '
+            'skipped (allowed: %s); any other skip still exits 0 and the '
+            'gate silently passes (skipped: %s)'
+            % (tag, module, sorted(allowed_skips), sorted(skipped)))
+        for marker in ('expected failures=', 'unexpected successes='):
+            self.assertNotIn(
+                marker, out,
+                '%s %s must not lean on the expectedFailure channel: %s '
+                'keeps unittest exit 0 while a real test is not asserted '
+                '(found %s)' % (tag, module, marker, marker))
+        self.assertEqual(
+            cp.returncode, 0,
+            '%s the %s suite itself must pass (rc=%d). Tail: %s'
+            % (tag, module, cp.returncode, out[-800:]))
+        return out
+
+    def test_the_verbose_skip_reading_covers_every_channel(self):
+        # r39（DS boundary#3 P2）：skip 判读助手自身的负控——r38 版正则对
+        # docstring / subTest 形状零命中而 `空集 ⊆ 白名单` 恒真，没有任何用例
+        # 能证明「漏掉一个 skip 必须红」。这里用固定文本覆盖三种实测形状 +
+        # 计数通道互证 + fail-closed + 空输出，全为纯函数判读，不起子进程。
+        transcript = (
+            "test_plain (m.C.test_plain) ... skipped 'plain reason'\n"
+            "test_docstringed (m.C.test_docstringed)\n"
+            "Docstring first line. ... skipped \"docstring reason\"\n"
+            "test_ok (m.C.test_ok) ... ok\n"
+            "  test_subtest (m.C.test_subtest) [child] ... skipped "
+            "'subtest reason'\n"
+            "Ran 4 tests in 0.001s\n\nOK (skipped=3)\n")
+        self.assertEqual(
+            self._verbose_skipped_tests(transcript),
+            [('test_plain', 'plain reason'),
+             ('test_docstringed', 'docstring reason'),
+             ('test_subtest', 'subtest reason')])
+        self._assert_skip_channels_agree(
+            transcript, self._verbose_skipped_tests(transcript), '#r39')
+        # 计数通道与名字通道不符（漂移形状）必须红：
+        with self.assertRaises(AssertionError):
+            self._assert_skip_channels_agree(
+                transcript.replace('skipped=3', 'skipped=2'),
+                self._verbose_skipped_tests(transcript), '#r39')
+        # 解析不了的 skip 行必须 fail-closed，而不是静默漏判：
+        with self.assertRaises(AssertionError):
+            self._verbose_skipped_tests(
+                "??? ... skipped 'unparseable'\n"
+                "Ran 1 test in 0.001s\n\nOK (skipped=1)\n")
+        # 空输出：无 skip 行、无 skipped= 汇总，两通道一致为 0。
+        empty = 'Ran 0 tests in 0.000s\n\nOK\n'
+        self.assertEqual(self._verbose_skipped_tests(empty), [])
+        self._assert_skip_channels_agree(empty, [], '#r39')
+
     def test_the_discovery_anchor_self_check_collects_real_tests(self):
         # #2136 fix-r35（DS boundary P2）→ fix-r36（MiniMax r35 boundary P0）：
         # 上面的守卫只钉「步存在 + 无条件 + cwd」，钉不住该步真的执行了非零且
@@ -1387,53 +1538,12 @@ class EnvironmentControls(unittest.TestCase):
         # skipped=[]（实测 _tmp/20261110-pr2136-revival/p0-repro-r36.log）。只有
         # 真跑一遍并看「Ran N tests」与「skipped=」才能同时覆盖方法级 / 类级 /
         # fixture 级 skip 与整体掏空；全套件实测约 60 s。
-        fixtures = Path(__file__).resolve().parent / 'fixtures'
-        try:
-            cp = subprocess.run(
-                [sys.executable, '-B', '-m', 'unittest', '-v',
-                 'test_negative_discovery_anchors'],
-                cwd=fixtures, capture_output=True, text=True,
-                timeout=self.discovery_anchor_step_budget)
-        except subprocess.TimeoutExpired:
-            self.fail('#2133 the self-check subprocess timed out '
-                      '(>%d s, the CI step budget); a hung or stalled gate '
-                      'must not pass silently'
-                      % self.discovery_anchor_step_budget)
-        out = cp.stdout + cp.stderr
-        ran = re.search(r'^Ran (\d+) tests? in ', out, re.M)
-        self.assertIsNotNone(
-            ran,
-            '#2133 the self-check run must print a "Ran N tests" summary '
-            'line; a broken or empty entry point must not pass. Tail: '
-            + out[-800:])
-        total = int(ran.group(1))
-        self.assertGreaterEqual(
-            total, 205,
-            '#2133 the self-check must run at least 205 tests (r37 加 4 条); '
-            'an emptied, renamed-away, or fixture-skipped module still exits 0 '
-            'and the gate is silently empty (ran %d)' % total)
-        skipped = re.search(r'skipped=(\d+)', out)
-        self.assertFalse(
-            skipped and int(skipped.group(1)),
-            '#2133 every self-check test must actually run; skipped tests '
-            'make unittest exit 0 and the gate silently pass (%s)'
-            % (skipped.group(0) if skipped else ''))
-        # #2136 fix-r37（MM concurrency P1）：unittest 的 expectedFailure
-        # 通道同样退 0——`Ran N` 照打、`OK (expected failures=N)` 换行出现、
-        # 没有 skipped=。把一条真实测试改成 @expectedFailure（或制造
-        # unexpected success）照样 CI 全绿。实测见
-        # _tmp/20261110-pr2136-revival/r37-expected-failure-channel.log。
-        for marker in ('expected failures=', 'unexpected successes='):
-            self.assertNotIn(
-                marker, out,
-                '#2133 the self-check must not lean on the expectedFailure '
-                'channel: %s keeps unittest exit 0 and the gate green '
-                'while a real test is not asserted (found %s)'
-                % (marker, marker))
-        self.assertEqual(
-            cp.returncode, 0,
-            '#2133 the self-check suite itself must pass (rc=%d). Tail: %s'
-            % (cp.returncode, out[-800:]))
+        # r39（DS simplify#1）：同构断言抽成 _assert_suite_really_runs（含
+        # r37 登记的 expectedFailure 通道洞，见
+        # _tmp/20261110-pr2136-revival/r37-expected-failure-channel.log）。
+        self._assert_suite_really_runs(
+            '#2133', 'test_negative_discovery_anchors', 205,
+            self.discovery_anchor_step_budget)
 
     def test_the_optimize_guards_self_tests_collect_real_tests(self):
         # #2136 fix-r37（MM sibling P1）：上面 -O 步的守卫同样只钉「步存在 +
@@ -1442,7 +1552,6 @@ class EnvironmentControls(unittest.TestCase):
         # 在 CI 静默为空。逐模块跑一遍并核「Ran N」下限与无 skip/期望失败；
         # 下限取 r37 实测（_tmp/20261110-pr2136-revival/
         # r37-sibling-module-baselines.log：10/13/8/10/6，合计 47，约 15 s）。
-        fixtures = Path(__file__).resolve().parent / 'fixtures'
         minimums = (
             ('test_negative_optimize_guards', 10),
             ('settings-gateway/test_negative_controls.py', 13),
@@ -1450,73 +1559,42 @@ class EnvironmentControls(unittest.TestCase):
             ('network-timing/test_negative_controls.py', 10),
             ('test_negative_roster_guards', 6),
         )
+        # r39（DS sibling#4 P2）：network-timing 的两条 EACCES 判杀用例按宿主
+        # 能力条件跳过（`@unittest.skipUnless(EACCES_STAGEABLE, ...)`——root /
+        # CAP_DAC_OVERRIDE 宿主读得了 mode-000 文件，#1922 的拒绝路径无法钉；
+        # 本仓明确支持 root 宿主，ci.yml 的 PDRS_REQUIRE_PERMISSION_FAULTS）。
+        # 与 #1570 的大小写文件系统跳过同类：环境条件跳过按 (名字, 原因) 登记
+        # 白名单，白名单外的任何 skip（含无条件 @unittest.skip）仍红。
+        registered_conditional_skips = {
+            'network-timing/test_negative_controls.py': {
+                ('test_controls_module_read_eacces_is_refused',
+                 '#1922 this host can read a mode-000 file; EACCES cannot '
+                 'be staged'),
+                ('test_private_catalog_eacces_is_refused',
+                 '#1922 this host can read a mode-000 file; EACCES cannot '
+                 'be staged'),
+            },
+        }
+        # r39（DS concurrency#2 P2）：超时失败不再包在 subTest 里——subTest 吞
+        # 异常继续下一模块，五个各挂 300 s 会把钉烧到 25 分钟；首个挂起即整条
+        # 红。总耗时一并钉在步预算上：五个各自 299 s 的「都合规」组合同样
+        # 超出它所钉的 CI 步预算（300 s），不许守钉比步长寿。
+        started = time.monotonic()
         for module, minimum in minimums:
-            with self.subTest(module=module):
-                try:
-                    cp = subprocess.run(
-                        [sys.executable, '-B', '-m', 'unittest', '-v', module],
-                        cwd=fixtures, capture_output=True, text=True,
-                        timeout=900)
-                except subprocess.TimeoutExpired:
-                    self.fail('#1666 the %s subprocess timed out (>900 s); '
-                              'a hung self-test must not pass silently' % module)
-                out = cp.stdout + cp.stderr
-                ran = re.search(r'^Ran (\d+) tests? in ', out, re.M)
-                self.assertIsNotNone(
-                    ran,
-                    '#1666 the %s run must print a "Ran N tests" summary '
-                    'line; a broken entry point must not pass. Tail: %s'
-                    % (module, out[-800:]))
-                self.assertGreaterEqual(
-                    int(ran.group(1)), minimum,
-                    '#1666 %s must run at least %d tests; an emptied, '
-                    'renamed-away, or skipped module still exits 0 and the '
-                    '-O invariance gate is silently empty (ran %s)'
-                    % (module, minimum, ran.group(1)))
-                skipped = re.search(r'skipped=(\d+)', out)
-                self.assertFalse(
-                    skipped and int(skipped.group(1)),
-                    '#1666 every %s test must actually run; skipped tests '
-                    'make unittest exit 0 and the gate silently pass (%s)'
-                    % (module, skipped.group(0) if skipped else ''))
-                for marker in ('expected failures=', 'unexpected successes='):
-                    self.assertNotIn(
-                        marker, out,
-                        '#1666 %s must not lean on the expectedFailure '
-                        'channel: %s keeps unittest exit 0 while a real '
-                        'test is not asserted (found %s)'
-                        % (module, marker, marker))
-                self.assertEqual(
-                    cp.returncode, 0,
-                    '#1666 the %s suite itself must pass (rc=%d). Tail: %s'
-                    % (module, cp.returncode, out[-800:]))
+            self._assert_suite_really_runs(
+                '#1666', module, minimum, self.optimize_guards_step_budget,
+                registered_conditional_skips.get(module, ()))
+        self.assertLessEqual(
+            time.monotonic() - started, self.optimize_guards_step_budget,
+            '#1666 the five -O self-test modules together must fit the -O '
+            'step budget (%d s); five near-miss modules must not outlive '
+            'the CI step they pin' % self.optimize_guards_step_budget)
 
     def test_the_copy_manifest_self_test_collects_real_tests(self):
         # #2136 fix-r37（MM sibling P1）：#1570 的自测步守卫同样只钉步存在，
         # 钉不住 `_shared.test_compile_inputs` 真的收集到测试——掏空或整类
         # skip 后退 0，compile_inputs 的覆盖面在 CI 静默为空。r37 实测
         # Ran 82（约 21 s，同上 baselines.log）。
-        fixtures = Path(__file__).resolve().parent / 'fixtures'
-        try:
-            cp = subprocess.run(
-                [sys.executable, '-B', '-m', 'unittest', '-v',
-                 '_shared.test_compile_inputs'],
-                cwd=fixtures, capture_output=True, text=True, timeout=900)
-        except subprocess.TimeoutExpired:
-            self.fail('#1570 the copy-manifest self-test subprocess timed out '
-                      '(>900 s); a hung self-test must not pass silently')
-        out = cp.stdout + cp.stderr
-        ran = re.search(r'^Ran (\d+) tests? in ', out, re.M)
-        self.assertIsNotNone(
-            ran,
-            '#1570 the copy-manifest self-test must print a "Ran N tests" '
-            'summary line; a broken entry point must not pass. Tail: %s'
-            % out[-800:])
-        self.assertGreaterEqual(
-            int(ran.group(1)), 82,
-            '#1570 the copy-manifest self-test must run at least 82 tests; '
-            'an emptied, renamed-away, or skipped module still exits 0 and '
-            'the coverage is silently empty (ran %s)' % ran.group(1))
         # r38（DS sibling P1）：`_shared.test_compile_inputs` 有一条按文件系统
         # 大小写条件跳过的真测试（`test_compile_inputs.py` 的
         # `test_a_case_alias_of_the_repository_is_not_outside`：临时目录大写后
@@ -1525,26 +1603,17 @@ class EnvironmentControls(unittest.TestCase):
         # 大小写不敏感的文件系统上成立，会把必跑步在 CI 上打红；改为「跳过
         # 集合 ⊆ 已登记条件跳过白名单」——白名单外的任何 skip（含整类掏空，
         # 82 条全 skip）仍红。
+        # r39（DS sibling#3 / boundary#1 P1）：白名单条目同时钉名字与原因文本
+        # （无条件 @unittest.skip('flaky') 冒充条件跳过会因原因不匹配而红），
+        # skip 判读换 fail-closed 解析 + 计数互证（见 _verbose_skipped_tests），
+        # 超时从 copy_manifest_step_budget 同源派生。
         registered_conditional_skips = {
-            'test_a_case_alias_of_the_repository_is_not_outside',
+            ('test_a_case_alias_of_the_repository_is_not_outside',
+             'case-sensitive filesystem'),
         }
-        skipped_names = set(re.findall(
-            r'^(\S+) \([^)]*\) \.\.\. skipped', out, re.M))
-        self.assertTrue(
-            skipped_names <= registered_conditional_skips,
-            '#1570 only the registered filesystem-conditional skip may be '
-            'skipped; any other skip still exits 0 and the gate silently '
-            'passes (skipped: %s)' % sorted(skipped_names))
-        for marker in ('expected failures=', 'unexpected successes='):
-            self.assertNotIn(
-                marker, out,
-                '#1570 the copy-manifest self-test must not lean on the '
-                'expectedFailure channel: %s keeps unittest exit 0 while a '
-                'real test is not asserted (found %s)' % (marker, marker))
-        self.assertEqual(
-            cp.returncode, 0,
-            '#1570 the copy-manifest self-test itself must pass (rc=%d). '
-            'Tail: %s' % (cp.returncode, out[-800:]))
+        self._assert_suite_really_runs(
+            '#1570', '_shared.test_compile_inputs', 82,
+            self.copy_manifest_step_budget, registered_conditional_skips)
 
     def test_the_shared_isolation_regressions_collect_real_tests(self):
         # #2136 fix-r38（DS sibling P2 / MM sibling P1，两家独立撞上同条）：
@@ -1557,44 +1626,12 @@ class EnvironmentControls(unittest.TestCase):
         # 树与 HEAD 一致（SourceBaselineError fail-closed），脏树上本钉红且
         # 报基线不匹配，与 CI 步本身的前提相同，属预期红。实测
         # _tmp/20261110-pr2136-revival/r38-994-baseline-clean.log。
-        fixtures = Path(__file__).resolve().parent / 'fixtures'
-        try:
-            cp = subprocess.run(
-                [sys.executable, '-B', '-m', 'unittest', '-v',
-                 'test_negative_adaptive_isolation'],
-                cwd=fixtures, capture_output=True, text=True, timeout=900)
-        except subprocess.TimeoutExpired:
-            self.fail('#994 the isolation subprocess timed out (>900 s); '
-                      'a hung regression suite must not pass silently')
-        out = cp.stdout + cp.stderr
-        ran = re.search(r'^Ran (\d+) tests? in ', out, re.M)
-        self.assertIsNotNone(
-            ran,
-            '#994 the isolation run must print a "Ran N tests" summary '
-            'line; a broken entry point must not pass. Tail: %s'
-            % out[-800:])
-        self.assertGreaterEqual(
-            int(ran.group(1)), 23,
-            '#994 the isolation regressions must run at least 23 tests; '
-            'an emptied, renamed-away, or skipped module still exits 0 '
-            'and the gate is silently empty (ran %s)' % ran.group(1))
-        skipped_names = set(re.findall(
-            r'^(\S+) \([^)]*\) \.\.\. skipped', out, re.M))
-        self.assertFalse(
-            skipped_names,
-            '#994 every isolation regression must actually run; skipped '
-            'tests make unittest exit 0 and the gate silently pass '
-            '(skipped: %s)' % sorted(skipped_names))
-        for marker in ('expected failures=', 'unexpected successes='):
-            self.assertNotIn(
-                marker, out,
-                '#994 the isolation regressions must not lean on the '
-                'expectedFailure channel: %s keeps unittest exit 0 while a '
-                'real test is not asserted (found %s)' % (marker, marker))
-        self.assertEqual(
-            cp.returncode, 0,
-            '#994 the isolation regression suite itself must pass '
-            '(rc=%d). Tail: %s' % (cp.returncode, out[-800:]))
+        # r39（DS sibling#3 / boundary#1 P1）：skip 判读换 fail-closed 解析 +
+        # 计数互证（docstring / subTest 形状 r38 的行首正则全漏），超时从
+        # isolation_step_budget 同源派生。
+        self._assert_suite_really_runs(
+            '#994', 'test_negative_adaptive_isolation', 23,
+            self.isolation_step_budget)
 
     def test_required_job_runs_the_optimize_guards_self_tests(self):
         # #2136 fix-r35（DS sibling P1）：-O 不变性自测步（#1666/#1734）与
@@ -1625,11 +1662,41 @@ class EnvironmentControls(unittest.TestCase):
                          'so the step runs from the fixtures dir')
         # #2136 fix-r38（MM sibling P2）：五个模块 r37 实测合计约 15 s，挂起时
         # 占满 job 默认 360 分钟；步级超时同样须声明且被钉住。
+        # r39（DS boundary#2 P2）：值从 optimize_guards_step_budget 同源派生。
         self.assertEqual(
-            fields.get('timeout-minutes'), ('5', []),
-            '#1666 the -O self-test step must declare timeout-minutes: 5; '
+            fields.get('timeout-minutes'),
+            (str(self.optimize_guards_step_budget // 60), []),
+            '#1666 the -O self-test step must declare timeout-minutes: %d; '
             'without it a hung step silently falls back to the 360-minute '
-            'job default')
+            'job default' % (self.optimize_guards_step_budget // 60))
+
+    def test_required_job_runs_the_environment_controls(self):
+        # #2136 fix-r39（DS sibling#1 / concurrency#2 P2）：r38 给四个被钉的
+        # 步补了 timeout-minutes，唯独**真正跑这些真跑钉的那一步**（本类全套
+        # 86 条，含 #994/#1570/#1666/#2133 四条真跑钉，r38 实测本机 764 s）
+        # 没有步级超时，挂起时回落 job 默认 360 分钟——正是那四条钉注释里
+        # 要消灭的场景搬到了本步。照 #2133 步同法声明并钉住（30 min ≈ 2.4×
+        # 余量，从 driver_step_budget 派生）。
+        command = ('\'"$RUNNER_TEMP/pyyaml-pinned/bin/python" -m unittest -v '
+                   'test_metadata_io_driver.EnvironmentControls\'')
+        jobs = self.ci_jobs('#2136')
+        steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#2136')
+        matching = [step for step in steps if self.ci_run_commands(step, '#2136') == [command]]
+        self.assertEqual(len(matching), 1,
+                         '#2136 required CI job must run the EnvironmentControls suite')
+        fields = self.ci_step_fields(matching[0], '#2136')
+        for key in ('if', 'continue-on-error'):
+            self.assertNotIn(key, fields,
+                             '#2136 the EnvironmentControls step must be unconditional')
+        self.assertEqual(
+            fields.get('working-directory'), ('src/pilotdeck-gateway/tests', []),
+            '#2136 the EnvironmentControls suite runs from the gateway tests dir')
+        self.assertEqual(
+            fields.get('timeout-minutes'),
+            (str(self.driver_step_budget // 60), []),
+            '#2136 the EnvironmentControls step must declare timeout-minutes: '
+            '%d; without it a hung step silently falls back to the '
+            '360-minute job default' % (self.driver_step_budget // 60))
 
     def test_negative_controls_job_runs_the_gateway_fixture(self):
         # #1632 P2-3：这个 job 存在的唯一理由是让夹具真的跑起来；删掉执行步、
@@ -1792,10 +1859,17 @@ class EnvironmentControls(unittest.TestCase):
             ('isolation-ci-wrong-cwd', 'working-directory: src\n        ' + command,
              '#994 isolation CI step must run from repository root'))]
         # r38（MM sibling P2）：删掉步级超时，回落 job 默认 360 分钟。
+        # r39（DS sibling#2 P2）：补「膨胀」形——把值改成 360 同样失去挂起
+        # 保护（#2133 步已两形齐全，其余只有 removed）。
+        timeout_message = ('#994 the isolation CI step must declare '
+                           'timeout-minutes: 15')
         cases.append(('isolation-ci-timeout-removed',
                       workflow.replace('        timeout-minutes: 15\n', '', 1),
-                      '#994 the isolation CI step must declare '
-                      'timeout-minutes: 15'))
+                      timeout_message))
+        cases.append(('isolation-ci-timeout-inflated',
+                      workflow.replace('        timeout-minutes: 15\n',
+                                       '        timeout-minutes: 360\n', 1),
+                      timeout_message))
         self.check_ci_mutations(cases, 'test_required_job_runs_shared_isolation_regressions', '#994')
 
     def test_discovery_anchor_self_check_ci_regressions_are_rejected(self):
@@ -1864,11 +1938,38 @@ class EnvironmentControls(unittest.TestCase):
              '#1666 the -O self-tests import the fixtures tree, '
              'so the step runs from the fixtures dir'),
             # r38（MM sibling P2）：删掉步级超时，回落 job 默认 360 分钟。
+            # r39（DS sibling#2 P2）：补「膨胀」形；锚串带后续 run 块头——
+            # ci.yml 里 `timeout-minutes: 5` 还有 #1570 步一份。
             ('optimize-self-test-timeout-removed',
              'timeout-minutes: 5\n        run: |', 'run: |',
+             '#1666 the -O self-test step must declare timeout-minutes: 5'),
+            ('optimize-self-test-timeout-inflated',
+             'timeout-minutes: 5\n        run: |', 'timeout-minutes: 360\n        run: |',
              '#1666 the -O self-test step must declare timeout-minutes: 5'))]
         self.check_ci_mutations(
             cases, 'test_required_job_runs_the_optimize_guards_self_tests', '#1666')
+
+    def test_environment_controls_step_ci_regressions_are_rejected(self):
+        # r39（DS sibling#1 P2）：driver 步（跑 EnvironmentControls 全套）的
+        # 超时变异负控——删掉 / 膨胀都必须杀在新守卫的超时断言上；锚串带
+        # run 行（该 run 标量全仓唯一），不与其它步的 timeout 行混淆。
+        workflow = self.ci_workflow_fixture()
+        timeout_message = ('#2136 the EnvironmentControls step must declare '
+                           'timeout-minutes: 30')
+        timeout_line = '        timeout-minutes: 30\n'
+        run_line = ('        run: \'"$RUNNER_TEMP/pyyaml-pinned/bin/python" '
+                    '-m unittest -v test_metadata_io_driver.EnvironmentControls\'\n')
+        cases = [
+            ('environment-controls-timeout-removed',
+             workflow.replace(timeout_line + run_line, run_line),
+             timeout_message),
+            ('environment-controls-timeout-inflated',
+             workflow.replace(timeout_line + run_line,
+                              '        timeout-minutes: 360\n' + run_line),
+             timeout_message),
+        ]
+        self.check_ci_mutations(
+            cases, 'test_required_job_runs_the_environment_controls', '#2136')
 
     def test_each_npm_job_sets_up_its_own_node_before_installing(self):
         runtime_jobs = set()

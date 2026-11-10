@@ -67,6 +67,12 @@ jobs:
       - name: CI 聚合门控与各 job 的 Node 前置守卫
         working-directory: src/pilotdeck-gateway/tests
         shell: bash
+        # #2136 fix-r39（DS sibling#1 / concurrency#2 P2）：本步真跑
+        # EnvironmentControls 全套（#994/#1570/#1666/#2133 四条真跑钉都在
+        # 其中，r38 实测本机 764 s），挂起时却占满 job 默认 360 分钟——
+        # 正是那四条钉注释里要消灭的场景搬到了本步；照 #2133 步同法声明
+        # 步级超时（30 min ≈ 2.4× 余量），由 driver 守卫钉住。
+        timeout-minutes: 30
         run: '"$RUNNER_TEMP/pyyaml-pinned/bin/python" -m unittest -v test_metadata_io_driver.EnvironmentControls'
       - name: metadata observer generation 正负控（自有文件）
         shell: bash
