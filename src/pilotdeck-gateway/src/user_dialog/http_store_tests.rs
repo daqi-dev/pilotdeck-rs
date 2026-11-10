@@ -262,6 +262,54 @@ async fn start_limited(
     (server, port)
 }
 
+/// Candidate ports for tests that assert "nothing listens here any more".
+///
+/// macOS hands loopback ephemeral ports out of
+/// `net.inet.ip.portrange.first..last` (49,152-65,535: 16,384 ports) and
+/// reuses a just-released port on the next `bind(0)`. The gateway lib suite
+/// runs thousands of tests in one process, many of which bind `127.0.0.1:0`
+/// servers, so after this test's listener closes another test's server can be
+/// handed the very same port. A plain `connect` then succeeds against that
+/// unrelated listener even though `close()` did its job.
+///
+/// A port below the ephemeral range can never be produced by `bind(0)`, so
+/// the assertion measures this listener only. The range 20000-23999 is
+/// disjoint from every other fixed port in the lib suite (channel_runtime uses
+/// the kernel allocator); a busy candidate is skipped, never stolen.
+const DEDICATED_PORT_BASE: u16 = 20_000;
+const DEDICATED_PORT_SPAN: u16 = 4_000;
+
+fn dedicated_port_candidate(offset: u32) -> u16 {
+    DEDICATED_PORT_BASE + (offset % u32::from(DEDICATED_PORT_SPAN)) as u16
+}
+
+async fn start_on_dedicated_port(
+    store: Arc<dyn LiveGatewayUserDialogStore>,
+    limits: ServeLimits,
+) -> (GatewayUserDialogStoreHttpServer, u16) {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let mut last = None;
+    for _ in 0..256 {
+        let offset = NEXT.fetch_add(1, Ordering::SeqCst);
+        let candidate = dedicated_port_candidate(offset);
+        // Bind the real server straight away: probing a port and releasing it
+        // first would leave a window where another test can take it.
+        match start_gateway_user_dialog_store_http_server_with_limits(
+            store.clone(),
+            TOKEN,
+            Some("127.0.0.1"),
+            Some(candidate),
+            limits,
+        )
+        .await
+        {
+            Ok(server) => return (server, candidate),
+            Err(error) => last = Some(error.to_string()),
+        }
+    }
+    panic!("no dedicated non-ephemeral loopback port available: {last:?}");
+}
+
 fn http_request(method: &str, path: &str, headers: &[(&str, &str)], body: &[u8]) -> Vec<u8> {
     let mut request = format!("{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n");
     for (name, value) in headers {
@@ -488,7 +536,10 @@ async fn many_small_headers_are_not_capped_at_the_documented_two_thousand() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn close_closes_idle_keep_alive_connections() {
     let (store, directory) = file_store("close-idle");
-    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    // This test is the only one that asserts "nothing listens on this port
+    // after close()", so it needs a port the OS will not hand to another
+    // test's listener; see `DEDICATED_PORT_BASE`.
+    let (server, port) = start_on_dedicated_port(store, ServeLimits::default()).await;
     let mut idle = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     idle.write_all(&http_get(false)).await.unwrap();
     let response = read_response(&mut idle).await;
@@ -508,6 +559,11 @@ async fn close_closes_idle_keep_alive_connections() {
         TcpStream::connect(("127.0.0.1", port)).await.is_err(),
         "the listener still accepts after close()"
     );
+    // And the port is genuinely free, not merely unanswered: a fresh listener
+    // can take it. This is the same liveness the assertion above relies on.
+    let rebound = std::net::TcpListener::bind(("127.0.0.1", port))
+        .expect("close() must release the listening port");
+    drop(rebound);
     let _ = std::fs::remove_dir_all(directory);
 }
 

@@ -12,6 +12,11 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 #[path = "channel_commands_tests.rs"]
 mod tests;
 
+// TS cc7c4e6 ChannelCommandRegistry.ts:190 reads process.version, not PATH.
+// Rust embeds no Node; report the pinned TS runtime from
+// tests/common/node_provenance.rs:10 and native_archive/tests.rs:722.
+const STATUS_NODE_VERSION: &str = "v22.22.0";
+
 pub trait ChannelGateway: Send + Sync {
     fn request<'a>(&'a self, method: &'a str, params: Value) -> ChannelCall<'a, Value>;
     fn turn(&self, params: Value) -> ChannelCall<'_, Vec<Value>>;
@@ -162,38 +167,8 @@ impl ChannelGateway for WsChannelGateway {
                 "windows" => "win32",
                 other => other,
             };
-            // ChannelCommandRegistry.ts reports the Node runtime's
-            // `process.version`.  Native gateway builds do not embed a
-            // fabricated version, so query the same `node` executable that
-            // would host the TypeScript implementation.  Keep the command
-            // output contract (`vNN...`) and fail the status request when the
-            // runtime cannot be discovered, matching the TS handler's
-            // catch-and-reply behaviour for a failed status probe.
-            let node_output = tokio::process::Command::new("node")
-                .arg("--version")
-                .kill_on_drop(true)
-                .output()
-                .await
-                .map_err(|e| RouteError::new("STATUS_FAILED", e.to_string()))?;
-            if !node_output.status.success() {
-                return Err(RouteError::new(
-                    "STATUS_FAILED",
-                    String::from_utf8_lossy(&node_output.stderr)
-                        .trim()
-                        .to_owned(),
-                ));
-            }
-            let node_version = String::from_utf8_lossy(&node_output.stdout)
-                .trim()
-                .to_owned();
-            if node_version.is_empty() {
-                return Err(RouteError::new(
-                    "STATUS_FAILED",
-                    "node --version returned no version",
-                ));
-            }
             Ok(format!(
-                "📊 PilotDeck Status\n\n分支: {branch}\n提交: {commit}\n运行时间: {uptime}\nNode: {node_version}\n平台: {platform}"
+                "📊 PilotDeck Status\n\n分支: {branch}\n提交: {commit}\n运行时间: {uptime}\nNode: {STATUS_NODE_VERSION}\n平台: {platform}"
             ))
         })
     }

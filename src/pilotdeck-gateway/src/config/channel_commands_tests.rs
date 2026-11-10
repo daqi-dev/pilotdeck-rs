@@ -277,12 +277,63 @@ async fn status_reports_the_node_runtime_version_contract() {
     let status = gateway
         .status()
         .await
-        .expect("node runtime is required by the TS host");
+        .expect("status must not require an external Node runtime");
     assert!(status.contains("\nNode: v"), "status={status:?}");
+    assert!(status.contains("\nNode: v22.22.0\n"), "status={status:?}");
     assert!(!status.contains("\nRust:"), "status={status:?}");
     assert!(status.starts_with("📊 PilotDeck Status\n\n"));
     assert!(status.contains("分支: "));
     assert!(status.contains("提交: "));
     assert!(status.contains("运行时间: "));
     assert!(status.contains("平台: "));
+}
+
+#[cfg(unix)]
+#[test]
+fn status_succeeds_without_invoking_external_node() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let git = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|path| path.join("git"))
+        .find(|path| path.is_file())
+        .expect("git is required for the status fields");
+    let dir = std::env::temp_dir().join(format!("pdrs-status-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&dir).unwrap();
+    symlink(git, dir.join("git")).unwrap();
+    let marker = dir.join("node.called");
+
+    // Only the child test's PATH changes; parallel tests keep their environment.
+    for fake_node in [false, true] {
+        if fake_node {
+            let node = dir.join("node");
+            std::fs::write(&node, "#!/bin/sh\nprintf called > \"$0.called\"\nexit 99\n").unwrap();
+            std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o755)).unwrap();
+            assert_eq!(
+                std::process::Command::new("node")
+                    .env("PATH", &dir)
+                    .status()
+                    .unwrap()
+                    .code(),
+                Some(99)
+            );
+            assert!(marker.exists(), "the fake node must record invocation");
+            std::fs::remove_file(&marker).unwrap();
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "config::channel_commands::tests::status_reports_the_node_runtime_version_contract",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("PATH", &dir)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success() && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+            "fake_node={fake_node}, output={output:?}"
+        );
+        assert!(!marker.exists(), "status must never invoke the fake node");
+    }
+    std::fs::remove_dir_all(dir).unwrap();
 }

@@ -1443,3 +1443,238 @@ async fn timeout_then_abort_keeps_the_timeout_terminal_text() {
     );
 }
 
+/// WeixinChannel.ts:419-433 / :481 — "/new /help" resolves as command "new"
+/// (no handler), so the remainder "/help" is queued as an ordinary turn
+/// message. It must never be routed through executeChannelCommand.
+#[tokio::test]
+async fn new_remainder_is_queued_as_a_message_not_run_as_a_command() {
+    let server = server(false).await;
+    let (storage, credentials, batch) = setup(&server.base, json!([message("/new /help")]));
+    let gateway = Arc::new(Gateway {
+        turns: AtomicUsize::new(0),
+        requests: Default::default(),
+    });
+    let delivery = NativeWeixinFactory::new(storage.home.clone(), Some(server.base.clone()))
+        .unwrap()
+        .delivery();
+    let owner = Arc::new(live::LiveOwner::new(
+        storage.clone(),
+        Http::new(),
+        gateway.clone(),
+        ChannelSessionState::default(),
+        delivery,
+    ));
+    owner.process_batch(&credentials, batch).await.unwrap();
+    assert_eq!(
+        gateway.turns.load(Ordering::SeqCst),
+        1,
+        "the remainder is one ordinary turn"
+    );
+    let requests = gateway.requests.lock().unwrap();
+    let turn = requests
+        .iter()
+        .find(|value| value.get("message").is_some())
+        .expect("a turn was submitted");
+    assert_eq!(turn["message"], "/help");
+    assert!(
+        turn["sessionKey"]
+            .as_str()
+            .unwrap()
+            .starts_with("weixin:chat=chat:s_"),
+        "the turn uses the new session"
+    );
+    drop(requests);
+    let texts: Vec<String> = server
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v["msg"]["item_list"][0]["text_item"]["text"].as_str().map(str::to_owned))
+        .collect();
+    assert!(
+        !texts.iter().any(|text| text.contains("📋 可用命令")),
+        "the /help remainder must not run the help command: {texts:?}"
+    );
+    // WeixinChannel.ts:431-433 — the ack is only sent when the remainder is
+    // empty; "/new /help" queues the remainder instead.
+    assert!(
+        !texts.iter().any(|text| text == "已创建新会话。"),
+        "a /new with a remainder sends no acknowledgement: {texts:?}"
+    );
+}
+
+/// WeixinChannel.ts:531-545 + :663 — processMessage re-reads the generation for
+/// every queued turn. A /new that lands while the previous run is still
+/// streaming must not make the queued replacement message complete as stale.
+#[tokio::test]
+async fn message_queued_during_new_still_runs_under_the_new_generation() {
+    struct Hold {
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+        turns: AtomicUsize,
+        messages: StdMutex<Vec<String>>,
+    }
+    impl ChannelGateway for Hold {
+        fn request<'a>(&'a self, method: &'a str, _params: Value) -> ChannelCall<'a, Value> {
+            Box::pin(async move {
+                assert_eq!(method, "abort_turn");
+                Ok(json!({}))
+            })
+        }
+        fn turn(&self, _params: Value) -> ChannelCall<'_, Vec<Value>> {
+            Box::pin(async { panic!() })
+        }
+        fn stream_turn<'a>(
+            &'a self,
+            params: Value,
+            sink: &'a dyn crate::config::channel_commands::ChannelEventSink,
+        ) -> ChannelCall<'a, ()> {
+            Box::pin(async move {
+                self.messages
+                    .lock()
+                    .unwrap()
+                    .push(params["message"].as_str().unwrap_or("").to_owned());
+                let first = self.turns.fetch_add(1, Ordering::SeqCst) == 0;
+                if first {
+                    self.entered.notify_one();
+                    self.release.notified().await;
+                }
+                sink.event(json!({"type":"assistant_text_delta","text":"reply"}))
+                    .await?;
+                Ok(())
+            })
+        }
+    }
+    let server = server(false).await;
+    let (storage, credentials, batch) = setup(&server.base, json!([message("active")]));
+    let gateway = Arc::new(Hold {
+        entered: Default::default(),
+        release: Default::default(),
+        turns: AtomicUsize::new(0),
+        messages: StdMutex::new(Vec::new()),
+    });
+    let delivery = NativeWeixinFactory::new(storage.home.clone(), Some(server.base.clone()))
+        .unwrap()
+        .delivery();
+    let owner = Arc::new(live::LiveOwner::new(
+        storage.clone(),
+        Http::new(),
+        gateway.clone(),
+        ChannelSessionState::default(),
+        delivery,
+    ));
+    let active = {
+        let owner = owner.clone();
+        let credentials = credentials.clone();
+        tokio::spawn(async move { owner.process_batch(&credentials, batch).await })
+    };
+    gateway.entered.notified().await;
+    // /new while the first run is still streaming.
+    let mut reset = second_batch(&storage, "/new");
+    reset["id"] = "d".repeat(64).into();
+    super::super::super::storage::write(
+        &storage
+            .home
+            .join("channels/weixin-inbox")
+            .join(format!("{}.json", "d".repeat(64))),
+        &reset,
+    )
+    .unwrap();
+    owner.process_batch(&credentials, reset).await.unwrap();
+    // The replacement message arrives before the old loop finished.
+    let mut queued = second_batch(&storage, "after new");
+    queued["id"] = "e".repeat(64).into();
+    super::super::super::storage::write(
+        &storage
+            .home
+            .join("channels/weixin-inbox")
+            .join(format!("{}.json", "e".repeat(64))),
+        &queued,
+    )
+    .unwrap();
+    let queued = {
+        let owner = owner.clone();
+        let credentials = credentials.clone();
+        tokio::spawn(async move { owner.process_batch(&credentials, queued).await })
+    };
+    tokio::task::yield_now().await;
+    tokio::task::yield_now().await;
+    gateway.release.notify_one();
+    tokio::time::timeout(Duration::from_secs(5), queued)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    active.await.unwrap().unwrap();
+    assert_eq!(
+        gateway.turns.load(Ordering::SeqCst),
+        2,
+        "the message queued during /new must run: {:?}",
+        gateway.messages.lock().unwrap()
+    );
+    let messages = gateway.messages.lock().unwrap().clone();
+    assert_eq!(messages[0], "active");
+    assert_eq!(messages[1], "after new");
+    let receipt = std::fs::read_dir(
+        storage
+            .home
+            .join("channels/weixin-inbox"),
+    )
+    .unwrap()
+    .filter_map(|entry| {
+        let path = entry.ok()?.path();
+        (path.extension()? == "receipt").then_some(path)
+    })
+    .map(|path| super::super::super::storage::read_checked(&path).unwrap().unwrap())
+    .filter(|receipt| receipt["complete"] != true)
+    .count();
+    assert_eq!(receipt, 0, "every consumed message receipt is complete");
+}
+
+/// WeixinChannel.ts:556 — String(msg.message_id ?? msg.client_id ?? Date.now())
+/// names the attachment store directory. A numeric message_id must stringify;
+/// the inbox batch id is only the fallback when the field is missing.
+#[tokio::test]
+async fn numeric_message_id_names_the_attachment_store_directory() {
+    let server = server(false).await;
+    let mut numeric = message("look");
+    numeric["message_id"] = json!(4242);
+    numeric["item_list"] = json!([
+        {"type": 1, "text_item": {"text": "look"}},
+        // Port 1 refuses, so materialize_inbound fails after creating the
+        // per-message directory.
+        {"type": 2, "image_item": {"url": "http://127.0.0.1:1/x.png"}}
+    ]);
+    let (storage, credentials, batch) = setup(&server.base, json!([numeric]));
+    let owner = Arc::new(live::LiveOwner::new(
+        storage.clone(),
+        Http::new(),
+        Arc::new(Gateway {
+            turns: AtomicUsize::new(0),
+            requests: Default::default(),
+        }),
+        ChannelSessionState::default(),
+        NativeWeixinFactory::new(storage.home.clone(), Some(server.base.clone()))
+            .unwrap()
+            .delivery(),
+    ));
+    owner.process_batch(&credentials, batch).await.unwrap();
+    let chat_dir = storage
+        .home
+        .join("im-attachments")
+        .join("weixin")
+        .join("chat");
+    let names: Vec<String> = std::fs::read_dir(&chat_dir)
+        .unwrap()
+        .filter_map(|entry| Some(entry.ok()?.file_name().to_string_lossy().into_owned()))
+        .collect();
+    assert!(
+        names.iter().any(|name| name == "4242"),
+        "numeric message_id must name the store dir, saw {names:?}"
+    );
+    assert!(
+        !names.iter().any(|name| name == &"a".repeat(64)),
+        "the inbox batch id is not used when message_id exists: {names:?}"
+    );
+}
+

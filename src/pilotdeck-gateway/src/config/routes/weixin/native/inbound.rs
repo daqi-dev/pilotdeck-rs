@@ -56,7 +56,29 @@ fn push_weixin_attachment(
         attachment["mimeType"] = mime.into();
     }
     attachment["url"] = url.into();
-    let mut metadata = json!({ "weixinMediaOwner": media_owner.clone() });
+    // WeixinChannel.ts:575-605 — metadata carries itemType plus the source the
+    // download URL came from ("url" for cdn_url/url, "media.full_url"
+    // otherwise) and, for images, the declared width/height. weixinMediaOwner
+    // stays because the Rust decrypt step needs the raw item object.
+    let source = if media_owner.get("cdn_url").and_then(Value::as_str).is_some()
+        || media_owner.get("url").and_then(Value::as_str).is_some()
+    {
+        "url"
+    } else {
+        "media.full_url"
+    };
+    let mut metadata = json!({
+        "weixinMediaOwner": media_owner.clone(),
+        "itemType": kind,
+        "source": source,
+    });
+    if kind == "image" {
+        for field in ["width", "height"] {
+            if let Some(number) = media_owner.get(field).and_then(Value::as_f64) {
+                metadata[field] = json!(number);
+            }
+        }
+    }
     if let Some(file_id) = media_owner
         .get("file_id")
         .or_else(|| media_owner.get("fileId"))
@@ -69,7 +91,7 @@ fn push_weixin_attachment(
     None
 }
 
-fn json_nonempty_id(value: &Value) -> Option<String> {
+pub(crate) fn json_nonempty_id(value: &Value) -> Option<String> {
     match value {
         Value::String(text) if !text.trim().is_empty() => Some(text.to_owned()),
         Value::Number(number) => Some(number.to_string()),

@@ -219,7 +219,7 @@ impl LiveOwner {
                     self.delivery.queue_pending_reply(chat, body);
                     eprintln!(
                         "weixin: outbox reply queued after failure: {}",
-                        super::super::media::format_weixin_error_message(&error.message)
+                        format_live_error(&error.message)
                     );
                 }
             }
@@ -259,7 +259,7 @@ impl LiveOwner {
         if let Err(error) = self.typing_rpc(credentials, chat, &context).await {
             eprintln!(
                 "weixin: sendTyping failed: {}",
-                super::super::media::format_weixin_error_message(&error.message)
+                format_live_error(&error.message)
             );
         }
     }
@@ -388,16 +388,11 @@ impl LiveOwner {
         };
         let mut input = input;
         if !attachments.is_empty() {
-            let message_id = message
-                .get("message_id")
-                .or_else(|| message.get("client_id"))
-                .and_then(Value::as_str)
-                .filter(|id| !id.is_empty())
-                .unwrap_or(id);
+            let message_id = inbound_store_id(message, id);
             let materialize_diags = super::super::attachments::materialize_inbound(
                 &self.storage.home,
                 chat_id,
-                message_id,
+                &message_id,
                 &mut attachments,
             )
             .await?;
@@ -468,7 +463,7 @@ impl LiveOwner {
                 if let Err(error) = self.gateway.request("abort_turn", params).await {
                     eprintln!(
                         "weixin: abort previous session on /new failed: {}",
-                        super::super::media::format_weixin_error_message(&error.message)
+                        format_live_error(&error.message)
                     );
                 }
                 self.mapper.lock().unwrap().reset("weixin", chat_id);
@@ -507,8 +502,13 @@ impl LiveOwner {
         if self.answer(credentials, chat_id, &input, generation).await? {
             return Ok(());
         }
-        // WeixinChannel.ts:457-471 — commands run on the raw text.
-        if js_trim(&input).starts_with('/')
+        // WeixinChannel.ts:419-433 / :457-471 — the command router only sees a
+        // message that was not a /new. TS routes the pre-extraction text, so
+        // "/new /help" resolves as command "new" (no handler → false) and the
+        // remainder "/help" is queued as an ordinary turn message, never run as
+        // a command.
+        if resolved_new.is_none()
+            && js_trim(&input).starts_with('/')
             && self
                 .run_command(&input, chat_id, credentials, &receipt_path, &mut receipt)
                 .await?
@@ -535,7 +535,7 @@ impl LiveOwner {
             attachments,
             receipt_path: Some(receipt_path),
         };
-        self.run_queued_turns(credentials, chat_id, generation, turn)
+        self.run_queued_turns(credentials, chat_id, turn)
             .await
     }
     /// WeixinChannel.ts:473-490 — executeChannelCommand and its reply delivery.
@@ -593,7 +593,6 @@ impl LiveOwner {
         self: &Arc<Self>,
         credentials: &Value,
         chat_id: &str,
-        generation: u64,
         first: QueuedTurn,
     ) -> Result<()> {
         if !self.enter_run(chat_id).await {
@@ -605,6 +604,12 @@ impl LiveOwner {
         }
         let mut next = Some(first);
         while let Some(turn) = next {
+            // WeixinChannel.ts:531-545 + :663 — processMessage reads the
+            // generation itself on every turn. Reading it once for the whole
+            // loop made a /new that arrives while this loop is still running
+            // stamp the queued replacement turns with the previous generation,
+            // so they were finished as dropped instead of executed.
+            let generation = self.generation(chat_id).await;
             self.process_message(credentials, chat_id, generation, turn)
                 .await;
             // A /new reset empties the queue, so a stale turn simply finds none.
@@ -679,7 +684,7 @@ impl LiveOwner {
                         Err(error) => {
                             eprintln!(
                                 "weixin: sendText failed: {}",
-                                super::super::media::format_weixin_error_message(&error.message)
+                                format_live_error(&error.message)
                             );
                             // WeixinChannel.ts:806-829 — queueOnFailure alone decides
                             // whether a failed send joins the pending list.
@@ -742,7 +747,7 @@ impl LiveOwner {
             // agent_status and the turn still flushes its final text.
             eprintln!(
                 "weixin: submitTurn error: {}",
-                super::super::media::format_weixin_error_message(&error.message)
+                format_live_error(&error.message)
             );
             let _ = live
                 .lock()
@@ -816,7 +821,7 @@ impl LiveOwner {
                 // WeixinChannel.ts:438-441 — swallow, keep the batch moving.
                 eprintln!(
                     "weixin: elicitation answer error: {}",
-                    super::super::media::format_weixin_error_message(&error.message)
+                    format_live_error(&error.message)
                 );
                 return Ok(true);
             }
@@ -878,7 +883,7 @@ impl LiveOwner {
                             .abort_answer(chat_id, token, entry);
                         eprintln!(
                             "weixin: permission answer error: {}",
-                            super::super::media::format_weixin_error_message(&error.message)
+                            format_live_error(&error.message)
                         );
                         return Ok(true);
                     }
@@ -965,6 +970,11 @@ mod generation_tests {
             state: ChatSessionState::new(20),
             ..Default::default()
         };
+        // WeixinChannel.ts:524-529 — two /new resets put the chat on generation 2,
+        // which is the replacement session the stale turn must not disturb.
+        chat.state.reset_for_new_session("chat");
+        chat.state.reset_for_new_session("chat");
+        assert_eq!(chat.state.generation("chat"), 2);
         chat.state.set_active_run(
             "chat",
             ActiveRun {
@@ -1009,6 +1019,51 @@ mod generation_tests {
                 "工具 write_file 需要权限才能继续执行。\n\n请求内容：\n{}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。"
             )
         );
+        // ImChatSessionState.ts:64 — the positive control r20 deleted: the turn
+        // that still owns the generation does finish. The pending question is
+        // dropped here; the permission stays deferred because its retry prompt
+        // is still pending (ImPermissionHelper.ts:151-164).
+        assert!(chat.finish_turn("chat", 2));
+        assert!(!chat.elicitation.has_pending("chat"));
+        assert!(chat.permissions.retry_pending("chat"));
+    }
+
+    // WeixinChannel.ts:773-783 — finishing the current turn must take the
+    // permission prompt and the question out of the chat, so the user is not
+    // asked again after the turn ended.
+    #[test]
+    fn finish_turn_clears_the_pending_prompts_the_user_sees() {
+        let mut chat = Chat::default();
+        chat.state.reset_for_new_session("chat");
+        let generation = chat.state.generation("chat");
+        let prompt = chat.permissions.capture(
+            "chat",
+            "session",
+            "request-1",
+            "write_file",
+            &json!({}),
+        );
+        assert_eq!(
+            prompt.as_deref(),
+            Some(
+                "工具 write_file 需要权限才能继续执行。\n\n请求内容：\n{}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。"
+            )
+        );
+        chat.permissions
+            .confirm_initial_prompt("chat", true, Some("request-1"));
+        chat.elicitation.capture(
+            "chat",
+            "session",
+            &json!({"requestId":"q-1","questions":[]}),
+        );
+        assert!(chat.permissions.has_pending("chat"));
+        assert!(chat.elicitation.has_pending("chat"));
+        assert!(chat.finish_turn("chat", generation));
+        assert!(chat.permissions.format_pending("chat").is_none());
+        assert!(!chat.permissions.has_pending("chat"));
+        assert!(!chat.permissions.is_answering("chat"));
+        assert_eq!(chat.elicitation.pending_request_id("chat"), None);
+        assert!(!chat.elicitation.has_pending("chat"));
     }
 
     // ImPermissionHelper.ts:93-106 — the initial prompt gate is the field the
@@ -1045,6 +1100,27 @@ fn resolve_new(input: &str) -> Option<String> {
         .strip_prefix("/new")
         .filter(|rest| rest.is_empty() || rest.starts_with(' '))
         .map(|rest| js_trim(rest).to_owned())
+}
+
+/// WeixinChannel.ts:1034-1056 — a plain transport error is an `Error` without a
+/// code, so formatWeixinError renders exactly "Error: <message>". RouteError
+/// names the error "Error" when the log site passes a bare message, which made
+/// every B-side log line end in "; code=Error" — text TS never prints.
+fn format_live_error(message: &str) -> String {
+    format!("Error: {message}")
+}
+
+/// WeixinChannel.ts:556 — `String(msg.message_id ?? msg.client_id ?? Date.now())`:
+/// a numeric id stringifies, and only a missing/empty id falls back to a
+/// generated one. The fallback stays the inbox batch id used elsewhere here.
+fn inbound_store_id(message: &Value, batch_id: &str) -> String {
+    message
+        .get("message_id")
+        .or_else(|| message.get("client_id"))
+        .and_then(super::inbound::json_nonempty_id)
+        .map(|id| id.trim().to_owned())
+        .filter(|id| !id.is_empty())
+        .unwrap_or_else(|| batch_id.to_owned())
 }
 
 struct LiveSink<'a> {
