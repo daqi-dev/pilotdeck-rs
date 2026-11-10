@@ -1523,7 +1523,10 @@ fn normalize(raw: &str, parser_admission: bool) -> Value {
         };
         let name = name.trim().to_ascii_lowercase();
         let value = value.trim();
-        if parser_admission && name == "content-length" && value == "0" {
+        if (parser_admission || crate::mutants::on("webhook-replay-cl0-mask-always"))
+            && name == "content-length"
+            && value == "0"
+        {
             // hyper's implicit empty-body length on the registered bare
             // 400 only.
             continue;
@@ -1593,11 +1596,18 @@ fn pin(raw: &str) -> String {
 const PARSER_ADMISSION_LABEL: &str = "unknown-method";
 
 /// #2153 (fix-r3, review r3): the predicate that grants the
-/// `content-length: 0` mask. Every consumer — the exemption in
-/// `run_request`, the uniqueness guard and the raw-byte pin's step lookup —
-/// goes through this one function, so widening the predicate anywhere
-/// fails the guard, which pins that exactly one oracle step satisfies it.
+/// `content-length: 0` mask. The exemption in `run_request` and the
+/// uniqueness guard both go through this one function, so widening the
+/// predicate anywhere fails the guard, which pins that exactly one oracle
+/// step satisfies it; the raw-byte pin's step lookup reads the same shared
+/// `PARSER_ADMISSION_LABEL` constant the predicate compares against, so its
+/// two legs stay same-sourced either way.
 fn parser_admission(label: &str) -> bool {
+    if crate::mutants::on("webhook-replay-cl0-wide") {
+        // #2789 negative control: the pre-#2153 blanket shape — every step
+        // exempt — which the uniqueness guard below must reject.
+        return true;
+    }
     label == PARSER_ADMISSION_LABEL
 }
 

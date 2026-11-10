@@ -113,6 +113,19 @@ const PARSER_ADMISSION_CELLS: &[&str] = &[
     "connect-nonascii",
 ];
 
+/// #2776/#2789: the predicate that grants the `content-length: 0` exemption.
+/// The replay's selection point goes through this one function, so widening
+/// it (the pre-#2153 blanket shape) fails the coverage guard's
+/// through-the-predicate comparison instead of silently re-widening the mask.
+fn parser_admission(id: &str) -> bool {
+    if crate::mutants::on("native-http-cl0-wide") {
+        // #2776 negative control: the exemption list spread to every cell,
+        // which the guard below must reject.
+        return true;
+    }
+    PARSER_ADMISSION_CELLS.contains(&id)
+}
+
 /// The two deterministic static roots of the fixture generator, contents never
 /// changing between runs.
 struct Fixture {
@@ -288,10 +301,10 @@ async fn replay(id: &str) {
     let fixture = roots();
     let (raw, closed) = exchange(&cell.server, &cell.request, &cell.id, &fixture).await;
     let expected = expected_response(&cell, &fixture);
-    let parser_admission = PARSER_ADMISSION_CELLS.contains(&cell.id.as_str());
+    let admitted = parser_admission(&cell.id);
     assert_eq!(
-        normalize(&raw, parser_admission),
-        normalize(&expected, parser_admission),
+        normalize(&raw, admitted),
+        normalize(&expected, admitted),
         "#1209 cell {} normalized response",
         cell.id
     );
@@ -708,7 +721,7 @@ fn normalize(raw: &str, parser_admission: bool) -> String {
             };
             if name.eq_ignore_ascii_case("date") {
                 out.push_str("date: <masked>\r\n");
-            } else if parser_admission
+            } else if (parser_admission || crate::mutants::on("native-http-cl0-mask-always"))
                 && name.eq_ignore_ascii_case("content-length")
                 && value.trim() == "0"
             {
@@ -1087,13 +1100,17 @@ fn only_the_registered_cells_mask_a_content_length_zero() {
 /// missing-Host 400 carries its own `date` and chunked terminator, so it is
 /// naturally excluded). A cell that gains or loses the bare-400 shape fails
 /// here with its id instead of a generic replay red, and a stale list entry
-/// points at the cell to re-check.
+/// points at the cell to re-check. #2776/#2789 add the second leg the
+/// predicate-widening mutant needs: the admitted set, read through the same
+/// `fn parser_admission` the replay's selection point uses, is also exactly
+/// the oracle's bare 400s, so widening the predicate fails here too.
 #[test]
 fn parser_admission_cells_cover_exactly_the_oracle_bare_400s() {
     let recorded = oracle();
-    let mut oracle_bare: Vec<&str> = recorded["cells"]
+    let cells = recorded["cells"]
         .as_array()
-        .expect("#1209 oracle cells array")
+        .expect("#1209 oracle cells array");
+    let mut oracle_bare: Vec<&str> = cells
         .iter()
         .filter(|cell| {
             cell["response"]
@@ -1109,6 +1126,20 @@ fn parser_admission_cells_cover_exactly_the_oracle_bare_400s() {
     assert_eq!(
         listed, oracle_bare,
         "#2153 PARSER_ADMISSION_CELLS and the oracle's bare-400 cells are the same set"
+    );
+    // #2776/#2789: through the same `fn parser_admission` the replay's
+    // selection point reads, so widening the predicate fails here instead of
+    // re-widening the mask (the constant comparison above stays the
+    // stale-entry leg).
+    let mut admitted: Vec<&str> = cells
+        .iter()
+        .map(|cell| cell["id"].as_str().expect("#1209 oracle cell id"))
+        .filter(|id| parser_admission(id))
+        .collect();
+    admitted.sort_unstable();
+    assert_eq!(
+        admitted, oracle_bare,
+        "#2153 the exemption predicate admits exactly the oracle's bare-400 cells"
     );
 }
 
