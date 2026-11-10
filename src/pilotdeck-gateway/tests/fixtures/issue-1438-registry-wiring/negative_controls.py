@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """#1438: the async-hook registration bridge must stay load-bearing.
 
-Five mutations walk the bridge backwards from its consumer. The first three
+Six mutations walk the bridge backwards from its consumer. The first three
 revert one link each of the #1438 wiring to the pre-issue degraded state — the
 state where ``hook_async_result`` could only ever answer ``unknown`` because
 nothing in production ever called ``AsyncHookRegistry::register``:
@@ -18,6 +18,11 @@ nothing in production ever called ``AsyncHookRegistry::register``:
   forwards the registration, but its error no longer propagates (the trait's
   pre-#1438 infallible shape): an ``ASYNC_HOOK_INVOCATION_CONFLICT`` on a
   restarted run would be swallowed and the dispatch would wrongly succeed.
+* ``family-slot-per-generation`` — the interaction family stops handing its
+  cross-generation sink slot to the ``InteractionHooks`` it stages (a fresh
+  private slot per generation instead): a project reload re-stages the
+  resources and the freshly staged generation silently loses the installed
+  sink — the fix-r2 regression the reload survival test pins.
 
 The last two guard the issue's second half — the steer-family behavior tests
 the issue added alongside the wiring:
@@ -48,6 +53,7 @@ from negative_suite import matrix_main
 ROOT = Path(__file__).resolve().parents[5]
 GATEWAY = ROOT / 'src/pilotdeck-gateway/src'
 STEER_ASSEMBLY = GATEWAY / 'native_process/assembly/steer.rs'
+INTERACTION_FAMILY = GATEWAY / 'runtime/project/interaction.rs'
 INTERACTION_HOOKS = GATEWAY / 'runtime/project/interaction_hooks.rs'
 HOOKS_RUNTIME = GATEWAY / 'runtime/hooks/runtime.rs'
 TURN_GATEWAY = GATEWAY / 'runtime/turn/gateway.rs'
@@ -61,19 +67,41 @@ MUTATIONS = [
      '    hooks.set_async_hook_sink(Arc::new(GatewayAsyncHookSink {\n'
      '        registry: registry.clone(),\n'
      '    }));',
-     '    let _ = (&hooks, &registry);',
+     '    if false {\n'
+     '        hooks.set_async_hook_sink(Arc::new(GatewayAsyncHookSink {\n'
+     '            registry: registry.clone(),\n'
+     '        }));\n'
+     '    }',
      [('native_process::assembly::steer::tests::'
        'production_hook_dispatch_registers_async_output_in_the_gateway_registry',
        '#1438 a bridged async output must not enter the local pending list')]),
+    # fix-r2: the sink must live in the cross-generation slot. Staging a
+    # fresh private slot per generation reverts the reload fix: the
+    # reloaded generation would silently fall back to local pending.
+    ('family-slot-per-generation', INTERACTION_FAMILY,
+     '        sink.register_resource(\n'
+     '            Resource::InteractionHooks,\n'
+     '            Arc::new(super::interaction_hooks::InteractionHooks::with_sink_slot(\n'
+     '                permission,\n'
+     '                Arc::clone(&self.async_sink),\n'
+     '            )),\n'
+     '        );',
+     '        sink.register_resource(\n'
+     '            Resource::InteractionHooks,\n'
+     '            Arc::new(super::interaction_hooks::InteractionHooks::new(permission)),\n'
+     '        );',
+     [('native_process::assembly::steer::tests::'
+       'async_hook_bridge_survives_a_project_reload',
+       '#1438 the reloaded generation still bridges async outputs')]),
     # The resource-side install: bind_with_options bridges the installed
     # sink into the per-turn handler only under this condition.
     ('hooks-bind-handler-install-skipped', INTERACTION_HOOKS,
      '        if options.on_async_registered.is_none()\n'
-     '            && let Some(sink) = state.async_hook_sink.clone()\n'
+     '            && let Some(sink) = lock(&self.sink_slot).clone()\n'
      '        {',
      '        if false\n'
      '            && options.on_async_registered.is_none()\n'
-     '            && let Some(sink) = state.async_hook_sink.clone()\n'
+     '            && let Some(sink) = lock(&self.sink_slot).clone()\n'
      '        {',
      [('native_process::assembly::steer::tests::'
        'production_hook_dispatch_registers_async_output_in_the_gateway_registry',
@@ -124,8 +152,8 @@ MUTATIONS = [
 def main():
     return matrix_main(ROOT, __file__, '', MUTATIONS,
                        passed_count=1, child_count=0,
-                       paths=[STEER_ASSEMBLY, INTERACTION_HOOKS, HOOKS_RUNTIME,
-                              STEER_MAILBOX, TURN_GATEWAY],
+                       paths=[STEER_ASSEMBLY, INTERACTION_FAMILY, INTERACTION_HOOKS,
+                              HOOKS_RUNTIME, STEER_MAILBOX, TURN_GATEWAY],
                        exact=True)
 
 

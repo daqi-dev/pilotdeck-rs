@@ -71,11 +71,23 @@ impl FamilyResource for InteractionResource {
 /// `ResourceFamilySource::layers_interaction`).
 pub struct InteractionFamilySource {
     execution_world: Arc<dyn ResourceFamilySource>,
+    // #1438: shared across generations. `stage` re-runs on every project
+    // reload, and each run stages a fresh `InteractionHooks`; handing them
+    // the same slot keeps the assembly-installed async-hook sink (and the
+    // gateway registry bridge) alive across the reload instead of silently
+    // reverting to local pending (`hook_async_result` answering `unknown`).
+    async_sink: super::interaction_hooks::AsyncHookSinkSlot,
 }
 
 impl InteractionFamilySource {
-    pub fn new(execution_world: Arc<dyn ResourceFamilySource>) -> Self {
-        Self { execution_world }
+    pub fn new(
+        execution_world: Arc<dyn ResourceFamilySource>,
+        async_sink: super::interaction_hooks::AsyncHookSinkSlot,
+    ) -> Self {
+        Self {
+            execution_world,
+            async_sink,
+        }
     }
 }
 
@@ -105,7 +117,10 @@ impl ResourceFamilySource for InteractionFamilySource {
         );
         sink.register_resource(
             Resource::InteractionHooks,
-            Arc::new(super::interaction_hooks::InteractionHooks::new(permission)),
+            Arc::new(super::interaction_hooks::InteractionHooks::with_sink_slot(
+                permission,
+                Arc::clone(&self.async_sink),
+            )),
         );
         sink.register_resource(
             Resource::InteractionSteer,

@@ -46,6 +46,13 @@ pub trait AsyncHookSink: Send + Sync {
     ) -> Result<(), HostError>;
 }
 
+/// The cross-generation home of the gateway's async-hook registration sink
+/// (#1438): the interaction family source hands the same slot to every
+/// `InteractionHooks` it stages, so a project reload (which re-stages all
+/// resources) keeps the assembly-installed sink instead of silently falling
+/// back to local pending and answering `unknown`.
+pub type AsyncHookSinkSlot = Arc<Mutex<Option<Arc<dyn AsyncHookSink>>>>;
+
 /// Per-turn bridge from a hook runtime's async output to the gateway sink:
 /// captures the binding session, exactly where TS's per-session closure
 /// closes over `context.sessionKey`.
@@ -72,12 +79,11 @@ struct State {
     draining: Vec<(JsString, Arc<Run>)>,
     // #686: pending async hook receipts voided when their run closed. Kept
     // until the same session binds its next turn (or the generation closes).
+    // #1438: with the bridge installed the sink_slot carries async outputs to
+    // the gateway registry, so the local pending list stays empty — this
+    // discard path is the no-bridge degraded state's behavior, not the
+    // production shape anymore.
     notices: Vec<DiscardNotice>,
-    // #1438: the gateway assembly's async-hook registration sink (TS
-    // ProjectSessionFactory.ts:231-243 wraps gateway.registerAsyncHook with
-    // the session key). Installed once per gateway; read at every turn
-    // binding, where the run's session key is known.
-    async_hook_sink: Option<Arc<dyn AsyncHookSink>>,
 }
 struct Run {
     owner: Weak<Mutex<State>>,
@@ -163,12 +169,30 @@ pub struct InteractionHooks {
     state: Arc<Mutex<State>>,
     permission: InteractionPermission,
     sessions: Arc<Mutex<State>>,
+    // #1438: the gateway's registration sink lives in a slot shared across
+    // project generations. A reload re-stages every resource (a fresh
+    // `InteractionHooks` per generation), so a sink stored on the instance
+    // would be lost and the bridge would silently fall back to local pending
+    // (`hook_async_result` answering `unknown`). The family source hands
+    // every generation the same slot; the assembly installs the sink into it
+    // once per gateway.
+    sink_slot: AsyncHookSinkSlot,
 }
 impl InteractionHooks {
     pub fn new(permission: InteractionPermission) -> Self {
+        Self::with_sink_slot(permission, Arc::default())
+    }
+    /// Stages this resource against a caller-owned cross-generation sink
+    /// slot (the interaction family source passes the same slot to every
+    /// generation it stages, so a reload keeps the installed sink).
+    pub(crate) fn with_sink_slot(
+        permission: InteractionPermission,
+        sink_slot: AsyncHookSinkSlot,
+    ) -> Self {
         Self {
             state: Arc::default(),
             sessions: Arc::default(),
+            sink_slot,
             permission,
         }
     }
@@ -176,8 +200,10 @@ impl InteractionHooks {
     /// turn bindings forward async hook outputs with invocation ids to it —
     /// the Rust counterpart of the TS session factory's per-session
     /// `registerAsyncHook` bridge — instead of the local pending registry.
+    /// The write goes to the cross-generation slot, so it survives project
+    /// reloads; a second install replaces the first (one sink per gateway).
     pub fn set_async_hook_sink(&self, sink: Arc<dyn AsyncHookSink>) {
-        lock(&self.state).async_hook_sink = Some(sink);
+        *lock(&self.sink_slot) = Some(sink);
     }
     /// `settings` is the host's leased session contribution config (TS
     /// ProjectSessionRuntimeBundle:380), never sidecar input. Keep that lease
@@ -218,9 +244,10 @@ impl InteractionHooks {
         // the assembly installed a sink and the caller did not supply its own
         // handler. Production (`bind_turn`) always passes default options, so
         // it always takes the bridge; test callers that inject an explicit
-        // `on_async_registered` keep precedence.
+        // `on_async_registered` keep precedence. The slot is shared across
+        // generations, so a reloaded project keeps the installed sink.
         if options.on_async_registered.is_none()
-            && let Some(sink) = state.async_hook_sink.clone()
+            && let Some(sink) = lock(&self.sink_slot).clone()
         {
             options.on_async_registered = Some(Arc::new(TurnAsyncHookRegistration {
                 session: binding.session_id.clone(),

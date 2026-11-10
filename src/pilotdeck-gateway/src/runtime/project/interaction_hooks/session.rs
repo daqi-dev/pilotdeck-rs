@@ -14,6 +14,10 @@ impl InteractionHooks {
         let scope = Self {
             state: self.sessions.clone(),
             sessions: Arc::default(),
+            // #1438: the session scope keeps the gateway's cross-generation
+            // sink slot, so its bindings bridge async outputs like turn
+            // bindings do.
+            sink_slot: Arc::clone(&self.sink_slot),
             permission: self.permission.clone(),
         };
         let hooks = scope.bind_turn(

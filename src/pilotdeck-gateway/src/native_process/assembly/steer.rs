@@ -56,10 +56,13 @@ pub(super) fn build_async_hook_registry(
             reg_coordinator.emit(session_key, &JsValue::Object(event));
         },
     ));
-    // #1438 registration-side wiring: hand the registry to the hooks resource
-    // so every turn binding bridges async hook outputs (invocation ids) into
-    // it — the counterpart of TS ProjectSessionFactory.ts:231-243 passing
-    // gateway.registerAsyncHook into the per-session HookRuntime.
+    // #1438 registration-side wiring: install the sink into the
+    // cross-generation slot the interaction family hands to every
+    // `InteractionHooks` it stages, so every turn binding — including every
+    // binding of a reloaded project generation — bridges async hook outputs
+    // (invocation ids) into the registry: the counterpart of TS
+    // ProjectSessionFactory.ts:231-243 passing gateway.registerAsyncHook
+    // into the per-session HookRuntime.
     hooks.set_async_hook_sink(Arc::new(GatewayAsyncHookSink {
         registry: registry.clone(),
     }));
@@ -430,6 +433,101 @@ mod tests {
             drained.len(),
             1,
             "#1438 the wired registration delivered through the real enqueue"
+        );
+        assert_eq!(
+            drained[0].item_id,
+            JsString::from("async-hook:aid"),
+            "#1438 the delivered item carries the dispatched invocation id"
+        );
+        fixture
+            .owner
+            .shutdown()
+            .await
+            .expect("#1438 fixture owner shutdown");
+        fixture
+            .project
+            .dispose()
+            .await
+            .expect("#1438 fixture project shutdown");
+    }
+
+    /// #1438 fix-r2: the bridge survives a project reload. The sink lives in
+    /// the cross-generation slot the interaction family hands to every
+    /// `InteractionHooks` it stages; `ProjectRuntimeRegistry::reload`
+    /// re-stages all resources (a fresh hooks resource per generation), and
+    /// a sink held on the pre-reload instance would be lost — the reloaded
+    /// generation would silently fall back to local pending and
+    /// `hook_async_result` would answer `unknown`, the exact symptom #1438
+    /// exists to fix. This is the production `refresh.rs` path
+    /// (`registry.reload()` on a config change).
+    #[tokio::test]
+    async fn async_hook_bridge_survives_a_project_reload() {
+        use crate::host::modules::lifecycle::LifecyclePort as _;
+        use crate::runtime::turn::gateway::GatewayRequests;
+
+        let (_scratch, fixture) =
+            std::panic::catch_unwind(crate::native_process::management_tests::setup)
+                .expect("#1438 registry fixture setup");
+        let requests = wired_requests(&fixture);
+        let session = JsString::from("hook-reload");
+        // The reload swaps every project resource for a fresh generation.
+        fixture
+            .project
+            .reload()
+            .await
+            .expect("#1438 project reload restages the resources");
+        let steer = steer_resource(&fixture.project);
+        let _turn = LiveTurn::live(&requests, &steer, &session, "t", "r1").await;
+        let hooks_turn = bound_hooks_turn(&requests, &session, "r1");
+        let dispatch = hooks_turn
+            .dispatch(crate::runtime::hooks::LifecycleDispatchInput {
+                event: "PreToolUse".into(),
+                base_input: JsObject::new(),
+                payload: None,
+                match_query: None,
+                cwd: std::env::temp_dir().to_string_lossy().into_owned().into(),
+                env: None,
+                signal: None,
+            })
+            .await
+            .expect("#1438 post-reload hook dispatch stays Ok");
+        crate::negative_assert!(
+            dispatch.pending_async_hooks.is_empty(),
+            "#1438 the reloaded generation still bridges async outputs"
+        );
+        let result = requests
+            .request(
+                "hook_async_result".into(),
+                crate::metadata::object([
+                    ("sessionKey", JsValue::String(session.clone())),
+                    ("invocationId", "aid".into()),
+                    (
+                        "output",
+                        crate::metadata::object([(
+                            "hookSpecificOutput",
+                            crate::metadata::object([
+                                ("hookEventName", "PreToolUse".into()),
+                                ("additionalContext", "reloaded context".into()),
+                            ]),
+                        )]),
+                    ),
+                ]),
+            )
+            .await
+            .expect("#1438 method-layer submit stays Ok");
+        crate::negative_assert_eq!(
+            result.get("status").and_then(JsValue::as_string),
+            Some(&JsString::from("delivered")),
+            "#1438 the reloaded project generation keeps the gateway-wide bridge"
+        );
+        let drained = steer
+            .mailbox_for_test(&session)
+            .expect("#1438 session mailbox")
+            .drain(&"t".into());
+        assert_eq!(
+            drained.len(),
+            1,
+            "#1438 the post-reload registration delivered through the real enqueue"
         );
         assert_eq!(
             drained[0].item_id,
