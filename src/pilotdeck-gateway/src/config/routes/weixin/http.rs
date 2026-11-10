@@ -485,6 +485,7 @@ mod tests {
 
     #[test]
     fn test_apply_ilink_fetch_compatibility_and_intercept() {
+        install_ilink_fetch_compatibility();
         // URL containing /ilink/bot/ strips Content-Length
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_LENGTH, HeaderValue::from_static("42"));
