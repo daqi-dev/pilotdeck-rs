@@ -1224,7 +1224,40 @@ def _folded_string_fold(node, budget):
                 if value is _FOLD_STRING_UNRESOLVED:
                     return _FOLD_STRING_UNRESOLVED
                 if value is None:
-                    return None
+                    # fix-r28 (anthropic sibling#1 r27-b P1, probe-verified —
+                    # _tmp/20261110-1355-r26-harvest/probe-p1-fstring.out):
+                    # the r17 recursion folds string expressions, but an
+                    # interpolation outside that grammar whose value is a
+                    # constant *scalar* ((114+1), +115) still landed in
+                    # this fail-open None while ``f'{(114+1):c}tatus'`` is
+                    # exactly ``'status'`` at runtime — the same
+                    # one-value-two-meanings gap r27 closed on the Mult
+                    # count. The interpolation is judged with
+                    # ``_literal_test_value`` now (the fold that already
+                    # resolves UnaryOp/BinOp constants, threaded on the
+                    # same budget): a runtime operand keeps the plain None
+                    # of the contract (r19: the runtime half is
+                    # word-aware and lives in _conditional_status_word);
+                    # a pure-literal tree the fold cannot resolve is the
+                    # r14 sentinel; a scalar constant joins as
+                    # ``str(value)`` — exact under no spec, and the
+                    # spec/conversion check below still stops that as the
+                    # sentinel. A folded *container* (list/tuple/set/dict)
+                    # is constant but its ``str()`` is not certifiably
+                    # exact (set/dict iteration order can differ between
+                    # the audit process and the audited run), so it
+                    # stops as the sentinel too — constant, not runtime,
+                    # never the fail-open None.
+                    if any(isinstance(part, _RUNTIME_TEST_NODES_STRICT)
+                           for part in ast.walk(part.value)):
+                        return None
+                    lit = _literal_test_value(part.value, budget)
+                    if lit is _LITERAL_TEST_UNRESOLVED:
+                        return _FOLD_STRING_UNRESOLVED
+                    if not isinstance(lit, (int, float, complex, bytes,
+                                            type(None))):
+                        return _FOLD_STRING_UNRESOLVED
+                    value = str(lit)
                 if (part.format_spec is not None
                         or part.conversion not in (-1, None, ord('s'))):
                     # fix-r16 (anthropic boundary#2 r15 P2, probe-verified —
@@ -1361,7 +1394,13 @@ def _folded_string_fold(node, budget):
             # sentinel, never the fail-open None.
             string, count_node = ((left, node.right) if left is not None
                                   else (right, node.left))
-            if _test_is_runtime(count_node):
+            # fix-r28 (DS boundary#1 r27-d P0, probe-verified —
+            # probe-p0-subscript.out): the gate is the strict set — a
+            # Subscript/Slice-only count subtree is constant by
+            # semantics, and the literal fold below fail-closes it to
+            # the sentinel instead of the fail-open None.
+            if any(isinstance(part, _RUNTIME_TEST_NODES_STRICT)
+                   for part in ast.walk(count_node)):
                 return None
             count = _literal_test_value(count_node, budget)
             if count is _LITERAL_TEST_UNRESOLVED:
@@ -4921,6 +4960,25 @@ _RUNTIME_TEST_NODES = (ast.Name, ast.Call, ast.Attribute, ast.Subscript,
                        ast.GeneratorExp, ast.Await, ast.Yield, ast.YieldFrom,
                        ast.Starred, ast.JoinedStr, ast.FormattedValue,
                        ast.NamedExpr, ast.Slice)
+
+# #1652 fix-r28 (DS boundary#1 r27-d P0, probe-verified —
+# _tmp/20261110-1355-r26-harvest/probe-p0-subscript.out): Subscript/Slice
+# over constant containers have constant semantics (``(1, 1)[0] == 1``),
+# but _RUNTIME_TEST_NODES — rightly, for a test whose *value* depends on
+# runtime state — classes them as runtime, and the r27 Mult-count gate
+# and the r28 interpolation gate both ran BEFORE the literal fold, so a
+# constant count/interpolation of that shape took the fail-open None
+# while ``report['sta' + 'tus' * (1, 1)[0]]`` wrote the exact
+# ``'status'`` at runtime. The fold gates use this stricter set: a
+# subtree with no state-dependent node is handed to
+# ``_literal_test_value``, whose grammar does not fold the subscript
+# shapes and fail-closes them to ``_LITERAL_TEST_UNRESOLVED`` — the r14
+# sentinel through the Mult/interpolation contracts, never the
+# fail-open None. A genuinely state-dependent subscript (``d['k']``,
+# ``xs[i]``) still carries a Name and keeps the plain None.
+_RUNTIME_TEST_NODES_STRICT = tuple(
+    node for node in _RUNTIME_TEST_NODES
+    if node not in (ast.Subscript, ast.Slice))
 
 
 def _test_is_runtime(node):
@@ -10316,6 +10374,119 @@ def _aggregation_audit_impl():
         if ('fix-r27-self-check.py', f'rogue{_i}') not in _fsr10_found:
             failures.append('#892 aggregation-audit: a commuted/unary-count '
                             'status write escaped enumeration '
+                            f'(rogue{_i}) (#1652)')
+            break
+    # #1652 fix-r28 (anthropic r27-b sibling#1 P1, probe-verified —
+    # _tmp/20261110-1355-r26-harvest/probe-p1-fstring.out, before/
+    # after): the r17 FormattedValue recursion folded string
+    # expressions, but a constant *scalar* expression outside that
+    # grammar ((114+1), +115) landed in the fail-open None while
+    # ``f'{(114+1):c}tatus'`` is exactly ``'status'`` at runtime
+    # (format(115, 'c') == 's'). Fold face first: the spec shapes must
+    # stop as the sentinel and the no-spec shape must fold exactly.
+    _fsr11_shapes = [
+        ("f'{(114 + 1):c}tatus'", _FOLD_STRING_UNRESOLVED),
+        ("f'{+115:c}tatus'", _FOLD_STRING_UNRESOLVED),
+        ("f'{(114 + 1)}tatus'", '115tatus'),
+    ]
+    for _shape, _want in _fsr11_shapes:
+        if _folded_string(ast.parse(_shape, mode='eval').body) != _want:
+            failures.append('#892 aggregation-audit: a constant-expression '
+                            'f-string interpolation lost its fold '
+                            f'polarity ({_shape!r}) (#1652)')
+            break
+    # Polarity face: a runtime interpolation operand keeps the plain
+    # None of the contract (r19: the runtime half is word-aware and
+    # lives in _conditional_status_word); a pure-literal tree the fold
+    # cannot resolve, and a folded container whose ``str()`` order is
+    # not certifiable across processes, stop as the r14 sentinel —
+    # constant, not runtime, never the fail-open None.
+    _fsr11_runtime = ast.parse("f'{count:c}tatus'", mode='eval').body
+    if _folded_string(_fsr11_runtime) is not None:
+        failures.append('#892 aggregation-audit: a runtime f-string '
+                        'interpolation lost the None contract of the '
+                        'runtime half (#1652)')
+    _fsr11_unresolved = ast.parse("f'{(2 ** 999999):c}tatus'",
+                                  mode='eval').body
+    if _folded_string(_fsr11_unresolved) is not _FOLD_STRING_UNRESOLVED:
+        failures.append('#892 aggregation-audit: an unresolvable constant '
+                        'f-string interpolation must stop the fold as '
+                        'the sentinel, not read as negative evidence '
+                        '(#1652)')
+    _fsr11_container = ast.parse("f'{[1, 2]}'", mode='eval').body
+    if _folded_string(_fsr11_container) is not _FOLD_STRING_UNRESOLVED:
+        failures.append('#892 aggregation-audit: a constant container '
+                        'interpolation must stop the fold as the '
+                        'sentinel (str() order is not certifiable), not '
+                        'read as negative evidence (#1652)')
+    # End-to-end: every write below puts the exact status word in at
+    # runtime (rogue0/rogue1 by the key under the chr-spec, rogue2 by
+    # the key through the repetition, rogue3 by the value through two
+    # chr-specs and a repetition), so each must be enumerated.
+    _fsr11_writes = [
+        "    report[f'{(114 + 1):c}tatus'] = 'PASS'",
+        "    report[f'{+115:c}tatus'] = 'PASS'",
+        "    report[f'{(2 - 1) * 115:c}tatus'] = 'PASS'",
+        "    report['status'] = 'P' + f'{65:c}' + f'{83:c}' * 2",
+    ]
+    _fsr11_lines = ['report = {}', '']
+    for _i, _write in enumerate(_fsr11_writes):
+        _fsr11_lines += [f'def rogue{_i}(rows):', _write, '    return 0', '']
+    _fsr11_found, _fsr11_dup = scan_aggregation_tree(
+        ast.parse('\n'.join(_fsr11_lines)), 'fix-r28-self-check.py')
+    for _i in range(len(_fsr11_writes)):
+        if ('fix-r28-self-check.py', f'rogue{_i}') not in _fsr11_found:
+            failures.append('#892 aggregation-audit: a constant-expression '
+                            'f-string status write escaped enumeration '
+                            f'(rogue{_i}) (#1652)')
+            break
+    # #1652 fix-r28 (DS boundary#1 r27-d P0, probe-verified —
+    # _tmp/20261110-1355-r26-harvest/probe-p0-subscript.out, before/
+    # after): the fold gates judged the Mult count and the f-string
+    # interpolation with ``_test_is_runtime`` BEFORE the literal fold,
+    # and ``ast.Subscript`` is runtime grammar there — so a constant-
+    # semantics count (``'tus' * (1, 1)[0]``, ``[1][0]``) took the
+    # fail-open None while the runtime key/value was the exact word.
+    # The gates use ``_RUNTIME_TEST_NODES_STRICT`` now; the literal fold
+    # fail-closes the subscript shapes it does not fold to the r14
+    # sentinel. Fold face first: both shapes must stop as the sentinel.
+    _fsr12_shapes = [
+        "'sta' + 'tus' * (1, 1)[0]",
+        "'sta' + 'tus' * [1][0]",
+        "f'{(115,)[0]:c}tatus'",
+    ]
+    for _shape in _fsr12_shapes:
+        if _folded_string(ast.parse(_shape, mode='eval').body) \
+                is not _FOLD_STRING_UNRESOLVED:
+            failures.append('#892 aggregation-audit: a constant-semantics '
+                            'subscript count/interpolation must stop the '
+                            f'fold as the sentinel ({_shape!r}) (#1652)')
+            break
+    # Polarity face: a subscript on a Name base is state-dependent and
+    # keeps the plain None of the runtime contract.
+    _fsr12_runtime = ast.parse("'sta' + 'tus' * d['k']",
+                               mode='eval').body
+    if _folded_string(_fsr12_runtime) is not None:
+        failures.append('#892 aggregation-audit: a subscript count on a '
+                        'Name base lost the None contract of the runtime '
+                        'half (#1652)')
+    # End-to-end: every write below puts the exact status word in at
+    # runtime (rogue0/rogue1 by the key, rogue2 by the value, rogue3 by
+    # the f-string key under the chr-spec), so each must be enumerated.
+    _fsr12_writes = [
+        "    report['sta' + 'tus' * (1, 1)[0]] = 'PASS'",
+        "    report[f'{(115,)[0]:c}tatus'] = 'PASS'",
+        "    report['status'] = 'PA' + 'SS' * [1][0]",
+    ]
+    _fsr12_lines = ['report = {}', '']
+    for _i, _write in enumerate(_fsr12_writes):
+        _fsr12_lines += [f'def rogue{_i}(rows):', _write, '    return 0', '']
+    _fsr12_found, _fsr12_dup = scan_aggregation_tree(
+        ast.parse('\n'.join(_fsr12_lines)), 'fix-r28-self-check.py')
+    for _i in range(len(_fsr12_writes)):
+        if ('fix-r28-self-check.py', f'rogue{_i}') not in _fsr12_found:
+            failures.append('#892 aggregation-audit: a constant-semantics '
+                            'subscript status write escaped enumeration '
                             f'(rogue{_i}) (#1652)')
             break
     # fix-r26 (structural, review verdict): the polarity migration must

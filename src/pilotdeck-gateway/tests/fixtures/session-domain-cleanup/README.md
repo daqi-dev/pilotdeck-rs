@@ -1730,3 +1730,41 @@ PASS unchanged (no registered file touched, `--write` a no-op).
 Evidence `_tmp/20261110-1355-r26-harvest/` (probe-p0-mult.out,
 probe-p0-mult-after.out, mutneg-r27.out, agg-audit-r27.out,
 test-safety-r27.tail.out).
+
+fix-r28 (anthropic r27-b sibling#1 P1 + DS r27-d boundary#1 P0, both
+probe-verified before/after — `_tmp/20261110-1355-r26-harvest/
+probe-p1-fstring.out`, `probe-p0-subscript.out`): two remaining faces
+of the same one-value-two-meanings family.  (1) The r17
+FormattedValue recursion folded string expressions, but a constant
+*scalar* interpolation outside that grammar (`f'{(114+1):c}tatus'`,
+`f'{+115:c}tatus'`) landed in the fail-open None while the runtime key
+is exactly `'status'` (format(115, 'c') == 's') — the interpolation is
+judged with `_literal_test_value` now: a runtime operand keeps the
+plain None (r19), an unresolvable pure-literal tree is the r14
+sentinel, a scalar constant joins as `str(value)` (exact under no
+spec; the spec/conversion check still stops that as the sentinel), and
+a folded container — constant but whose `str()` order is not
+certifiable across processes (set/dict iteration) — stops as the
+sentinel too.  (2) The r27 Mult-count gate and the new interpolation
+gate both ran `_test_is_runtime` BEFORE the literal fold, and
+`ast.Subscript` is runtime grammar there, so a constant-semantics count
+(`'tus' * (1, 1)[0]`, `[1][0]`) took the fail-open None while
+`report['sta' + 'tus' * (1, 1)[0]]` wrote the exact `'status'` — the
+gates use `_RUNTIME_TEST_NODES_STRICT` (Subscript/Slice removed) now,
+and the literal fold fail-closes the subscript shapes it does not fold
+to the sentinel; a subscript on a Name base still keeps the plain None.
+New `_fsr11`/`_fsr12` pins: fold faces (three f-string shapes, three
+subscript shapes), polarity pins (runtime None / unresolved sentinel /
+container sentinel / subscript-on-Name None), and seven e2e rogues
+that must all be enumerated.  The revert mutants are killed
+(`mutneg-r28.out` M01 back to the fail-open interpolation, M02 back to
+the `_test_is_runtime` gate; both pin-bound, battery fires on the
+real-tree audit; fixture restored sha-verified).  Real-tree
+aggregation-audit self-check PASS with verdicts byte-identical to the
+r26 merged head (`agg-audit-r28.out`, `agg-audit-r28-b.out`);
+test_safety 162/162; three `check_frozen --base origin/main` suites
+PASS unchanged (no registered file touched, `--write` a no-op).
+Evidence `_tmp/20261110-1355-r26-harvest/` (probe-p1-fstring.out,
+probe-p1-fstring-after.out, probe-p0-subscript.out,
+probe-p0-subscript-after.out, mutneg-r28.out, agg-audit-r28*.out,
+test-safety-r28.out).
