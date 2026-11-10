@@ -2241,6 +2241,146 @@ fn rename_after_open_is_not_found() {
     std::fs::remove_dir_all(&outside_root).ok();
 }
 
+/// #2098 (S3, FIFO T1): a FIFO swapped into the lease entry inside the
+/// `BeforeOpen` window — the same swap shape as the #1468 sequence, aimed at
+/// the composer's open. `symlink_metadata` only refuses a link, so the FIFO
+/// passes the approved stat; the guarded open returns at once (`O_NONBLOCK`)
+/// and the type term on the handle diagnoses it not-found: no read, no
+/// registration, inside the watchdog. The TS baseline shape (coordinator
+/// probe, node v22.22.0, 2026-11-11) blocks `readFile` past 3 s — and its
+/// process exit with it — on the same swap; refusing at once is the
+/// registered hardening (A7.2-ATTACH-HANDLE-BINDING-003).
+///
+/// The swap hook is thread-local, so the hook and `compose_attachment_turn`
+/// run inside the watched thread and the watchdog is the main test thread.
+/// Every bound assertion lives on the main thread: an unnamed worker's
+/// panic writes no #946 receipt.
+#[cfg(unix)]
+#[test]
+fn composer_lease_entry_swapped_for_a_fifo_is_diagnosed_not_found_within_the_watchdog() {
+    let scratch = Scratch::new();
+    let project_dir = scratch.0.clone();
+    let leaf = scratch.lease("target.png");
+    std::fs::write(&leaf, b"lease-bytes").expect("#2098 lease fixture");
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _guard = swap_test_hook::set(swap_test_hook::SwapWindow::BeforeOpen, {
+            let leaf = leaf.clone();
+            move |_path: &Path| {
+                std::fs::remove_file(&leaf)
+                    .expect("#2098 remove the in-root leaf for the FIFO swap");
+                let made = std::process::Command::new("mkfifo")
+                    .arg(&leaf)
+                    .status()
+                    .expect("#2098 run mkfifo for the FIFO lease fixture");
+                assert!(
+                    made.success(),
+                    "#2098 create the FIFO lease fixture for the composer watchdog"
+                );
+            }
+        });
+        let result = compose_attachment_turn(
+            &project_dir,
+            &message("hello"),
+            &[attachment(&leaf, "image/png")],
+        );
+        let _ = tx.send(result.map(|turn| {
+            let blocks = content_blocks(&turn);
+            let inlined = BASE64_STANDARD.encode(b"lease-bytes");
+            (
+                diagnostics_block(&blocks).contains("Image attachment not found"),
+                blocks.iter().any(|block| {
+                    block.get("type") == Some(&"image".into())
+                        && block.get("data") == Some(&JsValue::from(inlined.as_str()))
+                }),
+                turn.get("allowedReadFiles").is_some(),
+            )
+        }));
+    });
+    let verdict = rx.recv_timeout(std::time::Duration::from_secs(2));
+    negative_assert!(
+        matches!(verdict, Ok(Ok(_))),
+        "#2098 a FIFO lease entry must never make the composer wait for a writer"
+    );
+    // Fail-closed fallthrough for a verdict the watchdog above already
+    // refused: every subsequent assertion must fail, not silently pass.
+    let (not_found, inlined, registered) = match verdict {
+        Ok(Ok(summary)) => summary,
+        _ => (false, true, true),
+    };
+    negative_assert!(
+        not_found,
+        "#2098 a FIFO lease entry must be diagnosed not-found"
+    );
+    negative_assert!(!inlined, "#2098 a FIFO lease entry must never be inlined");
+    negative_assert!(
+        !registered,
+        "#2098 a FIFO lease entry must never register allowedReadFiles"
+    );
+}
+
+/// #2098 (S3, symlink T1): the lease entry swapped for a symlink to a hard
+/// link of the *same inode* placed inside the lease root. Every identity
+/// term — the approved stat, the post-open path stat, the handle's fstat,
+/// the handle's own resolved path — answers for that object, so only the
+/// no-follow half of the guarded open can refuse the swapped link; a plain
+/// byte-identical copy would be caught by the approved-identity term and
+/// prove nothing about `O_NOFOLLOW` here.
+#[cfg(unix)]
+#[test]
+fn composer_lease_entry_swapped_for_a_same_inode_symlink_is_diagnosed_not_found() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    let scratch = Scratch::new();
+    let path = scratch.lease("target.png");
+    std::fs::write(&path, b"lease-bytes").expect("#2098 lease fixture");
+    let alias = scratch.lease("alias-of-target.png");
+    std::fs::hard_link(&path, &alias)
+        .expect("#2098 hard-link the same inode inside the lease root");
+    let fired = Rc::new(Cell::new(0));
+    let _before = swap_test_hook::set(swap_test_hook::SwapWindow::BeforeOpen, {
+        let fired = Rc::clone(&fired);
+        let leaf = path.clone();
+        let alias = alias.clone();
+        move |_path: &Path| {
+            std::fs::remove_file(&leaf).expect("#2098 remove the in-root leaf");
+            std::os::unix::fs::symlink(&alias, &leaf)
+                .expect("#2098 swap the leaf for a same-inode link");
+            fired.set(fired.get() + 1);
+        }
+    });
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[attachment(&path, "image/png")],
+    )
+    .expect("#2098 a same-inode link swap must not fail the turn");
+    drop(_before);
+    negative_assert!(
+        fired.get() == 1,
+        "#2098 the swap hook must fire inside the before-open window"
+    );
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        diagnostics_block(&blocks).contains("Image attachment not found"),
+        "#2098 a same-inode symlink swapped for the lease entry must be diagnosed not-found"
+    );
+    let inlined = BASE64_STANDARD.encode(b"lease-bytes");
+    negative_assert!(
+        blocks.iter().all(|block| {
+            !(block.get("type") == Some(&"image".into())
+                && block.get("data") == Some(&JsValue::from(inlined.as_str())))
+        }),
+        "#2098 a same-inode symlink swapped for the lease entry must never be followed"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#2098 a same-inode symlink swapped for the lease entry must never register \
+         allowedReadFiles"
+    );
+}
+
 /// #1468 (review deepseek boundary#2 / concurrency#2): the upload-store root
 /// is the second legitimate home of a lease object, and it must get the same
 /// containment guard as the lease root. `.tmp/chat-uploads` swapped for a
