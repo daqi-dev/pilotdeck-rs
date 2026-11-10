@@ -73,6 +73,11 @@ jobs:
         run: node src/pilotdeck-gateway/tests/test_metadata_observer.mjs
       - name: 共享执行器隔离与候选正控回归（#994）
         shell: bash
+        # #2136 fix-r38（MM sibling P2）：本套件 r38 干净树实测 23 条约 354 s
+        #（CI 约 583 s），挂起时却占满 job 级 360 分钟默认上限，把同 job 别步
+        # 拖死；照 #2133 步同法声明步级超时（预算 + 余量），由
+        # test_metadata_io_driver 钉住（守卫 + 真跑钉 + 变异负控）。
+        timeout-minutes: 15
         run: python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_adaptive_isolation.py
       # #2133：宿主负控清单由 neg-for-diff.sh 按 diff 推导，它用字面串
       # `目录/文件名` 去 fixtures 里 `git grep -F`。表里写成「常量 / 裸文件名」
@@ -110,6 +115,9 @@ jobs:
       - name: 网关负控守卫 -O 不变性自测（#1666/#1734）
         working-directory: src/pilotdeck-gateway/tests/fixtures
         shell: bash  # #1809 r9：合并带入的步骤补钉（r7 P0 执行层守卫）
+        # #2136 fix-r38（MM sibling P2）：五个模块 r37 实测合计约 15 s，
+        # 挂起时同样占满 job 默认 360 分钟；由 driver 守卫钉住。
+        timeout-minutes: 5
         run: |
           python3 -B -m unittest -v test_negative_optimize_guards
           python3 -B -m unittest -v settings-gateway/test_negative_controls.py
@@ -136,6 +144,8 @@ jobs:
       - name: 共享副本清单推导自测（#1570）
         working-directory: src/pilotdeck-gateway/tests/fixtures
         shell: bash  # #1809 r9：合并带入的步骤补钉（r7 P0 执行层守卫）
+        # #2136 fix-r38（MM sibling P2）：r37 实测约 21 s，同上钉住。
+        timeout-minutes: 5
         run: python3 -B -m unittest -v _shared.test_compile_inputs
       # #1203：CLI fixtures 的负控脚本自带 --check 锚点自检，但此前没有任何闸门跑它——
       # #1145 重构 transport.rs 后 stream-event-field 锚点过期（6 条里 5 条有效），CI、
