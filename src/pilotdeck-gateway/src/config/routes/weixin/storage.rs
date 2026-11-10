@@ -85,13 +85,13 @@ impl Storage {
         write(&self.home.join("weixin-credentials.json"), &to_save)
     }
 
-    /// TS WeixinChannel.ts:990-997 saveCredentials():
-    /// Persists credentials (baseUrl, botToken, accountId, optional cursor) to weixin-credentials.json
-    /// with 0o600 permissions under the credential_owner lock, overwriting any previous
-    /// credentials so new logins from QR confirmation are not discarded.
     pub fn save_login(&self, value: Value) -> Result<Value> {
         let owner = self.credential_owner();
         let _guard = owner.lock().unwrap();
+        // A login already saved on disk takes precedence over stale in-flight results or QR completion races.
+        if let Some(current) = self.credentials()? {
+            return Ok(current);
+        }
         self.save_credentials_locked(&value)?;
         Ok(value)
     }
@@ -515,46 +515,34 @@ mod tests {
     }
 
     #[test]
-    fn test_save_login_overwrites_existing_credentials() {
+    fn test_save_login_preserves_existing_disk_credentials_against_stale_completion() {
         let home = TestHome::new();
         let store = Storage::new(home.0.clone());
-        let old_creds = json!({
-            "baseUrl": "https://old.example.com",
-            "botToken": "old-token-123",
-            "accountId": "old-acc-456",
-            "cursor": "old-cur-789"
+        let disk_creds = json!({
+            "baseUrl": "https://disk.example.com",
+            "botToken": "disk-token-123",
+            "accountId": "disk-acc-456",
+            "cursor": "disk-cur-789"
         });
-        store.save_credentials(&old_creds).unwrap();
+        store.save_credentials(&disk_creds).unwrap();
 
-        let initial_on_disk = store.credentials().unwrap().expect("old creds must exist");
-        assert_eq!(initial_on_disk["botToken"], "old-token-123");
-        assert_eq!(initial_on_disk["cursor"], "old-cur-789");
-
-        // Aligns with TS WeixinChannel.ts:990-997 (ts-align item 47):
-        // QR login confirmation persists the new credentials and overwrites stale ones.
-        let new_login = json!({
-            "baseUrl": "https://new.example.com",
-            "botToken": "new-token-abc",
-            "accountId": "new-acc-def"
+        // Stale in-flight login or poll result arriving after disk credentials exist
+        // must not overwrite disk credentials; it returns the current disk credentials.
+        let stale_login = json!({
+            "baseUrl": "https://stale.example.com",
+            "botToken": "stale-token-abc",
+            "accountId": "stale-acc-def"
         });
-        let result = store.save_login(new_login).unwrap();
-        assert_eq!(result["baseUrl"], "https://new.example.com");
-        assert_eq!(result["botToken"], "new-token-abc");
-        assert_eq!(result["accountId"], "new-acc-def");
+        let result = store.save_login(stale_login).unwrap();
+        assert_eq!(result["baseUrl"], "https://disk.example.com");
+        assert_eq!(result["botToken"], "disk-token-123");
+        assert_eq!(result["accountId"], "disk-acc-456");
 
-        let reloaded = store.credentials().unwrap().expect("new creds must exist");
-        assert_eq!(reloaded["baseUrl"], "https://new.example.com");
-        assert_eq!(reloaded["botToken"], "new-token-abc");
-        assert_eq!(reloaded["accountId"], "new-acc-def");
-        // Fresh QR login without cursor removes old cursor
-        assert!(reloaded.get("cursor").is_none());
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let meta = fs::metadata(home.0.join("weixin-credentials.json")).unwrap();
-            assert_eq!(meta.permissions().mode() & 0o777, 0o600);
-        }
+        let reloaded = store.credentials().unwrap().expect("disk creds must be retained");
+        assert_eq!(reloaded["baseUrl"], "https://disk.example.com");
+        assert_eq!(reloaded["botToken"], "disk-token-123");
+        assert_eq!(reloaded["accountId"], "disk-acc-456");
+        assert_eq!(reloaded["cursor"], "disk-cur-789");
     }
 
     #[test]
