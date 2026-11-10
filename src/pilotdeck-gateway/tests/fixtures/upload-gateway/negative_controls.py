@@ -41,6 +41,15 @@ fixture does not use it. The non-blocking row is measured 2026-11-07
 never returns, and without ``O_NONBLOCK`` the named test's watchdog is what
 turns that hang into a red test.
 
+The #2098 rows pin the guarded open's three siblings: the lease entry's
+helper became the family's, so `verified` and `read_at` each have their own
+FIFO, symlink and length rows — the flag rows edit the same shared
+``custom_flags`` line as the lease rows, but each is bound to its own site's
+named test, so the family cannot lose a flag while any one caller is tested.
+The `verify-hash-length-dropped` row restores the read-to-EOF digest (the
+pre-fix shape) and `read-at-metadata-cap-dropped` drops the record-leaf size
+cap.
+
 The #1887/#1888 rows pin the two halves of the shared "home" question: the
 reader's lexical prefix check refuses a `.tmp` that is a link into the same
 project, and the writer's lease root goes through the same guard instead of a
@@ -86,6 +95,19 @@ LEASE_LINK_REWRITE = 'upload::tests::upload_lease_link_of_a_rewritten_attachment
 LEASE_LINK_FIFO = ('upload::tests::upload_lease_link_of_a_swapped_entry_'
                   'is_not_read_through_the_path')
 LEASE_LINK_GROWN = 'upload::tests::upload_lease_link_of_a_grown_entry_is_rejected'
+# #2098: the lease entry's guarded open became the family's — `verified` and
+# `read_at` open through the same `open_artifact_guarded` helper. Each site
+# has its own row and its own named test, so a flag dropped from the one
+# shared line is caught by the site it protects, not only by the lease.
+VERIFY_FIFO = ('upload::tests::upload_verify_attachment_of_a_fifo_leaf_'
+               'is_rejected_within_the_watchdog')
+VERIFY_SYMLINK = 'upload::tests::upload_verify_attachment_never_follows_a_symlink_leaf'
+VERIFY_GROWN = 'upload::tests::upload_verify_attachment_of_a_grown_leaf_is_rejected'
+READ_AT_FIFO = ('upload::tests::upload_read_at_metadata_swapped_for_a_fifo_'
+                'is_rejected_within_the_watchdog')
+READ_AT_ZERO = ('upload::tests::upload_read_at_metadata_swapped_for_a_dev_zero_symlink_'
+                'is_rejected_at_open')
+READ_AT_CAP = 'upload::tests::upload_read_at_metadata_over_the_size_cap_is_rejected'
 LEASE_ROOT_LINK = 'upload::tests::upload_lease_root_link_is_refused'
 READ_AT_LINKED_ANCESTOR = 'upload::tests::upload_read_at_rejects_a_linked_tmp_ancestor'
 SWEEP = 'upload::tests::upload_cleanup_bad_record_does_not_abort_the_sweep'
@@ -283,6 +305,10 @@ mutations = [
     # removes it outright; read-at-check-before-open restores the pre-fix
     # shape — a check of the pre-open path spelling, which the canonicalize→
     # open swap already passed — so both must turn their named tests red.
+    # #2098 re-anchor note: the binding region gained the descriptor type
+    # term between the name check and the identity check; both mutants keep
+    # that term (it is #2098's, not the #1494 binding) and drop exactly the
+    # halves these rows have always dropped.
     ('read-at-handle-check-dropped', STORE, '''                let handle_inside = match crate::handle_path::opened_path(&file) {
                     Ok(handle) => handle.starts_with(&upload_root),
                     Err(_) => false,
@@ -293,13 +319,30 @@ mutations = [
                         "Upload metadata handle leaves the upload directory.",
                     ));
                 }
+                // #2098: the open is the guarded family, so the terms that
+                // make it safe run on the one descriptor it returned. The
+                // type term refuses a `metadata.json` swapped for a FIFO
+                // (the `O_NONBLOCK` open returned at once) or a device, and
+                // the length terms below refuse the sparse-file and
+                // same-inode-append faces of the unbounded read.
+                let opened = match file.metadata() {
+                    Ok(metadata) => metadata,
+                    Err(e) => return Err(UploadError::io(e, "stat", None)),
+                };
+                if !opened.file_type().is_file() && !opened.file_type().is_dir() {
+                    // A directory keeps its Node read-stage shape: the read
+                    // below fails at once with `EISDIR … read` (#656,
+                    // `upload_metadata_directory_reports_the_read_stage`),
+                    // so it is neither the FIFO's wait nor the device's
+                    // unbounded stream this term exists for.
+                    return Err(UploadError::dialog(
+                        "PROJECT_PATH_FORBIDDEN",
+                        "Upload metadata path became a non-regular file after validation.",
+                    ));
+                }
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::MetadataExt;
-                    let opened = match file.metadata() {
-                        Ok(metadata) => metadata,
-                        Err(e) => return Err(UploadError::io(e, "stat", None)),
-                    };
                     if opened.dev() != approved.dev() || opened.ino() != approved.ino() {
                         return Err(UploadError::dialog(
                             "PROJECT_PATH_FORBIDDEN",
@@ -307,7 +350,22 @@ mutations = [
                         ));
                     }
                 }
-''', '', READ_AT_SWAP,
+''', '''                let opened = match file.metadata() {
+                    Ok(metadata) => metadata,
+                    Err(e) => return Err(UploadError::io(e, "stat", None)),
+                };
+                if !opened.file_type().is_file() && !opened.file_type().is_dir() {
+                    // A directory keeps its Node read-stage shape: the read
+                    // below fails at once with `EISDIR … read` (#656,
+                    // `upload_metadata_directory_reports_the_read_stage`),
+                    // so it is neither the FIFO's wait nor the device's
+                    // unbounded stream this term exists for.
+                    return Err(UploadError::dialog(
+                        "PROJECT_PATH_FORBIDDEN",
+                        "Upload metadata path became a non-regular file after validation.",
+                    ));
+                }
+''', READ_AT_SWAP,
      '#1494 the swapped-in outside record must never be read back'),
     # The genuine pre-fix shape is both missing guards at once: the handle
     # binding *and* the pre-open identity. Restoring only the spelling check
@@ -324,13 +382,30 @@ mutations = [
                         "Upload metadata handle leaves the upload directory.",
                     ));
                 }
+                // #2098: the open is the guarded family, so the terms that
+                // make it safe run on the one descriptor it returned. The
+                // type term refuses a `metadata.json` swapped for a FIFO
+                // (the `O_NONBLOCK` open returned at once) or a device, and
+                // the length terms below refuse the sparse-file and
+                // same-inode-append faces of the unbounded read.
+                let opened = match file.metadata() {
+                    Ok(metadata) => metadata,
+                    Err(e) => return Err(UploadError::io(e, "stat", None)),
+                };
+                if !opened.file_type().is_file() && !opened.file_type().is_dir() {
+                    // A directory keeps its Node read-stage shape: the read
+                    // below fails at once with `EISDIR … read` (#656,
+                    // `upload_metadata_directory_reports_the_read_stage`),
+                    // so it is neither the FIFO's wait nor the device's
+                    // unbounded stream this term exists for.
+                    return Err(UploadError::dialog(
+                        "PROJECT_PATH_FORBIDDEN",
+                        "Upload metadata path became a non-regular file after validation.",
+                    ));
+                }
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::MetadataExt;
-                    let opened = match file.metadata() {
-                        Ok(metadata) => metadata,
-                        Err(e) => return Err(UploadError::io(e, "stat", None)),
-                    };
                     if opened.dev() != approved.dev() || opened.ino() != approved.ino() {
                         return Err(UploadError::dialog(
                             "PROJECT_PATH_FORBIDDEN",
@@ -339,7 +414,23 @@ mutations = [
                     }
                 }
 ''',
-     '                let handle_inside = canonical_path.starts_with(&upload_root);',
+     '''                let opened = match file.metadata() {
+                    Ok(metadata) => metadata,
+                    Err(e) => return Err(UploadError::io(e, "stat", None)),
+                };
+                if !opened.file_type().is_file() && !opened.file_type().is_dir() {
+                    // A directory keeps its Node read-stage shape: the read
+                    // below fails at once with `EISDIR … read` (#656,
+                    // `upload_metadata_directory_reports_the_read_stage`),
+                    // so it is neither the FIFO's wait nor the device's
+                    // unbounded stream this term exists for.
+                    return Err(UploadError::dialog(
+                        "PROJECT_PATH_FORBIDDEN",
+                        "Upload metadata path became a non-regular file after validation.",
+                    ));
+                }
+                let handle_inside = canonical_path.starts_with(&upload_root);
+''',
      LEASE_CHAIN,
      '#1494 a forged record must never reach the attachment lease'),
     # #1494: the identity recorded before the open. Dropping only this term
@@ -420,6 +511,59 @@ mutations = [
      '    if trailing != 0 && false {',
      LEASE_LINK_GROWN,
      '#1889 an entry that grew after verification must never be pinned into the lease'),
+    # #2098 (S1, `verified`): the FIFO and symlink rows drop one half of the
+    # shared guarded open exactly like the lease rows above, but their named
+    # tests are the verification-site ones, so the shared helper cannot lose
+    # a flag as long as any one of its callers is tested. The hash row is
+    # the read-to-EOF pre-fix shape: without the length terms (the fstat
+    # length and the must-end-there read) the digest follows a same-inode
+    # append to whatever EOF the writer allows.
+    ('verify-open-nonblock-dropped', STORE,
+     '        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);',
+     '        .custom_flags(libc::O_NOFOLLOW);',
+     VERIFY_FIFO,
+     '#2098 a FIFO leaf must never make verification wait for a writer'),
+    ('verify-open-nofollow-dropped', STORE,
+     '        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);',
+     '        .custom_flags(libc::O_NONBLOCK);',
+     VERIFY_SYMLINK,
+     '#2098 a symlink leaf must never pass attachment verification'),
+    ('verify-hash-length-dropped', STORE,
+     '''            if (!info.file_type().is_file() && !info.file_type().is_dir())
+                || info.len() as f64 != expected_bytes
+                || hash_file_exact(&mut file, expected_bytes as u64)?
+                    != string(attachment, "sha256").unwrap_or_default()
+            {
+                return Err(attachment_integrity_failed(attachment));
+            }''',
+     '''            let _ = expected_bytes;
+            let mut all = Vec::new();
+            file.read_to_end(&mut all)
+                .map_err(|e| UploadError::io(e, "read", None))?;
+            if hash(&all) != string(attachment, "sha256").unwrap_or_default() {
+                return Err(attachment_integrity_failed(attachment));
+            }''',
+     VERIFY_GROWN,
+     '#2098 a grown leaf must never pass attachment verification'),
+    # #2098 (S2, `read_at`): the same two flag rows for the record leaf's
+    # open, plus the size cap. The cap row `if false`-es the one comparison;
+    # the named test extends the leaf past the cap in place, so only that
+    # term can refuse the sparse read.
+    ('read-at-open-nonblock-dropped', STORE,
+     '        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);',
+     '        .custom_flags(libc::O_NOFOLLOW);',
+     READ_AT_FIFO,
+     '#2098 a FIFO record must never make the read wait for a writer'),
+    ('read-at-open-nofollow-dropped', STORE,
+     '        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);',
+     '        .custom_flags(libc::O_NONBLOCK);',
+     READ_AT_ZERO,
+     '#2098 the guarded open must refuse the swapped link at the open itself'),
+    ('read-at-metadata-cap-dropped', STORE,
+     '                if opened.len() > MAX_METADATA_JSON_BYTES {',
+     '                if false {',
+     READ_AT_CAP,
+     '#2098 a sparse record leaf past the cap must be refused before the read'),
     # #1888: the writer's lease root goes through the same home guard as the
     # reader's. This row restores the pre-fix shape — a bare join off
     # `projectKey`, created through whatever is at that spelling — so a lease
@@ -1016,7 +1160,14 @@ EXPECTED_NAMES = (
     # 写侧租约根 / 读侧词法前缀）也在同一 `registered()` 口径下：名册与运行时
     # 逐名同序，漏一条即整族 rc 2。
     'lease-link-content-dropped', 'lease-link-nonblock-dropped',
-    'lease-link-length-dropped', 'lease-root-link-refused',
+    'lease-link-length-dropped',
+    # #2098 的六条（S1 verify 三条：非阻塞打开 / 不跟随链接 / 读长与恰好结尾；
+    # S2 read_at 三条：非阻塞打开 / 不跟随链接 / metadata 上限），与上面同一名册
+    # 口径：名册与运行时逐名同序，漏一条即整族 rc 2。
+    'verify-open-nonblock-dropped', 'verify-open-nofollow-dropped',
+    'verify-hash-length-dropped', 'read-at-open-nonblock-dropped',
+    'read-at-open-nofollow-dropped', 'read-at-metadata-cap-dropped',
+    'lease-root-link-refused',
     'read-at-upload-root-prefix-dropped',
     # main 的 #1646 清理鲁棒性十五条，rebase 后并入；同理，名册漏一条即
     # `registered()` rc 2，整族在宿主上被读成「从未开跑」。

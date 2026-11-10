@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""#1458/#1459/#1462/#1464/#1468/#1469/#1618/#1629: every attach-followups-a mutation.
+"""#1458/#1459/#1462/#1464/#1468/#1469/#1618/#1629/#2098: every attach-followups-a mutation.
 
 Usage: negative_controls.py --check
        negative_controls.py [--compile-only] NEW_OUTPUT_DIR [mutation ...]
@@ -352,6 +352,25 @@ mutations = [
      '    let lease_lexical_roots = [lease_lexical.clone()];',
      'native_process::services_tests::lease_canonical_root_keeps_physically_spelled_attachments_inline',
      '#1618 the canonical spelling of the lease root must keep physically-spelled lease attachments inline'),
+    # #2098: the composer's open went through the same guarded family as the
+    # lease entry (`upload::open_artifact_guarded`, in the store module), so
+    # both rows anchor that shared custom_flags line rather than any services
+    # line. Each drops one half of the open and is bound to its own composer
+    # test: the FIFO row's mutant makes the open block on a writer that
+    # never comes (the named test's watchdog trips), and the nofollow row's
+    # mutant follows the same-inode hard-link alias the named test swaps in —
+    # a different-inode copy would be caught by the approved-identity term
+    # and prove nothing about the flag.
+    ('composer-open-nonblock-dropped', STORE,
+     '        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);',
+     '        .custom_flags(libc::O_NOFOLLOW);',
+     'native_process::services_tests::composer_lease_entry_swapped_for_a_fifo_is_diagnosed_not_found_within_the_watchdog',
+     '#2098 a FIFO lease entry must never make the composer wait for a writer'),
+    ('composer-open-nofollow-dropped', STORE,
+     '        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);',
+     '        .custom_flags(libc::O_NONBLOCK);',
+     'native_process::services_tests::composer_lease_entry_swapped_for_a_same_inode_symlink_is_diagnosed_not_found',
+     '#2098 a same-inode symlink swapped for the lease entry must be diagnosed not-found'),
 ]
 
 

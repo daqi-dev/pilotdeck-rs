@@ -1048,7 +1048,12 @@ pub(super) fn compose_attachment_turn(
         };
         #[cfg(test)]
         swap_test_hook::notify(swap_test_hook::SwapWindow::BeforeOpen, &resolved);
-        let mut file = match File::open(&resolved) {
+        // #2098: the same guarded open family as the lease entry (`#1889`) —
+        // `O_NOFOLLOW` refuses a link swapped into the entry at the open,
+        // `O_NONBLOCK` makes a FIFO swapped into it return at once instead of
+        // blocking the composer for a writer that never comes, and the type
+        // term on the handle below refuses both.
+        let mut file = match crate::upload::open_artifact_guarded(&resolved) {
             Ok(file) => file,
             Err(error) => {
                 if no_resolver {
@@ -1113,6 +1118,23 @@ pub(super) fn compose_attachment_turn(
                 continue;
             }
         };
+        // #2098: the type term on the opened handle — a FIFO or a device
+        // swapped into the lease entry must be diagnosed not-found instead
+        // of being read. A directory is deliberately not refused here: its
+        // read fails the whole turn with Node's `EISDIR … read` shape
+        // (#1462), so it is neither the FIFO's wait nor the device's
+        // unbounded stream this term exists for.
+        if !metadata.file_type().is_file() && !metadata.file_type().is_dir() {
+            if no_resolver {
+                continue;
+            }
+            let error = std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "attachment lease path became a non-regular file after validation",
+            );
+            diagnostics.push(attachment_not_found(entry, &entry.path, &error).into());
+            continue;
+        }
         if !attachment_identity_matches(&path_stat, &metadata) {
             if no_resolver {
                 continue;

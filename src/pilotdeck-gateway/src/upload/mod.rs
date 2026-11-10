@@ -854,18 +854,32 @@ impl UploadStore {
         // `File::open` inside `sha256_file` left a window in which the leaf
         // could be renamed to an outside file, so the hash covered a different
         // inode than the one the lease later pinned.
+        // #2098: that one open is the guarded family (`O_NOFOLLOW |
+        // O_NONBLOCK`), and the handle's own type and length are the terms:
+        // a leaf swapped for a FIFO must return at once instead of waiting
+        // for a writer, a swapped symlink is refused at the open, and a
+        // sparse file (or an approved inode that keeps growing) cannot turn
+        // the digest read into an unbounded one — `hash_file_exact` reads
+        // exactly the record's `bytes` and requires the entry to end there.
         let mut identities = Vec::with_capacity(attachments.len());
         for attachment in &attachments {
             let path = PathBuf::from(string(attachment, "path").unwrap_or_default());
-            let mut file = match File::open(&path) {
+            let mut file = match open_artifact_guarded(&path) {
                 Ok(file) => file,
                 Err(_) => return Err(attachment_integrity_failed(attachment)),
             };
             let info = file
                 .metadata()
                 .map_err(|e| UploadError::io(e, "stat", None))?;
-            if info.len() as f64 != number(attachment, "bytes")
-                || hash_file(&mut file)? != string(attachment, "sha256").unwrap_or_default()
+            let expected_bytes = number(attachment, "bytes");
+            // A directory is deliberately not refused here: its read fails
+            // at once with Node's `EISDIR … read` descriptor-read shape
+            // (#656), so it is neither the FIFO's wait nor the device's
+            // unbounded stream this term exists for.
+            if (!info.file_type().is_file() && !info.file_type().is_dir())
+                || info.len() as f64 != expected_bytes
+                || hash_file_exact(&mut file, expected_bytes as u64)?
+                    != string(attachment, "sha256").unwrap_or_default()
             {
                 return Err(attachment_integrity_failed(attachment));
             }
@@ -1068,7 +1082,7 @@ impl UploadStore {
             swap_test_hook::SwapWindow::BetweenCanonicalizeAndOpen,
             &canonical_path,
         );
-        let bytes = match fs::File::open(&canonical_path) {
+        let bytes = match open_artifact_guarded(&canonical_path) {
             // UploadStore.ts:384 reads through `readFile` (node:fs/promises): an
             // open error names its path, a descriptor read error (EISDIR after a
             // directory swap, EIO, ...) is `read` without one (node v22.22.0,
@@ -1098,13 +1112,30 @@ impl UploadStore {
                         "Upload metadata handle leaves the upload directory.",
                     ));
                 }
+                // #2098: the open is the guarded family, so the terms that
+                // make it safe run on the one descriptor it returned. The
+                // type term refuses a `metadata.json` swapped for a FIFO
+                // (the `O_NONBLOCK` open returned at once) or a device, and
+                // the length terms below refuse the sparse-file and
+                // same-inode-append faces of the unbounded read.
+                let opened = match file.metadata() {
+                    Ok(metadata) => metadata,
+                    Err(e) => return Err(UploadError::io(e, "stat", None)),
+                };
+                if !opened.file_type().is_file() && !opened.file_type().is_dir() {
+                    // A directory keeps its Node read-stage shape: the read
+                    // below fails at once with `EISDIR … read` (#656,
+                    // `upload_metadata_directory_reports_the_read_stage`),
+                    // so it is neither the FIFO's wait nor the device's
+                    // unbounded stream this term exists for.
+                    return Err(UploadError::dialog(
+                        "PROJECT_PATH_FORBIDDEN",
+                        "Upload metadata path became a non-regular file after validation.",
+                    ));
+                }
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::MetadataExt;
-                    let opened = match file.metadata() {
-                        Ok(metadata) => metadata,
-                        Err(e) => return Err(UploadError::io(e, "stat", None)),
-                    };
                     if opened.dev() != approved.dev() || opened.ino() != approved.ino() {
                         return Err(UploadError::dialog(
                             "PROJECT_PATH_FORBIDDEN",
@@ -1112,11 +1143,13 @@ impl UploadStore {
                         ));
                     }
                 }
-                let mut bytes = Vec::new();
-                match file.read_to_end(&mut bytes) {
-                    Ok(_) => bytes,
-                    Err(e) => return Err(UploadError::io(e, "read", None)),
+                if opened.len() > MAX_METADATA_JSON_BYTES {
+                    return Err(UploadError::dialog(
+                        "PROJECT_PATH_FORBIDDEN",
+                        "Upload metadata file exceeds the supported size.",
+                    ));
                 }
+                read_exact_file(&mut file, opened.len())?
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(UploadError::io(e, "open", Some(&canonical_path))),
@@ -1679,7 +1712,7 @@ fn lease_link_matches(
     expected_sha256: &str,
     expected_bytes: f64,
 ) -> bool {
-    let (Some(mut file), Some(want)) = (open_lease_entry(destination), expected) else {
+    let (Some(mut file), Some(want)) = (open_artifact_guarded(destination).ok(), expected) else {
         return false;
     };
     let Ok(listed) = file.metadata() else {
@@ -1690,20 +1723,32 @@ fn lease_link_matches(
         && lease_link_content_matches(&mut file, expected_sha256, expected_bytes)
 }
 
-/// The lease entry is opened once, without following a link and without
-/// waiting for a writer: a symlink swapped into the entry is refused at open
-/// (`O_NOFOLLOW`), a FIFO swapped into it returns at once instead of blocking
-/// the acquire for a writer that never comes (`O_NONBLOCK`), and the type
-/// check on the descriptor refuses both. `O_NONBLOCK` is a no-op on the
-/// regular file this is meant to be. Residual: `open` resolves the path once;
-/// the identity and content terms do not resolve it again.
+/// The guarded open every artifact read through a path goes through (#1889
+/// for the lease entry, #2098 for its three siblings): no following a link,
+/// no waiting for a writer. A symlink swapped into the spelling is refused
+/// at open (`O_NOFOLLOW`), a FIFO swapped into it returns at once instead
+/// of blocking the caller for a writer that never comes (`O_NONBLOCK`), and
+/// the type check the callers run on the returned descriptor refuses both.
+/// `O_NONBLOCK` is a no-op on the regular file this is meant to be.
+/// Residual: `open` resolves the path once; the callers' identity and
+/// content terms do not resolve it again.
 #[cfg(unix)]
-fn open_lease_entry(destination: &Path) -> Option<File> {
+pub(crate) fn open_artifact_guarded(path: &Path) -> io::Result<File> {
     let mut options = fs::OpenOptions::new();
     options
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    options.open(destination).ok()
+    options.open(path)
+}
+
+/// Non-Unix keeps the bare open (the same honest residual as the lease
+/// side's `cfg(not(unix))` branch): no `O_NOFOLLOW`/`O_NONBLOCK` flags exist
+/// there, so a swapped symlink is followed and a swapped FIFO still blocks
+/// the caller. The descriptor type/length terms the callers run apply on
+/// every platform; only the open-family flags are Unix-only.
+#[cfg(not(unix))]
+pub(crate) fn open_artifact_guarded(path: &Path) -> io::Result<File> {
+    File::open(path)
 }
 
 #[cfg(not(unix))]
@@ -1788,20 +1833,50 @@ fn hash_file_exact(file: &mut File, limit: u64) -> Result<String> {
     Ok(format!("{:x}", digest.finalize()))
 }
 
-fn hash_file(file: &mut File) -> Result<String> {
-    let mut digest = Sha256::new();
+/// #2098: the ceiling on a `metadata.json` read. The file is written by this
+/// gateway alone and a real record (attachments list included) is far below
+/// this bound; the cap exists so a leaf swapped for a sparse file cannot
+/// turn the read into an unbounded one, not as a validation of real records.
+const MAX_METADATA_JSON_BYTES: u64 = 64 * 1024 * 1024;
+
+/// [`hash_file_exact`]'s byte form, for the record leaf: read exactly `len`
+/// bytes and require the file to end there. A `read_to_end` here would let
+/// the same faces through that the lease entry's digest read refuses — a
+/// sparse file grown past its stat, or a same-inode writer appending at
+/// least as fast as the read — so the read is bounded by the length the
+/// type-checked descriptor reported. `len == 0` reads nothing and only
+/// requires the trailing EOF, which is what an empty record is.
+fn read_exact_file(file: &mut File, len: u64) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
     let mut chunk = [0; 64 * 1024];
-    loop {
+    let mut left = len;
+    while left > 0 {
+        let want = chunk.len().min(left as usize);
         let n = file
-            .read(&mut chunk)
+            .read(&mut chunk[..want])
             .map_err(|e| UploadError::io(e, "read", None))?;
         if n == 0 {
-            break;
+            return Err(UploadError::io(
+                io::Error::from(io::ErrorKind::UnexpectedEof),
+                "read",
+                None,
+            ));
         }
-        digest.update(&chunk[..n]);
+        out.extend_from_slice(&chunk[..n]);
+        left -= n as u64;
     }
-    Ok(format!("{:x}", digest.finalize()))
+    let mut extra = [0_u8; 1];
+    match file.read(&mut extra) {
+        Ok(0) => Ok(out),
+        Ok(_) => Err(UploadError::io(
+            io::Error::from(io::ErrorKind::InvalidData),
+            "read",
+            None,
+        )),
+        Err(e) => Err(UploadError::io(e, "read", None)),
+    }
 }
+
 fn random_id() -> Result<String> {
     let mut bytes = [0_u8; 16];
     File::open("/dev/urandom")
