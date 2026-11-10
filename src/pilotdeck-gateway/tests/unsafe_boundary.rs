@@ -147,12 +147,19 @@ fn workspace_paths(manifest: &str, key: &str) -> Vec<String> {
     members
 }
 
-const VENDORED_PACKAGES: [&str; 5] = [
+const RUST_ONLY_VENDORED_PACKAGES: [&str; 3] = [
+    "vendor/tiktoken-rs",
+    "vendor/icu_collator",
+    "data/icu_collator_data",
+];
+const NATIVE_VENDORED_PACKAGES: [&str; 3] = ["vendor/mupdf", "vendor/mupdf-sys", "vendor/libvips"];
+const VENDORED_PACKAGES: [&str; 6] = [
     "vendor/tiktoken-rs",
     "vendor/icu_collator",
     "data/icu_collator_data",
     "vendor/mupdf",
     "vendor/mupdf-sys",
+    "vendor/libvips",
 ];
 
 // A narrowly registered native dependency. The complete source tree, including
@@ -194,6 +201,98 @@ fn pinned_mupdf_source_boundary(metadata: &Value, directory: &Path) -> bool {
     );
     let document: Value = serde_json::from_slice(&bytes).unwrap();
     let crate_name = format!("{name}-0.8.0");
+    let mut declared = BTreeSet::new();
+    for row in document["files"].as_array().unwrap() {
+        if row["crate"].as_str() != Some(crate_name.as_str()) {
+            continue;
+        }
+        let relative = Path::new(row["path"].as_str().unwrap());
+        assert!(
+            relative
+                .components()
+                .all(|component| matches!(component, std::path::Component::Normal(_))),
+            "native source manifest path escapes package"
+        );
+        let path = directory.join(relative);
+        assert!(
+            declared.insert(path.clone()),
+            "duplicate native source manifest path"
+        );
+        assert!(
+            fs::symlink_metadata(&path).unwrap().file_type().is_file(),
+            "native source must be a regular file: {}",
+            path.display()
+        );
+        assert_eq!(
+            format!("{:x}", Sha256::digest(fs::read(&path).unwrap())),
+            row["sha256"].as_str().unwrap(),
+            "pinned native source changed: {}",
+            path.display()
+        );
+    }
+    assert!(
+        !declared.is_empty(),
+        "native source manifest must cover the package"
+    );
+    let mut actual = BTreeSet::new();
+    let mut pending = vec![directory.to_path_buf()];
+    while let Some(parent) = pending.pop() {
+        for entry in fs::read_dir(parent).unwrap() {
+            let path = entry.unwrap().path();
+            let kind = fs::symlink_metadata(&path).unwrap().file_type();
+            assert!(
+                !kind.is_symlink(),
+                "pinned native source cannot contain a symlink: {}",
+                path.display()
+            );
+            if kind.is_dir() {
+                pending.push(path);
+            } else {
+                assert!(kind.is_file());
+                actual.insert(path);
+            }
+        }
+    }
+    assert_eq!(
+        actual, declared,
+        "native source tree contains missing or unregistered files"
+    );
+    true
+}
+
+const IMAGE_SOURCE_MANIFEST_SHA256: &str =
+    "09a545bef161a83e54e08f56649ac7a6c976473f85d6f8fca5da4716053d6f78";
+
+fn pinned_image_source_boundary(metadata: &Value, directory: &Path) -> bool {
+    if !directory.ends_with("vendor/libvips") {
+        return false;
+    }
+    let name = "libvips";
+    assert_eq!(
+        metadata["name"].as_str(),
+        Some(name),
+        "pinned native package name"
+    );
+    assert_eq!(
+        metadata["version"].as_str(),
+        Some("2.3.0"),
+        "pinned native version"
+    );
+    let manifest = directory.parent().unwrap().join("libvips-source.json");
+    assert!(
+        fs::symlink_metadata(&manifest)
+            .unwrap()
+            .file_type()
+            .is_file()
+    );
+    let bytes = fs::read(&manifest).unwrap();
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&bytes)),
+        IMAGE_SOURCE_MANIFEST_SHA256,
+        "pinned image source manifest changed; independent source review required"
+    );
+    let document: Value = serde_json::from_slice(&bytes).unwrap();
+    let crate_name = format!("{name}-2.3.0");
     let mut declared = BTreeSet::new();
     for row in document["files"].as_array().unwrap() {
         if row["crate"].as_str() != Some(crate_name.as_str()) {
@@ -483,7 +582,9 @@ fn vendored_package_boundary(
     allowed: &BTreeSet<PathBuf>,
 ) {
     declared_local_dependency_boundary(metadata, &format!("vendored package {package}"), allowed);
-    let pinned_native = pinned_mupdf_source_boundary(metadata, directory);
+    let pinned_mupdf = pinned_mupdf_source_boundary(metadata, directory);
+    let pinned_image = pinned_image_source_boundary(metadata, directory);
+    let pinned_native = pinned_mupdf || pinned_image;
     let targets = metadata["targets"]
         .as_array()
         .expect("vendored package targets");
@@ -495,7 +596,10 @@ fn vendored_package_boundary(
             .iter()
             .map(|kind| kind.as_str().unwrap())
             .collect();
-        if pinned_native && metadata["name"] == "mupdf-sys" && kinds == ["custom-build"] {
+        if pinned_native
+            && (metadata["name"] == "mupdf-sys" || pinned_image)
+            && kinds == ["custom-build"]
+        {
             assert_eq!(
                 Path::new(target["src_path"].as_str().unwrap()),
                 directory.join("build.rs")
@@ -537,7 +641,7 @@ fn vendored_package_boundary(
         );
         assert_eq!(
             targets.len(),
-            if metadata["name"] == "mupdf-sys" {
+            if metadata["name"] == "mupdf-sys" || pinned_image {
                 2
             } else {
                 1
@@ -1010,6 +1114,66 @@ fn child_source_boundary(source: &str) {
 // Changing transport/build.rs requires updating this hash and review confirming
 // it emits no cargo:rustc-flags, cargo:rustc-env=RUSTC*, --cap-lints, or other
 // directives that can affect lint enforcement. Its compilation inherits forbid.
+
+// The Rust source profile does not grant a general vendor/build exception.
+// The separately pinned archives must be exactly the expected regular files.
+fn pinned_image_archive_boundary(root: &Path) {
+    let vendor = root.join("src/vendor");
+    let directory = vendor.join("image-codecs-sources");
+    for path in [&vendor, &directory] {
+        let kind = fs::symlink_metadata(path)
+            .expect("image source directory")
+            .file_type();
+        assert!(
+            kind.is_dir() && !kind.is_symlink(),
+            "image source directory must not be a symlink"
+        );
+    }
+    let pins = fs::read_to_string(root.join("src/pilotdeck-image-native/source-hashes.txt"))
+        .expect("image archive pins");
+    let mut expected = BTreeSet::new();
+    for line in pins.lines() {
+        let (sha, name) = line.split_once("  ").expect("image archive pin row");
+        assert!(
+            name.ends_with(".tar.gz") || name.ends_with(".tar.xz") || name.ends_with(".tar.bz2")
+        );
+        assert!(
+            Path::new(name).components().count() == 1
+                && matches!(
+                    Path::new(name).components().next(),
+                    Some(std::path::Component::Normal(_))
+                )
+        );
+        let file = directory.join(name);
+        assert!(expected.insert(file.clone()), "duplicate image archive pin");
+        assert!(
+            fs::symlink_metadata(&file)
+                .expect("image archive")
+                .file_type()
+                .is_file(),
+            "image archive must be regular"
+        );
+        assert_eq!(
+            format!(
+                "{:x}",
+                Sha256::digest(fs::read(&file).expect("image archive"))
+            ),
+            sha,
+            "image archive differs"
+        );
+    }
+    assert_eq!(
+        expected.len(),
+        13,
+        "image archive profile must pin 13 files"
+    );
+    let actual: BTreeSet<_> = fs::read_dir(&directory)
+        .expect("image source inventory")
+        .map(|item| item.expect("image source entry").path())
+        .collect();
+    assert_eq!(actual, expected, "image archive inventory changed");
+}
+
 fn registered_build_files(root: &Path) {
     let frozen = fs::read_to_string(root.join("specs/ui-server-parity/FROZEN.md")).unwrap();
     let hashes: Vec<_> = frozen
@@ -1022,6 +1186,46 @@ fn registered_build_files(root: &Path) {
     assert_eq!(hashes.len(), 1, "unique frozen root toolchain registration");
     for (relative, expected) in [
         ("rust-toolchain.toml", hashes[0]),
+        (
+            "src/pilotdeck-image-native/src/lib.rs",
+            "bb29fdcb269848d4473315a13eb6b29f56999b53fb2b4fd17f598432f54218a8",
+        ),
+        (
+            "src/pilotdeck-image-native/Cargo.toml",
+            "b4654efdaf5c6c2620431e2168ad2708417ea4dc1ff3ffd58b195b2fca5ef126",
+        ),
+        (
+            "src/pilotdeck-image-native/build.rs",
+            "3a06cbaf4499cd50b9e0caff0c0a4cb3171b65ed0c99103c048bec424bde4343",
+        ),
+        (
+            "src/pilotdeck-image-native/source-build.sh",
+            "935fff6d6678a3d3db111ba08bba27e1ea92de34587d933ec20f89fcad1e9698",
+        ),
+        (
+            "src/pilotdeck-image-native/strip-vips-extras.py",
+            "83b92ae0529fe780c1e55729eb59eb863f1a3c8d2e9f30feda5347c649f0c099",
+        ),
+        (
+            "src/pilotdeck-image-native/fix-macos-install-names.py",
+            "ab129620d51458b2074c313e2d9af776be983f301baaef1de8d2027071b6d4b6",
+        ),
+        (
+            "src/pilotdeck-image-native/source-hashes.txt",
+            "b7e7e24bf3ac7c34a774a1b873efb9570721c9f6e4a090c9ffd8e4e1d2d360ac",
+        ),
+        (
+            "src/vendor/libvips/build.rs",
+            "1b26382b3eefd1f1f878ea730fdc0f5f179399eab901889a3d87a544795a3660",
+        ),
+        (
+            "src/pilotdeck-gateway/build.rs",
+            "8a8ee74fccd78523680a63887b3ffed7cbbaf85f82f40849b883a8fad0e6ea04",
+        ),
+        (
+            "src/pilotdeck-cli/build.rs",
+            "8a8ee74fccd78523680a63887b3ffed7cbbaf85f82f40849b883a8fad0e6ea04",
+        ),
         (
             "src/pilotdeck-transport/build.rs",
             "f55927d26226112d4362567deec12002855906c15e53c4fbf1f2e80a9458cd56",
@@ -1055,7 +1259,11 @@ fn assert_build_configuration_path(root: &Path, path: &Path) {
     let registered = path == root.join("rust-toolchain.toml")
         || path == root.join("src/pilotdeck-transport/build.rs")
         || path == root.join("src/vendor/mupdf-sys/build.rs")
-        || path == root.join("src/vendor/mupdf/src/pdf/links/build.rs");
+        || path == root.join("src/vendor/mupdf/src/pdf/links/build.rs")
+        || path == root.join("src/pilotdeck-image-native/build.rs")
+        || path == root.join("src/vendor/libvips/build.rs")
+        || path == root.join("src/pilotdeck-gateway/build.rs")
+        || path == root.join("src/pilotdeck-cli/build.rs");
     assert!(
         registered
             || (name != ".cargo"
@@ -1471,6 +1679,7 @@ fn compiler_enforces_gateway_boundary() {
     cargo_configuration_locations_boundary(workspace);
     cargo_invocation_boundary();
     registered_build_files(root);
+    pinned_image_archive_boundary(root);
     build_configuration_boundary(root, root);
     let workspace_manifest = fs::read_to_string(workspace.join("Cargo.toml")).unwrap();
     assert_eq!(
@@ -1487,16 +1696,22 @@ fn compiler_enforces_gateway_boundary() {
     );
     for member in &members {
         let manifest = fs::read_to_string(workspace.join(member).join("Cargo.toml")).unwrap();
+        let package_section = section(&manifest, "[package]");
         assert!(
-            !section(&manifest, "[package]")
-                .iter()
-                // Fail closed on quoted/escaped keys as well: TOML can spell
-                // the build key as "build" or with Unicode escapes.
-                .any(|line| line.starts_with("build") || line.starts_with(['"', '\''])),
-            "custom build scripts or quoted package keys require extending the lint guard: {member}"
+            package_section.iter().all(|line| {
+                (!line.starts_with("build") && !line.starts_with(['"', '\'']))
+                    || (member == "pilotdeck-image-native" && *line == r#"build = "build.rs""#)
+            }),
+            "custom build script or quoted package key: {member}"
         );
         assert!(
-            member == "pilotdeck-transport"
+            [
+                "pilotdeck-transport",
+                "pilotdeck-image-native",
+                "pilotdeck-gateway",
+                "pilotdeck-cli"
+            ]
+            .contains(&member.as_str())
                 || fs::symlink_metadata(workspace.join(member).join("build.rs"))
                     .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
             "only the hash-checked transport build.rs is allowed: {member}"
@@ -1570,6 +1785,15 @@ fn compiler_enforces_gateway_boundary() {
     excludes.sort();
     let mut expected_excludes = VENDORED_PACKAGES;
     expected_excludes.sort();
+    let registered: BTreeSet<_> = RUST_ONLY_VENDORED_PACKAGES
+        .into_iter()
+        .chain(NATIVE_VENDORED_PACKAGES)
+        .collect();
+    assert_eq!(
+        registered,
+        VENDORED_PACKAGES.into_iter().collect(),
+        "vendor profiles must cover every excluded package"
+    );
     assert_eq!(excludes, expected_excludes, "workspace exclude whitelist");
 
     let child = workspace.join("pilotdeck-child-signals");
@@ -2435,7 +2659,7 @@ mod vendored_edge_negative_controls {
         // Native source profiles use their complete byte-pinned tree above;
         // the literal Rust include scanner remains scoped to the original
         // three Rust-only packages.
-        for package in &VENDORED_PACKAGES[..3] {
+        for package in &RUST_ONLY_VENDORED_PACKAGES {
             collect_vendored_source_candidates(package, &workspace.join(package), &mut files);
         }
         let mut non_rust: Vec<_> = files
@@ -2691,5 +2915,66 @@ impl GitBoundaryFixture {
 impl Drop for GitBoundaryFixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod image_archive_profile_tests {
+    use super::*;
+    struct Scratch(PathBuf);
+    impl Scratch {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "pdrs-image-archive-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn image_archive_pin_rejects_mutation_extra_file_and_symlink() {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let scratch = Scratch::new();
+        let archive_dir = scratch.0.join("src/vendor/image-codecs-sources");
+        let native_dir = scratch.0.join("src/pilotdeck-image-native");
+        fs::create_dir_all(&archive_dir).unwrap();
+        fs::create_dir_all(&native_dir).unwrap();
+        let pin_file = source.join("pilotdeck-image-native/source-hashes.txt");
+        fs::copy(&pin_file, native_dir.join("source-hashes.txt")).unwrap();
+        for line in fs::read_to_string(&pin_file).unwrap().lines() {
+            let (_, name) = line.split_once("  ").unwrap();
+            fs::copy(
+                source.join("vendor/image-codecs-sources").join(name),
+                archive_dir.join(name),
+            )
+            .unwrap();
+        }
+        pinned_image_archive_boundary(&scratch.0);
+        let victim = archive_dir.join("libexif-0.6.25.tar.xz");
+        fs::write(&victim, b"changed archive").unwrap();
+        assert!(std::panic::catch_unwind(|| pinned_image_archive_boundary(&scratch.0)).is_err());
+        fs::copy(
+            source.join("vendor/image-codecs-sources/libexif-0.6.25.tar.xz"),
+            &victim,
+        )
+        .unwrap();
+        fs::write(archive_dir.join("unexpected.tar.gz"), b"unexpected").unwrap();
+        assert!(std::panic::catch_unwind(|| pinned_image_archive_boundary(&scratch.0)).is_err());
+        fs::remove_file(archive_dir.join("unexpected.tar.gz")).unwrap();
+        fs::remove_file(&victim).unwrap();
+        std::os::unix::fs::symlink(
+            source.join("vendor/image-codecs-sources/libexif-0.6.25.tar.xz"),
+            &victim,
+        )
+        .unwrap();
+        assert!(std::panic::catch_unwind(|| pinned_image_archive_boundary(&scratch.0)).is_err());
     }
 }

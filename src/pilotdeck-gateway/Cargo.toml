@@ -14,6 +14,8 @@ pdrs-mutants = []
 workspace = true
 
 [dependencies]
+pilotdeck-image = { path = "../pilotdeck-image" }
+pilotdeck-image-native = { path = "../pilotdeck-image-native" }
 chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
 md-5 = "=0.10.6"
 # Fixed TS uses MuPDF; compile bundled C sources for the native PDF parser.
@@ -102,3 +104,6 @@ proc-macro2 = "=1.0.107"
 # crate forbids `unsafe`. Already locked at 0.6.5 via tokio→mio, so this adds
 # no new download or version.
 socket2 = "=0.6.5"
+
+[build-dependencies]
+pilotdeck-image-native = { path = "../pilotdeck-image-native" }

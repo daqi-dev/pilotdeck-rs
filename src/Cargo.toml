@@ -1,8 +1,10 @@
 [workspace]
 resolver = "3"
-exclude = ["vendor/tiktoken-rs", "vendor/icu_collator", "data/icu_collator_data", "vendor/mupdf", "vendor/mupdf-sys"]
+exclude = ["vendor/tiktoken-rs", "vendor/icu_collator", "data/icu_collator_data", "vendor/mupdf", "vendor/mupdf-sys", "vendor/libvips"]
 members = [
     "pilotdeck-cli",
+    "pilotdeck-image",
+    "pilotdeck-image-native",
     "pilotdeck-agent",
     "pilotdeck-transport",
     "pilotdeck-protocol",
@@ -49,3 +51,6 @@ icu_collator = { path = "vendor/icu_collator" }
 # Source/archive hashes and the reviewed changes: vendor/mupdf-source.json.
 mupdf = { path = "vendor/mupdf" }
 mupdf-sys = { path = "vendor/mupdf-sys" }
+
+# Pinned upstream libvips binding with narrow audited fixes.
+libvips = { path = "vendor/libvips" }

@@ -1,0 +1,15 @@
+[package]
+name = "pilotdeck-image-native"
+version = "0.1.0"
+edition = "2024"
+links = "pilotdeck_image_native"
+build = "build.rs"
+
+[dependencies]
+sha2 = "=0.10.9"
+
+[build-dependencies]
+sha2 = "=0.10.9"
+
+[lints]
+workspace = true

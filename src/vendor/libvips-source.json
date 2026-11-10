@@ -1,0 +1,162 @@
+{
+  "upstream_crate": "https://static.crates.io/crates/libvips/libvips-2.3.0.crate",
+  "upstream_archive_sha256": "29c2daabf7114fd6e626fef46e3ba187d204554cf94d31312424300bd8160d9b",
+  "license": "MIT",
+  "files": [
+    {
+      "crate": "libvips-2.3.0",
+      "path": ".cargo_vcs_info.json",
+      "sha256": "f282421342587dc050a33ce9c4dbaa77831b42459cf43b71d6466e2ce8f8bf5a"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": ".github/workflows/README.md",
+      "sha256": "c95ae2df9e3124f5226054fa5e424acc586d5db0027bd3d46637bae1964948ae"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": ".github/workflows/conventional-prs.yml",
+      "sha256": "df2beee33cebae01ec818403d8fc20618202d0f772f1e831ffba12182f144c4c"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": ".github/workflows/lint-pr-title-preview-outputErrorMessage.yml",
+      "sha256": "82d0e7fe81efc55889c3a2b034cd6eaf1ec3c3e1e92279fd16cf0942083f206c"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": ".github/workflows/release.yml",
+      "sha256": "24ef1f3ef9c22c9ba2cf6ee4f53a8dd5ee82b5d1951f4a14b5bbe8a0b813fe25"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": ".github/workflows/rust.yml.off",
+      "sha256": "6eda02bf92ff5e98ab3f8f7f1bc3833e080d33329ba850974b9ee8983f5e29f7"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": ".gitignore",
+      "sha256": "d4d11f888be9bac6e60baf9fa7f038489347ca89021188c81b38ef7cca6d9b96"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": ".pre-commit-config.yaml",
+      "sha256": "5f97a698a93760802c57d2fe503300d764742244368c396eabbce62bad91f185"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": ".releaserc.json",
+      "sha256": "2c79043998400d7eef178d442983aa5fd61eda0f60710d8b62f37f1285b11655"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": ".rustfmt.toml",
+      "sha256": "7021c135beeddee7a19f53938090e2bf71d3a513edc46a6f2b71b6e1b87f4f0c"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": ".tool-versions",
+      "sha256": "db1aab806bacd0149e970ae5b0c129f1f418802fdd583a908817ec1e84c967bc"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": "CHANGELOG.md",
+      "sha256": "86fd1975d7006fa777eca8ba8594e21241995581dea1b53d27dd524538be6345"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": "Cargo.lock",
+      "sha256": "c32b138837b264df3698cf4a29edf104609854fa206679bc7194907a0e93a79e"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": "Cargo.toml",
+      "sha256": "1d4316e760366777c5a0da5c57f8a2f65ec1de70e4f51d8b037c7a340127c47a"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": "Cargo.toml.orig",
+      "sha256": "547022d306616d29d945d945de16a89c219bccff6f85d6aa6f121d586b78928e"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": "LICENSE",
+      "sha256": "afa513ea705f0d599a3bc02bd6526f4a0d4156ed641ec3c7644f8908b086d849"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": "README.md",
+      "sha256": "4560f29ecac677de14369c5a6f94e42e4351f23339a9bb13db47c51ad45aef0c"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": "build.rs",
+      "sha256": "1b26382b3eefd1f1f878ea730fdc0f5f179399eab901889a3d87a544795a3660"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": "bump-versions.sh",
+      "sha256": "f24b5bc4f15dde5f8ad805c8f84560eb5575382b437c5d6e125e0e924b79b589"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": "examples/png_to_jpeg.rs",
+      "sha256": "e62570912a9ab3200ccb27c9811badf14c7a9d15659172139da57ace2252e112"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": "examples/test.png",
+      "sha256": "9d4e1d7a63bd933bb9c97b42e0e20a857a14c361d231ad26a1141e62aa9d669b"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": "package.json",
+      "sha256": "bc5fca62097a718cccf1398c79d66d64052c3d29109439d88c633afcf827db2c"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": "renovate.json",
+      "sha256": "9f8a8500ef333745fa626a3132803ad215ba38e79c7744884747ad2bb9bd8c47"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": "src/bindings.rs",
+      "sha256": "5c97e1c35a01c4da6be225cb7e750f72640aabddbbec53f213c3fdf137fa791d"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": "src/error.rs",
+      "sha256": "15392b14636ed7973f2d06c4fce5ef6699380800f5ff51967abde6b05bdb0959"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": "src/image.rs",
+      "sha256": "8d64933d2cda83286c8a42846d90e00e3a82b07a96f64555d81c4e670a4e72d1"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": "src/lib.rs",
+      "sha256": "bbe4c4d285d98dd4367d59e17efe3a43350b61fe645e597df47e0fa5843797df"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": "src/manual.rs",
+      "sha256": "f08923c90772e06566ce4c64e764d57f7212c824edcf3c73abfbae4037d1adc8"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": "src/ops.rs",
+      "sha256": "34ba99943629f7c93fc2ff8065a9f0ab1cea37b8622c41701d5f703044a9b123"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": "src/utils.rs",
+      "sha256": "58f960b2e6897f22940a6a54bb952a303ab3bbfb027c38992858e079c211744e"
+    },
+    {
+      "crate": "libvips-2.3.0",
+      "path": "vips.h",
+      "sha256": "dae4eb4b40859b2d5372abac8c369a38b606a4ea0cf8e6df7d982729b66bc04a"
+    }
+  ]
+}

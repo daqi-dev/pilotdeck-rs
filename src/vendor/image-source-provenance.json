@@ -1,0 +1,141 @@
+{
+  "libffi-3.5.2.tar.gz": {
+    "upstream_url_candidate": "https://github.com/libffi/libffi/releases/download/v3.5.2/libffi-3.5.2.tar.gz",
+    "sha256": "f3a3082a23b37c293a4fcd1053147b371f2ff91fa7ea1b2a52e335676bac82dc",
+    "bytes": 1423124,
+    "license_files_sha256": {
+      "libffi-3.5.2/LICENSE": "d5699fa516968e3a1550e6c902b7441c78856f2603d61bedd0b0662a26655366",
+      "libffi-3.5.2/LICENSE-BUILDTOOLS": "e67978cd18816c0cb7d29aaaacde7b7447402c2fb321a051698890a8eaedda94"
+    },
+    "url_verified": true,
+    "url_verification_status": "matching SHA256 on release retry"
+  },
+  "libwebp-1.6.0.tar.gz": {
+    "upstream_url_candidate": "https://codeload.github.com/webmproject/libwebp/tar.gz/4fa21912338357f89e4fd51cf2368325b59e9bd9",
+    "sha256": "923f3382a47a2af185c3240c954cf004428b237bd7317413a95146d01eb4b94b",
+    "bytes": 3834766,
+    "license_files_sha256": {
+      "libwebp-4fa21912338357f89e4fd51cf2368325b59e9bd9/COPYING": "5aec868f669e384a22372a4e8a1a6cd7d44c64cd451f960ca69cc170d1e13acf",
+      "libwebp-4fa21912338357f89e4fd51cf2368325b59e9bd9/PATENTS": "cc3273e0694ea5896145e0677699b53471b03ea43021ddc50e7923fbb9f5023c"
+    },
+    "url_verified": true,
+    "url_verification_status": "matching SHA256"
+  },
+  "gvdb-2b42fc75.tar.gz": {
+    "upstream_url_candidate": "https://codeload.github.com/GNOME/gvdb/tar.gz/2b42fc75f09dbe1cd1057580b5782b08f2dcb400",
+    "sha256": "069a00aa1fc893f18423602f4e095583be5a220429f6e8a58d70511490b4b019",
+    "bytes": 24716,
+    "license_files_sha256": {
+      "gvdb-2b42fc75f09dbe1cd1057580b5782b08f2dcb400/COPYING": "bdbcdaa7858872393e9d6b216bbdc8a23e99d98dd6cdb7cda19458025b9e19fc"
+    },
+    "url_verified": true,
+    "url_verification_status": "matching SHA256"
+  },
+  "ninja-1.12.1.tar.gz": {
+    "upstream_url_candidate": "https://github.com/ninja-build/ninja/archive/refs/tags/v1.12.1.tar.gz",
+    "sha256": "821bdff48a3f683bc4bb3b6f0b5fe7b2d647cf65d52aeb63328c91a6c6df285a",
+    "bytes": 240483,
+    "license_files_sha256": {
+      "ninja-1.12.1/COPYING": "eb7e9ab9690124c5c9f42bdc81383d886a3dede26345b6ed15bbad7caf81f7ea"
+    },
+    "url_verified": true,
+    "url_verification_status": "matching SHA256"
+  },
+  "vips-8.17.3.tar.xz": {
+    "upstream_url_candidate": "https://github.com/libvips/libvips/releases/download/v8.17.3/vips-8.17.3.tar.xz",
+    "sha256": "41e9a1439cd57dcc6d4435a085e2cfe181d9da1962fa84a484f09e8b536e4b77",
+    "bytes": 29526164,
+    "license_files_sha256": {
+      "vips-8.17.3/LICENSE": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+    },
+    "url_verified": false,
+    "url_verification_status": "two retries timed out; original source archive preserved and hash pinned"
+  },
+  "libspng-0.7.4.tar.gz": {
+    "upstream_url_candidate": "https://codeload.github.com/randy408/libspng/tar.gz/fb768002d4288590083a476af628e51c3f1d47cd",
+    "sha256": "d656813290d70a750b69e768323ff3b3875adf8c2e8c2fdb4e57ca1467abf86a",
+    "bytes": 159282,
+    "license_files_sha256": {
+      "libspng-fb768002d4288590083a476af628e51c3f1d47cd/LICENSE": "0622b0794d0fecde47d743f1bb70a03e6fdf082be8e71f39de672ed995d96ff9"
+    },
+    "url_verified": true,
+    "url_verification_status": "matching SHA256"
+  },
+  "pcre2-10.44.tar.bz2": {
+    "upstream_url_candidate": "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.44/pcre2-10.44.tar.bz2",
+    "sha256": "d34f02e113cf7193a1ebf2770d3ac527088d485d4e047ed10e5d217c6ef5de96",
+    "bytes": 1928086,
+    "license_files_sha256": {
+      "pcre2-10.44/LICENCE": "030087e2e8dd7c1bdd26057d25d4ded8f45bbf01ad458d68665ad04b8b0fbedf",
+      "pcre2-10.44/cmake/COPYING-CMAKE-SCRIPTS": "46cde7dc11e64c78d650b4851b88f6704b4665ff60f22a1caf68ceb15e217e5b",
+      "pcre2-10.44/COPYING": "99272c55f3dcfa07a8a7e15a5c1a33096e4727de74241d65fa049fccfdd59507"
+    },
+    "url_verified": true,
+    "url_verification_status": "matching SHA256"
+  },
+  "zlib-ng-2.2.5.tar.gz": {
+    "upstream_url_candidate": "https://github.com/zlib-ng/zlib-ng/archive/refs/tags/2.2.5.tar.gz",
+    "sha256": "5b3b022489f3ced82384f06db1e13ba148cbce38c7941e424d6cb414416acd18",
+    "bytes": 2417402,
+    "license_files_sha256": {
+      "zlib-ng-2.2.5/LICENSE.md": "6c9f0d975b41afaa34d22f55bb8986ce69e5cb7ad327cb2b28820cd425edf5ee"
+    },
+    "url_verified": true,
+    "url_verification_status": "matching SHA256"
+  },
+  "glib-2.86.1-git.tar.gz": {
+    "upstream_url_candidate": "https://codeload.github.com/GNOME/glib/tar.gz/refs/tags/2.86.1",
+    "sha256": "c05a4ca8725ee81d41ae2f9c5be849243953d9c9df841ed31c1c31facaf88282",
+    "bytes": 9926595,
+    "license_files_sha256": {
+      "glib-2.86.1/LICENSES/LicenseRef-old-glib-tests.txt": "fb261b2d5dbe76c4850f90da763210bc385e52428df6bbfd7b06295ac8a32914",
+      "glib-2.86.1/LICENSES/LGPL-2.1-or-later.txt": "fa6f36630bb1e0c571d34b2bbdf188d08495c9dbf58f28cac112f303fc1f58fb",
+      "glib-2.86.1/LICENSES/LGPL-2.1-only.txt": "fa6f36630bb1e0c571d34b2bbdf188d08495c9dbf58f28cac112f303fc1f58fb",
+      "glib-2.86.1/LICENSES/MIT.txt": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+    },
+    "url_verified": true,
+    "url_verification_status": "matching SHA256 on codeload retry"
+  },
+  "mozjpeg-0826579.tar.gz": {
+    "upstream_url_candidate": "https://codeload.github.com/mozilla/mozjpeg/tar.gz/08265790774cd0714832c9e675522acbe5581437",
+    "sha256": "b680167bd5d9afebdd576a12f8c49d2c9066a3b92ef96a2b2c5f7829b8600fe5",
+    "bytes": 2443542,
+    "license_files_sha256": {
+      "mozjpeg-08265790774cd0714832c9e675522acbe5581437/LICENSE.md": "96f5b328adbb78eeaaec6980d73fd558cb1e4d62560ed615646bc3cf5e532430",
+      "mozjpeg-08265790774cd0714832c9e675522acbe5581437/release/License.rtf": "933e1427ec78050c76396182fd9819a23fef58c17e997b67581852167be971db"
+    },
+    "url_verified": true,
+    "url_verification_status": "matching SHA256"
+  },
+  "meson-1.9.1.tar.gz": {
+    "upstream_url_candidate": "https://github.com/mesonbuild/meson/archive/refs/tags/1.9.1.tar.gz",
+    "sha256": "febaa8f7c1916521c53eb5fd11c0641b5eb4741c2c6e9b42c288ed62d9e4fd2c",
+    "bytes": 4926882,
+    "license_files_sha256": {
+      "meson-1.9.1/COPYING": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "meson-1.9.1/packaging/License.rtf": "e3e8d7b15b2021c994047314ad0ac5e367561f64771a60a85a9c0952d8cd4c3a"
+    },
+    "url_verified": true,
+    "url_verification_status": "matching SHA256"
+  },
+  "libexif-0.6.25.tar.xz": {
+    "upstream_url_candidate": "https://github.com/libexif/libexif/releases/download/v0.6.25/libexif-0.6.25.tar.xz",
+    "sha256": "62f74cf3bf673a6e24d2de68f6741643718541f83aca5947e76e3978c25dce83",
+    "bytes": 1291276,
+    "license_files_sha256": {
+      "libexif-0.6.25/COPYING": "36b6d3fa47916943fd5fec313c584784946047ec1337a78b440e5992cb595f89"
+    },
+    "url_verified": true,
+    "url_verification_status": "matching SHA256"
+  },
+  "expat-2.7.3.tar.xz": {
+    "upstream_url_candidate": "https://github.com/libexpat/libexpat/releases/download/R_2_7_3/expat-2.7.3.tar.xz",
+    "sha256": "71df8f40706a7bb0a80a5367079ea75d91da4f8c65c58ec59bcdfbf7decdab9f",
+    "bytes": 504744,
+    "license_files_sha256": {
+      "expat-2.7.3/COPYING": "31b15de82aa19a845156169a17a5488bf597e561b2c318d159ed583139b25e87"
+    },
+    "url_verified": true,
+    "url_verification_status": "matching SHA256"
+  }
+}

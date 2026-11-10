@@ -172,6 +172,121 @@ fn copy_executable(source: &Path, target: &Path) -> Result<String, Error> {
     hash_file(target)
 }
 
+// Libraries are copied from the newly built target, never from the updater's
+// own profile. Every runtime file is a regular bounded file with a recorded hash.
+fn valid_library_profile(value: &str) -> bool {
+    value.strip_prefix("pilotdeck-libs-").is_some_and(|hash| {
+        hash.len() == 64
+            && hash
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    })
+}
+fn valid_library_name(value: &str) -> bool {
+    value.starts_with("lib")
+        && value.len() <= 200
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b))
+        && (value.contains(".so") || value.ends_with(".dylib"))
+}
+fn copy_library(source: &Path, target: &Path) -> Result<String, Error> {
+    let mut input = regular(source)?;
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(target)
+        .map_err(io)?;
+    let count = std::io::copy(
+        &mut Read::by_ref(&mut input).take(MAX_BINARY + 1),
+        &mut output,
+    )
+    .map_err(io)?;
+    if count == 0 || count > MAX_BINARY {
+        return Err(Error::new("buildFailed", "Invalid library size."));
+    }
+    output.sync_all().map_err(io)?;
+    hash_file(target)
+}
+fn copy_image_libraries(
+    artifacts: &Path,
+    bins: &Path,
+) -> Result<(Option<String>, BTreeMap<String, String>), Error> {
+    let mut marker = String::new();
+    regular(&artifacts.join("pilotdeck-image-profile"))?
+        .take(128)
+        .read_to_string(&mut marker)
+        .map_err(io)?;
+    let profile = marker
+        .strip_suffix('\n')
+        .filter(|s| valid_library_profile(s))
+        .ok_or_else(|| Error::new("buildFailed", "Invalid image library profile."))?;
+    let source = artifacts.join(profile);
+    private_dir(&source)?;
+    let dest = bins.join(profile);
+    mkdir(&dest)?;
+    let mut hashes = BTreeMap::new();
+    for entry in fs::read_dir(&source).map_err(io)? {
+        let entry = entry.map_err(io)?;
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| Error::new("buildFailed", "Invalid library filename."))?;
+        if !valid_library_name(&name) || hashes.len() >= 64 {
+            return Err(Error::new(
+                "buildFailed",
+                "Invalid image library inventory.",
+            ));
+        }
+        hashes.insert(
+            name.clone(),
+            copy_library(&entry.path(), &dest.join(&name))?,
+        );
+    }
+    if hashes.is_empty() {
+        return Err(Error::new(
+            "buildFailed",
+            "Image library inventory is empty.",
+        ));
+    }
+    sync_dir(&dest)?;
+    Ok((Some(profile.to_owned()), hashes))
+}
+fn verify_image_libraries(bins: &Path, manifest: &Generation) -> Result<(), Error> {
+    match (
+        &manifest.library_profile,
+        manifest.library_hashes.is_empty(),
+    ) {
+        (None, true) => Ok(()),
+        (Some(profile), false)
+            if valid_library_profile(profile) && manifest.library_hashes.len() <= 64 =>
+        {
+            let dir = bins.join(profile);
+            private_dir(&dir)?;
+            let mut count = 0usize;
+            for entry in fs::read_dir(&dir).map_err(io)? {
+                let entry = entry.map_err(io)?;
+                let name = entry
+                    .file_name()
+                    .into_string()
+                    .map_err(|_| Error::refused("runtimeMismatch"))?;
+                if !valid_library_name(&name)
+                    || manifest.library_hashes.get(&name) != Some(&hash_file(&entry.path())?)
+                {
+                    return Err(Error::refused("runtimeMismatch"));
+                }
+                count += 1;
+            }
+            if count != manifest.library_hashes.len() {
+                return Err(Error::refused("runtimeMismatch"));
+            }
+            Ok(())
+        }
+        _ => Err(Error::refused("runtimeMismatch")),
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InstallManifest {
@@ -188,6 +303,10 @@ pub struct Generation {
     pub source_sha: String,
     pub source_checkout: PathBuf,
     pub bin_hashes: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library_profile: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub library_hashes: BTreeMap<String, String>,
 }
 pub struct Installation {
     pub root: PathBuf,
@@ -281,6 +400,7 @@ impl Installation {
                 return Err(Error::refused("runtimeMismatch"));
             }
         }
+        verify_image_libraries(&directory.join("bin"), &manifest)?;
         Ok(manifest)
     }
     fn unchanged(&self) -> Result<(), Error> {
@@ -310,6 +430,9 @@ impl Installation {
 }
 
 pub trait Builder {
+    fn requires_image_libraries(&self) -> bool {
+        false
+    }
     fn git(&mut self, cwd: &Path, args: &[&str]) -> Result<String, Error>;
     fn build(&mut self, source: &Path, output: &mut dyn FnMut(&str)) -> Result<PathBuf, Error>;
     fn cancelled(&self) -> bool {
@@ -349,6 +472,9 @@ impl NativeBuilder {
     }
 }
 impl Builder for NativeBuilder {
+    fn requires_image_libraries(&self) -> bool {
+        true
+    }
     fn git(&mut self, cwd: &Path, args: &[&str]) -> Result<String, Error> {
         let result = Runner {
             timeout: Duration::from_secs(60),
@@ -636,6 +762,11 @@ impl<B: Builder> Backend for Engine<B> {
                     copy_executable(&artifacts.join(name), &bins.join(name))?,
                 );
             }
+            let (library_profile, library_hashes) = if self.builder.requires_image_libraries() {
+                copy_image_libraries(&artifacts, &bins)?
+            } else {
+                (None, BTreeMap::new())
+            };
             if artifacts == source.join(".update-target/release") {
                 fs::remove_dir_all(source.join(".update-target")).map_err(io)?;
             }
@@ -668,6 +799,8 @@ impl<B: Builder> Backend for Engine<B> {
                 source_sha: target.source_sha.clone(),
                 source_checkout: destination.join("source"),
                 bin_hashes: hashes,
+                library_profile,
+                library_hashes,
             };
             write_json(&staging.join("manifest.json"), &manifest)?;
             sync_dir(&bins)?;
@@ -905,6 +1038,11 @@ fn bootstrap_with_confirmation_and_skills<
                 copy_executable(&artifacts.join(name), &directory.join("bin").join(name))?,
             );
         }
+        let (library_profile, library_hashes) = if builder.requires_image_libraries() {
+            copy_image_libraries(&artifacts, &directory.join("bin"))?
+        } else {
+            (None, BTreeMap::new())
+        };
         if artifacts == checkout.join(".update-target/release") {
             fs::remove_dir_all(checkout.join(".update-target")).map_err(io)?;
         }
@@ -933,6 +1071,8 @@ fn bootstrap_with_confirmation_and_skills<
             source_sha: sha.into(),
             source_checkout: final_root.join("generations").join(&id).join("source"),
             bin_hashes: hashes,
+            library_profile,
+            library_hashes,
         };
         write_json(&directory.join("manifest.json"), &generation)?;
         write_json(&stage.join("install.json"), &policy)?;
@@ -969,4 +1109,73 @@ fn bootstrap_with_confirmation_and_skills<
         let _ = fs::remove_dir_all(&stage);
     }
     result
+}
+
+#[cfg(test)]
+mod image_library_tests {
+    use super::*;
+    struct Scratch(PathBuf);
+    impl Scratch {
+        fn new() -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("pilotdeck-image-install-{}", uuid::Uuid::new_v4()));
+            mkdir(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn copied_libraries_are_manifested_and_tampering_is_rejected() {
+        let scratch = Scratch::new();
+        let artifacts = scratch.0.join("artifacts");
+        let bins = scratch.0.join("bin");
+        mkdir(&artifacts).unwrap();
+        mkdir(&bins).unwrap();
+        let profile = format!("pilotdeck-libs-{}", "a".repeat(64));
+        fs::write(
+            artifacts.join("pilotdeck-image-profile"),
+            format!("{profile}\n"),
+        )
+        .unwrap();
+        mkdir(&artifacts.join(&profile)).unwrap();
+        fs::write(
+            artifacts.join(&profile).join("libvips.so.42"),
+            b"native fixture",
+        )
+        .unwrap();
+        let (library_profile, library_hashes) = copy_image_libraries(&artifacts, &bins).unwrap();
+        let manifest = Generation {
+            schema_version: 1,
+            generation: "generation".into(),
+            source_sha: "0".repeat(40),
+            source_checkout: scratch.0.join("source"),
+            bin_hashes: BTreeMap::new(),
+            library_profile,
+            library_hashes,
+        };
+        verify_image_libraries(&bins, &manifest).unwrap();
+        fs::write(bins.join(&profile).join("libvips.so.42"), b"modified").unwrap();
+        assert!(verify_image_libraries(&bins, &manifest).is_err());
+    }
+
+    #[test]
+    fn profile_traversal_and_legacy_missing_fields_are_checked() {
+        let scratch = Scratch::new();
+        let artifacts = scratch.0.join("artifacts");
+        let bins = scratch.0.join("bin");
+        mkdir(&artifacts).unwrap();
+        mkdir(&bins).unwrap();
+        fs::write(artifacts.join("pilotdeck-image-profile"), "../escape\n").unwrap();
+        assert!(copy_image_libraries(&artifacts, &bins).is_err());
+        let legacy = serde_json::json!({"schemaVersion":1,"generation":"old","sourceSha":"0".repeat(40),"sourceCheckout":"/old/source","binHashes":{}});
+        let parsed: Generation = serde_json::from_value(legacy).unwrap();
+        assert!(parsed.library_profile.is_none());
+        assert!(parsed.library_hashes.is_empty());
+        verify_image_libraries(&bins, &parsed).unwrap();
+    }
 }

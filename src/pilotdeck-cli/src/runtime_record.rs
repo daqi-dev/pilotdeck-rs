@@ -168,6 +168,8 @@ mod tests {
                 source_sha: "0".repeat(40),
                 source_checkout: root.join("source"),
                 bin_hashes: BTreeMap::new(),
+                library_profile: None,
+                library_hashes: BTreeMap::new(),
             },
         };
         let record = RuntimeRecord::lock(&install).unwrap();

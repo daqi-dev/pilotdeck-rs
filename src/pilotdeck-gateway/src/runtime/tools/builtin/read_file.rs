@@ -519,15 +519,10 @@ fn image(
         .and_then(|value| value.get("imageDetail"))
         .and_then(JsValue::as_string)
         .cloned();
-    // The baseline's JPEG fast path is a pure EOI check: complete JPEGs over
-    // 1 KiB pass through unchanged when they already fit the byte budget. That
-    // path needs no sharp/decoder, so it can be reproduced exactly.
-    if mime_type == "image/jpeg" && context_stat.size as f64 <= max_image_bytes {
-        let bytes = std::fs::read(os_path(&resolved.absolute))
-            .map_err(|error| failed(error, "open", &resolved.absolute))?;
-        let has_eoi =
-            bytes.len() >= 2 && bytes[bytes.len() - 2] == 0xff && bytes[bytes.len() - 1] == 0xd9;
-        if has_eoi && bytes.len() > 1000 {
+    let bytes = std::fs::read(os_path(&resolved.absolute))
+        .map_err(|error| failed(error, "open", &resolved.absolute))?;
+    match pilotdeck_image::prepare(&bytes, mime_type, max_image_bytes) {
+        Ok((image, output_mime)) => {
             read_state_set(
                 context,
                 read_state_key.clone(),
@@ -535,55 +530,48 @@ fn image(
             );
             let mut content = object([
                 ("type", string("image")),
-                ("mimeType", string("image/jpeg")),
-                ("data", string(BASE64.encode(&bytes))),
-                ("bytes", JsValue::Number(bytes.len() as f64)),
+                ("mimeType", string(output_mime.clone())),
+                ("data", string(BASE64.encode(&image))),
+                ("bytes", JsValue::Number(image.len() as f64)),
             ]);
             if let Some(detail) = image_detail {
                 content.insert("detail".into(), JsValue::String(detail));
             }
-            return Ok(ToolOutput {
+            Ok(ToolOutput {
                 content: vec![JsValue::Object(content)],
-                supplemental_messages: None,
                 data: Some(JsValue::Object(object([
                     ("filePath", string(resolved.relative.clone())),
                     ("kind", string("image")),
-                    ("mimeType", string("image/jpeg")),
-                    ("bytes", JsValue::Number(bytes.len() as f64)),
+                    ("mimeType", string(output_mime)),
+                    ("bytes", JsValue::Number(image.len() as f64)),
                     ("originalBytes", JsValue::Number(bytes.len() as f64)),
                 ]))),
-                metadata: None,
-            });
+                ..ToolOutput::default()
+            })
         }
+        Err(error) => Ok(ToolOutput {
+            content: vec![JsValue::Object(object([
+                ("type", string("text")),
+                (
+                    "text",
+                    string(format!(
+                        "[Image file: {}, {} bytes, {mime_type}. Image decoding failed, so it was not attached as model-visible image content. Diagnostic: {error}]",
+                        text(&resolved.relative),
+                        context_stat.size
+                    )),
+                ),
+            ]))],
+            data: Some(JsValue::Object(object([
+                ("filePath", string(resolved.relative.clone())),
+                ("kind", string("image")),
+                ("mimeType", string(mime_type)),
+                ("bytes", JsValue::Number(context_stat.size as f64)),
+                ("imageDecodeFailed", JsValue::Bool(true)),
+                ("error", string(error)),
+            ]))),
+            ..ToolOutput::default()
+        }),
     }
-    // Non-JPEG decoding and JPEG repair/compression require sharp, which is not
-    // in the gateway dependency set; report the same recoverable notice as the
-    // baseline's decode-failure branch.
-    Ok(ToolOutput {
-        content: vec![JsValue::Object(object([
-            ("type", string("text")),
-            (
-                "text",
-                string(format!(
-                    "[Image file: {}, {} bytes, {mime_type}. Image decoding failed, so it was not attached as model-visible image content. Diagnostic: image processing is not available in this runtime.]",
-                    text(&resolved.relative),
-                    context_stat.size
-                )),
-            ),
-        ]))],
-        data: Some(JsValue::Object(object([
-            ("filePath", string(resolved.relative.clone())),
-            ("kind", string("image")),
-            ("mimeType", string(mime_type)),
-            ("bytes", JsValue::Number(context_stat.size as f64)),
-            ("imageDecodeFailed", JsValue::Bool(true)),
-            (
-                "error",
-                string("image processing is not available in this runtime"),
-            ),
-        ]))),
-        ..ToolOutput::default()
-    })
 }
 
 // The fixed TS countPdfPages treats malformed and zero-page documents as unknown.
@@ -629,11 +617,7 @@ fn render_pdf_pages(
         pixmap
             .write_jpeg80_to(&mut jpeg)
             .map_err(pdf_render_error)?;
-        // The TS sharp re-encoding path for an image over budget is not yet
-        // available here; fail rather than return an over-budget attachment.
-        if jpeg.len() as f64 > max_bytes {
-            return Err("Image content exceeds the read_file byte budget after compression attempts (image/jpeg).".into());
-        }
+        let (jpeg, _) = pilotdeck_image::compress(jpeg, "image/jpeg".to_owned(), max_bytes)?;
         let mut image = object([
             ("type", string("image")),
             ("mimeType", string("image/jpeg")),
