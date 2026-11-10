@@ -22035,12 +22035,20 @@ def negative_restored_replays(output):
     check and the restored-positive summary are patched, so no tracked byte is
     touched.  This is the final aggregation point the r6 review found: a
     restored PASS_WITH_SKIPS child must make the batch non-PASS, never PASS/0.
+
+    #2743: the fixture's publish/restore resolve through its own imported
+    ``write_source_atomic`` global (temp file + ``os.replace``), which neither
+    ``Path.write_*`` guard intercepts -- pin that entry too, or the replay
+    really renames the guarded sources on disk (no tree lock, no parity
+    lease; an inode probe confirmed it before this guard existed).
     """
     nc = load_negative_controls()
     name = nc.MUTATIONS[0][0]
     sources = {nc.COMMON_SOURCE, *(Path(row[1]) for row in nc.MUTATIONS)}
     real_write_text = Path.write_text
     real_write_bytes = Path.write_bytes
+    real_write_atomic = nc.write_source_atomic
+    atomic_calls = []
 
     def guarded_write_text(path, data, *args, **kwargs):
         if path in sources:
@@ -22051,6 +22059,12 @@ def negative_restored_replays(output):
         if path in sources:
             return len(data)
         return real_write_bytes(path, data, *args, **kwargs)
+
+    def guarded_write_atomic(root, path, data, *, mode=None):
+        if path in sources:
+            atomic_calls.append(Path(path))
+            return None
+        return real_write_atomic(root, path, data, mode=mode)
 
     @contextlib.contextmanager
     def fake_mutating(*_args, **_kwargs):
@@ -22074,15 +22088,18 @@ def negative_restored_replays(output):
         fake_summary = {'status': restored_status, 'results': result_rows}
         fake = SimpleNamespace(returncode=restored_code, stdout='', stderr='')
         saved = (nc.sys.argv, nc.sys.platform, nc.mutating_sources, nc.run_check,
-                 nc.read_summary, nc.classify, nc.pgrep_launcher, nc.MUTATIONS)
+                 nc.read_summary, nc.classify, nc.pgrep_launcher, nc.MUTATIONS,
+                 nc.write_source_atomic)
         nc.MUTATIONS = [row for row in nc.MUTATIONS if row[0] == name]
         nc.mutating_sources = fake_mutating
         nc.run_check = lambda *_a, **_k: fake
         nc.read_summary = lambda *_a, **_k: (fake_summary, None)
         nc.classify = lambda *_a, **_k: (verdict, 'injected')
         nc.pgrep_launcher = lambda: ''
+        nc.write_source_atomic = guarded_write_atomic
         nc.sys.argv = ['negative_controls.py', '--output', str(case), '--only', name]
         nc.sys.platform = platform
+        intercepted = len(atomic_calls)
         try:
             with patch.object(Path, 'write_text', guarded_write_text), \
                     patch.object(Path, 'write_bytes', guarded_write_bytes):
@@ -22091,13 +22108,22 @@ def negative_restored_replays(output):
             observed = (report.get('status'), code)
             failures = [] if observed == want else [
                 f'#164-fix-r7 negative-restored {tag}: {observed!r}, want {want!r}']
+            if len(atomic_calls) == intercepted:
+                # The guard itself must stay live: if the replayed main()
+                # stops resolving its writes through write_source_atomic
+                # (or the guard is dropped again), the in-memory promise
+                # above silently stops being true.
+                failures.append(
+                    f'#2743 negative-restored {tag}: the replay never reached '
+                    'write_source_atomic -- the in-memory write guard is dead')
         except Exception as error:
             observed = (None, None)
             failures = [f'#164-fix-r7 negative-restored {tag}: '
                         f'{type(error).__name__}: {error}']
         finally:
             (nc.sys.argv, nc.sys.platform, nc.mutating_sources, nc.run_check,
-             nc.read_summary, nc.classify, nc.pgrep_launcher, nc.MUTATIONS) = saved
+             nc.read_summary, nc.classify, nc.pgrep_launcher, nc.MUTATIONS,
+             nc.write_source_atomic) = saved
         rows[f'{tag}Status'] = observed[0]
         rows[f'{tag}Returncode'] = observed[1]
         rows[f'{tag}Passed'] = not failures
