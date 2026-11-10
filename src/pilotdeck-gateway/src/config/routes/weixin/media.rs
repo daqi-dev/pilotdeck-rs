@@ -1,4 +1,6 @@
 //! Weixin CDN media decrypt helpers (WeixinChannel.ts).
+use std::sync::OnceLock;
+
 use serde_json::Value;
 
 use aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit};
@@ -38,7 +40,7 @@ fn format_route_error(error: &crate::config::routes::RouteError, depth: usize) -
     pieces.join("; ")
 }
 
-/// Stack second line when captured; image-decrypt diagnostics keep a TS-shaped fallback.
+/// Stack second line when `Backtrace::capture()` has frames (release/profile test debug=0 often has none).
 fn error_stack_line() -> Option<String> {
     let trace = std::backtrace::Backtrace::capture();
     let text = format!("{trace}");
@@ -53,7 +55,8 @@ fn error_stack_line() -> Option<String> {
     None
 }
 
-const IMAGE_DECRYPT_ERROR_AT: &str = "decryptWeixinImageOrThrow (WeixinChannel.ts:631)";
+/// Filled on first `decrypt_weixin_image_or_throw` failure (real `file!:line!` at throw site).
+static IMAGE_DECRYPT_THROW_SITE: OnceLock<String> = OnceLock::new();
 
 pub(crate) fn weixin_attachment_failure_diagnostic(error: &crate::config::routes::RouteError) -> String {
     format!("微信附件处理失败：{}", format_weixin_error(error))
@@ -62,7 +65,15 @@ pub(crate) fn weixin_attachment_failure_diagnostic(error: &crate::config::routes
 pub(crate) fn weixin_attachment_failure_diagnostic_for_message(message: &str) -> String {
     let mut core = format_weixin_error(&crate::config::routes::RouteError::new("", message));
     if !core.contains("at=") {
-        core = format!("{core}; at={IMAGE_DECRYPT_ERROR_AT}");
+        let at = error_stack_line().or_else(|| {
+            message
+                .contains("微信图片解密后仍不是可识别图片")
+                .then(|| IMAGE_DECRYPT_THROW_SITE.get().cloned())
+                .flatten()
+        });
+        if let Some(at) = at {
+            core = format!("{core}; at={at}");
+        }
     }
     format!("微信附件处理失败：{core}")
 }
@@ -233,6 +244,13 @@ pub(crate) fn decrypt_weixin_image_or_throw(
     }
     let key_diag = summarize_weixin_media_key_shape(media_owner);
     let candidate_diag = summarize_weixin_decrypt_candidates(buffer, media_owner);
+    let _ = IMAGE_DECRYPT_THROW_SITE.get_or_init(|| {
+        format!(
+            "decrypt_weixin_image_or_throw ({}:{})",
+            file!(),
+            line!()
+        )
+    });
     Err(format!(
         "微信图片解密后仍不是可识别图片（{key_diag} {candidate_diag}）"
     ))
@@ -597,6 +615,23 @@ mod tests {
         assert!(formatted.contains("candidates="));
         assert!(formatted.contains("; at="));
         assert!(!formatted.contains("code=gateway_request_failed"));
+        assert!(
+            !formatted.contains("WeixinChannel.ts"),
+            "must not fake TS stack line: {formatted}"
+        );
+        let at_part = formatted
+            .split("; at=")
+            .nth(1)
+            .expect("at= suffix");
+        assert!(
+            at_part.contains("decrypt_weixin_image_or_throw"),
+            "expected Rust throw site in at=, got {at_part}"
+        );
+        assert!(
+            at_part.contains("media.rs"),
+            "expected Rust source path in at=, got {at_part}"
+        );
+        eprintln!("CAPTURED_DIAGNOSTIC={formatted}");
     }
 
     #[test]
