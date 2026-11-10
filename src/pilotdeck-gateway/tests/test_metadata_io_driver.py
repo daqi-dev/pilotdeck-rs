@@ -1373,20 +1373,131 @@ class EnvironmentControls(unittest.TestCase):
             + out[-800:])
         total = int(ran.group(1))
         self.assertGreaterEqual(
-            total, 201,
-            '#2133 the self-check must run at least 201 tests; an emptied, '
-            'renamed-away, or fixture-skipped module still exits 0 and the '
-            'gate is silently empty (ran %d)' % total)
+            total, 205,
+            '#2133 the self-check must run at least 205 tests (r37 加 4 条); '
+            'an emptied, renamed-away, or fixture-skipped module still exits 0 '
+            'and the gate is silently empty (ran %d)' % total)
         skipped = re.search(r'skipped=(\d+)', out)
         self.assertFalse(
             skipped and int(skipped.group(1)),
             '#2133 every self-check test must actually run; skipped tests '
             'make unittest exit 0 and the gate silently pass (%s)'
             % (skipped.group(0) if skipped else ''))
+        # #2136 fix-r37（MM concurrency P1）：unittest 的 expectedFailure
+        # 通道同样退 0——`Ran N` 照打、`OK (expected failures=N)` 换行出现、
+        # 没有 skipped=。把一条真实测试改成 @expectedFailure（或制造
+        # unexpected success）照样 CI 全绿。实测见
+        # _tmp/20261110-pr2136-revival/r37-expected-failure-channel.log。
+        for marker in ('expected failures=', 'unexpected successes='):
+            self.assertNotIn(
+                marker, out,
+                '#2133 the self-check must not lean on the expectedFailure '
+                'channel: %s keeps unittest exit 0 and the gate green '
+                'while a real test is not asserted (found %s)'
+                % (marker, marker))
         self.assertEqual(
             cp.returncode, 0,
             '#2133 the self-check suite itself must pass (rc=%d). Tail: %s'
             % (cp.returncode, out[-800:]))
+
+    def test_the_optimize_guards_self_tests_collect_real_tests(self):
+        # #2136 fix-r37（MM sibling P1）：上面 -O 步的守卫同样只钉「步存在 +
+        # 无条件 + cwd」，钉不住五条命令真的收集到测试——掏空 / skip 任一
+        # 模块，`python3 -B -m unittest -v` 退 0，#1666/#1734 的 -O 判别力
+        # 在 CI 静默为空。逐模块跑一遍并核「Ran N」下限与无 skip/期望失败；
+        # 下限取 r37 实测（_tmp/20261110-pr2136-revival/
+        # r37-sibling-module-baselines.log：10/13/8/10/6，合计 47，约 15 s）。
+        fixtures = Path(__file__).resolve().parent / 'fixtures'
+        minimums = (
+            ('test_negative_optimize_guards', 10),
+            ('settings-gateway/test_negative_controls.py', 13),
+            ('test_negative_run_guards', 8),
+            ('network-timing/test_negative_controls.py', 10),
+            ('test_negative_roster_guards', 6),
+        )
+        for module, minimum in minimums:
+            with self.subTest(module=module):
+                try:
+                    cp = subprocess.run(
+                        [sys.executable, '-B', '-m', 'unittest', '-v', module],
+                        cwd=fixtures, capture_output=True, text=True,
+                        timeout=900)
+                except subprocess.TimeoutExpired:
+                    self.fail('#1666 the %s subprocess timed out (>900 s); '
+                              'a hung self-test must not pass silently' % module)
+                out = cp.stdout + cp.stderr
+                ran = re.search(r'^Ran (\d+) tests? in ', out, re.M)
+                self.assertIsNotNone(
+                    ran,
+                    '#1666 the %s run must print a "Ran N tests" summary '
+                    'line; a broken entry point must not pass. Tail: %s'
+                    % (module, out[-800:]))
+                self.assertGreaterEqual(
+                    int(ran.group(1)), minimum,
+                    '#1666 %s must run at least %d tests; an emptied, '
+                    'renamed-away, or skipped module still exits 0 and the '
+                    '-O invariance gate is silently empty (ran %s)'
+                    % (module, minimum, ran.group(1)))
+                skipped = re.search(r'skipped=(\d+)', out)
+                self.assertFalse(
+                    skipped and int(skipped.group(1)),
+                    '#1666 every %s test must actually run; skipped tests '
+                    'make unittest exit 0 and the gate silently pass (%s)'
+                    % (module, skipped.group(0) if skipped else ''))
+                for marker in ('expected failures=', 'unexpected successes='):
+                    self.assertNotIn(
+                        marker, out,
+                        '#1666 %s must not lean on the expectedFailure '
+                        'channel: %s keeps unittest exit 0 while a real '
+                        'test is not asserted (found %s)'
+                        % (module, marker, marker))
+                self.assertEqual(
+                    cp.returncode, 0,
+                    '#1666 the %s suite itself must pass (rc=%d). Tail: %s'
+                    % (module, cp.returncode, out[-800:]))
+
+    def test_the_copy_manifest_self_test_collects_real_tests(self):
+        # #2136 fix-r37（MM sibling P1）：#1570 的自测步守卫同样只钉步存在，
+        # 钉不住 `_shared.test_compile_inputs` 真的收集到测试——掏空或整类
+        # skip 后退 0，compile_inputs 的覆盖面在 CI 静默为空。r37 实测
+        # Ran 82（约 21 s，同上 baselines.log）。
+        fixtures = Path(__file__).resolve().parent / 'fixtures'
+        try:
+            cp = subprocess.run(
+                [sys.executable, '-B', '-m', 'unittest', '-v',
+                 '_shared.test_compile_inputs'],
+                cwd=fixtures, capture_output=True, text=True, timeout=900)
+        except subprocess.TimeoutExpired:
+            self.fail('#1570 the copy-manifest self-test subprocess timed out '
+                      '(>900 s); a hung self-test must not pass silently')
+        out = cp.stdout + cp.stderr
+        ran = re.search(r'^Ran (\d+) tests? in ', out, re.M)
+        self.assertIsNotNone(
+            ran,
+            '#1570 the copy-manifest self-test must print a "Ran N tests" '
+            'summary line; a broken entry point must not pass. Tail: %s'
+            % out[-800:])
+        self.assertGreaterEqual(
+            int(ran.group(1)), 82,
+            '#1570 the copy-manifest self-test must run at least 82 tests; '
+            'an emptied, renamed-away, or skipped module still exits 0 and '
+            'the coverage is silently empty (ran %s)' % ran.group(1))
+        skipped = re.search(r'skipped=(\d+)', out)
+        self.assertFalse(
+            skipped and int(skipped.group(1)),
+            '#1570 every copy-manifest self-test must actually run; skipped '
+            'tests make unittest exit 0 and the gate silently pass (%s)'
+            % (skipped.group(0) if skipped else ''))
+        for marker in ('expected failures=', 'unexpected successes='):
+            self.assertNotIn(
+                marker, out,
+                '#1570 the copy-manifest self-test must not lean on the '
+                'expectedFailure channel: %s keeps unittest exit 0 while a '
+                'real test is not asserted (found %s)' % (marker, marker))
+        self.assertEqual(
+            cp.returncode, 0,
+            '#1570 the copy-manifest self-test itself must pass (rc=%d). '
+            'Tail: %s' % (cp.returncode, out[-800:]))
 
     def test_required_job_runs_the_optimize_guards_self_tests(self):
         # #2136 fix-r35（DS sibling P1）：-O 不变性自测步（#1666/#1734）与
