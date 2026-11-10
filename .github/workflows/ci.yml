@@ -98,8 +98,9 @@ jobs:
           # 真锚点 mutate、真发布；不需要 cargo 名额。
           python3 -B -m unittest -v test_negative_roster_guards
           # #2590 fix-r2（评审 P1 CI 接线，取高裁定）：issue-2495 的守卫机检同形进 CI
-          # （settings-gateway:88 / network-timing:94 同款），22 例纯 Python——含后台进程
-          # 真实占树锁、断言锁忙落 rc 2 + INVALID: 而非 traceback 的用例，不需要 cargo。
+          # （settings-gateway:88 / network-timing:94 同款），28 例纯 Python——含后台进程
+          # 真实占树锁、断言锁忙落 rc 2 + INVALID: 而非 traceback 的用例，
+          # 取得阶段拒跑（锁超时 / 树脏）撤目录、还原窗口超时退 1 的相位分界用例，不需要 cargo。
           python3 -B -m unittest -v issue-2495/test_negative_controls.py
       # #1570：共享负控的副本清单从源码推导（src/ 之外被编译期读取的输入）。
       # 漏一份不会表现成「变异存活」，而是整条变异 INVALID——尺子静默失去判别力。

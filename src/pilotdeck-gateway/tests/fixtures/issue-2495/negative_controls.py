@@ -40,9 +40,12 @@ or a source read that fails — is itself that same refusal (fix-r2: never an
 uncaught TimeoutError / OSError traceback a host would read as rc 1). The
 guard's lock and the mutation round's lock are two acquisitions, not one
 critical section: a sibling landing in the window between them is stopped
-fail-closed by the mutation round's own pristine check (rc 1, nothing
-published as green) or, from fix-r3, by its lock timeout — the same "never
-started" rc 2 refusal the guard already produces. A
+fail-closed by the mutation round's own acquisition — its pristine check or,
+from fix-r3, its lock timeout, both the same "never
+started" rc 2 refusal the guard already produces (fix-r3b scopes the refusal
+to the acquisition phase and withdraws the empty evidence directory; anything
+that fails after the acquisition is a red run: INVALID rows, published
+summary, rc 1). A
 bound assertion containing `{` / `}` is
 refused up front (#2590 item 3): the receipt protocol compares the runtime
 `format!` result byte-for-byte, so a template can never match and the row
@@ -54,6 +57,7 @@ run to `N-1/N-1 killed` and exiting 0 (#2590 item 2), and under
 contract counts — instead of a false `KILLED=0/N` (fix-r2).
 """
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -66,8 +70,9 @@ FIXTURES = Path(__file__).resolve().parents[1]
 SERVICES = ROOT / 'src/pilotdeck-gateway/src/native_process/services.rs'
 TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/services_tests.rs'
 sys.path.insert(0, str(FIXTURES))
-from negative_process import (mutating_sources, run_owned, wait_for_slot,
-                              tree_lock, write_source_atomic)
+from negative_process import (SourceBaselineError, mutating_sources,
+                              run_owned, wait_for_slot, tree_lock,
+                              write_source_atomic)
 from negative_selection import (claim_dir, missing_target, refuse,
                                 refuse_unusable_target, registered, verdict_exit)
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
@@ -259,12 +264,17 @@ def main():
     parser.add_argument('output', nargs='?')
     parser.add_argument('selected', nargs='*')
     args = parser.parse_args()
-    # fix-r3 (MM r2 boundary#1 P2a): --check's argv contract (the usage line
-    # above: no output directory, no names) is machine-checked, not just
-    # documented -- a typo'd `--check some-name` used to return the same
-    # green "OK" line as the real roster check without ever reading it.
-    if args.check and (args.output or args.selected):
-        refuse('#2495 --check takes no output directory and no mutation names')
+    # fix-r3 (MM r2 boundary#1 P2a; fix-r3b DS r3 boundary#1 P2a + MM r3
+    # boundary#5 P3): --check's argv contract (the usage line above: no output
+    # directory, no names, no flags it would silently drop) is machine-checked,
+    # not just documented -- a typo'd `--check some-name` used to return the
+    # same green "OK" line as the real roster check without ever reading it.
+    # `args.output is not None`, not truthiness: an empty-string positional
+    # (`--check ""`, an unset shell variable unquoted) is still a positional.
+    if args.check and (args.output is not None or args.selected
+                       or args.compile_only):
+        refuse('#2495 --check takes no output directory, no mutation names, '
+               'and no --compile-only flag')
     # #2590 item 1 (handle-path-macos:148-157, sdk-mcp-session-tools:209-216):
     # the binding self-check runs before any mutation, so its failure is a
     # "never started" refusal (rc 2) — the pre-`mutating_sources` boundary
@@ -364,7 +374,54 @@ def main():
         return result
 
     try:
-        with mutating_sources(ROOT, guarded) as originals:
+        with contextlib.ExitStack() as stack:
+            try:
+                originals = stack.enter_context(
+                    mutating_sources(ROOT, guarded))
+            except (TimeoutError, SourceBaselineError) as error:
+                # fix-r3 (MM r2 concurrency#1 P1 / DS r2 concurrency#1, 两家
+                # 同撞取高 P1): the mutation round takes the very same
+                # ROOT/.negative-source.lock the guard segment above already
+                # refuses on, so a sibling seizing it in the window between
+                # the two acquisitions must land on the same "never started"
+                # side — refuse() and rc 2, never verdict_exit's 1 over
+                # INVALID rows a host would read as a finished, not-green
+                # round (fix-r2's README/CI wording "领锁超时本身也拒跑
+                # （rc 2，非 traceback）" carries no stage qualifier).
+                # fix-r3b (DS r3 concurrency#1 P1 / boundary#2 P3 + MM r3
+                # boundary#2 P2a, 实测 TimeoutError ⊂ OSError 且
+                # errno.ETIMEDOUT 映射到它): the catch is scoped by PHASE,
+                # not by exception type — it wraps only the acquisition
+                # (enter_context: the tree-lock wait, the pristine checks
+                # and the snapshot reads), where nothing has been mutated
+                # yet. Once enter_context returns, every TimeoutError —
+                # including an ETIMEDOUT on the restore write-back — falls
+                # to the generic handler below: the round did run, rows may
+                # be INVALID and the tree may be mid-restore, so it must
+                # invalidate, publish and exit 1, never a "never started"
+                # refusal. Per-row timeouts (run_owned's 900 s,
+                # wait_for_slot's 600 s) are subprocess.TimeoutExpired and
+                # are caught by the inner per-row handler either way.
+                # fix-r3b (MM r3 concurrency#1 P2a): SourceBaselineError at
+                # entry is the same never-started phase — a sibling round
+                # SIGKILLed mid-mutation leaves its mutant on disk and this
+                # round's first act under the lock is to refuse it, not to
+                # fold it into seven INVALID rows and a published summary
+                # (the rc table: 树脏 → 2). Restore-phase failures keep the
+                # rc 1 shape.
+                # fix-r3b (MM r3 boundary#1 P2a, utf16-residual-sort
+                # startup_refusal precedent): the empty directory claim_dir
+                # made is withdrawn so a "never started" refusal leaves no
+                # claimed-looking evidence directory — rmdir only removes
+                # the empty case; a run that already wrote logs keeps them.
+                try:
+                    output.rmdir()
+                except OSError:
+                    pass
+                phase = ('source lock busy' if isinstance(error, TimeoutError)
+                         else 'tree not pristine')
+                refuse(f'#2495 {phase} (never started): '
+                       f'{type(error).__name__}: {error}')
             guarded_sha256 = {str(path.relative_to(ROOT)): hashlib.sha256(originals[path]).hexdigest() for path in guarded}
             for name, path, old, new, test, assertion in selected:
                 item = dict(name=name, test=test, assertion=assertion,
@@ -401,26 +458,6 @@ def main():
                     item.update(status='INVALID', reason=item['reason'] + f'; restored: {error}')
                 results.append(item)
                 print(f'{name}: {item["status"]}: {item["reason"]}', flush=True)
-    except TimeoutError as error:
-        # fix-r3 (MM r2 concurrency#1 P1 / DS r2 concurrency#1 / MM r2
-        # sibling#2, 两家同撞取高 P1): the mutation round takes the very
-        # same ROOT/.negative-source.lock the guard segment above already
-        # refuses on, so a sibling seizing it in the window between the two
-        # acquisitions must land on the same "never started" side — refuse()
-        # and rc 2, never verdict_exit's 1 over INVALID rows a host would
-        # read as a finished, not-green round. fix-r2's README/CI wording
-        # ("领锁超时本身也拒跑（rc 2，非 traceback）") carries no stage
-        # qualifier, and the issue-297 r7 precedent classifies this same
-        # TimeoutError as "source lock busy (never started)". The broad catch
-        # cannot misfile a started round: every per-row timeout (run_owned's
-        # 900 s, wait_for_slot's 600 s) is caught by the inner handler above,
-        # and the restore path raises OSError/RuntimeError shapes, never
-        # TimeoutError — so only the acquisition itself can land here. The
-        # claimed evidence directory stays but publishes no summary.json or
-        # roster-mismatch.json: rc 2 plus a verdictless directory is the
-        # "never started" signal (same as issue-297).
-        refuse(f'#2495 source lock busy (never started): '
-               f'{type(error).__name__}: {error}')
     except Exception as error:
         reason = f'source guard: {type(error).__name__}: {error}'
         invalidate_completed(results, reason)

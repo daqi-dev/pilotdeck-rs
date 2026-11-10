@@ -134,11 +134,15 @@
 之后的守卫失败作废已跑行、发布 INVALID 后按四分表退 1（延迟信号退 128+signum），
 同批进三条拒跑矩阵），以及 `issue-2495`
 （#2590 fix-r1 起同形：启动四拒 + `EXPECTED_NAMES` 静态名册 + stale 扫描入树锁；
-fix-r2 起领锁超时本身也拒跑（rc 2，非 traceback）、`--compile-only` 汇总打
+fix-r2 起守卫段领锁（等待上界 60 s）超时本身也拒跑（rc 2，非 traceback）、
+`--compile-only` 汇总打
 `COMPILED=n/N`，并进 `test_negative_optimize_guards.py` 矩阵与 CI `--check`；
-fix-r3 起变异段领锁超时同口径（rc 2 never-started，issue-297 先例，证据目录不发
-summary）、名册不符只发 `roster-mismatch.json`（原子写）并退出 1、`--check` 带位置
-参数即拒跑）。
+fix-r3 起变异段领锁超时同口径（rc 2 never-started；fix-r3b 起相位定界：
+取得阶段的领锁超时或树脏 `SourceBaselineError` 都拒跑并撤走空的认领目录，
+utf16 `startup_refusal` 先例，证据目录既不发 summary 也不留认领形状；
+取得之后含还原窗口的失败作废已跑行、发布 summary 并退 1），
+名册不符只发 `roster-mismatch.json`（原子写）并退出 1、`--check` 带位置
+参数、空输出槽或 `--compile-only` 即拒跑）。
 **其余同族入口尚未迁移**，
 由 #1666 按目录分批推进，名单是机器可检的：`tests/fixtures/test_negative_optimize_guards.py`
 的 `PENDING_BARE_ASSERTS` 登记每个仍含裸 `assert` 的 `*/negative_controls.py` 及理由，
@@ -169,7 +173,11 @@ summary）、名册不符只发 `roster-mismatch.json`（原子写）并退出 1
 | 2 | 从未开跑，本轮没有判决可读：未知或重复的变异名、名册与静态清单不符、marker 越界或取自判杀条件自身的 token、输出目录已存在（`negative_selection.claim_dir`）、`CARGO_TARGET_DIR` 不可用（未设置、空串、纯空白，或 `target_environment` 拒绝的 dot / 文件系统或仓库根 / `src` 内）、树脏或领锁超时、oracle 读不了 |
 | 42 | 全杀但基线不是 HEAD，只是非宿主证据（用到的脚本按自身规约） |
 
-分界判据是「有没有真的开始变异」：进 `mutating_sources` 之前返回的都算 2，进去之后被打断的算 1。
+分界判据是「有没有真的开始变异」：`mutating_sources` 的取得阶段（领锁等待、洁净检查、
+快照读——任何变异字节落盘之前）返回的都算 2，取得之后（含 `__exit__` 还原窗口）被打断的算 1
+（#2590 fix-r3b：issue-2495 以 `TimeoutError`/`SourceBaselineError` 只包取得段实现，
+异常类型不参与分界——`TimeoutError` ⊂ `OSError` 且是 `errno.ETIMEDOUT` 的标准映射，
+还原窗口抛它同样作废已跑行并退 1）。
 被信号直接杀死（SIGKILL 137）不在表内，看证据是否完整；以下退出码都以前台、未继承
 SIG_IGN 为前提（nohup / 后台链式宿主把 SIGINT / SIGTERM 设成 SIG_IGN 传给子进程时，
 信号被静默吞掉，进程既不退、证据也不终止，宿主需 SIGKILL / 超时兜底；实测：SIG_IGN
