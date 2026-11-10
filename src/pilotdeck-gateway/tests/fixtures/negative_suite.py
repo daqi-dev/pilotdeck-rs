@@ -241,7 +241,18 @@ def passed(result, test):
     # suffix after `... ok`.
     named_ok = re.search(r'^test ' + re.escape(test) + r' \.\.\..* ok$', log,
                          re.MULTILINE)
+    # #1637: a bound test that skipped *itself* also prints the marker line
+    # `PDRS_TEST_SKIPPED <short-name>: skipped, …` (tests/common/skip_line.rs
+    # `TEST_SKIPPED_MARKER`, written straight to the stderr handle so the
+    # harness capture cannot hide it) and exits green. That is not a passing
+    # positive control: on this host the row certified nothing, and counting
+    # it as a pass is the vacuous positive #1637 closes. Only whole-test
+    # self-skips carry the marker; a test that ran and skipped one scenario
+    # of many has no marker line and still passes on its own merits.
+    self_skipped = re.search(r'^PDRS_TEST_SKIPPED ' + re.escape(short_test(test)) + r'\b',
+                             log, re.MULTILINE)
     return (result.returncode == 0 and named_ok is not None
+            and self_skipped is None
             and 'test result: ok. 1 passed;' in log)
 
 

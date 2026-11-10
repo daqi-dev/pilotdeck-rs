@@ -26,21 +26,33 @@ The raw-bytes home row is Linux-only as a kill (#1289 → #1400): its bound
 test now exists on every unix but skips itself wherever the filesystem
 rejects non-UTF-8 filenames (APFS / HFS+ EILSEQ, #1400's runtime probe), so
 off Linux the mutated migration is never reached and the row can only be
-SKIPPED. The #1400 probe row is the mirror: it kills exactly on those
-rejecting filesystems (a forced-true probe walks the test into the EILSEQ
-fixture-create panic) and is SKIPPED on Linux, where the probe already
-returns true and forcing it changes nothing. Neither drop fails the run
-(same accounting as exact-rerun-receipt's DARWIN_ONLY rows).
+SKIPPED. The #1400 probe row is the mirror: it used to record its only
+macOS kill by walking the self-skipped test into the EILSEQ fixture-create
+panic — a kill whose positive control had certified nothing on that host
+(the vacuous positive #1637 closes). #1637 makes the self-skip
+machine-readable (`PDRS_TEST_SKIPPED`, tests/common/skip_line.rs): the
+runner now records the row SKIPPED whenever the positive run carries the
+marker — the rejecting-host vacuous-positive scenario is recognized
+instead of being read as a pass — so that row is SKIPPED on every host
+and the probe's real failure behavior is carried by the rows below.
 
 #1672 adds four rows that mutate the probe triage itself (the errno
 decision, its #1672 fd-limit arm, and the retry condition, now tested
 units instead of an untested call-site match) and bind to the two
 synthetic-errno unit tests; those rows are killable on every host, no
 filesystem cooperation needed.
+
+#1637 adds the fs-level fault-injection row the #1400 third-round review
+registered as a follow-up: fail-closed-arm-skips-real-eacces binds the
+same fail-closed arm to a test that feeds the probe a *real* EACCES (a
+0500 scratch; measured on darwin/APFS the permission check precedes the
+name validation, so even the non-UTF-8 name reports EACCES), killable on
+any unprivileged unix host.
 """
 from pathlib import Path
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -66,11 +78,13 @@ DELETED_CWD_WORKER = {'ignored': True, 'env': {'PDRS_CRON_CASE': 'absolute-home-
 # on a structurally absent control (same accounting as exact-rerun-receipt's
 # DARWIN_ONLY rows).
 LINUX_ONLY = {'entry-lossy-home'}
-# #1400: the probe mutant is the mirror image — killable only where the
-# filesystem rejects the names (forcing the probe true walks the test into
-# the EILSEQ fixture-create panic); on Linux the probe already returns true,
-# so forcing it changes no behavior and the row would be SURVIVED by
-# construction. Linux hosts record it SKIPPED instead.
+# #1400: the probe mutant is the mirror image — its historical kill lived
+# only on rejecting filesystems, and #1637 re-examined it: the positive
+# control self-skips there (the vacuous positive), so the row is now
+# SKIPPED on every host (the marker branch below on rejecting hosts, this
+# table on Linux, where the probe already returns true and forcing it
+# changes no behavior). The probe's fail-closed contract is carried by the
+# synthetic-errno unit tests and the #1637 real-EACCES row instead.
 NOT_ON_LINUX = {'skip-probe-forced-writable'}
 mutations = [
     # Migration routing removed: projectKey-routed tasks stay in their source
@@ -238,26 +252,24 @@ mutations = [
     # #1400: the skip probe lies — claims a rejecting filesystem accepts
     # non-UTF-8 names — so the fixture creation runs where the bytes are
     # EILSEQ-rejected and dies at the #1400 create panic instead of skipping.
-    # The mirror of entry-lossy-home: killable only off Linux (see
-    # NOT_ON_LINUX above). #1400 review (sibling/boundary P1): the probe
-    # sorts by errno — EILSEQ alone skips, everything else fails closed, and
-    # since #1672 the fd limit (EMFILE/ENFILE) gets one bounded retry and
-    # then its own marker — so forcing the probe to `true` still reaches the
-    # fixture's create panic, while a Linux-side EACCES/ENOSPC in the probe
-    # is a hard failure rather than a silent skip.
-    # #1400 third-round review (MiniMax boundary P1) → #1672: this row kills
-    # "the probe lies", NOT the triage. Rewriting the guard to
-    # `Err(_) => false` (any error skips) is indistinguishable here —
-    # Linux's probe always succeeds, APFS's only reachable failure is
-    # EILSEQ — so the triage contract is carried by the unit tests
+    # The mirror of entry-lossy-home. #1400 review (sibling/boundary P1):
+    # the probe sorts by errno — EILSEQ alone skips, everything else fails
+    # closed, and since #1672 the fd limit (EMFILE/ENFILE) gets one bounded
+    # retry and then its own marker — so forcing the probe to `true` still
+    # reaches the fixture's create panic, while a Linux-side EACCES/ENOSPC
+    # in the probe is a hard failure rather than a silent skip.
+    # #1637 re-examination: that historical kill ran on a host where the
+    # positive control had self-skipped — a vacuous positive — so it
+    # certified nothing. The row stays registered (the anchor is still
+    # checked and Linux still accounts it via NOT_ON_LINUX), but a rejecting
+    # host now records SKIPPED at the marker branch in the loop below: the
+    # triage contract is carried by the unit tests
     # `runtime::cron::tests::triage_probe_sorts_every_outcome_with_one_bounded_fd_retry`
     # and
-    # `runtime::cron::tests::non_eilseq_probe_outcomes_fail_closed_at_the_skip_decision`,
-    # which execute the decision (retry included) with synthetic errnos on
-    # every host, plus the four #1672 rows directly below, which mutate the
-    # decision itself and are killable on any host. A filesystem-level
-    # control still needs fault injection the mutation mechanism does not
-    # have (registered as a follow-up).
+    # `runtime::cron::tests::non_eilseq_probe_outcomes_fail_closed_at_the_skip_decision`
+    # (synthetic errnos on every host), the #1672 rows below that mutate the
+    # decision itself, and the #1637 real-EACCES row bound to
+    # `probe_eacces_from_a_read_only_scratch_fails_closed`.
     ('skip-probe-forced-writable', tests,
      'fn non_utf8_names_writable(dir: &Path) -> bool {\n'
      '    use std::os::unix::ffi::OsStrExt;\n'
@@ -313,6 +325,24 @@ mutations = [
      '        NonUtf8Probe::Failed(_) => false,',
      'runtime::cron::tests::non_eilseq_probe_outcomes_fail_closed_at_the_skip_decision',
      '#1400 a probe failure must fail closed (panic), not skip'),
+    # #1637 (补记 3/7): the same fail-closed arm, but fed a *real* EACCES.
+    # The row above proves the arm panics for synthetic errnos; this one
+    # proves the kernel-delivered failure reaches it too — a 0500 scratch
+    # makes the probe fail with EACCES (measured on darwin/APFS: the
+    # permission check precedes the name validation), and
+    # `probe_eacces_from_a_read_only_scratch_fails_closed` requires the
+    # panic. With the arm folded into `false` the probe silently reports
+    # "not writable" and the test dies at its own #1637 marker instead.
+    # Killable on any unprivileged unix host; under root the bound test
+    # self-skips with the #1637 marker and the loop records SKIPPED.
+    ('fail-closed-arm-skips-real-eacces', tests,
+     '        NonUtf8Probe::Failed(error) => panic!(\n'
+     '            "#1400 non-UTF-8 home: probing {} failed for a reason other than the file name: {error}",\n'
+     '            probed.display()\n'
+     '        ),',
+     '        NonUtf8Probe::Failed(_) => false,',
+     'runtime::cron::tests::probe_eacces_from_a_read_only_scratch_fails_closed',
+     '#1637 fs-level fault injection: a read-only scratch (real EACCES) must fail closed'),
     # #1672 fix-r2 (DS r2 reviews, three roles — the tight half of the retry
     # contract had no ruler row): the retry condition is loosened into "any
     # error retries once". Every non-fd errno then burns a second attempt;
@@ -441,6 +471,24 @@ def check_anchor(row, original):
         raise ValueError(f'{row[0]}: stale or unchanged anchor (count={original.count(row[2])})')
 
 
+class _SelfSkipped(Exception):
+    """#1637: control flow, not a fault — the row's positive self-skipped."""
+
+
+def self_skipped(result, test):
+    """#1637: whether the bound test skipped itself in this run's log.
+
+    Mirrors the marker exclusion negative_suite.passed() applies (kept as a
+    local twin so this call site cannot drift from the shared contract):
+    the skip line is written straight to the stderr handle with the
+    `PDRS_TEST_SKIPPED` prefix, so it can only appear in the combined log
+    of a run that really executed — and self-skipped — this test.
+    """
+    log = result.stdout + result.stderr
+    return re.search(r'^PDRS_TEST_SKIPPED ' + re.escape(test.rsplit('::', 1)[-1]) + r'\b',
+                     log, re.MULTILINE) is not None
+
+
 def main():
     args = sys.argv[1:]
     if args == ['--check']:
@@ -541,8 +589,25 @@ def main():
             with mutating_sources(root, guarded) as originals:
                 original = originals[path].decode()
                 check_anchor(row, original)
-                if not compile_only and not passed(run(name + '-positive', test, worker), test):
-                    raise RuntimeError('bound positive control did not pass')
+                if not compile_only:
+                    positive = run(name + '-positive', test, worker)
+                    if self_skipped(positive, test):
+                        # #1637: the positive control skipped itself (the
+                        # PDRS_TEST_SKIPPED marker): on this host the row
+                        # has nothing to mutate against — a kill here would
+                        # rest on a positive that certified nothing (the
+                        # vacuous positive this marker exists to expose).
+                        # Record SKIPPED, like the platform-absent rows
+                        # above; never a pass, never a silent walk into the
+                        # mutant.
+                        item.update(status='SKIPPED', compiled=False,
+                                    reason='positive control self-skipped on '
+                                            'this host (#1637 '
+                                            'PDRS_TEST_SKIPPED marker): the '
+                                            'row certified nothing here')
+                        raise _SelfSkipped()
+                    if not passed(positive, test):
+                        raise RuntimeError('bound positive control did not pass')
                 try:
                     path.write_text(original.replace(old, new, 1))
                     if run(name + '-compile', test, worker, compile=True).returncode != 0:
@@ -560,6 +625,10 @@ def main():
                     path.write_bytes(originals[path])
                 if not passed(run(name + '-restored', test, worker), test):
                     raise RuntimeError('bound restored control did not pass')
+        except _SelfSkipped:
+            # The SKIPPED verdict was already recorded on the item above;
+            # the guard's exit restored every guarded source untouched.
+            pass
         except Exception as error:
             item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
         summary.append(item)

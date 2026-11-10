@@ -293,6 +293,27 @@ class SuiteTests(unittest.TestCase):
                                   passed.stdout.replace(marker, ''), ''), TEST),
                                  'positive needs exact test and one pass')
 
+    def test_self_skip_marker_vetoes_the_vacuous_positive(self):
+        # #1637: a bound test that skipped *itself* still exits green and
+        # still prints its own `... ok` line, so the pre-#1637 `passed()` read
+        # it as a passing positive control — on a rejecting host the row had
+        # certified nothing. The marker line (stderr_skip_line, written
+        # straight to the handle so the harness capture cannot hide it) must
+        # veto the pass.
+        short = suite.short_test(TEST)
+        self_skipped = subprocess.CompletedProcess([], 0,
+            f'test {TEST} ... ok\ntest result: ok. 1 passed; 0 failed;\n',
+            f'PDRS_TEST_SKIPPED {short}: skipped, filesystem rejects non-UTF-8 file names\n')
+        self.assertFalse(suite.passed(self_skipped, TEST),
+                         '#1637 a self-skipped bound test must not count as a passing positive')
+        # The veto is bound to the row's own test identity: a marker line from
+        # a sibling run must not void this test's genuine pass.
+        sibling_marker = subprocess.CompletedProcess([], 0,
+            f'test {TEST} ... ok\ntest result: ok. 1 passed; 0 failed;\n',
+            'PDRS_TEST_SKIPPED unrelated_test: skipped, filesystem rejects non-UTF-8 file names\n')
+        self.assertTrue(suite.passed(sibling_marker, TEST),
+                        '#1637 a sibling marker line must not veto this test\'s own pass')
+
 
 class EvidenceLabelTests(unittest.TestCase):
     """#1365 fix-r3 P1: a row that binds several tests keeps one log per Case."""

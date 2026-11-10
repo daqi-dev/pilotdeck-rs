@@ -338,19 +338,121 @@ try {
   // Non-UTF-8 file names need a byte-transparent filesystem (Linux ext4 and
   // friends); APFS/HFS+ reject the bytes with EILSEQ (os error 92, measured
   // on darwin 25.6 for open/mkdir/create_dir_all alike — earlier notes here
-  // said EINVAL and were wrong), so the scenario probes
-  // first and both this generator and the Rust replay drop it where the name
-  // cannot exist. Since #283 the committed oracle is generated on Linux
-  // (cb8, ext4; the README in this directory registers the pinned host and
-  // SHA256) and carries the non-utf8 scenario; regenerating on macOS drops
-  // it again, so the regenerates-identically guard is Linux-only.
+  // said EINVAL and were wrong), so the scenario probes first and both this
+  // generator and the Rust replay drop it where the name cannot exist.
+  // Since #283 the committed oracle is generated on Linux (cb8, ext4; the
+  // README in this directory registers the pinned host and SHA256) and
+  // carries the non-utf8 scenario; regenerating on macOS drops it again, so
+  // the regenerates-identically guard is Linux-only.
+  // #1637: the probe used to fold every error into the skip
+  // (`.then(() => true, () => false)`), so an EACCES/ENOSPC scratch on a
+  // byte-transparent host silently produced a 27-scenario oracle that still
+  // passed every replay assertion. It now triages by errno, the twin of the
+  // Rust sides' decision (#1672: `runtime/cron/tests.rs::triage_probe` /
+  // `non_utf8_probe_skip`, and the replay probe in
+  // tests/workspace_snapshot.rs): only EILSEQ — the name bytes themselves
+  // being rejected — skips; EMFILE/ENFILE (the process or system fd limit,
+  // whose cause lives outside the probed directory) gets exactly one
+  // bounded retry and then its own failure; every other errno fails this
+  // run hard, never a silently smaller oracle. The accepting set is
+  // deliberately EILSEQ-only to stay identical to the Rust twins (EINVAL is
+  // fail-closed there, pinned by their unit tests).
   const nonUtf8Probe = Buffer.concat([Buffer.from(`${scratch}/probe-`), Buffer.from([0xff])]);
-  const nonUtf8Names = await writeFile(nonUtf8Probe, '')
-    .then(() => removeOwned(scratch, nonUtf8Probe))
-    .then(
-      () => true,
-      () => false,
-    );
+  const triageProbeError = (error: unknown): 'rejects-name' | 'fd-limit' | 'scratch-failure' => {
+    const code = (error as { code?: unknown } | null)?.code;
+    if (code === 'EILSEQ') return 'rejects-name';
+    if (code === 'EMFILE' || code === 'ENFILE') return 'fd-limit';
+    return 'scratch-failure';
+  };
+  const nonUtf8NamesWritable = async (attempt: () => Promise<void>): Promise<boolean> => {
+    let last: unknown;
+    for (let tries = 0; tries < 2; tries += 1) {
+      try {
+        await attempt();
+        return true;
+      } catch (error) {
+        last = error;
+        if (triageProbeError(error) !== 'fd-limit') break;
+      }
+    }
+    const outcome = triageProbeError(last);
+    if (outcome === 'rejects-name') return false;
+    if (outcome === 'fd-limit') {
+      assert.fail(`#1637 non-UTF-8 probe: ${scratch} hit the file-descriptor limit, not the file name: ${last}`);
+    }
+    assert.fail(`#1637 non-UTF-8 probe: probing ${scratch} failed for a reason other than the file name: ${last}`);
+  };
+  const nonUtf8Names = await nonUtf8NamesWritable(() => writeFile(nonUtf8Probe, ''));
+  // Cleanup is best-effort and deliberately outside the triage (the Rust
+  // replay twin's `let _ = remove_owned(...)`): a scratch that accepted the
+  // probe name but cannot remove the probe file is a host quirk, not a
+  // scenario decision.
+  await removeOwned(scratch, nonUtf8Probe).then(
+    () => undefined,
+    () => undefined,
+  );
+  // #1637 self-check: the triage above decides what the oracle contains, so
+  // every arm runs with synthetic errors on every host — the executable
+  // twin of the Rust unit tests
+  // `triage_probe_sorts_every_outcome_with_one_bounded_fd_retry` and
+  // `non_eilseq_probe_outcomes_fail_closed_at_the_skip_decision`. A
+  // regression to "any error skips" fails the generator itself instead of
+  // silently shrinking the oracle.
+  {
+    const synthetic = (code: string | undefined) => ({ code });
+    assert.equal(triageProbeError(synthetic('EILSEQ')), 'rejects-name',
+      '#1637 EILSEQ alone means the filesystem rejects these bytes: skip, do not fail');
+    for (const code of ['EMFILE', 'ENFILE'] as const) {
+      assert.equal(triageProbeError(synthetic(code)), 'fd-limit',
+        `#1637 ${code} is the fd limit, its own triage category`);
+    }
+    for (const code of ['EACCES', 'ENOSPC', 'EROFS', 'EINVAL', 'ENOENT'] as const) {
+      assert.equal(triageProbeError(synthetic(code)), 'scratch-failure',
+        `#1637 ${code} is a real failure of the scratch, never a skip`);
+    }
+    assert.equal(triageProbeError(synthetic(undefined)), 'scratch-failure',
+      '#1637 an error without an errno code fails closed');
+    let calls = 0;
+    assert.equal(await nonUtf8NamesWritable(async () => { calls += 1; }), true,
+      '#1637 a succeeding probe means the scratch accepts the raw bytes: record the scenario');
+    calls = 0;
+    assert.equal(await nonUtf8NamesWritable(async () => {
+      calls += 1;
+      throw synthetic('EILSEQ');
+    }), false, '#1637 a rejecting filesystem skips the scenario, never fails');
+    assert.equal(calls, 1, '#1637 EILSEQ is not retried');
+    for (const code of ['EACCES', 'ENOSPC', 'EROFS', 'EINVAL', 'ENOENT'] as const) {
+      calls = 0;
+      await assert.rejects(
+        () => nonUtf8NamesWritable(async () => {
+          calls += 1;
+          throw synthetic(code);
+        }),
+        /#1637 non-UTF-8 probe: .*failed for a reason other than the file name/,
+        `#1637 ${code} must fail closed, not skip`,
+      );
+      assert.equal(calls, 1, `#1637 ${code} is not retried`);
+    }
+    for (const code of ['EMFILE', 'ENFILE'] as const) {
+      calls = 0;
+      await assert.rejects(
+        () => nonUtf8NamesWritable(async () => {
+          calls += 1;
+          throw synthetic(code);
+        }),
+        /#1637 non-UTF-8 probe: .*hit the file-descriptor limit, not the file name/,
+        `#1637 a persistent ${code} fails with its own diagnosis, not the file-name one`,
+      );
+      assert.equal(calls, 2, `#1637 ${code} is retried exactly once`);
+    }
+    calls = 0;
+    assert.equal(await nonUtf8NamesWritable(async () => {
+      calls += 1;
+      if (calls === 1) throw synthetic('EMFILE');
+    }), true, '#1637 an fd freed after the first EMFILE lets the second attempt through');
+    assert.equal(calls, 2, '#1637 the retry is exactly one, never a loop');
+    console.log('non-utf8 triage self-check: every arm executed (EILSEQ skip, fd-limit retry, every other errno fails closed)');
+  }
 
   // Negative control for the ownership guard (round-4 P1). The legacy bug
   // removed the fixed /tmp/pdrs-r9-linkout path; that target is outside this
