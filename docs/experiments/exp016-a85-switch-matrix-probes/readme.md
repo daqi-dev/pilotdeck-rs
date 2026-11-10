@@ -37,7 +37,7 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
 |---|---|---|
 | p1_smoke | 装置自检 | mbp2 复验通过（health/hello/describe/close 全过） |
 | p1_p2_stages | E1/E2 × S0–S4 + t3 | 见 matrix §4.1/§4.2（cb8 原始数值） |
-| p2b_block | close() 阻塞规则 | mbp2 复验：无连接 settle / 一条 WS 2000ms 不 settle、断开后 1ms / 空闲 keep-alive settle——与 cb8 一致（#2756：空闲 keep-alive 格以首次 `/health` 入池为前提，前提未成立记 `C/SKIP-idle-keepalive`、不作 A14② 对照） |
+| p2b_block | close() 阻塞规则 | mbp2 复验：无连接 settle / 一条 WS 2000ms 不 settle、断开后 1ms / 空闲 keep-alive settle——与 cb8 一致（#2756：空闲 keep-alive 格以首次 `/health` 入池为前提，前提未成立记 `C/SKIP-idle-keepalive`；fix-r1 起还须 timedClose 前池内仍占用，池被服务端空闲超时提前收掉记 `C/SKIP-pool-drained-before-reuse`——两种降级下结论行均记 `skipped:true`，不作 A14② 对照） |
 | p2c_post_dispose | S3/S4 既有 WS | 见 matrix §4.1（cb8） |
 | p3_child/p3_driver | t4 drain 注入 | 见 matrix §5.2（cb8） |
 | p4_cron | E3 × 全阶段 | 见 matrix §4.3（cb8） |
@@ -52,7 +52,7 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
 | p13_empty_set | #2255 空集合格 | 组件级三格 + 全空五步组合级：全部 0–4ms 落定（空集合不挂起、退出路径可达） |
 | p14_child/p14_half_stop | #2255 半停格 | 真 cron 先真停不回滚 + alwaysOn stop 失败：单失败原样抛、finally 照走 unpublish、二次 stop no-op；server 级半停窗口 E1/E2 可服务、后续四步照走、退出码 0 |
 | p15_child/p15_driver | #2255 单飞 + 退出码抬升 | 重复信号（SIGTERM×2+SIGINT）下 automation.stop 恰 1 次（两层单飞缓存）；挂起窗口内 late unhandledRejection ⇒ exit 1（对照 0） |
-| p16_stop_acceptance | #2258 停接纳机制观测面 | 机制 A（关 listener，真实 server）：新连接三层 ECONNREFUSED、空闲 keep-alive 服务端 FIN、裸层复用已 FIN 连接 = 写成功后静默悬挂（同 keep-alive agent close 前池化、close 后复用直测 ECONNREFUSED connect 相位——重建连直测）；机制 B-RST/B-EOF（纯 node 受控）：握手一律完成后 RST（ECONNRESET）或 EOF（node:http 层两者同为 ECONNRESET 码，fetch 层可区分 ECONNRESET / UND_ERR_SOCKET）。前提守门（#2662）：两处健康检查响应须为 keep-alive（缺头按完整 HTTP/1.1 响应头隐式）、窗内须实际观测到干净 FIN（`end`，非 error→close 异常拆链），否则对应观察降级——agent-reuse 前提失败落 `A/SKIP-agent-reuse`，裸层/FIN 前提失败以 `rawPremise`/`finObserved` 字段与降级 note 体现（不发独立 SKIP 行），不出上述结论（#2756：keepAliveToken/入池前提判定收敛进 common.mjs——`keepAliveProbe.once` 返回 `premise`/`premiseReason`，本探针内联 agent 炮台改用共用 keepAliveProbe，p2b/p1_p2/p6 三探针同形） |
+| p16_stop_acceptance | #2258 停接纳机制观测面 | 机制 A（关 listener，真实 server）：新连接三层 ECONNREFUSED、空闲 keep-alive 服务端 FIN、裸层复用已 FIN 连接 = 写成功后静默悬挂（同 keep-alive agent close 前池化、close 后复用直测 ECONNREFUSED connect 相位——重建连直测）；机制 B-RST/B-EOF（纯 node 受控）：握手一律完成后 RST（ECONNRESET）或 EOF（node:http 层两者同为 ECONNRESET 码，fetch 层可区分 ECONNRESET / UND_ERR_SOCKET）。前提守门（#2662）：两处健康检查响应须为 keep-alive（缺头按完整 HTTP/1.1 响应头隐式）、窗内须实际观测到干净 FIN（`end`，非 error→close 异常拆链），否则对应观察降级——agent-reuse 前提失败落 `A/SKIP-agent-reuse`、close 前池被收空落 `A/SKIP-pool-drained-before-reuse`（fix-r1 池占用复检），裸层/FIN 前提失败以 `rawPremise`/`finObserved` 字段与降级 note 体现（不发独立 SKIP 行），不出上述结论（#2756：keepAliveToken/入池前提判定收敛进 common.mjs——`keepAliveProbe.once` 返回 `premise`/`premiseReason`，本探针内联 agent 炮台改用共用 keepAliveProbe，p2b/p1_p2/p6 三探针同形；fix-r1：裸层 `rawPremise` 亦改共用 `keepAlivePremise`、once 另带 `reusedSocket`、agent 暴露 `freeSocketCount()` 供 close 前复检） |
 
 ## 结论
 

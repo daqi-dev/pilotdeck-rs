@@ -97,6 +97,20 @@ async function main() {
     });
   }
 
+  // #2756 fix-r1（boundary P1 仲裁）：SIGTERM 时刻再判一次池占用——S0→SIGTERM
+  // 跨过服务端空闲收尾窗（实测 ~5.5–6s）时池已被收空，keepalive-http 是新连接
+  // 在途（实测错误串退化为 ECONNREFUSED、reusedSocket:false，与「既有 keep-alive
+  // 在途被拆」的 ECONNRESET 语义不同），仍按单样本口径引用即错读证据。判池须在
+  // SIGTERM 前（server 收到 SIGTERM 后 close() ~11ms 内即 FIN 掉池内 socket，
+  // 见轮次证据 exp-close-pool.out）。
+  const kaPoolAtSigterm = kaPool && ka.freeSocketCount() > 0;
+  if (kaPool && !kaPoolAtSigterm) {
+    log("ka/SKIP-pool-drained-before-reuse", {
+      reason: "池在 SIGTERM 前被服务端空闲超时收尾（pre/ka 入池后、SIGTERM 前池已空）",
+      note: "sigterm-concurrent 的 keepalive-http 跳过：池空时是新建连在途而非既有 keep-alive 被拆（新连接对照已由 new-http 覆盖），「既有 keep-alive 在途被拆（ECONNRESET 单样本）」观测不作对照",
+    });
+  }
+
   // SIGTERM 同一轮并发四个入口请求
   child.kill("SIGTERM");
   const concurrent = await Promise.all([
@@ -105,10 +119,12 @@ async function main() {
       (c) => c.hello(),
       (e) => ({ kind: "new-ws", error: e.message }),
     ),
-    // #2756：前提未成立时跳过（池空时是新建连而非复用在途，证据无效——同 p16 观察 3 形状）。
-    kaPool
+    // #2756：前提未成立时跳过（池空时是新建连而非复用在途，证据无效——同 p16 观察 3
+    // 形状）；fix-r1 起前提 = kaPoolAtSigterm（入池 + SIGTERM 前池仍占用），once 返回
+    // 带 reusedSocket（窗内正常样本应为 true，即真在池内 socket 上在途）。
+    kaPoolAtSigterm
       ? ka.once("/health").then((r) => ({ kind: "keepalive-http", ...r }))
-      : Promise.resolve({ kind: "keepalive-http", skipped: true, reason: "建池前提未成立（见 ka/SKIP-sigterm-keepalive-http）" }),
+      : Promise.resolve({ kind: "keepalive-http", skipped: true, reason: kaPool ? "池在 SIGTERM 前被服务端空闲超时收尾（见 ka/SKIP-pool-drained-before-reuse）" : "建池前提未成立（见 ka/SKIP-sigterm-keepalive-http）" }),
     httpProbe(port, "/health").then((r) => ({ kind: "new-http", ...r })),
   ]);
   log("sigterm-concurrent", concurrent);

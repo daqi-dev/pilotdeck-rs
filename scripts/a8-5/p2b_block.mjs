@@ -79,8 +79,31 @@ async function main() {
         note: "入池前提未成立（首次请求失败或响应 Connection 非 keep-alive，agent 池内无 idle socket）——C 格退化成无连接状态 A，settled 不作 A14②「空闲 keep-alive settle」对照",
       });
     }
-    const { p, settledAfterHoldMs } = await timedClose(s, "C:idle-keepalive", 2000, { premise });
-    say(`C settled=${settledAfterHoldMs}${premise ? "" : "（前提未成立，见 C/SKIP-idle-keepalive——不作 A14② 空闲 keep-alive settle 对照）"}`);
+    // #2756 fix-r1（boundary P1 仲裁 + 评审 boundary P2 三态统一）：入池前提 =
+    // 首请求入池 + close 前最后一刻池仍占用（服务端空闲收尾窗实测 ~5.5–6s；
+    // server.close() 本身 ~11ms 内即 FIN 掉池内 socket，判池须在 close 前，见
+    // 轮次证据 exp-close-pool.out）。前提不成立时结论行记 skipped:true、
+    // settledAfterHoldMs 置 null——与 p1_p2/p6/p16 三探针三态编码统一
+    // （settled 原值不再落「A14② settle」证据位：该降级状态的 settle 属无连接
+    // 状态 A，已被 A 格覆盖）。
+    const premiseAtClose = premise && ka.freeSocketCount() > 0;
+    if (premise && !premiseAtClose) {
+      rec.log("C/SKIP-pool-drained-before-reuse", {
+        reason: "池在 close 前被服务端空闲超时收尾（首次 /health 入池后、timedClose 前池已空）",
+        note: "C 格退化成无连接状态 A（agent 池内已无 idle socket），settled 不作 A14②「空闲 keep-alive settle」对照",
+      });
+    }
+    const { p, settledAfterHoldMs } = premiseAtClose
+      ? await timedClose(s, "C:idle-keepalive", 2000, { premise: true, freeSocketsBeforeClose: ka.freeSocketCount() })
+      : await timedClose(s, "C:idle-keepalive", 2000, {
+        skipped: true,
+        premise: false,
+        reason: premise ? "池在 close 前被服务端空闲超时收尾（见 C/SKIP-pool-drained-before-reuse）" : "入池前提未成立（见 C/SKIP-idle-keepalive）",
+        settledAfterHoldMs: null, // 覆盖 timedClose 实测值：降级行不占「A14② settle」证据位
+      });
+    say(premiseAtClose
+      ? `C settled=${settledAfterHoldMs}`
+      : `C skipped（${premise ? "池在 close 前被收尾，见 C/SKIP-pool-drained-before-reuse" : "入池前提未成立，见 C/SKIP-idle-keepalive"}——不作 A14② 空闲 keep-alive settle 对照）`);
     if (!settledAfterHoldMs) {
       ka.destroy();
       await p;

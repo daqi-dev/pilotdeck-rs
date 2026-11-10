@@ -14,7 +14,7 @@ import { connect, createServer } from "node:net";
 import http from "node:http";
 import { writeSync } from "node:fs";
 import {
-  makeFakeGateway, makeHome, makeStaticDir, keepAliveProbe, keepAliveToken,
+  makeFakeGateway, makeHome, makeStaticDir, keepAliveProbe, keepAlivePremise,
   Recorder, sleep, tcpRefused, makePaths, parseProbeArgs, TOKEN,
 } from "./common.mjs";
 
@@ -111,11 +111,18 @@ async function partA() {
   // （显式 close）时 FIN 来自响应结束而非 server.close()，观察 1/2 的结论适用条件就变了，
   // 记 rawPremise、不成立时降级 note。「头缺失 = 隐式 keep-alive（RFC 7230 §6.3）」只在
   // **完整 HTTP/1.1 响应头**下成立：dataPromise 2s 兜底 resolve 的空/半截 buf、以及
-  // HTTP/1.0 的缺省 close，都不得判成立（防空真）；归一与 pooledPremise 共用 keepAliveToken。
+  // HTTP/1.0 的缺省 close，都不得判成立（防空真）。
+  // #2756 fix-r1（simplify P2）：隐式规则不再内联第二份——与 node 层共用 common 的
+  // keepAlivePremise（单源）；headComplete/http11/connHeader 原值照旧入 record，
+  // 口径差异见 common.mjs keepAlivePremise doc（非 1.1 + 显式 keep-alive token）。
   const headComplete = raw.head.includes("\r\n\r\n");
   const http11 = /^HTTP\/1\.1 /.test(statusLine);
   const connValue = connHeader === undefined ? undefined : connHeader.slice(connHeader.indexOf(":") + 1);
-  const rawPremise = headComplete && http11 && (connValue === undefined ? true : keepAliveToken(connValue));
+  const { premise: rawPremise } = keepAlivePremise({
+    ok: headComplete,
+    connection: connValue,
+    httpVersion: http11 ? "1.1" : "1.0",
+  });
   log("A/raw-keepalive-request1", { statusLine, connHeader, headComplete, http11, rawPremise });
   const rawEvents = [];
   watchSock(raw.sock, rawEvents, "raw-ka");
@@ -149,6 +156,19 @@ async function partA() {
           ? "响应缺 Connection 头且非 HTTP/1.1（隐式 keep-alive 不适用），socket 未入池"
           : "响应 Connection 显式非 keep-alive（close 等），socket 未入池",
       pooled1,
+    });
+  }
+  // #2756 fix-r1（boundary P1 仲裁）：入池前提是「close 前最后一刻池内仍有该 idle
+  // socket」，不是 pooled1 的一次性快照——S0→close 跨过服务端空闲收尾窗（实测
+  // ~5.5–6s）时池已被收空，close 的 FIN 无池内 socket 可拆、agent 丢弃重建路径
+  // 未被走到，观察 3 的复用直测退化为纯新连接（错误串可相同但解释失据）。复检
+  // 必须在 close 前：server.close() 本身 ~11ms 内即 FIN 掉池内 socket（close 后
+  // 池必空，实测见轮次证据 exp-close-pool.out 场景①）。
+  const pooledAtClose = pooledPremise && ka.freeSocketCount() > 0;
+  if (pooledPremise && !pooledAtClose) {
+    log("A/SKIP-pool-drained-before-reuse", {
+      reason: "池在 close 前被服务端空闲超时收尾（pooled1 入池后、close() 前池已空）",
+      note: "复用直测降级：close 的 FIN 无池内 idle socket 可拆、agent 丢弃重建路径未被走到，close 后观测是新连接撞已关 listener（新连接对照已由 fetchNew/newTcpRefused 覆盖），「agent 丢弃已关 socket 重建连」解释失据",
     });
   }
 
@@ -217,16 +237,20 @@ async function partA() {
   // 复用，证据无效）；fetch 新连接与新 TCP 探测与入池无关，照常记录。
   // #2756：复用直测改经 common keepAliveProbe 同一 agent（once 错误路径带
   // code/message 分立字段；connect 相位判定保留 e.code，免 message 格式漂移）。
-  const agentReuse = pooledPremise
+  // fix-r1：前提改为 pooledAtClose（close 前最后一刻池占用，见 A/SKIP-pool-
+  // drained-before-reuse）；失败分支保留 once 原字段（error 等随 {...r} 带出，
+  // #2756 fix-r1 评审 concurrency P2——「疑似挂起」须与其它非预期形状可辨），
+  // 成功分支另带 reusedSocket（新旧连接可辨）。
+  const agentReuse = pooledAtClose
     ? await ka.once("/health").then((r) => (r.ok === true
         ? r
-        : { ok: false, code: r.code, message: r.message, phase: r.code === "ECONNREFUSED" ? "connect-phase" : "other" }))
-    : { skipped: true, reason: "复用直测前提未成立（见 A/SKIP-agent-reuse）" };
+        : { ...r, phase: r.code === "ECONNREFUSED" ? "connect-phase" : "other" }))
+    : { skipped: true, reason: pooledPremise ? "池在 close 前被服务端空闲超时收尾（见 A/SKIP-pool-drained-before-reuse）" : "复用直测前提未成立（见 A/SKIP-agent-reuse）" };
   ka.destroy();
   // #2662 fix-r3：note 随实测状态推导，不再无条件断言 ECONNREFUSED/connect 相位
   // 与裸层对照——agentReuse 非预期形状或裸层前提未成立时对应句不产出。
   const reuseNote = agentReuse.skipped
-    ? "agent 复用直测跳过（前提未成立，见 A/SKIP-agent-reuse）；fetch 新连接与 newTcpRefused 与入池无关，照常记录"
+    ? `agent 复用直测跳过（${pooledPremise ? "池在 close 前被服务端空闲超时收尾，见 A/SKIP-pool-drained-before-reuse" : "前提未成立，见 A/SKIP-agent-reuse"}）；fetch 新连接与 newTcpRefused 与入池无关，照常记录`
     : agentReuse.ok !== true && agentReuse.code === "ECONNREFUSED"
       ? "同 agent（close 前池化，见 A/agent-pooled-request1）复用直测：ECONNREFUSED 是 connect 相位错误（agent 丢弃已被服务端关闭的 socket 后重建连），非同 socket 报错"
         + (rawPremise && finBeforeWrite
