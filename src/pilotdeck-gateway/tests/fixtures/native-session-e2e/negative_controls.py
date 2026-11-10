@@ -48,13 +48,28 @@ paths = [session, common, native, collector, fixture, runner, chain]
 BUILD_SECONDS = 900
 BOUND_TEST_SECONDS = 300
 SLOT_WAIT_SECONDS = 900
-PER_CASE_LEASE_SECONDS = BUILD_SECONDS + 2 * BOUND_TEST_SECONDS
+# fix-r1 (#1528 review P1): #1536 moved the positive control inside the
+# window, so the hold now covers three bound-test stages (positive,
+# negative, restored) plus the cargo build; the old BUILD + 2*BOUND pinned
+# a window that no longer described the run while its composition test
+# stayed green. test_negative_lease_bound_composition validates the sum
+# against the real stage sequence, and the window must stay below the
+# stale-lease takeover age in common.py (MAX_AGE).
+PER_CASE_LEASE_SECONDS = BUILD_SECONDS + 3 * BOUND_TEST_SECONDS
+# fix-r1 (#1528 review P2): acquire the per-case lease with an explicit
+# budget instead of the shared mutating_sources default (900 s) -- a
+# runner queuing behind another tree's full case window must outlast that
+# window or the case goes INVALID before the mutant ever runs. One
+# bound-test stage of margin covers the lease-directory handoff and the
+# guard flock; test_negative_parity_acquire_budget_follows_lock_timeout
+# pins the forwarding, this derivation and the shared default.
+LEASE_ACQUIRE_SECONDS = PER_CASE_LEASE_SECONDS + BOUND_TEST_SECONDS
 # Each row mutates one #1140 fix-r1 addition and names the e2e test whose
 # dedicated assertion message must fire (the named FAIL the classifier pins):
 # the scoring-side shapes in session_domain.py and the recorder/contract-side
 # shapes in collect.py, so neither the collector's output nor the frozen audit
 # can silently drift away from the P1 recorder contract.
-EXPECTED_CASES = 31
+EXPECTED_CASES = 33
 # Independent total: update deliberately when adding or retiring a control.
 cases = [
     ('decoder-frame-for-send-rows', session, "        require(len(decoded) == 1\n                and decoded[0].get('raw' if row['direction'] == 'send' else 'frame') == row['frame'],\n                'OBSERVER_WIRE', 'wire observation disagrees with recorder')\n", "        require(len(decoded) == 1\n                and decoded[0].get('frame') == row['frame'],\n                'OBSERVER_WIRE', 'wire observation disagrees with recorder')\n", 'test_e2e_scores_real_capture'),
@@ -79,8 +94,12 @@ cases = [
     ('drop-unwitnessed-candidate', session, "            cell['cases'] = native['verdicts']", "            cell['cases'] = [] if all(row['status'] == 'NOT_RUN' for row in native['verdicts']) else native['verdicts']", 'test_unwitnessed_stimuli_are_not_executed'),
     ('manifest-count-minus-one', fixture, "    return len(c.session_manifest())", "    return len(c.session_manifest()) - 1", 'test_e2e_scores_real_capture'),
     ('chain-manifest-count-minus-one', chain, "        return len(self.healthy['expected'])", "        return len(self.healthy['expected']) - 1", 'test_negative_chain_denominators_derived'),
-    ('lease-enter-without-release', runner, "                with mutating_sources(root, paths, baseline=baseline) as originals:\n                    if not passed(run(name + '-positive', test)):\n                        raise ValueError('positive bound test did not pass')\n                    write_source_atomic(root, path, changed.encode())", "                for originals in [mutating_sources(root, paths, baseline=baseline).__enter__()]:\n                    if not passed(run(name + '-positive', test)):\n                        raise ValueError('positive bound test did not pass')\n                    write_source_atomic(root, path, changed.encode())", 'test_negative_lease_released_and_loud_on_cancellation'),
-    ('lease-bound-erased', runner, "PER_CASE_LEASE_SECONDS = BUILD_SECONDS + 2 * BOUND_TEST_SECONDS\n", "PER_CASE_LEASE_SECONDS = 10 ** 9\n", 'test_negative_lease_bound_composition'),
+    ('lease-enter-without-release', runner, "                with mutating_sources(root, paths, baseline=baseline, lock_timeout=LEASE_ACQUIRE_SECONDS) as originals:\n                    if not passed(run(name + '-positive', test)):\n                        raise ValueError('positive bound test did not pass')\n                    write_source_atomic(root, path, changed.encode())", "                for originals in [mutating_sources(root, paths, baseline=baseline, lock_timeout=LEASE_ACQUIRE_SECONDS).__enter__()]:\n                    if not passed(run(name + '-positive', test)):\n                        raise ValueError('positive bound test did not pass')\n                    write_source_atomic(root, path, changed.encode())", 'test_negative_lease_released_and_loud_on_cancellation'),
+    ('lease-bound-erased', runner, "PER_CASE_LEASE_SECONDS = BUILD_SECONDS + 3 * BOUND_TEST_SECONDS\n", "PER_CASE_LEASE_SECONDS = 10 ** 9\n", 'test_negative_lease_bound_composition'),
+    # fix-r1 (#1528 review P2): the acquire budget is only as good as its
+    # forwarding -- dropping the kwarg silently reverts to the shared 900 s
+    # default, the exact starvation #1528 closed, while every mock stays green.
+    ('lease-acquire-budget-dropped', runner, "                with mutating_sources(root, paths, baseline=baseline, lock_timeout=LEASE_ACQUIRE_SECONDS) as originals:\n", "                with mutating_sources(root, paths, baseline=baseline) as originals:\n", 'test_negative_parity_acquire_budget_follows_lock_timeout'),
     ('lease-cancel-swallowed', runner, "                        compiled = True\n                        status = classify(run(name + '-negative', test), test, messages[name])", "                        compiled = True\n                        try:\n                            status = classify(run(name + '-negative', test), test, messages[name])\n                        except BaseException:\n                            pass", 'test_negative_lease_released_and_loud_on_cancellation'),
     ('memory-rehearsal-without-lock', Path(__file__).resolve(), '        if memory:\n            with tree_' + 'lock(root, timeout=900):\n                for row in selected:\n                    one(row)\n        else:', '        if memory:\n            for row in selected:\n                one(row)\n        else:', 'test_memory_rehearsal_holds_tree_lock'),
     ('port-lease-not-exclusive', fixture, '        fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)\n', '        fcntl.flock(lease, fcntl.LOCK_UN)\n', 'test_port_reservation_is_exclusive_across_processes'),
@@ -88,6 +107,11 @@ cases = [
     # #1535: an edited table (row dropped or duplicated) must fail fast at
     # every entry point, not first at the next control run's missing verdict.
     ('omit-e2e-case', Path(__file__).resolve(), "    ('provider-lease-drop" + "ped', fixture, '            provider_lease = _acquire_port_lease(candidate + 1)\\n', '            provider_lease = _acquire_port_lease(candidate + 100)\\n', 'test_port_reservation_is_exclusive_across_processes'),\n", '', 'test_expected_case_count'),
+    # fix-r1 (#1528 review P2): an equal-length swap (drop one row, paste
+    # another over it) keeps len(cases) == EXPECTED_CASES, so the count
+    # check alone let a retired control vanish with the summary still green;
+    # validate_case_count now also refuses non-unique names.
+    ('duplicate-e2e-case', Path(__file__).resolve(), "    ('port-lease-not-exclu" + "sive', fixture, '        fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)\\n', '        fcntl.flock(lease, fcntl.LOCK_UN)\\n', 'test_port_reservation_is_exclusive_across_processes'),\n", "    ('provider-lease-drop" + "ped', fixture, '            provider_lease = _acquire_port_lease(candidate + 1)\\n', '            provider_lease = _acquire_port_lease(candidate + 100)\\n', 'test_port_reservation_is_exclusive_across_processes'),\n", 'test_expected_case_count'),
     # #1536: without the tree lock a second same-tree runner can interleave
     # writes with this runner's per-case lease windows.
     ('guarded-run-without-tree-lock', Path(__file__).resolve(), '        else:\n            with tree_' + 'lock(root, timeout=900):', '        else:', 'test_negative_guarded_run_holds_tree_lock'),
@@ -120,11 +144,13 @@ messages = {
     'chain-manifest-count-minus-one': '#1402 chain denominators derive from the calibration manifest',
     'lease-enter-without-release': '#1402 a cancelled case must release the parity lease and stay loud',
     'lease-bound-erased': '#1402 the per-case lease bound is composed and below the stale-lease age',
+    'lease-acquire-budget-dropped': '#1528 the parity lease acquire budget follows the caller lock timeout',
     'lease-cancel-swallowed': '#1402 a cancelled case must release the parity lease and stay loud',
     'memory-rehearsal-without-lock': '#1398 e2e memory rehearsal holds the source tree lock',
     'port-lease-not-exclusive': '#1510 the closed-guard handoff window stays exclusive via the port lease',
     'provider-lease-dropped': '#1510 the closed-guard handoff window stays exclusive via the port lease',
     'omit-e2e-case': '#1535 e2e negative case inventory is complete',
+    'duplicate-e2e-case': '#1535 e2e negative case inventory is complete',
     'guarded-run-without-tree-lock': '#1536 the guarded e2e run holds the tree lock around the whole loop',
     'omit-parity-guarded-source': '#1529 the e2e runner guards gateway-parity sources under the real parity lease',
 }
@@ -134,9 +160,16 @@ def validate_case_count():
     # #1535: a dropped or duplicated case row used to pass silently until the
     # next control run noticed the missing verdict; this runs at every entry
     # point (main and preflight) so the inventory fails fast instead.
+    # fix-r1 (#1528 review): the count alone cannot catch an equal-length
+    # swap -- drop one row and duplicate another and len(cases) still matches,
+    # so the uniqueness of the names is refused here too.
+    names = {row[0] for row in cases}
     if len(cases) != EXPECTED_CASES:
         raise SystemExit(f'#1535 e2e negative case inventory is complete: '
                          f'expected {EXPECTED_CASES}, got {len(cases)}')
+    if len(names) != EXPECTED_CASES:
+        raise SystemExit(f'#1535 e2e negative case inventory is complete: '
+                         f'expected {EXPECTED_CASES} unique names, got {len(names)}')
 
 
 def _test_classes():
@@ -333,7 +366,7 @@ def main():
                 # from HEAD". The table row `lease-enter-without-release`
                 # anchors the with-entry, the positive control and the
                 # mutation write below verbatim: keep them adjacent.
-                with mutating_sources(root, paths, baseline=baseline) as originals:
+                with mutating_sources(root, paths, baseline=baseline, lock_timeout=LEASE_ACQUIRE_SECONDS) as originals:
                     if not passed(run(name + '-positive', test)):
                         raise ValueError('positive bound test did not pass')
                     write_source_atomic(root, path, changed.encode())

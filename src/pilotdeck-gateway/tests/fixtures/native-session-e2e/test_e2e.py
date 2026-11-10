@@ -1155,6 +1155,7 @@ class NegativeRunnerTests(unittest.TestCase):
         self.events = []
         self.timeouts = []
         self.disks = []
+        self.lease_budgets = []
         c.common.LIVE_GROUPS.clear()
         self.addCleanup(c.common.LIVE_GROUPS.clear)
 
@@ -1177,8 +1178,10 @@ class NegativeRunnerTests(unittest.TestCase):
         never from call counting, so injected failures cannot mislabel a stage.
         #1536: the guarded loop's tree lock defaults to a no-op stand-in here;
         tests that pin it inject a recording one through `tree`.
+        #1528: the acquire budgets the runner hands to mutating_sources are
+        recorded the same way -- the kwarg is the contract under test.
         """
-        events, timeouts, disks = self.events, self.timeouts, self.disks
+        events, timeouts, disks, budgets = self.events, self.timeouts, self.disks, self.lease_budgets
         originals = {self.source: self.source.read_bytes()}
         ok = subprocess.CompletedProcess([], 0, '', self.OK_LOG)
         killed = subprocess.CompletedProcess([], 1, '', self.KILLED_LOG)
@@ -1193,6 +1196,7 @@ class NegativeRunnerTests(unittest.TestCase):
 
             def __init__(self, root, paths, **_kwargs):
                 self.inner = None
+                budgets.append(_kwargs.get('lock_timeout'))
 
             def __enter__(self):
                 if lease is None:
@@ -1340,14 +1344,25 @@ class NegativeRunnerTests(unittest.TestCase):
     def test_negative_lease_bound_composition(self):
         marker = '#1402 the per-case lease bound is composed and below the stale-lease age'
         runner = self.load_runner()
-        self.assertTrue(runner.PER_CASE_LEASE_SECONDS == runner.BUILD_SECONDS + 2 * runner.BOUND_TEST_SECONDS
+        code, _summary = self._drive(runner)
+        # fix-r1 (#1528 review P1): the bound is validated against the real
+        # stage sequence the drive records inside one lease window, not by
+        # re-deriving a formula -- #1536 moved the positive control inside,
+        # so the window is three bound-test stages (positive, negative,
+        # restored) plus one cargo build, and the old BUILD + 2*BOUND pin
+        # stayed green over a window it no longer described.
+        sequence = ['slot', 'acquire', 'positive', 'cargo', 'negative', 'restored', 'release'] * 2
+        window = self.events[2:6] if self.events == sequence else []
+        builds = window.count('cargo')
+        self.assertTrue(code == 0 and window == ['positive', 'cargo', 'negative', 'restored']
+                        and runner.PER_CASE_LEASE_SECONDS
+                        == builds * runner.BUILD_SECONDS + (len(window) - builds) * runner.BOUND_TEST_SECONDS
                         and min(runner.BUILD_SECONDS, runner.BOUND_TEST_SECONDS, runner.SLOT_WAIT_SECONDS) > 0
                         and runner.PER_CASE_LEASE_SECONDS < c.common.MAX_AGE, marker)
-        code, _summary = self._drive(runner)
         expected = {'slot': runner.SLOT_WAIT_SECONDS, 'cargo': runner.BUILD_SECONDS,
                     'bound': runner.BOUND_TEST_SECONDS, 'negative': runner.BOUND_TEST_SECONDS}
-        self.assertTrue(code == 0 and all(timeout == expected[stage]
-                                          for stage, timeout in self.timeouts), marker)
+        self.assertTrue(all(timeout == expected[stage]
+                          for stage, timeout in self.timeouts), marker)
 
     def test_negative_lease_released_on_case_failure(self):
         marker = '#1402 a failed case releases the lease and the next case continues'
@@ -1398,20 +1413,27 @@ class NegativeRunnerTests(unittest.TestCase):
         # control run, as a missing verdict or a wrong total; the runner now
         # refuses to start at every entry point instead. Same shape as the
         # session-lease pin: direct call plus every argv shape main() takes.
+        # fix-r1 (#1528 review): the red side covers all three damage shapes
+        # now -- a dropped row (count), an appended duplicate (count) and the
+        # equal-length swap (unique names) the count alone never caught.
         path = Path(__file__).with_name('negative_controls.py')
         try:
             spec = importlib.util.spec_from_file_location('e2e_case_count', path)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             module.validate_case_count()
+            damaged = [module.cases[:-1],
+                       module.cases + [module.cases[0]],
+                       module.cases[:-1] + [module.cases[0]]]
             for argv in ([], ['--check-anchors'], ['--memory-run', 'unused'],
                          ['unused-output'], ['unused-output', '--memory', '--case', 'unused']):
-                with self.subTest(argv=argv):
-                    with mock.patch.object(sys, 'argv', [str(path)] + argv), \
-                            mock.patch.object(module, 'cases', module.cases[:-1]):
-                        with self.assertRaises(SystemExit) as rejected:
-                            module.main()
-                    self.assertTrue(str(rejected.exception.code).startswith(marker), marker)
+                for index, rows in enumerate(damaged):
+                    with self.subTest(argv=argv, damage=index):
+                        with mock.patch.object(sys, 'argv', [str(path)] + argv), \
+                                mock.patch.object(module, 'cases', rows):
+                            with self.assertRaises(SystemExit) as rejected:
+                                module.main()
+                        self.assertTrue(str(rejected.exception.code).startswith(marker), marker)
         except (Exception, SystemExit) as error:
             self.fail(marker + ': ' + repr(error))
 
@@ -1504,6 +1526,29 @@ class NegativeRunnerTests(unittest.TestCase):
         with process._parity_mutation_lock(ROOT, snapshot, 900):
             pass
         self.assertTrue(record.is_file() and record.read_text() == '900', marker)
+        # fix-r1 (#1528 review): the shared default was never pinned -- a
+        # revert to the old 60 s cap would keep every assertion above green
+        # while every default-budget caller silently lost its queue budget.
+        # The runner now passes its own budget explicitly (LEASE_ACQUIRE_
+        # SECONDS = PER_CASE_LEASE_SECONDS + one bound stage, so a queuing
+        # runner outlasts a full peer window), so pin all three: the shared
+        # default, this runner's derivation, and the value actually handed
+        # over by main() (the drive records the kwarg like a stage).
+        self.assertTrue(inspect.signature(process.mutating_sources)
+                        .parameters['lock_timeout'].default == 900, marker)
+        with mock.patch.dict(process.mutating_sources.__wrapped__.__kwdefaults__,
+                             {'lock_timeout': 60}):
+            # Red side: the pin above must fire on the reverted cap, or it
+            # guards nothing (same proof shape as the pin mutants).
+            self.assertFalse(inspect.signature(process.mutating_sources)
+                             .parameters['lock_timeout'].default == 900,
+                             marker + ': the default pin must be discriminating')
+        runner = self.load_runner()
+        self.assertTrue(runner.LEASE_ACQUIRE_SECONDS
+                        == runner.PER_CASE_LEASE_SECONDS + runner.BOUND_TEST_SECONDS, marker)
+        code, _summary = self._drive(runner)
+        self.assertTrue(code == 0
+                        and self.lease_budgets == [runner.LEASE_ACQUIRE_SECONDS] * 2, marker)
 
     def test_negative_chain_denominators_derived(self):
         marker = '#1402 chain denominators derive from the calibration manifest'
