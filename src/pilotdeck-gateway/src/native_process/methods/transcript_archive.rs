@@ -2084,9 +2084,13 @@ mod tests {
     #[tokio::test]
     async fn export_title_gate_reads_the_length_property_like_ts() {
         let (_scratch, requests) = management_tests::setup();
+        // `json!` has no `[value; N]` repeat form — build the 513-element
+        // array title with `vec!` and interpolate it.
+        let array_title =
+            |count: usize| json!({"title": Value::Array(vec![Value::String("x".into()); count])});
         for (key, metadata, keeps) in [
-            ("array-title", json!({"title": ["x"]}), true),
-            ("array-over", json!({"title": ["x"; 513]}), false),
+            ("array-title", array_title(1), true),
+            ("array-over", array_title(513), false),
             ("number-title", json!({"title": 42}), false),
             ("empty-title", json!({"title": ""}), false),
         ] {
