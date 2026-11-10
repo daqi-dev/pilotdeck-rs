@@ -173,7 +173,7 @@ ToString 简化（number/bool only，非 projectKey 读点，#1457 fix-r2 已登
   `list_sessions_non_string_project_key_answers_the_path_resolve_type_error`
   （`:1815`——fix-r1 扩格：number / `-0` / boolean / array / object 与
   constructor 检视变体（`[Object]` / `an instance of null` /
-  `an instance of `）七格断 `ERR_INVALID_ARG_TYPE` + Node 报文逐字，另
+  `an instance of `）八格断 `ERR_INVALID_ARG_TYPE` + Node 报文逐字，另
   两格（`{"constructor":5}` / `constructor.name` 不可转换）断 description
   phase 抛错的 `gateway_request_failed` + 裸报文）、
   `list_sessions_string_project_keys_are_real_keys_not_the_fallback`
