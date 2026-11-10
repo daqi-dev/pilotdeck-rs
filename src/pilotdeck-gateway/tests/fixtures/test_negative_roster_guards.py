@@ -297,9 +297,13 @@ class ManagerRosterGuard(unittest.TestCase):
 
 
 TRIPLE_ENTRIES = (
-    ('native-registry-switch', '#1369'),
-    ('native-storage-stimulus', '#1370'),
-    ('issue-1437-methods', '#1437'),
+    # #2572 fix-r2: the third field pins each absolute denominator OUTSIDE
+    # the fixture (the FULL_ROSTER = 36 precedent above); a coordinated
+    # "delete a row, shrink the roster, lower EXPECTED_TOTAL" edit must fail
+    # here instead of shrinking the run silently.
+    ('native-registry-switch', '#1369', 7),
+    ('native-storage-stimulus', '#1370', 18),
+    ('issue-1437-methods', '#1437', 21),
 )
 
 
@@ -329,25 +333,46 @@ class TripleFixtureRosterGuard(unittest.TestCase):
     existing gate green. The three ``--check`` lines also enter CI directly
     (ci.yml 绑定漂移自检); this case additionally pins the exit codes, the
     named stderr, and the "a refusal claims no evidence directory" contract.
-    No cargo, no tree mutation: every refusal fires before any write.
+    No cargo, no tree mutation: every refusal fires before any write —
+    #2572 fix-r2 hardens that promise by stubbing the execution layer, so a
+    regressed refusal fails fast instead of mutating sources and launching
+    cargo. fix-r2 also pins the absolute denominator outside the fixtures
+    (FULL_ROSTER precedent), `--check` misuse, and the name-refusals-first
+    ordering (both review families converged on those).
     """
 
     def setUp(self):
         self.base = Path(tempfile.mkdtemp(prefix='negctl-2572-'))
         self.addCleanup(shutil.rmtree, self.base, ignore_errors=True)
 
-    def drive(self, module, argv, *, shrink=False):
+    def drive(self, module, argv, *, shrink=False, target=True):
         """Run a loaded entry's main() under a synthetic argv; capture I/O."""
         out = self.base / 'out'
         names = module.EXPECTED_NAMES[:-1] if shrink else module.EXPECTED_NAMES
         stdout, stderr = io.StringIO(), io.StringIO()
-        environment = {**os.environ,
-                       'CARGO_TARGET_DIR': str(self.base / 'cargo-target')}
-        with patch.dict(os.environ, environment), \
-             patch.object(module, 'EXPECTED_NAMES', names), \
-             patch('sys.argv', [str(self.base / 'launch.py'), *argv]), \
-             contextlib.redirect_stdout(stdout), \
-             contextlib.redirect_stderr(stderr):
+        environment = {**os.environ}
+        if target:
+            environment['CARGO_TARGET_DIR'] = str(self.base / 'cargo-target')
+        else:
+            environment.pop('CARGO_TARGET_DIR', None)
+
+        def execution_reached(*_args, **_kwargs):
+            raise AssertionError(
+                'the execution layer was reached: these drives must stop '
+                'at a startup refusal, not mutate sources or launch cargo')
+
+        stubs = [patch.object(module, name, execution_reached)
+                 for name in ('mutating_sources', 'run_owned', 'run_cases')
+                 if hasattr(module, name)]
+        with contextlib.ExitStack() as stack:
+            for entered in [patch.dict(os.environ, environment),
+                            patch.object(module, 'EXPECTED_NAMES', names),
+                            *stubs,
+                            patch('sys.argv',
+                                  [str(self.base / 'launch.py'), *argv]),
+                            contextlib.redirect_stdout(stdout),
+                            contextlib.redirect_stderr(stderr)]:
+                stack.enter_context(entered)
             try:
                 code = module.main()
             except SystemExit as error:
@@ -355,19 +380,23 @@ class TripleFixtureRosterGuard(unittest.TestCase):
         return code, out, stdout.getvalue(), stderr.getvalue()
 
     def test_the_roster_is_consistent_and_check_passes(self):
-        for directory, tag in TRIPLE_ENTRIES:
+        for directory, tag, total in TRIPLE_ENTRIES:
             with self.subTest(directory=directory):
                 module = load_named_entry(directory)
                 self.assertTrue(
-                    module.EXPECTED_TOTAL == len(module.EXPECTED_NAMES),
-                    f'{tag} EXPECTED_TOTAL must equal len(EXPECTED_NAMES)')
+                    module.EXPECTED_TOTAL == total
+                    == len(module.EXPECTED_NAMES) == len(module.mutations),
+                    f'{tag} the denominator must stay pinned outside the '
+                    f'fixture: EXPECTED_TOTAL={module.EXPECTED_TOTAL} '
+                    f'pin={total} roster={len(module.EXPECTED_NAMES)} '
+                    f'table={len(module.mutations)}')
                 code, _out, _stdout, stderr = self.drive(module, ['--check'])
                 self.assertTrue(code == 0,
                                 f'{tag} --check must pass on a clean tree; '
                                 f'stderr={stderr!r}')
 
     def test_a_drifted_roster_never_starts(self):
-        for directory, tag in TRIPLE_ENTRIES:
+        for directory, tag, _total in TRIPLE_ENTRIES:
             with self.subTest(directory=directory):
                 module = load_named_entry(directory)
                 code, out, _stdout, stderr = self.drive(
@@ -383,7 +412,7 @@ class TripleFixtureRosterGuard(unittest.TestCase):
                                 'evidence directory')
 
     def test_an_unknown_name_refuses_to_start(self):
-        for directory, tag in TRIPLE_ENTRIES:
+        for directory, tag, _total in TRIPLE_ENTRIES:
             with self.subTest(directory=directory):
                 module = load_named_entry(directory)
                 name = 'no-such-mutation-2572'
@@ -401,7 +430,7 @@ class TripleFixtureRosterGuard(unittest.TestCase):
                                 'evidence directory')
 
     def test_a_repeated_name_refuses_to_start(self):
-        for directory, tag in TRIPLE_ENTRIES:
+        for directory, tag, _total in TRIPLE_ENTRIES:
             with self.subTest(directory=directory):
                 module = load_named_entry(directory)
                 name = module.EXPECTED_NAMES[0]
@@ -413,6 +442,59 @@ class TripleFixtureRosterGuard(unittest.TestCase):
                                 f'(2), got {code}')
                 self.assertTrue('repeated' in stderr and name in stderr,
                                 f'{tag} the refusal must name the repeat: '
+                                f'{stderr!r}')
+                self.assertTrue(not out.exists(),
+                                f'{tag} a refusal must not claim the '
+                                'evidence directory')
+
+    def test_check_rejects_extra_arguments(self):
+        # #2572 fix-r2 (MM review): `--check OUT` used to print a green line
+        # and silently drop the rest of the command line — a caller cannot
+        # tell "roster verified" from "arguments swallowed".
+        for directory, tag, _total in TRIPLE_ENTRIES:
+            with self.subTest(directory=directory):
+                module = load_named_entry(directory)
+                out = self.base / 'out'
+                code, out, _stdout, stderr = self.drive(
+                    module, ['--check', str(out)])
+                self.assertTrue(code == 2,
+                                f'{tag} --check with extra arguments must '
+                                f'refuse to start (2), got {code}')
+                self.assertTrue('--check' in stderr,
+                                f'{tag} the refusal must name the misuse: '
+                                f'{stderr!r}')
+                self.assertTrue(not out.exists(),
+                                f'{tag} a refusal must not claim the '
+                                'evidence directory')
+
+    def test_a_bad_name_refuses_before_the_source_guards(self):
+        # #2572 fix-r2 (both review families): with every binding body
+        # unreadable (a concurrent full run is mutating the tree) and no
+        # CARGO_TARGET_DIR set, a typo'd name still reports itself — never
+        # a stale-anchor or target refusal that reads as "it ran and was
+        # not green".
+        for directory, tag, _total in TRIPLE_ENTRIES:
+            with self.subTest(directory=directory):
+                module = load_named_entry(directory)
+                name = 'no-such-mutation-2572'
+                out = self.base / 'out'
+                with contextlib.ExitStack() as stack:
+                    if hasattr(module, 'check_binding_scope'):
+                        stack.enter_context(patch.object(
+                            module, 'check_binding_scope', lambda: None))
+                    if hasattr(module, 'test_body'):
+                        # every binding body missing → a stale scan that ran
+                        # first would refuse with a stale-anchor rc 1
+                        stack.enter_context(patch.object(
+                            module, 'test_body',
+                            lambda *args, **kwargs: ''))
+                    code, out, _stdout, stderr = self.drive(
+                        module, [str(out), name], target=False)
+                self.assertTrue(code == 2,
+                                f'{tag} the name refusal must fire before '
+                                f'the source guards (2), got {code}')
+                self.assertTrue(name in stderr,
+                                f'{tag} the refusal must name the mutation: '
                                 f'{stderr!r}')
                 self.assertTrue(not out.exists(),
                                 f'{tag} a refusal must not claim the '

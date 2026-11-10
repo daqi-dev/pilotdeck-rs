@@ -308,19 +308,17 @@ def main():
         print(f'#1437 {EXPECTED_TOTAL} registered mutation anchors OK '
               f'(EXPECTED_NAMES roster matched)')
         return 0
+    # #2572 fix-r2 (both review families): the exact-match above let
+    # `--check NAME` fall through to the run path and create a directory
+    # named `--check`; any other placement of --check is a never-started
+    # refusal. The name refusals also move ahead of the target check so
+    # every entry of this batch reports a typo as "never started" (exit 2)
+    # — the two argparse siblings check names before their stale and target
+    # guards for the same reason.
+    if '--check' in sys.argv[1:]:
+        refuse('#1437 --check takes no arguments')
     if len(sys.argv) < 2:
         raise SystemExit('usage: negative_controls.py --check | OUT [mutation ...]')
-    env = dict(os.environ)
-    if not env.get('CARGO_TARGET_DIR'):
-        raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
-    # `run_cases` runs plain cases with no receipt protocol of its own (the
-    # #946 ReceiptRun lives in `matrix_main`, negative_suite.py, not here), so
-    # anything inherited from a caller shell is stale config: `record_failure`
-    # would panic on it and turn a real KILLED into INVALID (same pop list as
-    # the sibling fixtures, #1616 r3).
-    for key in ('PDRS_MUTANT', 'PDRS_NEGATIVE_RECEIPTS',
-                'PDRS_NEGATIVE_PARENT_TEST', 'CARGO_TERM_QUIET'):
-        env.pop(key, None)
     selected_names = sys.argv[2:]
     # #2572: a repeated name is a caller-side typo (`a a` for `a b`), not a
     # subset; folding it through the membership test would run the row once
@@ -334,6 +332,17 @@ def main():
     unknown = sorted(set(selected_names) - {row[0] for row in mutations})
     if unknown:
         refuse('#1437 unknown mutation name: ' + ', '.join(unknown))
+    env = dict(os.environ)
+    if not env.get('CARGO_TARGET_DIR'):
+        raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
+    # `run_cases` runs plain cases with no receipt protocol of its own (the
+    # #946 ReceiptRun lives in `matrix_main`, negative_suite.py, not here), so
+    # anything inherited from a caller shell is stale config: `record_failure`
+    # would panic on it and turn a real KILLED into INVALID (same pop list as
+    # the sibling fixtures, #1616 r3).
+    for key in ('PDRS_MUTANT', 'PDRS_NEGATIVE_RECEIPTS',
+                'PDRS_NEGATIVE_PARENT_TEST', 'CARGO_TERM_QUIET'):
+        env.pop(key, None)
     selected = [Case(*row) for row in mutations
                 if not selected_names or row[0] in selected_names]
     out = Path(sys.argv[1]).resolve()

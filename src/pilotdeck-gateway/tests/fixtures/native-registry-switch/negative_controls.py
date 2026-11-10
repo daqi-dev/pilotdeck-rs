@@ -159,6 +159,23 @@ def main():
     args = parser.parse_args()
     check_binding_scope()
     check_roster()
+    # #2572 fix-r2 (both review families): the name refusals fire before any
+    # guard reads mutable sources — under a concurrent full run holding the
+    # tree, a typo'd name must report itself (exit 2, never started), not a
+    # stale-anchor rc 1 that reads as "it ran and was not green".
+    repeated = sorted({name for name in args.selected
+                       if args.selected.count(name) > 1})
+    if repeated:
+        refuse('#1369 repeated mutation name: ' + ', '.join(repeated))
+    unknown = sorted(set(args.selected) - {row[0] for row in mutations})
+    if unknown:
+        refuse('#1369 unknown mutation name: ' + ', '.join(unknown))
+    # #2572 fix-r2: `--check` only verifies the roster and bindings; a caller
+    # that also passes an output slot or names means a run and must not get a
+    # green line that silently drops them.
+    if args.check and (args.output is not None or args.selected
+                       or args.compile_only):
+        refuse('#1369 --check takes no positional arguments')
     stale = []
     for name, path, old, new, test, assertion in mutations:
         text = path.read_text()
@@ -173,16 +190,6 @@ def main():
               f'(EXPECTED_NAMES roster matched); {EXPECTED_TOTAL} unique anchors '
               f'and assertion bindings: OK')
         return 0
-    # #2572 fix-r1: a mistyped or repeated name is a never-started refusal
-    # (exit 2) that names the offending entry, not a bare SystemExit string
-    # (Python exits 1 with one, reading as "it ran and was not green").
-    repeated = sorted({name for name in args.selected
-                       if args.selected.count(name) > 1})
-    if repeated:
-        refuse('#1369 repeated mutation name: ' + ', '.join(repeated))
-    unknown = sorted(set(args.selected) - {row[0] for row in mutations})
-    if unknown:
-        refuse('#1369 unknown mutation name: ' + ', '.join(unknown))
     selected = [row for row in mutations if not args.selected or row[0] in args.selected]
     if not args.output or not os.environ.get('CARGO_TARGET_DIR'):
         raise SystemExit('#1369 output and caller CARGO_TARGET_DIR required')
