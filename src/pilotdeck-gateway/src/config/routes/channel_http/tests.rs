@@ -563,12 +563,22 @@ async fn webhook_actual_http_preserves_json_order_pr_coercion_and_empty_cron_cha
             format!("webhook:chat=webhook:one:{delivery}:general")
         );
     }
+    // TS ImCronDelivery.ts:22:
+    // `if (delivery.originChannelKey && delivery.originChannelKey !== channelKey) return false;`
+    // Empty originChannelKey is falsy so it does not filter out the channel;
+    // delivery continues and arrives at the target chat.
     assert!(
-        !channel
+        channel
             .deliver(&json!({"originChannelKey":"","originSessionKey":"webhook:chat=webhook:one:ordered-0:general","text":"empty origin cron"}))
             .await
             .unwrap()
     );
+    let msgs = logger.messages.lock().unwrap();
+    assert!(
+        msgs.iter().any(|m| m.contains("webhook: response for webhook:one:ordered-0: empty origin cron")),
+        "expected logged delivery for empty origin cron, got: {msgs:?}"
+    );
+    drop(msgs);
     handle.close().await;
 }
 
