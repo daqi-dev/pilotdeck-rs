@@ -121,8 +121,11 @@ async fn configured_native_authority_reads_real_admission_and_disk_state_from_ta
         }
         paths
     });
-    let config = requests.options.home.join("pilotdeck.yaml");
-    let mut bytes = std::fs::read_to_string(&config).unwrap();
+    // The default home has no SOP capability; only this registered project does.
+    // Reading the wrong generation must therefore fail this consumer.
+    let config = requests.options.project.join(".pilotdeck/pilotdeck.yaml");
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    let mut bytes = String::from("schemaVersion: 1\n");
     bytes.push_str(&format!("modules:\n  sop:\n    enabled: true\n    provider: staffdeck\n    endpoint: {origin}\n    discoveryEndpoint: {origin}/api/v1\n    discoveryAgentId: target\n    discoveryApiKey: 12345678901234567890-fixture-key\n    definitionsPath: fixture-sops.json\n    defaultSopId: fixture\n"));
     std::fs::write(config, bytes).unwrap();
     let mut environment = requests.env.clone();
