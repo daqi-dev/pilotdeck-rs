@@ -335,7 +335,8 @@ def main():
         ap.error('node executable not found')
     env = os.environ.copy()
     for key in ('PILOTDECK_CONFIG_PATH', 'PILOTDECK_STORAGE_ROOT', 'PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND',
-                'PILOTDECK_AGENT_LOOP_SIDECAR_PATH', 'PILOTDECK_AGENT_LOOP_TCP_HOST', 'PILOTDECK_AGENT_LOOP_TCP_PORT'):
+                'PILOTDECK_AGENT_LOOP_SIDECAR_PATH', 'PILOTDECK_AGENT_LOOP_TCP_HOST', 'PILOTDECK_AGENT_LOOP_TCP_PORT',
+                'PILOTDECK_GATEWAY_MODE'):
         env.pop(key, None)
     env.update(PDRS_BASELINE=str(G.BASELINE), PDRS_SIDE=args.side, PDRS_EXPECTED_SHA256=expected,
                PILOTDECK_AGENT_LOOP_TRANSPORT='stdio', PATH=str(Path(node).parent) + os.pathsep + env.get('PATH', ''),
