@@ -347,8 +347,14 @@ impl TurnSubmitter {
             );
             set(&mut input, "sdkSessionConfig", config);
         }
+        // #2692: TS nowhere validates sessionKey on the submit chain; the
+        // registry composite key spells `String(sessionKey)` (null → "null",
+        // absent → "undefined"), so the turn hangs on that spelling while the
+        // record body keeps the raw value. `string()` folds the same inputs
+        // to `""`, collapsing two states TS keeps apart.
+        let session_key_raw = field(&input, "sessionKey").clone();
         let run = RunRef {
-            session_key: string(field(&input, "sessionKey")),
+            session_key: crate::js_value::template_key(&session_key_raw),
             project_key: field(&input, "projectKey").as_string().cloned(),
             run_id: field(&input, "runId")
                 .as_string()
@@ -358,6 +364,7 @@ impl TurnSubmitter {
         let acceptance = RunAcceptInput {
             run: run.clone(),
             request_material: request_material(&input)?.into(),
+            session_key_raw,
         };
         match accept_turn(self.registry.as_deref(), &acceptance).await {
             TurnAcceptance::Replay(events) => {

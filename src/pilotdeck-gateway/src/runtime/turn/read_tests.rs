@@ -396,6 +396,7 @@ async fn replay_run_case(case: &JsValue) -> Result<(), String> {
     for seed in array(sub(case, "setup"), "seed") {
         let run = run_ref(seed);
         file.accept(&RunAcceptInput {
+            session_key_raw: JsValue::String(run.session_key.clone()),
             run: run.clone(),
             request_material: text(seed, "material").cloned().unwrap(),
         })
@@ -968,6 +969,7 @@ async fn read_session_messages_settles_when_concurrent_publish_finishes_the_turn
         project_key: None,
     };
     file.accept(&RunAcceptInput {
+        session_key_raw: JsValue::String(run.session_key.clone()),
         run: run.clone(),
         request_material: "{\"message\":\"hello\"}".into(),
     })

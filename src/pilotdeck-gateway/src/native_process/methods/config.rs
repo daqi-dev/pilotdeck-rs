@@ -272,10 +272,16 @@ impl Requests {
         // that same port gate: `""` folds onto the `session` transcript,
         // and the owner side must not answer this busy code first for a
         // request TS rejects as `INVALID_SESSION_KEY` (probe E/G).
-        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)
-            && (self.owner.has_active_turn(key)
-                || trimmed_string_is_non_empty(key)
-                    && owner.is_some_and(|owner| self.owner.has_active_turn(owner)))
+        // #2692: a turn born from `sessionKey:null` hangs on the
+        // template-literal spelling "null" (submit side no longer folds to
+        // `""`), so the busy gate consults that spelling, not only string
+        // keys — TS `hasActiveTurn(input.sessionKey)` sees the raw value,
+        // and the spelling is where that value's turn now lives.
+        let request_key =
+            crate::js_value::template_key(params.get("sessionKey").unwrap_or(&UNDEFINED));
+        if self.owner.has_active_turn(&request_key)
+            || trimmed_string_is_non_empty(&request_key)
+                && owner.is_some_and(|owner| self.owner.has_active_turn(owner))
         {
             return Err(gateway_error(
                 "SESSION_BUSY",
@@ -529,9 +535,13 @@ impl Requests {
                 JsString::from_utf16(units),
             ));
         }
-        if let Some(JsValue::String(key)) = params.get("sessionKey")
-            && self.owner.has_active_turn(key)
-        {
+        // #2692: same spelling lookup as session_model_set — a turn born
+        // from `sessionKey:null` lives on "null", and TS's
+        // `hasActiveTurn(input.sessionKey)` (InProcessGateway.ts:2325) sees
+        // the raw request value.
+        let request_key =
+            crate::js_value::template_key(params.get("sessionKey").unwrap_or(&UNDEFINED));
+        if self.owner.has_active_turn(&request_key) {
             return Err(gateway_error(
                 "SESSION_BUSY",
                 "Cannot change permission mode during an active turn.",
@@ -1705,6 +1715,409 @@ mod tests {
             "sessionKey is required.",
             "#1872 the blank key keeps the gate message for permission"
         );
+        teardown(&r).await;
+    }
+
+    // ─────────────────────── #2692: submit-chain null/blank key four cells
+
+    /// #2692: the S1 probe's hanging session, ported. The pump's first
+    /// await is the config refresh (`refreshConfigBeforeTurn`), so a
+    /// pending refresh parks the turn after admission — the same in-flight
+    /// state the TS probe's never-yielding `submit` generator keeps
+    /// (probes/ts-deepkey-probe.mjs A/B), without reaching any session
+    /// machinery.
+    struct HangingRefreshServices;
+    impl crate::runtime::turn::submit_host::SubmitHostServices for HangingRefreshServices {
+        fn workspace_id(
+            &self,
+            _: &JsValue,
+        ) -> Result<Option<JsString>, crate::runtime::turn::submit::SubmitError> {
+            Ok(None)
+        }
+        fn snapshots(&self) -> Option<Arc<dyn crate::runtime::turn::submit::SubmitSnapshots>> {
+            None
+        }
+        fn snapshots_required(&self) -> bool {
+            false
+        }
+        fn cwd(&self) -> Option<Arc<dyn crate::runtime::turn::submit_host::SubmitCwdService>> {
+            None
+        }
+        fn refresh(
+            &self,
+        ) -> crate::runtime::turn::submit::SubmitFuture<
+            '_,
+            Result<(), crate::runtime::turn::submit::SubmitError>,
+        > {
+            Box::pin(std::future::pending())
+        }
+        fn run_policy(&self) -> Option<JsValue> {
+            None
+        }
+        fn resolve_attachments<'a>(
+            &'a self,
+            _: &'a JsValue,
+        ) -> crate::runtime::turn::submit::SubmitFuture<
+            'a,
+            Result<
+                crate::runtime::turn::submit_host::SubmitAttachmentLease,
+                crate::runtime::turn::submit::SubmitError,
+            >,
+        > {
+            Box::pin(async {
+                Err(crate::runtime::turn::submit::SubmitError::new(
+                    "gateway_submit_failed",
+                    "unreachable",
+                ))
+            })
+        }
+        fn prepare_attachment_turn<'a>(
+            &'a self,
+            _: &'a JsValue,
+            _: Vec<JsValue>,
+            _: Option<&JsString>,
+            _: Option<&JsString>,
+        ) -> crate::runtime::turn::submit::SubmitFuture<
+            'a,
+            Result<JsValue, crate::runtime::turn::submit::SubmitError>,
+        > {
+            Box::pin(async {
+                Err(crate::runtime::turn::submit::SubmitError::new(
+                    "gateway_submit_failed",
+                    "unreachable",
+                ))
+            })
+        }
+        fn resolve_model_selection<'a>(
+            &'a self,
+            _: &'a JsValue,
+        ) -> crate::runtime::turn::submit::SubmitFuture<
+            'a,
+            Result<JsValue, crate::runtime::turn::submit::SubmitError>,
+        > {
+            Box::pin(async { Ok(object([("source", "default".into())])) })
+        }
+        fn record_failure<'a>(
+            &'a self,
+            _: &'a crate::storage::RunRef,
+            _: &'a JsValue,
+        ) -> crate::runtime::turn::submit::SubmitFuture<
+            'a,
+            Result<(), crate::runtime::turn::submit::SubmitError>,
+        > {
+            Box::pin(async { Ok(()) })
+        }
+        fn after_turn(
+            &self,
+            _: &crate::storage::RunRef,
+        ) -> Result<(), crate::runtime::turn::submit::SubmitError> {
+            Ok(())
+        }
+        fn now_ms(&self) -> f64 {
+            0.0
+        }
+        fn abort_turn_timeout_ms(&self) -> u64 {
+            20
+        }
+    }
+
+    /// The production submitter over the fixture's own owner and registry,
+    /// with the hanging refresh: a `submit_turn` born here parks in flight
+    /// on the template spelling its `sessionKey` spells (#2692: null →
+    /// "null", absent → "undefined", `""` → "").
+    fn hanging_submitter(r: &Requests) -> Arc<crate::runtime::turn::submit::TurnSubmitter> {
+        let admission = crate::runtime::turn::admission::GatewaySubmitAdmission::new(
+            crate::runtime::turn::admission::SubmitAdmissionOptions::new(r.replacement.clone()),
+        );
+        Arc::new(crate::runtime::turn::submit::TurnSubmitter {
+            owner: r.owner.clone(),
+            coordinator: r.coordinator.clone(),
+            projector: Arc::new(
+                crate::runtime::turn::projector::GatewayAgentEventProjector::new(
+                    crate::runtime::turn::projector::GatewayAgentEventProjectorOptions::default(),
+                )
+                .expect("#879 default projector"),
+            ),
+            registry: r
+                .runs
+                .clone()
+                .map(|runs| runs as Arc<dyn crate::runtime::turn::publish::TurnRunRegistry>),
+            host: Arc::new(crate::runtime::turn::submit_host::GatewaySubmitHost::new(
+                Arc::new(HangingRefreshServices),
+                Arc::new(crate::runtime::turn::submit_host::NativeSubmitReplacement(
+                    (*r.replacement).clone(),
+                )),
+                Arc::new(admission),
+            )),
+            workspace_admissions: crate::runtime::turn::submit::WorkspaceAdmissions::default(),
+        })
+    }
+
+    /// Submit through the real chain and wait until the turn is in flight on
+    /// the given spelling. The consumer task drains the submission for the
+    /// rest of the test, so the parked pump is never cancelled mid-turn.
+    async fn submit_in_flight(r: &Requests, input: JsValue, spelling: &str) {
+        let mut submission = hanging_submitter(r).submit(input);
+        tokio::spawn(async move { while let Ok(Some(_)) = submission.next().await {} });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !r.owner.has_active_turn(&spelling.into()) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "#2692 the {spelling}-spelling turn was never admitted"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    /// #2692 S1 probe A (ts-deepkey-probe.out): a `sessionKey:null` turn
+    /// born from the full submit chain — TS keeps it distinct from `""`
+    /// (registry record JSON null, router Map key null) — answers the
+    /// method cells exactly as the probe measured them: cell E (`""`
+    /// request) `INVALID_SESSION_KEY`, cell F (null request)
+    /// `SESSION_BUSY`, and the permission twins the same shape. Before the
+    /// fix the submit side folded null to `""`, so the turn lived on the
+    /// blank key and both cells inverted.
+    #[tokio::test]
+    async fn session_model_set_null_key_turn_from_the_submit_chain_answers_the_ts_cells() {
+        let (_scratch, r) = setup_fixture();
+        submit_in_flight(
+            &r,
+            object([
+                ("sessionKey", JsValue::Null),
+                ("runId", "run-1".into()),
+                ("message", "deep-key probe".into()),
+                ("channelKey", "probe-channel".into()),
+            ]),
+            "null",
+        )
+        .await;
+        // The probe's key separation: the turn is in flight on the "null"
+        // spelling, not on the blank key.
+        negative_assert!(
+            !r.owner.has_active_turn(&"".into()),
+            "#2692 the null-spelling turn does not fold onto the blank key"
+        );
+        // The probe's storage cell: the record body keeps the raw JSON null
+        // while the dedupe key spells "null".
+        let record = r
+            .runs
+            .as_ref()
+            .expect("#2692 fixture registry")
+            .call(|registry| {
+                registry.get(&crate::storage::RunRef {
+                    session_key: "null".into(),
+                    project_key: None,
+                    run_id: "run-1".into(),
+                })
+            })
+            .await
+            .expect("#2692 registry worker")
+            .expect("#2692 the null-spelling record is readable");
+        negative_assert_eq!(
+            record.as_json().get("sessionKey"),
+            Some(&JsValue::Null),
+            "#2692 the record body keeps the raw JSON null"
+        );
+        // cell E: null turn in flight, `""` request.
+        let error = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([
+                    ("sessionKey", "".into()),
+                    ("selection", selection("model", "test", "test")),
+                ]),
+            )
+            .await
+            .expect_err("#2692 cell E: a blank request answers the sessionKey gate");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#2692 cell E code"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "sessionKey is required.",
+            "#2692 cell E message"
+        );
+        // cell F: null turn in flight, null request.
+        let error = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([
+                    ("sessionKey", JsValue::Null),
+                    ("selection", selection("model", "test", "test")),
+                ]),
+            )
+            .await
+            .expect_err("#2692 cell F: a null request meets the busy gate");
+        negative_assert_eq!(error.code.as_str(), "SESSION_BUSY", "#2692 cell F code");
+        negative_assert_eq!(
+            error_text(&error),
+            "Cannot change the model during an active turn.",
+            "#2692 cell F message"
+        );
+        // permission cell F: null turn in flight, null request.
+        let error = r
+            .session_config_request(
+                "set_permission_mode".into(),
+                object([("sessionKey", JsValue::Null), ("mode", "plan".into())]),
+            )
+            .await
+            .expect_err("#2692 permission cell F: a null request meets the busy gate");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "SESSION_BUSY",
+            "#2692 permission cell F code"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "Cannot change permission mode during an active turn.",
+            "#2692 permission cell F message"
+        );
+        // permission cell E: null turn in flight, `""` request.
+        let error = r
+            .session_config_request(
+                "set_permission_mode".into(),
+                object([("sessionKey", "".into()), ("mode", "plan".into())]),
+            )
+            .await
+            .expect_err("#2692 permission cell E: a blank request answers the sessionKey gate");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#2692 permission cell E code"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "sessionKey is required.",
+            "#2692 permission cell E message"
+        );
+        // The parked pump holds admission for the rest of the test; end it
+        // here so teardown's shutdown is not the first release.
+        r.owner.end_turn(&"null".into(), None, None);
+        teardown(&r).await;
+    }
+
+    /// #2692 S1 probe B + A2/B2 (ts-deepkey-probe.out): the mirror cells
+    /// with a `sessionKey:""` turn from the submit chain — cell B (`""`
+    /// request) `SESSION_BUSY`, cell D (null request) `INVALID_SESSION_KEY`
+    /// — plus the submit-layer cross-spelling separation: the same runId
+    /// under the other spelling is a second record with a second in-flight
+    /// turn (probe A2/B2), not the duplicate replay the old fold produced.
+    #[tokio::test]
+    async fn session_model_set_blank_key_turn_from_the_submit_chain_answers_the_ts_cells() {
+        let (_scratch, r) = setup_fixture();
+        submit_in_flight(
+            &r,
+            object([
+                ("sessionKey", "".into()),
+                ("runId", "run-1".into()),
+                ("message", "deep-key probe".into()),
+                ("channelKey", "probe-channel".into()),
+            ]),
+            "",
+        )
+        .await;
+        negative_assert!(
+            !r.owner.has_active_turn(&"null".into()),
+            "#2692 the blank-spelling turn does not leak onto the null spelling"
+        );
+        // cell B: blank turn in flight, `""` request.
+        let error = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([
+                    ("sessionKey", "".into()),
+                    ("selection", selection("model", "test", "test")),
+                ]),
+            )
+            .await
+            .expect_err("#2692 cell B: a blank-keyed turn is busy for model set");
+        negative_assert_eq!(error.code.as_str(), "SESSION_BUSY", "#2692 cell B code");
+        // cell D: blank turn in flight, null request.
+        let error = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([
+                    ("sessionKey", JsValue::Null),
+                    ("selection", selection("model", "test", "test")),
+                ]),
+            )
+            .await
+            .expect_err("#2692 cell D: a null request answers the sessionKey gate");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#2692 cell D code"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "sessionKey is required.",
+            "#2692 cell D message"
+        );
+        // permission twins: blank turn in flight, both request spellings.
+        let error = r
+            .session_config_request(
+                "set_permission_mode".into(),
+                object([("sessionKey", "".into()), ("mode", "plan".into())]),
+            )
+            .await
+            .expect_err("#2692 permission cell B: a blank-keyed turn is busy");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "SESSION_BUSY",
+            "#2692 permission cell B code"
+        );
+        let error = r
+            .session_config_request(
+                "set_permission_mode".into(),
+                object([("sessionKey", JsValue::Null), ("mode", "plan".into())]),
+            )
+            .await
+            .expect_err("#2692 permission cell D: a null request answers the sessionKey gate");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#2692 permission cell D code"
+        );
+        // Cross-spelling (probe A2): the same runId under `sessionKey:null`
+        // is a second record with a second in-flight turn.
+        submit_in_flight(
+            &r,
+            object([
+                ("sessionKey", JsValue::Null),
+                ("runId", "run-1".into()),
+                ("message", "deep-key probe".into()),
+                ("channelKey", "probe-channel".into()),
+            ]),
+            "null",
+        )
+        .await;
+        negative_assert!(
+            r.owner.has_active_turn(&"".into()),
+            "#2692 the blank-spelling turn stays in flight"
+        );
+        let runs = r.runs.as_ref().expect("#2692 fixture registry");
+        for (spelling, body) in [("", JsValue::from("")), ("null", JsValue::Null)] {
+            let record = runs
+                .call(|registry| {
+                    registry.get(&crate::storage::RunRef {
+                        session_key: spelling.into(),
+                        project_key: None,
+                        run_id: "run-1".into(),
+                    })
+                })
+                .await
+                .expect("#2692 registry worker")
+                .unwrap_or_else(|| panic!("#2692 the {spelling}-spelling record exists"));
+            negative_assert_eq!(
+                record.as_json().get("sessionKey"),
+                Some(&body),
+                "#2692 the {spelling}-spelling record body keeps its own spelling"
+            );
+        }
+        r.owner.end_turn(&"".into(), None, None);
+        r.owner.end_turn(&"null".into(), None, None);
         teardown(&r).await;
     }
 

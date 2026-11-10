@@ -24,8 +24,10 @@ fn run_ref() -> RunRef {
 }
 const MATERIAL: &str = "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}";
 fn input() -> RunAcceptInput {
+    let run = run_ref();
     RunAcceptInput {
-        run: run_ref(),
+        session_key_raw: JsValue::String(run.session_key.clone()),
+        run,
         request_material: MATERIAL.into(),
     }
 }

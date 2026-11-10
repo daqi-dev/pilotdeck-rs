@@ -5302,9 +5302,11 @@ async fn run_family_reads_the_registry_key_like_the_ts_template() {
             run_id: "r".into(),
         },
     ] {
+        let session_key_raw = JsValue::String(run.session_key.clone());
         TurnRunRegistry::accept(
             &*registry,
             &RunAcceptInput {
+                session_key_raw,
                 run,
                 request_material: "#1604 seed".into(),
             },

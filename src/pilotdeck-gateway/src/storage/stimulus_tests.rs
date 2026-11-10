@@ -268,8 +268,10 @@ fn run() -> RunRef {
     }
 }
 fn accept_input() -> RunAcceptInput {
+    let run = run();
     RunAcceptInput {
-        run: run(),
+        session_key_raw: JsValue::String(run.session_key.clone()),
+        run,
         request_material: "m".into(),
     }
 }

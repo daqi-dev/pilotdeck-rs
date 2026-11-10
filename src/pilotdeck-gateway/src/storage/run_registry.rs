@@ -160,10 +160,15 @@ impl RunRef {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RunAcceptInput {
     pub run: RunRef,
     pub request_material: JsString,
+    /// The record body keeps the raw `sessionKey` spelling (TS's `...input`
+    /// spread in RunRegistry.ts:221-229): JSON `null` stays `null` on disk
+    /// while the dedupe key and `RunRef::session_key` spell `"null"`. JSON
+    /// encoding drops `Undefined`, matching an absent TS property.
+    pub session_key_raw: JsValue,
 }
 
 /// A stored record exactly as persisted, including fields this port does not
@@ -305,10 +310,7 @@ impl FileRunRegistry {
                 let now = now()?;
                 // InProcessGateway.ts:906-911 key order, then RunRegistry.ts:221-229.
                 let mut record = JsObject::new();
-                record.insert(
-                    "sessionKey".into(),
-                    JsValue::String(input.run.session_key.clone()),
-                );
+                record.insert("sessionKey".into(), input.session_key_raw.clone());
                 if let Some(project) = &input.run.project_key {
                     record.insert("projectKey".into(), JsValue::String(project.clone()));
                 }

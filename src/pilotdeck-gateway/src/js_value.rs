@@ -250,6 +250,21 @@ pub(crate) fn property_key(value: &JsValue) -> Result<JsString, ToStringError> {
     to_string_units_checked(value).map(JsString::from_utf16)
 }
 
+/// The template-literal spelling TS gives a session key on the run side:
+/// the composite run key `` `${projectKey ?? ""}\0${sessionKey}\0${runId}` ``
+/// (RunRegistry.ts:70) and the router-facing busy gates both see
+/// `String(value)`-shaped text — `null` → `"null"`, a missing key →
+/// `"undefined"` — while the stored record body keeps the raw value. Unlike
+/// [`property_key`] this is unchecked: the submit path materializes the
+/// request first, so a `String()` that would throw (a too-deep array) already
+/// answers `INVALID_INPUT` before the key matters, and folding to `""` there
+/// keeps that order.
+pub(crate) fn template_key(value: &JsValue) -> JsString {
+    to_string_units(value)
+        .map(JsString::from_utf16)
+        .unwrap_or_default()
+}
+
 /// `JSON.stringify` with the same conservative container-depth bound as
 /// [`to_string_units`]. The serializer itself walks iteratively; this guard
 /// makes a too-deep input report V8's `RangeError` instead of silently
@@ -458,6 +473,35 @@ mod tests {
         assert_eq!(
             expand_replacement("没有 $ 模式", "m", "pre", "post"),
             "没有 $ 模式"
+        );
+    }
+
+    /// #2692: the spelling TS's composite run key and router-facing busy
+    /// gates see. `null`/absent keep their template spellings instead of
+    /// folding to `""` (the old submit-side fold collapsed the two states);
+    /// a too-deep array folds to `""` only because request materialization
+    /// answers `INVALID_INPUT` first.
+    #[test]
+    fn template_key_spells_the_template_literal_form() {
+        for (value, expected) in [
+            (JsValue::Null, "null"),
+            (JsValue::Undefined, "undefined"),
+            (JsValue::from("session"), "session"),
+            (JsValue::from(""), ""),
+            (JsValue::Bool(true), "true"),
+            (JsValue::Number(42.0), "42"),
+            (parse_json("[1,null]").unwrap(), "1,"),
+        ] {
+            assert_eq!(
+                template_key(&value).to_utf8().unwrap(),
+                expected,
+                "#2692 {value:?}"
+            );
+        }
+        assert_eq!(
+            template_key(&nested(MAX_ARRAY_DEPTH + 1)),
+            JsString::default(),
+            "#2692 a too-deep array keeps the request-materialization order"
         );
     }
 

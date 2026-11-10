@@ -67,6 +67,7 @@ fn project_run(run_id: &str) -> RunRef {
 }
 fn accept_input(run: &RunRef, material: &str) -> RunAcceptInput {
     RunAcceptInput {
+        session_key_raw: JsValue::String(run.session_key.clone()),
         run: run.clone(),
         request_material: material.into(),
     }
@@ -182,6 +183,7 @@ fn step_outcome(
     match string(field(step, "op")).as_str() {
         "accept" => registry
             .accept(&RunAcceptInput {
+                session_key_raw: field(input, "sessionKey").clone(),
                 run: ref_of(input),
                 request_material: field(input, "requestMaterial").as_string().unwrap().clone(),
             })
@@ -870,4 +872,84 @@ fn registry_reclaims_dead_stale_lock_like_ts() {
     );
     drop(held);
     assert!(!lock_path.exists());
+}
+
+// #2692: the submit side hands the registry the template spelling as the
+// dedupe key and the raw value as the record body, matching TS's split
+// (RunRegistry.ts:70 key template vs :221-229 `...input` spread). The disk
+// bytes keep JSON null while the key spells "null", and a reopen re-keys from
+// the body so both spellings stay separate (ts-deepkey-probe A/B).
+#[test]
+fn null_session_key_body_keeps_json_null_while_the_key_spells_null() {
+    let scratch = Scratch::new();
+    let path = scratch.path();
+    let registry = FileRunRegistry::open(&path).unwrap();
+    let accepted = registry
+        .accept(&RunAcceptInput {
+            session_key_raw: JsValue::Null,
+            run: run(None, "null", "r"),
+            request_material: "m".into(),
+        })
+        .unwrap();
+    assert!(!accepted.duplicate, "#2692 first accept writes the record");
+    let record = registry
+        .get(&run(None, "null", "r"))
+        .unwrap()
+        .expect("#2692 the null spelling reads the record back");
+    assert_eq!(
+        field(record.as_json(), "sessionKey"),
+        &JsValue::Null,
+        "#2692 the record body keeps the raw JSON null"
+    );
+    // The blank spelling is a different key: no fold, no record.
+    assert!(
+        registry.get(&run(None, "", "r")).unwrap().is_none(),
+        "#2692 the blank spelling does not alias the null spelling"
+    );
+    let bytes = fs::read(&path).unwrap();
+    assert!(
+        String::from_utf8_lossy(&bytes).contains(r#""sessionKey":null"#),
+        "#2692 the disk bytes keep the JSON null body"
+    );
+    drop(registry);
+    // A fresh instance re-keys from the body: `null` templates to "null"
+    // again, so the reopened registry still separates the two spellings.
+    let reopened = FileRunRegistry::open(&path).unwrap();
+    assert!(
+        reopened.get(&run(None, "null", "r")).unwrap().is_some(),
+        "#2692 reopen re-keys the null spelling"
+    );
+    assert!(
+        reopened.get(&run(None, "", "r")).unwrap().is_none(),
+        "#2692 reopen keeps the blank spelling separate"
+    );
+    // An absent sessionKey writes no body property (JSON drops undefined)
+    // while the key spells "undefined".
+    let accepted = reopened
+        .accept(&RunAcceptInput {
+            session_key_raw: JsValue::Undefined,
+            run: run(None, "undefined", "u"),
+            request_material: "m".into(),
+        })
+        .unwrap();
+    assert!(!accepted.duplicate, "#2692 the absent spelling accepts");
+    let bytes = fs::read(&path).unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(
+        text.contains(r#""runId":"u""#),
+        "#2692 the undefined-spelling record is on disk"
+    );
+    assert!(
+        !text.contains("sessionKey\":undefined"),
+        "#2692 the undefined body never serializes"
+    );
+    let record = reopened
+        .get(&run(None, "undefined", "u"))
+        .unwrap()
+        .expect("#2692 the undefined spelling reads back");
+    assert_eq!(
+        field(record.as_json(), "sessionKey"),
+        &JsValue::Undefined,
+        "#2692 the absent body field reads as undefined"
+    );
 }
