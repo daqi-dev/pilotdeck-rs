@@ -89,6 +89,11 @@ SCRIPTS = (
     # also wired into CI.
     ('session-reservation-2391/negative_controls.py', (), ()),
     ('session-delete-2392/negative_controls.py', (), ()),
+    # #2309 fix-r2: same entry shape after the migration off the shared
+    # `negative_suite.run_cases` loop (registered + select + claim_dir +
+    # missing_target/refuse_unusable_target + verdict_exit); its positional
+    # names and `--only a,b` both feed the shared selection rule.
+    ('manager-gateway/negative_controls.py', (), ()),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption
