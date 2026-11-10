@@ -58,7 +58,6 @@ run to `N-1/N-1 killed` and exiting 0 (#2590 item 2), and under
 contract counts — instead of a false `KILLED=0/N` (fix-r2).
 """
 import argparse
-import contextlib
 import hashlib
 import json
 import os
@@ -374,12 +373,17 @@ def main():
         (output / f'{label}.log').write_text(result.stdout + result.stderr)
         return result
 
+    # fix-r3b4 (CI red on 849702ac9 — both the negative-controls job and its
+    # rust mirror): the phase boundary is carried by the acquired flag, not
+    # by an ExitStack-scoped try — the anchor self-check models only the
+    # canonical `with mutating_sources(...) as originals:` capture, and an
+    # `originals = stack.enter_context(...)` acquisition is an unrecognized
+    # snapshot binding there (an ERROR, not a skippable UNSUPPORTED). The
+    # flag keeps the same four-way rc table without touching the ruler.
+    acquired = False
     try:
-        with contextlib.ExitStack() as stack:
-            try:
-                originals = stack.enter_context(
-                    mutating_sources(ROOT, guarded))
-            except (TimeoutError, SourceBaselineError) as error:
+        try:
+            with mutating_sources(ROOT, guarded) as originals:
                 # fix-r3 (MM r2 concurrency#1 P1 / DS r2 concurrency#1, 两家
                 # 同撞取高 P1): the mutation round takes the very same
                 # ROOT/.negative-source.lock the guard segment above already
@@ -391,15 +395,16 @@ def main():
                 # （rc 2，非 traceback）" carries no stage qualifier).
                 # fix-r3b (DS r3 concurrency#1 P1 / boundary#2 P3 + MM r3
                 # boundary#2 P2a, 实测 TimeoutError ⊂ OSError 且
-                # errno.ETIMEDOUT 映射到它): the catch is scoped by PHASE
-                # (it wraps only the acquisition — enter_context: the
-                # tree-lock wait, the pristine checks and the snapshot
-                # reads, where nothing has been mutated yet), and within
-                # that phase to these two exception types, not to every
-                # exception the phase can raise. Once enter_context
-                # returns, every TimeoutError — including an ETIMEDOUT on
-                # the restore write-back — falls to the generic handler
-                # below: the round did run, rows may be INVALID and the
+                # errno.ETIMEDOUT 映射到它): the catch below is scoped by
+                # PHASE (the with-statement's own entry: the tree-lock
+                # wait, the pristine checks and the snapshot reads, where
+                # nothing has been mutated yet — the acquired flag flips
+                # only after all of them), and within that phase to these
+                # two exception types, not to every exception the phase
+                # can raise. Once the flag is set, every TimeoutError —
+                # including an ETIMEDOUT on the restore write-back — hits
+                # the acquired guard, re-raises, and falls to the generic
+                # handler below: the round did run, rows may be INVALID and the
                 # tree may be mid-restore, so it must invalidate, publish
                 # and exit 1, never a "never started" refusal. Per-row
                 # timeouts (run_owned's 900 s, wait_for_slot's 600 s) are
@@ -423,62 +428,69 @@ def main():
                 # / utf16-residual-sort precedent). Signals are outside
                 # this table entirely: 128+signum per the README signal
                 # paragraph.
-                # fix-r3b (MM r3 concurrency#1 P2a): SourceBaselineError at
-                # entry is the same never-started phase — a sibling round
-                # SIGKILLed mid-mutation leaves its mutant on disk and this
-                # round's first act under the lock is to refuse it, not to
-                # fold it into seven INVALID rows and a published summary
-                # (the rc table: 树脏 → 2). Restore-phase failures keep the
-                # rc 1 shape.
-                # fix-r3b (MM r3 boundary#1 P2a, utf16-residual-sort
-                # startup_refusal precedent): the empty directory claim_dir
-                # made is withdrawn so a "never started" refusal leaves no
-                # claimed-looking evidence directory — rmdir only removes
-                # the empty case; a run that already wrote logs keeps them.
-                try:
-                    output.rmdir()
-                except OSError:
-                    pass
-                phase = ('source lock busy' if isinstance(error, TimeoutError)
-                         else 'tree not pristine')
-                refuse(f'#2495 {phase} (never started): '
-                       f'{type(error).__name__}: {error}')
-            guarded_sha256 = {str(path.relative_to(ROOT)): hashlib.sha256(originals[path]).hexdigest() for path in guarded}
-            for name, path, old, new, test, assertion in selected:
-                item = dict(name=name, test=test, assertion=assertion,
-                            status='INVALID', reason='not run', compiled=False)
-                try:
-                    if not args.compile_only and not passed(run(name + '-positive', env, test), test):
-                        raise RuntimeError('positive bound test failed')
-                    # fix-r1 (concurrency review P2): one atomic rename, never a
-                    # truncating in-place write — a SIGKILL mid-window must not
-                    # leave a half-written source (#1903, write_source_atomic).
-                    write_source_atomic(
-                        ROOT, path, originals[path].decode().replace(old, new, 1).encode())
-                    if run(name + '-compile', env, test, compile_only=True).returncode:
-                        raise RuntimeError('mutant did not compile; not a runtime kill')
-                    item['compiled'] = True
-                    if args.compile_only:
-                        item.update(status='COMPILED', reason='mutated source compiled')
-                    else:
-                        receipt = ReceiptRun(output, name, [(test, assertion)])
-                        result = run(name + '-negative', receipt.environment(env), test)
-                        killed, reason, hits = judge(result, '', [(test, assertion)], receipt)
-                        item.update(status='KILLED' if killed else ('SURVIVED' if passed(result, test) else 'INVALID'),
-                                    reason=reason, hits=hits)
-                except Exception as error:
-                    item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
-                finally:
-                    write_source_atomic(ROOT, path, originals[path])
-                try:
-                    if not args.compile_only:
-                        if not passed(run(name + '-restored', env, test), test):
-                            raise RuntimeError('restored bound test failed')
-                        item['restoredPass'] = True
-                except Exception as error:
-                    item.update(status='INVALID', reason=item['reason'] + f'; restored: {error}')
-                results.append(item)
-                print(f'{name}: {item["status"]}: {item["reason"]}', flush=True)
+                acquired = True
+                guarded_sha256 = {str(path.relative_to(ROOT)): hashlib.sha256(originals[path]).hexdigest() for path in guarded}
+                for name, path, old, new, test, assertion in selected:
+                    item = dict(name=name, test=test, assertion=assertion,
+                                status='INVALID', reason='not run', compiled=False)
+                    try:
+                        if not args.compile_only and not passed(run(name + '-positive', env, test), test):
+                            raise RuntimeError('positive bound test failed')
+                        # fix-r1 (concurrency review P2): one atomic rename, never a
+                        # truncating in-place write — a SIGKILL mid-window must not
+                        # leave a half-written source (#1903, write_source_atomic).
+                        write_source_atomic(
+                            ROOT, path, originals[path].decode().replace(old, new, 1).encode())
+                        if run(name + '-compile', env, test, compile_only=True).returncode:
+                            raise RuntimeError('mutant did not compile; not a runtime kill')
+                        item['compiled'] = True
+                        if args.compile_only:
+                            item.update(status='COMPILED', reason='mutated source compiled')
+                        else:
+                            receipt = ReceiptRun(output, name, [(test, assertion)])
+                            result = run(name + '-negative', receipt.environment(env), test)
+                            killed, reason, hits = judge(result, '', [(test, assertion)], receipt)
+                            item.update(status='KILLED' if killed else ('SURVIVED' if passed(result, test) else 'INVALID'),
+                                        reason=reason, hits=hits)
+                    except Exception as error:
+                        item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+                    finally:
+                        write_source_atomic(ROOT, path, originals[path])
+                    try:
+                        if not args.compile_only:
+                            if not passed(run(name + '-restored', env, test), test):
+                                raise RuntimeError('restored bound test failed')
+                            item['restoredPass'] = True
+                    except Exception as error:
+                        item.update(status='INVALID', reason=item['reason'] + f'; restored: {error}')
+                    results.append(item)
+                    print(f'{name}: {item["status"]}: {item["reason"]}', flush=True)
+        except (TimeoutError, SourceBaselineError) as error:
+            if acquired:
+                # Post-acquisition phase, the restore window included: the
+                # generic handler below owns it, never a "never started"
+                # refusal — re-raise.
+                raise
+            # fix-r3b (MM r3 concurrency#1 P2a): SourceBaselineError at
+            # entry is the same never-started phase — a sibling round
+            # SIGKILLed mid-mutation leaves its mutant on disk and this
+            # round's first act under the lock is to refuse it, not to
+            # fold it into seven INVALID rows and a published summary
+            # (the rc table: 树脏 → 2). Restore-phase failures keep the
+            # rc 1 shape.
+            # fix-r3b (MM r3 boundary#1 P2a, utf16-residual-sort
+            # startup_refusal precedent): the empty directory claim_dir
+            # made is withdrawn so a "never started" refusal leaves no
+            # claimed-looking evidence directory — rmdir only removes
+            # the empty case; a run that already wrote logs keeps them.
+            try:
+                output.rmdir()
+            except OSError:
+                pass
+            phase = ('source lock busy' if isinstance(error, TimeoutError)
+                     else 'tree not pristine')
+            refuse(f'#2495 {phase} (never started): '
+                   f'{type(error).__name__}: {error}')
     except Exception as error:
         reason = f'source guard: {type(error).__name__}: {error}'
         invalidate_completed(results, reason)

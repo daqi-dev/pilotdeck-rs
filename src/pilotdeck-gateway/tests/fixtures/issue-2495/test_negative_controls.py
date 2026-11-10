@@ -498,10 +498,8 @@ class TreeLockBusy(unittest.TestCase):
                 ('        with tree_lock(ROOT, timeout=2):\n'
                  '            stale = stale_names()',
                  '        stale = stale_names()'),
-                ('                originals = stack.enter_context(\n'
-                 '                    mutating_sources(ROOT, guarded))',
-                 '                originals = stack.enter_context(\n'
-                 '                    mutating_sources(ROOT, guarded, lock_timeout=2))'),
+                ('            with mutating_sources(ROOT, guarded) as originals:',
+                 '            with mutating_sources(ROOT, guarded, lock_timeout=2) as originals:'),
             ])
         code, stdout, stderr, out = result
         self.assertEqual(
@@ -544,8 +542,8 @@ class TreeLockBusy(unittest.TestCase):
             code, stdout, stderr, out = run(
                 environ={'CARGO_TARGET_DIR': '/nonexistent-cargo-target'},
                 patch_source=(
-                    '            for name, path, old, new, test, assertion in selected:',
-                    '            for name, path, old, new, test, assertion in []:'))
+                    '                for name, path, old, new, test, assertion in selected:',
+                    '                for name, path, old, new, test, assertion in []:'))
         self.assertEqual(
             code, 1,
             f'a restore-phase timeout is a failed round (rc 1), not a '
