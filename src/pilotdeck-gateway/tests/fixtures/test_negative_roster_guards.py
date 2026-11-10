@@ -56,7 +56,7 @@ doctored copy of its own source -- ``if recorded != expected:`` flipped to
 ``if False:``, and every anchor-bearing line commented out -- and requires
 the anchors to break either way, so the pin cannot be satisfied by comment
 lines while the real code is gone (the line filter's known blind spot is
-documented at ``check_anchors``).
+documented in the kill-demo note on this demo).
 
 The lock import caveat (round 3, MM concurrency#4): ``tree_lock`` itself is
 imported before the lock is taken, and ``negative_process.py`` is an in-place
