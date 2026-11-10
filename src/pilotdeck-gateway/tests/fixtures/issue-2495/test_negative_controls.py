@@ -18,7 +18,11 @@ publishes no verdict; fix-r3b scopes that refusal to the ACQUISITION phase --
 a lock timeout or a not-pristine tree at entry refuses and withdraws the
 empty claimed directory, while any failure after acquisition, including the
 restore window, keeps the red-run shape of INVALID rows, a published summary
-and rc 1). A stray positional argument, an empty output slot or a
+and rc 1; within the acquisition phase the refusal maps only TimeoutError
+and SourceBaselineError -- raw acquisition failures (a bare git RuntimeError,
+a cold-boot cargo failure, a bare snapshot-read OSError) stay red runs at
+rc 1, and signals are outside this table entirely, 128+signum per the README
+signal paragraph). A stray positional argument, an empty output slot or a
 ``--compile-only`` flag next to ``--check`` is refused too (fix-r3/r3b).
 Instead of duplicating the guard logic here, each
 case execs the real
@@ -517,7 +521,8 @@ class TreeLockBusy(unittest.TestCase):
     def test_restore_timeout_after_entry_is_a_failed_round(self):
         # fix-r3b (DS r3 concurrency#1 P1, 实测 TimeoutError ⊂ OSError 且
         # errno.ETIMEDOUT 映射到它): the rc 2 refusal is scoped to the
-        # acquisition phase, not to the exception type. A TimeoutError raised
+        # acquisition phase, and within it to the two mapped exception
+        # types, not to every exception the phase can raise. A TimeoutError raised
         # while EXITING mutating_sources -- an ETIMEDOUT on the restore
         # write-back -- happens after the round has run and possibly after
         # mutants were written, so it must fall to the generic handler:
@@ -589,6 +594,42 @@ class TreeLockBusy(unittest.TestCase):
                          'claimed directory (utf16 startup_refusal)')
         self.assertFalse((out / 'summary.json').exists())
         self.assertFalse((out / 'roster-mismatch.json').exists())
+
+    def test_acquisition_phase_raw_failure_is_a_red_run(self):
+        # fix-r3b3 (final DS sibling#2 P2 / boundary#1+sib#3 精化): within
+        # the acquisition phase only TimeoutError and SourceBaselineError
+        # map to the rc 2 refusal; the WRAPPED git/scanner failures already
+        # reach SourceBaselineError, but a RAW acquisition failure -- here
+        # a bare RuntimeError from the preflight _assert_workspace_sources,
+        # the same call shape _git uses when a preflight diff/ls-files
+        # call itself fails -- must stay a red run: INVALID rows, a
+        # published summary.json, rc 1. This runs the REAL
+        # mutating_sources (only the preflight is patched), so it also pins
+        # that the wrapping boundary is exactly where the README says.
+        import negative_process
+
+        def raw_preflight_failure(root, baseline):
+            raise RuntimeError(
+                'git diff --name-only HEAD -- src: simulated hard failure')
+
+        with patch.object(negative_process, '_assert_workspace_sources',
+                          raw_preflight_failure):
+            code, stdout, stderr, out = run(
+                environ={'CARGO_TARGET_DIR': '/nonexistent-cargo-target'})
+        self.assertEqual(
+            code, 1,
+            f'a raw acquisition-phase failure is a red run (rc 1), not a '
+            f'refusal: stderr={stderr!r} stdout={stdout!r}')
+        self.assertNotIn('never started', stderr)
+        self.assertNotIn('tree not pristine', stderr)
+        self.assertTrue((out / 'summary.json').exists(),
+                        'a raw acquisition failure still publishes its '
+                        'verdict as a failed round')
+        self.assertIn('INVALID=7', stdout)
+        summary = json.loads((out / 'summary.json').read_text(encoding='utf-8'))
+        self.assertEqual(summary['counts']['INVALID'], 7)
+        self.assertIn('source guard: RuntimeError',
+                      summary['controls'][0]['reason'])
 
 
 class SummaryWording(unittest.TestCase):
