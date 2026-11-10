@@ -2724,6 +2724,11 @@ class SameJsonSurfaces(unittest.TestCase):
                 if path.name == 'session-calibration.json' else document
 
         with patch.object(self.session, 'read', side_effect=fake_read):
+            # Defense in depth, and the rejection point is the earlier
+            # structure gate (``isinstance(..., bool)``), not the fixed
+            # require: a folded ``{'applicable': 0}`` never reaches it.
+            # The require's own bite — the honest-input false FAIL — is
+            # covered by the accepting test above (DS r34 boundary#1).
             with self.assertRaises(self.session.EvidenceError):
                 self.session.validate_expectations(registration, observations)
 
@@ -5789,6 +5794,11 @@ _COMPARISON_DOC_NAMES = {
     # literal, so the assignment tracker could not see them and their
     # comparisons stayed outside the family.
     'read_results', 'registry',
+    # fix-r35 (DS r34 sibling#1/#2): `record` is a comprehension loop
+    # variable over runs.get('records') (native_evidence) and `writes` is
+    # the same response_map view as read_results (compare) — helper
+    # returns and comprehension targets stay invisible to the tracker.
+    'record', 'writes',
 }
 _COMPARISON_DOC_LOADERS = {'load', 'read', 'json_loads'}
 
@@ -5868,9 +5878,23 @@ def _comparison_doc_read(node, constructed):
     # fix-r34 (DS sibling#2): a tuple display reads the document through
     # its elements — the pair judgment could not see either side of a
     # ``(a.get('x'), b.get('y')) == (...)`` equality, fold or not.
-    if isinstance(node, ast.Tuple):
+    # fix-r35 (DS r34 sibling#1): the same holds for list/dict/set
+    # displays — the r34 tuple branch alone left the *referenced*
+    # native_evidence site (a list display over `record`) outside the
+    # family while the bite probe used a DOC_NAMES spelling (`row`).
+    if isinstance(node, (ast.Tuple, ast.List, ast.Dict, ast.Set)):
+        elements = list(node.elts) if not isinstance(node, ast.Dict) \
+            else list(node.keys) + list(node.values)
         return any(_comparison_doc_read(element, constructed)
-                  for element in node.elts)
+                  for element in elements if element is not None)
+    # fix-r35 (DS r34 sibling#2): ``json.loads(<doc read>)`` (and the
+    # Name loaders) *produces* an external document — reading through it
+    # is a document read, not only a construction on the literal side.
+    if isinstance(node, ast.Call) and (
+            (isinstance(node.func, ast.Attribute) and node.func.attr == 'loads')
+            or (isinstance(node.func, ast.Name)
+                and node.func.id in _COMPARISON_DOC_LOADERS)):
+        return True
     return _comparison_doc_base(node, constructed)
 
 
@@ -6176,6 +6200,13 @@ _COMPARISON_POINT_REGISTRY = (
      'GATE', 'fix-r34 DS r33b sibling#2: both sides pass the '
      '_retirement_hashable projection (bool/float walk the repr path), '
      'so set equality cannot fold types'),
+    ('compare.py', 'validate', 475, "type(writes.get('cron_create', {}).get('task', {}).get('taskId')) is not str",
+     'GATE', 'fix-r35 DS r34 sibling#2: the cron taskId gate — writes is '
+     'the same response_map view as read_results; true/1 folded through '
+     'the truthiness operand of the same oracle'),
+    ('compare.py', 'validate', 533, "type(json.loads(http[2]['body']).get('projects')) is list",
+     'GATE', 'fix-r35 DS r34 sibling#2: the projects gate — json.loads '
+     'produces a document, so its reads count (not only constructions)'),
     ('session_domain.py', '_retirement_round', 3215, "addresses == [f'127.0.0.1:{gateway_port}']",
      'EXEMPT', 'string domain: listen addresses'),
 )
@@ -6194,12 +6225,14 @@ class ComparisonPointLedger(unittest.TestCase):
         # MM boundary#2, four role hits across two lineages): the lock's
         # 600s default wait is below every batch's legal lease hold.
         # fix-r34 (DS r33b concurrency#1): the wait bound is the protocol
-        # bound itself, not any one fixture's budget — session-domain-
-        # cleanup budgets 900s, same-json-surfaces 1800s plus a ≤580s
-        # tail (≈2380s legal hold), and the native-witness batches carry
-        # no budget at all; every legal holder sits under MAX_AGE and a
-        # cleanup-pending residue is never taken over, so MAX_AGE is the
-        # shortest wait that cannot time out red on a legal holder.
+        # bound itself, not any one fixture's budget.  Budgeted holders
+        # sit under it by construction (session-domain-cleanup 900s;
+        # same-json-surfaces 1800s incl. its reserve tail ≈2380s).  An
+        # unbudgeted holder (the native-witness batches) that crosses
+        # MAX_AGE is 'expired' under the protocol itself and this waiter
+        # takes it over rather than erroring; the only residual false-red
+        # window is a *live cleanupPending* holder past MAX_AGE, which is
+        # the same residual every other waiter in the repo accepts.
         with common.parity_lock(timeout=common.MAX_AGE):
             sites = _comparison_family_sites()
         keys = {(entry[0], entry[1], entry[2], entry[3])
