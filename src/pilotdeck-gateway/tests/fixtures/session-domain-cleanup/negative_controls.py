@@ -1848,8 +1848,8 @@ MUTATIONS = [
      "            'passed': True,'report':report,'reason':reason}"),
 
     ('empty-eligible-guard-removed', NEGATIVE,
-     '    if not mutation_inventory_matches(sys.platform,eligible):',
-     '    if False:'),
+     '    if not mutation_inventory_matches(sys.platform,eligible):\n        common=committed_status_contract(ROOT)',
+     '    if False:\n        common=committed_status_contract(ROOT)'),
 
     ('linux-initial-identity-gate-removed', LINUX_SOURCE,
      "    if held._state() != 'EXITED':\n        result.update(status=not_verified, reason='Linux leader identity was lost before cleanup proof')",
@@ -6792,11 +6792,22 @@ def linux_kernel_regression(rows,case,field,want):
     return True,f'{case}: {field}={want!r}, own control assertion failed'
 
 
+class MissingKernelBranchEvidence(ValueError):
+    """A requested kernel branch was not actually exercised."""
+
+
 def kernel_lease_branch_accepted(rows,branch):
-    row=next((item for item in rows if item.get('mode')=='kernel-lease'),{})
-    observed=row.get('branches',{}).get(branch,{})
-    return (row.get('positiveRestored') is True and observed.get('accepted') is True
-            and observed.get('reason') is None and row.get('passed') is False)
+    matches=[row for row in rows if row.get('mode')=='kernel-lease']
+    if len(matches)!=1:
+        raise MissingKernelBranchEvidence(f'{branch}: missing or duplicate lease control result')
+    row=matches[0]
+    observed=row.get('branches',{}).get(branch)
+    if (row.get('positiveRestored') is not True or row.get('branchControls') not in ('PASS','FAIL')
+            or not isinstance(observed,dict) or type(observed.get('accepted')) is not bool
+            or 'reason' not in observed):
+        raise MissingKernelBranchEvidence(f'{branch}: no valid real parent-lease injection result')
+    accepted=(observed['accepted'] is True and observed['reason'] is None and row.get('passed') is False)
+    return accepted, f'{branch}: accepted={observed["accepted"]!r}; reason={observed["reason"]!r}'
 
 
 JUDGES = {
@@ -7787,7 +7798,10 @@ def classify(name, judge_spec, result, case):
             value = probe.get(field)
             if value and field not in allowed_errors:
                 return 'INVALID', f'undeclared probe environment error {field}={value!r}'
-    ok, detail = judge(rows)
+    try:
+        ok, detail = judge(rows)
+    except MissingKernelBranchEvidence as error:
+        return 'INVALID', str(error)
     if ok:
         if result.returncode == 0:
             return 'INVALID', 'expected result present but the check exited 0'

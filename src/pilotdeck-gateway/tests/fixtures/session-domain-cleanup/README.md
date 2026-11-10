@@ -301,7 +301,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 345 declared mutants (platform counts and ordered fingerprints in `EXPECTED_MUTATION_ROSTERS`):
+`JUDGES`, keyed by the same names. The current table has 349 declared mutants (platform counts and ordered fingerprints in `EXPECTED_MUTATION_ROSTERS`):
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,

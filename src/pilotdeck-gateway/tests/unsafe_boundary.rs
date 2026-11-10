@@ -1227,6 +1227,10 @@ fn registered_build_files(root: &Path) {
             "8a8ee74fccd78523680a63887b3ffed7cbbaf85f82f40849b883a8fad0e6ea04",
         ),
         (
+            "scripts/smoke/probe/build.rs",
+            "8a8ee74fccd78523680a63887b3ffed7cbbaf85f82f40849b883a8fad0e6ea04",
+        ),
+        (
             "src/pilotdeck-transport/build.rs",
             "f55927d26226112d4362567deec12002855906c15e53c4fbf1f2e80a9458cd56",
         ),
@@ -1263,7 +1267,8 @@ fn assert_build_configuration_path(root: &Path, path: &Path) {
         || path == root.join("src/pilotdeck-image-native/build.rs")
         || path == root.join("src/vendor/libvips/build.rs")
         || path == root.join("src/pilotdeck-gateway/build.rs")
-        || path == root.join("src/pilotdeck-cli/build.rs");
+        || path == root.join("src/pilotdeck-cli/build.rs")
+        || path == root.join("scripts/smoke/probe/build.rs");
     assert!(
         registered
             || (name != ".cargo"

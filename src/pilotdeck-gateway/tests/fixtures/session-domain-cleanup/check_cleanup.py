@@ -946,7 +946,11 @@ def kernel_lease_control(md,output,*,require_parent=False):
     if proof is None:
         # Direct `all` invocations establish only the two unowned cases; a
         # dedicated branch check is never credited without a real upper lease.
-        return {**report,'branchControls':'NOT_RUN','branches':{},'passed':outside and not require_parent}
+        result={**report,'branchControls':'NOT_RUN','branches':{},'passed':False}
+        if outside and not require_parent:
+            skip='real parent source lease unavailable; four lease branches not exercised'
+            return {**result,**skipped_result('kernel-lease',skip)}
+        return result
     healthy=md.common.owner(md.common.LOCK)
     parent=proof['parentPid']
     lock=(ROOT/'.negative-source.lock').stat()

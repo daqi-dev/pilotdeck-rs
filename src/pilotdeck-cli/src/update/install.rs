@@ -429,9 +429,27 @@ impl Installation {
     }
 }
 
+// The approved target checkout determines its runtime dependencies. A newer
+// updater must still be able to install source revisions predating image-native.
+fn source_requires_image_libraries(source: &Path) -> Result<bool, Error> {
+    let image = source.join("src/pilotdeck-image-native");
+    match fs::symlink_metadata(&image) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(io(error)),
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+            regular(&image.join("Cargo.toml"))?;
+            Ok(true)
+        }
+        Ok(_) => Err(Error::new(
+            "buildFailed",
+            "Invalid source image runtime directory.",
+        )),
+    }
+}
+
 pub trait Builder {
-    fn requires_image_libraries(&self) -> bool {
-        false
+    fn requires_image_libraries(&self, _source: &Path) -> Result<bool, Error> {
+        Ok(false)
     }
     fn git(&mut self, cwd: &Path, args: &[&str]) -> Result<String, Error>;
     fn build(&mut self, source: &Path, output: &mut dyn FnMut(&str)) -> Result<PathBuf, Error>;
@@ -472,8 +490,8 @@ impl NativeBuilder {
     }
 }
 impl Builder for NativeBuilder {
-    fn requires_image_libraries(&self) -> bool {
-        true
+    fn requires_image_libraries(&self, source: &Path) -> Result<bool, Error> {
+        source_requires_image_libraries(source)
     }
     fn git(&mut self, cwd: &Path, args: &[&str]) -> Result<String, Error> {
         let result = Runner {
@@ -762,11 +780,12 @@ impl<B: Builder> Backend for Engine<B> {
                     copy_executable(&artifacts.join(name), &bins.join(name))?,
                 );
             }
-            let (library_profile, library_hashes) = if self.builder.requires_image_libraries() {
-                copy_image_libraries(&artifacts, &bins)?
-            } else {
-                (None, BTreeMap::new())
-            };
+            let (library_profile, library_hashes) =
+                if self.builder.requires_image_libraries(&source)? {
+                    copy_image_libraries(&artifacts, &bins)?
+                } else {
+                    (None, BTreeMap::new())
+                };
             if artifacts == source.join(".update-target/release") {
                 fs::remove_dir_all(source.join(".update-target")).map_err(io)?;
             }
@@ -1038,7 +1057,7 @@ fn bootstrap_with_confirmation_and_skills<
                 copy_executable(&artifacts.join(name), &directory.join("bin").join(name))?,
             );
         }
-        let (library_profile, library_hashes) = if builder.requires_image_libraries() {
+        let (library_profile, library_hashes) = if builder.requires_image_libraries(&checkout)? {
             copy_image_libraries(&artifacts, &directory.join("bin"))?
         } else {
             (None, BTreeMap::new())
@@ -1127,6 +1146,29 @@ mod image_library_tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn runtime_requirement_follows_target_source_and_rejects_incomplete_or_linked_crates() {
+        let scratch = Scratch::new();
+        mkdir(&scratch.0.join("src")).unwrap();
+        assert!(!source_requires_image_libraries(&scratch.0).unwrap());
+        let image = scratch.0.join("src/pilotdeck-image-native");
+        mkdir(&image).unwrap();
+        assert!(source_requires_image_libraries(&scratch.0).is_err());
+        fs::write(
+            image.join("Cargo.toml"),
+            "[package]\nname=\"pilotdeck-image-native\"\n",
+        )
+        .unwrap();
+        assert!(source_requires_image_libraries(&scratch.0).unwrap());
+        fs::remove_file(image.join("Cargo.toml")).unwrap();
+        symlink("/dev/null", image.join("Cargo.toml")).unwrap();
+        assert!(source_requires_image_libraries(&scratch.0).is_err());
+        fs::remove_file(image.join("Cargo.toml")).unwrap();
+        fs::remove_dir(&image).unwrap();
+        symlink("..", &image).unwrap();
+        assert!(source_requires_image_libraries(&scratch.0).is_err());
     }
 
     #[test]

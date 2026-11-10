@@ -58,6 +58,8 @@ home 与 project 须已存在，且物理路径不能相同或互为祖孙目录
 
 目标机须具备源码构建依赖和干净 checkout；bootstrap control 也由源码构建。原生 PDF 解析通过 `mupdf 0.8.0` 从依赖源码编译 MuPDF，需要 C/C++ 工具链、Make、libclang 及对应标准头文件。只有 libclang 而缺少其 resource headers 的 Linux 环境，须为 bindgen 显式提供本机编译器头文件目录；本次 cb8 验证使用 `BINDGEN_EXTRA_CLANG_ARGS="-isystem /usr/lib/gcc/aarch64-linux-gnu/13/include"`，其他机器不得照抄此路径。registry 依赖由 `src/Cargo.lock` 固定；本地 MuPDF 两包的原包与逐文件校验和固定在 `src/vendor/mupdf-source.json`，构建不下载预编译程序。
 
+图片处理另从固定源码构建 libvips 及依赖，需要 CMake、Python 3、POSIX sh、tar，以及 Make/configure 所需工具；源码、归档哈希和许可见 [image-sources.md](../../../src/vendor/image-sources.md)。构建使用同一机器的既有工具链，不下载预编译程序。
+
 安装根必须尚不存在，首代构建该 checkout 的 `HEAD`，`--remote` 必须与它的 `origin` 地址完全一致；`--ref` 记录后续更新目标（默认 `refs/heads/main`），不会替首装自动切换 checkout。可以使用目标机上的私有 Git bare 仓作为 remote；本轮验证即采用这种方式，没有推送 GitHub。
 
 ```sh
@@ -68,7 +70,7 @@ home 与 project 须已存在，且物理路径不能相同或互为祖孙目录
   --ref refs/heads/main
 ```
 
-四个程序是 `pilotdeck`、`pilotdeck-control`、`pilotdeck-gateway`、`pilotdeck-agent-loop-sidecar`。同一个固定源码提交在目标机实际编译，校验后发布同代；安装根的 `current` 链接到 `generations/<generation>`，该代含 `source`、`bin` 和 `manifest.json`；`current/bin` 提供当前程序，稳定入口 `bin/<程序名>` 再链接到 `../current/bin/<程序名>`。默认使用该代 `source/skills` 中的 32 项旧版默认技能，随源码安装与更新交付；来源、逐文件哈希和许可见 [skills/README.md](../../../skills/README.md)。`--bundled-skills-root` 是可选的外部目录覆盖，更新保持显式外部链接，不用随包目录覆盖它。技能的外部运行依赖、账户和凭据仍须按对应技能说明配置。
+四个程序是 `pilotdeck`、`pilotdeck-control`、`pilotdeck-gateway`、`pilotdeck-agent-loop-sidecar`。同一个固定源码提交在目标机实际编译，校验后发布同代；安装根的 `current` 链接到 `generations/<generation>`，该代含 `source`、`bin` 和 `manifest.json`，图片原生运行库位于该代 `bin/pilotdeck-libs-<profile>`，逐库哈希随 manifest 校验；旧源码代不要求图片库，新的 updater 按目标源码判断依赖；`current/bin` 提供当前程序，稳定入口 `bin/<程序名>` 再链接到 `../current/bin/<程序名>`。默认使用该代 `source/skills` 中的 32 项旧版默认技能，随源码安装与更新交付；来源、逐文件哈希和许可见 [skills/README.md](../../../skills/README.md)。`--bundled-skills-root` 是可选的外部目录覆盖，更新保持显式外部链接，不用随包目录覆盖它。技能的外部运行依赖、账户和凭据仍须按对应技能说明配置。
 
 ```sh
 /absolute/new-install/current/bin/pilotdeck update --check

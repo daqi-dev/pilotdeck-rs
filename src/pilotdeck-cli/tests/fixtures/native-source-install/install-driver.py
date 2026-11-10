@@ -11,6 +11,8 @@ import argparse
 import hashlib
 import json
 import os
+import re
+import stat
 from pathlib import Path
 import shutil
 import signal
@@ -61,6 +63,46 @@ def tree_bytes(root):
         else:
             raise RuntimeError(f"Unexpected generation object: {path}")
     return rows
+
+
+def generation_libraries(directory, manifest):
+    """Independently verify installed native libraries, including legacy sources."""
+    bins = directory / "bin"
+    profile, hashes = manifest.get("libraryProfile"), manifest.get("libraryHashes", {})
+    image = directory / "source/src/pilotdeck-image-native"
+    require(not image.is_symlink(), "Linked source image runtime")
+    needs_image = image.exists()
+    if needs_image:
+        require(image.is_dir() and stat.S_ISREG((image / "Cargo.toml").lstat().st_mode),
+                "Invalid source image runtime")
+    if not needs_image:
+        require(profile is None and hashes == {}, "Unexpected legacy library inventory")
+        require({p.name for p in bins.iterdir()} == set(BINARIES),
+                "Unexpected legacy binary directory entries")
+        return {}
+    require(isinstance(profile, str) and re.fullmatch(r"pilotdeck-libs-[0-9a-f]{64}", profile),
+            "Missing or invalid runtime profile")
+    require(isinstance(hashes, dict) and 0 < len(hashes) <= 64,
+            "Missing or oversized runtime library inventory")
+    root = bins / profile
+    require(stat.S_ISDIR(root.lstat().st_mode), "Runtime profile is not a regular directory")
+    require({p.name for p in bins.iterdir()} == set(BINARIES) | {profile},
+            "Unregistered binary directory entries")
+    require({p.name for p in root.iterdir()} == set(hashes), "Runtime library set mismatch")
+    actual = {}
+    for name, expected in hashes.items():
+        require(isinstance(name, str) and len(name) <= 200 and
+                re.fullmatch(r"lib[A-Za-z0-9._+-]+", name) and
+                (".so" in name or name.endswith(".dylib")), "Invalid library name")
+        path = root / name
+        metadata = path.lstat()
+        require(stat.S_ISREG(metadata.st_mode) and 0 < metadata.st_size <= 512 * 1024 * 1024,
+                "Invalid library file")
+        require(isinstance(expected, str) and re.fullmatch(r"[0-9a-f]{64}", expected),
+                "Invalid library hash")
+        actual[name] = digest(path)
+        require(actual[name] == expected, "Runtime library hash mismatch: " + name)
+    return {"profile": profile, "sha256": actual}
 
 
 def main():
@@ -275,7 +317,9 @@ def main():
                     f"Wrong stable entrypoint: {name}")
             require(os.access(directory / "bin" / name, os.X_OK),
                     f"Not executable: {name}")
-        return directory, {"link": link, "manifest": manifest, "sha256": hashes}
+        libraries = generation_libraries(directory, manifest)
+        return directory, {"link": link, "manifest": manifest, "sha256": hashes,
+                           "libraries": libraries}
 
     monitor = None
     result = {"pass": False, "skills": "NOT_RUN", "defaultSidecar": "NOT_RUN"}

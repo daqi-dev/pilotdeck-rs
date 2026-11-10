@@ -27,6 +27,7 @@ user PilotDeck homes/config, or live services may be used.
 
 Retained checks: clean source/ancestor revisions; normal control install then
 installed CLI update; four executable hashes and generation manifest identities;
+complete runtime-library inventory and regular-file hashes (required by image-native source generations, absent for legacy generations);
 stable entry links; unchanged old payload bytes/modes/symlinks (except fetch-
 modified source/.git); unchanged install policy; 20ms current-link observations.
 Sampling is not a syscall-level atomicity proof.

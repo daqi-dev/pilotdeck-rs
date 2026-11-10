@@ -1069,6 +1069,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "libvips"
+version = "2.3.0"
+dependencies = [
+ "num-derive",
+ "num-traits",
+ "pilotdeck-image-native",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1224,6 +1233,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-derive"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed3955f1a9c7c0c15e092f9c887db08b1fc683305fdf6eb6684f22555355e202"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1357,6 +1377,8 @@ dependencies = [
  "md-5",
  "mupdf",
  "pilotdeck-child-signals",
+ "pilotdeck-image",
+ "pilotdeck-image-native",
  "pilotdeck-protocol",
  "pilotdeck-tokenizer",
  "pilotdeck-transport",
@@ -1376,6 +1398,20 @@ dependencies = [
  "url",
  "uuid",
  "webpki-roots 1.0.9",
+]
+
+[[package]]
+name = "pilotdeck-image"
+version = "0.1.0"
+dependencies = [
+ "libvips",
+]
+
+[[package]]
+name = "pilotdeck-image-native"
+version = "0.1.0"
+dependencies = [
+ "sha2",
 ]
 
 [[package]]
@@ -1555,6 +1591,7 @@ name = "real-provider-probe"
 version = "0.1.0"
 dependencies = [
  "pilotdeck-gateway",
+ "pilotdeck-image-native",
  "pilotdeck-protocol",
  "tokio",
 ]

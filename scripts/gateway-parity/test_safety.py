@@ -2083,6 +2083,12 @@ class ApparatusInputs(unittest.TestCase):
             del source['runtimeLibraries']
             with self.assertRaisesRegex(ValueError, 'missing manifest binding'):
                 check()
+            source['files'] = []
+            with self.assertRaisesRegex(ValueError, 'missing manifest binding'):
+                check()
+            for program in ('pilotdeck', 'pilotdeck-control', 'pilotdeck-gateway'):
+                (root / program).write_bytes(b'legacy binary without native images')
+            self.assertEqual(check(), [])
 
     def test_a2_entries_never_resolve_apparatus_through_sys_path(self):
         # Covers entries that do not mention ``common`` but still import a

@@ -87,24 +87,34 @@ def verify_native_runtime_libraries(source, binary_manifest):
     needed = any(row.get('path') == 'src/pilotdeck-image-native/Cargo.toml'
                  for row in source.get('files', []))
     reference = source.get('runtimeLibraries')
-    if reference is None and not needed:
-        return []  # Historical source-only receipts predate native images.
     def need(value, message):
         if not value:
             raise ValueError('NATIVE_RUNTIME_LIBRARIES: ' + message)
-    need(isinstance(reference, dict) and set(reference) == {'path', 'sha256'}, 'missing manifest binding')
     root = Path(binary_manifest).parent
+    binary_profiles = {}
+    for program in ('pilotdeck', 'pilotdeck-control', 'pilotdeck-gateway'):
+        found, tail = set(), b''
+        with (root / program).open('rb') as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b''):
+                data = tail + block
+                found.update(re.findall(rb'pilotdeck-libs-[0-9a-f]{64}', data))
+                tail = data[-79:]
+        binary_profiles[program] = found
+    if reference is None and not needed:
+        need(not any(binary_profiles.values()), 'missing manifest binding for native binaries')
+        return []  # Only actual binaries without a native profile qualify as legacy.
+    need(isinstance(reference, dict) and set(reference) == {'path', 'sha256'}, 'missing manifest binding')
     manifest = Path(reference['path'])
     need(manifest == root / 'libraries.json' and manifest.is_file() and
          manifest.resolve() == manifest and digest(manifest) == reference['sha256'], 'manifest identity')
-    rows = read(manifest)
+    rows = json.loads(manifest.read_text())
     need(isinstance(rows, list) and 0 < len(rows) <= 64, 'empty or oversized inventory')
     names, profiles = set(), set()
     for row in rows:
         need(isinstance(row, dict) and set(row) == {'path', 'sha256', 'bytes'}, 'entry shape')
         path = Path(row['path'])
         need(len(path.parts) == 2 and re.fullmatch(r'pilotdeck-libs-[0-9a-f]{64}', path.parts[0])
-             and re.fullmatch(r'lib[A-Za-z0-9._+-]+', path.name) and
+             and len(path.name) <= 200 and re.fullmatch(r'lib[A-Za-z0-9._+-]+', path.name) and
              ('.so' in path.name or path.name.endswith('.dylib')), 'library path')
         need(path not in names, 'duplicate entry')
         names.add(path)
@@ -117,13 +127,7 @@ def verify_native_runtime_libraries(source, binary_manifest):
     profile = next(iter(profiles))
     actual_names = {p.relative_to(root) for p in (root / profile).iterdir()}
     need(actual_names == names, 'unregistered runtime files')
-    for program in ('pilotdeck', 'pilotdeck-control', 'pilotdeck-gateway'):
-        found, tail = set(), b''
-        with (root / program).open('rb') as stream:
-            for block in iter(lambda: stream.read(1024 * 1024), b''):
-                data = tail + block
-                found.update(re.findall(rb'pilotdeck-libs-[0-9a-f]{64}', data))
-                tail = data[-79:]
+    for program, found in binary_profiles.items():
         need(found == {profile.encode()}, 'binary runtime profile: ' + program)
     return rows
 

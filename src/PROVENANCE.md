@@ -502,3 +502,8 @@ execute_code 的搜索配置及 sandbox 模式文案按实际运行状态生成�
 ## Gateway PDF 原生源依赖（2026-11-11）
 
 `vendor/mupdf` / `vendor/mupdf-sys` 为 crates.io 0.8.0 原包，VCS deaacc87c4cea6a2146e90e00e0d5658c911277b。所有原文件和许可证保留，原包 SHA、全文件 SHA 与五个差量文件统一见 `vendor/mupdf-source.json`；设计与实际 TS 样本证据见 `vendor/mupdf-jpeg.md`。没有预编译库。构建脚本及生成绑定边界采用 `state/decisions-20261111-mupdf-source-boundary.md` 的窄 profile；这是源码依赖，不属于业务 workspace 的 unsafe 豁免。
+
+
+## Gateway 图片原生源依赖（2026-11-11）
+
+固定 libvips Rust 绑定与 13 项编解码源码归档的来源、许可和哈希见 [vendor/image-sources.md](vendor/image-sources.md)、[vendor/libvips-source.json](vendor/libvips-source.json) 与 [vendor/image-source-provenance.json](vendor/image-source-provenance.json)。
