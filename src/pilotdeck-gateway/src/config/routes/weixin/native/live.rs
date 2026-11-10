@@ -1092,6 +1092,27 @@ mod generation_tests {
         assert_eq!(resolve_new("hello"), None);
         assert_eq!(resolve_new(""), None);
     }
+
+    // WeixinChannel.ts:1034-1056 — a transport failure is a plain Error with no
+    // code, so formatWeixinError renders "Error: <message>" and nothing else.
+    // The B-side log sites used format_weixin_error_message, which appended a
+    // "; code=Error" tail that TS never prints.
+    #[test]
+    fn live_error_logs_match_format_weixin_error_without_a_code() {
+        assert_eq!(
+            format_live_error("iLink HTTP transport failed"),
+            "Error: iLink HTTP transport failed"
+        );
+        assert_eq!(format_live_error(""), "Error: ");
+        for message in ["timeout", "connect refused"] {
+            let rendered = format_live_error(message);
+            assert!(
+                !rendered.contains("code="),
+                "a plain Error carries no code: {rendered}"
+            );
+            assert!(rendered.starts_with("Error: "), "{rendered}");
+        }
+    }
 }
 /// WeixinSessionMapper.ts:23-33 — resolve() trims the text, then treats an exact
 /// `/new` or `/new <rest>` as a session reset. Returns the trimmed remainder.
