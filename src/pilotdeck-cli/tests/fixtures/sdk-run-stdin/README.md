@@ -4,7 +4,7 @@
 
 探针是进程内 WebSocket double，只允许 `ws://127.0.0.1:28999/ws`。macOS 上 Node spawn 使用非阻塞 stdin socket，基线 `readFile('/dev/stdin')` 会 EAGAIN；探针在导入原 TS 前设为阻塞，模拟 shell 管道，未修改 TS。该前提不可解释为未适配的 Node spawn 也通过。
 
-Rust 用旧 `sdk-run` 的已采集回放实例化大 prompt，对照新 oracle 的输入摘要、输出和退出状态；不宣称新 TS 原始 wire 与旧回放逐字相同。六族（run、resume、format、settings、sessions-list、sessions-messages）的后台 writer 由子进程 owner 持有，取消先 kill/reap 再有界 join；首写测试经过真实 `spawn()` 的 stdinHex 解码和 writer 登记，线程局部观测钩子在首个真实 pipe write 报告线程身份与字节。子进程永不读 stdin，独立 socket 收到释放信号后退出 23；收到首写进展后先释放，再回收及 join，断言写入线程不是 spawn 调用线程、完整解码字节、registry 和退出码 23。BOUND 只防挂起，不以耗时判杀。六族均覆盖 holdStdin / stdinAfterCreate 单独及同时开启时保留 stdin，以及取消 registry、join 标记和退出后登记回收。各族装置暂保持同构副本，共享抽取归 #1179。listener 由调用方持有到子进程退出，检查未被回放接收的连接。macOS 26.6.1 的最小探针已验证：子进程 connect 后 SO_LINGER=0 close 再退出，父进程仍能 accept，recv 为 ECONNRESET（5/5）。对应 RST 负控必须在实际宿主执行；其他内核不能仅凭这份 macOS 证据宣称通过。
+Rust 用旧 `sdk-run` 的已采集回放实例化大 prompt，对照新 oracle 的输入摘要、输出和退出状态；不宣称新 TS 原始 wire 与旧回放逐字相同。六族（run、resume、format、settings、sessions-list、sessions-messages）的后台 writer 由子进程 owner 持有，取消先 kill/reap 再有界 join；首写测试经过真实 `spawn()` 的 stdinHex 解码和 writer 登记，线程局部观测钩子在首个真实 pipe write 报告线程身份与字节。子进程永不读 stdin，独立 socket 收到释放信号后退出 23；收到首写进展后先释放，再回收及 join，断言写入线程不是 spawn 调用线程、完整解码字节、registry 和退出码 23。BOUND 只防挂起，不以耗时判杀。六族均覆盖 holdStdin / stdinAfterCreate 单独及同时开启时保留 stdin，以及取消 registry、join 标记和退出后登记回收。六族装置已共用 `src/pilotdeck-cli/tests/common/sdk_exit.rs`（#1179 的共享抽取交付面）；租约与 ParityLock 等仍各留一份，属剩余收敛面，指向后续单。listener 由调用方持有到子进程退出，检查未被回放接收的连接。macOS 26.6.1 的最小探针已验证：子进程 connect 后 SO_LINGER=0 close 再退出，父进程仍能 accept，recv 为 ECONNRESET（5/5）。对应 RST 负控必须在实际宿主执行；其他内核不能仅凭这份 macOS 证据宣称通过。
 
 从仓库根执行（先跑 cargo-slots，设置本树 CARGO_TARGET_DIR 与两个 debug profile）：
 

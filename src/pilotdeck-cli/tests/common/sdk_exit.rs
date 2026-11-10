@@ -136,7 +136,14 @@ impl Drop for OwnedChild {
         }
         // The child owns every early/delayed writer. Kill/reap happens first,
         // including when collect or the mock future is cancelled or panics.
-        for writer in self.1.lock().expect("#1136 owned stdin writers").drain(..) {
+        // #1136 owned stdin writers: recover the guard from a poisoned mutex
+        // instead of panicking -- panicking in Drop during an unwind aborts
+        // the whole test binary.
+        let mut writers = self
+            .1
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for writer in writers.drain(..) {
             let finished =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| writer.finish()));
             if let Err(payload) = finished {

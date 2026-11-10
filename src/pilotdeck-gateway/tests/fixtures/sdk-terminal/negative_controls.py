@@ -65,6 +65,9 @@ def check(row):
 def main():
     args = sys.argv[1:]
     if args == ['--check']:
+        if not mutations:
+            # #1364: an empty manifest must fail closed, not "0 anchors checked".
+            raise SystemExit('#1086 anchors: empty mutation manifest; refusing to pass')
         failures = []
         for row in mutations:
             try:
