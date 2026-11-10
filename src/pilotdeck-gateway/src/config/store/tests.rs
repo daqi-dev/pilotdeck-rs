@@ -787,6 +787,107 @@ async fn stop_reports_a_watcher_that_died_by_panic() {
     );
 }
 
+/// #1920 fix-r1: the third stop shape's positive control — the loop had
+/// already returned on its own (the store was dropped, the next tick's
+/// owner check ended it) before `stop` was called, so the abort lands on a
+/// finished task and the join reports the loop's own `Ok(())`. r0 claimed
+/// this could not be constructed on the current_thread runtime; measured:
+/// the missing ingredient is one poll interval of time, not a scheduler
+/// turn — settle alone never fires the ticker (the stop's abort wins,
+/// `Cancelled`), while one interval of clock lets the owner check end the
+/// loop first (`Finished`). The paused clock makes that interval
+/// deterministic.
+#[tokio::test(start_paused = true)]
+async fn stop_reports_finished_after_loop_returns() {
+    let root = Root::new();
+    root.write(BASE);
+    let (store, loads) = store(&root);
+    let watch = store
+        .start_watching(WatchOptions::default())
+        .expect("#879 healthy watcher paths");
+    settle().await;
+    advance(100).await;
+    // #1899: the `Finished` below must not be reachable by a watcher that
+    // died early — all three of #1899's death shapes pre-decease this check.
+    assert!(
+        !watch
+            .task
+            .as_ref()
+            .expect("#1899 the watcher task handle is present")
+            .is_finished(),
+        "#1899 the watcher must still be running before the store is dropped"
+    );
+    drop(store);
+    // One poll interval of (paused) clock: the loop's owner check ends it on
+    // its own, before `stop` is ever called.
+    advance(100).await;
+    settle().await;
+    assert_eq!(
+        watch.stop().await,
+        WatchStop::Finished,
+        "#1920 stop must report a watcher that returned on its own as Finished"
+    );
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        1,
+        "#1920 the self-returning watcher reloaded nothing"
+    );
+}
+
+/// #1920 fix-r1: `stop`'s else arm — the task was already taken out of the
+/// handle (the store-half drop test's move; the field is private, so only
+/// this crate's tests can do it). The arm used to return `Finished`, an
+/// unobserved death labeled as a clean self-return; it now fails a debug
+/// assertion instead. The misuse is driven through a spawned task so the
+/// panic arrives as a `JoinError` the test can assert on.
+#[tokio::test(start_paused = true)]
+async fn stop_after_the_task_was_taken_fails_loudly() {
+    let root = Root::new();
+    root.write(BASE);
+    let (store, _loads) = store(&root);
+    let mut watch = store
+        .start_watching(WatchOptions::default())
+        .expect("#879 healthy watcher paths");
+    settle().await;
+    advance(100).await;
+    assert!(
+        !watch
+            .task
+            .as_ref()
+            .expect("#1899 the watcher task handle is present")
+            .is_finished(),
+        "#1899 the watcher must still be running before the store is dropped"
+    );
+    drop(store);
+    // The store-half move: the task is taken out and joined by the test
+    // itself (it returns `Ok(())` once the owner is gone).
+    watcher_stop(watch.task.take())
+        .await
+        .expect("#1899 the watcher returns on its own after the store is dropped");
+    // The handle now has no task left; this `stop` never observed the
+    // watcher's death and must not paper over that with a shape.
+    let misuse = tokio::spawn(async move { watch.stop().await })
+        .await
+        .expect_err("#1920 stop after the task was taken must not return normally");
+    assert!(
+        misuse.is_panic(),
+        "#1920 the unclassifiable stop must die by panic, not return a shape"
+    );
+    // A `debug_assert!` with a literal message panics with a `&'static str`
+    // payload; accept both that and a formatted `String`.
+    let message = match misuse.into_panic().downcast::<&'static str>() {
+        Ok(message) => (*message).to_owned(),
+        Err(payload) => match payload.downcast::<String>() {
+            Ok(message) => *message,
+            Err(payload) => format!("{payload:?}"),
+        },
+    };
+    assert!(
+        message.contains("#1920 stop after the task was already taken"),
+        "#1920 the misuse failure must carry the #1920 marker: {message}"
+    );
+}
+
 /// #1899/#1920: the handle half of the old two-in-one drop test. Dropping the
 /// handle aborts the task and detaches it, so the terminal shape cannot be
 /// joined here — the evidence chain is the liveness precondition above plus
