@@ -822,11 +822,24 @@ impl WatchHandle {
     /// normal shape, [`WatchStop::Finished`] means the loop had already
     /// returned on its own (the store was dropped first), and
     /// [`WatchStop::Panicked`] means the watcher had died by panic — the
-    /// #1650 silent death that `let _ = task.await` used to hide.
+    /// #1650 silent death that `let _ = task.await` used to hide. The report
+    /// is defined only for a handle whose task is still in it: the field is
+    /// private and `stop` and this type's `Drop` are the only takers, so
+    /// a missing task means a test took it out and joined it itself — that
+    /// `stop` never observed the watcher's death and fails a debug assertion
+    /// instead of guessing a shape (#1920 fix-r1; the release fallback keeps
+    /// the old `Finished` for a state no outside caller can reach).
     pub async fn stop(mut self) -> WatchStop {
         let Some(task) = self.task.take() else {
-            // The task was already taken out of this handle (a test joined it
-            // itself); there is no watcher left to classify.
+            // #1920 fix-r1: this arm used to return `Finished` — the
+            // "returned on its own" label — for a death this `stop` never
+            // observed. Only this crate's tests can take the task (the
+            // field is private), and the mislabeled report was exactly the
+            // #1650-style quiet death the triage exists to surface.
+            debug_assert!(
+                false,
+                "#1920 stop after the task was already taken out of the handle"
+            );
             return WatchStop::Finished;
         };
         task.abort();

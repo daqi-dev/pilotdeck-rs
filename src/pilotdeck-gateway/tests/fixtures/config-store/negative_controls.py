@@ -39,17 +39,19 @@ and commits no metadata shortcut; a mixed tick is a complete observation,
 not an obscured one; an obscured startup sample commits the folded value
 into the obscured chain only; a ``read_dir`` iteration error mid-listing
 obscures the sample; a failed startup probe on the parent of a missing
-config file keeps that parent watched); nine pin the #1899/#1920
+config file keeps that parent watched); fourteen pin the #1899/#1920
 watcher-stop evidence (the
 join-based check reverted to ``JoinHandle::is_finished()``, which tokio also
-reports for a task that died by panic; a panicking watcher loop that an
-``is_finished()``-only check accepts as a clean stop, against the handle half
-of the split drop test and against the stop test; one that returns cleanly
-right after spawn, against the handle half and the stop test; one that exits
-on its first in-loop tick, against the store half and before ``stop``; one
-that never stops at all; and #1920's own regression — ``WatchHandle::stop``
+reports for a task that died by panic; each of the three death shapes — a
+panicking watcher loop, one that returns cleanly right after spawn, one that
+exits on its first in-loop tick — bound against the handle half of the
+split drop test, against the store half and against the stop test; one that
+never stops at all; #1920's own regression — ``WatchHandle::stop``
 swallowing the ``JoinError`` again, so a watcher that died by panic is
-reported as a clean stop — all of them are #1650's silent-death path) plus
+reported as a clean stop; the same triage relabeling the loop's own clean
+return as ``Cancelled``; and the triage's else arm — ``stop`` called after
+the task was already taken out of the handle — silenced back into a quiet
+``Finished`` return — all of them are #1650's silent-death path) plus
 the #1736 pair that must be restored together (debounce ceiling + unchecked
 deadline add — the double-restoration regression that kills the watcher
 task).
@@ -460,16 +462,25 @@ mutations = [
     # the later ones are listed because they are the same defect seen one step
     # apart (`classify` accepts the first marker that shows up). #1920: the old
     # two-in-one drop test is split (`dropping_the_handle_ends_the_task` /
-    # `dropping_the_store_ends_the_task`); this row keeps the handle half and
-    # the store half is covered by `watch-loop-exits-after-first-tick` /
-    # `watch-loop-never-stops`. The stop-test twin is
-    # `watch-loop-panic-injected-before-stop`.
+    # `dropping_the_store_ends_the_task`); this row keeps the handle half. The
+    # stop-test twin is `watch-loop-panic-injected-before-stop`.
     ('watch-loop-panic-injected', source,
      '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
      '    panic!("#1899 injected: simulated watch_loop failure");\n'
      '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
      TESTS + 'dropping_the_handle_ends_the_task',
      '#1899 the watcher must still be running before the handle is dropped'),
+    # #1920 fix-r1 (Grok sibling#1): the split left the panic death shape
+    # bound to the handle half only — the store half's own liveness
+    # precondition had no panic mutant, so a watcher-death-by-panic that only
+    # the store half would have caught went unguarded. This row restores the
+    # store-half marker the old combined row used to list.
+    ('watch-loop-panic-injected-store-half', source,
+     '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
+     '    panic!("#1899 injected: simulated watch_loop failure");\n'
+     '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
+     TESTS + 'dropping_the_store_ends_the_task',
+     '#1899 the watcher must still be running before the store is dropped'),
     # #1899 review P2-2: a watcher that returns cleanly right after spawn also
     # joins with `Ok(())`, so the drop-the-store evidence only means something
     # once the watcher is proven alive before the drop. This mutant is that
@@ -483,12 +494,23 @@ mutations = [
      '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
      TESTS + 'dropping_the_handle_ends_the_task',
      '#1899 the watcher must still be running before the handle is dropped'),
+    # #1920 fix-r1 (Grok sibling#2): the split's cross-assignment left the
+    # store half with the exits-after-first-tick and never-stops shapes only
+    # — the spawn-time clean return had no row against it. This row restores
+    # the store-half marker the old combined row used to list.
+    ('watch-loop-clean-early-exit-store-half', source,
+     '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
+     '    return;\n'
+     '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
+     TESTS + 'dropping_the_store_ends_the_task',
+     '#1899 the watcher must still be running before the store is dropped'),
     # #1899 review P2 (boundary): a liveness check taken at spawn time proves
     # nothing about a watcher that returns on its first in-loop tick — still
     # #1650's silent death, one tick later. Each check advances one poll interval
     # first, and this mutant is what that advance is there to catch. #1920: the
-    # split moves this row to the store half, so each half of the old combined
-    # test keeps an own-death row.
+    # split moves this row to the store half; fix-r1 adds the handle-half twin
+    # below so both halves keep every death shape (the old combined row
+    # listed both halves' markers).
     ('watch-loop-exits-after-first-tick', source,
      '                if inner.strong_count() == 0 {\n'
      '                    return;\n'
@@ -501,9 +523,27 @@ mutations = [
      '                let mut changed = false;',
      TESTS + 'dropping_the_store_ends_the_task',
      '#1899 the watcher must still be running before the store is dropped'),
+    # #1920 fix-r1 (Grok sibling#2): the mirror gap of the row above — the
+    # handle half was left with the panic and clean-early-exit shapes only,
+    # so a watcher that died right after its first in-loop tick passed the
+    # handle-half drop test's liveness window unguarded. This row restores
+    # the handle-half marker the old combined row used to list.
+    ('watch-loop-exits-after-first-tick-handle-half', source,
+     '                if inner.strong_count() == 0 {\n'
+     '                    return;\n'
+     '                }\n'
+     '                let mut changed = false;',
+     '                if inner.strong_count() == 0 {\n'
+     '                    return;\n'
+     '                }\n'
+     '                return;\n'
+     '                let mut changed = false;',
+     TESTS + 'dropping_the_handle_ends_the_task',
+     '#1899 the watcher must still be running before the handle is dropped'),
     # #1899 review P2 (sibling): the same mutant against `WatchHandle::stop`,
-    # which aborts and swallows the `JoinError` — `weak_count == 0` and "no
-    # reload" alone would accept a watcher that died before the stop.
+    # which before #1920 aborted and swallowed the `JoinError` — `weak_count
+    # == 0` and "no reload" alone would accept a watcher that died before
+    # the stop.
     ('watch-loop-exits-after-first-tick-before-stop', source,
      '                if inner.strong_count() == 0 {\n'
      '                    return;\n'
@@ -576,6 +616,51 @@ mutations = [
      '        WatchStop::Cancelled',
      TESTS + 'stop_reports_a_watcher_that_died_by_panic',
      '#1920 stop must report a watcher that died by panic, not a clean stop'),
+    # #1920 fix-r1 (DS sibling#1 / concurrency#2 / boundary#2 + Grok
+    # boundary#2, four ways): the `Finished` arm had no positive test, so
+    # this mutation — relabeling the loop's own clean return (the store was
+    # dropped first, the owner check ended the loop) as `Cancelled` —
+    # survived every existing row. The new positive test kills it at its own
+    # marker.
+    ('finished-reported-as-cancelled', source,
+     '        task.abort();\n'
+     '        match task.await {\n'
+     '            // Measured on this runtime (tokio 1.48): abort-then-join joins\n'
+     '            // `Err(JoinError::Cancelled)` and a task that died by panic joins\n'
+     '            // `Err(JoinError::Panic(..))`, so `is_panic()` — checked first,\n'
+     '            // like #1899\'s `watcher_stop` — leaves `is_cancelled()` as the\n'
+     '            // only other shape.\n'
+     '            Err(err) if err.is_panic() => WatchStop::Panicked,\n'
+     '            Err(_) => WatchStop::Cancelled,\n'
+     '            Ok(()) => WatchStop::Finished,\n'
+     '        }',
+     '        task.abort();\n'
+     '        match task.await {\n'
+     '            // Measured on this runtime (tokio 1.48): abort-then-join joins\n'
+     '            // `Err(JoinError::Cancelled)` and a task that died by panic joins\n'
+     '            // `Err(JoinError::Panic(..))`, so `is_panic()` — checked first,\n'
+     '            // like #1899\'s `watcher_stop` — leaves `is_cancelled()` as the\n'
+     '            // only other shape.\n'
+     '            Err(err) if err.is_panic() => WatchStop::Panicked,\n'
+     '            Err(_) => WatchStop::Cancelled,\n'
+     '            Ok(()) => WatchStop::Cancelled,\n'
+     '        }',
+     TESTS + 'stop_reports_finished_after_loop_returns',
+     '#1920 stop must report a watcher that returned on its own as Finished'),
+    # #1920 fix-r1 (Grok boundary#1): `stop`'s else arm — the task was
+    # already taken out of the handle — used to quietly return `Finished`,
+    # relabeling an unobserved death as a clean self-return. The product now
+    # debug-asserts the misuse instead; this row removes that assert so the
+    # binding test must fail at its own marker.
+    ('stop-misuse-silenced-again', source,
+     '            debug_assert!(\n'
+     '                false,\n'
+     '                "#1920 stop after the task was already taken out of the handle"\n'
+     '            );\n'
+     '            return WatchStop::Finished;',
+     '            return WatchStop::Finished;',
+     TESTS + 'stop_after_the_task_was_taken_fails_loudly',
+     '#1920 stop after the task was taken must not return normally'),
     # #1946: the join window. The baseline claims the in-flight slot
     # synchronously but starts the load on a microtask
     # (`Promise.resolve().then`), so `run_or_wait` hops once before the first
@@ -721,13 +806,18 @@ EXPECTED_NAMES = (
     'not-found-counted-obscured',
     'is-finished-stop-evidence-restored',
     'watch-loop-panic-injected',
+    'watch-loop-panic-injected-store-half',
     'watch-loop-clean-early-exit',
+    'watch-loop-clean-early-exit-store-half',
     'watch-loop-exits-after-first-tick',
+    'watch-loop-exits-after-first-tick-handle-half',
     'watch-loop-exits-after-first-tick-before-stop',
     'watch-loop-panic-injected-before-stop',
     'watch-loop-clean-early-exit-before-stop',
     'watch-loop-never-stops',
     'stop-panic-swallowed-again',
+    'finished-reported-as-cancelled',
+    'stop-misuse-silenced-again',
     'join-window-hop-removed',
     'obscured-transition-target-not-compared',
     'startup-metadata-shortcut-committed',
