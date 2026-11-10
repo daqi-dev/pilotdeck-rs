@@ -1322,9 +1322,13 @@ class EnvironmentControls(unittest.TestCase):
 
     def test_required_job_runs_the_discovery_anchor_self_check(self):
         # #2133 fix-r34（MM 评审 P1）：「网关负控发现锚点自检」是唯一执行 #2133 闸门
-        # 的 CI 步。同 job 里同形的自测步都有逐字守卫 + 变异负控（#994 / #1570），
-        # 唯独这一步没有——删步、加 if、加 continue-on-error 或改错工作目录，
-        # 全仓无红，闸门在 CI 静默不跑，正是 #2133 要防的「尺子假通过」。
+        # 的 CI 步。删步、加 if、加 continue-on-error 或改错工作目录，此前全仓无红，
+        # 闸门在 CI 静默不跑，正是 #2133 要防的「尺子假通过」。同 job 同形自测步的
+        # 守卫覆盖此前并不齐（fix-r35 按 DS sibling P1 更正此注释的事实面）：
+        # #994 有守卫 + 变异负控；#1570 有守卫但无变异负控；-O 不变性步
+        # （#1666/#1734）自本轮起有（test_required_job_runs_the_optimize_guards_
+        # self_tests）；#1570 变异负控与 #1203 CLI 循环、gitleaks 自检步的守卫
+        # 登记在 #2844（P2-跟进，前置于 #2141）。
         command = 'python3 -B -m unittest -v test_negative_discovery_anchors'
         jobs = self.ci_jobs('#2133')
         steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#2133')
@@ -1339,6 +1343,67 @@ class EnvironmentControls(unittest.TestCase):
                          ('src/pilotdeck-gateway/tests/fixtures', []),
                          '#2133 the self-check imports the fixtures tree, '
                          'so it runs from the fixtures dir')
+
+    def test_the_discovery_anchor_self_check_collects_real_tests(self):
+        # #2136 fix-r35（DS boundary P2）：上面的守卫只钉「步存在 + 无条件 +
+        # cwd」，钉不住该步真的执行了非零且非 skip 的测试——把模块掏空或整类
+        # @unittest.skip 后，`python3 -B -m unittest -v` 收集 0 个测试仍退 0，
+        # CI 绿而 #2133 闸门静默为空，正是守卫注释要防的「闸门在 CI 静默不跑」。
+        # 这里按 CI 同一入口装载该模块，钉住测试条数下限与「无 skip」；
+        # 判别力红侧实测见 _tmp/20261110-pr2136-revival/collect-pin-kill-demo.log。
+        module_path = (Path(__file__).resolve().parent / 'fixtures'
+                       / 'test_negative_discovery_anchors.py')
+        spec = importlib.util.spec_from_file_location(
+            'discovery_anchors_gate', module_path)
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        suite = unittest.defaultTestLoader.loadTestsFromModule(gate)
+        stack, total, skipped = [suite], 0, []
+        while stack:
+            item = stack.pop()
+            if isinstance(item, unittest.TestSuite):
+                stack.extend(item)
+            else:
+                total += 1
+                if getattr(item, '__unittest_skip__', False):
+                    skipped.append(str(item))
+        self.assertGreaterEqual(
+            total, 201,
+            '#2133 the self-check module must collect at least 201 tests; '
+            'an emptied or renamed-away module exits 0 and the gate is '
+            'silently empty')
+        self.assertEqual(
+            skipped, [],
+            '#2133 every collected self-check test must run; a skip '
+            'decorator makes unittest exit 0 and the gate silently pass')
+
+    def test_required_job_runs_the_optimize_guards_self_tests(self):
+        # #2136 fix-r35（DS sibling P1）：-O 不变性自测步（#1666/#1734）与
+        # #2133 步同 job 同形——它跑的正是负控守卫的 -O 判别力（含 #2309
+        # roster-guards），但删步、加 if、加 continue-on-error 或改错 cwd
+        # 此前全仓无红。照 #994/#2133 的三件套补上；五形变异负控见
+        # test_optimize_guards_self_test_ci_regressions_are_rejected。
+        commands = ('python3 -B -m unittest -v test_negative_optimize_guards',
+                    'python3 -B -m unittest -v settings-gateway/test_negative_controls.py',
+                    'python3 -B -m unittest -v test_negative_run_guards',
+                    'python3 -B -m unittest -v network-timing/test_negative_controls.py',
+                    'python3 -B -m unittest -v test_negative_roster_guards')
+        jobs = self.ci_jobs('#1666')
+        steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#1666')
+        matching = [step for step in steps
+                    if all(command in self.ci_run_commands(step, '#1666')
+                           for command in commands)]
+        self.assertEqual(len(matching), 1,
+                         '#1666 required CI job must run the -O invariance self-tests')
+        fields = self.ci_step_fields(matching[0], '#1666')
+        for key in ('if', 'continue-on-error'):
+            self.assertNotIn(key, fields,
+                             '#1666 the -O self-test step must be unconditional '
+                             'and required')
+        self.assertEqual(fields.get('working-directory'),
+                         ('src/pilotdeck-gateway/tests/fixtures', []),
+                         '#1666 the -O self-tests import the fixtures tree, '
+                         'so the step runs from the fixtures dir')
 
     def test_negative_controls_job_runs_the_gateway_fixture(self):
         # #1632 P2-3：这个 job 存在的唯一理由是让夹具真的跑起来；删掉执行步、
@@ -1503,9 +1568,10 @@ class EnvironmentControls(unittest.TestCase):
         self.check_ci_mutations(cases, 'test_required_job_runs_shared_isolation_regressions', '#994')
 
     def test_discovery_anchor_self_check_ci_regressions_are_rejected(self):
-        # #2133 fix-r34（MM 评审 P1）：与 #994 / #1570 的同形变异负控——删步 /
+        # #2133 fix-r34（MM 评审 P1）：与 #994 同形的变异负控——删步 /
         # 注释掉 / 加 if / 加 continue-on-error / 改错 working-directory，
-        # 每形必须杀在上一条守卫的专属断言上，而不是别的失败点。
+        # 每形必须杀在上一条守卫的专属断言上，而不是别的失败点（#1570 缺
+        # 变异负控，登记在 #2844，见上一条守卫注释）。
         workflow = self.ci_workflow_fixture()
         command = 'run: python3 -B -m unittest -v test_negative_discovery_anchors'
         cases = [(name, workflow.replace(command, changed, 1), message)
@@ -1530,6 +1596,34 @@ class EnvironmentControls(unittest.TestCase):
                       'so it runs from the fixtures dir'))
         self.check_ci_mutations(
             cases, 'test_required_job_runs_the_discovery_anchor_self_check', '#2133')
+
+    def test_optimize_guards_self_test_ci_regressions_are_rejected(self):
+        # #2136 fix-r35（DS sibling P1）：-O 不变性步（#1666/#1734）的变异负控，
+        # 与 #994 / #2133 同形。该步是 run 块（五条命令），删掉其中任一条
+        # （以 #2309 roster-guards 为代表）必须杀在「必须跑全部五条」的断言上；
+        # if / continue-on-error / 错 cwd 按步名锚定插入或改值。
+        workflow = self.ci_workflow_fixture()
+        name_line = '- name: 网关负控守卫 -O 不变性自测（#1666/#1734）\n'
+        command = 'python3 -B -m unittest -v test_negative_roster_guards'
+        cases = [(name_, workflow.replace(old, new, 1), message)
+                 for name_, old, new, message in (
+            ('optimize-self-test-removed', command + '\n', '',
+             '#1666 required CI job must run the -O invariance self-tests'),
+            ('optimize-self-test-commented', command, '# ' + command,
+             '#1666 required CI job must run the -O invariance self-tests'),
+            ('optimize-self-test-skipped', name_line,
+             name_line + '        if: false\n',
+             '#1666 the -O self-test step must be unconditional and required'),
+            ('optimize-self-test-ignored', name_line,
+             name_line + '        continue-on-error: true\n',
+             '#1666 the -O self-test step must be unconditional and required'),
+            ('optimize-self-test-wrong-cwd',
+             name_line + '        working-directory: src/pilotdeck-gateway/tests/fixtures\n',
+             name_line + '        working-directory: src\n',
+             '#1666 the -O self-tests import the fixtures tree, '
+             'so the step runs from the fixtures dir'))]
+        self.check_ci_mutations(
+            cases, 'test_required_job_runs_the_optimize_guards_self_tests', '#1666')
 
     def test_each_npm_job_sets_up_its_own_node_before_installing(self):
         runtime_jobs = set()
