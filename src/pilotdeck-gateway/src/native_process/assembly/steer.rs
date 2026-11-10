@@ -132,6 +132,24 @@ mod tests {
             .clone()
     }
 
+    /// The staged `InteractionHooks` resource's address, for the reload test's
+    /// generation-swap assertion (a fresh generation stages a fresh
+    /// allocation; a short-circuited reload would keep the same one).
+    fn hooks_resource_addr(project: &Arc<ProjectRuntimeRegistry>) -> usize {
+        let lease = project.acquire(None).expect("#1438 project lease");
+        lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .expect("#1438 project resources")
+            .context()
+            .resource(Resource::InteractionHooks)
+            .expect("#1438 interaction hooks resource")
+            .as_any()
+            .downcast_ref::<crate::runtime::project::interaction_hooks::InteractionHooks>()
+            .expect("#1438 hooks resource type") as *const _ as usize
+    }
+
     /// The #1438 wiring shared by the four tests below: the production
     /// registry build (which now also installs the registration sink into the
     /// InteractionHooks resource) wired into a clone of the registry fixture.
@@ -470,12 +488,20 @@ mod tests {
                 .expect("#1438 registry fixture setup");
         let requests = wired_requests(&fixture);
         let session = JsString::from("hook-reload");
+        let hooks_before = hooks_resource_addr(&fixture.project);
         // The reload swaps every project resource for a fresh generation.
         fixture
             .project
             .reload()
             .await
             .expect("#1438 project reload restages the resources");
+        let hooks_after = hooks_resource_addr(&fixture.project);
+        // Guard the guard: the reload must actually stage a fresh hooks
+        // generation, or this test would pass on the old generation either way.
+        crate::negative_assert!(
+            hooks_before != hooks_after,
+            "#1438 the reload staged a fresh interaction hooks generation"
+        );
         let steer = steer_resource(&fixture.project);
         let _turn = LiveTurn::live(&requests, &steer, &session, "t", "r1").await;
         let hooks_turn = bound_hooks_turn(&requests, &session, "r1");

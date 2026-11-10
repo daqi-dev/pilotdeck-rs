@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """#1438: the async-hook registration bridge must stay load-bearing.
 
-Six mutations walk the bridge backwards from its consumer. The first three
-revert one link each of the #1438 wiring to the pre-issue degraded state — the
-state where ``hook_async_result`` could only ever answer ``unknown`` because
-nothing in production ever called ``AsyncHookRegistry::register``:
+Six mutations walk the bridge backwards from its consumer. The first four
+revert one link each of the #1438 wiring to a degraded state — the pre-issue
+shape where ``hook_async_result`` could only ever answer ``unknown`` because
+nothing in production reached ``AsyncHookRegistry::register``, or the fix-r2
+cross-generation slot shape that keeps the bridge alive across a reload:
 
 * ``assembly-sink-install-skipped`` — ``build_async_hook_registry`` stops
   installing the sink into the InteractionHooks resource (the injection point

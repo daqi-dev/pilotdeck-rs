@@ -79,10 +79,10 @@ struct State {
     draining: Vec<(JsString, Arc<Run>)>,
     // #686: pending async hook receipts voided when their run closed. Kept
     // until the same session binds its next turn (or the generation closes).
-    // #1438: with the bridge installed the sink_slot carries async outputs to
-    // the gateway registry, so the local pending list stays empty — this
-    // discard path is the no-bridge degraded state's behavior, not the
-    // production shape anymore.
+    // #1438: with the bridge installed, async outputs carrying an invocation
+    // id go to the gateway registry instead of this list — this discard path
+    // is the no-bridge degraded state's behavior, not the production shape
+    // anymore (outputs without an id still take the local pending route).
     notices: Vec<DiscardNotice>,
 }
 struct Run {
@@ -179,6 +179,12 @@ pub struct InteractionHooks {
     sink_slot: AsyncHookSinkSlot,
 }
 impl InteractionHooks {
+    /// Tests only: a resource with a private (empty) sink slot — the exact
+    /// degraded no-bridge shape the `family-slot-per-generation` negative
+    /// control encodes. Production must go through the family source's
+    /// `with_sink_slot` (one cross-generation slot per gateway), so this
+    /// constructor is compiled out of production builds on purpose.
+    #[cfg(test)]
     pub fn new(permission: InteractionPermission) -> Self {
         Self::with_sink_slot(permission, Arc::default())
     }
