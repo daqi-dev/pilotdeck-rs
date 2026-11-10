@@ -3074,3 +3074,117 @@ reading the AugAssign-registered carrying; pre-existing, probe-r49c
 | **The ior/dunder clean twins stay clean** (false FAIL guard): the same spellings merging a clean lambda. | `... withdrew a clean receiver behind an operator.ior dict merge of a clean lambda / an in-place dunder append of a clean lambda / an in-place dunder dict merge of a clean lambda (round 49)` |
 | **The never-matching sequence / mapping / or guards no longer launder** (false PASS guard / false FAIL guard): the guard's insert cannot cancel the executed pop; the clean fall-through twin stays clean. | `... lost a receiver behind a guard on a never-matching sequence pattern / a guard on a never-matching mapping pattern / a guard on an all-failing or-pattern (round 49)`; `... withdrew a clean receiver behind a never-matching sequence guard with a clean fall-through (round 49)` |
 | **A tuple `+=` rebind's alias stays clean** (false FAIL guard): `_t += (handle,)` rebinds, so iterating the alias reads the old clean object. | `... withdrew a clean receiver behind a clean lambda iterated off a tuple alias after a tuple += (round 49)` |
+
+### Closed by `fix-r1` round 50 (DS r49 boundary#1 P0 / boundary#2 P0 / concurrency#1 P0 / concurrency#2 P0 / concurrency#3 P0 / sibling#1 P1 / sibling#2 P1 / sibling#5 P1; probes 2026-11-10)
+
+Every finding was probe-reproduced against the round-49 committed ruler
+`9a1b4cf8a` before any fix (`probe-r49d.log` holds the pre-fix columns,
+every row carrying a runtime oracle; the r49 star cell there was vacuous
+-- a `from operator import *` inside a `def` is a SyntaxError, so the
+probe's module-level rerun is the real evidence).  The structural second
+layer: r49 fixed the *identification key* (literal attribute chain ->
+binding resolution), r50 fixes the *value domain* -- the scope model kept
+one origin per name (the module read only `tree.body` direct children,
+a function scope took `ast.walk(scope)` with overwrite), so nine holes
+shared the single root cause `_import_binding_origins`' scope semantics.
+**Fix type: structural** -- one change of the scope model's value domain
+closes the family, not another literal addition; the residual-judgment
+two questions: r49's hole was the value domain (single value -> missed
+shadowing and layers), r48's hole was the identification key (literal
+chain -> binding resolution) -- two different layers, so round 50 does
+not repeat round 49's shape.
+
+`_import_binding_layers` builds `{layer: {name: set(origins)}}` in one
+`_walk_scoped` pass -- a *layer* is the module body or one function's
+own body, compound blocks and class bodies counting where they stand,
+a nested `def`/`lambda` body a layer of its own -- plus the
+function-parent map.  `_import_binding_origins(scope)` then resolves
+each name through the chain `[scope, parent, ..., None]`: every binding
+of the *innermost layer that binds the name* joins the answer as a
+union, so shadowing is decided by the reference's layer, not by walk
+order.  The placements this closes: a module-level `try`-wrapped import
+(b1a, DS boundary#1a), an outer import used inside a closure (b1b, DS
+boundary#1b), both same-name shadowing variants -- the nested def's
+clean import no longer clobbers the outer dirty binding and the nested
+dirty import is no longer missed (b1c, DS boundary#1c/concurrency#1) --
+the star import (b2, DS boundary#2/concurrency#3) and the class-body
+import (c2, DS concurrency#2).  Star imports are module-level-only in
+the CPython grammar (a `from x import *` inside a `def` or class body
+is a SyntaxError), so the star traverses the two module-level
+placements; the operator star binds the store/display function names
+(`operator.__all__` verified: `setitem` in it, no underscore names),
+the builtins star binds the unbound type names, and any other source
+fails closed the same way (the r39 precedent).
+
+The matrix the battery actually traverses: three import forms
+(`import x as y` / `from x import f` / `from x import *`) x four
+placements (module top level, a module-level `try`, the function's own
+body or a nested def of it, a class body -- in-function and at module
+level) x the shadowing pairs (outer clean/inner dirty, outer dirty/
+inner clean, both dirty in the alias-vs-alias shape) x operator/builtins
+(`probe-r50.py` runs the full 51-cell matrix against the runtime
+oracle, `probe-r50-after.log`: 51 cells, 0 mismatches; star
+module-level-only per the grammar).
+
+The module-layer walk root (`ast.walk(None)`, pre-existing latent
+crash): r49 *already* crashed on every module-level store spelling it
+recognized (`_items.append(_hs[0])`, `operator.setitem`, a subscript
+store -- with the receiver-establishing call present; the corpus never
+trips it, which is why fifty rounds stayed green) while silently
+false-PASSing the alias spellings.  The union rewrite routes the
+module-layer shapes into the same path, so round 50 fixes the root:
+`_name_alias_closure` takes the walk root (module scope spells `None`
+in the scoped walk -- the root is the module tree the caller hands in)
+and the two scope walks inside the registration path read the same way.
+The r49 probe's c2 cell omitted the `md.common.aggregate_status(...)`
+call entirely, so its `False` conflated the origins hole with the
+missing receiver registration; the round-50 battery rows carry the
+call and pin the end-to-end conviction.
+
+`_dict_binding_keys` (DS sibling#1, P1): the in-place merge
+`operator.ior(_d, {...})` adds keys the literal binding never saw --
+plain, import-aliased and the unbound `dict.__ior__(d, {...})` -- and
+the walk's origins are now the union of every layer (an alias bound
+inside a function reads the same as the module-level one).  The
+from-imported `setitem` writing `md.__dict__` (DS sibling#5, P1) and
+the star-imported spelling join the mapping-write family the plain
+module spelling already read.  `_sys_modules_write_values` (DS
+sibling#4 via boundary#3, P1) keeps the `ior`-merged values: the
+`operator.ior(sys.modules, {...})`, import-aliased and receiver-bound
+`sys.modules.__ior__({...})` spellings each record their written
+values the plain `setitem` spelling already did.  `case [_x] as _w`
+(DS sibling#2, P1): a `MatchAs`-wrapped never-matching pattern never
+evaluates its guard either -- the wrapper's inner pattern is asked the
+same unmatchability question (a bare `case _ as w` wildcard capture
+still matches; its pattern is `None`).
+
+Known residuals (follow-up issue; unchanged from round 49 unless
+noted): the use-in-Assign-target conservative floor, a `Try`
+interrupted mid-body, the not-fork-aware mutator-name conviction,
+`extend` of an empty literal and the tuple/str display's `+=` rebind
+alias all over-report; stale container history survives a clean rebind;
+*untracked or non-literal* dynamic starred/keyword arguments remain
+unanalyzable; the guardfall fork stays independent of the match fork;
+`_scoped_nodes` class-body walrus, `_name_bindings` for-target
+spellings and the For-only `AsyncFor` walks remain; an import binding
+a name later rebinds to another object still reads as the module
+(position within a layer is not modeled -- the registered
+over-approximation, honest spellings pinned by the clean twins); the
+`operator.__setitem__`-on-a-receiver spelling in `_mapping_method_call`
+keeps its pre-r49 target read and the dunder spellings
+(`operator.__setitem__` / `operator.__ior__`) stay outside the
+target-first decode of the mapping decoder (registered, kept for the
+audit-identical guarantee); `_dict_binding_keys`' origin union is
+file-wide by design (over-approximation consistent with the walk);
+an outer display relaying a `+=`-grown container through a name alias
+misses the handle (pre-existing, probe-r49c).
+
+| Shape | Self-test |
+|---|---|
+| **The scope-model placements register** (false PASS guard): a try-wrapped module import, a module-level star, an outer import used inside a nested def, both same-name shadowing variants and a class-body import (in-function and at module level) storing a handle -- withdraw. | `... lost a receiver behind a try-wrapped module import of operator / a module-level star import of operator / an outer import used inside a nested def / an outer dirty import shadowed by a nested clean import / an outer clean import shadowed by a nested dirty import / a class-body import of operator inside the function (round 50)`; the module rows: `... a module-level class-body import with the use in the class body / a try-wrapped module import with a module-level class-body use / a module-level star import with a module-level class-body use (round 50)` |
+| **The placement clean twins stay clean** (false FAIL guard): the same placements storing a clean lambda; the outer-clean/inner-dirty shadow use at the outer layer stays clean (the layer, not the subtree, decides). | `... withdrew a clean receiver behind a try-wrapped module import of a clean store / a module-level star import of a clean store / an outer clean import shadowed by a nested dirty import / a class-body import of a clean store (round 50)`; the module twin: `... a module-level class-body import of a clean store (round 50)` |
+| **The `ior` merged keys read unbounded** (false PASS guard): `operator.ior(_d, {...})` (plain and import-aliased) and `dict.__ior__(_d, {...})` merged-key iteration -- withdraw. | `... lost a receiver behind an operator.ior dict merge iterated for keys / an import-aliased operator.ior dict merge iterated for keys / an unbound dict.__ior__ dict merge iterated for keys (round 50)` |
+| **The from-imported / star mapping writes register** (false PASS guard): `from operator import setitem as _si; _si(md.__dict__, 'common', ...)` and the star-imported spelling -- withdraw. | `... lost a receiver behind a from-imported setitem mapping write of a handle / a star-imported setitem mapping write of a handle (round 50)` |
+| **The `MatchAs`-wrapped never-matching guards no longer launder** (false PASS guard / false FAIL guard): `case [_x] as _w if ...` and `case 0 \| 2 as _w if ...` ride the case arm; the clean fall-through twin stays clean. | `... lost a receiver behind a guard on a MatchAs-wrapped never-matching sequence pattern / a guard on a MatchAs-wrapped all-failing or-pattern (round 50)`; `... withdrew a clean receiver behind a MatchAs-wrapped guard with a clean fall-through (round 50)` |
+| **The star mapping write of an untracked key stays clean** (false FAIL guard): `setitem(md.__dict__, 'other', ...)` under a star import. | `... withdrew a clean receiver behind a star-imported setitem mapping write of an untracked key (round 50)` |
+| **`sys.modules` keeps the `ior`-merged values** (false PASS guard): `operator.ior(sys.modules, {...})`, its import-aliased spelling and `sys.modules.__ior__({...})`. | `... dropped the written value behind an operator.ior write into sys.modules / an import-aliased operator.ior write into sys.modules / a receiver-bound __ior__ write into sys.modules (round 50)` |

@@ -1456,6 +1456,17 @@ def _case_pattern_unmatchable(subject, pattern):
         # evaluates its guard either.
         return all(_case_pattern_unmatchable(subject, alternative)
                    for alternative in pattern.patterns)
+    if isinstance(pattern, ast.MatchAs) and pattern.pattern is not None:
+        # #1953 fix-r1 round 50 (DS r49 sibling#2, probes
+        # s2-matchas-seq / s2-matchas-or, 2026-11-10): a capture pattern
+        # binds only when the pattern it wraps matches -- ``case [_x] as
+        # _w`` against ``match 1`` fails on the sequence, and the guard
+        # never runs; the r49 recursion stopped one spelling short and
+        # the wrapped never-matching shapes laundered the same events
+        # the unwrapped ones already convict (r48-c1 family).  A bare
+        # wildcard capture (``case _ as _w``, ``pattern`` None) matches
+        # anything and stays matchable.
+        return _case_pattern_unmatchable(subject, pattern.pattern)
     return False
 
 
@@ -3942,51 +3953,120 @@ _OPERATOR_DISPLAY_MUTATORS = _OPERATOR_STORE_FUNCS | frozenset((
 _UNBOUND_TYPE_NAMES = frozenset(('list', 'dict', 'set', 'frozenset'))
 
 
+_IMPORT_LAYERS_CACHE = {}
+
+
+def _import_binding_layers(tree):
+    """Per-layer import bindings and function parents, one walk (r50).
+
+    A *layer* is the module body or one function's own body: compound
+    blocks (``try``/``if``/loops) and *class bodies* count where they
+    stand (a class body executes at its ``class`` statement, r46), while
+    a nested ``def``/``lambda`` body is a layer of its own.  The one
+    :func:`_walk_scoped` pass attributes every node to its innermost
+    enclosing function, which is exactly this layering; the parents map
+    reuses the same attribution, so a reference's layer chain is
+    ``[scope, parent, ..., None]``.
+    """
+    cached = _IMPORT_LAYERS_CACHE.get(id(tree))
+    if cached is not None and cached[0] is tree:
+        return cached[1], cached[2]
+    layers = {}
+    parents = {}
+
+    def _bind(node, layer):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                key = alias.asname or alias.name.split('.')[0]
+                layer.setdefault(key, set()).add(('module', alias.name))
+            return
+        module = node.module or ''
+        level0 = getattr(node, 'level', 0) == 0
+        for alias in node.names:
+            if alias.name == '*':
+                # #1953 fix-r1 round 50 (DS r49 boundary#2 / concurrency#3
+                # P0, probes b2-star-import / matrix star cells, 2026-11-10):
+                # a star re-exports whatever the source holds.
+                # ``from operator import *`` hands back the store/display
+                # function names (``operator.__all__`` verified: ``setitem``
+                # in it, no underscore names -- the dunder spellings stay
+                # in as the fail-closed union).  ``from builtins import *``
+                # hands back the unbound type names.  Any other source --
+                # named or relative (GLM r38 boundary P2) -- may re-export
+                # the operator family, so it fails closed the same way
+                # (the r39 precedent the events walk set).
+                builtins_star = level0 and module == 'builtins'
+                members = (_UNBOUND_TYPE_NAMES if builtins_star
+                           else _OPERATOR_DISPLAY_MUTATORS)
+                for name in _star_import_names(node, members):
+                    layer.setdefault(name, set()).add(
+                        ('from', 'builtins' if builtins_star else 'operator',
+                         name))
+                continue
+            key = alias.asname or alias.name
+            layer.setdefault(key, set()).add(('from', module, alias.name))
+
+    for owner, node in _walk_scoped(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                            ast.Lambda)):
+            parents[node] = owner
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            _bind(node, layers.setdefault(owner, {}))
+    _IMPORT_LAYERS_CACHE[id(tree)] = (tree, layers, parents)
+    return layers, parents
+
+
 def _import_binding_origins(scope, tree=None):
-    """Import bindings visible in *scope*, as ``{name: origin}`` (r49).
+    """Import bindings visible in *scope*, ``{name: frozenset}`` (r50).
 
     ``import x as y`` binds *y* to module *x* -- origin ``('module', x)``;
     ``from x import f`` and ``from x import f as g`` bind to ``x.f`` --
-    origin ``('from', x, f)``.  The qualified-spelling gates resolve the
-    callee's base through this map, so an alias admits the same store
+    origin ``('from', x, f)``; a star import expands its source's tracked
+    family (operator store/display names, builtins unbound types), an
+    unknown source failing closed.  The qualified-spelling gates resolve
+    the callee's base through this map, so an alias admits the same store
     call the literal module name does (the structural r49 fix for the
-    import-alias false-PASS family).  Imports written inside *scope*'s
-    subtree are read whole-scope, the same over-approximation
-    :func:`_name_alias_closure` makes for its bindings -- a name an
-    import rebinds to something else is the registered trade-off, and the
-    clean twins of the battery pin the honest spellings.  When *tree* is
-    handed in and differs from *scope*, the module-level imports join the
-    map (a function sees the imports above it), earlier scope-level
-    entries winning over the module's.  A ``None`` *scope* is the module
-    scope (:func:`_walk_scoped`'s spelling of it) -- only the module
-    body's own imports are visible there, never a function-local
-    ``import``.
+    import-alias false-PASS family).
+
+    #1953 fix-r1 round 50 (the structural second layer: the scope model
+    rewritten to union semantics, one change closing the nine confirmed
+    holes; DS r49 boundary#1/#2 / concurrency#1/#2/#3 P0, probes
+    2026-11-10): r49 kept one origin per name -- the module read only
+    ``tree.body`` direct children (a ``try``-wrapped or class-body import
+    invisible, b1a/c2) and a function scope took ``ast.walk(scope)`` with
+    overwrite (a nested def's import clobbering the outer binding, b1c,
+    and the outer layer's binding invisible to a closure, b1b) while a
+    star was skipped outright (b2).  r50 resolves through the layer chain
+    instead: every binding statement of the *innermost layer that binds
+    the name* joins the answer as a union -- shadowing is decided by the
+    reference's layer, not by walk order, and a layer that binds a name
+    several times keeps every origin.  The registered
+    over-approximations stay: position within a layer is not modeled
+    (the r49 trade-off), and a name an import rebinds to something else
+    is the same trade-off the battery's clean twins pin.
     """
+    if tree is None:
+        if scope is None:
+            return {}
+        tree = scope
+    layers, parents = _import_binding_layers(tree)
+    chain = []
+    level = scope
+    while True:
+        chain.append(level)
+        if level is None:
+            break
+        level = parents.get(level)
+    names = set()
+    for level in chain:
+        names.update(layers.get(level, ()))
     origins = {}
-
-    def _collect(nodes, overwrite):
-        for node in nodes:
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    key = alias.asname or alias.name.split('.')[0]
-                    if overwrite or key not in origins:
-                        origins[key] = ('module', alias.name)
-            elif isinstance(node, ast.ImportFrom):
-                for alias in node.names:
-                    if alias.name == '*':
-                        continue
-                    key = alias.asname or alias.name
-                    if overwrite or key not in origins:
-                        origins[key] = ('from', node.module or '',
-                                       alias.name)
-
-    if scope is None:
-        if tree is not None:
-            _collect(tree.body, overwrite=True)
-        return origins
-    _collect(ast.walk(scope), overwrite=True)
-    if tree is not None and tree is not scope:
-        _collect(tree.body, overwrite=False)
+    for name in names:
+        for level in chain:
+            layer = layers.get(level)
+            if layer and name in layer:
+                origins[name] = frozenset(layer[name])
+                break
     return origins
 
 
@@ -4094,7 +4174,7 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
     # walrus display alias (``(_n2 := _items)``) laundered a mutation the
     # same way the dict/mutator spellings did -- the shared closure now
     # reads every binding spelling.
-    names = _name_alias_closure(scope, {name})
+    names = _name_alias_closure(scope, {name}, tree)
 
     # #1953 fix-r1 round 49 (GLM r48 boundary#1 P0, probes
     # b1-operator-as-alias / b1-operator-from-import / b1-builtins-*
@@ -4104,8 +4184,21 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
     # mutation at all -- zero events, zero registration, the false PASS
     # the structural fix resolves from the import bindings.
     import_origins = _import_binding_origins(scope, tree)
+    # #1953 fix-r1 round 50 (DS r49 boundary#1b, probe b1b-closure-import):
+    # a call inside a nested body resolves its imports at *its* layer --
+    # the chain the nested scope sees, not the window scope's own map.
+    _origins_cache = {scope: import_origins}
 
-    def mutates_display(callee, call, price=True):
+    def _origins_for(use_scope):
+        if use_scope not in _origins_cache:
+            _origins_cache[use_scope] = _import_binding_origins(
+                use_scope, tree)
+        return _origins_cache[use_scope]
+
+    _WINDOW_SCOPE = object()
+
+    def mutates_display(callee, call, price=True,
+                        use_scope=_WINDOW_SCOPE):
         """The display mutation *call* makes (r44 event model).
 
         ``None`` -- the call does not touch the display; ``True`` -- an
@@ -4117,8 +4210,13 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
         collection -- a closure body runs once per call and the count is
         not statically known, so every mutating call counts
         unconditionally: a priced-safe ``pop`` inside one is the same
-        composite the simulation refuses (probe b1-loop).
+        composite the simulation refuses (probe b1-loop).  *use_scope*
+        names the layer the call lives in (r50) -- the window's own scope
+        when absent -- so a nested body's call resolves the chain around
+        *it*.
         """
+        origins = _origins_for(scope if use_scope is _WINDOW_SCOPE
+                              else use_scope)
         base = callee.value if isinstance(callee, ast.Attribute) else None
         if isinstance(callee, ast.Name):
             # #1953 fix-r1 round 49 (probes b1-operator-from-import /
@@ -4127,47 +4225,49 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
             # chain ever matched it, so the call was no event at all
             # while the run time replaced the selected element (a false
             # PASS, the import-alias family GLM r48 boundary#1 proved).
-            origin = import_origins.get(callee.id)
-            if (origin is not None and origin[0] == 'from'
-                    and origin[1] == 'operator'
-                    and origin[2] in _OPERATOR_DISPLAY_MUTATORS):
+            # r50: the value is a frozenset -- any origin of the layer
+            # that binds the name admits (the union rewrite).
+            if any(origin[0] == 'from' and origin[1] == 'operator'
+                   and origin[2] in _OPERATOR_DISPLAY_MUTATORS
+                   for origin in origins.get(callee.id, ())):
                 first = call.args[0] if call.args else None
                 if isinstance(first, ast.Name) and first.id in names:
                     return True
             return None
-        base_name = None
+        base_names = None
         if isinstance(base, ast.Name):
-            base_name = base.id
-            origin = import_origins.get(base.id)
-            if origin is not None:
-                # #1953 fix-r1 round 49 (probe b1-operator-as-alias):
-                # ``import operator as _op`` -- the module behind an
-                # alias admits the same store calls the literal name
-                # does; ``from builtins import list as _l`` makes the
-                # bare name the type itself (probe
-                # b1-builtins-from-as-alias).  The literal names keep
-                # their reading -- only these two resolutions override.
+            # #1953 fix-r1 round 49 (probe b1-operator-as-alias):
+            # ``import operator as _op`` -- the module behind an
+            # alias admits the same store calls the literal name
+            # does; ``from builtins import list as _l`` makes the
+            # bare name the type itself (probe
+            # b1-builtins-from-as-alias).  The literal name keeps
+            # its reading -- only these two resolutions join it, as
+            # a set (r50: the binding layer may hold several).
+            base_names = {base.id}
+            for origin in origins.get(base.id, ()):
                 if origin == ('module', 'operator'):
-                    base_name = 'operator'
+                    base_names.add('operator')
                 elif (origin[0] == 'from' and origin[1] == 'builtins'
                         and origin[2] in _UNBOUND_TYPE_NAMES):
-                    base_name = origin[2]
+                    base_names.add(origin[2])
         elif (isinstance(base, ast.Attribute)
                 and isinstance(base.value, ast.Name)
                 and (base.value.id == 'builtins'
-                     or import_origins.get(base.value.id)
-                     == ('module', 'builtins'))):
+                     or ('module', 'builtins') in origins.get(
+                         base.value.id, ()))):
             # #1953 fix-r1 round 48 (probe builtins-qualified-append):
             # ``builtins.list.append(items, z)`` is the unbound
             # spelling behind one attribute hop -- r49 also reads it
             # through ``import builtins as _b`` (probe
             # b1-builtins-as-alias).
-            base_name = base.attr
+            base_names = {base.attr}
         # The r48 isinstance guard stays: a Subscript callee
         # (``_items[1](...)``) is a read, not an attribute mutation.
         if not (isinstance(callee, ast.Attribute)
                 and (callee.attr in _MUTATING_DISPLAY_ATTRS
-                     or (base_name == 'operator'
+                     or (base_names is not None
+                         and 'operator' in base_names
                          and callee.attr in _OPERATOR_DISPLAY_MUTATORS))):
             return None
         if isinstance(callee.value, ast.Name) and callee.value.id in names:
@@ -4215,9 +4315,10 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
         # ``operator.setitem(items, 1, hs[0])`` /
         # ``operator.iadd(items, [hs[0]])`` -- so they join the bare
         # type names here and in the registration walk.
-        if (base_name in _UNBOUND_TYPE_NAMES
-                or (base_name == 'operator'
-                    and callee.attr in _OPERATOR_DISPLAY_MUTATORS)):
+        if (base_names is not None
+                and (not base_names.isdisjoint(_UNBOUND_TYPE_NAMES)
+                     or ('operator' in base_names
+                         and callee.attr in _OPERATOR_DISPLAY_MUTATORS))):
             first = call.args[0] if call.args else None
             if isinstance(first, ast.Name) and first.id in names:
                 return True
@@ -4241,9 +4342,16 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
         return False
 
     def _body_mutates(body):
-        for inner in ast.walk(body):
+        # #1953 fix-r1 round 50 (DS r49 boundary#1b, probe
+        # b1b-closure-import): the walk is scoped, so each call resolves
+        # the import bindings of the layer it lives in -- a nested body's
+        # ``_op.setitem`` reads the outer layer's binding through the
+        # chain, and a same-name inner import stays out of the outer
+        # body's answer (r49 read one whole-subtree map).
+        for owner, inner in _walk_scoped(body):
             if isinstance(inner, ast.Call):
-                if mutates_display(_callee_expr(inner), inner, price=False):
+                if mutates_display(_callee_expr(inner), inner, price=False,
+                                   use_scope=owner):
                     return True
             elif isinstance(inner, (ast.Assign, ast.AugAssign,
                                     ast.AnnAssign, ast.Delete)):
@@ -4284,7 +4392,9 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
     # body directly.
     while True:
         before = len(mutators)
-        for statement in ast.walk(scope):
+        # r50: module scope spells ``None`` -- the walk root is the module
+        # tree (the shared alias-closure rule, same probe family).
+        for statement in ast.walk(scope if scope is not None else tree):
             if isinstance(statement, (ast.FunctionDef,
                                       ast.AsyncFunctionDef)):
                 if (statement.name not in mutators
@@ -4344,7 +4454,7 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
         # closure the single-target fixpoint never saw.  It joins the
         # fixpoint body (r46) so a wrapper calling an *alias* of a
         # mutator is seen on the next pass too.
-        mutators |= _name_alias_closure(scope, mutators)
+        mutators |= _name_alias_closure(scope, mutators, tree)
         if len(mutators) == before:
             break
 
@@ -4992,10 +5102,18 @@ def _sys_modules_write_values(tree, kinds=None):
                     # ``operator.setitem(sys.modules, 'k', stub)`` name the mapping
                     # first; r29 read only the bound spelling (GLM sibling r29
                     # P1-6, MiniMax concurrency r29 P0-7).
-                    unbound = (attr == 'setitem'
+                    # #1953 fix-r1 round 50 (DS r49 sibling#4, probes
+                    # u-sysmodules-ior / u-sysmodules-ior-alias /
+                    # u-sysmodules-dunder-ior, 2026-11-10): the operator
+                    # module's ``ior`` (and the bound ``__ior__``) merge the
+                    # same entries ``update`` does -- the branch read only
+                    # ``update`` and the setitem family, so both ior
+                    # spellings dropped their writes (the decoder already
+                    # reads them, r48; only the consumer dropped).
+                    unbound = (attr in ('setitem', 'ior')
                                or _builtin_type_name(func.value, kinds) is not None)
                     args = node.args[1:] if unbound else node.args
-                    if attr == 'update':
+                    if attr in ('update', 'ior', '__ior__'):
                         for key, value in _updated_items_parts(args, node.keywords):
                             record(key, value)
                     elif attr in ('setitem', '__setitem__', 'setdefault'):
@@ -6917,10 +7035,11 @@ def _receiver_attribute_writes(tree, receivers, shared):
     scope_imports = {}
 
     def _scope_import_origins(scope):
-        """Import bindings visible in *scope* (r49, cached per scope).
+        """Import bindings visible in *scope* (r50, cached per scope).
 
-        The registration walk asks every node, so the module-plus-scope
-        walk runs once per scope and is shared by every call in it.
+        The registration walk asks every node, so the layer-chain
+        resolution runs once per scope and is shared by every call in
+        it (r50: the values are frozensets, the union rewrite).
         """
         if scope not in scope_imports:
             scope_imports[scope] = _import_binding_origins(scope, tree)
@@ -6990,7 +7109,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
         binding and the copy keeps the carried answer; the false FAIL that
         costs is the price of not losing the write.
         """
-        for node in ast.walk(scope):
+        for node in ast.walk(scope if scope is not None else tree):
             if not isinstance(node, ast.Name) or node.id != name:
                 continue
             position = (getattr(node, 'lineno', 0),
@@ -7582,7 +7701,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 # class of the receiver registers together with it -- the
                 # same read the mutation window's alias set gives a
                 # display name.
-                for alias in _name_alias_closure(scope, {name}):
+                for alias in _name_alias_closure(scope, {name}, tree):
                     if _carry(scope, alias, carried):
                         grown = True
         return grown
@@ -7625,10 +7744,13 @@ def _receiver_attribute_writes(tree, receivers, shared):
             receiver = None
             args = []
             if isinstance(callee, ast.Name):
-                origin = origins.get(callee.id)
-                if not (origin is not None and origin[0] == 'from'
-                        and origin[1] == 'operator'
-                        and origin[2] in _OPERATOR_STORE_FUNCS):
+                # r50: the origin value is a frozenset -- any origin the
+                # reference's binding layer holds admits (the union
+                # rewrite; star expansion included).
+                if not any(origin[0] == 'from'
+                           and origin[1] == 'operator'
+                           and origin[2] in _OPERATOR_STORE_FUNCS
+                           for origin in origins.get(callee.id, ())):
                     return False
                 # ``from operator import setitem; setitem(items, 1, z)``
                 # names the display first, exactly the module spelling.
@@ -7637,13 +7759,13 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 receiver, args = node.args[0], list(node.args[1:])
             elif isinstance(callee, ast.Attribute):
                 attr = callee.attr
-                base_origin = (origins.get(callee.value.id)
-                               if isinstance(callee.value, ast.Name)
-                               else None)
+                base_origins = (origins.get(callee.value.id, frozenset())
+                                if isinstance(callee.value, ast.Name)
+                                else frozenset())
                 operator_store = (
                     isinstance(callee.value, ast.Name)
                     and (callee.value.id == 'operator'
-                         or base_origin == ('module', 'operator'))
+                         or ('module', 'operator') in base_origins)
                     and attr in _OPERATOR_STORE_FUNCS)
                 if not (attr in _ELEMENT_STORE_ATTRS or operator_store):
                     return False
@@ -7651,17 +7773,16 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 unbound = (isinstance(callee.value, ast.Name)
                            and (callee.value.id in _UNBOUND_TYPE_NAMES
                                 or operator_store
-                                or (base_origin is not None
-                                    and base_origin[0] == 'from'
-                                    and base_origin[1] == 'builtins'
-                                    and base_origin[2]
-                                    in _UNBOUND_TYPE_NAMES)))
+                                or any(origin[0] == 'from'
+                                       and origin[1] == 'builtins'
+                                       and origin[2] in _UNBOUND_TYPE_NAMES
+                                       for origin in base_origins)))
                 if (not unbound
                         and isinstance(callee.value, ast.Attribute)
                         and isinstance(callee.value.value, ast.Name)
                         and (callee.value.value.id == 'builtins'
-                             or origins.get(callee.value.value.id)
-                             == ('module', 'builtins'))):
+                             or ('module', 'builtins') in origins.get(
+                                 callee.value.value.id, ()))):
                     # #1953 fix-r1 round 48 (probe
                     # builtins-qualified-append):
                     # ``builtins.list.append(items, z)`` is the unbound
@@ -8131,9 +8252,23 @@ def _receiver_attribute_writes(tree, receivers, shared):
                             unknown_stars.append(node)
                         continue
                     name = alias.asname or alias.name.split('.')[0]
+                    # #1953 fix-r1 round 50 (DS r49 sibling#5, probe
+                    # s5-from-setitem-mddict, 2026-11-10):
+                    # ``from operator import setitem as _si`` is the
+                    # write helper the same way the builtins spelling is
+                    # -- the helper field stayed ``None`` for operator
+                    # sources, so the poisoning walk's freshness guard
+                    # cleared the decoded write and ``_si(md.__dict__,
+                    # 'common', ...)`` read clean (a false PASS).  The
+                    # level-0 test rides along so a relative ``from
+                    # .operator import`` (a package sibling, GLM r38
+                    # boundary P2) does not.
+                    operator_import = (getattr(node, 'module', None)
+                                       == 'operator'
+                                       and getattr(node, 'level', 0) == 0)
                     helper = (alias.name
-                              if builtins_import
-                              and alias.name in _MANAGED_WRITE_ATTRS
+                              if alias.name in _MANAGED_WRITE_ATTRS
+                              and (builtins_import or operator_import)
                               else None)
                     add(name, node, helper, True)
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
@@ -8517,6 +8652,43 @@ def _dict_binding_keys(name, tree):
     # (``e = f = d``) or unpack (``e, x = (d, 1)``) alias keeps the same
     # mapping the plain spelling does, and the single-target fixpoint
     # never saw one (probes b2a-d).
+    # #1953 fix-r1 round 50 (DS r49 sibling#1, probes s1-dict-ior-* /
+    # s1-dict-dunder-unbound, 2026-11-10): the in-place merge joins every
+    # family this walk reads -- the receiver-bound ``d.__ior__({...})``,
+    # the unbound ``dict.__ior__(d, {...})`` and the operator spellings
+    # ``operator.ior(d, {...})`` plain and import-aliased (``_op.ior``),
+    # plus the from-imported bare name (``from operator import ior as
+    # _i; _i(d, {...})``), whose callee is a Name, not an Attribute --
+    # each adds keys the literal binding never saw, so each reads
+    # unbounded (the r27 rule).
+    _dict_mutating_attrs = ('update', 'setdefault', 'pop', 'popitem',
+                            'clear', '__setitem__', '__delitem__',
+                            '__ior__')
+    _operator_dict_mutators = ('setitem', 'delitem', 'ior', '__setitem__',
+                               '__delitem__', '__ior__')
+    # r50: this walk is file-wide over-approximation (any spelling anywhere
+    # makes the keys unbounded), so the origins are the union of *every*
+    # layer -- an import-alias bound inside a function (``def _f():
+    # import operator as _op``) must read the same as the module-level one
+    # (probe s1-dict-ior-alias; the module-layer-only map missed it).
+    _all_layers, _ = _import_binding_layers(tree)
+    origins = {}
+    for _layer in _all_layers.values():
+        for _bound, _found in _layer.items():
+            origins.setdefault(_bound, set()).update(_found)
+    origins = {k: frozenset(v) for k, v in origins.items()}
+
+    def _names_operator_module(expr):
+        return (isinstance(expr, ast.Name)
+                and (expr.id == 'operator'
+                     or ('module', 'operator') in origins.get(expr.id, ())))
+
+    def _names_dict_type(expr):
+        return (isinstance(expr, ast.Name)
+                and (expr.id == 'dict'
+                     or ('from', 'builtins', 'dict') in origins.get(
+                         expr.id, ())))
+
     receivers = _name_alias_closure(tree, {name})
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
@@ -8530,21 +8702,30 @@ def _dict_binding_keys(name, tree):
             value = None
         elif isinstance(node, ast.Call):
             callee = _callee_expr(node)
+            if isinstance(callee, ast.Name):
+                # r50: the from-imported operator store functions name the
+                # receiver first, the same unbounded read.
+                if any(origin[0] == 'from'
+                       and origin[1] == 'operator'
+                       and origin[2] in _operator_dict_mutators
+                       for origin in origins.get(callee.id, ())):
+                    first = node.args[0] if node.args else None
+                    if (isinstance(first, ast.Name)
+                            and first.id in receivers):
+                        return None
+                continue
             if not isinstance(callee, ast.Attribute):
                 continue
             if (isinstance(callee.value, ast.Name)
                     and callee.value.id in receivers
-                    and callee.attr in ('update', 'setdefault', 'pop',
-                                        'popitem', 'clear', '__setitem__',
-                                        '__delitem__')):
+                    and callee.attr in _dict_mutating_attrs):
                 return None
             if (isinstance(callee.value, ast.Name)
-                    and ((callee.value.id == 'dict'
-                          and callee.attr in ('update', 'setdefault', 'pop',
-                                             'popitem', 'clear',
-                                             '__setitem__', '__delitem__'))
-                         or (callee.value.id == 'operator'
-                             and callee.attr in ('setitem', 'delitem')))):
+                    and ((_names_dict_type(callee.value)
+                          and callee.attr in _dict_mutating_attrs)
+                         or (_names_operator_module(callee.value)
+                             and callee.attr
+                             in _operator_dict_mutators))):
                 first = node.args[0] if node.args else None
                 if isinstance(first, ast.Name) and first.id in receivers:
                     return None
@@ -8561,6 +8742,15 @@ def _dict_binding_keys(name, tree):
             elif (isinstance(target, ast.Subscript)
                   and isinstance(target.value, ast.Name)
                   and target.value.id in receivers):
+                return None
+            elif (isinstance(node, ast.AugAssign)
+                    and isinstance(target, ast.Name)
+                    and target.id in receivers):
+                # r50: the augmented merge through an alias (``e = d;
+                # e |= {...}``) mutates the same mapping in place -- the
+                # direct ``d |= {...}`` spelling already reads unbounded
+                # (``value`` is ``None`` for an AugAssign); the alias
+                # target fell through both arms above.
                 return None
     return keys if seen else None
 
@@ -9045,7 +9235,7 @@ def _local_bound_values(node):
     return values
 
 
-def _name_alias_closure(scope, seeds):
+def _name_alias_closure(scope, seeds, tree=None):
     """Every name an alias chain of *seeds* reaches (r44).
 
     #1953 fix-r1 round 44 (GLM r43 boundary#2/#3, probe 2026-11-10): the
@@ -9072,8 +9262,20 @@ def _name_alias_closure(scope, seeds):
     (``case [_n3]:``) binds an element, not the subject, and a
     non-literal / mixed iterable has no single value to project -- both
     stay outside the closure.
+
+    #1953 fix-r1 round 50 (probes c2-classbody-*, matrix module cells,
+    # 2026-11-10): module scope spells ``None`` in the scoped walk, so the
+    walk root of a module-layer alias closure is the *module tree* the
+    caller hands in -- ``ast.walk(None)`` crashed the registration path
+    the union rewrite now reaches (r49 crashed the same way on its own
+    recognized module-level spellings, a latent gap the corpus never
+    tripped).  No tree at all keeps the seeds unchanged (fail-closed
+    under-count, never a crash).
     """
     names = set(seeds)
+    root = scope if scope is not None else tree
+    if root is None:
+        return names
     changed = True
 
     def literal_seed_iterable(iterable):
@@ -9090,7 +9292,7 @@ def _name_alias_closure(scope, seeds):
 
     while changed:
         changed = False
-        for node in ast.walk(scope):
+        for node in ast.walk(root):
             if isinstance(node, ast.AugAssign):
                 continue
             if (isinstance(node, ast.NamedExpr)
@@ -20744,6 +20946,249 @@ def aggregation_audit():
             failures.append('#1953 aggregation-audit: detector self-test '
                             'withdrew a clean receiver behind ' + _m49_kind
                             + ' (round 49)')
+    # #1953 fix-r1 round 50 (the structural second layer: the scope model
+    # rewritten to union semantics; DS r49 boundary#1/#2 /
+    # concurrency#1/#2/#3 P0 + sibling#1/#2/#5 P1, probes probe-r50 /
+    # probe-r49d, 2026-11-10): r49 kept one origin per name -- the module
+    # read only ``tree.body`` direct children (a try-wrapped or class-body
+    # import invisible) and a function scope took ``ast.walk(scope)`` with
+    # overwrite (a nested def's import clobbering the outer binding while
+    # the outer layer stayed invisible to a closure) and a star was skipped
+    # outright.  The layer chain now resolves each name through
+    # ``[scope, parent, ..., None]`` with every binding of the innermost
+    # layer that binds the name unioned, and the module-layer rows below
+    # also pin the walk-root fix (``ast.walk(None)`` crashed the
+    # registration path r49 already reached on its own recognized
+    # module-level spellings -- probes c2-classbody-* / matrix module
+    # cells).  The shadow rows pin the layering itself: the inner layer's
+    # binding is in force inside it, the outer's outside, and a whole-
+    # subtree union would fail the clean twin.
+    for _m50_kind, _m50_src, _m50_prefix in (
+            ("a try-wrapped module import of operator",
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _op.setitem(_items, 1, _hs[0])\n"
+             "    _items[1]('common', object())\n",
+             "try:\n    import operator as _op\n"
+             "except ImportError:\n    raise\n"),
+            ("a module-level star import of operator",
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    setitem(_items, 1, _hs[0])\n"
+             "    _items[1]('common', object())\n",
+             "from operator import *\n"),
+            ("an outer import used inside a nested def",
+             "    import operator as _op\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    def _inner():\n"
+             "        _op.setitem(_items, 1, _hs[0])\n"
+             "        _items[1]('common', object())\n"
+             "    _inner()\n",
+             ""),
+            ("an outer dirty import shadowed by a nested clean import",
+             "    import operator as _op\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    def _shadowed():\n"
+             "        import os as _op\n"
+             "        return _op\n"
+             "    _op.setitem(_items, 1, _hs[0])\n"
+             "    _items[1]('common', object())\n",
+             ""),
+            ("an outer clean import shadowed by a nested dirty import",
+             "    import builtins as _op\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    def _shadowed():\n"
+             "        import operator as _op\n"
+             "        _op.setitem(_items, 1, _hs[0])\n"
+             "        _items[1]('common', object())\n"
+             "        return _op\n"
+             "    _shadowed()\n",
+             ""),
+            ("a class-body import of operator inside the function",
+             "    class _C:\n"
+             "        import operator as _op\n"
+             "        _items = [lambda *a: None, lambda *a: None]\n"
+             "        _op.setitem(_items, 1, _hs[0])\n"
+             "        _items[1]('common', object())\n",
+             ""),
+            ("an operator.ior dict merge iterated for keys",
+             "    import operator\n"
+             "    _d = {'safe': 1}\n"
+             "    operator.ior(_d, {'common': None})\n"
+             "    for _k in _d:\n"
+             "        setattr(md, _k, object())\n",
+             ""),
+            ("an import-aliased operator.ior dict merge iterated for keys",
+             "    import operator as _op\n"
+             "    _d = {'safe': 1}\n"
+             "    _op.ior(_d, {'common': None})\n"
+             "    for _k in _d:\n"
+             "        setattr(md, _k, object())\n",
+             ""),
+            ("an unbound dict.__ior__ dict merge iterated for keys",
+             "    _d = {'safe': 1}\n"
+             "    dict.__ior__(_d, {'common': None})\n"
+             "    for _k in _d:\n"
+             "        setattr(md, _k, object())\n",
+             ""),
+            ("a guard on a MatchAs-wrapped never-matching sequence pattern",
+             "    _items = [_hs[0], lambda *a: None]\n"
+             "    match 1:\n"
+             "        case [_x] as _w if _items.insert(1, 0):\n"
+             "            pass\n"
+             "        case _:\n"
+             "            _items.pop(1)\n"
+             "    _items[-1]('common', object())\n",
+             ""),
+            ("a guard on a MatchAs-wrapped all-failing or-pattern",
+             "    _items = [_hs[0], lambda *a: None]\n"
+             "    match 1:\n"
+             "        case 0 | 2 as _w if _items.insert(1, 0):\n"
+             "            pass\n"
+             "        case _:\n"
+             "            _items.pop(1)\n"
+             "    _items[-1]('common', object())\n",
+             ""),
+            ("a from-imported setitem mapping write of a handle",
+             "    from operator import setitem as _si\n"
+             "    _si(md.__dict__, 'common', object())\n",
+             ""),
+            ("a star-imported setitem mapping write of a handle",
+             "    setitem(md.__dict__, 'common', object())\n",
+             "from operator import *\n")):
+        _m50_display = ast.parse(
+            _m50_prefix +
+            "def _m50a(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m50_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' not in _withdrawn_receivers(_m50_display):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost a receiver behind ' + _m50_kind
+                            + ' (round 50)')
+    # the module-layer placements: a whole-module source (class bodies at
+    # module level execute there, and the receiver-establishing call rides
+    # along -- the verdict needs it to register 'md' at all, which the r49
+    # probe's c2 cell omitted).
+    for _m50_kind, _m50_src in (
+            ("a module-level class-body import with the use in the class body",
+             "def _m50m():\n"
+             "    return md.common.aggregate_status(None)\n"
+             "_hs = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+             "class _C:\n"
+             "    import operator as _op\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _op.setitem(_items, 1, _hs[0])\n"
+             "    _items[1]('common', object())\n"
+             "_m50m()\n"),
+            ("a try-wrapped module import with a module-level class-body use",
+             "def _m50m():\n"
+             "    return md.common.aggregate_status(None)\n"
+             "_hs = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+             "try:\n    import operator as _op\n"
+             "except ImportError:\n    raise\n"
+             "class _C:\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _op.setitem(_items, 1, _hs[0])\n"
+             "    _items[1]('common', object())\n"
+             "_m50m()\n"),
+            ("a module-level star import with a module-level class-body use",
+             "def _m50m():\n"
+             "    return md.common.aggregate_status(None)\n"
+             "_hs = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+             "from operator import *\n"
+             "class _C:\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    setitem(_items, 1, _hs[0])\n"
+             "    _items[1]('common', object())\n"
+             "_m50m()\n")):
+        _m50_module = ast.parse(_m50_src)
+        if 'md' not in _withdrawn_receivers(_m50_module):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost a receiver behind ' + _m50_kind
+                            + ' (round 50)')
+    for _m50_kind, _m50_src, _m50_prefix in (
+            ("a try-wrapped module import of a clean store",
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    _op.setitem(_items, 1, lambda *a: None)\n"
+             "    _items[1]('common', object())\n",
+             "try:\n    import operator as _op\n"
+             "except ImportError:\n    raise\n"),
+            ("a module-level star import of a clean store",
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    setitem(_items, 1, lambda *a: None)\n"
+             "    _items[1]('common', object())\n",
+             "from operator import *\n"),
+            ("an outer clean import shadowed by a nested dirty import",
+             "    import os as _op\n"
+             "    _items = [lambda *a: None, lambda *a: None]\n"
+             "    def _shadowed():\n"
+             "        import operator as _op\n"
+             "        return _op\n"
+             "    _op.setitem(_items, 1, _hs[0])\n"
+             "    _items[1]('common', object())\n",
+             ""),
+            ("a class-body import of a clean store",
+             "    class _C:\n"
+             "        import operator as _op\n"
+             "        _items = [lambda *a: None, lambda *a: None]\n"
+             "        _op.setitem(_items, 1, lambda *a: None)\n"
+             "        _items[1]('common', object())\n",
+             ""),
+            ("a MatchAs-wrapped guard with a clean fall-through",
+             "    _items = [_hs[0], lambda *a: None]\n"
+             "    match 1:\n"
+             "        case [_x] as _w if _items.insert(1, 0):\n"
+             "            pass\n"
+             "        case _:\n"
+             "            pass\n"
+             "    _items[-1]('common', object())\n",
+             ""),
+            ("a star-imported setitem mapping write of an untracked key",
+             "    setitem(md.__dict__, 'other', object())\n",
+             "from operator import *\n")):
+        _m50_clean = ast.parse(
+            _m50_prefix +
+            "def _m50b(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m50_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' in _withdrawn_receivers(_m50_clean):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'withdrew a clean receiver behind ' + _m50_kind
+                            + ' (round 50)')
+    _m50_module_clean = ast.parse(
+        "def _m50m():\n"
+        "    return md.common.aggregate_status(None)\n"
+        "_hs = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+        "class _C:\n"
+        "    import operator as _op\n"
+        "    _items = [lambda *a: None, lambda *a: None]\n"
+        "    _op.setitem(_items, 1, lambda *a: None)\n"
+        "    _items[1]('common', object())\n"
+        "_m50m()\n")
+    if 'md' in _withdrawn_receivers(_m50_module_clean):
+        failures.append('#1953 aggregation-audit: detector self-test '
+                        'withdrew a clean receiver behind a module-level '
+                        'class-body import of a clean store (round 50)')
+    # #1953 fix-r1 round 50 (DS r49 sibling#4, probe u-sysmodules-ior*):
+    # the import guard also reads the in-place merge spellings --
+    # ``operator.ior(sys.modules, {...})``, its import-aliased spelling and
+    # the receiver-bound ``sys.modules.__ior__({...})`` each hand the
+    # module map values the plain ``setitem`` spelling already recorded.
+    for _m50_kind, _m50_src in (
+            ("an operator.ior write into sys.modules",
+             "import operator, sys\n"
+             "operator.ior(sys.modules, {'_guard': object()})\n"),
+            ("an import-aliased operator.ior write into sys.modules",
+             "import operator as _op\n"
+             "import sys\n"
+             "_op.ior(sys.modules, {'_guard': object()})\n"),
+            ("a receiver-bound __ior__ write into sys.modules",
+             "import sys\n"
+             "sys.modules.__ior__({'_guard': object()})\n")):
+        if '_guard' not in _sys_modules_write_values(ast.parse(_m50_src)):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'dropped the written value behind ' + _m50_kind
+                            + ' (round 50)')
     # #1953 fix-r1 round 47 (GLM r46 sibling#2/#3, unit probes u-class-site/
     # u-fortarget-loops): the module call tables record a class-body call at
     # its class statement and carry the loop id on a for-target call.
