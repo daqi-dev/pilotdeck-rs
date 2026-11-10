@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { Server } from 'node:net';
 import { checkObservation, runControls, RULES } from './observation_rules.mjs';
 
-const WORKTREE = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const WORKTREE = resolve(process.env.A19_HOST_SOURCE_ROOT ?? resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
 // The Python launcher isolates the environment BEFORE this Node starts.
 const isolation = process.env.A52_ISOLATION;
 assert.ok(isolation, 'Use python3 scripts/a5-19/run.py (isolated Node startup required)');
@@ -157,7 +157,8 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
   const id = `${cell.name}/${variant.name}/${phase}/${repetition}`;
   const dir = resolve(RUN_DIR, id);
   mkdirSync(dir, { recursive: true });
-  const transcriptPath = resolve(dir, 'transcript.jsonl');
+  const transcriptPath = process.env.A19_HOST_ADAPTER ? resolve(dir, 'chats', 'session.jsonl') : resolve(dir, 'transcript.jsonl');
+  mkdirSync(dirname(transcriptPath), { recursive: true });
   const registryPath = resolve(dir, 'registry.json');
   writeFileSync(transcriptPath, '');
   const j = new Journal(resolve(dir, 'timeline.ndjson'));
@@ -254,7 +255,13 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
       return { result, messages: input.messages };
     },
   };
-  const runner = new TurnRunner(loop, transcript, undefined, () => new Date(TIME), undefined,
+  // #1314: explicit collection adapter only; original loop/control/score stays default.
+  const sidecarScene = process.env.A19_HOST_ADAPTER
+    ? await (await import(pathToFileURL(resolve(process.env.A19_HOST_ADAPTER)).href)).wrapLoop({
+        dir, phase, order, journal: j, outcome, knownReturn, transcript, time: TIME, id,
+      })
+    : undefined;
+  const runner = new TurnRunner(sidecarScene?.loop ?? loop, transcript, undefined, () => new Date(TIME), undefined,
     { cwd: dir, transcriptPath, collectFileArtifacts: false }, { autoGenerateSessionTitle: false });
   const session = new AgentSession({ sessionId: 'session', turnRunner: runner, cwd: dir, transcriptPath });
   const originalSubmit = session.submit.bind(session);
@@ -319,7 +326,9 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
     };
   }
   const gateway = new InProcessGateway(router, {
-    uuid: () => 'run', now: () => new Date(TIME), turnCompletionFence: fence,
+    // An external sidecar validates absolute deadlines on its real clock.
+    // The intercepted TIMEOUT_MS timer and all original event ordering remain unchanged.
+    uuid: () => 'run', now: () => new Date(sidecarScene ? Date.now() : TIME), turnCompletionFence: fence,
     ...(registry ? { runRegistry: registry } : {}),
     recordAgentStatusMessage: async (input: any) => { await recordStatus(input.sessionKey, input.turnId, input.status); return { recorded: true }; },
   });
@@ -423,6 +432,7 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
       assert.deepEqual(events, Object.values(disk.events)[0] ?? [], 'events independently reread');
       registryObservation = { applicable: true, source: relative(WORKTREE, registryPath), rawText: diskText, disk, record, events };
     }
+    sidecarScene?.collect();
     const observation = { id, evidenceChecks: { frames: ['FRAME_PUBLICATIONS'], durableStatus: ['STATUS_RAW', 'STATUS_COMMITS', 'STATUS_FIFO'], registry: cell.registry ? Object.keys(RULES).filter(k => k.startsWith('REGISTRY_')) : 'N/A' }, variant, phase, repetition, frames, durableStatus: durable, registry: registryObservation, timeline: j.rows,
       transcriptRawText: readFileSync(transcriptPath, 'utf8') };
     checkCompleteness(observation);
@@ -438,6 +448,7 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
   } finally {
     await cleanupAll([
       () => drainObserver(),
+      ...(sidecarScene ? [() => sidecarScene.close()] : []),
       () => transcript.close(),
       () => gateway.dispose(),
       () => router.shutdown(),
@@ -500,10 +511,14 @@ let failedStatus: any;
 let failedRegistry: any;
 // Save the rules and complete input manifest BEFORE any baseline measurements.
 writeFileSync(resolve(OUTPUT, 'preregistration.json'), JSON.stringify({ rules: RULES, cells, phases: ['model', 'tool'], repeats: 5 }, null, 2) + '\n');
+const selectedCase = process.env.A19_HOST_CASE;
+const registeredCases = cells.flatMap(cell => cell.variants.flatMap(variant => ['model', 'tool'].map(phase => `${cell.name}/${variant.name}/${phase}`)));
+assert.ok(!selectedCase || registeredCases.includes(selectedCase), 'host subset must name an original registered case');
 for (const cell of cells) {
   const observations: any[] = [];
   const repetitions: any[] = [];
   for (const variant of cell.variants) for (const phase of ['model', 'tool']) {
+    if (selectedCase && `${cell.name}/${variant.name}/${phase}` !== selectedCase) continue;
     const runs: any[] = [];
     for (let repetition = 1; repetition <= 5; repetition++) {
       const id = `${cell.name}/${variant.name}/${phase}/${repetition}`;
@@ -531,7 +546,7 @@ for (const cell of cells) {
   writeFileSync(resolve(OUTPUT, cell.name + '.json'), JSON.stringify({ cell: cell.name, baselineCommit, node: process.version, repetitions, observations }, null, 2) + '\n');
 }
 // Controls must reject with EXACT registered rule IDs, not just throw/exit.
-controls = runControls(firstFrames, firstRegistry, failedStatus, failedRegistry);
+controls = selectedCase ? [] : runControls(firstFrames, firstRegistry, failedStatus, failedRegistry);
 for (const [path, hash] of importedSources) assert.equal(createHash('sha256').update(readFileSync(path)).digest('hex'), hash, `baseline changed: ${path}`);
 const manifest = {
   generatedAt: new Date().toISOString(), node: process.version, baselineCommit,
@@ -542,12 +557,23 @@ const manifest = {
   isolation: Object.fromEntries(['HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'TMPDIR', 'PILOTDECK_SKIP_BROWSER_OPEN', 'SKIP_BROWSER_OPEN'].map(k => [k, process.env[k]])), pilotHome: process.env.PILOT_HOME,
   fixtureFiles: ['six_cells.mts', 'observation_rules.mjs', 'run.py', 'append-observer.mjs', 'cleanup-observer.mjs'].map(name => ({ path: `scripts/a5-19/${name}`, sha256: createHash('sha256').update(readFileSync(resolve(WORKTREE, 'scripts/a5-19', name))).digest('hex') })),
   scriptSha256: createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex'),
+  externalSidecarAdapter: process.env.A19_HOST_ADAPTER ? {
+    path: resolve(process.env.A19_HOST_ADAPTER),
+    sha256: createHash('sha256').update(readFileSync(resolve(process.env.A19_HOST_ADAPTER))).digest('hex'),
+    sidecarSpec: JSON.parse(readFileSync(process.env.A19_HOST_SIDECAR_SPEC!, 'utf8')),
+    controlledLoopContract: '#1371; unchanged 72 case controls; real-clock absolute transport deadlines',
+  } : null,
   // 路径与哈希分两行写：文件名含 token / credential 时，同一行的 64 位哈希会被 gitleaks 误判为密钥。
   importedSources: [...importedSources].map(([path, hash]) => ({ path: relative(BASELINE, path), sha256: hash })),
   checks: { tcpListenForbidden: true, nonemptyObservers: true, diskRereadAgreesWithFreshRegistry: true, statusInjectionInsideWriteTail: true, registryInjectionInsideMutationChain: true, baselineHashesUnchanged: true, observerControls: controls },
   unstableGroups: summary.filter(r => !r.stable),
+  collectionScope: selectedCase ? 'FILTERED_FORMAL_SCENES_NOT_WHOLE_HOST' : 'FULL_ORIGINAL_72_SCENE_COLLECTION',
+  selectedCase: selectedCase ?? null,
+  missingCases: registeredCases.filter(id => !summary.some(row => `${row.cell}/${row.variant}/${row.phase}` === id)),
+  controlsStatus: selectedCase ? 'NOT_RUN_FILTERED_CAPTURE' : 'EXECUTED',
   repeats: 5, totalMeasurements: summary.reduce((n, r) => n + r.runs, 0), summary,
 };
-assert.deepEqual(manifest.executedCases, manifest.expectedCases, 'no missing/duplicate/implicit skip cases');
+assert.deepEqual(manifest.executedCases, selectedCase ? [selectedCase] : manifest.expectedCases, 'no missing/duplicate/implicit skip cases within explicit capture selection');
+assert.equal(manifest.expectedCases.length, 72, 'whole-host denominator is always the original 72');
 writeFileSync(resolve(OUTPUT, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
 console.log(`DONE ${manifest.totalMeasurements} measurements; ${summary.filter(r => !r.stable).length} unstable variant/phase groups; ${importedSources.size} unchanged baseline source files.`);

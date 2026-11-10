@@ -1314,17 +1314,17 @@ def _observer_binding(rows):
     return bindings[0]
 
 
-def load_native_capture(folder):
+def load_native_capture(folder, *, expected_partition=None):
     """Formal scoring rejects all explicitly synthetic controls before replay."""
     launch = read(Path(folder) / 'capture/launch.json')
     evidence = read(Path(folder) / 'capture/evidence.json')
     require(launch.get('scope') != 'SYNTHETIC_CONTROL_ONLY'
             and evidence.get('scope') != 'SYNTHETIC_CONTROL_ONLY', 'NATIVE_CAPTURE',
             'synthetic control is not formal run evidence')
-    return _load_native_artifacts(folder)
+    return _load_native_artifacts(folder, expected_partition=expected_partition)
 
 
-def _load_native_artifacts(folder):
+def _load_native_artifacts(folder, *, expected_partition=None):
     """Shared strict artifact authentication, also exercised by labelled controls."""
     folder = Path(folder).resolve()
     require((folder / 'capture').is_dir() and (folder / 'session-domain').is_dir(),
@@ -1360,6 +1360,13 @@ def _load_native_artifacts(folder):
             'driver-recorded hello binding disagrees with the observer hello record')
     cases_document, provider = read(folder / 'session-domain/cases.json'), read(folder / 'session-domain/provider.json')
     expected = read(SCRIPT / 'fixtures/session-calibration.json')['cases']
+    if expected_partition is not None:
+        # #1314 only: the host suite retains all 72 × k5 across partitions.
+        # The existing deadline caller still requires a full manifest here.
+        require(isinstance(expected_partition, list) and bool(expected_partition)
+                and expected_partition == [case for case in expected if case in expected_partition],
+                'COVERAGE', 'partition must be a unique ordered subset of the frozen 72 cases')
+        expected = expected_partition
     require(contract.get('cases') == expected, 'COVERAGE',
             'the native capture must declare the full E1 case manifest; no denominator shrink')
     rows = cases_document.get('cases') if isinstance(cases_document, dict) else None
@@ -2975,13 +2982,14 @@ def retirement_report(output, baseline):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--suite', choices=('calibrate', 'deadline', 'retirement'), required=True)
+    parser.add_argument('--suite', choices=('calibrate', 'deadline', 'retirement', 'host'), required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--baseline', type=Path, default=BASELINE)
     parser.add_argument('--native-capture', type=Path,
                         help='#1140 native witness capture directory; the deadline suite '
                              'audits it and scores its rust-host/rust-sidecar cell against '
                              'the registered A19-HOST expectations')
+    parser.add_argument('--host-manifest', type=Path, help='#1314 exact four-cell capture manifest; host suite only')
     args = parser.parse_args()
     takeovers = []
     # Preconditions are checked before any output directory exists (#187); they
@@ -2999,6 +3007,10 @@ def main():
                               'error': 'native witness capture directory lacks capture/ or '
                                        f'session-domain/: {capture}'}, ensure_ascii=False))
             return 2
+    if (args.suite == 'host') != (args.host_manifest is not None):
+        print(json.dumps({'suite': args.suite, 'status': 'BLOCKED',
+                          'error': '--suite host and --host-manifest must be provided together'}))
+        return 2
     install_shutdown()
     try:
         with parity_lock(timeout=30, takeovers=takeovers):
@@ -3049,6 +3061,16 @@ def main():
                         raise ApparatusVerificationError('FROZEN: deadline requires successful frozen check')
                     report.update(deadline_report(args.native_capture))
                     _, code = common.aggregate_status(report['status'])
+                elif args.suite == 'host':
+                    if report['frozen']['exitCode'] != 0:
+                        raise ApparatusVerificationError('FROZEN: host requires successful frozen check')
+                    host_suite = _load('host_suite', SCRIPT / 'host_suite.py')
+                    _verify_cli_imports()
+                    try:
+                        report.update(host_suite.report(args.host_manifest.resolve(), session=sys.modules[__name__], output=output))
+                    except (host_suite.HostError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+                        raise EvidenceError(getattr(error, 'rule', 'HOST_EVIDENCE'), str(error)) from error
+                    _, code = common.aggregate_status(report['status'] if report['status'] in common.BATCH_STATUS_ORDER else 'BLOCKED')
                 elif args.suite == 'retirement':
                     # TS calibration slice (#1355): the frozen re-registration is the
                     # coordinator receive step, so measurements are recorded and the

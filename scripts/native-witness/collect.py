@@ -18,6 +18,7 @@ import re
 import select
 import signal
 import socket
+import subprocess
 import threading
 import time
 
@@ -253,7 +254,8 @@ class WireClient:
         return self.receive(until=cap)
 
 
-def native_run(gateway, sidecar, output, port=28999, session_domain=False, registry='on'):
+def native_run(gateway, sidecar, output, port=28999, session_domain=False, registry='on',
+               ts_sidecar_baseline=None, session_cases=()):
     w.need(sys.platform == 'linux', 'Linux only; macOS eslogger + root deferred')
     w.need(28999 <= port <= 29008, 'gateway port must be in 28999 series')
     w.need(registry in ('on', 'off'), '#2396 registry capture group must be on or off')
@@ -267,7 +269,8 @@ def native_run(gateway, sidecar, output, port=28999, session_domain=False, regis
         for candidate, reuse_address in ((port, False), (port + 1, True)):
             probe_bind(candidate, reuse_address=reuse_address)
         result = _native_run(gateway, sidecar, output, port, session_domain=session_domain,
-                             registry=registry)
+                             registry=registry, ts_sidecar_baseline=ts_sidecar_baseline,
+                             session_cases=session_cases)
     print(json.dumps({'status': 'WITNESS_CAPTURED', 'scoring': 'NOT_RUN',
                       'sessionDomain': bool(session_domain), 'registry': registry,
                       'output': str(Path(output).resolve())}))
@@ -629,7 +632,24 @@ def wait_ready(tracer, folder, port, deadline):
         time.sleep(0.01)
 
 
-def _native_run(gateway, sidecar, output, port, session_domain=False, registry='on'):
+def _native_run(gateway, sidecar, output, port, session_domain=False, registry='on',
+                ts_sidecar_baseline=None, session_cases=()):
+    # #1314: the only alternate collector profile starts the original TS CLI
+    # with an explicit, pinned argv; never an arbitrary shell/wrapper/factory.
+    sidecar_args = []
+    if ts_sidecar_baseline is not None:
+        w.need(session_domain, 'controlled TS factory only belongs to original session-domain stimuli')
+        ts_sidecar_baseline = str(Path(ts_sidecar_baseline).resolve(strict=True))
+        adapters = Path(__file__).resolve().parents[1] / 'a5-19'
+        ts_sidecar_factory = str((adapters / 'host-sidecar-stimulus.mjs').resolve(strict=True))
+        loader = (adapters / 'host-sidecar-source-loader.mjs').resolve(strict=True)
+        sidecar_args = ['--import', str(loader), str(Path(ts_sidecar_baseline) / 'src/cli/pilotdeck-agent-loop-sidecar.ts')]
+        baseline_head = subprocess.check_output(['git', '-C', ts_sidecar_baseline, 'rev-parse', 'HEAD'], text=True).strip()
+        w.need(baseline_head == 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', 'fixed TS baseline identity')
+        w.need(not subprocess.check_output(['git', '-C', ts_sidecar_baseline, 'status', '--porcelain', '--untracked-files=no'], text=True).strip(), 'fixed TS baseline must be tracked clean')
+        versions = json.loads(subprocess.check_output([str(Path(sidecar).resolve(strict=True)), '-p', 'JSON.stringify(process.versions)'], text=True, timeout=5))
+        w.need([versions.get(key) for key in ('node', 'icu', 'uv')] == ['22.22.0', '78.2', '1.52.1'], 'fixed Node/ICU/libuv versions required')
+        factory_sha, loader_sha = w.sha(ts_sidecar_factory), w.sha(loader)
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=False)
     home, project = output / 'home', output / 'project'
@@ -637,6 +657,14 @@ def _native_run(gateway, sidecar, output, port, session_domain=False, registry='
     project.mkdir()
     requests = []
     cases = session_manifest() if session_domain else None
+    if session_cases:
+        # Only the #1314 capture adapter may shard the fixed trace byte budget.
+        # The original deadline consumer still requires the full registered 72.
+        w.need(cases is not None and len(session_cases) == len(set(session_cases)) and set(session_cases) <= set(cases),
+               'host capture partition must contain unique original cases')
+        w.need(all(case.startswith('registry-') == (registry == 'on') for case in session_cases),
+               'host capture partition must agree with the process-frozen registry setting')
+        cases = [case for case in cases if case in session_cases]
     expectations = session_expectations() if session_domain else {}
     rows, observer_rows, sources = [], [], []
     # The driver's own record of the gateway's hello answer (#1140 fix-r3),
@@ -730,6 +758,8 @@ def _native_run(gateway, sidecar, output, port, session_domain=False, registry='
         gateway, sidecar = str(Path(gateway).resolve(strict=True)), str(Path(sidecar).resolve(strict=True))
         argv = [gateway, '--native', '--home', str(home), '--project', str(project), '--listen',
                 f'127.0.0.1:{port}', '--token-file', str(home / 'token'), '--sidecar', sidecar, '--drain-ms', '1500']
+        for value in sidecar_args:
+            argv.extend(['--sidecar-arg', value])
         # The real gateway assembly spawns one sidecar per session, and the
         # session-domain driver gives every case its own session, so the
         # declared roles must be host x1 plus one sidecar per manifest case —
@@ -737,7 +767,7 @@ def _native_run(gateway, sidecar, output, port, session_domain=False, registry='
         # cap-fix; the old ['host', 'sidecar'] failed closed on real captures).
         contract = {'host': 'rust', 'project': str(project),
                     'processRoles': (['host'] + ['sidecar'] * len(cases)) if session_domain else ['host', 'sidecar'],
-                    'binaries': {'host': w.identity(gateway, argv), 'sidecar': w.identity(sidecar, [sidecar])},
+                    'binaries': {'host': w.identity(gateway, argv), 'sidecar': w.identity(sidecar, [sidecar, *sidecar_args])},
                     'externalEndpoints': [f'127.0.0.1:{port + 1}'],
                     'connections': 1,
                     'cases': cases if session_domain else ['native-witness-smoke'],
@@ -862,6 +892,11 @@ def _native_run(gateway, sidecar, output, port, session_domain=False, registry='
             # The three s2-s4 entries resolve once per process (#1369/#1370/
             # #1371); sidecars inherit them from the gateway.
             environment.update(control.environment())
+        if ts_sidecar_baseline is not None:
+            environment.update(PILOTDECK_AGENT_LOOP_FACTORY=ts_sidecar_factory,
+                               A19_HOST_BASELINE=ts_sidecar_baseline,
+                               A19_HOST_TIME='2026-10-14T08:00:00.000Z',
+                               A52B_CHILD_LOADLOG=str(output / 'sidecar-loaded.ndjson'))
         launch, evidence = w.capture(contract, output / 'capture',
                                       environment,
                                       timeout=SESSION_LIMIT_SECONDS if session_domain else w.LIMIT_SECONDS,
@@ -869,6 +904,24 @@ def _native_run(gateway, sidecar, output, port, session_domain=False, registry='
                                       exercise=exercise, validate=validate, ownership=common.LIVE_GROUPS)
         if session_domain:
             try:
+                if ts_sidecar_baseline is not None:
+                    w.need(w.sha(ts_sidecar_factory) == factory_sha and w.sha(loader) == loader_sha,
+                           'TS controlled factory/loader changed during capture')
+                    loaded = [json.loads(line) for line in (output / 'sidecar-loaded.ndjson').read_text().splitlines() if line]
+                    sidecar_pids = {process['pid'] for process in evidence['processes'] if process['role'] == 'sidecar'}
+                    w.need(bool(loaded) and {row['pid'] for row in loaded} == sidecar_pids,
+                           'each actual TS sidecar must load the original source')
+                    sources_by_path = {}
+                    for row in loaded:
+                        path = Path(row['path'])
+                        w.need(not path.is_absolute() and '..' not in path.parts, 'TS source load outside fixed baseline')
+                        w.need(sources_by_path.setdefault(path, row['sha256']) == row['sha256'], 'same source loaded with different bytes')
+                    for path, digest in sources_by_path.items():
+                        original = subprocess.check_output(['git', '-C', ts_sidecar_baseline, 'show', baseline_head + ':' + str(path)])
+                        w.need(hashlib.sha256(original).hexdigest() == digest == w.sha(Path(ts_sidecar_baseline) / path), 'TS source differs from fixed committed baseline')
+                    w.save(output / 'ts-sidecar-provenance.json', {'baselineCommit': baseline_head,
+                           'factory': {'path': ts_sidecar_factory, 'sha256': factory_sha},
+                           'loader': {'path': str(loader), 'sha256': loader_sha}, 'loaded': loaded})
                 publish_session_domain(output, {'connections': 1, 'rows': observer_rows},
                                        rows, requests, f'127.0.0.1:{port + 1}',
                                        driver_hello, sources)
@@ -917,12 +970,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--gateway', required=True)
     parser.add_argument('--sidecar', required=True)
+    parser.add_argument('--ts-sidecar-baseline', type=Path,
+                        help='#1314 fixed TS checkout for the original CLI controlled factory')
     parser.add_argument('--output', required=True)
     parser.add_argument('--port', type=int, default=28999)
     parser.add_argument('--session-domain', action='store_true',
                         help='#1140 drive the frozen 72-case E1 manifest through one gateway '
                              'and publish observer rows plus per-case three-surface observations '
                              '(session-domain/) for the deadline scoring suite')
+    parser.add_argument('--session-case', action='append', default=[],
+                        help='#1314 named original case in this trace partition (repeatable)')
     parser.add_argument('--registry', choices=('on', 'off'), default='on',
                         help='#2396 process-frozen run-registry capture group: the on capture '
                              'witnesses the registry cells, the off capture the no-registry '
@@ -930,7 +987,8 @@ def main():
     args = parser.parse_args()
     try:
         native_run(args.gateway, args.sidecar, args.output, args.port,
-                   session_domain=args.session_domain, registry=args.registry)
+                   session_domain=args.session_domain, registry=args.registry,
+                   ts_sidecar_baseline=args.ts_sidecar_baseline, session_cases=args.session_case)
     except Blocked as error:
         print(json.dumps({'status': 'BLOCKED', 'scoring': 'NOT_RUN', 'error': str(error)}))
         return 2
