@@ -36,6 +36,8 @@ python3 -I scripts/gateway-parity/session_domain.py --suite deadline \
 
 CLI 消费者判定可重试 BLOCKED 时，必须同时核对退出码 2 和 **stdout JSON 的 `status == "BLOCKED"`**。argparse 用法错误同样返回 2，但只往 stderr 写 usage、stdout 为空，不能按退出码单独归为 BLOCKED。成功状态也走 stdout。绑定竞态可能已创建输出目录，重试必须换新目录。
 
+隔离配置显式关闭 `browser-use`、`funasr`、`windows-skills` 三个默认插件，与预注册合同 `capabilities.tools: []` 及固定 TS `scripts/a5-19/six_cells.mts` 直接构造受控宿主的前提一致。受控 tool phase 仍按原 stimulus 执行；这里不检验项目默认 MCP 的启动与安装，它们须通过独立的实际 Server/MCP 消费者。此配置不改变 72 格分母、期望、deadline 或进程解析规则。2026-11-11 首对采集中的默认浏览器 MCP 尝试执行缺失的 Node，形成无成功 exec 的子进程，按既有规则记录 INCOMPLETE；原 trace 与失败结果保留，不能用关闭插件后的新结果覆盖。
+
 EADDRINUSE 仅在预检/启动失败复查的 `probe.bind` 和 provider 的实际 `server_bind` 中映射为 BLOCKED。`WireClient.create_connection` 的临时源端口耗尽、socket 创建/选项错误以及其他采集行为保留原异常，不能归为固定监听端口冲突。WS 发送按 payload 字节数支持 7/16/64 位长度编码，包含 65535/65536 边界。
 
 `collect.py` 的 smoke 模式通过真实 native opt-in 启动 gateway，完成 WS hello / submit_turn，本地 mock 返回文本，以 pidfd 核实所属 tracer 后 SIGTERM 停机，等待完整 trace 与退出码 0，再确认 sidecar exec、模型出网和 JSONL 落盘；这些检查及 provider 清理都先于 receipt 发布。smoke 模式下 `driver.json` 保留本轮 WS 字节、解码和 mock 请求；它仍是驱动观察。采集 deadline：smoke 60 秒、session-domain 900 秒（`w.capture` 的 `timeout`/`limit` 显式传参，不接受无上限等待）。

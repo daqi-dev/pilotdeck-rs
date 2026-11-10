@@ -716,7 +716,14 @@ def _native_run(gateway, sidecar, output, port, session_domain=False, registry='
             worker.start()
             started = True
         (home / 'pilotdeck.yaml').write_text(
-            'schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n'
+            # The preregistered profile has no external MCP tools. Disable
+            # unrelated default plugins explicitly, as the TS controlled host
+            # also constructs its loop without a project plugin manager.
+            # Default-plugin functionality is verified by its own consumers.
+            'schemaVersion: 1\nagent: {model: fixture/mock}\n'
+            'extension:\n  builtinPluginsEnabled:\n'
+            '    browser-use: false\n    funasr: false\n    windows-skills: false\n'
+            'model:\n  providers:\n    fixture:\n'
             f'      protocol: openai\n      url: http://127.0.0.1:{port + 1}/v1\n'
             '      apiKey: local-fixture\n      models:\n        mock: {}\n')
         (home / 'token').write_text('native-witness-fixture\n')
