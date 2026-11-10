@@ -112,10 +112,14 @@ metadata-only 字段序、session_model/config/skills/manager 四处描述器有
 不 trim、metadata `metadata_summary` 完整路径空白标题不 trim（共 35 个）。
 #2309 再加 1 个：dispatch 把 `Err` 压回 `Response` 成功体（`error-mapped-to-response`，
 镜像 snapshot-projection 同名行，绑 `dispatch_routes_only_manager_methods`；共 36 个）。
-分母由静态名册 `EXPECTED_NAMES`（36 项，与上表同序）钉死：启动时
-`negative_selection.registered()` 拒绝表漂移（rc 2，不开跑），跑后复核记录的
-verdict 名单，不符则写 `roster-mismatch.json` 且不写 `summary.json`（#1666 契约，
-镜像 memory-gateway / snapshot-projection 家族）。
-执行器是 `tests/fixtures/negative_suite.py`：逐项正控 → 变异 → 恢复 → 汇总
-KILLED/SURVIVED/INVALID，任一非 KILLED 非零退出。新增产品文件在提交前不在 HEAD，
-`mutating_sources` 会拒绝；提交后由协调者运行。`--audit` 只核对锚点。
+分母由静态名册 `EXPECTED_NAMES`（36 项，与上表同序）钉死，入口按 #1666/#1734 自管契约
+落在共享件上（`negative_selection`，登记进 `test_negative_optimize_guards.py` 矩阵）：
+启动 `registered()` 拒绝表漂移；未知名/重复名（`--only a,b` 或位置参数名）以 2 拒跑；
+`CARGO_TARGET_DIR` 不可用或输出目录已存在（`claim_dir`）同样以 2 拒跑且不留证据目录。
+循环由本入口自管（不委托 `negative_suite.run_cases`，它会在控制权返回前发布
+summary）：逐项正控 → 变异 → 判杀 → byte 恢复 → 恢复后正控，**先**核对记录的
+verdict 名单与名册（不符 → 原子写 `roster-mismatch.json`、rc 1、不发布
+`summary.json` 也不打印绿色计数行），**后**才发布 `summary.json`、打印计数行、
+`verdict_exit` 收尾（memory-gateway / snapshot-projection 的 r5/r6 先核对后发布次序）。
+新增产品文件在提交前不在 HEAD，`mutating_sources` 会拒绝；提交后由协调者运行。
+`--audit` 只核对锚点（名册漂移与非法选择同样先拒）。

@@ -7,30 +7,44 @@ coordinator commits:
 
     CARGO_TARGET_DIR=<caller-owned cargo target directory> \
     PDRS_BASELINE=/path/to/PilotDeck \
-      python3 src/pilotdeck-gateway/tests/fixtures/manager-gateway/negative_controls.py <out-dir>
+      python3 src/pilotdeck-gateway/tests/fixtures/manager-gateway/negative_controls.py \
+      <out-dir> [--only name,...] [name ...]
 
 `--audit` only checks every anchor against the current source; it does not
 mutate, compile, or require a commit.
 
-The table is pinned to the static `EXPECTED_NAMES` roster: drift refuses to
-start (rc 2, no evidence directory claimed), and a run whose recorded verdicts
-do not match the roster publishes `roster-mismatch.json` instead of
-`summary.json` and exits 1 (#1666, the memory-gateway / snapshot-projection
-contract).
+The entry follows the #1666 / #1734 self-run contract on the shared
+`negative_selection` helpers: the table is pinned to the static
+`EXPECTED_NAMES` roster (drift refuses to start, rc 2, no evidence directory
+claimed), an unknown or repeated selection name and an unusable or
+already-claimed output directory / target refuse the same way, and the verdict
+roster is re-checked *before* anything that reads as success is published: a
+run whose recorded verdicts do not match the roster writes
+`roster-mismatch.json` instead of `summary.json` and exits 1, so no green
+summary or green count line ever exists for a shrunken run (#1666, the
+memory-gateway / snapshot-projection r5/r6 ordering). The loop is owned here,
+not delegated to `negative_suite.run_cases`, because that shared runner
+publishes its summary before control returns to the caller.
 """
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 root = Path(__file__).resolve().parents[5]
 fixtures = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
-# negative_suite owns mutating_sources/run_owned/wait_for_slot; no local
-# backup/restore or alternate baseline is permitted here.
+# negative_process/negative_suite own mutating_sources/run_owned/wait_for_slot
+# and the judging/publishing helpers; no local backup/restore or alternate
+# baseline is permitted here.
+import pending_reanchor as pending
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_selection import registered
-from negative_suite import Case, run_cases
+from negative_selection import (claim_dir, missing_target,
+                                 refuse_unusable_target, registered, select,
+                                 verdict_exit)
+from negative_suite import (Case, case_labels, classify, invalidate_completed,
+                            passed, publish_summary, _publish_json)
 from _negative_common import mutate
 
 catalog = root / 'src/pilotdeck-gateway/src/runtime/manager/catalog.rs'
@@ -336,12 +350,13 @@ cases = [
      '#2309 manager_sessions failure must dispatch as ManagerDispatch::Error'),
 ]
 
-# #2309 fix-r1 (MM boundary P1, DS boundary P2): the denominator of this run
-# is this static roster, not `len(cases)`. `run_cases` exits 0 while every
-# surviving row stays KILLED, so a deleted or renamed row would silently
-# shrink the run and keep printing a green count (#1666). `main` refuses to
-# start on drift and re-checks the recorded verdicts after the run, the same
-# contract as the memory-gateway / snapshot-projection families.
+# #2309 fix-r1/fix-r2 (MM boundary P1, DS boundary P2, then the two-family
+# concurrency P1): the denominator of this run is this static roster, not
+# `len(cases)`. A deleted or renamed row would silently shrink the run and
+# keep printing a green count (#1666). `main` refuses to start on drift and
+# re-checks the recorded verdicts after the run but *before* publishing
+# anything that reads as success, the same contract as the memory-gateway /
+# snapshot-projection families.
 EXPECTED_NAMES = (
     'catalog-tail-partial-dropped',
     'catalog-internal-filter-removed',
@@ -386,8 +401,18 @@ def main():
     only = None
     if '--only' in args:
         index = args.index('--only')
-        only = set(args[index + 1].split(','))
+        if index + 1 >= len(args):
+            print('--only needs a comma-separated mutation name list', file=sys.stderr)
+            return 2
+        only = args[index + 1].split(',')
         del args[index:index + 2]
+    audit = '--audit' in args
+    args = [arg for arg in args if arg != '--audit']
+    if not args and not audit:
+        print('usage: negative_controls.py <output-dir> [--only name,...] [name ...]'
+              ' | --audit', file=sys.stderr)
+        return 2
+    requested = args[1:] + (only or [])
     # #2309 fix-r1: a drifted roster is a "never started" (2) and refuses
     # before the evidence directory is claimed, so a shrunken table leaves no
     # out/ behind — never a quietly shorter green run (#1666).
@@ -396,8 +421,19 @@ def main():
     except ValueError as error:
         print(f'mutation roster drifted: {error}', file=sys.stderr)
         return 2
-    selected = [case for case in cases if only is None or case[0] in only]
-    if '--audit' in args:
+    # #2309 fix-r2 (DS concurrency/boundary P2a, MM concurrency P2): an
+    # unknown or repeated selection name is the same "never started" (2) as
+    # roster drift. The old inline set() filter folded both silently, so a
+    # mistyped `--only` name ran a shorter green scope over a claimed evidence
+    # directory (#1734). `select` is the one shared rule, and it runs before
+    # the directory is claimed.
+    try:
+        selected = select(cases, requested, always=())
+    except ValueError as error:
+        print(f'invalid mutation selection: {error}', file=sys.stderr)
+        return 2
+    selected_names = set(requested)
+    if audit:
         for name, path, old, new, scope, _test, _expected in selected:
             mutate(path.read_text(), scope, [(old, new)])
         print(json.dumps([
@@ -406,40 +442,169 @@ def main():
         ], indent=2))
         return 0
 
+    # The family contract, not a local copy: absent/empty/blank targets and
+    # the dot/root/src values are refused by the shared rule, and an already
+    # existing directory is a "never started" (2) rather than a bare traceback
+    # that reads as "it ran and did not come out green" (#1666 fix-r7/r9,
+    # #1734). A `SystemExit` carrying a *string* exits 1, so every refusal
+    # names the cause on stderr and returns an explicit int 2.
+    if missing_target():
+        print('CARGO_TARGET_DIR must be set by the caller', file=sys.stderr)
+        return 2
+    refuse_unusable_target()
+    if not (os.environ.get('PDRS_BASELINE') or '').strip():
+        print('PDRS_BASELINE must be set by the caller', file=sys.stderr)
+        return 2
+    out = claim_dir(args[0])
     env = os.environ.copy()
-    if not env.get('CARGO_TARGET_DIR') or not env.get('PDRS_BASELINE'):
-        raise SystemExit('caller must set CARGO_TARGET_DIR and PDRS_BASELINE')
     env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only',
                CARGO_PROFILE_TEST_DEBUG='line-tables-only', CARGO_TERM_QUIET='false')
-    out = Path(args[0])
-    out.mkdir(parents=True, exist_ok=False)
-    code = run_cases(
-        root,
-        [Case(name, path, old, new, test, expected, scope)
-         for name, path, old, new, scope, test, expected in selected],
-        out, env, mutate, timeout=900, baseline='HEAD')
-    # #2309 fix-r1: the startup roster only proves the source table is intact;
-    # require exactly one verdict per selected name before anything reads as
-    # success. A run that lost a row keeps a green count line, so a mismatch
-    # publishes no summary.json at all — only a file whose name says what
-    # happened (the memory-gateway r5/r6 post-run re-check).
-    expected = [name for name in EXPECTED_NAMES if only is None or name in only]
-    summary = out / 'summary.json'
-    published = json.loads(summary.read_text(encoding='utf-8'))
-    recorded = [row['mutation'] for row in published['controls']]
+    selected_cases = [Case(name, path, old, new, test, expected, scope)
+                      for name, path, old, new, scope, test, expected in selected]
+    labels = case_labels(selected_cases)
+    command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
+               '-p', 'pilotdeck-gateway', '--lib']
+    results = []
+
+    def stem(case):
+        return labels[id(case)]
+
+    def run(label, test):
+        try:
+            slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
+            (out / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
+            # Exact binding still runs one test, including explicit TS/regeneration
+            # guards. No `--nocapture`: it interleaves test stdout with the
+            # `test <name> ... ok` status line (#938 r14). No `-q`: quiet mode
+            # drops the named per-test line the judge needs (#273, #818 fix-r3).
+            result = run_owned(command + [test, '--', '--exact', '--include-ignored'],
+                               cwd=root, env=env, timeout=900)
+            (out / f'{label}.log').write_text(result.stdout + result.stderr)
+            return result
+        except Exception as error:
+            raw = ''
+            if isinstance(error, subprocess.TimeoutExpired):
+                for value in (error.stdout, error.stderr):
+                    raw += value.decode(errors='replace') if isinstance(value, bytes) else value or ''
+            with (out / f'{label}.log').open('a') as log:
+                log.write(raw + f'\n{type(error).__name__}: {error}\n')
+            raise
+
+    def record(case, status, reason):
+        # Memory only: the summary is published after the guarded restore /
+        # re-verify window has closed *and* the roster check below has passed
+        # (#1076, fix-r2).
+        results.append({'mutation': case.mutation, 'test': case.test,
+                        'assertion': case.assertion, 'status': status, 'reason': reason})
+        print(f'{stem(case)}: {status}: {reason}', flush=True)
+
+    # Where the guarded window raised, for the three-state exit contract:
+    # 'enter' is a refusal to run (HEAD/baseline mismatch, busy lock) and keeps
+    # the historical rc=1; 'restore'/'exit' are unverified restores and must
+    # exit 2; 'body' is an in-window precondition such as an expired anchor,
+    # also a refusal (#1076 fix-r1). ``body_error`` remembers the object the
+    # guarded body raised; a guard that raises while unwinding raises a
+    # *different* object even though ``phase`` still says 'body', which is an
+    # unverified restore and must exit 2 (#1076 fix-r2).
+    phase = 'enter'
+    body_error = None
+    try:
+        registrations = pending.for_script(root)
+        paths = list(dict.fromkeys(case.path for case in selected_cases))
+        if registrations:
+            paths.append(root / pending.FIXTURES / pending.REGISTRY)
+        with mutating_sources(root, paths, baseline='HEAD') as originals:
+            phase = 'body'
+            try:
+                for case in selected_cases:
+                    entry = pending.match(registrations, case.mutation)
+                    if entry is not None:
+                        record(case, pending.SKIPPED, entry.reason())
+                        continue
+                    status, reason, stage = 'INVALID', '', 'anchor'
+                    try:
+                        changed = mutate(originals[case.path].decode(), case.scope,
+                                         [(case.old, case.new)])
+                        stage = 'positive'
+                        if not passed(run(stem(case) + '-positive', case.test), case.test):
+                            reason = 'positive control did not pass the bound test'
+                        else:
+                            stage = 'negative'
+                            case.path.write_text(changed)
+                            status, reason = classify(run(stem(case) + '-negative', case.test), case)
+                    except Exception as error:
+                        status, reason = 'INVALID', f'{stage}: {type(error).__name__}: {error}'
+                    finally:
+                        # Restore before every successor, also on timeout or bad
+                        # anchors. The enclosing guard independently restores
+                        # and verifies on exit.
+                        phase = 'restore'
+                        case.path.write_bytes(originals[case.path])
+                        if case.path.read_bytes() != originals[case.path]:
+                            raise RuntimeError(f'byte restoration failed: {case.path}')
+                        phase = 'body'
+                    try:
+                        if not passed(run(stem(case) + '-restored', case.test), case.test):
+                            status, reason = 'INVALID', reason + '; restored bound test did not pass'
+                    except Exception as error:
+                        status, reason = 'INVALID', reason + f'; restored: {type(error).__name__}: {error}'
+                    record(case, status, reason)
+            except BaseException as error:
+                # Keep the refusal/cancellation object so the handler below
+                # can tell it apart from a failure raised by the guard exit.
+                body_error = error
+                raise
+            # The body is done; an exception from here on comes from the
+            # guard's own restore/re-verify on context exit.
+            phase = 'exit'
+    except BaseException as error:
+        # A baseline/lock/restoration failure — or a cancellation delivered by
+        # the guard's restore/re-verify window — makes every recorded row
+        # untrustworthy. Void them in memory, account for unrun cases, publish
+        # the all-INVALID summary, and exit per the #1076 contract. This is the
+        # only summary published on a failure path and it never reads as
+        # success; no final summary exists before this point, so an interrupt
+        # during the publish leaves no summary at all (missing is fail-closed).
+        reason = f'source guard: {type(error).__name__}: {error}'
+        invalidate_completed(results, reason)
+        for case in selected_cases[len(results):]:
+            record(case, 'INVALID', reason)
+        publish_summary(out, results)
+        # A raw SystemExit code must not decide the process status: 256/-256
+        # truncate to zero on POSIX and a string code exits 1. Re-raise the
+        # normalized code; a KeyboardInterrupt returns 2.
+        if isinstance(error, SystemExit):
+            raise SystemExit(2) from error
+        if (phase in ('restore', 'exit') or not isinstance(error, Exception)
+                or (body_error is not None and error is not body_error)):
+            return 2
+        return 1
+    # Reaching here means mutating_sources restored every source and verified
+    # it against the baseline. The roster check runs *before* anything that
+    # reads as success is published: a shrunken run used to leave an all-green
+    # summary.json and a green count line behind (run_cases published and
+    # printed them, then this entry unlinked after the fact), so a consumer
+    # that only reads the artifact never saw the mismatch (r5 concurrency P1,
+    # fix-r2). A mismatch publishes no summary.json at all — only a file whose
+    # name says what happened (r6 concurrency/boundary P1), atomically: the
+    # shared `_publish_json` temp name carries the pid and a serial, never a
+    # fixed `<name>.tmp` (#1579 r5).
+    expected = [name for name in EXPECTED_NAMES if not selected_names or name in selected_names]
+    recorded = [row['mutation'] for row in results]
     if recorded != expected:
         message = f'verdict roster mismatch: recorded={recorded} expected={expected}'
         print(message, file=sys.stderr)
-        report = json.dumps(
-            {'verdict': 'ROSTER_MISMATCH', 'expected': expected,
-             'recorded': recorded, 'rows': published['controls']},
-            ensure_ascii=False, indent=2) + '\n'
-        tmp = out / 'roster-mismatch.json.tmp'
-        tmp.write_text(report, encoding='utf-8')
-        tmp.replace(out / 'roster-mismatch.json')
-        summary.unlink()
+        _publish_json(out / 'roster-mismatch.json',
+                      {'verdict': 'ROSTER_MISMATCH', 'expected': expected,
+                       'recorded': recorded, 'rows': results},
+                      overwrite=True)
         return 1
-    return code
+    publish_summary(out, results)
+    counts = pending.counts(results)
+    print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
+    # Every row must be KILLED and at least one row must exist: an empty run or
+    # a zero-kill run is never success (#818 fix-r3 P0).
+    return verdict_exit(results, key='status')
 
 
 if __name__ == '__main__':
