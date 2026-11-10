@@ -55,12 +55,9 @@ const MAX_INLINE_IMAGE_BYTES: u64 = 5_242_880;
 const BYTES_PER_PDF_PAGE: u64 = 102_400;
 /// TS GatewayAttachmentTurnComposer.ts:21 — `ATTACHMENT_PATH_NOTE_MARKER`.
 const ATTACHMENT_PATH_NOTE_MARKER: &str = "[Registered attachment files in this session:]";
-/// TS GatewayAttachmentTurnComposer.ts:95 — the funasr install command the
-/// audio guidance names (`installCommand = "npm run install:asr"` default).
-/// The native process has no TS package root to compute
-/// `getPilotDeckInstallCommand()` (projectMcpSpec.ts:27-37), so the composer
-/// default is used verbatim.
-const FUNASR_INSTALL_COMMAND: &str = "npm run install:asr";
+// Native source installations have no TS npm package root. The pure attachment
+// composer directs the agent to the actual MCP diagnostic, whose installation
+// command already belongs to the active source generation or explicit config.
 /// TS AttachmentResolver.ts:40-61 — `TEXT_EXTENSIONS`: the whitelisted
 /// plain-text extensions a path-based file attachment is inlined from.
 const TEXT_EXTENSIONS: &[&str] = &[
@@ -703,7 +700,7 @@ fn attachment_diagnostics_guidance(
             "Audio attachments are not readable with read_file. When the user asks for \
              transcription, subtitles, or audio analysis, use the funasr MCP server's \
              mcp__funasr__transcribe_audio tool.{mapped_hint} If that tool reports that its \
-             runtime is missing, run {FUNASR_INSTALL_COMMAND} and retry the tool in this session."
+             runtime is missing, run the installation command reported by that tool and retry the tool in this session."
         );
     }
     // :142-151 — no attachment with an allowedReadFiles spelling left

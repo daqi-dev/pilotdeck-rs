@@ -30,13 +30,13 @@ Only install the browser when all of the following are true:
 - The cache check shows Chrome for Testing is missing, or an actual browser-use launch failed because the browser executable is missing.
 - The environment has network/proxy access suitable for downloading browser binaries.
 
-The one-line installer uses the same check. If Chrome for Testing is already present, it prints `Chrome for Testing already installed` and does not download it again.
+In separately packaged TypeScript installations, the one-line installer uses the same check. If Chrome for Testing is already present, it prints `Chrome for Testing already installed` and does not download it again.
 
 For a Rust source installation, use the configured SDK and existing browser paths described in `../.builtin-plugins/browser-use/skills/browser-use-install/SKILL.md`. The source-built generation does not ship the old npm/browser download installer. Point the Gateway at already prepared third-party dependencies and verify an actual browser-use launch.
 
 Separately packaged TypeScript installations may still provide their own browser installation command. Use that command only from the matching runtime directory when the referenced installer exists.
 
-Repeated installs are safe only when the installer can confirm the cache first. In task containers or time-limited jobs, avoid ad hoc commands such as `playwright install chromium` unless the missing-browser error is confirmed and installation time is acceptable.
+For those TypeScript installers, repeated installs are safe only when the installer can confirm the cache first. In task containers or time-limited jobs, avoid ad hoc commands such as `playwright install chromium` unless the missing-browser error is confirmed and installation time is acceptable.
 
 If the download is slow or blocked, configure your network proxy first and rerun the install command. Browser automation is optional; PilotDeck core chat, files, skills, and settings work without it.
 

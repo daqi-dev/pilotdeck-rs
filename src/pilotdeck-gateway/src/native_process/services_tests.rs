@@ -1542,9 +1542,9 @@ fn guidance_audio_form_names_project_local_path() {
              transcription, subtitles, or audio analysis, use the funasr MCP server's \
              mcp__funasr__transcribe_audio tool. Pass the registered project-local path \
              {path} to transcribe_audio. If that tool reports that its runtime is missing, \
-             run npm run install:asr and retry the tool in this session."
+             run the installation command reported by that tool and retry the tool in this session."
         ),
-        "#1321 the audio guidance form must match the TS composer text, got: {note}"
+        "#1321 audio guidance preserves the TS path contract with the declared native installer text adaptation, got: {note}"
     );
     let allowed = match result.get("allowedReadFiles") {
         Some(JsValue::Array(files)) => files.clone(),
@@ -3217,8 +3217,8 @@ fn audio_form_is_selected_by_attachment_presence() {
              transcription, subtitles, or audio analysis, use the funasr MCP server's \
              mcp__funasr__transcribe_audio tool. Pass a project-local host path to \
              transcribe_audio; paths outside this project are rejected. If that tool \
-             reports that its runtime is missing, run npm run install:asr and retry the \
-             tool in this session."
+             reports that its runtime is missing, run the installation command reported by that \
+             tool and retry the tool in this session."
         ),
         "#1321 P1-b: a pathless audio attachment must select the audio guidance \
          with the generic hint, got: {note}"
