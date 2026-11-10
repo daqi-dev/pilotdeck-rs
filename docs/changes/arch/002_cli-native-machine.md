@@ -56,7 +56,7 @@ home 与 project 须已存在，且物理路径不能相同或互为祖孙目录
 
 ## 在目标机源码安装和升级
 
-目标机须具备源码构建依赖和干净 checkout；bootstrap control 也由源码构建。原生 PDF 解析通过 `mupdf 0.8.0` 从依赖源码编译 MuPDF，需要 C/C++ 工具链、Make、libclang 及对应标准头文件。只有 libclang 而缺少其 resource headers 的 Linux 环境，须为 bindgen 显式提供本机编译器头文件目录；本次 cb8 验证使用 `BINDGEN_EXTRA_CLANG_ARGS="-isystem /usr/lib/gcc/aarch64-linux-gnu/13/include"`，其他机器不得照抄此路径。依赖版本与校验和固定在 `src/Cargo.lock`，构建不下载预编译程序。
+目标机须具备源码构建依赖和干净 checkout；bootstrap control 也由源码构建。原生 PDF 解析通过 `mupdf 0.8.0` 从依赖源码编译 MuPDF，需要 C/C++ 工具链、Make、libclang 及对应标准头文件。只有 libclang 而缺少其 resource headers 的 Linux 环境，须为 bindgen 显式提供本机编译器头文件目录；本次 cb8 验证使用 `BINDGEN_EXTRA_CLANG_ARGS="-isystem /usr/lib/gcc/aarch64-linux-gnu/13/include"`，其他机器不得照抄此路径。registry 依赖由 `src/Cargo.lock` 固定；本地 MuPDF 两包的原包与逐文件校验和固定在 `src/vendor/mupdf-source.json`，构建不下载预编译程序。
 
 安装根必须尚不存在，首代构建该 checkout 的 `HEAD`，`--remote` 必须与它的 `origin` 地址完全一致；`--ref` 记录后续更新目标（默认 `refs/heads/main`），不会替首装自动切换 checkout。可以使用目标机上的私有 Git bare 仓作为 remote；本轮验证即采用这种方式，没有推送 GitHub。
 

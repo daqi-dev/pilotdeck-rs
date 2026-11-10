@@ -39,6 +39,8 @@ static const fz_locks_context locks =
 /* Context */
 void mupdf_drop_base_context(fz_context *ctx)
 {
+    /* Context teardown can use the registered locks. */
+    fz_drop_context(ctx);
     int i;
     for (i = 0; i < FZ_LOCK_MAX; i++)
     {
@@ -48,9 +50,6 @@ void mupdf_drop_base_context(fz_context *ctx)
         (void)pthread_mutex_destroy(&mutexes[i]);
 #endif
     }
-
-    fz_drop_context(ctx);
-    ctx = NULL;
 }
 
 fz_context *mupdf_new_base_context()
@@ -74,7 +73,9 @@ fz_context *mupdf_new_base_context()
         fz_register_document_handlers(ctx);
     }
     fz_catch(ctx) {
+        fz_ignore_error(ctx);
         mupdf_drop_base_context(ctx);
+        return NULL;
     }
     // Disable default warning & error printing
     fz_set_warning_callback(ctx, NULL, NULL);

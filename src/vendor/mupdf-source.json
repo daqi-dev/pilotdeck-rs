@@ -55,8 +55,8 @@
     {
       "crate": "mupdf-0.8.0",
       "path": "Cargo.toml",
-      "bytes": 4176,
-      "sha256": "6bfaf14f0a9812efad2906472cf8e40a7002da96d5ba3a8d3cb6ddd10ddeea95"
+      "bytes": 3552,
+      "sha256": "cdbfbacb4b7324e876eaa2b1fc538720f12e708a3d28f2bf0f574774223e5656"
     },
     {
       "crate": "mupdf-0.8.0",
@@ -157,8 +157,8 @@
     {
       "crate": "mupdf-0.8.0",
       "path": "src/context.rs",
-      "bytes": 6127,
-      "sha256": "8d71b1797196d300a465b146058ecd158a9e1664b6bc267e367e2e1018395ad0"
+      "bytes": 6229,
+      "sha256": "1d3d267a11993af6f4c7033e348b2f4110c2f892bfbd84ce5512066242cbb7ad"
     },
     {
       "crate": "mupdf-0.8.0",
@@ -17107,8 +17107,8 @@
     {
       "crate": "mupdf-sys-0.8.0",
       "path": "wrapper/context.c",
-      "bytes": 1688,
-      "sha256": "795134ee1213988f623800f8ffda8d10a753604855ec8b417fca7bdf8cb4ae7c"
+      "bytes": 1779,
+      "sha256": "8f89d10f593f83887b331cd6bf25e3b8c6f6218f07904f3145affedca2c97dc4"
     },
     {
       "crate": "mupdf-sys-0.8.0",
@@ -17191,8 +17191,8 @@
     {
       "crate": "mupdf-sys-0.8.0",
       "path": "wrapper/pixmap.c",
-      "bytes": 5000,
-      "sha256": "4ac945686ce44923c16bb99eccbb42e2260a1c133cd03fcf2c5d261cea49d822"
+      "bytes": 5054,
+      "sha256": "8b5f8715ef8e29d86e15cc83466f5077c0af2eea327a5d9d9896aa3fb078ff4c"
     },
     {
       "crate": "mupdf-sys-0.8.0",
@@ -17230,7 +17230,25 @@
       "crate": "mupdf-sys-0.8.0",
       "path": "wrapper/pixmap.c",
       "before": "92399c66f9bb0ee4e3c3b6caeabc1e553b76e83419f43b1b6ca9cb1384233922",
-      "after": "4ac945686ce44923c16bb99eccbb42e2260a1c133cd03fcf2c5d261cea49d822"
+      "after": "8b5f8715ef8e29d86e15cc83466f5077c0af2eea327a5d9d9896aa3fb078ff4c"
+    },
+    {
+      "crate": "mupdf-0.8.0",
+      "path": "Cargo.toml",
+      "before": "6bfaf14f0a9812efad2906472cf8e40a7002da96d5ba3a8d3cb6ddd10ddeea95",
+      "after": "cdbfbacb4b7324e876eaa2b1fc538720f12e708a3d28f2bf0f574774223e5656"
+    },
+    {
+      "crate": "mupdf-0.8.0",
+      "path": "src/context.rs",
+      "before": "8d71b1797196d300a465b146058ecd158a9e1664b6bc267e367e2e1018395ad0",
+      "after": "1d3d267a11993af6f4c7033e348b2f4110c2f892bfbd84ce5512066242cbb7ad"
+    },
+    {
+      "crate": "mupdf-sys-0.8.0",
+      "path": "wrapper/context.c",
+      "before": "795134ee1213988f623800f8ffda8d10a753604855ec8b417fca7bdf8cb4ae7c",
+      "after": "8f89d10f593f83887b331cd6bf25e3b8c6f6218f07904f3145affedca2c97dc4"
     }
   ],
   "archiveSha256": {

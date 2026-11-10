@@ -498,3 +498,7 @@ execution、report 的英中提示；动态值采用 JS UTF-16 和 trim 语义�
 工具资产就地嵌入 `runtime/always_on/tools.rs`、`native_process/{skills,agent,agent_continuation}.rs`
 及 `runtime/tools/builtin/{send_attachment,plan_todo,execute_code}.rs`；agent 深度、
 execute_code 的搜索配置及 sandbox 模式文案按实际运行状态生成，不使用某次请求的固定捕获替代配置。
+
+## Gateway PDF 原生源依赖（2026-11-11）
+
+`vendor/mupdf` / `vendor/mupdf-sys` 为 crates.io 0.8.0 原包，VCS deaacc87c4cea6a2146e90e00e0d5658c911277b。所有原文件和许可证保留，原包 SHA、全文件 SHA 与五个差量文件统一见 `vendor/mupdf-source.json`；设计与实际 TS 样本证据见 `vendor/mupdf-jpeg.md`。没有预编译库。构建脚本及生成绑定边界采用 `state/decisions-20261111-mupdf-source-boundary.md` 的窄 profile；这是源码依赖，不属于业务 workspace 的 unsafe 豁免。

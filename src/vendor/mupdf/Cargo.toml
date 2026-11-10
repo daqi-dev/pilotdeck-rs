@@ -96,43 +96,6 @@ zxingcpp = ["mupdf-sys/zxingcpp"]
 name = "mupdf"
 path = "src/lib.rs"
 
-[[example]]
-name = "extract_images"
-path = "examples/extract_images.rs"
-
-[[example]]
-name = "extract_stext"
-path = "examples/extract_stext.rs"
-required-features = ["serde"]
-
-[[example]]
-name = "extract_text"
-path = "examples/extract_text.rs"
-
-[[example]]
-name = "list_annotations"
-path = "examples/list_annotations.rs"
-
-[[example]]
-name = "shape_demo"
-path = "examples/shape_demo.rs"
-
-[[test]]
-name = "drawings"
-path = "tests/drawings.rs"
-
-[[test]]
-name = "shape"
-path = "tests/shape/main.rs"
-
-[[test]]
-name = "test_issues"
-path = "tests/test_issues.rs"
-
-[[test]]
-name = "test_pdf_object"
-path = "tests/test_pdf_object.rs"
-
 [dependencies.bitflags]
 version = "2.0.2"
 

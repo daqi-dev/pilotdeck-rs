@@ -41,8 +41,11 @@
 //! 处与定义处文件可能不同，基准不可静态确定。字面量只接受不含反斜杠的普通
 //! `"..."` 和 `r#*"..."#*`；带转义、`b"` / `br"` / `c"` / `cr"` 以及带后缀的
 //! 字面量一律拒绝。vendored 包内部的 unsafe 本身仍不属于本守卫范围。
-//! vendored 源码内容不做哈希 pin：内容本身是否可信属于冻结件/人工评审边界；
-//! 本守卫只锁“声明边与源码包含边不能引出该目录”。
+//! 原三项 vendored 源码不做内容 pin，只锁声明与源码包含边。MuPDF 两包
+//! 是单独登记的原生源码构建例外：完整源树逐文件哈希、清单本身的常量哈希、
+//! 精确 lib/custom-build target 和两条既有 build.rs 路径都必须匹配；其
+//! bindgen OUT_DIR include 由原样构建脚本及全源字节 pin 约束，不放行其它
+//! vendored 包的生成源码或 build script。决策见 20261111-mupdf-source-boundary。
 //! #448 登记的剩余边界（做不到的部分，明确写出）：测试进程 cwd 恒为包根，
 //! 没有 /proc 的平台（macOS / Windows）读不到父进程的 cwd / argv / 进程像，
 //! 那些平台上的树外调用目录 `.cargo/config*`、`cargo --config` 与
@@ -144,11 +147,111 @@ fn workspace_paths(manifest: &str, key: &str) -> Vec<String> {
     members
 }
 
-const VENDORED_PACKAGES: [&str; 3] = [
+const VENDORED_PACKAGES: [&str; 5] = [
     "vendor/tiktoken-rs",
     "vendor/icu_collator",
     "data/icu_collator_data",
+    "vendor/mupdf",
+    "vendor/mupdf-sys",
 ];
+
+// A narrowly registered native dependency. The complete source tree, including
+// its upstream build script and generated-bindings include, is pinned here.
+// Other vendored packages still use the lib-only literal-include boundary.
+const MUPDF_SOURCE_MANIFEST_SHA256: &str =
+    "efba27bd886e0b8908a196696a26c16291183dd7b9562419236142182fba5223";
+
+fn pinned_mupdf_source_boundary(metadata: &Value, directory: &Path) -> bool {
+    let name = if directory.ends_with("vendor/mupdf") {
+        "mupdf"
+    } else if directory.ends_with("vendor/mupdf-sys") {
+        "mupdf-sys"
+    } else {
+        return false;
+    };
+    assert_eq!(
+        metadata["name"].as_str(),
+        Some(name),
+        "pinned native package name"
+    );
+    assert_eq!(
+        metadata["version"].as_str(),
+        Some("0.8.0"),
+        "pinned native version"
+    );
+    let manifest = directory.parent().unwrap().join("mupdf-source.json");
+    assert!(
+        fs::symlink_metadata(&manifest)
+            .unwrap()
+            .file_type()
+            .is_file()
+    );
+    let bytes = fs::read(&manifest).unwrap();
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&bytes)),
+        MUPDF_SOURCE_MANIFEST_SHA256,
+        "pinned MuPDF source manifest changed; independent source review required"
+    );
+    let document: Value = serde_json::from_slice(&bytes).unwrap();
+    let crate_name = format!("{name}-0.8.0");
+    let mut declared = BTreeSet::new();
+    for row in document["files"].as_array().unwrap() {
+        if row["crate"].as_str() != Some(crate_name.as_str()) {
+            continue;
+        }
+        let relative = Path::new(row["path"].as_str().unwrap());
+        assert!(
+            relative
+                .components()
+                .all(|component| matches!(component, std::path::Component::Normal(_))),
+            "native source manifest path escapes package"
+        );
+        let path = directory.join(relative);
+        assert!(
+            declared.insert(path.clone()),
+            "duplicate native source manifest path"
+        );
+        assert!(
+            fs::symlink_metadata(&path).unwrap().file_type().is_file(),
+            "native source must be a regular file: {}",
+            path.display()
+        );
+        assert_eq!(
+            format!("{:x}", Sha256::digest(fs::read(&path).unwrap())),
+            row["sha256"].as_str().unwrap(),
+            "pinned native source changed: {}",
+            path.display()
+        );
+    }
+    assert!(
+        !declared.is_empty(),
+        "native source manifest must cover the package"
+    );
+    let mut actual = BTreeSet::new();
+    let mut pending = vec![directory.to_path_buf()];
+    while let Some(parent) = pending.pop() {
+        for entry in fs::read_dir(parent).unwrap() {
+            let path = entry.unwrap().path();
+            let kind = fs::symlink_metadata(&path).unwrap().file_type();
+            assert!(
+                !kind.is_symlink(),
+                "pinned native source cannot contain a symlink: {}",
+                path.display()
+            );
+            if kind.is_dir() {
+                pending.push(path);
+            } else {
+                assert!(kind.is_file());
+                actual.insert(path);
+            }
+        }
+    }
+    assert_eq!(
+        actual, declared,
+        "native source tree contains missing or unregistered files"
+    );
+    true
+}
 
 const REGRESS_REV: &str = "95c04041cd9b30249961eb80d950102c29c9586c";
 const REGRESS_SOURCE: &str =
@@ -380,6 +483,7 @@ fn vendored_package_boundary(
     allowed: &BTreeSet<PathBuf>,
 ) {
     declared_local_dependency_boundary(metadata, &format!("vendored package {package}"), allowed);
+    let pinned_native = pinned_mupdf_source_boundary(metadata, directory);
     let targets = metadata["targets"]
         .as_array()
         .expect("vendored package targets");
@@ -391,6 +495,13 @@ fn vendored_package_boundary(
             .iter()
             .map(|kind| kind.as_str().unwrap())
             .collect();
+        if pinned_native && metadata["name"] == "mupdf-sys" && kinds == ["custom-build"] {
+            assert_eq!(
+                Path::new(target["src_path"].as_str().unwrap()),
+                directory.join("build.rs")
+            );
+            continue;
+        }
         assert_eq!(
             kinds,
             ["lib"],
@@ -418,7 +529,24 @@ fn vendored_package_boundary(
         );
         lib_sources.push(source);
     }
-    vendored_compile_closure(package, directory, lib_sources);
+    if pinned_native {
+        assert_eq!(
+            lib_sources,
+            [directory.join("src/lib.rs")],
+            "pinned native library target"
+        );
+        assert_eq!(
+            targets.len(),
+            if metadata["name"] == "mupdf-sys" {
+                2
+            } else {
+                1
+            },
+            "pinned native target set"
+        );
+    } else {
+        vendored_compile_closure(package, directory, lib_sources);
+    }
 }
 
 fn resolved_dependency_boundary(workspace: &Path, members: &[String]) {
@@ -898,6 +1026,14 @@ fn registered_build_files(root: &Path) {
             "src/pilotdeck-transport/build.rs",
             "f55927d26226112d4362567deec12002855906c15e53c4fbf1f2e80a9458cd56",
         ),
+        (
+            "src/vendor/mupdf-sys/build.rs",
+            "d440fef9e9e268cacaea24d8f2bcc9c7fcfe94c461423633bf6ce302e8d880ba",
+        ),
+        (
+            "src/vendor/mupdf/src/pdf/links/build.rs",
+            "44cb6f633338f96dc8ab93bc00ec4ac6c964a719eb22f409c9093b6e847d9c8d",
+        ),
     ] {
         let path = root.join(relative);
         assert!(
@@ -917,7 +1053,9 @@ fn assert_build_configuration_path(root: &Path, path: &Path) {
     let name = path.file_name().unwrap().to_str().unwrap();
     let kind = fs::symlink_metadata(path).unwrap().file_type();
     let registered = path == root.join("rust-toolchain.toml")
-        || path == root.join("src/pilotdeck-transport/build.rs");
+        || path == root.join("src/pilotdeck-transport/build.rs")
+        || path == root.join("src/vendor/mupdf-sys/build.rs")
+        || path == root.join("src/vendor/mupdf/src/pdf/links/build.rs");
     assert!(
         registered
             || (name != ".cargo"
@@ -2090,6 +2228,68 @@ mod vendored_edge_negative_controls {
     }
 
     #[test]
+    fn native_source_profile_rejects_changed_missing_extra_sources_and_unregistered_targets() {
+        let fixture = Fixture::new();
+        let original = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("vendor");
+        let vendor = fixture.root.join("vendor");
+        let package = vendor.join("mupdf");
+        fs::create_dir_all(&package).unwrap();
+        let manifest = fs::read(original.join("mupdf-source.json")).unwrap();
+        fs::write(vendor.join("mupdf-source.json"), &manifest).unwrap();
+        let document: Value = serde_json::from_slice(&manifest).unwrap();
+        for row in document["files"].as_array().unwrap() {
+            if row["crate"] != "mupdf-0.8.0" {
+                continue;
+            }
+            let relative = row["path"].as_str().unwrap();
+            let destination = package.join(relative);
+            fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            assert!(!destination.exists());
+            fs::copy(original.join("mupdf").join(relative), destination).unwrap();
+        }
+        let metadata = serde_json::json!({
+            "name":"mupdf", "version":"0.8.0", "dependencies":[],
+            "targets":[{"kind":["lib"],"src_path":package.join("src/lib.rs")}],
+        });
+        vendored_boundary(&package, &metadata);
+        let source = package.join("src/lib.rs");
+        let bytes = fs::read(&source).unwrap();
+        fs::write(&source, b"// changed native source\n").unwrap();
+        assert!(
+            rejection(|| vendored_boundary(&package, &metadata))
+                .contains("pinned native source changed")
+        );
+        fs::write(&source, &bytes).unwrap();
+        let extra = package.join("unregistered.rs");
+        fs::write(&extra, b"// unregistered\n").unwrap();
+        assert!(
+            rejection(|| vendored_boundary(&package, &metadata)).contains("unregistered files")
+        );
+        fs::remove_file(extra).unwrap();
+        fs::remove_file(&source).unwrap();
+        assert!(std::panic::catch_unwind(|| vendored_boundary(&package, &metadata)).is_err());
+        fs::write(&source, &bytes).unwrap();
+        let mut changed = metadata.clone();
+        changed["targets"][0]["kind"] = serde_json::json!(["custom-build"]);
+        assert!(
+            rejection(|| vendored_boundary(&package, &changed))
+                .contains("must expose only a lib target")
+        );
+        let mut changed_manifest = manifest.clone();
+        changed_manifest.push(b' ');
+        fs::write(vendor.join("mupdf-source.json"), changed_manifest).unwrap();
+        assert!(
+            rejection(|| vendored_boundary(&package, &metadata))
+                .contains("source manifest changed")
+        );
+        fs::write(vendor.join("mupdf-source.json"), &manifest).unwrap();
+        vendored_boundary(&package, &metadata);
+    }
+
+    #[test]
     fn vendored_non_lib_targets_are_rejected() {
         let fixture = Fixture::new();
         let lib = fixture.source("lib.rs", "// lib\n");
@@ -2180,7 +2380,10 @@ mod vendored_edge_negative_controls {
         let gateway = Path::new(env!("CARGO_MANIFEST_DIR"));
         let workspace = gateway.parent().unwrap();
         let mut files = Vec::new();
-        for package in VENDORED_PACKAGES {
+        // Native source profiles use their complete byte-pinned tree above;
+        // the literal Rust include scanner remains scoped to the original
+        // three Rust-only packages.
+        for package in &VENDORED_PACKAGES[..3] {
             collect_vendored_source_candidates(package, &workspace.join(package), &mut files);
         }
         let mut non_rust: Vec<_> = files

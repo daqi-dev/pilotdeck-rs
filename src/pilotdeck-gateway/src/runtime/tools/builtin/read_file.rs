@@ -16,6 +16,8 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::io::Read;
 
 const MAX_PDF_PAGES_PER_REQUEST: u64 = 20;
+// The fixed TS read_file uses a separate automatic-read threshold.
+const AUTO_PDF_MAX_PAGES: i32 = 10;
 const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 const PDF_EXTRACT_SIZE_THRESHOLD: u64 = 3 * 1024 * 1024;
 /// Node's `createReadStream` hands readline chunks; the exact size is not part
@@ -721,7 +723,7 @@ fn pdf(
         });
     }
     if pages.is_none()
-        && let Some(count) = page_count.filter(|count| *count > 10)
+        && let Some(count) = page_count.filter(|count| *count > AUTO_PDF_MAX_PAGES)
     {
         return Err(tool_error(
             "invalid_tool_input",

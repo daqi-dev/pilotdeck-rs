@@ -164,6 +164,8 @@ fz_buffer *mupdf_pixmap_get_image_data(fz_context *ctx, fz_pixmap *pixmap, int f
     }
     fz_catch(ctx)
     {
+        fz_drop_buffer(ctx, buf);
+        buf = NULL;
         mupdf_save_error(ctx, errptr);
     }
     return buf;
