@@ -1831,6 +1831,18 @@ MUTATIONS = [
     ('kernel-source-lease-gate-removed', CHECK,
      '    if proof is None:\n        return kernel_control_report(None,None,reason)',
      '    if False:\n        return kernel_control_report(None,None,reason)'),
+    ('kernel-source-lease-cleanup-pending-guard-removed', CHECK,
+     "    if owner.get('cleanupPending') is not True:",
+     '    if False:'),
+    ('kernel-source-lease-token-guard-removed', CHECK,
+     "    if not isinstance(owner.get('token'),str) or not owner['token']:",
+     '    if False:'),
+    ('kernel-source-lease-timestamp-guard-removed', CHECK,
+     "    if not 0<=time.time()-owner['timestamp']<=md.common.MAX_AGE:",
+     '    if False:'),
+    ('kernel-source-lease-flock-guard-removed', CHECK,
+     '        if not any(kernel_flock_match(line,parent,identity) for line in kernel_flock_rows()):',
+     '        if False:'),
     ('kernel-result-passed-forced', CHECK,
      "            'passed': status=='PASS','report':report,'reason':reason}",
      "            'passed': True,'report':report,'reason':reason}"),
@@ -6780,8 +6792,19 @@ def linux_kernel_regression(rows,case,field,want):
     return True,f'{case}: {field}={want!r}, own control assertion failed'
 
 
+def kernel_lease_branch_accepted(rows,branch):
+    row=next((item for item in rows if item.get('mode')=='kernel-lease'),{})
+    observed=row.get('branches',{}).get(branch,{})
+    return (row.get('positiveRestored') is True and observed.get('accepted') is True
+            and observed.get('reason') is None and row.get('passed') is False)
+
+
 JUDGES = {
     'kernel-source-lease-gate-removed':('kernel-lease',lambda rows:match(rows,'kernel-lease',{'unownedPassed':True,'foreignPassed':True}),False,()),
+    'kernel-source-lease-cleanup-pending-guard-removed':('kernel-lease',lambda rows:kernel_lease_branch_accepted(rows,'cleanupPending'),False,()),
+    'kernel-source-lease-token-guard-removed':('kernel-lease',lambda rows:kernel_lease_branch_accepted(rows,'token'),False,()),
+    'kernel-source-lease-timestamp-guard-removed':('kernel-lease',lambda rows:kernel_lease_branch_accepted(rows,'timestamp'),False,()),
+    'kernel-source-lease-flock-guard-removed':('kernel-lease',lambda rows:kernel_lease_branch_accepted(rows,'flock'),False,()),
     'kernel-result-passed-forced':('kernel-result',lambda rows:match(rows,'kernel-result',{'failedPacketPassed':True}),False,()),
     'empty-eligible-guard-removed':('batch-aggregation',lambda rows:match(rows,'batch-aggregation',{'negativeRestored.emptyStatus':'PASS','negativeRestored.emptyReturncode':0,'negativeRestored.truncatedStatus':'PASS','negativeRestored.truncatedReturncode':0,'negativeRestored.duplicateStatus':'PASS','negativeRestored.duplicateReturncode':0,'negativeRestored.renamedStatus':'PASS','negativeRestored.renamedReturncode':0,'negativeRestored.reorderedStatus':'PASS','negativeRestored.reorderedReturncode':0}),False,()),
     'linux-initial-identity-gate-removed':('linux-kernel-controls',lambda rows:linux_kernel_regression(rows,'helper-initial-identity','observerCalls',1),False,()),
@@ -7793,12 +7816,12 @@ def require_restored(source, digest):
 
 DARWIN_ONLY = frozenset(('empty-group-probe-removed','sigterm-removed',
     'sigkill-escalation-removed','eperm-census-ignored','blocked-branch-removed'))
-LINUX_ONLY = frozenset(('kernel-source-lease-gate-removed','linux-initial-identity-gate-removed','linux-pre-reap-identity-gate-removed','linux-refusal-erases-finding','linux-empty-group-probe-removed','linux-sigterm-removed',
+LINUX_ONLY = frozenset(('kernel-source-lease-cleanup-pending-guard-removed','kernel-source-lease-token-guard-removed','kernel-source-lease-timestamp-guard-removed','kernel-source-lease-flock-guard-removed','kernel-source-lease-gate-removed','linux-initial-identity-gate-removed','linux-pre-reap-identity-gate-removed','linux-refusal-erases-finding','linux-empty-group-probe-removed','linux-sigterm-removed',
     'linux-sigkill-escalation-removed','linux-positive-finding-dropped-on-denial',
     'linux-unknown-error-means-empty'))
 
 
-EXPECTED_MUTATION_ROSTERS = {'declared': {'count': 345, 'sha256': 'a44cc858b0d4dd3ebc592ae86cc60b43275012ae6f0f6c8854d26ef68f242e5c'}, 'linux': {'count': 340, 'sha256': '0cbf70162bf8a0ca5d5233169e14bb01f42bdea833f2760f24d3bad07e8b4372'}, 'darwin': {'count': 336, 'sha256': '3230002e56264111754c5c8b560c36696bf900f5f52a14bf8dadfafdab19f1e5'}, 'other': {'count': 331, 'sha256': 'aab79d771a3c58005dda6863b2f799bd8d2417def547d48d9c2808dcbd38ce2d'}}
+EXPECTED_MUTATION_ROSTERS = {'declared': {'count': 349, 'sha256': '301feec75d6bb2dd72cb6f9cd4680049b4cd0b7fd94194bc7355990f51f45688'}, 'linux': {'count': 344, 'sha256': '588aa695518e9706cc572b65c6b3dc2c209dda063859e15941bd610d76573e8d'}, 'darwin': {'count': 336, 'sha256': '3230002e56264111754c5c8b560c36696bf900f5f52a14bf8dadfafdab19f1e5'}, 'other': {'count': 331, 'sha256': 'aab79d771a3c58005dda6863b2f799bd8d2417def547d48d9c2808dcbd38ce2d'}}
 
 
 def applicable_mutations(platform):

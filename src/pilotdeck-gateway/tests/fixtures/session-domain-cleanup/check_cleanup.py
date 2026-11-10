@@ -837,14 +837,32 @@ def run_kernel_cli_process(command, timeout=90, ready=None):
                 process.kill();process.communicate(timeout=5)
 
 
+def kernel_flock_rows():
+    return Path('/proc/locks').read_text().splitlines()
+
+
+def kernel_flock_match(line,parent,identity):
+    fields=line.split()
+    if len(fields)<8 or fields[1:4]!=['FLOCK','ADVISORY','WRITE'] or fields[4]!=str(parent):
+        return False
+    major,minor,inode=fields[5].split(':')
+    return (int(major,16),int(minor,16),int(inode))==identity
+
+
 def kernel_upper_lease(md):
     """Prove the direct negative runner still owns both existing leases."""
     owner=md.common.owner(md.common.LOCK)
     parent=os.getppid()
-    if (not owner or owner.get('pid')!=parent or owner.get('cleanupPending') is not True
-            or not isinstance(owner.get('token'),str) or not owner['token']
-            or not 0<=time.time()-owner['timestamp']<=md.common.MAX_AGE):
-        return None,'no live parent parity owner'
+    if not owner:
+        return None,'parent parity owner record is absent'
+    if owner.get('pid')!=parent:
+        return None,'parity owner is not the direct parent'
+    if owner.get('cleanupPending') is not True:
+        return None,'parent parity owner lacks the live cleanup marker'
+    if not isinstance(owner.get('token'),str) or not owner['token']:
+        return None,'parent parity owner token is invalid'
+    if not 0<=time.time()-owner['timestamp']<=md.common.MAX_AGE:
+        return None,'parent parity owner timestamp is not live'
     fd=None
     try:
         fd=os.pidfd_open(parent,0);poll=select.poll();poll.register(fd,select.POLLIN)
@@ -858,13 +876,9 @@ def kernel_upper_lease(md):
             return None,'parent is not the registered source-control runner'
         lock=(ROOT/'.negative-source.lock').stat()
         identity=(os.major(lock.st_dev),os.minor(lock.st_dev),lock.st_ino)
-        matching=False
-        for line in Path('/proc/locks').read_text().splitlines():
-            fields=line.split()
-            if len(fields)<8 or fields[1:4]!=['FLOCK','ADVISORY','WRITE'] or fields[4]!=str(parent):continue
-            major,minor,inode=fields[5].split(':')
-            if (int(major,16),int(minor,16),int(inode))==identity:matching=True;break
-        if not matching or poll.poll(0) or os.getppid()!=parent or md.common.owner(md.common.LOCK)!=owner:
+        if not any(kernel_flock_match(line,parent,identity) for line in kernel_flock_rows()):
+            return None,'direct parent does not hold the source flock'
+        if poll.poll(0) or os.getppid()!=parent or md.common.owner(md.common.LOCK)!=owner:
             return None,'parent source flock or parity owner is not stable'
         return {'parentPid':parent,'treeLockInode':lock.st_ino},None
     except (OSError,ValueError,KeyError) as error:
@@ -916,16 +930,50 @@ def linux_kernel_controls(md, output):
         if cache is not None:cache.cleanup()
 
 
-def kernel_lease_control(md,output):
+def kernel_lease_control(md,output,*,require_parent=False):
     with patch.object(md.common,'owner',return_value=None):
         unowned=linux_kernel_controls(md,output/'unowned')
     wrong={'pid':os.getpid(),'token':'foreign','timestamp':time.time(),'cleanupPending':True}
     with patch.object(md.common,'owner',return_value=wrong):
         foreign=linux_kernel_controls(md,output/'foreign')
-    return {'mode':'kernel-lease','unownedPassed':unowned.get('passed'),
-            'foreignPassed':foreign.get('passed'),
-            'passed':all(row.get('status')=='BLOCKED' and row.get('passed') is False
-                         and row.get('report') is None for row in (unowned,foreign))}
+    reasons=('parent parity owner record is absent','parity owner is not the direct parent')
+    outside=all(row.get('status')=='BLOCKED' and row.get('passed') is False
+                and row.get('report') is None and row.get('reason')==reason
+                for row,reason in zip((unowned,foreign),reasons))
+    proof,reason=kernel_upper_lease(md)
+    report={'mode':'kernel-lease','unownedPassed':unowned.get('passed'),
+            'foreignPassed':foreign.get('passed'),'parentProof':proof,'parentReason':reason}
+    if proof is None:
+        # Direct `all` invocations establish only the two unowned cases; a
+        # dedicated branch check is never credited without a real upper lease.
+        return {**report,'branchControls':'NOT_RUN','branches':{},'passed':outside and not require_parent}
+    healthy=md.common.owner(md.common.LOCK)
+    parent=proof['parentPid']
+    lock=(ROOT/'.negative-source.lock').stat()
+    identity=(os.major(lock.st_dev),os.minor(lock.st_dev),lock.st_ino)
+    real=kernel_flock_rows()
+    filtered=[line for line in real if not kernel_flock_match(line,parent,identity)]
+    if not healthy or len(filtered)==len(real):
+        raise RuntimeError('positive parent lease disappeared before branch controls')
+    def observe(change, expected):
+        with change:
+            observed,reason=kernel_upper_lease(md)
+        return {'accepted':observed is not None,'reason':reason,'expectedReason':expected,
+                'blockedByExpectedBranch':observed is None and reason==expected}
+    branches={}
+    for name,update,expected in (
+            ('cleanupPending',{'cleanupPending':False},'parent parity owner lacks the live cleanup marker'),
+            ('token',{'token':''},'parent parity owner token is invalid'),
+            ('timestamp',{'timestamp':time.time()-md.common.MAX_AGE-1},'parent parity owner timestamp is not live'),
+            ('futureTimestamp',{'timestamp':time.time()+md.common.MAX_AGE+1},'parent parity owner timestamp is not live')):
+        branches[name]=observe(patch.object(md.common,'owner',return_value={**healthy,**update}),expected)
+    branches['flock']=observe(patch.dict(globals(),{'kernel_flock_rows':lambda:filtered}),
+                              'direct parent does not hold the source flock')
+    final_proof,final_reason=kernel_upper_lease(md)
+    stable=final_proof==proof and final_reason is None and md.common.owner(md.common.LOCK)==healthy
+    healthy_branches=stable and all(row['blockedByExpectedBranch'] for row in branches.values())
+    return {**report,'branchControls':'PASS' if healthy_branches else 'FAIL','branches':branches,
+            'positiveRestored':stable,'passed':outside and healthy_branches}
 
 
 def kernel_result_control():
@@ -22572,7 +22620,7 @@ def main():
         result=kernel_result_control();results.append(result)
         print(json.dumps(result,ensure_ascii=False),flush=True)
     if args.mode in ('kernel-lease','all') and sys.platform=='linux':
-        try:result=kernel_lease_control(md,output)
+        try:result=kernel_lease_control(md,output,require_parent=args.mode=='kernel-lease')
         except Exception as error:result=control_failure('kernel-lease',error)
         results.append(result);print(json.dumps(result,ensure_ascii=False),flush=True)
     if args.mode in ('kernel-cancellation','all') and sys.platform=='linux':

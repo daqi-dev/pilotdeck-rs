@@ -255,7 +255,9 @@ def manifest_inventory(root):
               # edit is invisible to the frozen check.
               'scripts/gateway-parity/fixtures/retirement-methods.json']
     paths += [f'scripts/a5-19/{name}' for name in
-              ('observation_rules.mjs', 'run.py', 'six_cells.mts', 'append-observer.mjs', 'cleanup-observer.mjs')]
+              ('observation_rules.mjs', 'run.py', 'six_cells.mts', 'append-observer.mjs', 'cleanup-observer.mjs',
+               'host-sidecar-adapter.mjs', 'host-sidecar-source-loader.mjs',
+               'host-sidecar-stimulus.mjs', 'run-host.py')]
     inventory.update({'../../' + name: name for name in paths})
     return inventory
 

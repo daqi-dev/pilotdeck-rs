@@ -972,7 +972,7 @@ class ImportIsolation(unittest.TestCase):
         contract = json.loads(fixture.read_text())
         entries = {name for name in common.A2_SCRIPTS if name.endswith('.py')
                    and name not in ('common.py', '_guard.py', 'test_safety.py',
-                                    'controls/prerequisites.py', 'linux_group_cleanup.py')}
+                                    'controls/prerequisites.py', 'linux_group_cleanup.py', 'host_suite.py')}
         self.assertEqual(set(contract['errors']),
                          {'ordinary', 'interrupt', 'timeout', 'permission', 'subprocess_timeout',
                           'apparatus', 'rule_only', 'system_exit'}, message + ': required exception classes')
@@ -1974,7 +1974,7 @@ class ApparatusInputs(unittest.TestCase):
         folder = Path(__file__).resolve().parent
         entries = [name for name in common.A2_SCRIPTS if name.endswith('.py')
                    and name not in ('common.py', '_guard.py', 'test_safety.py',
-                                    'controls/prerequisites.py', 'linux_group_cleanup.py')]
+                                    'controls/prerequisites.py', 'linux_group_cleanup.py', 'host_suite.py')]
         for name in entries:
             with self.subTest(entry=name):
                 text = (folder / name).read_text(encoding='utf-8')
@@ -2013,6 +2013,21 @@ class ApparatusInputs(unittest.TestCase):
                       '#991 library must alias guard verifier')
         self.assertIs(_load, _guard.load, '#991 test runner must alias guard load')
         self.assertIs(run_entry, _guard.run_entry, '#991 test runner must alias guard dispatch')
+
+    def test_host_suite_is_an_authenticated_library_not_an_unmeasured_cli(self):
+        import ast
+        path = Path(__file__).resolve().parent / 'host_suite.py'
+        tree = ast.parse(path.read_text(encoding='utf-8'))
+        self.assertIn('host_suite.py', common.A2_SCRIPTS)
+        self.assertFalse(any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                             and node.name == 'main' for node in tree.body),
+                         '#1314 host library must not introduce an unmeasured CLI contract')
+        self.assertFalse(any(isinstance(node, ast.If) and '__name__' in ast.unparse(node.test)
+                             for node in ast.walk(tree)),
+                         '#1314 host library must have no independent dispatch')
+        entry = _load('guard_shape_host_suite', path)
+        self.assertEqual(Path(entry.__file__).resolve(), path.resolve(),
+                         '#1314 library must be loaded through authenticated explicit path')
 
     def test_a2_entries_never_resolve_apparatus_through_sys_path(self):
         # Covers entries that do not mention ``common`` but still import a
