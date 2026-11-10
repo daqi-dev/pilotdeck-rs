@@ -19,6 +19,7 @@ carry their own function-internal mutant.
 """
 from pathlib import Path
 import os
+import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -58,6 +59,10 @@ FACTORY_TESTS = ROOT / 'src/pilotdeck-gateway/src/runtime/session/factory_tests.
 # the helper every caller goes through. TRANSCRIPT_LOCKS joins SOURCE_TEXTS
 # below.
 TRANSCRIPT_LOCKS = ROOT / 'src/pilotdeck-gateway/src/runtime/session/transcript_locks.rs'
+# #1651: the one owner of the permission-mode list. The row below widens the
+# constant itself; its bound assertion literal lives in the config test file,
+# so PERMISSION joins SOURCE_TEXTS as a mutation source only.
+PERMISSION = ROOT / 'src/pilotdeck-gateway/src/runtime/permission.rs'
 LIVE = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
 # #1864 fix-r2: the host session tools' admission source — `turn()` writes
 # the stored selection back into `Permissions` *and* this turn's local
@@ -141,6 +146,15 @@ mutations = [
      'PERMISSION_MODES\n                .iter()\n                .any(|allowed| *allowed != "default" && m.equals_str(allowed))',
      CFG + 'set_permission_mode_applies_and_validates',
      '#1864 set_permission_mode applies the fixture mode'),
+    # ── #1651: the mode list itself is pinned. Widening PERMISSION_MODES
+    # makes every gate accept a wire value no TS counterpart ever allowed —
+    # and the roundtrip tests cannot see it, because they echo whatever the
+    # list holds. Narrowing is already killed by the row above.
+    ('permission-modes-widened', PERMISSION,
+     'pub const PERMISSION_MODES: [&str; 3] = ["default", "plan", "bypassPermissions"];',
+     'pub const PERMISSION_MODES: [&str; 4] = ["default", "plan", "bypassPermissions", "debug"];',
+     CFG + 'permission_modes_are_pinned_verbatim',
+     '#1651 PERMISSION_MODES is exactly default, plan, bypassPermissions'),
     ('thinking-shape-message', CONFIG,
      '            "INVALID_THINKING_CONFIG",\n            "thinking must be null or an object with an enabled boolean.",',
      '            "INVALID_THINKING_CONFIG",\n            "thinking must be null or an object with an enabled flag.",',
@@ -156,19 +170,69 @@ mutations = [
      '"INVALID_REQUEST", "path is required."',
      CFG + 'seed_read_state_applies_and_validates',
      '#1457 absent path code'),
+    # ── #1651: the gate order of seed_read_state is pinned pairwise, one
+    # mutation per adjacent pair, each bound to the case that violates both
+    # gates at once. The busy-before-mtime row needs case ③ (active turn,
+    # valid path, negative mtime): ① dies at the sessionKey gate and ② at the
+    # path gate under either order, so neither can see the busy gate move.
+    ('seed-path-before-session-key', CONFIG,
+     '        let session_key = require_session_key(params)?;\n'
+     '        let path = super::require_text(params, "path", "INVALID_FILE_PATH", '
+     '"path is required.")?;',
+     '        let path = super::require_text(params, "path", "INVALID_FILE_PATH", '
+     '"path is required.")?;\n'
+     '        let session_key = require_session_key(params)?;',
+     CFG + 'seed_read_state_answers_gates_in_order',
+     '#1651 the sessionKey gate answers a request missing both key and path'),
+    ('seed-busy-before-path', CONFIG,
+     '        let session_key = require_session_key(params)?;\n'
+     '        let path = super::require_text(params, "path", "INVALID_FILE_PATH", '
+     '"path is required.")?;',
+     '        let session_key = require_session_key(params)?;\n'
+     '        if self.owner.has_active_turn(&session_key) {\n'
+     '            return Err(gateway_error(\n'
+     '                "SESSION_BUSY",\n'
+     '                "Cannot seed file read state while a turn is active.",\n'
+     '            ));\n'
+     '        }\n'
+     '        let path = super::require_text(params, "path", "INVALID_FILE_PATH", '
+     '"path is required.")?;',
+     CFG + 'seed_read_state_answers_gates_in_order',
+     '#1651 the path gate answers before the busy gate'),
+    ('seed-busy-before-mtime', CONFIG,
+     '        let path = super::require_text(params, "path", "INVALID_FILE_PATH", '
+     '"path is required.")?;\n'
+     '        let mtime = params',
+     '        let path = super::require_text(params, "path", "INVALID_FILE_PATH", '
+     '"path is required.")?;\n'
+     '        if self.owner.has_active_turn(&session_key) {\n'
+     '            return Err(gateway_error(\n'
+     '                "SESSION_BUSY",\n'
+     '                "Cannot seed file read state while a turn is active.",\n'
+     '            ));\n'
+     '        }\n'
+     '        let mtime = params',
+     CFG + 'seed_read_state_answers_gates_in_order',
+     '#1651 the mtime gate answers before the busy gate'),
     ('transcript-clear-null', CONFIG,
      'selection.cloned().unwrap_or(JsValue::Null),',
      'selection.cloned().unwrap_or(JsValue::Undefined),',
      CFG + 'session_model_clear_appends_transcript_and_returns_null',
      '#1457 clear entry nulls the model selection'),
-    # ── fix-r1 P0: the per-session single-writer fence. Dropping either side
-    # puts two fresh writers back on the same tail, so the concurrent case must
-    # see a duplicate `sequence` and a transcript the next restore() rejects.
+    # ── fix-r1 P0 / #1868: the per-session single-writer fence. Since fix-r3
+    # the cold-write lease already refuses an overlapped read-modify-write
+    # (`SESSION_WRITER_BUSY`, no transcript corruption), so a removed fence no
+    # longer shows up as a duplicate `sequence` — it shows up as the concurrent
+    # request answering busy beside an in-flight writer instead of waiting for
+    # it. The bound test is its own synchronization point (#1868): it holds the
+    # fence and the lease an in-flight writer would, and the request whose
+    # fence was removed settles with `SESSION_WRITER_BUSY` inside the window,
+    # each side under its own label.
     ('transcript-fence-removed-config', CONFIG,
      '        let write_fence = transcript_locks::acquire(&fence_path).await?;',
      '        let write_fence = ();',
      CFG + 'concurrent_transcript_writers_keep_the_chain_loadable',
-     '#1457 transcript sequences strictly increase'),
+     '#1868 the concurrent model set waits at the held transcript fence'),
     ('transcript-fence-removed-rename', SESSION_DIR,
      '        let fence_path =\n'
      '            transcript_locks::session_transcript_path(&self.options.home, &project_root, &key);\n'
@@ -177,7 +241,7 @@ mutations = [
      '            transcript_locks::session_transcript_path(&self.options.home, &project_root, &key);\n'
      '        let write_fence = ();',
      CFG + 'concurrent_transcript_writers_keep_the_chain_loadable',
-     '#1457 transcript sequences strictly increase'),
+     '#1868 the concurrent rename waits at the held transcript fence'),
     # ── fix-r2 P0: a loaded session must be written *through* its recorder.
     # Bypassing the lookup sends the entry to a fresh writer on the same tail;
     # the loaded writer's next append then duplicates `sequence + 1` and the
@@ -457,6 +521,54 @@ mutations = [
      '        let mode = match mode.as_string() {',
      CFG + 'set_permission_mode_blank_key_answers_the_session_key_gate',
      '#1872 the blank key is a sessionKey error for permission'),
+    # ── #2703: the same require-weakened shape for the three methods the
+    # #1872 round did not cover. The bound tests' expect_err message is the
+    # anchor itself: with the require weakened and no turn running, the
+    # request succeeds on the blank default, so the Ok never reaches the
+    # assert labels and the expect_err is where the death shows.
+    ('thinking-blank-key-require-weakened', CONFIG,
+     '        let session_key = require_session_key(params)?;\n'
+     '        if self.owner.has_active_turn(&session_key) {\n'
+     '            return Err(gateway_error(\n'
+     '                "SESSION_BUSY",\n'
+     '                "Cannot change thinking while a turn is active.",\n'
+     '            ));\n'
+     '        }',
+     '        let session_key = require_session_key(params).unwrap_or_default();\n'
+     '        if self.owner.has_active_turn(&session_key) {\n'
+     '            return Err(gateway_error(\n'
+     '                "SESSION_BUSY",\n'
+     '                "Cannot change thinking while a turn is active.",\n'
+     '            ));\n'
+     '        }',
+     CFG + 'set_session_thinking_blank_key_answers_the_session_key_gate',
+     '#2703 the blank key is a sessionKey error for thinking'),
+    ('style-blank-key-require-weakened', CONFIG,
+     '        let session_key = require_session_key(params)?;\n'
+     '        if self.owner.has_active_turn(&session_key) {\n'
+     '            return Err(gateway_error(\n'
+     '                "SESSION_BUSY",\n'
+     '                "Cannot change output style during an active turn.",\n'
+     '            ));\n'
+     '        }',
+     '        let session_key = require_session_key(params).unwrap_or_default();\n'
+     '        if self.owner.has_active_turn(&session_key) {\n'
+     '            return Err(gateway_error(\n'
+     '                "SESSION_BUSY",\n'
+     '                "Cannot change output style during an active turn.",\n'
+     '            ));\n'
+     '        }',
+     CFG + 'set_output_style_blank_key_answers_the_session_key_gate',
+     '#2703 the blank key is a sessionKey error for output style'),
+    ('seed-blank-key-require-weakened', CONFIG,
+     '        let session_key = require_session_key(params)?;\n'
+     '        let path = super::require_text(params, "path", "INVALID_FILE_PATH", '
+     '"path is required.")?;',
+     '        let session_key = require_session_key(params).unwrap_or_default();\n'
+     '        let path = super::require_text(params, "path", "INVALID_FILE_PATH", '
+     '"path is required.")?;',
+     CFG + 'seed_read_state_blank_key_answers_the_session_key_gate',
+     '#2703 the blank key is a sessionKey error for seed read state'),
     ('clear-alias-owner-busy-removed', CONFIG,
      '        if self.owner.has_active_turn(&session_key)\n'
      '            || owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n'
@@ -833,7 +945,8 @@ LITERAL_ANCHORS = [
     (CONFIG, '#1457 set_permission_mode rejects '),
     (CONFIG, '#1457 seed_read_state returns the stale outcome'),
     (CONFIG, '#1457 clear entry nulls the model selection'),
-    (CONFIG, '#1457 transcript sequences strictly increase'),
+    (CONFIG, '#1868 the concurrent model set waits at the held transcript fence'),
+    (CONFIG, '#1868 the concurrent rename waits at the held transcript fence'),
     (CONFIG, '#1457 the transcript still loads'),
     (CONFIG, '#1457 exact mtime applies'),
     (CONFIG, '#1457 busy message'),
@@ -855,6 +968,13 @@ LITERAL_ANCHORS = [
     (CONFIG, '#1457 th busy message'),
     (CONFIG, '#1457 style busy message'),
     (CONFIG, '#1457 seed busy message'),
+    (CONFIG, '#1651 the sessionKey gate answers a request missing both key and path'),
+    (CONFIG, '#1651 the path gate answers before the busy gate'),
+    (CONFIG, '#1651 the mtime gate answers before the busy gate'),
+    (CONFIG, '#1651 PERMISSION_MODES is exactly default, plan, bypassPermissions'),
+    (CONFIG, '#2703 the blank key is a sessionKey error for thinking'),
+    (CONFIG, '#2703 the blank key is a sessionKey error for output style'),
+    (CONFIG, '#2703 the blank key is a sessionKey error for seed read state'),
     (CONFIG, '#1864 the plan selection is stored for the next run to read'),
     (CONFIG, '#1864 the mode object is stored'),
     (CONFIG, '#1864 the stored permission mode reaches the agent config'),
@@ -894,7 +1014,7 @@ LITERAL_ANCHORS = [
 # scan does not read would be a guard with a blind spot.
 SOURCE_TEXTS = (CONFIG, SESSION_DIR, METHODS_MOD, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS,
                 REVIEW_TESTS, FACTORY, FACTORY_TESTS, REQUESTS, SERVICES,
-                MANAGEMENT_TESTS, CRON, CRON_TESTS, TRANSCRIPT_LOCKS)
+                MANAGEMENT_TESTS, CRON, CRON_TESTS, TRANSCRIPT_LOCKS, PERMISSION)
 
 
 def _assertions(case):
@@ -981,6 +1101,81 @@ def write_atomic(path, data):
         tmp.unlink(missing_ok=True)
 
 
+def _shared_target_roots(root):
+    """Repository-shared cargo targets this runner must refuse.
+
+    ``<root>/_build/cargo-target`` is the shared default when the fixture runs
+    in the primary checkout. A worktree deployment (this runner's normal
+    shape, ``_build/wt-<N>`` — ``<root>/.git`` is a file) additionally shares
+    the primary checkout's ``_build/cargo-target``, which the worktree-local
+    path never equals, so the primary root is derived from the git common
+    dir (#1651: DS r2 P1). In a worktree the derivation is load-bearing:
+    if it cannot be made (git missing/old/broken, or a layout whose common
+    dir is not a ``.git`` directory), fail closed instead of silently
+    dropping the primary root.
+    """
+    roots = [root / '_build' / 'cargo-target']
+    in_worktree = (root / '.git').is_file()
+    try:
+        common = subprocess.run(
+            ['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+            cwd=str(root), capture_output=True, text=True, check=True,
+            timeout=30,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        if in_worktree:
+            raise SystemExit('#1651 cannot derive the primary checkout to '
+                              'guard its shared target; refusing to run')
+        return roots
+    common_dir = Path(common)
+    if common_dir.name != '.git':
+        if in_worktree:
+            raise SystemExit('#1651 unrecognized git layout; cannot guard the '
+                            'primary checkout shared target; refusing to run')
+        return roots
+    if common_dir.parent not in (root, root.resolve()):
+        primary = common_dir.parent / '_build' / 'cargo-target'
+        if primary not in roots:
+            roots.append(primary)
+    return roots
+
+
+def _shared_target_collision(value, root):
+    """Return the shared target `value` collides with, or None.
+
+    Values are resolved on cargo's basis — cargo runs with ``cwd=ROOT``, so a
+    relative spelling is joined to ROOT, never to the caller's cwd — then
+    normalized with ``realpath``, which collapses ``..``/``.`` and follows
+    symlinks, so spellings that differ only lexically, or through an alias
+    pointing *inside* a shared target, land on the same normalized path
+    (#1651: subpath, relative, and alias-to-subdirectory spellings cannot
+    slip past). The equality/containment comparison runs against every
+    shared root; existing spellings are additionally compared by inode
+    (``samefile``), so case-insensitive re-spellings of a shared root cannot
+    bypass while the directory exists.
+    """
+    raw = Path(value)
+    resolved = Path(os.path.realpath(raw if raw.is_absolute() else root / raw))
+    for shared in _shared_target_roots(root):
+        shared = Path(os.path.realpath(shared))
+        if resolved == shared:
+            return shared
+        try:
+            resolved.relative_to(shared)
+            return shared
+        except ValueError:
+            pass
+        probe = resolved
+        while probe != probe.parent:
+            try:
+                if probe.exists() and shared.exists() and probe.samefile(shared):
+                    return shared
+            except OSError:
+                pass
+            probe = probe.parent
+    return None
+
+
 def main():
     args = sys.argv[1:]
     compile_only = '--compile-only' in args
@@ -1007,6 +1202,21 @@ def main():
     env = dict(os.environ)
     if not env.get('CARGO_TARGET_DIR'):
         raise SystemExit('#1457 CARGO_TARGET_DIR must be supplied by the caller')
+    # #1651: a shared-target refusal, not the shared defaulting rule — the
+    # entry this runner needs is a caller-owned tree-external target (the
+    # README's "a target of its own"), and a value that resolves to — or
+    # inside — the repository's shared in-tree `_build/cargo-target` (of the
+    # worktree itself or, in a worktree deployment, of the primary checkout)
+    # means that isolation has failed. Refuse here, before the evidence
+    # directory is claimed; any other value — the runner's out-of-tree build
+    # dir included — proceeds untouched. The shared presence/defaulting rules
+    # live in `negative_process.target_environment` (#1166) and are not
+    # re-listed here.
+    collision = _shared_target_collision(env['CARGO_TARGET_DIR'], ROOT)
+    if collision is not None:
+        raise SystemExit('#1651 CARGO_TARGET_DIR resolves to the '
+                         f'repository-shared target {collision}; supply a '
+                         'tree-external target')
     for key in ('PDRS_NEGATIVE_RECEIPTS', 'PDRS_NEGATIVE_PARENT_TEST', 'PDRS_MUTANT'):
         env.pop(key, None)
     selected = args[1:]
@@ -1075,11 +1285,18 @@ def main():
                             raise RuntimeError('#1457 source restoration failed')
                         phase = 'body'
                     if not compile_only:
+                        # #1651: same shape as run_cases — a restored-control
+                        # failure invalidates the row without erasing what the
+                        # negative phase found: the KILLED/SURVIVED reason stays
+                        # and the restored outcome is appended, so the summary
+                        # still shows which label the mutant died under.
                         try:
                             if not passed(run(case.mutation + '-restored', args), case.test):
-                                raise RuntimeError('#1457 restored positive control failed')
+                                row['status'] = 'INVALID'
+                                row['reason'] += '; restored bound test did not pass'
                         except Exception as error:
-                            row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+                            row['status'] = 'INVALID'
+                            row['reason'] += f'; restored: {type(error).__name__}: {error}'
                     record(row)
             except BaseException as error:
                 # Keep the refusal/cancellation object so the handler below can

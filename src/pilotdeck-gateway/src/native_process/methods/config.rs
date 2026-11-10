@@ -1708,6 +1708,88 @@ mod tests {
         teardown(&r).await;
     }
 
+    /// #2703: the blank-key gate for `set_session_thinking` — a blank
+    /// sessionKey is not a missing one, and with no turn running the request
+    /// must die at the sessionKey gate, `sessionKey is required.` verbatim,
+    /// before the store or the session close is consulted.
+    #[tokio::test]
+    async fn set_session_thinking_blank_key_answers_the_session_key_gate() {
+        let (_scratch, r) = setup_fixture();
+        let error = r
+            .session_config_request(
+                "set_session_thinking".into(),
+                object([("sessionKey", "".into()), ("thinking", JsValue::Null)]),
+            )
+            .await
+            .expect_err("#2703 the blank key is a sessionKey error for thinking");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#2703 the blank key is a sessionKey error for thinking"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "sessionKey is required.",
+            "#2703 the blank key keeps the gate message for thinking"
+        );
+        teardown(&r).await;
+    }
+
+    /// #2703: the blank-key gate for `set_output_style`, same shape as
+    /// thinking above.
+    #[tokio::test]
+    async fn set_output_style_blank_key_answers_the_session_key_gate() {
+        let (_scratch, r) = setup_fixture();
+        let error = r
+            .session_config_request(
+                "set_output_style".into(),
+                object([("sessionKey", "".into()), ("name", JsValue::Null)]),
+            )
+            .await
+            .expect_err("#2703 the blank key is a sessionKey error for output style");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#2703 the blank key is a sessionKey error for output style"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "sessionKey is required.",
+            "#2703 the blank key keeps the gate message for output style"
+        );
+        teardown(&r).await;
+    }
+
+    /// #2703: the blank-key gate for `seed_read_state` — the key is gated
+    /// before the path, the mtime and the maintenance reservation, so a blank
+    /// key with an otherwise valid payload still answers the sessionKey gate.
+    #[tokio::test]
+    async fn seed_read_state_blank_key_answers_the_session_key_gate() {
+        let (_scratch, r) = setup_fixture();
+        let error = r
+            .session_config_request(
+                "seed_read_state".into(),
+                object([
+                    ("sessionKey", "".into()),
+                    ("path", "seeded.txt".into()),
+                    ("mtime", JsValue::Number(1.0)),
+                ]),
+            )
+            .await
+            .expect_err("#2703 the blank key is a sessionKey error for seed read state");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#2703 the blank key is a sessionKey error for seed read state"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "sessionKey is required.",
+            "#2703 the blank key keeps the gate message for seed read state"
+        );
+        teardown(&r).await;
+    }
+
     /// #1872 fix-r3: a blank request key must not consult — or hold — the
     /// owner-side transcript-write reservation. The owner it folds onto
     /// (`session`) has a concurrent reservation held here; before the skip
@@ -2341,6 +2423,57 @@ mod tests {
         );
         r.owner
             .end_turn(&session.into(), Some(&run), Some(&reservation));
+        teardown(&r).await;
+    }
+
+    /// #1651: `PERMISSION_MODES` is the one owner of the mode list — the
+    /// session-config gate above, the settings `defaultMode` check and the
+    /// stored-mode reader all defer to it, so widening or narrowing the
+    /// constant silently changes which wire values are accepted everywhere.
+    /// The roundtrip tests cannot see it (they echo whatever the list holds),
+    /// so the list is pinned here, verbatim, in order.
+    #[test]
+    fn permission_modes_are_pinned_verbatim() {
+        // Compared as slices, not arrays: a widened constant must die at
+        // this assertion (KILLED), not at a length-mismatched type
+        // (INVALID) — the control needs the mutant to compile.
+        negative_assert_eq!(
+            crate::runtime::permission::PERMISSION_MODES.as_slice(),
+            ["default", "plan", "bypassPermissions"].as_slice(),
+            "#1651 PERMISSION_MODES is exactly default, plan, bypassPermissions"
+        );
+    }
+
+    /// #1651: a blank or whitespace `mode` is not a missing mode — it is a
+    /// present, non-member string, and the gate must answer with the
+    /// unknown-mode rejection verbatim, exactly like any other non-member.
+    /// A regression that trims the value or treats `""` as absent changes
+    /// the code, the message, or both.
+    #[tokio::test]
+    async fn set_permission_mode_blank_mode_is_rejected_verbatim() {
+        let (_scratch, r) = setup_fixture();
+        for mode in ["", " ", "\t"] {
+            let error = r
+                .session_config_request(
+                    "set_permission_mode".into(),
+                    object([
+                        ("sessionKey", "cfg-pm-blank".into()),
+                        ("mode", JsValue::String(mode.into())),
+                    ]),
+                )
+                .await
+                .expect_err("#1651 set_permission_mode rejects the blank mode");
+            negative_assert_eq!(
+                error.code.as_str(),
+                "INVALID_PERMISSION_MODE",
+                "#1651 a blank mode is an unknown mode, not a missing one"
+            );
+            negative_assert_eq!(
+                error_text(&error),
+                format!("Unsupported permission mode: {mode}"),
+                "#1651 the blank mode keeps the verbatim unknown-mode message"
+            );
+        }
         teardown(&r).await;
     }
 
@@ -3174,6 +3307,90 @@ mod tests {
         teardown(&r).await;
     }
 
+    /// #1651: the gate order of `seed_read_state` is itself behavior —
+    /// sessionKey, then path, then mtime, then the active-turn busy gate.
+    /// Each adjacent pair is pinned by a request that violates both gates at
+    /// once, so the answer names which gate really came first. The
+    /// mtime-before-busy pair needs the active turn *and* a valid path: a
+    /// pathless request never reaches the mtime gate, so it cannot tell the
+    /// two orders apart — that is case ③, the one the issue's ①/② alone
+    /// cannot pin.
+    #[tokio::test]
+    async fn seed_read_state_answers_gates_in_order() {
+        let (_scratch, r) = setup_fixture();
+        // ① no sessionKey and no path: the sessionKey gate owns the answer.
+        let error = r
+            .session_config_request(
+                "seed_read_state".into(),
+                object([("mtime", JsValue::Number(1.0))]),
+            )
+            .await
+            .expect_err("#1651 seed_read_state rejects the keyless and pathless request");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#1651 the sessionKey gate answers a request missing both key and path"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "sessionKey is required.",
+            "#1651 the sessionKey gate message answers a request missing both key and path"
+        );
+        // An active turn for the remaining two cases: the busy gate is only
+        // distinguishable from the validation gates while one is running.
+        let session = "cfg-seed-order".to_string();
+        let run: JsString = "run-1".into();
+        let reservation = r
+            .owner
+            .begin_turn(&session.clone().into(), &run)
+            .expect("#1651 reserve the active turn");
+        // ② the turn is active and the path is missing: the path gate still
+        // answers first.
+        let error = r
+            .session_config_request(
+                "seed_read_state".into(),
+                object([("sessionKey", session.as_str().into())]),
+            )
+            .await
+            .expect_err("#1651 seed_read_state rejects the pathless request under the active turn");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_FILE_PATH",
+            "#1651 the path gate answers before the busy gate"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "path is required.",
+            "#1651 the path gate message answers before the busy gate"
+        );
+        // ③ the turn is active and the mtime is negative: the mtime gate
+        // still answers first.
+        let error = r
+            .session_config_request(
+                "seed_read_state".into(),
+                object([
+                    ("sessionKey", session.as_str().into()),
+                    ("path", "seeded.txt".into()),
+                    ("mtime", JsValue::Number(-1.0)),
+                ]),
+            )
+            .await
+            .expect_err("#1651 seed_read_state rejects the bad mtime under the active turn");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_FILE_MTIME",
+            "#1651 the mtime gate answers before the busy gate"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "mtime must be a non-negative integer in milliseconds.",
+            "#1651 the mtime gate message answers before the busy gate"
+        );
+        r.owner
+            .end_turn(&session.clone().into(), Some(&run), Some(&reservation));
+        teardown(&r).await;
+    }
+
     // ─────────────────────────────────────── transcript write serialization
 
     /// #1457 fix-r2 (P0): a loaded session owns the transcript writer, so the
@@ -3268,36 +3485,98 @@ mod tests {
         teardown(&r).await;
     }
 
-    /// #1457 fix-r1 (P0): `session_model_set` and `rename_session` each build a
-    /// fresh `JsonlTranscriptStore`, restore the tail, and append
-    /// `sequence + 1`. Racing them on one session must still leave a log the
-    /// next `restore()` accepts: strictly increasing sequences, no duplicate.
+    /// How long [`concurrent_transcript_writers_keep_the_chain_loadable`]
+    /// holds its fence before declaring the request parked: the same bound
+    /// the close thread gates use, and the same meaning — a request still
+    /// parked at this point is not slower, it is waiting on the fence.
+    const TRANSCRIPT_RACE_WINDOW: std::time::Duration = std::time::Duration::from_secs(30);
+
+    /// #1457 fix-r1 (P0), #1868: `session_model_set` and `rename_session`
+    /// each build a fresh `JsonlTranscriptStore`, restore the tail, and append
+    /// `sequence + 1`, so the per-session fence is what makes the second one
+    /// wait. Since fix-r3 the cold-write lease already refuses an overlapped
+    /// read-modify-write (`SESSION_WRITER_BUSY`, no transcript corruption), so
+    /// the fence's remaining unique contract is that the concurrent request
+    /// *waits for the in-flight writer* instead of being answered busy. The
+    /// old eight-round `join!` spin could only hit that interleave by
+    /// thread-scheduling luck (#1868), so the test is now its own
+    /// synchronization point: it holds the fence and the cold-write lease the
+    /// way an in-flight writer would (the fence wraps the whole
+    /// read-modify-write, the lease lives inside it) and gives the request a
+    /// window to prove which one it stopped at.
+    ///
+    /// 1. intact: the request parks at the held fence for the whole window —
+    ///    nothing can wake it while this test owns the fence — then completes
+    ///    once the test releases, after the in-flight writer would have;
+    /// 2. fence removed: the request skips the fence, runs its cold
+    ///    read-modify-write on the blocking pool beside the lease this test
+    ///    holds, and is answered `SESSION_WRITER_BUSY` inside the window.
     #[tokio::test]
     async fn concurrent_transcript_writers_keep_the_chain_loadable() {
         let (_scratch, r) = setup_fixture();
         let session = "cfg-race-1";
-        // Eight rounds: a single unlucky ordering must not be able to make the
-        // race invisible, and the fences must hold for the whole run.
-        for round in 0..8 {
-            let set_params = object([
-                ("sessionKey", session.into()),
-                ("selection", selection("model", "test", "test")),
-            ]);
-            let rename_params = object([
-                ("sessionKey", session.into()),
-                ("value", JsValue::String(format!("round-{round}").into())),
-            ]);
-            let (written, renamed) = tokio::join!(
-                r.session_config_request("session_model_set".into(), set_params),
-                r.session_dir_request("rename_session".into(), rename_params),
+        let fence_path = transcript_locks::session_transcript_path(
+            &r.options.home,
+            &r.options.project,
+            &JsString::from(session),
+        );
+        // One round per fenced method, each with its own removable lock: the
+        // config-family fence and the session-directory fence must each carry
+        // its request alone, so a mutation of either side is attributed to
+        // its own label instead of whichever request happened to break first.
+        for (method, params, waits) in [
+            (
+                "session_model_set",
+                object([
+                    ("sessionKey", session.into()),
+                    ("selection", selection("model", "test", "test")),
+                ]),
+                "#1868 the concurrent model set waits at the held transcript fence",
+            ),
+            (
+                "rename_session",
+                object([
+                    ("sessionKey", session.into()),
+                    ("value", JsValue::String("round-1".into())),
+                ]),
+                "#1868 the concurrent rename waits at the held transcript fence",
+            ),
+        ] {
+            // Same order production takes them: the fence around the whole
+            // read-modify-write, the lease inside it. The lease is what the
+            // in-flight writer holds; the fence is what the request must wait
+            // on — and does wait on, when it has not been removed.
+            let fence = transcript_locks::acquire(&fence_path)
+                .await
+                .expect("#1868 the test holds the transcript fence");
+            let lease = transcript_locks::cold_write_lease(&fence_path)
+                .expect("#1868 the test reaches the cold-write lease")
+                .expect("#1868 the cold-write lease is free before the request starts");
+            let mut request = match method {
+                "session_model_set" => r.session_config_request(method.into(), params),
+                _ => r.session_dir_request(method.into(), params),
+            };
+            // The forced race window: an intact request parks at the held
+            // fence and cannot complete inside it — this test owns the fence,
+            // so nothing can wake the request. A request whose fence was
+            // removed runs its cold read-modify-write beside the held lease
+            // and settles in milliseconds (the only work between skipping the
+            // fence and reaching the lease), so the bound only has to sit far
+            // above that; it matches the close thread gates' hang bound.
+            let settled = tokio::time::timeout(TRANSCRIPT_RACE_WINDOW, request.as_mut()).await;
+            let parked = settled.is_err();
+            negative_assert!(
+                parked,
+                "{waits}, settled inside the window instead: {settled:?}"
             );
-            // The requests succeed only if each append claimed the next number
-            // under the fence, so a lost fence shows up here as the store's
-            // `sequence_not_increasing` rejection (#1457 fix-r2: the negative
-            // controls bind to `#1457 transcript sequences strictly increase`,
-            // and this is one of the sites where that invariant breaks first).
-            written.expect("#1457 transcript sequences strictly increase (session_model_set)");
-            renamed.expect("#1457 transcript sequences strictly increase (rename_session)");
+            // Intact: release both in the order production takes them and
+            // let the parked request finish. It must succeed now — it holds
+            // the fence and the lease itself, and the transcript is cold.
+            drop(lease);
+            drop(fence);
+            request
+                .await
+                .expect("#1868 the parked request completes once the fence is released");
         }
         let entries = transcript_entries(&r, session);
         let sequences: Vec<f64> = entries
@@ -3315,7 +3594,7 @@ mod tests {
         );
         negative_assert_eq!(
             sequences.len(),
-            16,
+            2,
             "#1457 every concurrent write landed exactly once"
         );
         // The real invariant: a fresh reader must still be able to load it.

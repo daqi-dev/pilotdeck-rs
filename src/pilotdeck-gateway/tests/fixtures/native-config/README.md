@@ -12,7 +12,7 @@ CARGO_TARGET_DIR=<本树独立 target> \
 ```
 
 - `<NEW_OUTPUT_DIR>` 必须不存在（独占创建，不覆盖历史证据）。
-- `CARGO_TARGET_DIR` 必须由调用方提供（脚本不猜，避免复用陈旧 target 把环境问题报成「变异没杀死」）。
+- `CARGO_TARGET_DIR` 必须由调用方提供（脚本不猜，避免复用陈旧 target 把环境问题报成「变异没杀死」）；且解析后不得落在仓内共享的 `_build/cargo-target` 之内或之上——共享根按部署形态取**两个**：本树（或本 worktree）的 `<ROOT>/_build/cargo-target`，以及 worktree 部署下主 checkout 的同一路径（由 git common dir 推导；worktree 内推导失败即拒跑，fail-closed）；相对值按 cargo 的口径（`cwd=ROOT`）解析，再经 `realpath` 归一化（`..` 词法拼写与指向共享子目录的别名落在同一条归一化路径上），已存在的拼写另按 inode（`samefile`）比对，符号链接别名与大小写重拼都拦（#1651：入口拒绝发生在进证据目录之前——本装置要求树外独立 target，该本地规则不动共享的 `negative_process.target_environment` 默认规则）。
 - 只跑某几条：在输出目录后追加变异名（见脚本 `mutations` 表），可配合 `--compile-only` 只验编译。
 
 只校验锚点、不执行：
@@ -21,15 +21,15 @@ CARGO_TARGET_DIR=<本树独立 target> \
 python3 -I src/pilotdeck-gateway/tests/fixtures/native-config/negative_controls.py --check
 ```
 
-正跑也会在起 cargo 之前无条件跑同一条守卫（只读 15 个文件、秒级），坏锚当场拒跑，不会烧掉整轮编译预算；`--check` 的用处是不进变异、不起进程的预检，CI 与宿主链都不会替你跑它（gateway 夹具不在 CI 的 negative-controls 作业里）。
+正跑也会在起 cargo 之前无条件跑同一条守卫（只读 17 个文件、秒级），坏锚当场拒跑，不会烧掉整轮编译预算；`--check` 的用处是不进变异、不起进程的预检，CI 与宿主链都不会替你跑它（gateway 夹具不在 CI 的 negative-controls 作业里）。
 
-这条自检自己的红侧由同目录 `test_literal_anchors.py` 钉住（正控跑真 `--check` 并核输出两串计数；十条负控各破坏一个不变式，要求对应的拒绝语；其中两条钉「定点重跑只校验被选中的行、但 pin 仍按全表绑定」）：
+这条自检自己的红侧由同目录 `test_literal_anchors.py` 钉住（正控跑真 `--check` 并核输出两串计数；十五条负控各破坏一个不变式，要求对应的拒绝语——含 #1651 的「`CARGO_TARGET_DIR` 解析到共享 target（等值 / 子路径 / 相对拼写 / worktree 主 checkout / 符号链接别名）时拒绝且不落证据目录」；其中两条钉「定点重跑只校验被选中的行、但 pin 仍按全表绑定」）：
 
 ```
 python3 -m unittest -v src/pilotdeck-gateway/tests/fixtures/native-config/test_literal_anchors.py
 ```
 
-除了逐条变异锚点，`--check` 还校验 `LITERAL_ANCHORS` 表（#2065）：`expect` / `expect_err` 收 `&str`、不做插值，panic 载荷里的 `{label}` 是字面量，所以这类断言串必须逐字出现在被扫描源码里；`negative_assert!` / `negative_assert_eq!` 经 `format!` 插值，**只有带 `{...}` 占位符的模板**才与载荷不同（无占位符的宏断言同样是逐字源码文本，照常登记）。扫描面是 `SOURCE_TEXTS`：被变异的源文件（含 #1604 起加入的 `methods/mod.rs`、#1860 起加入的 `runtime/session/factory.rs`、#1864 起加入的 `assembly.rs` / `runtime/turn/live.rs` / `native_process/tools.rs`、#2272 起加入的 `requests.rs`、#2562 起加入的 `services.rs`、#2195 起加入的 `methods/cron.rs`），加上 `live_stream_tests.rs` / `review_tests.rs` / `factory_tests.rs` / `management_tests.rs` / `cron_tests.rs` 五个承载 #1864 / #1860 / #2562 / #1509 断言消息的测试文件；表项路径必须落在其中，否则 `--check` 报 `outside SOURCE_TEXTS`。新增/改这类锚点时把 `(源码路径, 逐字子串)` 一并登记，否则 `--check` 报错。表项与行的绑定是**逐字相等**：某行断言必须原样等于表里的一条（取源码前缀的行，表里就存那个前缀），所以把行改回比前缀更长的自造后缀会被判 `unbound to any row`；反过来，断言逐字出现在源码里却没登记会被判 `unpinned literal anchor`。登记按 `(文件, 串)` 成对判定：同一串在两个扫描文件里各逐字出现时，两边都要各登记一条，删掉其中一条仍会报错。
+除了逐条变异锚点，`--check` 还校验 `LITERAL_ANCHORS` 表（#2065）：`expect` / `expect_err` 收 `&str`、不做插值，panic 载荷里的 `{label}` 是字面量，所以这类断言串必须逐字出现在被扫描源码里；`negative_assert!` / `negative_assert_eq!` 经 `format!` 插值，**只有带 `{...}` 占位符的模板**才与载荷不同（无占位符的宏断言同样是逐字源码文本，照常登记）。扫描面是 `SOURCE_TEXTS`：被变异的源文件（含 #1604 起加入的 `methods/mod.rs`、#1860 起加入的 `runtime/session/factory.rs`、#1864 起加入的 `assembly.rs` / `runtime/turn/live.rs` / `native_process/tools.rs`、#2272 起加入的 `requests.rs`、#2562 起加入的 `services.rs`、#2195 起加入的 `methods/cron.rs`、#1874 起加入的 `runtime/session/transcript_locks.rs`、#1651 起加入的 `runtime/permission.rs`），加上 `live_stream_tests.rs` / `review_tests.rs` / `factory_tests.rs` / `management_tests.rs` / `cron_tests.rs` 五个承载 #1864 / #1860 / #2562 / #1509 断言消息的测试文件；表项路径必须落在其中，否则 `--check` 报 `outside SOURCE_TEXTS`。新增/改这类锚点时把 `(源码路径, 逐字子串)` 一并登记，否则 `--check` 报错。表项与行的绑定是**逐字相等**：某行断言必须原样等于表里的一条（取源码前缀的行，表里就存那个前缀），所以把行改回比前缀更长的自造后缀会被判 `unbound to any row`；反过来，断言逐字出现在源码里却没登记会被判 `unpinned literal anchor`。登记按 `(文件, 串)` 成对判定：同一串在两个扫描文件里各逐字出现时，两边都要各登记一条，删掉其中一条仍会报错。
 
 ## 每条变异做什么
 
@@ -39,4 +39,6 @@ python3 -m unittest -v src/pilotdeck-gateway/tests/fixtures/native-config/test_l
 
 脚本复用 `negative_process`（`mutating_sources` / `run_owned` / `wait_for_slot`）与 `negative_suite`（`Case` / `classify` / `invalidate_completed` / `passed` / `publish_summary`），但自管逐案流程：每个变异前要插一次 `cargo test --no-run` 编译门，`negative_suite.run_cases` 当前没有该钩子。
 
-三态退出契约逐字沿用 `run_cases`（#1076 fix-r2）：进入守卫前失败 rc=1；守卫展开期间失败、恢复未验证、取消、或守卫在回卷途中抛出（此时 `phase` 仍写着 `body`，靠 `body_error` 同一性区分）一律 rc=2。当前 51 条变异（以 `--check` 报的锚点数为准）。
+三态退出契约逐字沿用 `run_cases`（#1076 fix-r2）：进入守卫前失败 rc=1；守卫展开期间失败、恢复未验证、取消、或守卫在回卷途中抛出（此时 `phase` 仍写着 `body`，靠 `body_error` 同一性区分）一律 rc=2。#1651 起恢复后正控的失败也按 `run_cases` 语义处置：不整行覆盖，保留负控阶段的 status/reason 再追加（`…; restored bound test did not pass`），KILLED/SURVIVED 的归因不丢。当前 77 条变异、68 条字面锚（以 `--check` 报的计数为准；#1868 两行删锁变异换锚为「停在持住的转写 fence」语义、#1651 增四行、#2703 增三行后的数）。
+
+原子性分两层，互不代管：本夹具自己的写入与回滚走上面的 `write_atomic`（`仓根 .negctl-publish/` 临时文件 + 一次 `os.replace`；错误路径有 `finally` 清理 `*.tmp`，#1903 收口，SIGKILL 残留同位、下轮同名 `open('wb')` 截断复用）；`mutating_sources` 的收尾恢复走共享的 `write_source_atomic`（同为临时文件 + 一次 rename，#1903 改形）。
