@@ -59,7 +59,7 @@ async fn production_public_skills_external_projection_errors_and_slow_peer_leave
                                 let path = request.uri().path().to_owned();
                                 let bytes = request.into_body().collect().await.unwrap().to_bytes();
                                 let body = if path == "/module-manifest" {
-                                    serde_json::json!({"protocolVersion":"2.0","implementationId":"test.skills","contract":"pilotdeck.skills/v1","transport":"module-http-v2","methods":["list"]})
+                                    serde_json::json!({"protocolVersion":"2.0","implementationId":"test.skills","contract":"pilotdeck.skills/v1","transport":"module-http-v2","methods":["list","read","write","create","delete","import","validate","scan"]})
                                 } else {
                                     let request: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
                                     sent.send(request.clone()).unwrap();
@@ -83,7 +83,7 @@ async fn production_public_skills_external_projection_errors_and_slow_peer_leave
     let (_scratch, requests) = management_tests::setup();
     let config = requests.options.home.join("pilotdeck.yaml");
     let mut source = std::fs::read_to_string(&config).unwrap();
-    source.push_str(&format!("\nmodules:\n  skills:\n    enabled: true\n    implementationId: test.skills\n    contract: pilotdeck.skills/v1\n    transport: module-http-v2\n    endpoint: {endpoint}\n    methods: [list]\n    timeoutMs: 10000\n"));
+    source.push_str(&format!("\nmodules:\n  skills:\n    enabled: true\n    implementationId: test.skills\n    contract: pilotdeck.skills/v1\n    transport: module-http-v2\n    endpoint: {endpoint}\n    methods: [list, read, write, create, delete, import, validate, scan]\n    timeoutMs: 10000\n"));
     std::fs::write(&config, source).unwrap();
     let registry = assembly::project_registry(&requests.options, &requests.env);
     let sop = NativeSopControl::new(
