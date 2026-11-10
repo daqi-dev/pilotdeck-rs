@@ -700,13 +700,46 @@ where
     }
     failure.map_or(Ok(()), Err)
 }
+// Source-installer resolution is advisory: inability to inspect an executable
+// or working directory must not prevent the MCP helper from serving requests.
+fn optional_install_command(
+    env: &crate::config::Env,
+    executable: Option<PathBuf>,
+    cwd: Option<PathBuf>,
+) -> String {
+    if let Some(command) = env
+        .get("PILOTDECK_FUNASR_INSTALL_COMMAND")
+        .filter(|s| !s.trim().is_empty())
+    {
+        return command.clone();
+    }
+    let Some(base) = cwd.or_else(|| {
+        executable
+            .as_deref()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+    }) else {
+        return String::new();
+    };
+    let executable = executable.unwrap_or_else(|| base.join("pilotdeck-gateway"));
+    super::native_builtins::install_command(env, &executable, &base).unwrap_or_default()
+}
+
 pub async fn serve_stdio(mut options: FunasrOptions) -> io::Result<()> {
     if options.install_command.trim().is_empty() {
-        options.install_command = super::native_builtins::install_command(
-            &std::env::vars().collect(),
-            &std::env::current_exe()?,
-            &std::env::current_dir()?,
-        )?;
+        let env = std::env::vars_os()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.to_string_lossy().into_owned(),
+                )
+            })
+            .collect();
+        options.install_command = optional_install_command(
+            &env,
+            std::env::current_exe().ok(),
+            std::env::current_dir().ok(),
+        );
     }
     serve(
         tokio::io::BufReader::new(tokio::io::stdin()),

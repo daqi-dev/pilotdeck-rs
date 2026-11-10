@@ -36,6 +36,11 @@ case $(uname -s)/$(uname -m) in
 esac
 jobs=${PILOTDECK_ASR_BUILD_JOBS:-2}
 case $jobs in ''|*[!0-9]*|0*) fail 'PILOTDECK_ASR_BUILD_JOBS must be a positive integer without leading zeroes.' ;; esac
+# A broad hard ceiling rejects dangerous accidental fanout. The default is 2;
+# operators still choose a value appropriate for the target machine.
+if [ "${#jobs}" -gt 3 ] || [ "$jobs" -gt 128 ]; then
+    fail "PILOTDECK_ASR_BUILD_JOBS must not exceed 128 (received $jobs)."
+fi
 umask 077
 mkdir -p "$PILOT_HOME"
 pilot_home=$(CDPATH= cd -- "$PILOT_HOME" && pwd -P)
@@ -51,11 +56,26 @@ if ! mkdir "$lock" 2>/dev/null; then
     if [ ! -L "$lock" ] && [ -f "$lock/owner.txt" ] && [ ! -L "$lock/owner.txt" ]; then head -c 2048 "$lock/owner.txt" >&2; fi
     fail "Confirm the recorded installer and build processes have stopped before removing the recorded stage and this lock. No existing lock or stage was removed."
 fi
-printf 'installerPid=%s\nstartedUtc=%s\nbirth=%s\n' "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(ps -p "$$" -o lstart=)" > "$lock/owner.txt"
 stage=
+lock_identity=
+lock_marker=
+lock_identity_now() {
+    [ ! -L "$lock" ] && [ -d "$lock" ] || return 1
+    case $platform in
+        darwin-*) stat -f '%d:%i' "$lock" ;;
+        *) stat -c '%d:%i' -- "$lock" ;;
+    esac
+}
 cleanup() {
     if [ -n "$stage" ]; then rm -rf -- "$stage"; fi
-    rm -f -- "$lock/owner.txt"
+    # A manually replaced lease belongs to another installer. Never remove it.
+    [ -n "$lock_identity" ] || return 0
+    current_identity=$(lock_identity_now 2>/dev/null) || return 0
+    [ "$current_identity" = "$lock_identity" ] || return 0
+    [ -n "$lock_marker" ] && [ -f "$lock_marker" ] && [ ! -L "$lock_marker" ] || return 0
+    rm -f -- "$lock/owner.txt" "$lock_marker"
+    current_identity=$(lock_identity_now 2>/dev/null) || return 0
+    [ "$current_identity" = "$lock_identity" ] || return 0
     rmdir "$lock" 2>/dev/null || :
 }
 trap cleanup EXIT
@@ -67,6 +87,9 @@ interrupted() {
     exit 143
 }
 trap interrupted INT TERM HUP
+lock_identity=$(lock_identity_now)
+lock_marker=$(mktemp "$lock/.owner.XXXXXXXX")
+printf 'installerPid=%s\nstartedUtc=%s\nbirth=%s\n' "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(ps -p "$$" -o lstart=)" > "$lock/owner.txt"
 stage=$(mktemp -d "$cache/.source-build.XXXXXXXX")
 printf 'stage=%s\n' "$stage" >> "$lock/owner.txt"
 device() {

@@ -494,7 +494,11 @@ fn live_worker_identity(pid: i32) -> Option<String> {
         if trimmed.is_empty() || trimmed.starts_with('Z') {
             None
         } else {
-            Some(trimmed.to_owned())
+            // State can change (sleeping/running) while the same process lives.
+            // Compare only the stable birth-time fields after the state column.
+            trimmed
+                .split_once(char::is_whitespace)
+                .map(|(_, birth)| birth.trim_start().to_owned())
         }
     }
 }
@@ -544,18 +548,18 @@ async fn exited_wrapper_with_pipe_holding_worker_is_cancellable() {
             .transcribe(object([("audio_path", "audio.wav".into())]), rx)
             .await
     });
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while !worker.exists() {
+    let pid = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Ok(contents) = std::fs::read_to_string(&worker)
+                && let Ok(pid) = contents.trim().parse::<i32>()
+            {
+                break pid;
+            }
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     })
     .await
-    .unwrap();
-    let pid: i32 = std::fs::read_to_string(worker)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
+    .expect("worker pid must be published as a complete integer");
     let identity = live_worker_identity(pid).expect("holding worker is live");
     // EOF has not arrived. Returning success/error here would truncate the SDK's output.
     assert!(
@@ -581,4 +585,16 @@ async fn exited_wrapper_with_pipe_holding_worker_is_cancellable() {
     })
     .await
     .expect("holding worker must stop before cancellation returns");
+}
+
+#[test]
+fn installer_advice_does_not_require_executable_or_working_directory() {
+    let env = crate::config::Env::new();
+    assert_eq!(optional_install_command(&env, None, None), "");
+    let mut env = env;
+    env.insert(
+        "PILOTDECK_FUNASR_INSTALL_COMMAND".into(),
+        "local install".into(),
+    );
+    assert_eq!(optional_install_command(&env, None, None), "local install");
 }

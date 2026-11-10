@@ -1719,6 +1719,27 @@ mod native_retirement_marker_tests {
         );
     }
     #[test]
+    fn legacy_funasr_without_source_installer_injects_empty_argument() {
+        let input = spec(
+            PILOTDECK_NODE_EXECUTABLE_MARKER,
+            vec![PILOTDECK_FUNASR_MCP_ENTRYPOINT_MARKER.into()],
+        );
+        let patched =
+            patch_project_scoped_mcp_spec(input, "/project", "/home", &BuiltinMcpPaths::default())
+                .unwrap();
+        let McpTransportSpec::Stdio { args, .. } = patched.transport else {
+            panic!("stdio")
+        };
+        let args = args.unwrap();
+        assert_eq!(args[args.len() - 2..], ["--install-command", ""]);
+        let argv = args
+            .iter()
+            .map(std::ffi::OsString::from)
+            .collect::<Vec<_>>();
+        let helper = super::super::funasr::parse_helper_args(&argv).unwrap();
+        assert!(helper.install_command.is_empty());
+    }
+    #[test]
     fn unknown_embedded_funasr_marker_is_explicit_instead_of_an_empty_argument() {
         let input = spec(
             "wrapper",
