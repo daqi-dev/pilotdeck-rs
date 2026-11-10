@@ -5913,3 +5913,12 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | 下次两小时交接 | ~04:30 前写段（不空等） | coord2/e7 | 04:30 |
 
 （本段 READY 改动：updated 行重写【含 00:39 段未落盘的补正】；j-fix-r2 行增记 fix-r3；新增 ext-hop3-5 / hop-batch / t-harvest / orphan-pr-patrol 四行。段后 next-task --check 自查。）
+
+### 巡场补记（02:31–02:36，coord2/e7，随 02:30 段后补跑）
+
+- 遗留 CPU 探针：pid 21021（`python -I`、ppid 1、11h49m、95% CPU、cwd 主仓、无打开数据文件、零写入）判为审计遗留死循环，已 kill（可重跑无害）；pid 36729（4 min、有父 shell）为 hop6 车道正常子进程，不动。
+- human-comments：空（无新拍板）。
+- 磁盘：`_build`+`_tmp` = 84,931,616 KiB ≈ 81 GiB < 160 GiB WARN 线，正常。
+- **#2519 漏收链收官：PR #2888 已 MERGED（02:34:26，origin/main 头 8a7b0626a，六件提交链 cherry 等价确认、邮箱核平）**；#2884 跟进单已开、#2519 处置评论已发（issuecomment-6775903264）。两点遗留：① #2855 同改 test_safety.py/FROZEN.md，会被 #2888 语义冲突踢出队列，其车道需 rebase + `--write` 重登记（#1355 收口链已知情）；② `--suite retirement` 真轮复算归合入后宿主车道。
+- PR 队列：#2876（board）与 #2903（决策卡）均 OPEN 排队中（#2903 CI 4 项在跑）；#2068 车道 PR #2904 CI 在跑、#2622 四通道在飞（fix8 链 + DS r6 + Grok r2 + negctl 18、跟进单 #2905 已开）。
+- sweep-lanes 全量卡（sweep-0231.md）仍在生成中，结论并入 04:30 段；本补记已提交。
