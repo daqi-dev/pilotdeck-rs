@@ -1,22 +1,31 @@
 //! Live per-chat ownership: polling keeps accepting answers while a turn waits.
 //!
-//! TS baseline (cc7c4e65): WeixinChannel.ts:403-800 (dispatchMessage,
-//! runQueuedTurns, processMessage, createLiveReplyTransport) plus the protocol
-//! helpers in native/live/{reply,permissions,session}.rs.
+//! TS baseline (cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85):
+//! - WeixinChannel.ts:403-545 (dispatchMessage, queuePendingTurn,
+//!   resetChatInteractionState, runQueuedTurns)
+//! - WeixinChannel.ts:655-800 (processMessage, createLiveReplyTransport,
+//!   sendReply, sendTypingIfPossible)
+//! - ImPermissionHelper.ts / ImElicitationHelper.ts / ImLiveReplyController.ts
+//!   live in native/live/{permissions,reply}.rs; ImChatSessionState.ts lives in
+//!   native/live/session.rs.
 use super::*;
 use crate::config::channel_commands::ChannelEventSink;
+use crate::metadata::js_trim;
 use reply::{ActivityKind, LiveReplyController, LiveReplyOptions, WeixinLiveTransport, WeixinReplyIo};
-pub(crate) use std::collections::{HashMap, HashSet, VecDeque};
+pub(crate) use std::collections::{HashMap, VecDeque};
 pub(crate) use std::sync::Mutex as StdMutex;
 
 mod permissions;
 mod reply;
 mod session;
-use permissions::{AnswerStep, ElicitationState, PermissionState};
-use session::{ActiveRun, ChatSessionState, QueuedTurn, WEIXIN_MAX_PENDING_TURNS_PER_CHAT};
+use permissions::{Confirmation, ElicitationState, PermissionAnswer, PermissionState};
+use session::{ActiveRun, ChatSessionState, QueuedTurn};
 
+/// One chat's live state. ImChatSessionState.ts:14-68 owns the generation, the
+/// bounded pending-turn queue and the active run; permissions and elicitation
+/// are the two helper state machines.
 struct Chat {
-    generation: u64,
+    state: ChatSessionState,
     context: Option<String>,
     permissions: PermissionState,
     elicitation: ElicitationState,
@@ -26,7 +35,7 @@ struct Chat {
 impl Default for Chat {
     fn default() -> Self {
         Self {
-            generation: 0,
+            state: ChatSessionState::default(),
             context: None,
             permissions: PermissionState::new(),
             elicitation: ElicitationState::new(),
@@ -36,14 +45,18 @@ impl Default for Chat {
     }
 }
 impl Chat {
+    fn generation(&self, chat: &str) -> u64 {
+        self.state.generation(chat)
+    }
     /// WeixinChannel.ts:719-742 / ImPermissionHelper.ts:151-164 — a finished turn
     /// never clears a permission decision that is still in flight.
     fn finish_turn(&mut self, chat: &str, generation: u64) -> bool {
-        if self.generation != generation {
+        if !self.state.is_current(chat, generation) {
             return false;
         }
         self.elicitation.clear(chat);
         self.permissions.clear_after_turn(chat);
+        self.live = None;
         true
     }
 }
@@ -53,9 +66,6 @@ pub(super) struct LiveOwner {
     gateway: Arc<dyn ChannelGateway>,
     mapper: StdMutex<ChannelSessionState>,
     chats: StdMutex<HashMap<String, Arc<Mutex<Chat>>>>,
-    queues: StdMutex<HashMap<String, Arc<Mutex<()>>>>,
-    sessions: StdMutex<HashMap<String, ChatSessionState>>,
-    pending: StdMutex<HashMap<String, VecDeque<PendingTurn>>>,
     delivery: Arc<super::WeixinDelivery>,
 }
 impl LiveOwner {
@@ -72,9 +82,6 @@ impl LiveOwner {
             gateway,
             mapper: StdMutex::new(mapper),
             chats: Default::default(),
-            queues: Default::default(),
-            sessions: Default::default(),
-            pending: Default::default(),
             delivery,
         }
     }
@@ -86,74 +93,84 @@ impl LiveOwner {
             .or_default()
             .clone()
     }
-    fn queue(&self, id: &str) -> Arc<Mutex<()>> {
-        self.queues
+    async fn generation(&self, chat: &str) -> u64 {
+        self.chat(chat).lock().await.generation(chat)
+    }
+    /// WeixinChannel.ts:524 — resetChatInteractionState drops pendingTurns.
+    pub(crate) async fn clear_pending_turns(&self, chat: &str) -> Vec<QueuedTurn> {
+        self.chat(chat)
             .lock()
-            .unwrap()
-            .entry(id.into())
-            .or_default()
-            .clone()
+            .await
+            .state
+            .clear_pending_turns(chat)
     }
-    fn sessions(&self) -> std::sync::MutexGuard<'_, HashMap<String, ChatSessionState>> {
-        self.sessions.lock().unwrap()
+    async fn enter_run(&self, chat: &str) -> bool {
+        self.chat(chat).lock().await.state.enter_run(chat)
     }
-    fn session_running(&self, chat: &str) -> bool {
-        self.sessions()
-            .get(chat)
-            .is_some_and(|session| session.is_running(chat))
+    async fn leave_run(&self, chat: &str) {
+        self.chat(chat).lock().await.state.leave_run(chat);
     }
-    fn enter_run(&self, chat: &str) -> bool {
-        self.sessions()
-            .entry(chat.into())
-            .or_default()
-            .enter_run(chat)
+    async fn queue_turn(&self, chat: &str, turn: QueuedTurn) -> Vec<QueuedTurn> {
+        self.chat(chat).lock().await.state.queue_turn(chat, turn)
     }
-    fn leave_run(&self, chat: &str) {
-        if let Some(session) = self.sessions().get_mut(chat) {
-            session.leave_run(chat);
+    async fn shift_turn(&self, chat: &str) -> Option<QueuedTurn> {
+        self.chat(chat).lock().await.state.shift_turn(chat)
+    }
+    async fn active_run(&self, chat: &str) -> Option<ActiveRun> {
+        self.chat(chat).lock().await.state.active_run(chat)
+    }
+    async fn set_active_run(
+        &self,
+        chat: &str,
+        session: &str,
+        run_id: Option<String>,
+        generation: u64,
+    ) {
+        self.chat(chat).lock().await.state.set_active_run(
+            chat,
+            ActiveRun {
+                session_key: session.into(),
+                run_id,
+                generation,
+            },
+        );
+    }
+    /// ImChatSessionState.ts:64 — only the turn that still owns the generation
+    /// clears the run (WeixinChannel.ts:777).
+    async fn clear_active_run(&self, chat: &str, generation: u64) {
+        let guarded = self.chat(chat);
+        let mut state = guarded.lock().await;
+        if state.state.is_current(chat, generation) {
+            state.state.clear_active_run(chat);
         }
     }
-    fn queue_turn(&self, chat: &str, turn: QueuedTurn) {
-        self.sessions()
-            .entry(chat.into())
-            .or_default()
-            .queue_turn(chat, turn);
+
+    #[cfg(test)]
+    pub(crate) async fn test_set_active_run(
+        &self,
+        chat: &str,
+        session: &str,
+        run_id: Option<&str>,
+        generation: u64,
+    ) {
+        self.set_active_run(chat, session, run_id.map(str::to_owned), generation)
+            .await;
     }
-    fn shift_turn(&self, chat: &str) -> Option<QueuedTurn> {
-        self.sessions().get_mut(chat).and_then(|s| s.shift_turn(chat))
+
+    #[cfg(test)]
+    pub(crate) async fn test_clear_active_run(&self, chat: &str, generation: u64) {
+        self.clear_active_run(chat, generation).await;
     }
-    fn pending_turns(&self, chat: &str) -> usize {
-        self.sessions()
-            .get(chat)
-            .map(|s| s.pending_len(chat))
-            .unwrap_or(0)
+
+    #[cfg(test)]
+    pub(crate) async fn test_active_run(&self, chat: &str) -> Option<ActiveRun> {
+        self.active_run(chat).await
     }
-    /// r20 merge (AG poll §3): `clear_pending_turns(chat_id)` for `/new` — drops ImChatSessionState queue.
-    pub(crate) fn clear_pending_turns(&self, chat_id: &str) {
-        if let Some(session) = self.sessions().get_mut(chat_id) {
-            session.clear_pending_turns(chat_id);
-        }
-    }
-    fn active_run(&self, chat: &str) -> Option<ActiveRun> {
-        self.sessions().get(chat).and_then(|s| s.active_run(chat))
-    }
-    fn set_active_run(&self, chat: &str, session: &str, run_id: Option<String>, generation: u64) {
-        self.sessions()
-            .entry(chat.into())
-            .or_default()
-            .set_active_run(
-                chat,
-                ActiveRun {
-                    session_key: session.into(),
-                    run_id,
-                    generation,
-                },
-            );
-    }
-    fn clear_active_run(&self, chat: &str) {
-        if let Some(session) = self.sessions().get_mut(chat) {
-            session.clear_active_run(chat);
-        }
+
+    #[cfg(test)]
+    pub(crate) async fn test_reset_for_new_session(&self, chat: &str) {
+        let guarded = self.chat(chat);
+        guarded.lock().await.state.reset_for_new_session(chat);
     }
     fn save_mapper(&self) -> Result<()> {
         self.storage
@@ -168,6 +185,8 @@ impl LiveOwner {
     fn save_receipt(&self, path: &std::path::Path, value: &Value) -> Result<()> {
         super::super::storage::write(path, value)
     }
+    /// WeixinChannel.ts:927-947 — queued replies flush on the next successful
+    /// poll; each failed segment stays at the head.
     pub(crate) async fn deliver_outbox(
         &self,
         credentials: &Value,
@@ -198,7 +217,10 @@ impl LiveOwner {
                 }
                 Err(error) => {
                     self.delivery.queue_pending_reply(chat, body);
-                    eprintln!("weixin: outbox reply queued after failure: {}", error.message);
+                    eprintln!(
+                        "weixin: outbox reply queued after failure: {}",
+                        super::super::media::format_weixin_error_message(&error.message)
+                    );
                 }
             }
         }
@@ -227,24 +249,22 @@ impl LiveOwner {
         )
         .await
     }
-    /// WeixinChannel.ts:875-893 — best effort: a missing context or a failed RPC
-    /// only logs.
+    /// WeixinChannel.ts:880-889 — best effort. A missing client or context token
+    /// is a silent no-op; a failed RPC only logs with formatWeixinError.
     async fn send_typing(&self, credentials: &Value, chat: &str) {
         let context = self.chat(chat).lock().await.context.clone();
-        if context.is_none() {
+        let Some(context) = context else {
             return;
-        }
-        if let Err(error) = self.typing_rpc(credentials, chat, context.as_deref()).await {
-            eprintln!("weixin: sendTyping failed: {}", error.message);
+        };
+        if let Err(error) = self.typing_rpc(credentials, chat, &context).await {
+            eprintln!(
+                "weixin: sendTyping failed: {}",
+                super::super::media::format_weixin_error_message(&error.message)
+            );
         }
     }
     /// weixin-ilink api.js:68-75: getconfig supplies typing_ticket, then sendtyping.
-    async fn typing_rpc(
-        &self,
-        credentials: &Value,
-        chat: &str,
-        context: Option<&str>,
-    ) -> Result<()> {
+    async fn typing_rpc(&self, credentials: &Value, chat: &str, context: &str) -> Result<()> {
         let base = text(credentials, "baseUrl").unwrap_or("");
         let token = text(credentials, "botToken");
         let config = self
@@ -253,7 +273,7 @@ impl LiveOwner {
                 base,
                 "ilink/bot/getconfig",
                 token,
-                Some(json!({"ilink_user_id":chat,"context_token":context.unwrap_or("")})),
+                Some(json!({"ilink_user_id":chat,"context_token":context})),
             )
             .await?;
         let Some(ticket) = text(&config, "typing_ticket").filter(|ticket| !ticket.is_empty())
@@ -270,11 +290,22 @@ impl LiveOwner {
             .await
             .map(|_| ())
     }
+    /// WeixinChannel.ts:707 — a void sendTypingIfPossible call: the turn must not
+    /// wait for the typing round trip.
+    fn typing_in_background(self: &Arc<Self>, credentials: &Value, chat: &str) {
+        let owner = self.clone();
+        let credentials = credentials.clone();
+        let chat = chat.to_owned();
+        tokio::spawn(async move {
+            owner.send_typing(&credentials, &chat).await;
+        });
+    }
     pub async fn process_batch(
         self: &Arc<Self>,
         credentials: &Value,
         mut batch: Value,
-    ) -> Result<()> {        let id = text(&batch, "id")
+    ) -> Result<()> {
+        let id = text(&batch, "id")
             .ok_or_else(|| failure("Invalid Weixin batch"))?
             .to_owned();
         if id.len() != 64 || !id.bytes().all(|c| c.is_ascii_hexdigit()) {
@@ -336,7 +367,7 @@ impl LiveOwner {
         self.save_mapper()?;
         super::super::inbox::WeixinInbox::new(self.storage.home.clone()).acknowledge(&id, None)
     }
-    /// WeixinChannel.ts:403-519 — command, answer, and ordinary-turn dispatch.
+    /// WeixinChannel.ts:403-521 — dispatchMessage.
     async fn message(
         self: &Arc<Self>,
         credentials: &Value,
@@ -350,11 +381,12 @@ impl LiveOwner {
         let Some(chat_id) = text(message, "from_user_id") else {
             return Ok(());
         };
-        let Some((mut input, mut attachments)) =
+        let Some((input, mut attachments)) =
             crate::config::routes::weixin::native::weixin_inbound_text_and_attachments(message)
         else {
             return Ok(());
         };
+        let mut input = input;
         if !attachments.is_empty() {
             let message_id = message
                 .get("message_id")
@@ -380,7 +412,9 @@ impl LiveOwner {
                 .unwrap()
                 .insert(chat_id.into(), context.into());
         }
-        if input.is_empty() && attachments.is_empty() {
+        // WeixinChannel.ts:417-419 — trim decides whether the message is empty;
+        // the command router still receives the raw text.
+        if js_trim(&input).is_empty() && attachments.is_empty() {
             return Ok(());
         }
         let receipt_path = self.receipt_path(id, index);
@@ -394,8 +428,10 @@ impl LiveOwner {
                 .deliver_outbox(credentials, chat_id, &receipt_path, &mut receipt)
                 .await;
         }
-        let is_new = input == "/new" || input.starts_with("/new ");
-        if is_new {
+        let previous_session = self.mapper.lock().unwrap().session("weixin", chat_id);
+        // WeixinSessionMapper.ts:23-27 — resolve trims first, then matches /new.
+        let resolved_new = resolve_new(&input);
+        if let Some(remainder) = resolved_new.as_ref() {
             if let Some(saved) = receipt.get("resolvedNew").and_then(Value::as_str) {
                 self.mapper
                     .lock()
@@ -404,17 +440,37 @@ impl LiveOwner {
                     .insert(chat_id.into(), saved.into());
                 self.save_mapper()?;
             } else {
-                let previous_generation = self.reset_chat(chat_id).await;
-                let previous = previous_generation.0;
-                self.clear_pending_turns(chat_id);
+                let active = self.active_run(chat_id).await;
+                let dropped = self.clear_pending_turns(chat_id).await;
+                for turn in dropped {
+                    self.finish_dropped_turn(&turn)?;
+                }
+                {
+                    let guarded = self.chat(chat_id);
+                    let mut state = guarded.lock().await;
+                    state.state.reset_for_new_session(chat_id);
+                    state.permissions.clear(chat_id);
+                    state.elicitation.clear(chat_id);
+                    state.live = None;
+                    state.changed.notify_waiters();
+                }
                 self.delivery.clear_pending_replies(chat_id);
-                let previous = previous
-                    .unwrap_or_else(|| self.mapper.lock().unwrap().session("weixin", chat_id));
-                let mut params = json!({"sessionKey":previous});
-                if let Some(run_id) = previous_generation.1 {
+                let mut params = json!({
+                    "sessionKey":active
+                        .as_ref()
+                        .map(|run| run.session_key.clone())
+                        .unwrap_or(previous_session)
+                });
+                if let Some(run_id) = active.and_then(|run| run.run_id) {
                     params["runId"] = run_id.into();
                 }
-                let _ = self.gateway.request("abort_turn", params).await;
+                // WeixinChannel.ts:416-419 — a failed abort only logs.
+                if let Err(error) = self.gateway.request("abort_turn", params).await {
+                    eprintln!(
+                        "weixin: abort previous session on /new failed: {}",
+                        super::super::media::format_weixin_error_message(&error.message)
+                    );
+                }
                 self.mapper.lock().unwrap().reset("weixin", chat_id);
                 self.save_mapper()?;
                 receipt["resolvedNew"] = self
@@ -425,75 +481,46 @@ impl LiveOwner {
                     .into();
                 self.save_receipt(&receipt_path, &receipt)?;
             }
-            if input == "/new" {
-                // WeixinChannel.ts:431 — no queueOnFailure for session confirmation.
-                let context = chat.lock().await.context.clone();
-                let _ = super::send_reply(
-                    &self.storage,
-                    &self.http,
-                    credentials,
-                    chat_id,
-                    context.as_deref(),
-                    "已创建新会话。",
-                )
-                .await;
-                receipt["outbox"] = json!(["已创建新会话。"]);
-                receipt["sentIndex"] = json!(1);
+            if remainder.is_empty() {
+                // WeixinChannel.ts:431 — the confirmation is not queued on failure
+                // and a failed send still acks this message.
+                if self
+                    .reply(credentials, chat_id, "已创建新会话。", false)
+                    .await
+                    .is_ok()
+                {
+                    receipt["outbox"] = json!(["已创建新会话。"]);
+                    receipt["sentIndex"] = json!(1);
+                } else {
+                    receipt["outbox"] = json!([]);
+                    receipt["sentIndex"] = json!(0);
+                }
                 receipt["complete"] = true.into();
                 self.save_receipt(&receipt_path, &receipt)?;
                 return Ok(());
             }
+            input = remainder.clone();
         }
-        // WeixinChannel.ts:413 — dispatched inputs carry the generation they
-        // were admitted under; /new above already bumped it.
-        let generation = self.chat_generation(chat_id).await;
-        if !is_new && self.answer(credentials, chat_id, input.as_str(), generation).await? {
+        let generation = self.generation(chat_id).await;
+        // WeixinChannel.ts:437-441 — elicitation and permission answers both
+        // consume the inbound message.
+        if self.answer(credentials, chat_id, &input, generation).await? {
             return Ok(());
         }
-        let prompt = if is_new {
-            input[4..].trim().to_owned()
-        } else {
-            input
-        };
-        let prompt = if prompt.is_empty() && !attachments.is_empty() {
+        // WeixinChannel.ts:457-471 — commands run on the raw text.
+        if js_trim(&input).starts_with('/')
+            && self
+                .run_command(&input, chat_id, credentials, &receipt_path, &mut receipt)
+                .await?
+        {
+            return Ok(());
+        }
+        // WeixinChannel.ts:421 — mapped.message is the trimmed text.
+        let prompt = if js_trim(&input).is_empty() {
             "请查看我发送的附件。".to_owned()
         } else {
-            prompt
+            js_trim(&input).to_owned()
         };
-        let capture = CapturedReply::default();
-        let mut mapper = self.mapper.lock().unwrap().clone();
-        let mut ctx = CommandContext {
-            gateway: self.gateway.as_ref(),
-            reply: &capture,
-            state: &mut mapper,
-            channel: "weixin",
-            chat: chat_id,
-            home: &self.storage.home,
-        };
-        if execute_channel_command(&prompt, &mut ctx).await? {
-            // Only copy this chat's entries. Other chats may have changed while
-            // the command's gateway RPC was in flight.
-            {
-                let mut current = self.mapper.lock().unwrap();
-                if let Some(value) = mapper.active_by_chat_id.get(chat_id) {
-                    current
-                        .active_by_chat_id
-                        .insert(chat_id.into(), value.clone());
-                }
-                if let Some(value) = mapper.project_by_chat_id.get(chat_id) {
-                    current
-                        .project_by_chat_id
-                        .insert(chat_id.into(), value.clone());
-                }
-            }
-            self.save_mapper()?;
-            let replies = capture.0.lock().unwrap().clone();
-            receipt["outbox"] = json!(replies);
-            self.save_receipt(&receipt_path, &receipt)?;
-            return self
-                .deliver_outbox(credentials, chat_id, &receipt_path, &mut receipt)
-                .await;
-        }
         let (session, project) = {
             let mapper = self.mapper.lock().unwrap();
             (
@@ -506,215 +533,117 @@ impl LiveOwner {
             message: prompt,
             project_key: project,
             attachments,
+            receipt_path: Some(receipt_path),
         };
-        // WeixinChannel.ts:453-477 — answer with the prompt gate still open;
-        // otherwise hand the turn to the per-chat run loop (or its queue).
-        if self
-            .await_chat_slot(credentials, chat_id, &turn.message, generation)
-            .await?
-        {
-            return Ok(());
-        }
-        if self.session_running(chat_id) {
-            self.enqueue_turn(chat_id, turn, receipt_path, receipt)?;
-            return Ok(());
-        }
-        self.dispatch_turn(credentials, chat_id, generation, turn, receipt_path, receipt)
+        self.run_queued_turns(credentials, chat_id, generation, turn)
             .await
     }
-    /// WeixinChannel.ts:453-477 — the permission answer path runs before the
-    /// active-chat queue. Only a reply that can be an answer to an in-flight
-    /// interaction waits for it; ordinary text queues immediately.
-    async fn await_chat_slot(
+    /// WeixinChannel.ts:473-490 — executeChannelCommand and its reply delivery.
+    async fn run_command(
         &self,
-        credentials: &Value,
-        chat_id: &str,
         input: &str,
-        generation: u64,
+        chat_id: &str,
+        credentials: &Value,
+        receipt_path: &std::path::Path,
+        receipt: &mut Value,
     ) -> Result<bool> {
-        if !self.session_running(chat_id) {
-            return Ok(false);
-        }
-        let interacting = matches!(input.trim(), "0" | "1" | "2") || {
-            let chat = self.chat(chat_id);
-            let state = chat.lock().await;
-            state.permissions.has_pending(chat_id)
-                || state.permissions.is_answering(chat_id)
-                || state.elicitation.has_pending(chat_id)
+        let capture = CapturedReply::default();
+        let mut mapper = self.mapper.lock().unwrap().clone();
+        let mut ctx = CommandContext {
+            gateway: self.gateway.as_ref(),
+            reply: &capture,
+            state: &mut mapper,
+            channel: "weixin",
+            chat: chat_id,
+            home: &self.storage.home,
         };
-        if !interacting {
+        if !execute_channel_command(input, &mut ctx).await? {
             return Ok(false);
         }
-        let chat = self.chat(chat_id);
-        loop {
-            let changed = chat.lock().await.changed.clone();
-            let notified = changed.notified();
-            tokio::pin!(notified);
-            // Enable before checking state so a prompt transition between
-            // answer() and the wait is not lost.
-            notified.as_mut().enable();
-            if self.chat_generation(chat_id).await != generation {
-                return Ok(true);
+        // Only copy this chat's entries. Other chats may have changed while the
+        // command's gateway RPC was in flight.
+        {
+            let mut current = self.mapper.lock().unwrap();
+            if let Some(value) = mapper.active_by_chat_id.get(chat_id) {
+                current
+                    .active_by_chat_id
+                    .insert(chat_id.into(), value.clone());
             }
-            if !self.session_running(chat_id) {
-                return Ok(false);
+            if let Some(value) = mapper.project_by_chat_id.get(chat_id) {
+                current
+                    .project_by_chat_id
+                    .insert(chat_id.into(), value.clone());
             }
-            if self.answer(credentials, chat_id, input, generation).await? {
-                return Ok(true);
-            }
-            if !self.session_running(chat_id) {
-                return Ok(false);
-            }
-            notified.await;
         }
+        self.save_mapper()?;
+        // WeixinChannel.ts:478-486 — command replies go through sendReply with the
+        // default options, so a delivery failure is NOT queued.
+        let replies = capture.0.lock().unwrap().clone();
+        for reply in &replies {
+            let _ = self.reply(credentials, chat_id, reply, false).await;
+        }
+        receipt["outbox"] = json!([]);
+        receipt["sentIndex"] = json!(0);
+        receipt["complete"] = true.into();
+        self.save_receipt(receipt_path, receipt)?;
+        Ok(true)
     }
-    /// WeixinChannel.ts:520-546 — one run loop per chat. The first message runs
-    /// inline; later messages land in the bounded pending-turn queue and are
-    /// drained by that loop, each with its own staged receipt.
-    async fn dispatch_turn(
+    /// WeixinChannel.ts:520-546 — queuePendingTurn + runQueuedTurns.
+    async fn run_queued_turns(
         self: &Arc<Self>,
         credentials: &Value,
         chat_id: &str,
         generation: u64,
-        turn: QueuedTurn,
-        receipt_path: std::path::PathBuf,
-        receipt: Value,
+        first: QueuedTurn,
     ) -> Result<()> {
-        if !self.enter_run(chat_id) {
-            self.enqueue_turn(chat_id, turn, receipt_path, receipt)?;
+        if !self.enter_run(chat_id).await {
+            let dropped = self.queue_turn(chat_id, first).await;
+            for turn in dropped {
+                self.finish_dropped_turn(&turn)?;
+            }
             return Ok(());
         }
-        let mut next = Some((turn, receipt_path, receipt));
-        let mut outcome = Ok(());
-        while let Some((turn, receipt_path, mut receipt)) = next {
-            if self.chat_generation(chat_id).await != generation {
-                // /new replaced the session: drop this turn and everything queued.
-                receipt["complete"] = true.into();
-                self.save_receipt(&receipt_path, &receipt)?;
-                break;
-            }
-            // The old post-lock re-check: a queued reply may answer the prompt.
-            if self
-                .answer(credentials, chat_id, &turn.message, generation)
-                .await?
-            {
-                next = self.dequeue_turn(chat_id);
-                continue;
-            }
-            outcome = self
-                .process_message(credentials, chat_id, generation, turn, &receipt_path, &mut receipt)
+        let mut next = Some(first);
+        while let Some(turn) = next {
+            self.process_message(credentials, chat_id, generation, turn)
                 .await;
-            if outcome.is_err() {
-                break;
-            }
-            next = self.dequeue_turn(chat_id);
+            // A /new reset empties the queue, so a stale turn simply finds none.
+            next = self.shift_turn(chat_id).await;
         }
-        self.leave_run(chat_id);
-        outcome
+        self.leave_run(chat_id).await;
+        Ok(())
     }
-    /// ImChatSessionState.ts:38-45 — cap at 20 pending turns, dropping the oldest.
-    fn enqueue_turn(
-        &self,
-        chat: &str,
-        turn: QueuedTurn,
-        receipt_path: std::path::PathBuf,
-        receipt: Value,
-    ) -> Result<()> {
-        let dropped = {
-            let mut pending = self.pending.lock().unwrap();
-            let queue = pending.entry(chat.into()).or_default();
-            queue.push_back(PendingTurn {
-                turn,
-                receipt_path,
-                receipt,
-            });
-            let mut dropped = Vec::new();
-            while queue.len() > WEIXIN_MAX_PENDING_TURNS_PER_CHAT {
-                if let Some(entry) = queue.pop_front() {
-                    dropped.push(entry);
-                }
-            }
-            dropped
+    /// The oldest turns dropped by the 20-turn cap are finished, not replayed.
+    fn finish_dropped_turn(&self, turn: &QueuedTurn) -> Result<()> {
+        let Some(path) = turn.receipt_path.as_ref() else {
+            return Ok(());
         };
-        for mut entry in dropped {
-            entry.receipt["complete"] = true.into();
-            self.save_receipt(&entry.receipt_path, &entry.receipt)?;
-        }
-        if let Some(session) = self.sessions().get_mut(chat) {
-            session.queue_turn(
-                chat,
-                QueuedTurn {
-                    session_key: String::new(),
-                    message: String::new(),
-                    project_key: None,
-                    attachments: vec![],
-                },
-            );
-        }
-        Ok(())
+        let mut receipt = match super::super::storage::read_checked(path) {
+            Ok(Some(saved)) => saved,
+            Ok(None) => json!({}),
+            Err(_) => json!({}),
+        };
+        receipt["outbox"] = json!([]);
+        receipt["sentIndex"] = json!(0);
+        receipt["complete"] = true.into();
+        self.save_receipt(path, &receipt)
     }
-    fn dequeue_turn(&self, chat: &str) -> Option<(QueuedTurn, std::path::PathBuf, Value)> {
-        let entry = self
-            .pending
-            .lock()
-            .unwrap()
-            .get_mut(chat)
-            .and_then(|queue| queue.pop_front())?;
-        if let Some(session) = self.sessions().get_mut(chat) {
-            session.shift_turn(chat);
-        }
-        Some((entry.turn, entry.receipt_path, entry.receipt))
-    }
-    /// /new drops every queued turn (REPORT 113/158/159); their receipts complete
-    /// so the inbox does not replay them.
-    fn clear_pending(&self, chat: &str) -> Result<()> {
-        let dropped: Vec<PendingTurn> = self
-            .pending
-            .lock()
-            .unwrap()
-            .remove(chat)
-            .map(|queue| queue.into_iter().collect())
-            .unwrap_or_default();
-        for mut entry in dropped {
-            entry.receipt["complete"] = true.into();
-            self.save_receipt(&entry.receipt_path, &entry.receipt)?;
-        }
-        if let Some(session) = self.sessions().get_mut(chat) {
-            session.reset_for_new_session(chat);
-        }
-        Ok(())
-    }
-    async fn chat_generation(&self, chat: &str) -> u64 {
-        self.chat(chat).lock().await.generation
-    }
-    /// WeixinChannel.ts:524-529 — generation++, clear answers, abort the active run.
-    async fn reset_chat(&self, chat: &str) -> (Option<String>, Option<String>) {
-        let active = self.active_run(chat);
-        let _ = self.clear_pending(chat);
-        let guarded = self.chat(chat);
-        let mut state = guarded.lock().await;
-        state.generation += 1;
-        state.permissions.clear(chat);
-        state.elicitation.clear(chat);
-        state.live = None;
-        state.changed.notify_waiters();
-        (
-            active.as_ref().map(|run| run.session_key.clone()),
-            active.and_then(|run| run.run_id),
-        )
-    }
-    /// WeixinChannel.ts:655-745 — one turn: live reply controller in, final flush out.
+    /// WeixinChannel.ts:655-800 — processMessage. A gateway failure becomes a
+    /// visible status and never stops the queued turns.
     async fn process_message(
         self: &Arc<Self>,
         credentials: &Value,
         chat_id: &str,
         generation: u64,
         turn: QueuedTurn,
-        receipt_path: &std::path::Path,
-        receipt: &mut Value,
-    ) -> Result<()> {
+    ) {
         let chat = self.chat(chat_id);
-        self.set_active_run(chat_id, &turn.session_key, None, generation);
+        if !chat.lock().await.state.is_current(chat_id, generation) {
+            let _ = self.finish_dropped_turn(&turn);
+            return;
+        }
+        self.set_active_run(chat_id, &turn.session_key, None, generation)
+            .await;
         struct ReplyIo {
             owner: Arc<LiveOwner>,
             credentials: Value,
@@ -725,7 +654,13 @@ impl LiveOwner {
             fn typing_available(&self) -> bool {
                 true
             }
-            fn send_reply<'a>(&'a self, text: &'a str, queue_on_failure: bool) -> ChannelCall<'a, bool> {
+            /// WeixinChannel.ts:806-829 — queueOnFailure decides whether a failed
+            /// send joins the pending list; an activity pulse never queues.
+            fn send_reply<'a>(
+                &'a self,
+                text: &'a str,
+                queue_on_failure: bool,
+            ) -> ChannelCall<'a, bool> {
                 Box::pin(async move {
                     let owner = self.owner.clone();
                     let chat = self.chat.clone();
@@ -742,12 +677,17 @@ impl LiveOwner {
                     {
                         Ok(()) => Ok(true),
                         Err(error) => {
-                            eprintln!("weixin: live reply send failed: {}", error.message);
-                            // WeixinChannel.ts:789-790 — queue the segment and let
-                            // the durable receipt resend it on the next poll.
-                            owner.delivery.queue_pending_reply(&chat, text);
-                            self.failed.lock().unwrap().push(text.into());
-                            Ok(queue_on_failure)
+                            eprintln!(
+                                "weixin: sendText failed: {}",
+                                super::super::media::format_weixin_error_message(&error.message)
+                            );
+                            // WeixinChannel.ts:806-829 — queueOnFailure alone decides
+                            // whether a failed send joins the pending list.
+                            if queue_on_failure {
+                                owner.delivery.queue_pending_reply(&chat, text);
+                                self.failed.lock().unwrap().push(text.into());
+                            }
+                            Ok(false)
                         }
                     }
                 })
@@ -773,10 +713,10 @@ impl LiveOwner {
             LiveReplyOptions::weixin(),
         )));
         chat.lock().await.live = Some(live.clone());
+        // WeixinChannel.ts:747-761 — submitTurn builds the run; no client runId.
         let mut params = json!({
             "sessionKey":turn.session_key,
             "channelKey":"weixin",
-            "runId":format!("weixin:{chat_id}:{}", uuid::Uuid::new_v4()),
             "message":turn.message,
             "allowPlanModeTools":false
         });
@@ -792,22 +732,19 @@ impl LiveOwner {
             chat: chat_id,
             session: &turn.session_key,
             generation,
-            live,
-            timeout: StdMutex::new(None),
+            live: live.clone(),
+            settled: StdMutex::new(false),
         };
-        // WeixinChannel.ts:707 — typing before the turn starts.
-        let _ = transport.send_typing_if_possible().await;
-        let result = self.gateway.stream_turn(params, &sink).await;
-        let current = chat.lock().await.finish_turn(chat_id, generation);
-        self.clear_active_run(chat_id);
-        if !current {
-            receipt["complete"] = true.into();
-            self.save_receipt(receipt_path, receipt)?;
-            return Ok(());
-        }
-        if result.is_err() {
-            // WeixinChannel.ts:734-743 — a submit failure becomes a visible status.
-            sink.live
+        // WeixinChannel.ts:707 / :880 — fire and forget.
+        self.typing_in_background(credentials, chat_id);
+        if let Err(error) = self.gateway.stream_turn(params, &sink).await {
+            // WeixinChannel.ts:734-743 — submitTurn failure becomes a visible
+            // agent_status and the turn still flushes its final text.
+            eprintln!(
+                "weixin: submitTurn error: {}",
+                super::super::media::format_weixin_error_message(&error.message)
+            );
+            let _ = live
                 .lock()
                 .await
                 .handle_event(&json!({
@@ -815,27 +752,35 @@ impl LiveOwner {
                     "event":"channel_submit_failed",
                     "detail":{"message":"Failed to process this message. Please retry.","visible":true,"severity":"error"}
                 }))
-                .await?;
+                .await;
         }
-        let mut controller = sink.live.lock().await;
-        controller.flush_final().await?;
-        drop(controller);
-        chat.lock().await.live = None;
-        // WeixinChannel.ts:789 — a failed segment is staged in the receipt so the
-        // next poll resends it without re-submitting the turn.
+        if chat.lock().await.finish_turn(chat_id, generation) {
+            self.clear_active_run(chat_id, generation).await;
+            let _ = live.lock().await.flush_final().await;
+        }
+        let Some(path) = turn.receipt_path.as_ref() else {
+            return;
+        };
+        let mut receipt = match super::super::storage::read_checked(path) {
+            Ok(Some(saved)) => saved,
+            Ok(None) => json!({}),
+            Err(_) => json!({}),
+        };
+        // WeixinChannel.ts:789-790 — a failed segment is staged in the receipt so
+        // the next poll resends it without re-submitting the turn.
         let failed = failed.lock().unwrap().clone();
-        if failed.is_empty() {
-            receipt["outbox"] = json!([]);
+        receipt["outbox"] = json!(failed);
+        receipt["sentIndex"] = json!(0);
+        // WeixinChannel.ts:789-790 — the receipt is only complete when nothing is
+        // staged; otherwise the next poll replays the staged segments.
+        if receipt["outbox"].as_array().is_none_or(|values| values.is_empty()) {
             receipt["complete"] = true.into();
-        } else {
-            // WeixinChannel.ts:789-790 — every failed segment is retried separately.
-            receipt["outbox"] = json!(failed);
-            receipt["sentIndex"] = json!(0);
         }
-        self.save_receipt(receipt_path, receipt)?;
-        result
+        let _ = self.save_receipt(path, &receipt);
     }
-    /// WeixinChannel.ts:452-477 + ImPermissionHelper.ts:185-274.
+    /// WeixinChannel.ts:437-513 — the elicitation and permission answer paths.
+    /// Every failure is logged and consumes the message, exactly like TS: the
+    /// batch must still advance.
     async fn answer(
         &self,
         credentials: &Value,
@@ -844,18 +789,20 @@ impl LiveOwner {
         generation: u64,
     ) -> Result<bool> {
         let chat = self.chat(chat_id);
-        let mut state = chat.lock().await;
-        // An input queued before /new must never answer the replacement turn.
-        if state.generation != generation {
-            return Ok(true);
-        }
-        if state.elicitation.has_pending(chat_id) {
-            let pending = state.elicitation.answer(chat_id, input);
-            drop(state);
-            let Some(pending) = pending else {
+        let pending_elicitation = {
+            let state = chat.lock().await;
+            if !state.state.is_current(chat_id, generation) {
+                return Ok(true);
+            }
+            state.elicitation.has_pending(chat_id)
+        };
+        if pending_elicitation {
+            let pending = chat.lock().await.elicitation.answer(chat_id, input);
+            let Some(pending): Option<Confirmation> = pending else {
                 return Ok(true);
             };
-            self.gateway
+            if let Err(error) = self
+                .gateway
                 .request(
                     "elicitation_respond",
                     json!({
@@ -864,120 +811,105 @@ impl LiveOwner {
                         "answer":pending.answer
                     }),
                 )
-                .await?;
+                .await
+            {
+                // WeixinChannel.ts:438-441 — swallow, keep the batch moving.
+                eprintln!(
+                    "weixin: elicitation answer error: {}",
+                    super::super::media::format_weixin_error_message(&error.message)
+                );
+                return Ok(true);
+            }
             if let Some(confirmation) = pending.confirmation {
-                let context = chat.lock().await.context.clone();
-                // WeixinChannel.ts:439-442 — the confirmation is best effort and a
-                // failed send never fails the turn (REPORT 132, 八项④).
-                let _ = super::send_reply(
-                    &self.storage,
-                    &self.http,
-                    credentials,
-                    chat_id,
-                    context.as_deref(),
-                    &confirmation,
-                )
-                .await;
+                let _ = self
+                    .reply(credentials, chat_id, &confirmation, false)
+                    .await;
             }
             return Ok(true);
         }
-        if !state.permissions.has_pending(chat_id) {
+        let (pending, answering) = {
+            let state = chat.lock().await;
+            (
+                state.permissions.has_pending(chat_id),
+                state.permissions.is_answering(chat_id),
+            )
+        };
+        if !pending && !answering {
             return Ok(false);
         }
-        let step = state.permissions.answer_step(chat_id, input);
-        match step {
-            AnswerStep::NotHandled => return Ok(false),
-            AnswerStep::Reply(text) => {
-                drop(state);
-                self.reply(credentials, chat_id, &text, false).await?;
-                return Ok(true);
-            }
-            AnswerStep::Swallow => return Ok(true),
-            AnswerStep::Retry => {
-                drop(state);
-                // ImPermissionHelper.ts:192-194 — retry the queued prompt while the
-                // lock stays held, then confirm it (REPORT 128/129, 八项③).
-                let _ = self
-                    .reply(credentials, chat_id, permissions::PERMISSION_RETRY, false)
+        let answer = chat
+            .lock()
+            .await
+            .permissions
+            .answer_with_state(chat_id, input);
+        match answer {
+            None | Some(PermissionAnswer::Silent) => Ok(true),
+            Some(PermissionAnswer::Reply(result)) => {
+                if self
+                    .reply(credentials, chat_id, &result.text, false)
+                    .await
+                    .is_err()
+                {
+                    chat.lock()
+                        .await
+                        .permissions
+                        .release_answer(chat_id, result.answer_token);
+                    return Ok(true);
+                }
+                if !result.can_advance && !result.retry_prompt {
+                    return Ok(true);
+                }
+                self.deliver_next_prompt(credentials, chat_id, result.answer_token)
                     .await;
-                let prompt = {
-                    let mut state = chat.lock().await;
-                    state.permissions.take_next_prompt(chat_id, None)
-                };
-                if let Some(prompt) = prompt {
-                    let delivered = self.reply(credentials, chat_id, &prompt, false).await;
-                    let request_id = {
-                        let state = chat.lock().await;
-                        state.permissions.get_prompt_request_id(chat_id, None)
-                    };
-                    let mut state = chat.lock().await;
-                    state.permissions.confirm_next_prompt(
-                        chat_id,
-                        delivered.is_ok(),
-                        request_id.as_deref(),
-                        None,
-                    );
-                }
-                return Ok(true);
+                Ok(true)
             }
-            AnswerStep::Decide(answer) => {
-                drop(state);
-                let params = PermissionState::decision_params(&answer);
-                let token = answer.token;
-                let entry = answer.entry.clone();
-                let result = self.gateway.request("permission_decide", params).await;
-                if result.is_err() {
-                    let mut state = chat.lock().await;
-                    state.permissions.abort_answer(chat_id, token, entry);
-                    return result.map(|_| true);
-                }
-                let delivered = result.unwrap_or_default()["delivered"] == true;
-                let confirmation = {
-                    let mut state = chat.lock().await;
-                    state.permissions.complete_answer(chat_id, token, delivered)
+            Some(PermissionAnswer::Decide(begin)) => {
+                let params = PermissionState::decision_params(&begin);
+                let token = begin.token;
+                let entry = begin.entry.clone();
+                // WeixinChannel.ts:505-513 — a failed RPC rolls the request back
+                // and is logged, never replayed as a new turn.
+                let response = match self.gateway.request("permission_decide", params).await {
+                    Ok(response) => response,
+                    Err(error) => {
+                        chat.lock()
+                            .await
+                            .permissions
+                            .abort_answer(chat_id, token, entry);
+                        eprintln!(
+                            "weixin: permission answer error: {}",
+                            super::super::media::format_weixin_error_message(&error.message)
+                        );
+                        return Ok(true);
+                    }
                 };
-                let Some(confirmation) = confirmation else {
+                let delivered = response["delivered"] == true;
+                let Some(result) = chat
+                    .lock()
+                    .await
+                    .permissions
+                    .complete_answer(chat_id, token, delivered)
+                else {
                     return Ok(true);
                 };
                 if self
-                    .reply(credentials, chat_id, &confirmation.text, false)
+                    .reply(credentials, chat_id, &result.text, false)
                     .await
                     .is_err()
                 {
                     // ImPermissionHelper.ts:129-137 — keep the lock so the next
-                    // message retries; never let an unseen request be decided.
-                    let mut state = chat.lock().await;
-                    state.permissions.release_answer(chat_id, Some(token));
+                    // message retries; never decide an unseen request.
+                    chat.lock()
+                        .await
+                        .permissions
+                        .release_answer(chat_id, result.answer_token);
                     return Ok(true);
                 }
-                if confirmation.can_advance || confirmation.retry_prompt {
-                    let prompt = {
-                        let mut state = chat.lock().await;
-                        state
-                            .permissions
-                            .take_next_prompt(chat_id, confirmation.answer_token)
-                    };
-                    if let Some(prompt) = prompt {
-                        let request_id = {
-                            let state = chat.lock().await;
-                            state
-                                .permissions
-                                .get_prompt_request_id(chat_id, confirmation.answer_token)
-                        };
-                        let delivered =
-                            self.reply(credentials, chat_id, &prompt, false).await.is_ok();
-                        let mut state = chat.lock().await;
-                        state.permissions.confirm_next_prompt(
-                            chat_id,
-                            delivered,
-                            request_id.as_deref(),
-                            confirmation.answer_token,
-                        );
-                    }
+                if result.can_advance || result.retry_prompt {
+                    self.deliver_next_prompt(credentials, chat_id, result.answer_token)
+                        .await;
                 }
-                if (input.trim() == "1" || input.trim() == "2")
-                    && confirmation.text.starts_with("已允许")
-                {
+                if matches!(js_trim(input), "1" | "2") && result.text.starts_with("已允许") {
                     let live = chat.lock().await.live.clone();
                     let pending = chat.lock().await.permissions.has_pending(chat_id);
                     if let Some(live) = live.filter(|_| !pending) {
@@ -992,17 +924,56 @@ impl LiveOwner {
             }
         }
     }
+    /// WeixinChannel.ts:462-477 — take the next queued prompt while the lock is
+    /// still held, confirm it by requestId, and keep the lock on a failed send.
+    async fn deliver_next_prompt(&self, credentials: &Value, chat_id: &str, token: Option<u64>) {
+        let chat = self.chat(chat_id);
+        let Some(prompt) = chat
+            .lock()
+            .await
+            .permissions
+            .take_next_prompt(chat_id, token)
+        else {
+            return;
+        };
+        let request_id = chat
+            .lock()
+            .await
+            .permissions
+            .get_prompt_request_id(chat_id, token);
+        let delivered = self
+            .reply(credentials, chat_id, &prompt, false)
+            .await
+            .is_ok();
+        chat.lock().await.permissions.confirm_next_prompt(
+            chat_id,
+            delivered,
+            request_id.as_deref(),
+            token,
+        );
+    }
 }
 
 #[cfg(test)]
 mod generation_tests {
     use super::*;
+    // WeixinChannel.ts:777 + ImChatSessionState.ts:64 — a stale turn may not clear
+    // the replacement session's interactions. Every field is asserted.
     #[test]
     fn stale_turn_completion_cannot_clear_replacement_interactions() {
         let mut chat = Chat {
-            generation: 2,
+            state: ChatSessionState::new(20),
             ..Default::default()
         };
+        chat.state.set_active_run(
+            "chat",
+            ActiveRun {
+                session_key: "new-session".into(),
+                run_id: None,
+                generation: 2,
+            },
+        );
+        assert!(chat.state.enter_run("chat"));
         chat.permissions.capture(
             "chat",
             "new-session",
@@ -1015,17 +986,67 @@ mod generation_tests {
             "new-session",
             &json!({"requestId":"new-question","questions":[]}),
         );
+        chat.permissions.test_mark_retry("chat");
         assert!(!chat.finish_turn("chat", 1));
-        assert!(chat.permissions.has_pending("chat"));
-        assert!(chat.elicitation.has_pending("chat"));
-        assert!(chat.finish_turn("chat", 2));
+        assert_eq!(
+            chat.state.active_run("chat").unwrap().session_key,
+            "new-session"
+        );
+        assert_eq!(
+            chat.permissions.head_request_id("chat").as_deref(),
+            Some("new-permission")
+        );
+        assert_eq!(
+            chat.elicitation.pending_request_id("chat").as_deref(),
+            Some("new-question")
+        );
+        assert!(chat.permissions.is_answering("chat"));
+        assert!(chat.permissions.initial_prompt_pending("chat"));
+        assert!(chat.permissions.retry_pending("chat"));
+        assert_eq!(
+            chat.permissions.format_pending("chat").as_deref(),
+            Some(
+                "工具 write_file 需要权限才能继续执行。\n\n请求内容：\n{}\n\n回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。"
+            )
+        );
+    }
+
+    // ImPermissionHelper.ts:93-106 — the initial prompt gate is the field the
+    // stale-turn test must keep proving, not just "there is pending work".
+    #[test]
+    fn initial_prompt_flag_tracks_capture_and_delivery() {
+        let mut state = PermissionState::new();
+        state.capture("chat", "session", "r1", "write_file", &json!({}));
+        assert!(state.initial_prompt_pending("chat"));
+        state.confirm_initial_prompt("chat", true, Some("r1"));
+        assert!(!state.initial_prompt_pending("chat"));
+        assert!(!state.is_answering("chat"));
+    }
+
+    // WeixinSessionMapper.ts:23-33 — resolve trims before matching /new, so a
+    // leading-space "/new" still resets the session (r19 PASS → r20 FAIL).
+    #[test]
+    fn resolve_new_matches_after_js_trim() {
+        assert_eq!(resolve_new("/new"), Some(String::new()));
+        assert_eq!(resolve_new("  /new  "), Some(String::new()));
+        assert_eq!(resolve_new("\u{feff}/new"), Some(String::new()));
+        assert_eq!(resolve_new("/new next task"), Some("next task".into()));
+        assert_eq!(resolve_new("   /new   next  "), Some("next".into()));
+        assert_eq!(resolve_new("/newer"), None);
+        assert_eq!(resolve_new("/news"), None);
+        assert_eq!(resolve_new("hello"), None);
+        assert_eq!(resolve_new(""), None);
     }
 }
-struct PendingTurn {
-    turn: QueuedTurn,
-    receipt_path: std::path::PathBuf,
-    receipt: Value,
+/// WeixinSessionMapper.ts:23-33 — resolve() trims the text, then treats an exact
+/// `/new` or `/new <rest>` as a session reset. Returns the trimmed remainder.
+fn resolve_new(input: &str) -> Option<String> {
+    js_trim(input)
+        .strip_prefix("/new")
+        .filter(|rest| rest.is_empty() || rest.starts_with(' '))
+        .map(|rest| js_trim(rest).to_owned())
 }
+
 struct LiveSink<'a> {
     owner: Arc<LiveOwner>,
     credentials: &'a Value,
@@ -1033,16 +1054,9 @@ struct LiveSink<'a> {
     session: &'a str,
     generation: u64,
     live: Arc<Mutex<LiveReplyController>>,
-    timeout: StdMutex<Option<tokio::task::JoinHandle<()>>>,
-}
-impl Drop for LiveSink<'_> {
-    fn drop(&mut self) {
-        if let Ok(mut timeout) = self.timeout.lock() {
-            if let Some(task) = timeout.take() {
-                task.abort();
-            }
-        }
-    }
+    /// WeixinChannel.ts:686-692 — once a terminal text was posted (timeout), a
+    /// later abort must not replace it.
+    settled: StdMutex<bool>,
 }
 impl ChannelEventSink for LiveSink<'_> {
     fn event(&self, event: Value) -> ChannelCall<'_, ()> {
@@ -1051,19 +1065,21 @@ impl ChannelEventSink for LiveSink<'_> {
             let kind = text(&event, "type").unwrap_or("");
             {
                 let state = chat.lock().await;
-                if state.generation != self.generation {
+                if state.generation(self.chat) != self.generation {
                     return Ok(());
                 }
             }
             match kind {
                 "turn_started" => {
                     if let Some(run_id) = text(&event, "runId") {
-                        self.owner.set_active_run(
-                            self.chat,
-                            self.session,
-                            Some(run_id.into()),
-                            self.generation,
-                        );
+                        self.owner
+                            .set_active_run(
+                                self.chat,
+                                self.session,
+                                Some(run_id.into()),
+                                self.generation,
+                            )
+                            .await;
                     }
                 }
                 "permission_request" => {
@@ -1088,7 +1104,7 @@ impl ChannelEventSink for LiveSink<'_> {
                             .await
                             .is_ok();
                         let mut state = chat.lock().await;
-                        if state.generation == self.generation {
+                        if state.generation(self.chat) == self.generation {
                             state.permissions.confirm_initial_prompt(
                                 self.chat,
                                 delivered,
@@ -1116,15 +1132,17 @@ impl ChannelEventSink for LiveSink<'_> {
                 }
                 "assistant_attachment" => return self.attachment(event).await,
                 "error" if text(&event, "code") == Some("agent_aborted") => {
-                    // WeixinChannel.ts:739 — a timeout notice already replaced the
-                    // terminal text, so an abort after it is not appended twice.
-                    if self.timeout.lock().unwrap().is_some() {
+                    // WeixinChannel.ts:739 — after a timeout the terminal text is
+                    // already posted; markAborted only applies to real aborts.
+                    if *self.settled.lock().unwrap() {
                         return Ok(());
                     }
+                    *self.settled.lock().unwrap() = true;
                     self.live.lock().await.mark_aborted().await?;
                     return Ok(());
                 }
                 "error" if text(&event, "code") == Some("turn_timeout") => {
+                    *self.settled.lock().unwrap() = true;
                     self.live.lock().await.mark_timed_out().await?;
                     return Ok(());
                 }
@@ -1156,7 +1174,10 @@ impl LiveSink<'_> {
         {
             Ok(true) => return Ok(()),
             Ok(false) => eprintln!("weixin: attachment send failed: missing content"),
-            Err(error) => eprintln!("weixin: attachment send failed: {}", error.message),
+            Err(error) => eprintln!(
+                "weixin: attachment send failed: {}",
+                super::super::media::format_weixin_error_message(&error.message)
+            ),
         }
         let fallback = super::super::attachments::format_attachment_fallback(&attachment);
         let _ = self
@@ -1166,10 +1187,6 @@ impl LiveSink<'_> {
         Ok(())
     }
 }
-impl LiveSink<'_> {
-
-}
-
 
 
 

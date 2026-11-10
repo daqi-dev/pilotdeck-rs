@@ -17,6 +17,9 @@ pub(crate) struct QueuedTurn {
     pub message: String,
     pub project_key: Option<String>,
     pub attachments: Vec<Value>,
+    /// PilotDeck-inbox plumbing: the durable receipt this turn stages its reply
+    /// into. ImChatSessionState has no analogue; the queue itself is the TS one.
+    pub receipt_path: Option<std::path::PathBuf>,
 }
 
 /// ImChatSessionState.ts:8-12 — {sessionKey, runId?, generation}.
@@ -67,9 +70,13 @@ impl ChatSessionState {
     }
 
     /// WeixinChannel.ts:524 — `resetChatInteractionState` drops pendingTurns for the chat.
-    pub(crate) fn clear_pending_turns(&mut self, chat: &str) {
-        self.pending.remove(chat);
+    /// Returns the dropped turns so the owner can finish their receipts.
+    pub(crate) fn clear_pending_turns(&mut self, chat: &str) -> Vec<QueuedTurn> {
         self.active_runs.remove(chat);
+        self.pending
+            .remove(chat)
+            .map(|queue| queue.into_iter().collect())
+            .unwrap_or_default()
     }
 
     /// ImChatSessionState.ts:32-36 — /new bumps the generation and drops the queued
@@ -77,19 +84,24 @@ impl ChatSessionState {
     pub(crate) fn reset_for_new_session(&mut self, chat: &str) {
         let next = self.generation(chat) + 1;
         self.generations.insert(chat.into(), next);
-        self.clear_pending_turns(chat);
+        let _ = self.clear_pending_turns(chat);
     }
 
     /// ImChatSessionState.ts:38-45 — FIFO with the oldest turn dropped past the cap.
-    pub(crate) fn queue_turn(&mut self, chat: &str, turn: QueuedTurn) {
+    /// Returns the dropped turns so the owner can finish their receipts.
+    pub(crate) fn queue_turn(&mut self, chat: &str, turn: QueuedTurn) -> Vec<QueuedTurn> {
         if self.max_pending_turns == 0 {
-            return;
+            return vec![turn];
         }
         let pending = self.pending.entry(chat.into()).or_default();
         pending.push_back(turn);
+        let mut dropped = Vec::new();
         while pending.len() > self.max_pending_turns {
-            pending.pop_front();
+            if let Some(turn) = pending.pop_front() {
+                dropped.push(turn);
+            }
         }
+        dropped
     }
 
     pub(crate) fn pending_len(&self, chat: &str) -> usize {
@@ -153,6 +165,7 @@ mod session_tests {
             message: message.into(),
             project_key: None,
             attachments: vec![],
+            receipt_path: None,
         }
     }
 
@@ -256,4 +269,7 @@ mod session_tests {
         );
     }
 }
+
+
+
 

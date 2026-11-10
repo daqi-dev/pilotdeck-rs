@@ -1007,3 +1007,439 @@ async fn new_session_drops_queued_turns() {
     );
 }
 
+/// WeixinChannel.ts:417-419 — dispatchMessage trims before the empty check, so a
+/// whitespace-only message is dropped instead of starting a turn.
+#[tokio::test]
+async fn whitespace_only_message_starts_no_turn() {
+    let server = server(false).await;
+    let (storage, credentials, batch) = setup(&server.base, json!([message("   \t  ")]));
+    let gateway = Arc::new(Gateway {
+        turns: AtomicUsize::new(0),
+        requests: Default::default(),
+    });
+    let delivery = NativeWeixinFactory::new(storage.home.clone(), Some(server.base.clone()))
+        .unwrap()
+        .delivery();
+    let owner = Arc::new(live::LiveOwner::new(
+        storage.clone(),
+        Http::new(),
+        gateway.clone(),
+        ChannelSessionState::default(),
+        delivery,
+    ));
+    owner.process_batch(&credentials, batch).await.unwrap();
+    assert_eq!(gateway.turns.load(Ordering::SeqCst), 0);
+    assert!(server.requests.lock().unwrap().is_empty());
+}
+
+/// WeixinSessionMapper.ts:23-27 — a leading-space `/new` still resets the session
+/// (r19 PASS → r20 FAIL) and keeps the previous session key for abort_turn.
+#[tokio::test]
+async fn leading_space_new_still_resets_the_session() {
+    let server = server(false).await;
+    let (storage, credentials, batch) = setup(&server.base, json!([message("   /new")]));
+    let gateway = Arc::new(Gateway {
+        turns: AtomicUsize::new(0),
+        requests: Default::default(),
+    });
+    let delivery = NativeWeixinFactory::new(storage.home.clone(), Some(server.base.clone()))
+        .unwrap()
+        .delivery();
+    let owner = Arc::new(live::LiveOwner::new(
+        storage.clone(),
+        Http::new(),
+        gateway.clone(),
+        ChannelSessionState::default(),
+        delivery,
+    ));
+    owner.process_batch(&credentials, batch).await.unwrap();
+    assert_eq!(gateway.turns.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        gateway.requests.lock().unwrap()[0][0],
+        "abort_turn",
+        "a trimmed /new must abort the previous session"
+    );
+    assert!(
+        storage.load_mapper().unwrap()["activeByChatId"]["chat"]
+            .as_str()
+            .unwrap()
+            .starts_with("weixin:chat=chat:s_")
+    );
+    assert!(
+        server
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|v| v["msg"]["item_list"][0]["text_item"]["text"] == "已创建新会话。")
+    );
+}
+
+/// WeixinChannel.ts:431 — a failed `/new` confirmation still acks the message and
+/// never enters the pending-reply queue.
+#[tokio::test]
+async fn failed_new_confirmation_still_completes_the_receipt() {
+    let server = server_reject_all_sends().await;
+    let (storage, credentials, batch) = setup(&server.base, json!([message(" /new ")]));
+    let delivery = NativeWeixinFactory::new(storage.home.clone(), Some(server.base.clone()))
+        .unwrap()
+        .delivery();
+    let owner = Arc::new(live::LiveOwner::new(
+        storage.clone(),
+        Http::new(),
+        Arc::new(Gateway {
+            turns: AtomicUsize::new(0),
+            requests: Default::default(),
+        }),
+        ChannelSessionState::default(),
+        delivery.clone(),
+    ));
+    owner.process_batch(&credentials, batch.clone()).await.unwrap();
+    assert_eq!(delivery.test_pending_len("chat"), 0);
+    let id = batch["id"].as_str().unwrap();
+    let receipt = super::super::super::storage::read_checked(
+        &storage
+            .home
+            .join("channels/weixin-inbox")
+            .join(format!("{id}-0.receipt")),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(receipt["complete"], true);
+    assert_eq!(receipt["sentIndex"], 0);
+    assert_eq!(receipt["outbox"], json!([]));
+}
+
+/// WeixinChannel.ts:437-441 + security.md:15 — a failed elicitation_respond is
+/// logged and the message is consumed: the batch must ack, not replay the
+/// question as a fresh ordinary turn.
+#[tokio::test]
+async fn elicitation_rpc_failure_consumes_the_message() {
+    struct Elicits {
+        ready: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+        turns: AtomicUsize,
+        responses: StdMutex<Vec<String>>,
+    }
+    impl ChannelGateway for Elicits {
+        fn request<'a>(&'a self, method: &'a str, _params: Value) -> ChannelCall<'a, Value> {
+            Box::pin(async move {
+                match method {
+                    "abort_turn" => Ok(json!({})),
+                    "elicitation_respond" => {
+                        self.responses.lock().unwrap().push(method.into());
+                        Err(crate::config::routes::RouteError::new(
+                            "gateway_request_failed",
+                            "elicitation rpc failed",
+                        ))
+                    }
+                    other => panic!("unexpected RPC {other}"),
+                }
+            })
+        }
+        fn turn(&self, _params: Value) -> ChannelCall<'_, Vec<Value>> {
+            Box::pin(async { panic!() })
+        }
+        fn stream_turn<'a>(
+            &'a self,
+            _params: Value,
+            sink: &'a dyn crate::config::channel_commands::ChannelEventSink,
+        ) -> ChannelCall<'a, ()> {
+            Box::pin(async move {
+                self.turns.fetch_add(1, Ordering::SeqCst);
+                sink.event(json!({"type":"turn_started","runId":"run-elicitation"}))
+                    .await?;
+                sink.event(json!({"type":"elicitation_request","requestId":"q","questions":[{"question":"Choose","options":[{"label":"A"}]}]}))
+                    .await?;
+                self.ready.notify_one();
+                self.release.notified().await;
+                Ok(())
+            })
+        }
+    }
+    let server = server(false).await;
+    let (storage, credentials, batch) = setup(&server.base, json!([message("start")]));
+    let gateway = Arc::new(Elicits {
+        ready: Default::default(),
+        release: Default::default(),
+        turns: Default::default(),
+        responses: Default::default(),
+    });
+    let delivery = NativeWeixinFactory::new(storage.home.clone(), Some(server.base.clone()))
+        .unwrap()
+        .delivery();
+    let owner = Arc::new(live::LiveOwner::new(
+        storage.clone(),
+        Http::new(),
+        gateway.clone(),
+        ChannelSessionState::default(),
+        delivery,
+    ));
+    let turn = {
+        let owner = owner.clone();
+        let credentials = credentials.clone();
+        tokio::spawn(async move { owner.process_batch(&credentials, batch).await })
+    };
+    gateway.ready.notified().await;
+    owner
+        .process_batch(&credentials, second_batch(&storage, "1"))
+        .await
+        .unwrap();
+    assert_eq!(gateway.responses.lock().unwrap().len(), 1);
+    gateway.release.notify_one();
+    turn.await.unwrap().unwrap();
+    assert!(
+        super::super::super::inbox::WeixinInbox::new(storage.home)
+            .pending()
+            .unwrap()
+            .is_empty(),
+        "a failed elicitation RPC must not leave the batch replayable"
+    );
+    assert_eq!(gateway.turns.load(Ordering::SeqCst), 1);
+}
+
+/// ImPermissionHelper.ts:257-273 + WeixinChannel.ts:505-513 — a failed
+/// permission_decide rolls the request back and consumes the message instead of
+/// failing the batch (which would replay it as a new turn).
+#[tokio::test]
+async fn permission_decide_failure_consumes_the_message() {
+    struct Permissions {
+        ready: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+        turns: AtomicUsize,
+        decisions: AtomicUsize,
+    }
+    impl ChannelGateway for Permissions {
+        fn request<'a>(&'a self, method: &'a str, _params: Value) -> ChannelCall<'a, Value> {
+            Box::pin(async move {
+                match method {
+                    "abort_turn" => Ok(json!({})),
+                    "permission_decide" => {
+                        self.decisions.fetch_add(1, Ordering::SeqCst);
+                        Err(crate::config::routes::RouteError::new(
+                            "gateway_request_failed",
+                            "decide rpc failed",
+                        ))
+                    }
+                    other => panic!("unexpected RPC {other}"),
+                }
+            })
+        }
+        fn turn(&self, _params: Value) -> ChannelCall<'_, Vec<Value>> {
+            Box::pin(async { panic!() })
+        }
+        fn stream_turn<'a>(
+            &'a self,
+            _params: Value,
+            sink: &'a dyn crate::config::channel_commands::ChannelEventSink,
+        ) -> ChannelCall<'a, ()> {
+            Box::pin(async move {
+                self.turns.fetch_add(1, Ordering::SeqCst);
+                sink.event(json!({"type":"turn_started","runId":"run-permission"}))
+                    .await?;
+                sink.event(json!({"type":"permission_request","requestId":"r1","toolName":"write_file","payload":{}}))
+                    .await?;
+                self.ready.notify_one();
+                self.release.notified().await;
+                Ok(())
+            })
+        }
+    }
+    let server = server(false).await;
+    let (storage, credentials, batch) = setup(&server.base, json!([message("start")]));
+    let gateway = Arc::new(Permissions {
+        ready: Default::default(),
+        release: Default::default(),
+        turns: Default::default(),
+        decisions: Default::default(),
+    });
+    let delivery = NativeWeixinFactory::new(storage.home.clone(), Some(server.base.clone()))
+        .unwrap()
+        .delivery();
+    let owner = Arc::new(live::LiveOwner::new(
+        storage.clone(),
+        Http::new(),
+        gateway.clone(),
+        ChannelSessionState::default(),
+        delivery,
+    ));
+    let turn = {
+        let owner = owner.clone();
+        let credentials = credentials.clone();
+        tokio::spawn(async move { owner.process_batch(&credentials, batch).await })
+    };
+    gateway.ready.notified().await;
+    owner
+        .process_batch(&credentials, second_batch(&storage, "1"))
+        .await
+        .unwrap();
+    assert_eq!(gateway.decisions.load(Ordering::SeqCst), 1);
+    gateway.release.notify_one();
+    turn.await.unwrap().unwrap();
+    assert!(
+        super::super::super::inbox::WeixinInbox::new(storage.home)
+            .pending()
+            .unwrap()
+            .is_empty(),
+        "a failed permission_decide must not leave the batch replayable"
+    );
+    assert_eq!(gateway.turns.load(Ordering::SeqCst), 1);
+}
+
+/// ImChatSessionState.ts:64 + WeixinChannel.ts:777 — only the current turn clears
+/// the active run. A stale turn must leave the replacement run intact.
+#[tokio::test]
+async fn stale_turn_does_not_clear_the_replacement_active_run() {
+    let server = server(false).await;
+    let (storage, _credentials, _batch) = setup(&server.base, json!([]));
+    let owner = live::LiveOwner::new(
+        storage.clone(),
+        Http::new(),
+        Arc::new(Gateway {
+            turns: AtomicUsize::new(0),
+            requests: Default::default(),
+        }),
+        ChannelSessionState::default(),
+        NativeWeixinFactory::new(storage.home.clone(), Some(server.base.clone()))
+            .unwrap()
+            .delivery(),
+    );
+    // Two /new resets take the chat to generation 2, the replacement session.
+    owner.test_reset_for_new_session("chat").await;
+    owner.test_reset_for_new_session("chat").await;
+    owner
+        .test_set_active_run("chat", "new-session", Some("run-new"), 2)
+        .await;
+    owner.test_clear_active_run("chat", 1).await;
+    let run = owner.test_active_run("chat").await.expect("run kept");
+    assert_eq!(run.session_key, "new-session");
+    assert_eq!(run.run_id.as_deref(), Some("run-new"));
+    assert_eq!(run.generation, 2);
+    owner.test_clear_active_run("chat", 2).await;
+    assert!(owner.test_active_run("chat").await.is_none());
+}
+
+/// WeixinChannel.ts:707 — `void this.sendTypingIfPossible(userId)`: a slow typing
+/// RPC must not hold the turn.
+#[tokio::test]
+async fn slow_typing_does_not_block_the_turn() {
+    struct Turns;
+    impl ChannelGateway for Turns {
+        fn request<'a>(&'a self, _method: &'a str, _params: Value) -> ChannelCall<'a, Value> {
+            Box::pin(async { Ok(json!({})) })
+        }
+        fn turn(&self, _params: Value) -> ChannelCall<'_, Vec<Value>> {
+            Box::pin(async { panic!() })
+        }
+        fn stream_turn<'a>(
+            &'a self,
+            _params: Value,
+            sink: &'a dyn crate::config::channel_commands::ChannelEventSink,
+        ) -> ChannelCall<'a, ()> {
+            Box::pin(async move {
+                sink.event(json!({"type":"turn_started","runId":"run-slow"}))
+                    .await?;
+                sink.event(json!({"type":"assistant_text_delta","text":"fast reply"}))
+                    .await?;
+                Ok(())
+            })
+        }
+    }
+    let server = server_slow_getconfig().await;
+    let (storage, credentials, batch) = setup(&server.base, json!([message("hello")]));
+    let delivery = NativeWeixinFactory::new(storage.home.clone(), Some(server.base.clone()))
+        .unwrap()
+        .delivery();
+    let owner = Arc::new(live::LiveOwner::new(
+        storage.clone(),
+        Http::new(),
+        Arc::new(Turns),
+        ChannelSessionState::default(),
+        delivery,
+    ));
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        owner.process_batch(&credentials, batch),
+    )
+    .await
+    .expect("typing must not block the turn")
+    .unwrap();
+    assert!(
+        server
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|v| v["msg"]["item_list"][0]["text_item"]["text"] == "fast reply")
+    );
+}
+
+/// WeixinChannel.ts:685-692 + ImLiveReplyController.ts:220-224 — after the timeout
+/// terminal text lands, the abort that follows must not replace it.
+#[tokio::test]
+async fn timeout_then_abort_keeps_the_timeout_terminal_text() {
+    struct TimeoutThenAbort;
+    impl ChannelGateway for TimeoutThenAbort {
+        fn request<'a>(&'a self, method: &'a str, _params: Value) -> ChannelCall<'a, Value> {
+            Box::pin(async move {
+                assert_eq!(method, "abort_turn");
+                Ok(json!({}))
+            })
+        }
+        fn turn(&self, _params: Value) -> ChannelCall<'_, Vec<Value>> {
+            Box::pin(async { panic!() })
+        }
+        fn stream_turn<'a>(
+            &'a self,
+            _params: Value,
+            sink: &'a dyn crate::config::channel_commands::ChannelEventSink,
+        ) -> ChannelCall<'a, ()> {
+            Box::pin(async move {
+                sink.event(json!({"type":"turn_started","runId":"run-timeout"}))
+                    .await?;
+                sink.event(json!({"type":"error","code":"turn_timeout","message":"timed out"}))
+                    .await?;
+                // The watchdog aborts right after the notice.
+                sink.event(json!({"type":"error","code":"agent_aborted","message":"aborted"}))
+                    .await?;
+                Ok(())
+            })
+        }
+    }
+    let server = server(false).await;
+    let (storage, credentials, batch) = setup(&server.base, json!([message("hello")]));
+    let delivery = NativeWeixinFactory::new(storage.home.clone(), Some(server.base.clone()))
+        .unwrap()
+        .delivery();
+    let owner = Arc::new(live::LiveOwner::new(
+        storage.clone(),
+        Http::new(),
+        Arc::new(TimeoutThenAbort),
+        ChannelSessionState::default(),
+        delivery,
+    ));
+    owner.process_batch(&credentials, batch).await.unwrap();
+    let texts: Vec<String> = server
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|v| {
+            v["msg"]["item_list"][0]["text_item"]["text"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    assert!(
+        texts
+            .iter()
+            .any(|text| text.contains("处理时间已超过上限")),
+        "the timeout terminal text must be posted"
+    );
+    assert!(
+        !texts.iter().any(|text| text.contains("处理已中止")),
+        "a later abort must not replace the timeout text"
+    );
+}
+

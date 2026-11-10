@@ -11,6 +11,7 @@
 //! live.rs; this module owns every state transition so the lock can be tested
 //! without a gateway.
 use super::*;
+use crate::metadata::js_trim;
 use std::collections::HashSet;
 
 /// ImPermissionHelper.ts:3-8.
@@ -46,11 +47,14 @@ pub(crate) struct AnswerResult {
     pub answer_token: Option<u64>,
 }
 
-/// Only Decide authorizes permission_decide; Reply never advances a request.
+/// ImPermissionHelper.ts:181-183 — answerWithState returns text-or-undefined;
+/// Silent is the undefined case where the message is consumed without a reply.
+/// Only Decide authorizes permission_decide.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum PermissionAnswer {
     Reply(AnswerResult),
     Decide(BeginAnswer),
+    Silent,
 }
 
 /// ImPermissionHelper.ts:185-205 — the pre-RPC half of answerWithState.
@@ -337,7 +341,7 @@ impl PermissionState {
     }
 
     /// ImPermissionHelper.ts:185-216 — the pre-RPC half of answerWithState.
-    pub(crate) fn answer_step(&mut self, chat: &str, text: &str) -> AnswerStep {
+    fn answer_step(&mut self, chat: &str, text: &str) -> AnswerStep {
         if self.answering.contains(chat) {
             if self.in_flight.contains(chat) {
                 return AnswerStep::Reply(PERMISSION_DECIDING.into());
@@ -357,7 +361,7 @@ impl PermissionState {
         {
             return AnswerStep::NotHandled;
         }
-        let trimmed = trim_im_text(text);
+        let trimmed = js_trim(text);
         if trimmed != "0" && trimmed != "1" && trimmed != "2" {
             return AnswerStep::Reply(PERMISSION_CHOICES.into());
         }
@@ -396,13 +400,14 @@ impl PermissionState {
         }
     }
 
-    /// ImPermissionHelper.ts:185-202. Retry/status replies cannot authorize an RPC.
+    /// ImPermissionHelper.ts:185-196. Retry/status replies cannot authorize an RPC.
     pub(crate) fn answer_with_state(&mut self, chat: &str, input: &str) -> Option<PermissionAnswer> {
         let (text, retry_prompt) = match self.answer_step(chat, input) {
             AnswerStep::Reply(text) => (text, false),
             AnswerStep::Retry => (PERMISSION_RETRY.into(), true),
             AnswerStep::Decide(answer) => return Some(PermissionAnswer::Decide(answer)),
-            AnswerStep::Swallow | AnswerStep::NotHandled => return None,
+            AnswerStep::Swallow => return Some(PermissionAnswer::Silent),
+            AnswerStep::NotHandled => return None,
         };
         Some(PermissionAnswer::Reply(AnswerResult {
             text, can_advance: false, retry_prompt, answer_token: None,
@@ -543,12 +548,33 @@ impl PermissionState {
         self.retry_prompt_pending.contains(chat)
     }
 
+    /// Reproduces the pre-merge independent `prompt_retry` flag so the restored
+    /// stale-turn assertion can prove a failed prompt stays queued.
+    #[cfg(test)]
+    pub(crate) fn test_mark_retry(&mut self, chat: &str) {
+        self.retry_prompt_pending.insert(chat.into());
+    }
+
     pub(crate) fn deferred_clear_pending(&self, chat: &str) -> bool {
         self.deferred_clears.contains(chat)
     }
 
     pub(crate) fn queued_permissions(&self, chat: &str) -> usize {
         self.pending.get(chat).map(VecDeque::len).unwrap_or(0)
+    }
+
+    /// ImPermissionHelper.ts:47-52 — the head request the prompt text came from.
+    pub(crate) fn head_request_id(&self, chat: &str) -> Option<String> {
+        self.pending
+            .get(chat)
+            .and_then(|entries| entries.front())
+            .map(|entry| entry.request_id.clone())
+    }
+
+    /// ImPermissionHelper.ts:29 — the initial prompt send gate (answering
+    /// before the first confirmInitialPrompt lands).
+    pub(crate) fn initial_prompt_pending(&self, chat: &str) -> bool {
+        self.initial_prompt_pending.contains(chat)
     }
 }
 
@@ -636,10 +662,12 @@ impl ElicitationState {
         self.pending.contains_key(chat)
     }
 
-    /// ImElicitationHelper.ts:67 — the entry is removed before parsing.
-    pub(crate) fn reply(&mut self, chat: &str, input: &str) -> Option<ElicitationReply> {
-        let (_, event) = self.take(chat)?;
-        Some(elicitation_reply(&event, input))
+    /// ImElicitationHelper.ts:36-40 — the request the pending question came from.
+    pub(crate) fn pending_request_id(&self, chat: &str) -> Option<String> {
+        self.pending
+            .get(chat)
+            .and_then(|(_, event)| event["requestId"].as_str())
+            .map(str::to_owned)
     }
 
     /// ImElicitationHelper.ts:65-67. Consume before parsing or awaiting RPC.
@@ -667,7 +695,7 @@ impl ElicitationState {
 
 /// ImElicitationHelper.ts:69-104 — pure reply mapping.
 pub(crate) fn elicitation_reply(event: &Value, input: &str) -> ElicitationReply {
-    let trimmed = trim_im_text(input);
+    let trimmed = js_trim(input);
     if trimmed == "0" {
         return ElicitationReply {
             answer: json!({"type":"cancelled","reason":"user cancelled"}),
@@ -675,7 +703,7 @@ pub(crate) fn elicitation_reply(event: &Value, input: &str) -> ElicitationReply 
         };
     }
     let indices: Vec<usize> = trimmed
-        .split(|c: char| c == ',' || c == '，' || c.is_whitespace() || c == '\u{feff}')
+        .split(|c: char| c == ',' || c == '，' || crate::metadata::js_space(c))
         .filter_map(parse_decimal_index)
         .collect();
     let mut answers = serde_json::Map::new();
@@ -703,10 +731,6 @@ pub(crate) fn elicitation_reply(event: &Value, input: &str) -> ElicitationReply 
         answer: json!({"type":"answered","answers":answers}),
         confirmation: None,
     }
-}
-
-fn trim_im_text(text: &str) -> &str {
-    text.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}')
 }
 
 // Number.parseInt(s, 10) accepts a decimal prefix; negative indices are invalid.
@@ -1082,4 +1106,6 @@ mod permission_tests {
         assert!(state.answer("chat", "1").is_none());
     }
 }
+
+
 

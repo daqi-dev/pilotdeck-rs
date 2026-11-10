@@ -225,6 +225,84 @@ async fn server_reject_all_sends() -> Server {
     }
 }
 
+/// `WeixinChannel.ts:707` — getconfig hangs; only typing waits on it.
+async fn server_slow_getconfig() -> Server {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/", listener.local_addr().unwrap());
+    let requests = Arc::new(StdMutex::new(Vec::new()));
+    let recorded = requests.clone();
+    let task = tokio::spawn(async move {
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let recorded = recorded.clone();
+            tokio::spawn(async move {
+                let mut bytes = Vec::new();
+                let mut buf = [0u8; 4096];
+                let (header, length, path) = loop {
+                    let count = socket.read(&mut buf).await.unwrap();
+                    if count == 0 {
+                        return;
+                    }
+                    bytes.extend_from_slice(&buf[..count]);
+                    if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let hdr = String::from_utf8_lossy(&bytes[..end]);
+                        let length = hdr
+                            .lines()
+                            .find_map(|line| {
+                                line.to_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .and_then(|v| v.trim().parse().ok())
+                            })
+                            .unwrap_or(0);
+                        let path = hdr.split_whitespace().nth(1).unwrap_or("").to_owned();
+                        break (end + 4, length, path);
+                    }
+                };
+                while bytes.len() < header + length {
+                    let count = socket.read(&mut buf).await.unwrap();
+                    bytes.extend_from_slice(&buf[..count]);
+                }
+                if path.ends_with("getconfig") {
+                    // Never answer: the typing RPC stays in flight for the test.
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    return;
+                }
+                let body = if path.ends_with("getupdates") {
+                    r#"{"ret":0,"msgs":[]}"#.to_owned()
+                } else {
+                    if header + length <= bytes.len() && length > 0 {
+                        let _ = serde_json::from_slice::<Value>(&bytes[header..header + length]);
+                    }
+                    recorded.lock().unwrap().push(
+                        serde_json::from_slice::<Value>(&bytes[header..header + length])
+                            .unwrap_or_else(|_| json!({})),
+                    );
+                    r#"{"ret":0}"#.to_owned()
+                };
+                let _ = socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await;
+            });
+        }
+    });
+    Server {
+        base,
+        requests,
+        task,
+        hold_confirmation: Arc::new(AtomicBool::new(false)),
+        confirmation_entered: Default::default(),
+        confirmation_release: Default::default(),
+        hold_prompt: Arc::new(AtomicBool::new(false)),
+        prompt_entered: Default::default(),
+        prompt_release: Default::default(),
+    }
+}
 fn setup(base: &str, messages: Value) -> (Storage, Value, Value) {
     let home = std::env::temp_dir().join(format!("pdrs-weixin-native-{}", uuid::Uuid::new_v4()));
     let storage = Storage::new(home);
@@ -657,4 +735,5 @@ async fn same_poll_batch_early_answer_preserves_ts_prompt_delivery_gate() {
 
 #[path = "outbox.rs"]
 mod outbox;
+
 
