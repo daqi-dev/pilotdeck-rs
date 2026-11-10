@@ -62,7 +62,7 @@ dot / 根 / `src` 内走 `negative_selection.refuse_unusable_target()`，后者�
 - 全部守卫写成 `raise` / `refuse()`，**一个都不依赖 `assert`**。`python3 -O` /
   `PYTHONOPTIMIZE=1` 会整条剥离 `assert`，靠 `assert` 的负控在优化解释器下静默放行。
 
-`test_negative_optimize_guards.py` 对已迁移的二十七个入口脚本（二十六个夹具目录，
+`test_negative_optimize_guards.py` 对已迁移的二十八个入口脚本（二十七个夹具目录，
 `network-timing` 计 `negative_controls.py` 与 `negative_private.py` 两条）逐一复算三条拒跑矩阵：未知变异名
 （加不加 `-O` 各一遍）、`CARGO_TARGET_DIR` 不可用（未设置 / 空串 / 纯空白 / `.` 四档）、输出目录已存在
 ——都要求 rc=2 且 stderr 点名、且不留下证据目录；它同时自证本解释器确实剥离 `assert`，否则结论
