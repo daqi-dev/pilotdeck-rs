@@ -60,8 +60,9 @@ use super::*;
 /// Within the gap the sms lane owns 18922–18923 (the http10 pins), 18924–18925
 /// (this module's head-timeout pins, the constants right below), 18926 (the
 /// json-null cell), 18927–18928 (the #2152 parser-admission pins) and
-/// 18929–18931 (the #2691 port-guard cases: the v6-only occupier, the
-/// TOCTOU bind race and the dual-stack preflight) — keep
+/// 18929–18932 (the #2691 port-guard cases: the v6-only occupier, the
+/// TOCTOU bind race, the dual-stack preflight and the replay-form
+/// post-start guard) — keep
 /// this ledger in sync when an sms pin moves: #2257 fix-r4, fix-r5 and
 /// #2152 fix-r1 each caught a port collision in this gap. fix-r5 moved the
 /// head-timeout pins here off 18971/18972, which the feishu replay binds

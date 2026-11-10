@@ -2874,7 +2874,7 @@ fn empty_steps_cannot_be_zero_coverage() {
 ///
 /// #2691 fix-r2 (review r2 concurrency#2, P1): the halves divide the work by
 /// the host the product binds — the v6 half (empty host only) asks who holds
-/// the dual-stack `::` wildcard, and the bind probe after the connect half
+/// the dual-stack `::` wildcard, and the bind probe ahead of the connect half
 /// (fixed host only) asks whether the product's own `bind((host, port))`
 /// would fail. The connect probe cannot answer that second question: an
 /// occupier that never listens refuses instead of answering, and a
@@ -2886,13 +2886,17 @@ async fn ensure_replay_port_free(port: u16, host: &str) {
         return;
     }
     // #1339 fix-r6 (P2): ask "is something listening?" by *connecting*, not by
-    // binding. `TcpListener::bind` sets `SO_REUSEADDR`, which on macOS/BSD
-    // reports a port still held by a wildcard listener as free — the very
-    // contamination this guard exists to stop — while the option-free bind used
-    // by the product collides with the `TIME_WAIT` the previous replay of the
-    // same case leaves behind and fails every later run. A connect probe has
-    // neither problem: a live listener answers, a lingering `TIME_WAIT` socket
-    // refuses.
+    // binding. A bind probe carries `SO_REUSEADDR` — the option shape both
+    // std and the product's own tokio listener set on Unix (mio sets it,
+    // exactly like std; see the fixed-host bind probe below) — and with that
+    // option a macOS/BSD kernel reports a port still held by a *wildcard*
+    // holder as free, the very contamination this guard exists to stop. A
+    // live listener on the probed address always answers a connect, and a
+    // lingering `TIME_WAIT` socket from the previous replay refuses instead
+    // of accepting, so the connect is clear of both shapes. (`TIME_WAIT` is
+    // not what separates the two probes here: the product's own bind sets
+    // `SO_REUSEADDR` too, so it is no more exposed to a `TIME_WAIT`
+    // collision than this connect is.)
     //
     // #1339 fix-r9 (P0, Codex): the IPv4 probe alone could not see an IPv6
     // occupier on the same port, and that is the shape the guard must catch —
@@ -2945,6 +2949,53 @@ async fn ensure_replay_port_free(port: u16, host: &str) {
         }
     }
 
+    // #2691 fix-r2 (review r2 concurrency#2, P1): the fixed host's own bind.
+    // A std `TcpListener::bind((host, port))` has the same option shape as
+    // the product's `bind_listener` on Unix (mio sets `SO_REUSEADDR` on the
+    // tokio listener, exactly like std), so this probe's verdict is the
+    // product's verdict; `SO_REUSEADDR` is also what keeps it clear of the
+    // previous replay's `TIME_WAIT` (#1339 fix-r6). Measured on this host
+    // (`_tmp/20261026-issue-2691/fix-r2/probes/bind-probe-errno.log`):
+    //   a v6-only holder of `[::]:P`     -> Ok (the product's v4 bind
+    //      succeeds there too, so the v6_only_occupier case stays green)
+    //   a dual-stack holder of `[::]:P`  -> EADDRINUSE (the connect probe
+    //      below is refused — the holder never listens — so this bind is the
+    //      only half that sees it)
+    //   a host this machine does not own -> EADDRNOTAVAIL (`203.0.113.7`,
+    //      whose recording itself expects the product's bind to fail —
+    //      `start-host-unavailable` — so there is nothing local to probe
+    //      and the replay must proceed)
+    // Anything the probe cannot classify aborts the replay, the same
+    // fail-closed posture the other halves take.
+    //
+    // #2691 fix-r3 (review r3 MM boundary#2, P1): the probe runs *before*
+    // the v4 connect probe below. Measured on the coordinator's macOS host
+    // (`_tmp/20261110-pr2760-harvest/macos-dualstack-probe.log`): a v4
+    // connect against a dual-stack `[::]:P` holder that never listens
+    // stalls for its whole timeout — the SYN is swallowed — while the std
+    // bind reports `EADDRINUSE` (errno 48) immediately. With the bind probe
+    // after the connect half, the connect half died at its 5 s `bounded`
+    // cap first, so on macOS this probe was unreachable and the exact
+    // shape it exists for went unreported there. On Linux the same connect
+    // is refused at once, so the order only decides which half reports a
+    // holder, never whether one does.
+    if !host.is_empty() && !crate::mutants::on("sms-port-preflight-bind-probe-skipped") {
+        match std::net::TcpListener::bind((host, port)) {
+            Ok(listener) => drop(listener),
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => panic!(
+                "#1339 port {port} is already bound on {host}: the product's own \
+                 bind would fail and start would degrade to the no-op handle — \
+                 an occupier the connect probe cannot see holds it"
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::AddrNotAvailable => {}
+            Err(error) => {
+                panic!(
+                    "#1339 cannot prove port {port} is bindable on {host} ({error}); refusing to replay"
+                )
+            }
+        }
+    }
+
     // #1339 fix-r9 (P2, four roles): the IPv4 probe carries the same shape as
     // the generator's `portIsFree` — `bounded` caps the wait and
     // `ConnectionRefused` is the only proof of a free port.
@@ -2960,41 +3011,6 @@ async fn ensure_replay_port_free(port: u16, host: &str) {
         Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
         Err(error) => {
             panic!("#1339 cannot prove port {port} is free on IPv4 ({error}); refusing to replay")
-        }
-    }
-
-    // #2691 fix-r2 (review r2 concurrency#2, P1): the fixed host's own bind.
-    // A std `TcpListener::bind((host, port))` has the same option shape as
-    // the product's `bind_listener` on Unix (mio sets `SO_REUSEADDR` on the
-    // tokio listener, exactly like std), so this probe's verdict is the
-    // product's verdict; `SO_REUSEADDR` is also what keeps it clear of the
-    // previous replay's `TIME_WAIT` (#1339 fix-r6). Measured on this host
-    // (`_tmp/20261026-issue-2691/fix-r2/probes/bind-probe-errno.log`):
-    //   a v6-only holder of `[::]:P`     -> Ok (the product's v4 bind
-    //      succeeds there too, so the v6_only_occupier case stays green)
-    //   a dual-stack holder of `[::]:P`  -> EADDRINUSE (the connect probe
-    //      above refused — the holder never listens — so this bind is the
-    //      only half that sees it)
-    //   a host this machine does not own -> EADDRNOTAVAIL (`203.0.113.7`,
-    //      whose recording itself expects the product's bind to fail —
-    //      `start-host-unavailable` — so there is nothing local to probe
-    //      and the replay must proceed)
-    // Anything the probe cannot classify aborts the replay, the same
-    // fail-closed posture both halves above take.
-    if !host.is_empty() && !crate::mutants::on("sms-port-preflight-bind-probe-skipped") {
-        match std::net::TcpListener::bind((host, port)) {
-            Ok(listener) => drop(listener),
-            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => panic!(
-                "#1339 port {port} is already bound on {host}: the product's own \
-                 bind would fail and start would degrade to the no-op handle — \
-                 an occupier the connect probe cannot see holds it"
-            ),
-            Err(error) if error.kind() == std::io::ErrorKind::AddrNotAvailable => {}
-            Err(error) => {
-                panic!(
-                    "#1339 cannot prove port {port} is bindable on {host} ({error}); refusing to replay"
-                )
-            }
         }
     }
 }
@@ -3099,6 +3115,22 @@ fn effective_webhook_host(extra: Option<&Value>) -> String {
     String::from_utf16_lossy(js_string_of(&host).units())
 }
 
+/// #2691 fix-r3 (review r3 concurrency#1 / boundary#1 / MM boundary#1, three
+/// roles independently): the `extra_owners` a guard call site keeps alive
+/// across `start()`, beyond the local `shared` clone every call site holds.
+/// Only [`replay_named`] needs it — the `cron` steps below its guard call
+/// `channel.deliver_cron_result`, so the channel (an `SmsShared` owner) is
+/// still alive when the guard runs. Every other call site drops the channel
+/// first (the drop form, `0` here), which is what the absolute `>= 2` of
+/// fix-r2 was written for: after `drop(channel)` a no-op start leaves only
+/// the local clone (count 1) while a started one keeps the handle and the
+/// accept task too (count 3). In the non-drop form those counts are 2
+/// (channel + clone) and 4 (channel + clone + handle + accept task), so a
+/// `>= 2` written for the drop form is tautological there — the threshold
+/// must be raised by exactly this constant. Pinned from the failing side by
+/// [`a_replay_start_that_keeps_the_channel_alive_is_still_caught_after_start`].
+const OWNERS_KEPT_ALIVE_ACROSS_START: usize = 1;
+
 /// #2691 gap 2 (TOCTOU): the preflight above is a pre-`start` probe, but
 /// `start` swallows a lost bind into the no-op handle (mod.rs:606-628: the
 /// `sms: HTTP server failed` log, then the no-op return), so an occupier
@@ -3108,15 +3140,20 @@ fn effective_webhook_host(extra: Option<&Value>) -> String {
 /// shape `head_timeout_tests.rs` runs after every one of its starts (#2020,
 /// pinned from the failing side by its bind-race cell): a no-op handle owns
 /// no `SmsShared`, while a started channel keeps one in the handle and one
-/// in its accept task. What slips past both probes (a dual-stack
-/// `[::]:port` socket bound but never listening refuses the v4 connect and
-/// never listens, so only the product's own bind notices it) lands here too.
-fn assert_bound_listener(shared: &Arc<SmsShared>, port: u16) {
+/// in its accept task. The threshold is `>= 2 + extra_owners`: `2` is the
+/// drop-form floor (local clone + one started owner; see
+/// [`OWNERS_KEPT_ALIVE_ACROSS_START`] for the two call-site shapes), and
+/// `extra_owners` adds the owners a call site kept alive across `start()`.
+/// What slips past the probes (an occupier that appears only after the
+/// preflight reported the port free — with fix-r3's bind probe first, a
+/// pre-existing dual-stack `[::]:port` holder is already caught before
+/// `start`) lands here.
+fn assert_bound_listener(shared: &Arc<SmsShared>, port: u16, extra_owners: usize) {
     if crate::mutants::on("sms-pin-bind-race-unchecked") {
         return;
     }
     crate::negative_assert!(
-        Arc::strong_count(shared) >= 2,
+        Arc::strong_count(shared) >= 2 + extra_owners,
         "#2691 start() on port {port} returned the no-op handle: the bind lost the \
          race with an occupier the preflight could not see, so this pin would \
          measure a foreign listener"
@@ -3149,6 +3186,55 @@ fn expects_live_listener(case: &Value) -> bool {
                     .is_some_and(|text| text.starts_with("sms: Twilio webhook http://"))
             })
         })
+}
+
+/// #2691 fix-r3 (review r3 sibling#2 / simplify#1 / MM boundary#4): pin the
+/// [`expects_live_listener`] discriminator itself. It is the only thing that
+/// can silently switch the whole post-start guard off — the prefix
+/// `"sms: Twilio webhook http://"` is hardcoded against the product's own
+/// `format!` in `mod.rs`, so a log-text drift would turn every cell's verdict
+/// false and no other test would notice. The count over all 59 oracle cells
+/// is the tripwire: 52 of them record a live listener (the seven no-op
+/// shapes are the complete complement), and any drift in the prefix, the
+/// `[level, text]` log shape or the cell set turns this red instead of
+/// disarming the guard quietly.
+#[test]
+fn expects_live_listener_anchors_the_product_webhook_log_line() {
+    let mut live = 0;
+    for case in oracle_cases() {
+        if expects_live_listener(&case) {
+            live += 1;
+        }
+    }
+    crate::negative_assert_eq!(
+        live,
+        52,
+        "#2691 the live-listener discriminator no longer sees 52 of the oracle \
+         cells — the product log prefix or the recorded log shape drifted, and \
+         every drifted cell silently skips its post-start bind guard"
+    );
+    for name in ["start-ok", "start-ok-public-url", "http10"] {
+        crate::negative_assert!(
+            expects_live_listener(&case_by_name(name)),
+            "#2691 the recorded {name} cell shows a live listener — the \
+             discriminator must agree"
+        );
+    }
+    for name in [
+        "start-missing-config",
+        "start-twilio-init-failed",
+        "start-port-busy",
+        "start-port-out-of-range",
+        "start-port-nan",
+        "start-host-unavailable",
+        "port-busy-preflight",
+    ] {
+        crate::negative_assert!(
+            !expects_live_listener(&case_by_name(name)),
+            "#2691 the recorded {name} cell expects the no-op handle — the \
+             discriminator must not run the post-start guard for it"
+        );
+    }
 }
 
 /// #1339 fix-r12 (P2, Codex r11 #1 / minimax simplify r11 #2): pin the
@@ -3353,7 +3439,7 @@ async fn replay_body_read_timeout(case: &Value, port: u16) {
     .await
     .expect("#1901 start");
     drop(channel);
-    assert_bound_listener(&shared, port);
+    assert_bound_listener(&shared, port, 0);
     let mut stream = bounded(
         "body-read-timeout connect",
         TcpStream::connect(("127.0.0.1", port)),
@@ -3521,10 +3607,12 @@ async fn replay_named(name: &str) {
         record_unhandled: Some(record_unhandled),
         request_timeout: None,
     });
-    // #2691 fix-r2: the strong-count guard handle. The channel stays alive
-    // (the `cron` steps below call `channel.deliver_cron_result`), so it is
-    // not dropped — a started channel counts channel + handle + accept task
-    // against the no-op handle's single owner.
+    // #2691 fix-r2: the strong-count guard handle. #2691 fix-r3 (review r3,
+    // three roles independently): the channel stays alive (the `cron` steps
+    // below call `channel.deliver_cron_result`), so it is *not* dropped the
+    // way the drop-form call sites drop theirs — the guard threshold must
+    // count it (no-op: channel + this clone = 2; started: channel + clone +
+    // handle + accept task = 4), see [`OWNERS_KEPT_ALIVE_ACROSS_START`].
     let shared = channel.shared.clone();
     let handle = channel
         .start(ChannelStartDeps {
@@ -3536,7 +3624,7 @@ async fn replay_named(name: &str) {
         .await
         .expect("#1339 start");
     if live_listener_expected {
-        assert_bound_listener(&shared, port);
+        assert_bound_listener(&shared, port, OWNERS_KEPT_ALIVE_ACROSS_START);
     }
 
     for step in steps {
@@ -3805,7 +3893,7 @@ async fn http10_request_closes_the_connection() {
     // #2691: the preflight cannot see an occupier that wins the window
     // between its probe and this bind — prove the bind really happened.
     drop(channel);
-    assert_bound_listener(&shared, PORT);
+    assert_bound_listener(&shared, PORT, 0);
     let raw = bounded("http10 pin response", raw_until_close(PORT, &request)).await;
     settle().await;
     bounded("http10 pin cleanup stop", handle.stop("cleanup"))
@@ -3962,7 +4050,7 @@ async fn http10_not_found_keeps_the_close_delimited_framing() {
         .expect("#2257 start for the http10 404 pin");
     // #2691: same post-start bind proof as the 200 pin.
     drop(channel);
-    assert_bound_listener(&shared, PORT);
+    assert_bound_listener(&shared, PORT, 0);
     let raw = bounded("http10 404 pin response", raw_until_close(PORT, &request)).await;
     settle().await;
     bounded("http10 404 pin cleanup stop", handle.stop("cleanup"))
@@ -4030,7 +4118,7 @@ async fn pin_channel(
         .await
         .expect("#2152 start for the parser-admission pin");
     drop(channel);
-    assert_bound_listener(&shared, port);
+    assert_bound_listener(&shared, port, 0);
     handle
 }
 
@@ -5766,7 +5854,7 @@ async fn json_null_body_is_unhandled_destroy() {
     // moved out to the free gap above that segment, same policy as the
     // 200/404 pins (18923/18922), the head-timeout ports (18924/18925),
     // the #2152 parser-admission pins (18927/18928) and the #2691
-    // port-guard cases (18929–18931).
+    // port-guard cases (18929–18932).
     // #2691: this pin's extra carries no `webhookHost`, so the effective
     // host is the `127.0.0.1` default — the fixed-host shape.
     let extra = json!({
@@ -5799,7 +5887,7 @@ async fn json_null_body_is_unhandled_destroy() {
     // (a foreign listener that ignores the request destroys too) must not
     // stay silent.
     drop(channel);
-    assert_bound_listener(&shared, PORT);
+    assert_bound_listener(&shared, PORT, 0);
     // 1) No signature header: the gate is skipped, `params.Body` on null
     //    throws first.
     let outcome = bounded(
@@ -6055,7 +6143,7 @@ fn v6_only_occupier_does_not_block_the_fixed_127_0_0_1_host() {
             .await
             .expect("#2691 start with the v6-only occupier held");
         drop(channel);
-        assert_bound_listener(&shared, PORT);
+        assert_bound_listener(&shared, PORT, 0);
         let raw = bounded("#2691 v6-occupier pin response", async {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
             let mut stream = TcpStream::connect(("127.0.0.1", PORT))
@@ -6134,8 +6222,10 @@ async fn a_pin_start_that_loses_the_bind_race_is_caught_after_start() {
         .expect("#2691 a lost bind is still a started channel");
     drop(channel);
     // 3. The post-start guard must fire: the no-op handle owns no SmsShared.
+    //    #2691 fix-r3: the drop form (`0` extra owners) — the non-drop form
+    //    `replay_named` needs is pinned by its own cell below.
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        assert_bound_listener(&shared, PORT)
+        assert_bound_listener(&shared, PORT, 0)
     }));
     match result {
         Err(payload) => {
@@ -6167,6 +6257,96 @@ async fn a_pin_start_that_loses_the_bind_race_is_caught_after_start() {
     settle().await;
 }
 
+/// #2691 fix-r3 (review r3 concurrency#1 / boundary#1 / MM boundary#1, three
+/// roles independently): `replay_named`'s post-start guard is the *non-drop*
+/// form — the channel stays alive because the `cron` steps below the guard
+/// call `channel.deliver_cron_result` — so at the guard a lost bind already
+/// counts channel + this clone = 2 owners and the drop-form `>= 2` fix-r2
+/// wrote was tautological there (the TOCTOU stayed open on every oracle cell
+/// that expects a live listener). This cell reproduces exactly that
+/// ownership shape — no `drop(channel)` before the guard, the same
+/// [`OWNERS_KEPT_ALIVE_ACROSS_START`] the replay driver passes — and proves
+/// the guard still fires. Weaken the threshold back to the drop form, or
+/// drop the constant to 0, and this test turns red with its own marker; the
+/// `sms-pin-bind-race-unchecked` switch disarms the guard for both forms.
+#[tokio::test]
+async fn a_replay_start_that_keeps_the_channel_alive_is_still_caught_after_start() {
+    // #2691 fix-r3: 18932 — the fourth #2691 port-guard slot; see the ledger
+    // in `head_timeout_tests.rs`.
+    const PORT: u16 = 18932;
+    let extra = json!({
+        "accountSid": "AC1", "authToken": "tok", "phoneNumber": "+15550000",
+        "webhookPort": PORT,
+    });
+    let host = effective_webhook_host(Some(&extra));
+    // 1. The preflight passes: the port is free.
+    ensure_replay_port_free(PORT, &host).await;
+    // 2. The occupier appears inside the window the probe cannot see.
+    let occupier = std::net::TcpListener::bind(("127.0.0.1", PORT))
+        .expect("#2691 replay-form occupier bind between the preflight and the start");
+    let channel = SmsChannel::new(SmsChannelOptions {
+        extra: Some(to_js_object(&extra)),
+        mapper: None,
+        gateway: None,
+        env: None,
+        twilio_factory: Some(null_factory()),
+        record_unhandled: None,
+        request_timeout: None,
+    });
+    // 3. `replay_named`'s shape: the channel is NOT dropped — its `cron`
+    //    steps would still call `channel.deliver_cron_result`.
+    let shared = channel.shared.clone();
+    let handle = channel
+        .start(ChannelStartDeps {
+            config: None,
+            report_status: None,
+            log: None,
+            turn_gateway: None,
+        })
+        .await
+        .expect("#2691 a lost bind is still a started channel (replay form)");
+    // 4. The post-start guard must fire anyway: the no-op shape counts
+    //    channel + clone = 2, below the 2 + OWNERS_KEPT_ALIVE_ACROSS_START
+    //    threshold.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        assert_bound_listener(&shared, PORT, OWNERS_KEPT_ALIVE_ACROSS_START)
+    }));
+    match result {
+        Err(payload) => {
+            let text = payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| {
+                    payload
+                        .downcast_ref::<&str>()
+                        .map(|text| (*text).to_owned())
+                })
+                .unwrap_or_else(|| "#2691 non-string panic payload".to_owned());
+            crate::negative_assert!(
+                text.contains("#2691 start() on port"),
+                "#2691 the replay-form bind guard fired with an unexpected message: {text}"
+            );
+        }
+        Ok(()) => panic!(
+            "#2691 the replay-form post-start bind guard did not fire: with the \
+             channel kept alive the no-op shape still counts 2 owners, so a \
+             threshold written for the drop form (`>= 2`) is tautological here — \
+             the pre-fix TOCTOU shape would silently measure the occupier's \
+             listener through every oracle cell that expects a live listener"
+        ),
+    }
+    // Production hands the no-op handle to the supervisor; it must stop.
+    bounded(
+        "#2691 replay-form TOCTOU cleanup stop",
+        handle.stop("cleanup"),
+    )
+    .await
+    .expect("#2691 stop the replay-form no-op handle");
+    drop(occupier);
+    drop(channel);
+    settle().await;
+}
+
 /// #2691 fix-r2 (review r2 concurrency#2, P1): parameterizing the preflight
 /// by the effective host dropped more than the false red — on a host where a
 /// dual-stack `[::]:port` holder makes the product's own fixed-host bind
@@ -6181,14 +6361,27 @@ async fn a_pin_start_that_loses_the_bind_race_is_caught_after_start() {
 /// `sms-port-preflight-bind-probe-skipped` switch restores the pre-fix
 /// shape and must turn this test red.
 ///
-/// The assertion is the equivalence, not an unconditional catch: the std
-/// probe and the product's tokio bind share the same option shape on Unix
-/// (mio sets `SO_REUSEADDR`), but on macOS/BSD that option lets a specific
-/// address bind while a wildcard owns the port (measured in #1339 fix-r5:
-/// a v4 `SO_REUSEADDR` socket binds over a `::`-owned port). On such a host
-/// the product's own bind succeeds too, so a passing preflight is the
-/// correct verdict — the not-caught branch therefore proves the
-/// product-shaped bind really succeeds instead of assuming it.
+/// #2691 fix-r3 (review r3 MM boundary#2/#3, DS concurrency#2 / boundary#3):
+/// the kill no longer leans on Linux-only kernel semantics. With the bind
+/// probe moved ahead of the connect probe, the unmutated run reports the
+/// holder on both platforms — Linux `EADDRINUSE` errno 98 (fix-r2 probe
+/// log) and macOS `EADDRINUSE` errno 48 (the coordinator's measured macOS
+/// baseline, `_tmp/20261110-pr2760-harvest/macos-dualstack-probe.log`;
+/// re-verification on the coordinator's host is recorded in the fix-r3
+/// RESULT). Under the switch the probe is skipped, and what the run meets
+/// next is the connect probe: on Linux it is refused at once (the Ok
+/// branch below then proves the product-shaped bind still fails); on macOS
+/// it stalls on the dual-stack holder for its whole `bounded` cap — a shape
+/// only the skipped probe could classify — and the stall is attributed to
+/// the switch with this test's own marker instead of being read as an
+/// unrelated timeout.
+///
+/// The not-caught branch is the equivalence proof, not an unconditional
+/// catch: the std probe and the product's tokio bind share the same option
+/// shape on Unix (mio sets `SO_REUSEADDR`), so a kernel that lets the
+/// specific-address bind through over the wildcard holder lets the
+/// product's own bind through too — the branch proves the product-shaped
+/// bind really succeeds instead of assuming it.
 #[test]
 fn dual_stack_occupier_is_reported_by_the_fixed_host_bind_probe() {
     // #2691 fix-r2: 18931 — the third #2691 port-guard slot; see the ledger
@@ -6237,16 +6430,31 @@ fn dual_stack_occupier_is_reported_by_the_fixed_host_bind_probe() {
                         .map(|text| (*text).to_owned())
                 })
                 .unwrap_or_else(|| "#2691 non-string panic payload".to_owned());
+            if text.contains("#1339 wait timeout: port guard 127.0.0.1") {
+                // #2691 fix-r3: the v4 connect probe stalled on the
+                // dual-stack holder — the macOS shape (measured on the
+                // coordinator's macOS host: the SYN is swallowed for the
+                // whole `bounded` cap). Only the bind probe classifies this
+                // holder, and fix-r3 moved it ahead of the connect probe
+                // precisely so it is reachable; surviving to the connect
+                // stall means the probe did not run — the switch.
+                panic!(
+                    "#2691 the fixed-host bind probe did not fire: the v4 connect \
+                     probe alone cannot classify the dual-stack holder ({text})"
+                );
+            }
             crate::negative_assert!(
                 text.contains(&format!("#1339 port {PORT} is already bound on")),
                 "#2691 the fixed-host bind probe fired with an unexpected message: {text}"
             );
         }
         Ok(()) => {
-            // The kernel let the product-shaped bind through (the
-            // macOS/BSD `SO_REUSEADDR` wildcard shape). Prove the product's
-            // own bind really succeeds there — the same std shape the probe
-            // uses — or the preflight silently lost the occupier.
+            // The kernel let the product-shaped bind through over the
+            // wildcard holder (a hypothetical shape: both measured hosts —
+            // Linux errno 98, macOS errno 48 — report `EADDRINUSE`). Prove
+            // the product's own bind really succeeds there — the same std
+            // shape the probe uses — or the preflight silently lost the
+            // occupier.
             match std::net::TcpListener::bind((DEFAULT_HOST, PORT)) {
                 Ok(listener) => drop(listener),
                 Err(error) => panic!(
