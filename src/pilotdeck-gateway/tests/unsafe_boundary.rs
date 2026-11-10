@@ -65,7 +65,7 @@
 //! CI yml 与脚本自行替换编译器（包括 source .env、设置 CARGO_HOME、RUSTC /
 //! CARGO 包装器）由人工评审负责，不靠扫描脚本文本覆盖；依据：
 //! state/decisions-20261021.md「卡 · #386 守卫的构建配置检查改为「一律不许存在」，并划清守卫边界（AI 代批，待人复核）」。
-//! source 只接受 null（已审计本地包）与 registry+；git 等其它 kind 一律拒绝。
+//! source 只接受 null（已审计本地包）、registry+ 与下文精确 pin 的 regress Git 源；其它 kind 拒绝。
 //! registry 依赖内部 unsafe 不属于本守卫的审计范围；registry 依赖由 Cargo.lock
 //! pin 评审；vendored 内容的变更仍须按冻结件规则评审。
 
@@ -150,10 +150,127 @@ const VENDORED_PACKAGES: [&str; 3] = [
     "data/icu_collator_data",
 ];
 
+const REGRESS_REV: &str = "95c04041cd9b30249961eb80d950102c29c9586c";
+const REGRESS_SOURCE: &str =
+    "git+https://github.com/ridiculousfish/regress?rev=95c04041cd9b30249961eb80d950102c29c9586c";
+const REGRESS_RESOLVED_SOURCE: &str = "git+https://github.com/ridiculousfish/regress?rev=95c04041cd9b30249961eb80d950102c29c9586c#95c04041cd9b30249961eb80d950102c29c9586c";
+
+fn pinned_regress_source(source: &str) -> bool {
+    source == REGRESS_SOURCE || source == REGRESS_RESOLVED_SOURCE
+}
+
+fn clean_git_output(directory: &Path, args: &[&str]) -> String {
+    // Do not inherit caller Git routing into the checkout being audited.
+    let mut command = Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    let output = command
+        .arg("-C")
+        .arg(directory)
+        .args(args)
+        .output()
+        .expect("inspect pinned Git dependency");
+    assert!(
+        output.status.success(),
+        "cannot inspect pinned Git dependency: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("Git dependency output is UTF-8")
+}
+
+fn pinned_regress_checkout(workspace: &Path, package: &Value) {
+    assert_eq!(package["name"], "regress", "pinned Git package identity");
+    assert_eq!(package["version"], "0.12.0", "pinned Git package version");
+    assert_eq!(
+        package["source"], REGRESS_RESOLVED_SOURCE,
+        "pinned Git resolved identity"
+    );
+    let lock = fs::read_to_string(workspace.join("Cargo.lock")).expect("workspace Cargo.lock");
+    let matching: Vec<_> = lock
+        .split("[[package]]")
+        .filter(|block| block.lines().any(|line| line == "name = \"regress\""))
+        .collect();
+    assert_eq!(matching.len(), 1, "exactly one pinned regress lock entry");
+    let lock_source = format!("source = \"{REGRESS_RESOLVED_SOURCE}\"");
+    assert!(
+        matching[0].lines().any(|line| line == lock_source),
+        "regress lock source identity"
+    );
+    assert!(
+        matching[0]
+            .lines()
+            .any(|line| line == "version = \"0.12.0\""),
+        "regress lock version"
+    );
+    let manifest = Path::new(
+        package["manifest_path"]
+            .as_str()
+            .expect("Git package manifest"),
+    );
+    assert!(
+        !fs::symlink_metadata(manifest)
+            .expect("Git manifest exists")
+            .file_type()
+            .is_symlink(),
+        "Git manifest cannot be a symlink"
+    );
+    let directory = manifest
+        .parent()
+        .unwrap()
+        .canonicalize()
+        .expect("Git checkout directory");
+    assert_eq!(
+        clean_git_output(&directory, &["rev-parse", "--show-toplevel"]).trim(),
+        directory.to_str().unwrap(),
+        "Git manifest must be at checkout root"
+    );
+    assert_eq!(
+        clean_git_output(&directory, &["rev-parse", "HEAD"]).trim(),
+        REGRESS_REV,
+        "Git checkout must match pinned commit"
+    );
+    pinned_git_clean_tree(&directory);
+}
+
+fn pinned_git_clean_tree(directory: &Path) {
+    let flags = clean_git_output(directory, &["ls-files", "-v"]);
+    assert!(
+        flags.lines().all(|line| line.starts_with("H ")),
+        "Git checkout must not hide tracked changes with index flags"
+    );
+    assert!(
+        clean_git_output(
+            directory,
+            &["diff", "--no-ext-diff", "--no-textconv", "HEAD", "--"]
+        )
+        .is_empty(),
+        "Git dependency tracked files/index changed"
+    );
+    // Cargo writes this marker after checkout. No other untracked or ignored
+    // source is accepted, since it could become a Rust include/build input.
+    let extra = clean_git_output(directory, &["ls-files", "--others", "--exclude-standard"]);
+    assert!(
+        extra.lines().all(|line| line == ".cargo-ok"),
+        "Git dependency has untracked files: {extra}"
+    );
+    let ignored = clean_git_output(
+        directory,
+        &["ls-files", "--others", "--ignored", "--exclude-standard"],
+    );
+    assert!(
+        ignored.lines().all(|line| line == ".cargo-ok"),
+        "Git dependency has ignored files: {ignored}"
+    );
+}
+
 fn is_local_source(source: &Value, description: &str) -> bool {
     match source {
         Value::Null => true,
         Value::String(source) if source.starts_with("registry+") => false,
+        Value::String(source) if pinned_regress_source(source) => false,
         _ => panic!("unsupported dependency source for {description}: {source}"),
     }
 }
@@ -170,6 +287,19 @@ fn declared_local_dependency_boundary(
 ) {
     for dependency in package["dependencies"].as_array().unwrap() {
         let name = dependency["name"].as_str().unwrap();
+        if dependency["source"]
+            .as_str()
+            .is_some_and(pinned_regress_source)
+        {
+            assert_eq!(
+                name, "regress",
+                "only the pinned regress Git declaration is allowed"
+            );
+            assert_eq!(
+                dependency["source"], REGRESS_SOURCE,
+                "Git declaration must use the exact pinned revision"
+            );
+        }
         if is_local_source(
             dependency
                 .get("source")
@@ -400,6 +530,12 @@ fn resolved_dependency_boundary(workspace: &Path, members: &[String]) {
             continue;
         }
         let package = packages[id];
+        if package["source"]
+            .as_str()
+            .is_some_and(pinned_regress_source)
+        {
+            pinned_regress_checkout(workspace, package);
+        }
         if is_local_source(package.get("source").expect("package source"), id) {
             let directory = package_directory(package);
             assert!(
@@ -2178,5 +2314,127 @@ fn icu_collator_vendor_scope_matches_approved_lib_only_boundary() {
             message.contains("must expose only a lib target"),
             "#132 target rejected at the lib-only boundary: {kind}: {message}"
         );
+    }
+}
+
+#[test]
+fn pinned_git_source_rejects_other_urls_revisions_and_fragments() {
+    assert!(pinned_regress_source(REGRESS_SOURCE));
+    assert!(pinned_regress_source(REGRESS_RESOLVED_SOURCE));
+    for source in [
+        REGRESS_SOURCE.replace("ridiculousfish", "another-owner"),
+        REGRESS_SOURCE.replace(REGRESS_REV, "95c0404"),
+        format!("{REGRESS_SOURCE}#0000000000000000000000000000000000000000"),
+        format!("{REGRESS_SOURCE}&branch=main"),
+        "git+file:///tmp/regress".to_owned(),
+    ] {
+        assert!(!pinned_regress_source(&source), "{source}");
+        assert!(
+            std::panic::catch_unwind(|| is_local_source(
+                &Value::String(source.clone()),
+                "negative"
+            ))
+            .is_err()
+        );
+    }
+}
+
+#[test]
+fn pinned_git_checkout_rejects_dirty_and_replaced_packages() {
+    let temporary = GitBoundaryFixture::new();
+    let root = temporary.path();
+    fs::write(root.join("Cargo.lock"), format!("[[package]]\nname = \"regress\"\nversion = \"0.12.0\"\nsource = \"{REGRESS_RESOLVED_SOURCE}\"\n")).unwrap();
+    let checkout = root.join("checkout");
+    fs::create_dir(&checkout).unwrap();
+    assert!(
+        Command::new("git")
+            .arg("init")
+            .arg(&checkout)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    fs::write(
+        checkout.join("Cargo.toml"),
+        "[package]\nname = \"regress\"\nversion = \"0.12.0\"\n",
+    )
+    .unwrap();
+    let package = serde_json::json!({"name":"regress","version":"0.12.0","source":REGRESS_RESOLVED_SOURCE,"manifest_path":checkout.join("Cargo.toml")});
+    // Even a clean replacement repository with the right metadata is not the
+    // pinned commit. Metadata/lock strings alone cannot establish identity.
+    assert!(std::panic::catch_unwind(|| pinned_regress_checkout(root, &package)).is_err());
+    for field in ["name", "version", "source"] {
+        let mut changed = package.clone();
+        changed[field] = Value::String("replacement".into());
+        assert!(
+            std::panic::catch_unwind(|| pinned_regress_checkout(root, &changed)).is_err(),
+            "{field}"
+        );
+    }
+}
+
+#[test]
+fn git_checkout_clean_tree_rejects_worktree_index_and_untracked_changes() {
+    let temporary = GitBoundaryFixture::new();
+    let directory = temporary.path();
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(directory)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init"]);
+    fs::write(directory.join("source.rs"), "// original\n").unwrap();
+    git(&["add", "."]);
+    git(&[
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "commit",
+        "-m",
+        "fixture",
+    ]);
+    fs::write(directory.join(".cargo-ok"), "").unwrap();
+    pinned_git_clean_tree(directory);
+    fs::write(directory.join("source.rs"), "// changed\n").unwrap();
+    assert!(std::panic::catch_unwind(|| pinned_git_clean_tree(directory)).is_err());
+    git(&["add", "source.rs"]);
+    assert!(std::panic::catch_unwind(|| pinned_git_clean_tree(directory)).is_err());
+    git(&["reset", "--hard", "HEAD"]);
+    fs::write(directory.join("extra.rs"), "// injected\n").unwrap();
+    assert!(std::panic::catch_unwind(|| pinned_git_clean_tree(directory)).is_err());
+    fs::remove_file(directory.join("extra.rs")).unwrap();
+    git(&["update-index", "--assume-unchanged", "source.rs"]);
+    assert!(std::panic::catch_unwind(|| pinned_git_clean_tree(directory)).is_err());
+}
+
+struct GitBoundaryFixture(PathBuf);
+impl GitBoundaryFixture {
+    fn new() -> Self {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "pdrs-git-boundary-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        fs::create_dir(&path).expect("exclusive Git test fixture");
+        Self(path.canonicalize().unwrap())
+    }
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+impl Drop for GitBoundaryFixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
     }
 }
