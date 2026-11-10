@@ -77,14 +77,18 @@ use super::*;
 /// 18960–18999  feishu registered segment — the feishu oracle replay binds
 ///              18960–18972 and its pins bind 18973/18980/18990–18993; the
 ///              wecom suite binds 18990/18991/18994 and 18995–18998 (the
-///              QYAPI fake on 18998)
+///              QYAPI fake on 18998), and its concurrent-dispatch test
+///              dials 18993 as a "nothing listens here" qyapi address
+///              while the feishu TOKEN_PIN binds it (#2446 tracks that
+///              bind-vs-dial overlap too)
 /// ```
 ///
 /// **18973–18979 sit inside the feishu registered range** yet belong to this
-/// module: 18973 is `PORT_DEFAULT_WIRING`, one of the three actual cross-lane
-/// binds here (the feishu NULL_PIN_ROUTER_PORT, tracked in #2446 — the other
-/// two are 18990/18991, which the wecom suite binds against feishu's
-/// `LARK_PORT` / `NULL_PIN_LARK_PORT`); 18974–18979 are
+/// module: 18973 is `PORT_DEFAULT_WIRING`, one of the three bind-vs-bind
+/// cross-lane overlaps in this gap (the feishu NULL_PIN_ROUTER_PORT, tracked
+/// in #2446 — the other two are 18990/18991, which the wecom suite binds
+/// against feishu's `LARK_PORT` / `NULL_PIN_LARK_PORT`; #2446 also carries
+/// the fourth, bind-vs-dial 18993 overlap recorded above); 18974–18979 are
 /// this module's `PORT_DEFAULT_DEADLINE` … `PORT_STOP_DROP` constants below
 /// (they predate the feishu registration; the feishu replay never binds
 /// them). Keep this ledger in sync when any pin moves: #2257 fix-r4, fix-r5

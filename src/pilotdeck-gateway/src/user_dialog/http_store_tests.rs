@@ -409,6 +409,22 @@ enum ServerClose {
     StillOpen,
 }
 
+/// Whether every dribble beat's write completed against the server
+/// (`exchange_dribbled_after_response`, #2773 fix-r3, review MM r3
+/// concurrency#1 / boundary#3): the write side of the dribble is the
+/// platform-independent drain discriminator. A non-draining close leaves the
+/// beats in flight against a socket the peer has fully closed, and the RST
+/// that earns fails every later write on both POSIX platforms — regardless of
+/// which of the already-queued FIN and the late RST the client's
+/// `read_to_end` consumes first (on Linux the queued FIN wins that read race,
+/// so the close-kind axis alone cannot discriminate there: cb8 rounds
+/// `negctl6` / `negctl7`, both drain-unwired rows SURVIVED).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DribbleWrites {
+    AllAbsorbed,
+    Errored,
+}
+
 /// Like [`exchange_lenient`], but reports how the server ended the
 /// connection instead of leaving it idle until `limit`.
 async fn exchange_until_eof(port: u16, request: &[u8], limit: Duration) -> (Vec<u8>, ServerClose) {
@@ -435,8 +451,8 @@ async fn exchange_until_eof(port: u16, request: &[u8], limit: Duration) -> (Vec<
 /// kill to a timing race (#2773 fix-r2, review anthropic concurrency#1). The
 /// response is read before the dribble starts so a dropped drain cannot
 /// RST-flush the response bytes out of the client's receive queue: the
-/// byte-shape assertions stay green and the close-kind assertion is the one
-/// that turns red.
+/// byte-shape assertions stay green and the close-kind / beat-write
+/// assertions are the ones that turn red.
 async fn exchange_dribbled_after_response(
     port: u16,
     head: &[u8],
@@ -444,7 +460,7 @@ async fn exchange_dribbled_after_response(
     beat_bytes: usize,
     beat_every: Duration,
     limit: Duration,
-) -> (Vec<u8>, ServerClose) {
+) -> (Vec<u8>, ServerClose, DribbleWrites) {
     let mut stream = TcpStream::connect(("127.0.0.1", port))
         .await
         .expect("connect");
@@ -452,9 +468,16 @@ async fn exchange_dribbled_after_response(
     let response = read_response(&mut stream).await;
     let beat = vec![b'a'; beat_bytes];
     let mut sent = 0;
+    let mut beats = DribbleWrites::AllAbsorbed;
     while sent < body {
         let take = beat.len().min(body - sent);
-        let _ = tokio::time::timeout(limit, stream.write_all(&beat[..take])).await;
+        match tokio::time::timeout(limit, stream.write_all(&beat[..take])).await {
+            Ok(Ok(())) => {}
+            // A beat that times out or errors means the peer is no longer
+            // reading: the drain race is settled on the write side, on every
+            // platform (#2773 fix-r3, review MM r3 concurrency#1).
+            _ => beats = DribbleWrites::Errored,
+        }
         sent += take;
         tokio::time::sleep(beat_every).await;
     }
@@ -464,7 +487,7 @@ async fn exchange_dribbled_after_response(
         Ok(Err(_)) => ServerClose::Reset,
         Err(_) => ServerClose::StillOpen,
     };
-    (response, closed)
+    (response, closed, beats)
 }
 
 /// A chunked request; the body is sent as `chunks` so `Limited` can reject it
@@ -1167,7 +1190,7 @@ async fn header_guard_beats_hyper_buffer_cap_at_the_boundary() {
     // head is still 16,368 value bytes with no CRLF, so hyper's old 32 KiB
     // buffer would have filled first pre-fix.
     request.extend(std::iter::repeat_n(b'a', 6_600));
-    let (response, closed) = exchange_dribbled_after_response(
+    let (response, closed, beats) = exchange_dribbled_after_response(
         port,
         &request,
         16_368 - 6_600,
@@ -1181,6 +1204,17 @@ async fn header_guard_beats_hyper_buffer_cap_at_the_boundary() {
         NODE_431,
         "guard bytes, not hyper's 123-byte 431: {:?}",
         String::from_utf8_lossy(&response)
+    );
+    // The write side before the close kind (#2773 fix-r3, review MM r3
+    // concurrency#1 / boundary#3): the beat writes discriminate the drain
+    // mark on every platform, so the guard-431 unwired mutant dies here on
+    // Linux too, where the close-kind assertion below stays green (the
+    // queued FIN wins the read race there).
+    assert_eq!(
+        beats,
+        DribbleWrites::AllAbsorbed,
+        "#2773 the 431 must drain the unread head before closing: \
+         every dribble beat is written, none reset"
     );
     assert_eq!(closed, ServerClose::Fin, "the 431 must end the connection");
     server.close().await;
@@ -1718,7 +1752,7 @@ async fn parser_rejection_with_unread_body_delivers_and_closes() {
         "FROB {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n\
          Content-Length: {UNREAD_BODY_BYTES}\r\n\r\n"
     );
-    let (response, closed) = exchange_dribbled_after_response(
+    let (response, closed, beats) = exchange_dribbled_after_response(
         port,
         frob_head.as_bytes(),
         UNREAD_BODY_BYTES,
@@ -1728,6 +1762,17 @@ async fn parser_rejection_with_unread_body_delivers_and_closes() {
     )
     .await;
     assert_close_without_keep_alive(&response, 400, "#2774 unread-admission-frob");
+    // The write side before the close kind (#2773 fix-r3, review MM r3
+    // concurrency#1 / boundary#3): the beat writes discriminate the drain
+    // wiring on every platform, so the admission unwired mutant dies here on
+    // Linux too, where the close-kind assertion below stays green (the queued
+    // FIN wins the read race there — cb8 rounds negctl6/negctl7).
+    assert_eq!(
+        beats,
+        DribbleWrites::AllAbsorbed,
+        "#2774 the admission 400 must drain the unread body: \
+         every dribble beat is written, none reset"
+    );
     assert_eq!(
         closed,
         ServerClose::Fin,

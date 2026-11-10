@@ -5895,8 +5895,9 @@ async fn json_null_body_is_unhandled_destroy() {
     // held only by the fixture's documented courtesy of skipping 18901 —
     // moved out to the free gap above that segment, same policy as the
     // 200/404 pins (18923/18922), the head-timeout ports (18924/18925),
-    // the #2152 parser-admission pins (18927/18928) and the #2691
-    // port-guard cases (18929–18932); the full 189xx layout lives in the
+    // the json-null cell (18926), the #2152 parser-admission pins
+    // (18927/18928), the #2691 port-guard cases (18929–18932) and the
+    // #2773 CONNECT pin (18933); the full 189xx layout lives in the
     // single ledger in `head_timeout_tests.rs` (#2773 A2).
     // #2691: this pin's extra carries no `webhookHost`, so the effective
     // host is the `127.0.0.1` default — the fixed-host shape.

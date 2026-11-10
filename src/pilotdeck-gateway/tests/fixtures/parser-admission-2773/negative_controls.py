@@ -100,9 +100,12 @@ cases = [
      'unknown-method: #2773 admission replay status differs'),
     # The admission gate's drain wiring alone, disconnected (#2773 fix-r1
     # P1-b): the early 400 still goes out, but the connection task no longer
-    # drains the unread body, so the close degenerates into an RST and the
-    # #2774 lib pin's own FIN expectation fails. This row is what makes the
-    # ledger's "double kill" claim machine-checked (review r2 simplify#7).
+    # drains the unread body, so the beats still in flight earn an RST. The
+    # kill rides the pin's beat-write assertion first — the platform-
+    # independent axis (#2773 fix-r3, review MM r3 concurrency#1/boundary#3);
+    # on macOS the close-kind FIN assertion would also fire. This row is what
+    # makes the ledger's "double kill" claim machine-checked (review r2
+    # simplify#7).
     ('parser-admission-drain-unwired', HTTP_STORE,
      '                                    if body_pending\n'
      '                                        && rejection.headers().get(header::CONNECTION)\n'
@@ -118,11 +121,13 @@ cases = [
      '                                    }\n',
      'user_dialog::http_store::http_store_tests::'
      'parser_rejection_with_unread_body_delivers_and_closes',
-     '#2774 the admission 400 must close the connection, '
-     'not park it after an unread body'),
+     '#2774 the admission 400 must drain the unread body: '
+     'every dribble beat is written, none reset'),
     # The guard-431 mid-head drain mark alone, disconnected (#2773 fix-r1):
     # the 431 still answers, but the unread head bytes turn the close into an
-    # RST racing the response — the boundary pin's FIN expectation fails.
+    # RST racing the response — the boundary pin's beat-write assertion fires
+    # first (platform-independent axis, fix-r3 review MM r3), and on macOS
+    # the FIN expectation would also fail.
     ('guard-431-drain-unwired', HTTP_STORE,
      '                        this.timer.mark_unread_body_close();\n'
      '                        response = Some(NODE_431_RESPONSE);\n',
@@ -130,7 +135,8 @@ cases = [
      '// mutant: guard drain disconnected\n',
      'user_dialog::http_store::http_store_tests::'
      'header_guard_beats_hyper_buffer_cap_at_the_boundary',
-     'the 431 must end the connection'),
+     '#2773 the 431 must drain the unread head before closing: '
+     'every dribble beat is written, none reset'),
     # The setHost read, fail-open: the non-boolean is no longer refused, so
     # the catch_unwind pin finds no panic and fails at its own expectation.
     ('set-host-fail-open', INTEGRATION,

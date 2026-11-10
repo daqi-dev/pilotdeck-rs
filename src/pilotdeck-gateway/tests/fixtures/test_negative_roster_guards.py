@@ -38,18 +38,33 @@ window's handler never appears), and moving the registry read back into the
 guarded window (an unusable registry stops being a "never started" refusal).
 
 fix-r3 (review round 2) adds two things. The drive now holds the same
-``negative_process.tree_lock`` a real run would: the stubbed window still
-hands out live source bytes, so a concurrently mutating batch on this
-checkout could feed the real ``mutate`` a mutant instead of the anchor and
-turn this pin red for no defect. And the three sibling entries that carry
-the same verify-before-publish defence -- ``memory-gateway``,
-``snapshot-projection`` and ``sdk-mcp-session-tools`` -- get source-anchor
-pins (the behavioural drive stays manager-gateway-only: the first two of
-those vintages write their mutants with bare ``Path.write_text``, so a
-stubbed-window drive would still touch the guarded tree). Each anchor test
-also applies the review's kill demo -- ``if recorded != expected:`` flipped
-to ``if False:`` -- to a doctored copy of its own source and requires the
-anchors to break, so the pin cannot silently rot into a no-op grep.
+``negative_process.tree_lock`` a real run would (with a test-sized 60 s
+budget, not the production 900 s default): the stubbed window still hands
+out live source bytes, so a concurrently mutating batch on this checkout
+could feed the real ``mutate`` a mutant instead of the anchor and turn this
+pin red for no defect. And the three sibling entries that carry the same
+verify-before-publish defence -- ``memory-gateway``, ``snapshot-projection``
+and ``sdk-mcp-session-tools`` -- get source-anchor pins (the behavioural
+drive stays manager-gateway-only: memory-gateway and snapshot-projection
+write their mutants with bare ``Path.write_text`` inside the window -- the
+truncating in-place write whose SIGKILL half-file risk is why #1903
+introduced ``write_source_atomic`` -- so a stubbed-window drive would still
+touch the guarded tree; sdk-mcp-session-tools writes through the shared
+``mutating_sources`` window and is behaviourally drivable, registered as the
+first extension in #2804). Each anchor test applies two kill demos to a
+doctored copy of its own source -- ``if recorded != expected:`` flipped to
+``if False:``, and every anchor-bearing line commented out -- and requires
+the anchors to break either way, so the pin cannot be satisfied by comments
+or prose while the real code is gone.
+
+The lock import caveat (round 3, MM concurrency#4): ``tree_lock`` itself is
+imported before the lock is taken, and ``negative_process.py`` is an in-place
+mutation target for other lanes -- an import landing inside such a window
+would cache a mutant in ``sys.modules`` and this drive would run it. No
+known mutant today touches the flock, so the present hazard is the comment
+overstating the guarantee rather than a wrong verdict; the hardening
+(post-lock byte verification, or relocating the lock helper out of the
+mutated module) is registered in #2804.
 
 Run from this directory: ``python3 -m unittest test_negative_roster_guards``.
 """
@@ -84,6 +99,11 @@ FULL_ROSTER = 36
 # flipped ``if recorded != expected:`` predicate, a missing
 # roster-mismatch publication, or a summary published before the
 # refusal all break the ordered anchor chain.
+#
+# The sdk-mcp chain pins the derivation of ``expected`` with a two-part
+# anchor (the comprehension head and its ``if`` tail span two lines there,
+# so a one-fragment tail would let a constant table replace the derivation
+# while the chain stays green -- round 3, MM sibling#4).
 SIBLING_DEFENCE_ANCHORS = {
     'memory-gateway': (
         'EXPECTED_NAMES = (',
@@ -103,6 +123,7 @@ SIBLING_DEFENCE_ANCHORS = {
     ),
     'sdk-mcp-session-tools': (
         'EXPECTED_NAMES = (',
+        'expected = [name for name in EXPECTED_NAMES',
         'if not args.selected or name in args.selected]',
         'if recorded != expected:',
         "(output / 'roster-mismatch.json').write_text(",
@@ -110,6 +131,14 @@ SIBLING_DEFENCE_ANCHORS = {
         "'summary.json.tmp'",
     ),
 }
+
+# The declared sibling denominator (#2773 fix-r3, review MM r3 boundary#1):
+# the anchor table's keys double as the loop domain of both tests below, so
+# they need a static literal of their own -- deleting one key would silently
+# shorten the anchor test and the kill demo while the table itself stays
+# green. Every loop iterates this tuple, never the table.
+EXPECTED_SIBLINGS = ('memory-gateway', 'snapshot-projection',
+                     'sdk-mcp-session-tools')
 TERMINATE_SIGNALS = ('SIGTERM', 'SIGHUP', 'SIGQUIT')
 
 
@@ -137,6 +166,26 @@ def stubbed_window(root, paths, *, baseline=None, lock_timeout=None):
     real ``mutate`` below still walks every real anchor.
     """
     yield {path: path.read_bytes() for path in paths}
+
+
+@contextlib.contextmanager
+def held_tree_lock(root):
+    """The same lock a real run holds, on a test-sized budget.
+
+    The production default is a 900 s silent wait; a mutating batch holding
+    this checkout would turn this unit test into a 15-minute hang followed by
+    an opaque ``TimeoutError`` (#2773 fix-r3, review MM r3 concurrency#3 /
+    boundary#5). Six drives each pass through this gate, so the wait would
+    stack. 60 s names the cause instead.
+    """
+    try:
+        with tree_lock(root, timeout=60):
+            yield
+    except TimeoutError as error:
+        raise AssertionError(
+            '#2773 fix-r3 the roster-guard drive could not take the tree '
+            'lock within 60 s -- a mutating batch holds this checkout; this '
+            f'is not an entry defect: {error}') from error
 
 
 class RecordingRegistry:
@@ -231,10 +280,10 @@ class ManagerRosterGuard(unittest.TestCase):
                     # defect of the entry under test.
                     if registry is not None:
                         with patch.object(module, 'pending', registry), \
-                                tree_lock(module.root):
+                                held_tree_lock(module.root):
                             code = module.main()
                     else:
-                        with tree_lock(module.root):
+                        with held_tree_lock(module.root):
                             code = module.main()
                 except ValueError as error:
                     # A registry problem must be a refused start (rc 2), never
@@ -369,39 +418,82 @@ class SiblingRosterDefenceAnchorPins(unittest.TestCase):
     and snapshot-projection write their mutants with bare ``Path.write_text``
     inside the snapshot window, so driving their ``main()`` on a stubbed
     window would still write the guarded tree. The anchors below pin the
-    same defence shape in source, and each test re-applies the review's
-    kill demo to a doctored copy of its own source to prove the pin bites.
+    same defence shape in source, and each test re-applies two kill demos to
+    a doctored copy of its own source to prove the pin bites.
     """
 
     def entry_source(self, name):
-        return (FIXTURES / name / 'negative_controls.py').read_text()
+        # utf-8 explicitly: sdk-mcp carries non-ASCII prose and a bare
+        # read_text() would decode with the locale default (round 3, MM
+        # boundary#8).
+        return (FIXTURES / name / 'negative_controls.py').read_text(
+            encoding='utf-8')
 
     def check_anchors(self, name, source):
-        position = -1
+        # Line-anchored, order-checked, comment-rejecting (#2773 fix-r3,
+        # review MM r3 boundary#6 / DS boundary#1): a bare ``source.find``
+        # lets a commented-out copy of the defence satisfy the chain while
+        # the real code is gone. Each anchor must appear, in order, on a
+        # line that is not a comment; the full AST relocation of the scan
+        # is the #2804 extension.
+        lines = source.splitlines()
+        position = 0
         for anchor in SIBLING_DEFENCE_ANCHORS[name]:
-            found = source.find(anchor)
-            self.assertTrue(
-                found >= 0 and found > position,
+            found = None
+            while position < len(lines):
+                candidate = lines[position]
+                position += 1
+                if anchor in candidate and not candidate.lstrip().startswith('#'):
+                    found = position - 1
+                    break
+            self.assertIsNotNone(
+                found,
                 f'#2773 fix-r3 {name}: the verify-before-publish roster '
                 f'defence is broken at or moved before {anchor!r} -- the '
-                f'refusal must run before anything that reads as success')
-            position = found
+                f'refusal must run before anything that reads as success '
+                f'(commented-out or out-of-order copies do not count)')
+
+    def test_the_anchor_table_matches_the_declared_sibling_set(self):
+        # The static denominator (#2773 fix-r3, review MM r3 boundary#1):
+        # the table's keys are the loop domain, so they must equal the
+        # declared literal -- deleting a key silently shortens every other
+        # test in this class while the table stays green.
+        self.assertEqual(
+            tuple(SIBLING_DEFENCE_ANCHORS), EXPECTED_SIBLINGS,
+            '#2773 fix-r3 the pinned sibling set must equal the declared '
+            'denominator EXPECTED_SIBLINGS')
 
     def test_every_sibling_entry_keeps_the_defence(self):
-        for name in SIBLING_DEFENCE_ANCHORS:
+        for name in EXPECTED_SIBLINGS:
             with self.subTest(entry=name):
                 self.check_anchors(name, self.entry_source(name))
 
     def test_the_pin_kills_a_disabled_defence(self):
-        # The round-2 review's kill demo, applied to a doctored copy of each
-        # entry's own source: flipping the predicate to ``if False:`` must
-        # break the anchors, so the pin cannot rot into a no-op grep.
-        for name in SIBLING_DEFENCE_ANCHORS:
-            with self.subTest(entry=name):
-                doctored = self.entry_source(name).replace(
-                    'if recorded != expected:', 'if False:', 1)
+        # Two kill demos on doctored copies of each entry's own source
+        # (#2773 fix-r3, review round 2 + round 3 MM boundary#6 / DS
+        # boundary#1): the predicate flipped to a constant and every
+        # anchor-bearing line commented out must both break the chain, so
+        # the pin cannot rot into a no-op grep -- nor into one satisfied by
+        # comments while the real defence is gone.
+        for name in EXPECTED_SIBLINGS:
+            with self.subTest(entry=name, doctor='predicate-const'):
+                source = self.entry_source(name)
+                self.assertEqual(
+                    source.count('if recorded != expected:'), 1,
+                    f'#2773 fix-r3 {name}: the kill demo needs exactly one '
+                    f'predicate occurrence to doctor, found '
+                    f'{source.count("if recorded != expected:")}')
                 with self.assertRaises(AssertionError):
-                    self.check_anchors(name, doctored)
+                    self.check_anchors(name, source.replace(
+                        'if recorded != expected:', 'if False:', 1))
+            with self.subTest(entry=name, doctor='defence-commented-out'):
+                anchors = SIBLING_DEFENCE_ANCHORS[name]
+                commented = '\n'.join(
+                    f'# {line}' if any(anchor in line for anchor in anchors)
+                    else line
+                    for line in self.entry_source(name).splitlines())
+                with self.assertRaises(AssertionError):
+                    self.check_anchors(name, commented)
 
 
 if __name__ == '__main__':

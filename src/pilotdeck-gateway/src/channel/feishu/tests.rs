@@ -53,10 +53,13 @@ const FIXED_UUID: &str = "aaaa1111-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 /// parallel pins never race for one listener.
 const LARK_PORT: u16 = 18990;
 /// The component pins take their own ports inside the 18960-18999 feishu
-/// block the task reserved; 18990/18991 (LARK_PORT / NULL_PIN_LARK_PORT
-/// here) are the two cross-lane binds the wecom suite shares with these
-/// constants, and the wecom suite also holds 18994 and 18995-18998 (the
-/// QYAPI fake on 18998) — the 189xx ledger in
+/// block the task reserved. 18990/18991 (LARK_PORT / NULL_PIN_LARK_PORT
+/// here) are cross-lane binds the wecom suite binds against these constants
+/// — registered overlap, not endorsement: the two suites share one lib test
+/// binary and nothing serialises them yet, so the overlaps can still go
+/// EADDRINUSE under a parallel run (tracked in #2446, alongside 18973 and
+/// the 18993 feishu-bind/wecom-dial overlap). The wecom suite also holds
+/// 18994 and 18995-18998 (the QYAPI fake on 18998) — the 189xx ledger in
 /// `channel/sms/head_timeout_tests.rs` is the single source of truth.
 const NULL_PIN_ROUTER_PORT: u16 = 18973;
 const NULL_PIN_LARK_PORT: u16 = 18991;
@@ -1273,9 +1276,11 @@ async fn superseded_batch_timer_does_not_drain() {
 /// gateway with the payload and not answering the bare confirmation instead.
 #[tokio::test]
 async fn new_command_with_text_submits_on_the_new_session() {
-    // 18960-18972 belong to the oracle replay, 18973/18990-18993 to the other
-    // pins, 18995-18998 to the wecom_callback suite: stay clear of all of them
-    // so a parallel full-suite run cannot collide on bind.
+    // The 189xx layout lives in one place — the ledger in
+    // `channel/sms/head_timeout_tests.rs` (this module's replay 18960-18972,
+    // the pins 18973/18980/18990-18993, wecom 18994-18998, this module's
+    // sms neighbours 18922-18933): stay clear of every bound port there so a
+    // parallel full-suite run cannot collide on bind.
     const NEW_TEXT_PIN_LARK_PORT: u16 = 18980;
     let record = Arc::new(Mutex::new(Record::default()));
     let lark = Lark::new();
