@@ -108,6 +108,12 @@ switches = [
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/module_host/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/module_host/budget_guard.rs',
+    # DS r3 sibling#1: the bound tests run the shared transport closure
+    # (`module_host/tests.rs` builds it through `http_proxy::…` +
+    # `native_http::…`), so the receipts cannot prove which transport bytes
+    # they ran against without pinning them (the webhook lane's口径).
+    ROOT / 'src/pilotdeck-gateway/src/native_http.rs',
+    ROOT / 'src/pilotdeck-gateway/src/http_proxy.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',

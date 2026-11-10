@@ -252,10 +252,12 @@ impl WebhookChannel {
     /// comparisons (`total > maxBodyBytes`, `timestamps.length >= rateLimit`)
     /// false — **neither bound ever rejects**. That unbounded shape is the
     /// measured TS baseline behavior (probe
-    /// `_tmp/20261110-issue-1608/ts-probe-1689/probe.out`: `maxBodyBytes:
-    /// NaN` and `: Infinity` both accept a 2 MiB + 7 body; `rateLimit: NaN`
-    /// accepts every request), so the Rust port replicates it on purpose
-    /// rather than falling back to the defaults — falling back would diverge.
+    /// `_tmp/20261110-issue-1608/ts-probe-1689-r2-v220/probe.out`, node
+    /// v22.22.0 = the pinned baseline: `rateLimit: NaN` accepts a 40 连发
+    /// with 40 gateway calls while the default `rateLimit`=30 answers request
+    /// 31 with a 429 — the initial 6-request probe could not tell those
+    /// apart), so the Rust port replicates it on purpose rather than falling
+    /// back to the defaults — falling back would diverge.
     /// Registered in `specs/gateway-parity/diffs/A8.3-CH-WEBHOOK-005.md`.
     pub fn from_options(options: &JsObject) -> Self {
         let field = |name: &str| options.get(name).filter(|value| !nullish(value));
@@ -670,7 +672,15 @@ impl ChannelHandle for WebhookHandle {
 /// socket into them — the child then holds the open file description and the
 /// server's close never delivers the FIN, and the child can read the socket.
 fn duplicate_socket(socket: &TcpStream) -> io::Result<TcpStream> {
-    let probe = std::net::TcpStream::from(std::os::fd::AsFd::as_fd(socket).try_clone_to_owned()?);
+    // The `webhook-dup-no-cloexec` mutant restores the plain-`dup(2)` shape
+    // (Grok r2 concurrency#1's regression, pinned by the CLOEXEC direct
+    // test): without `FD_CLOEXEC` the red assertion names the missing flag.
+    let owned = if crate::mutants::on("webhook-dup-no-cloexec") {
+        rustix::io::dup(std::os::fd::AsFd::as_fd(socket))?
+    } else {
+        std::os::fd::AsFd::as_fd(socket).try_clone_to_owned()?
+    };
+    let probe = std::net::TcpStream::from(owned);
     TcpStream::from_std(probe)
 }
 

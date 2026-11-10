@@ -46,7 +46,16 @@ switches = [
     ('webhook-null-body-responds', SOURCE_WEBHOOK, 'no_text', '#1334 webhook oracle case no-text'),
     # #1534 P0: a pipelined null body must let the client FIN reclaim the
     # connection; without the duplicate-socket FIN probe, stop() hangs forever.
-    ('webhook-null-body-probe-off', SOURCE_WEBHOOK, 'pipelined_null_body_disconnect_reclaims_the_connection', '#1334 a pipelined null body reclaims the connection after the client FIN'),
+    # The second cell (Grok r3 boundary#2) is the degraded half of the same
+    # switch: with the probe off, the low-fd child's pipelined literal-null
+    # falls back to the unconditional `pending().await`, the child never sees
+    # the EOF and reports `served: timeout`, failing the parent's anchored
+    # served assertion — the P0-fix test proves it can see the regression, not
+    # just the fix.
+    ('webhook-null-body-probe-off', SOURCE_WEBHOOK,
+     ['pipelined_null_body_disconnect_reclaims_the_connection', 'dup_failure_serves_without_the_fin_probe'],
+     ['#1334 a pipelined null body reclaims the connection after the client FIN',
+      '#1689 the EMFILE-failing dup degrades to a probeless serve instead of dropping the connection']),
     # The error body carries the TS `code` verbatim, not a decorated one.
     ('webhook-error-body-code', SOURCE_WEBHOOK, 'unknown_route', '#1334 webhook oracle case unknown-route'),
     # `/new` replies with the fixed new-session message.
@@ -87,6 +96,11 @@ switches = [
     # that budget; the mutant restores the drop and the client sees EOF.
     ('webhook-dup-failure-drops', SOURCE_WEBHOOK, 'dup_failure_serves_without_the_fin_probe',
      '#1689 the EMFILE-failing dup degrades to a probeless serve instead of dropping the connection'),
+    # Grok r2 concurrency#1 fixed the probe duplicate with a CLOEXEC direct
+    # test; Grok r3 boundary#3 adds the missing switch — the mutant restores
+    # the plain `dup(2)`, and the CLOEXEC assertion names the missing flag.
+    ('webhook-dup-no-cloexec', SOURCE_WEBHOOK, 'duplicate_socket_keeps_close_on_exec',
+     '#1689 the probe fd keeps FD_CLOEXEC across exec'),
     # #1689.2: the accept-error backoff ladder and the one-log-per-streak
     # counter. The mutant restores the pre-fix fixed 100 ms pause: the ladder
     # unit test's persistent values turn red, and the low-fd child's error log

@@ -1404,13 +1404,17 @@ fn recorded_request_modes_and_bytes_stay_legal() {
     );
 }
 
-/// One direct-test delivery: the same shape the recorder's `post()` built.
+/// One direct-test delivery: the same header **order** the recorder's close
+/// mode builds — `Connection: close` ahead of `Content-Length`, matching
+/// `request_bytes_checked` and the recorder's `post()` (Grok r3 sibling#3 /
+/// DS r3 simplify#3: the old insertion parked the header after
+/// `Content-Length`).
 fn post_body(delivery_id: Option<&str>, body: &str) -> String {
     let mut request = post_body_keep_alive(delivery_id, body);
-    let head_end = request
-        .find("\r\n\r\n")
-        .expect("#1334 post head terminator");
-    request.replace_range(head_end..head_end, "\r\nConnection: close");
+    let length_line = request
+        .find("Content-Length:")
+        .expect("#1334 post content-length line");
+    request.replace_range(length_line..length_line, "Connection: close\r\n");
     request
 }
 

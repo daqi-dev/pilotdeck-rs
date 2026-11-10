@@ -41,6 +41,10 @@ GUARDED = [SERVER_DIR / 'tests.rs', SERVER_DIR / 'mod.rs', SERVER_DIR / 'server.
     ROOT / 'src/pilotdeck-gateway/src/native_http.rs',
     ROOT / 'src/pilotdeck-gateway/src/http_proxy.rs',
     ROOT / 'src/pilotdeck-gateway/src/channel/mod.rs',
+    # DS r3 simplify#2: `api_server/mod.rs:14` re-exports `super::protocol::*`,
+    # so the shared request/response protocol bytes are inside this lane's
+    # closure — the webhook table pins the same file.
+    ROOT / 'src/pilotdeck-gateway/src/channel/protocol.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',
