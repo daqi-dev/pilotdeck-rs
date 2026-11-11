@@ -1625,3 +1625,185 @@ fn subagent_duplicate_completed_rows_kept() {
         "#2042 duplicate completed index keeps the last entry"
     );
 }
+
+// ---- #2044 web-history host view -------------------------------------------
+
+/// The `webHistory` rows of the session-factory oracle, behind the same
+/// `test_baseline::oracle` provenance check every other golden replay uses.
+fn web_history_rows() -> Vec<serde_json::Value> {
+    let text = fs::read_to_string(format!("{SESSION_FACTORY}/oracle.json")).unwrap();
+    crate::test_baseline::oracle(&text);
+    let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+    parsed["webHistory"]
+        .as_array()
+        .expect("#2044 web history rows")
+        .clone()
+}
+fn web_history_cell(name: &str) -> serde_json::Value {
+    let rows: Vec<_> = web_history_rows()
+        .into_iter()
+        .filter(|row| row["name"] == name)
+        .collect();
+    assert_eq!(rows.len(), 1, "#2044 web history cell {name}");
+    rows.into_iter().next().unwrap()
+}
+fn project_web_history_cell(row: &serde_json::Value) -> AdapterResult<WebHistoryView> {
+    let entries = js(&row["entries"].to_string());
+    let JsValue::Array(ref entries) = entries else {
+        panic!("#2044 web history cell entries must be an array")
+    };
+    project_web_history(entries)
+}
+/// `JSON.stringify` of a projected value, so the comparison is field by field
+/// against the recorded TS text instead of a Rust-side paraphrase.
+fn web_json(value: &JsValue) -> serde_json::Value {
+    serde_json::from_str(
+        &stringify_json(value)
+            .expect("#2044 web history serialize")
+            .expect("#2044 web history defined"),
+    )
+    .expect("#2044 web history JSON")
+}
+fn web_history_view(actual: &WebHistoryView) -> serde_json::Value {
+    serde_json::json!({
+        "fileArtifacts": web_json(&JsValue::Array(actual.file_artifacts.clone())),
+        "agentStatuses": web_json(&JsValue::Array(actual.agent_statuses.clone())),
+        "turnErrors": web_json(&JsValue::Array(actual.turn_errors.clone())),
+        "tokenUsage": web_json(&actual.token_usage),
+        "incompleteTurnIds": web_json(&JsValue::Array(actual.incomplete_turn_ids.clone())),
+    })
+}
+
+#[test]
+fn web_history_view_matches_ts() {
+    let rows = web_history_rows();
+    assert_eq!(rows.len(), 35, "#2044 web history denominator");
+    for row in &rows {
+        let name = row["name"].as_str().expect("#2044 web history cell name");
+        let actual = project_web_history_cell(row);
+        let Some(expected) = row.get("error") else {
+            let actual = actual.expect("#2044 web history projection replay");
+            assert_eq!(
+                web_history_view(&actual),
+                row["view"],
+                "#2044 web history view {name}"
+            );
+            continue;
+        };
+        let error = actual.expect_err("#2044 web history cell rejects");
+        let outcome = web_json(&error_outcome(&error));
+        assert_eq!(
+            outcome["error"], *expected,
+            "#2044 web history error {name}"
+        );
+    }
+}
+
+#[test]
+fn web_history_workspace_diff_filtered() {
+    let row = web_history_cell("workspace-diff-filtered");
+    let actual = project_web_history_cell(&row).expect("#2044 web history projection replay");
+    assert_eq!(
+        web_json(&JsValue::Array(actual.file_artifacts.clone())),
+        row["view"]["fileArtifacts"],
+        "#2044 non-tool turns drop their workspace_diff artifacts"
+    );
+}
+
+#[test]
+fn web_history_tool_turn_keeps_diff() {
+    let row = web_history_cell("tool-turn-keeps-diff");
+    let actual = project_web_history_cell(&row).expect("#2044 web history projection replay");
+    assert_eq!(
+        web_json(&JsValue::Array(actual.file_artifacts.clone())),
+        row["view"]["fileArtifacts"],
+        "#2044 tool-result turns keep their workspace_diff artifacts"
+    );
+    assert_eq!(
+        web_json(&JsValue::Array(actual.incomplete_turn_ids.clone())),
+        row["view"]["incompleteTurnIds"],
+        "#2044 tool-result turns keep their workspace_diff artifacts"
+    );
+}
+
+#[test]
+fn web_history_finalize_rejects_nonarray() {
+    for name in ["artifacts-str", "artifacts-hex-length"] {
+        let row = web_history_cell(name);
+        let error = project_web_history_cell(&row)
+            .expect_err("#2044 non-array artifacts reject in finalize");
+        assert_eq!(
+            error.to_string(),
+            "entry.artifacts.filter is not a function",
+            "#2044 {name} reports the missing filter method"
+        );
+    }
+}
+
+#[test]
+fn web_history_context_budget_matches_ts() {
+    for name in [
+        "context-budget",
+        "context-budget-partial",
+        "context-budget-used-fallback",
+    ] {
+        let row = web_history_cell(name);
+        let actual = project_web_history_cell(&row).expect("#2044 web history projection replay");
+        assert_eq!(
+            web_json(&actual.token_usage),
+            row["view"]["tokenUsage"],
+            "#2044 the latest context budget is exposed ({name})"
+        );
+    }
+}
+
+#[test]
+fn web_history_compact_budget_matches_ts() {
+    for name in ["compact-budget", "compact-budget-nopost"] {
+        let row = web_history_cell(name);
+        let actual = project_web_history_cell(&row).expect("#2044 web history projection replay");
+        assert_eq!(
+            web_json(&actual.token_usage),
+            row["view"]["tokenUsage"],
+            "#2044 the latest compact budget is exposed ({name})"
+        );
+    }
+}
+
+#[test]
+fn web_history_turn_usage_matches_ts() {
+    let row = web_history_cell("turn-usage");
+    let actual = project_web_history_cell(&row).expect("#2044 web history projection replay");
+    assert_eq!(
+        web_json(&actual.token_usage),
+        row["view"]["tokenUsage"],
+        "#2044 the latest turn usage is exposed"
+    );
+}
+
+#[test]
+fn web_history_incomplete_turns_filtered() {
+    let row = web_history_cell("incomplete");
+    let actual = project_web_history_cell(&row).expect("#2044 web history projection replay");
+    assert_eq!(
+        web_json(&JsValue::Array(actual.incomplete_turn_ids.clone())),
+        row["view"]["incompleteTurnIds"],
+        "#2044 completed turns leave the incomplete list"
+    );
+}
+
+#[test]
+fn web_history_visible_failures_filtered() {
+    let row = web_history_cell("turn-error-visibility");
+    let actual = project_web_history_cell(&row).expect("#2044 web history projection replay");
+    assert_eq!(
+        web_json(&JsValue::Array(actual.turn_errors.clone())),
+        row["view"]["turnErrors"],
+        "#2044 turns with a visible failure status leave the error rows"
+    );
+    assert_eq!(
+        web_json(&JsValue::Array(actual.agent_statuses.clone())),
+        row["view"]["agentStatuses"],
+        "#2044 turns with a visible failure status leave the error rows"
+    );
+}

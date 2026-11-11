@@ -104,3 +104,14 @@ python3 src/pilotdeck-gateway/tests/fixtures/session-factory/subagent_schemata.p
 ```
 
 `subagent-drop-started` 丢光行表、绑 `subagent_started_rows_match_ts`；`subagent-started-first-only` 只留每 id 首行、绑 `subagent_duplicate_started_rows_kept`；`subagent-completed-deduped` 错误去重 completed 行、绑 `subagent_duplicate_completed_rows_kept`；`subagent-started-index-last` 把 `startedById` 改成末条胜出、绑 `subagent_duplicate_started_rows_kept` 的索引断言；`subagent-completed-index-first` 把 `completedById` 改成首条胜出、绑 `subagent_duplicate_completed_rows_kept` 的索引断言。消费者（web `readSessionMessages` 的 sidechain 依赖 `startedById.get`）在 #2044 接线，本单只交付函数与金样。
+
+#2044（#1985 第 4 块）：`projections.mts` 另采集 `webHistory`——真实 TS `projectWebHistory`（`WebHistoryProjections.ts`，web-only 注册表经 `SessionProjectionDriver`，driver 构造先 `lastSequence` 后逐 cell 全日志扫描、finalize 最后）的 35 格输出：fileArtifacts 的 workspace_diff 过滤与 tool-result turn 保留、非数组 artifacts 的 `entry.artifacts.filter is not a function` / `artifacts is not iterable` 文案、agentStatuses、turnErrors 的可见失败过滤、tokenUsage 的 latestContextBudget/latestCompactBudget/latestTurnUsage 三预算（含 `used ?? displayUsed` 回退、hex length 语义）、incompleteTurnIds，以及原始值条目、`null` 条目（driver `lastSequence` 先报 `sequence`）、近似 type、错误优先级（finalize 先于 reduce、reduce 各 pass 按注册表序）行。Rust 侧 `storage::transcript_adapter::project_web_history` 返回 `WebHistoryView`（fileArtifacts/agentStatuses/turnErrors/tokenUsage/incompleteTurnIds），金样逐字段比较；冷启动与 checkpoint 命中两路径输出相同由 `runtime::session::factory::projection_cache_tests::web_history_restores_identically_with_and_without_checkpoint` 钉住。
+
+八只编译期开关负控（`web_history_schemata.py`，绑新增具名测试；源码全部提交后在宿主运行，调用方给本树 `CARGO_TARGET_DIR`）：
+
+```sh
+python3 src/pilotdeck-gateway/tests/fixtures/session-factory/web_history_schemata.py --check
+python3 src/pilotdeck-gateway/tests/fixtures/session-factory/web_history_schemata.py "$OUT_WEBHISTORY"
+```
+
+`web-history-tool-turn-ignored` 忘记 tool-result turn、绑 `web_history_tool_turn_keeps_diff`；`web-history-workspace-diff-kept` 不过滤非 tool turn 的 workspace_diff、绑 `web_history_workspace_diff_filtered`；`web-history-finalize-nonarray-empty` 把非数组 artifacts 行静默丢空、绑 `web_history_finalize_rejects_nonarray`；`web-history-visible-error-kept` 保留可见失败 turn 的行、绑 `web_history_visible_failures_filtered`；`web-history-context-budget-dropped` / `web-history-compact-budget-dropped` / `web-history-turn-usage-dropped` 分别不落 latestContextBudget / latestCompactBudget / latestTurnUsage、绑对应 tokenUsage 用例；`web-history-incomplete-turn-kept` 不过滤已完成 turn、绑 `web_history_incomplete_turns_filtered`。

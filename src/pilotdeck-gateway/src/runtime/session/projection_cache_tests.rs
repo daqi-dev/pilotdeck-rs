@@ -1320,3 +1320,193 @@ async fn committed_error_requires_recreation() {
         "#1011 uncertain commit remains single durable record"
     );
 }
+
+/// #2043: the fresh-load checkpoint with a mismatched anchor `entryId` and a
+/// valid-but-wrong metadata row state. `valid_envelope` must reject the anchor
+/// mismatch exactly like the TS `checkpointMatchesLog` comparison; if the
+/// envelope were accepted, `title` would hydrate from the wrong row instead of
+/// the log replay, which is the #2043 P0 (stale checkpoint silently reused).
+fn mismatched_anchor_checkpoint(base: &JsValue) -> String {
+    let value = js(&cache_bytes(base).expect("#2043 present checkpoint bytes"));
+    let mut anchor = match field(&value, "anchor") {
+        JsValue::Object(anchor) => anchor.clone(),
+        _ => panic!("#2043 checkpoint anchor object"),
+    };
+    assert!(
+        !anchor
+            .get("entryId")
+            .and_then(|entry_id| entry_id.as_string())
+            .is_some_and(|entry_id| entry_id.equals_str("mismatched-2043")),
+        "#2043 mismatched anchor fixture differs from the present anchor"
+    );
+    anchor.insert("entryId".into(), JsValue::String("mismatched-2043".into()));
+    let mut envelope = match &value {
+        JsValue::Object(envelope) => envelope.clone(),
+        _ => panic!("#2043 checkpoint envelope object"),
+    };
+    let mut rows = match field(&value, "projections") {
+        JsValue::Object(rows) => rows.clone(),
+        _ => panic!("#2043 checkpoint rows object"),
+    };
+    let mut row = match field(field(&value, "projections"), "agent-transcript.metadata") {
+        JsValue::Object(row) => row.clone(),
+        _ => panic!("#2043 metadata row object"),
+    };
+    let mut state = match row.get("state") {
+        Some(JsValue::Object(state)) => state.clone(),
+        _ => panic!("#2043 metadata row state object"),
+    };
+    state.insert(
+        "title".into(),
+        JsValue::String("silently-reused-2043".into()),
+    );
+    row.insert("state".into(), JsValue::Object(state));
+    rows.insert("agent-transcript.metadata".into(), JsValue::Object(row));
+    envelope.insert("anchor".into(), JsValue::Object(anchor));
+    envelope.insert("projections".into(), JsValue::Object(rows));
+    stringify_json(&JsValue::Object(envelope))
+        .expect("#2043 mismatched checkpoint JSON")
+        .expect("#2043 mismatched checkpoint defined")
+}
+
+/// #2043 (#1985 block 3): one log, every checkpoint state. Present (valid,
+/// current watermark), absent, stale prefix (valid, watermark behind the log),
+/// mismatched anchor and corrupt bytes must all restore the same projection
+/// state, durable log and writer sequence; the mismatched-anchor envelope must
+/// be rejected before hydrate — reusing it silently is the P0.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn checkpoint_states_restore_identically() {
+    let fresh_case = case("fresh-load");
+    let fresh = array(field(&fresh_case, "snapshots")).expect("#1011 fresh snapshots");
+    let stale_case = case("stale-load");
+    let stale = array(field(&stale_case, "snapshots")).expect("#1011 stale snapshots");
+    assert_eq!(
+        transcript(&fresh[0]),
+        transcript(&stale[0]),
+        "#2043 checkpoint states share one log"
+    );
+    let base = &fresh[0];
+    let states = [
+        ("present", cache_bytes(base)),
+        ("absent", None),
+        ("stale-prefix", cache_bytes(&stale[0])),
+        ("stale-anchor", Some(mismatched_anchor_checkpoint(base))),
+        ("corrupt", Some("{broken\n".into())),
+    ];
+    let expected_hydrated = [2, 0, 2, 0, 0];
+    let mut outcomes = Vec::new();
+    for (name, bytes) in states {
+        let h = Harness::new(base);
+        *lock(&h.cache.bytes) = bytes;
+        h.storage
+            .restore()
+            .await
+            .unwrap_or_else(|error| panic!("#2043 {name} state restores: {error}"));
+        outcomes.push((
+            h.storage
+                .projection
+                .snapshot()
+                .unwrap_or_else(|error| panic!("#2043 {name} state projection: {error}")),
+            lock(&h.log.entries).clone(),
+            h.storage.recorder.writer().snapshot_state().sequence,
+            *lock(&h.storage.cache.hydrated_rows),
+        ));
+    }
+    // The stale-anchor envelope is rejected before hydrate, so its rows are
+    // never consumed and the restored title comes from the log replay, not
+    // from the wrong row the fixture planted in the checkpoint. These run
+    // before the identity sweep so the reuse itself is the reported failure.
+    assert_eq!(
+        outcomes[3].3, 0,
+        "#2043 mismatched anchor checkpoint is not silently reused"
+    );
+    assert_eq!(
+        outcomes[3].0.metadata.get("title"),
+        outcomes[0].0.metadata.get("title"),
+        "#2043 mismatched anchor checkpoint is not silently reused"
+    );
+    let reference = &outcomes[0];
+    for ((state, entries, sequence, hydrated), expected) in outcomes.iter().zip(expected_hydrated) {
+        assert_eq!(
+            state, &reference.0,
+            "#2043 checkpoint state restores the present state identically"
+        );
+        assert_eq!(
+            entries, &reference.1,
+            "#2043 checkpoint state restores the present log identically"
+        );
+        assert_eq!(
+            *sequence, reference.2,
+            "#2043 checkpoint state restores the present writer sequence identically"
+        );
+        assert_eq!(
+            *hydrated, expected,
+            "#2043 checkpoint state hydrated row count"
+        );
+    }
+}
+
+/// #2044 (#1985 block 4): the host web view is the same whether the session
+/// cold-replays the whole log or restores with a valid checkpoint behind it.
+/// The three web-shaped entries continue the seed log's parent chain, so both
+/// paths go through the same restore gates and durable log.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn web_history_restores_identically_with_and_without_checkpoint() {
+    let fresh_case = case("fresh-load");
+    let snapshots = array(field(&fresh_case, "snapshots")).expect("#1011 fresh snapshots");
+    let base = &snapshots[0];
+    let web_entries = [
+        r#"{"version":1,"type":"durable_message","entryId":"storage-1-entry-3","parentEntryId":"storage-1-entry-2","sequence":3,"sessionId":"session-1011","turnId":"web-turn","createdAt":"2026-10-31T00:00:00.000Z","message":{"role":"assistant","content":[{"type":"tool_result","content":[]}]}}"#,
+        r#"{"version":1,"type":"file_artifacts","entryId":"storage-1-entry-4","parentEntryId":"storage-1-entry-3","sequence":4,"sessionId":"session-1011","turnId":"web-turn","createdAt":"2026-10-31T00:00:00.000Z","artifacts":[{"source":"workspace_diff","path":"a"},{"source":"session","path":"b"}]}"#,
+        r#"{"version":1,"type":"turn_result","entryId":"storage-1-entry-5","parentEntryId":"storage-1-entry-4","sequence":5,"sessionId":"session-1011","turnId":"web-turn","createdAt":"2026-10-31T00:00:00.000Z","result":{"type":"success","sessionId":"session-1011","turnId":"web-turn","usage":{"inputTokens":2,"outputTokens":3},"permissionDenials":[]}}"#,
+    ];
+    let mut views = Vec::new();
+    for present in [true, false] {
+        let h = Harness::new(base);
+        for line in web_entries {
+            lock(&h.log.entries).push(js(line));
+        }
+        if !present {
+            *lock(&h.cache.bytes) = None;
+        }
+        h.storage.restore().await.unwrap_or_else(|error| {
+            panic!(
+                "#2044 {} restore: {error}",
+                if present { "checkpoint" } else { "cold" }
+            )
+        });
+        let entries = lock(&h.log.entries).clone();
+        let view = crate::storage::project_web_history(&entries).unwrap_or_else(|error| {
+            panic!(
+                "#2044 {} web history view: {error}",
+                if present { "checkpoint" } else { "cold" }
+            )
+        });
+        views.push((view, entries));
+    }
+    assert_eq!(
+        views[0].1, views[1].1,
+        "#2044 cold replay and checkpoint restore keep the same durable log"
+    );
+    assert_eq!(
+        views[0].0, views[1].0,
+        "#2044 cold replay and checkpoint restore expose the same web history view"
+    );
+    // The view is non-trivial: the artifacts row keeps the workspace_diff
+    // artifact (the turn has a tool result) and the turn usage landed.
+    assert_eq!(
+        views[0].0.file_artifacts.len(),
+        1,
+        "#2044 the restored web view carries the artifacts row"
+    );
+    assert_eq!(
+        field(&views[0].0.file_artifacts[0], "artifacts"),
+        &js(r#"[{"source":"workspace_diff","path":"a"},{"source":"session","path":"b"}]"#),
+        "#2044 the tool-result turn keeps its workspace_diff artifacts"
+    );
+    assert_eq!(
+        field(&views[0].0.token_usage, "latestTurnUsage"),
+        &js(r#"{"inputTokens":2,"outputTokens":3}"#),
+        "#2044 the restored web view carries the turn usage"
+    );
+}
