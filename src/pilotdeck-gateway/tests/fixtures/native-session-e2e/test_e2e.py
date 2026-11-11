@@ -18,6 +18,7 @@ if not sys.flags.isolated:
 sys.dont_write_bytecode = True
 import ast
 import contextlib
+from collections import Counter
 import errno
 import fcntl
 import importlib.util
@@ -1352,17 +1353,29 @@ class NegativeRunnerTests(unittest.TestCase):
         # restored) plus one cargo build, and the old BUILD + 2*BOUND pin
         # stayed green over a window it no longer described.
         sequence = ['slot', 'acquire', 'positive', 'cargo', 'negative', 'restored', 'release'] * 2
-        window = self.events[2:6] if self.events == sequence else []
+        # fix-r2 (#1528 review P3): sequence and composition fail with their
+        # own sub-messages, so a red run says which half drifted instead of
+        # collapsing both into window == [].
+        self.assertTrue(code == 0 and self.events == sequence,
+                        marker + ': the real stage sequence the drive records')
+        window = self.events[2:6]
         builds = window.count('cargo')
-        self.assertTrue(code == 0 and window == ['positive', 'cargo', 'negative', 'restored']
+        self.assertTrue(window == ['positive', 'cargo', 'negative', 'restored']
                         and runner.PER_CASE_LEASE_SECONDS
                         == builds * runner.BUILD_SECONDS + (len(window) - builds) * runner.BOUND_TEST_SECONDS
                         and min(runner.BUILD_SECONDS, runner.BOUND_TEST_SECONDS, runner.SLOT_WAIT_SECONDS) > 0
                         and runner.PER_CASE_LEASE_SECONDS < c.common.MAX_AGE, marker)
-        expected = {'slot': runner.SLOT_WAIT_SECONDS, 'cargo': runner.BUILD_SECONDS,
-                    'bound': runner.BOUND_TEST_SECONDS, 'negative': runner.BOUND_TEST_SECONDS}
-        self.assertTrue(all(timeout == expected[stage]
-                          for stage, timeout in self.timeouts), marker)
+        # fix-r2 (#1528 review): a bare run() bound stage inside the lease
+        # window holds real time the events sequence never records, and the
+        # old value-only timeout check never counted either -- the per-case
+        # timeouts multiset is the judge: exactly one slot, one cargo and
+        # three bound-test stages (positive, negative, restored) per case,
+        # both cases, nothing else.
+        expected_timeouts = Counter({('slot', runner.SLOT_WAIT_SECONDS): 1,
+                                      ('cargo', runner.BUILD_SECONDS): 1,
+                                      ('bound', runner.BOUND_TEST_SECONDS): 2,
+                                      ('negative', runner.BOUND_TEST_SECONDS): 1})
+        self.assertTrue(Counter(self.timeouts) == expected_timeouts + expected_timeouts, marker)
 
     def test_negative_lease_released_on_case_failure(self):
         marker = '#1402 a failed case releases the lease and the next case continues'

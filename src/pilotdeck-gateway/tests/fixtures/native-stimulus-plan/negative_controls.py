@@ -29,21 +29,15 @@ runner = Path(__file__).resolve()
 e2e_runner = fixture.parent.parent / 'native-session-e2e/negative_controls.py'
 r11 = fixture.parent.parent / 'native-witness/test_r11.py'
 PUBLISH_DIR = root / '.negctl-publish'
-# fix-r1 (#1528 review P2): the guarded branch's whole-run parity lease is
-# acquired with an explicit budget instead of the mutating_sources default
-# (900 s) -- queuing behind another tree's full per-case lease window must
-# not INVALID the run before the first mutant is even written. The budget
-# is derived from this runner's own single-case hold upper bound (slot wait
-# + cargo no-run build + three bound-test runs: positive, negative,
-# restored) plus one bound-test margin; that hold (1890 s) already covers
-# the e2e family's per-case window (PER_CASE_LEASE_SECONDS = 1800 s), the
-# longest window this runner can queue behind. A peer's longer whole-run
-# lease still fails closed within this budget.
+# fix-r2 (#1528 review): the guarded branch below holds only this tree's
+# .negative-source.lock, acquired by mutating_sources' internal tree lock
+# with the shared default budget (900 s). Every path it guards is outside
+# scripts/gateway-parity/, so the shared parity lease is a nullcontext for
+# this runner and no cross-tree window can starve the acquire -- same
+# lock and same budget as the memory rehearsal below.
 SLOT_WAIT_SECONDS = 900
 BUILD_SECONDS = 900
 BOUND_TEST_SECONDS = 30
-CASE_HOLD_SECONDS = SLOT_WAIT_SECONDS + BUILD_SECONDS + 3 * BOUND_TEST_SECONDS
-LEASE_ACQUIRE_SECONDS = CASE_HOLD_SECONDS + BOUND_TEST_SECONDS
 
 
 def write_atomic(path, data):
@@ -317,7 +311,7 @@ def main():
             paths = [source, driver, collector, fixture, measurement, runner, e2e_runner, r11,
                      Path(__file__).with_name('preregistration.mjs'),
                      root / 'src/pilotdeck-gateway/tests/native_stimulus_plan.rs']
-            with mutating_sources(root, paths, lock_timeout=LEASE_ACQUIRE_SECONDS) as originals:
+            with mutating_sources(root, paths) as originals:
                 for row in selected:
                     one(row)
     except BaseException as error:

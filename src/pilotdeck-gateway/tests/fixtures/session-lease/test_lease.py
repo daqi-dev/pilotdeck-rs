@@ -128,14 +128,22 @@ class LeaseTests(unittest.TestCase):
             module = importlib.util.module_from_spec(spec)
             exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
             module.validate_case_count()
+            # fix-r2 (#1528 review): the red side covers all three damage
+            # shapes now -- a dropped row (count), an appended duplicate
+            # (count) and the equal-length swap (unique names) the count alone
+            # never caught (same shapes as the e2e runner's #1535 pin).
+            damaged = [module.cases[:-1],
+                       module.cases + [module.cases[0]],
+                       module.cases[:-1] + [module.cases[0]]]
             for arguments in ([], ['--check-anchors'], ['--memory-run', 'unused'],
                               ['unused-output'], ['unused-output', '--memory', '--case', 'unused']):
-                with self.subTest(arguments=arguments), \
-                        patch.object(module, 'cases', module.cases[:-1]), \
-                        patch.object(sys, 'argv', [str(path), *arguments]):
-                    with self.assertRaises(SystemExit, msg=marker) as rejected:
-                        module.main()
-                    self.assertTrue(str(rejected.exception.code).startswith(marker), marker)
+                for index, rows in enumerate(damaged):
+                    with self.subTest(arguments=arguments, damage=index), \
+                            patch.object(module, 'cases', rows), \
+                            patch.object(sys, 'argv', [str(path), *arguments]):
+                        with self.assertRaises(SystemExit, msg=marker) as rejected:
+                            module.main()
+                        self.assertTrue(str(rejected.exception.code).startswith(marker), marker)
         except (Exception, SystemExit) as error:
             self.fail(marker + ': ' + repr(error))
 
