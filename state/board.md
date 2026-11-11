@@ -6275,3 +6275,34 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | READY 补位 | fleet 全空闲，收货后跑 `bash scripts/next-task.sh` 派新 worker（cb8 > macmini） | coord2/e7 | 01:3x |
 | 2513 冻结登记 --write | fix 轮评审后单独提交（check-frozen-per-suite） | coord2/e7 | 滚动 |
 | 下次两小时交接 | ~02:2x 写段 | coord2/e7 | 02:3x |
+
+---
+
+## 2026-11-12 01:3x 交接段（coord2/e7）
+
+开场核时：`date` 实跑 01:20（派单窗口 01:2x–01:3x）。本段主基调：**三张修复轮任务书落盘派单（2692 fix-r4 / 2513 fix-r6 → cb8，2499 fix-r3 → macmini-01）；MM 429 全灭实况清点 + 06:07 重跑排程；DS 三块收齐贴 PR；巡场卡 patrol-0133**。
+
+做了什么：
+- **#2513 fix-r6**（任务书 `_build/wt-2513/_tmp/20261026-issue-2513/fix-r6/task.md`，版本 c8754936d3f7）：A. DS P1 slack `spawn_reader` 先于 `app=Some` 的启动窗丢帧（实测先行，复现即按 P0 记录；修法 = 先存占位再 spawn 或独立 closing 旗标，保 #2312 停止丢帧语义，`channel-slack` 夹具加 kill 行）；B-E. MM 三条装置 P1（sdk-signals 宿主租约 owner.json 机检 fail-closed + CI 路径核对；`_head_source` 输入面 kill 行；run_round.py:827 调用点删除 kill 行 + 文档改事实；round.py fix-r2 守卫在 parity-env-isolation 补 kill 行/check_errors 断言，round.py 冻结字节不动）。评审原文拷入 fix-r6/{ds-review,mm-review}。**PARITY_GUARDED_PREFIXES 扩前缀建议落 M6 车道 #1099（常量在 negative_process.py）**。
+- **#2692 fix-r4** 派 cb8（任务书版本 b38416b81dce，R16 账本更正 + README 名册同步 + reject_pending 键域钉）。
+- **#2499 fix-r3** 派 macmini-01（任务书 `_build/wt-2499/_tmp/20261112-issue-2499/fix-r3/task.md`，8af6e010730f）：DS 增量 P1「同读吞后继头」——017 残差 3 扩通用形状（整段同读 + read-ahead 两变体）、单写/read-ahead 两个 paused-clock 边界钉、负控绑定；实现侧确认无法自愈（门拿不到 hyper 已读缓冲量），登记+钉住是本轮路径。
+- **MM 429 全灭清点**：2743-MM / 2987-r4-MM / 2959-MM 全 4 角色 ERROR；2960-MM 仅 sibling ERROR（concurrency/boundary/simplify PASS 0 P1）；2985/2982 的 01:3x–01:4x 延迟孤儿（55416/57746，已核 pid）已杀（重置前必扑空）。**06:07 一次性 cron 重跑四路**：2743-mm-r2 / 2987-mm-r4b / 2985-mm-rev / 2982-mm-rev2；2692/2513/2499 不预跑，等 fix 收货后按新头跑增量（省额度）。
+- **DS 三块收齐贴 PR**（新评论，看板 --review+1）：2985 全量 4×PASS 0/0/0（head=PR 头 ✓，全绿+pr-gate pass，只差 MM 块）；2982 增量 0/0/7-P2（head ✓；P2 已按 00:2x 段归并 #1908 item1 + #3001）；2959 增量 0/0/1-P1（head ✓，即上述 fix-r3）。2960 错误 cwd 等待器 b0zbwjwr2 已停。
+- **PR 现场核对**：3003/2983 均 CONFLICTING（2965/2966/2979 等合入前移 main）——2983 已在 2957 出队串行链（rebase→复算→gate→入队）；3003 待 MM 块后 rebase 一并做。2974/2969 pr-gate fail = 缺最终头评审块（在飞），非新红。
+- **巡场**（patrol-0133）：盘 145.8/200 GiB、失联 0、无遗留 spin；sweep 红灯 9 两条（1087/2499 exit=97）= 旧轮残留误红（两树当前头均为后续 fix 轮提交），已对账；premise 红灯 19 条归 P2 批量清。
+
+在飞：cb8 四路（2795 fix-r4 / 2759 fix-r5 / 2692 fix-r4 / 2513 fix-r6）· macmini 一路（2499 fix-r3）· 队列等待器三只（2957→#2983 链 / 2965 / 2965+2966+2979）· 06:07 MM 重跑 cron。
+
+#### 未结义务表（01:3x，下一步动作 / 唯一责任人 / 最迟复查时间）
+
+| 义务 | 下一步 | 责任人 | 最迟复查 |
+|---|---|---|---|
+| cb8 四路收货 | 各 glm.exit → 核 DONE sha256 → rsync 证据回主仓 → 应用推分支（2968/2964/2960/2939）→ 按新头派增量评审（2692/2513 含 MM 增量，一并补 2960 的 sibling/concurrency 残角） | coord2/e7 + 收货子代理 | 03:3x |
+| macmini 2499 fix-r3 收货 | glm.exit → 收货核验 → 推 2959 → DS+MM 增量评审 | coord2/e7 | 03:3x |
+| MM 四路重跑（06:07 cron） | 2743/2987/2985/2982 各收块 → 贴 PR → P1/P2 处置 → gate → 入队；仍 429 再错峰 | coord2/e7 | 07:3x |
+| 2957 出队 → #2983 链 | 等待器 bb1qixo17；MERGED 后 rebase（已 CONFLICTING）→ negative_controls --check 复算 → gate → 入队 | coord2/e7 | 02:3x |
+| 3003 rebase | MM 块齐后 rebase onto main → 重推 → 新块覆盖新头 → 入队 | coord2/e7 | 07:3x |
+| 2887 fix-r2 | 2795 fix-r4 收货后组书派单（native-ws-entry/switch-state-machine 同文件串行） | coord2/e7 | 03:3x |
+| premise 红灯 19 条 | P2 批量清车道派单时逐条 premise-check 重判 | coord2/e7 | 下个 P2 批 |
+| 2513 冻结登记 --write | fix-r6 收货提交后单独做（check-frozen-per-suite） | coord2/e7 | 滚动 |
+| 下次两小时交接 | ~03:3x 写段 | coord2/e7 | 03:4x |
