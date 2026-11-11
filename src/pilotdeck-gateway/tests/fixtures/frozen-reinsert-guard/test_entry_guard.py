@@ -36,6 +36,9 @@ ENTRIES = (
     # same -I/os-preload/samefile reinsertion preamble; a drift in it was
     # previously unjudged (missing from this machine-checked roster).
     'scripts/parity/controls/host_env_isolation.py',
+    # #2513 fix-r7 (sibling P2#1): the round-head guard control carries the
+    # same byte-identical preamble and was likewise missing from the roster.
+    'scripts/parity/controls/round_head_guard.py',
     'scripts/parity/controls/review_r1.py',
     'scripts/check-approval-provenance.py',
     'scripts/test-approval-provenance.py',

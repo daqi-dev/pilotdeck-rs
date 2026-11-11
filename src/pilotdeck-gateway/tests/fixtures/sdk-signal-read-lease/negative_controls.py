@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# anchor-selfcheck: unsupported two-phase concurrency lease control, no source replacement table
+# anchor-selfcheck: unsupported two-phase concurrency lease control with one imperative self-mutation kill row, no declarative whole-file product anchors
 """#1662 paired read-lease control for the resident sdk_signal_exit golden test.
 
 RED proves the #1662 false FAIL: with the fixture read lease's contended wait
@@ -28,9 +28,22 @@ acquisition, is therefore INVALID, never KILLED.
 0 *via* the graceful path, an own failure exits non-zero and is reported); it is
 also the third row of the default run below.
 
+#2513 fix-r7 (concurrency P1): this fixture runs under a host-pre-held
+/tmp/pdrs-parity.lock (the 28999 lane contract, ``sdk-signals/README.md``), and
+its mutation windows cover parity-guarded sources (``capture.py``,
+``read_lease.rs``), so since the guarded set grew they would queue on the very
+lease the host holds for us -- 60 s TimeoutError, every row INVALID. The
+windows now redirect to ``out/parity-redirect.lock`` behind the fail-closed
+``_require_host_lease`` gate (the sdk-signals fix-r4/r6 twin), and
+``--window-lock-check`` machine-checks the condition the kill row
+``--kill-window-lock`` pins: with the shared lease held by a live external
+process, the entry must acquire the window lock on the redirect path instead
+of blocking.
+
 Run only after commit (mutating_sources refuses a dirty tree):
     CARGO_TARGET_DIR=<target> python3 -I .../sdk-signal-read-lease/negative_controls.py NEW_OUTPUT_DIR
 """
+import importlib.util
 import json
 import os
 import re
@@ -38,12 +51,15 @@ import signal
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import negative_process
 from negative_process import (
+    TreeLock,
     _collect,
     _ensure_workspace_scanner,
     _head_bytes,
@@ -53,6 +69,7 @@ from negative_process import (
     new_output_directory,
     run_owned,
     wait_for_slot,
+    write_source_atomic,
 )
 from negative_suite import passed, publish_summary
 from negative_panic import named_test_failed, panic_evidence
@@ -227,6 +244,331 @@ def capture_matches_head():
         return False
 
 
+# --- #2513 fix-r7 (concurrency P1): the window redirect --------------------
+#
+# This fixture's contract is a host-pre-held /tmp/pdrs-parity.lock (the host
+# serializes every 28999 lane user and runs this fixture under that hold, the
+# same README contract as sdk-signals). Its mutation windows cover
+# parity-guarded sources, so they would take that same shared lease -- against
+# the host holding it for us -- and fail after 60 s with zero evidence. The
+# Python twin of the sdk-signals fix-r4 redirect: the window's
+# ``common.parity_lock`` call point is redirected to ``out/parity-redirect.lock``,
+# an unshared lease in this run's evidence directory, same owner/guard/
+# stale-takeover protocol. Mutual exclusion against live rounds is not weakened
+# -- the host pre-hold provides it for the whole run.
+
+COMMON_SOURCE = root / 'scripts/gateway-parity/common.py'
+# The redirect probe must acquire well inside this bound; the reverted mutant
+# queues on the externally-held shared lease and fails after exactly it.
+WINDOW_LOCK_PROBE_SECONDS = 5
+# The check's own stand-in for the host pre-hold: one bounded external holder
+# of the real shared lease, spawned only when nobody else holds it.
+SHARED_HOLD_SECONDS = 30
+SHARED_HOLD_ENTRY_SECONDS = 30
+SHARED_HOLD_EXIT_SECONDS = 15
+# The kill row's dedicated marker: the failure that credits the kill must
+# carry it (an unrelated red in the same entry stays INVALID, never KILLED).
+WINDOW_LOCK_MARKER = '#2513 该 fixture 必须能取到窗口锁'
+# The one kill row (#2513 fix-r7): the redirect reverted to the shared lease.
+WINDOW_LOCK_KILL_ROW = (
+    'window-lock-redirect-reverted',
+    # The anchors are concatenated so this very definition does not spell
+    # them contiguously: the row counts occurrences in this file's text,
+    # and a whole-literal constant would match its own definition.
+    'timeout=timeout, ' + 'lock=out / "parity-redirect.lock"):',
+    'timeout=timeout, ' + 'lock=common.LOCK):',
+)
+
+
+class _HoldStopped(Exception):
+    """The shared-hold holder was asked to stop; the unwind releases first."""
+
+
+def _load_pristine_common(staged):
+    """Load scripts/gateway-parity/common.py from staged verified bytes.
+
+    Never a ``git`` re-read and never mutated disk code: the caller stages
+    HEAD-proven bytes (the mutation-window snapshot, or ``_head_bytes`` for
+    the check modes) exactly like ``negative_process._parity_mutation_lock``
+    and the sdk-signals redirect do.
+    """
+    spec = importlib.util.spec_from_file_location(
+        'negative_pristine_common_sdk_signal_read_lease', staged)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _require_host_lease(common, lock=None):
+    """#2513 fix-r7 (concurrency P1): the host pre-hold, machine-checked.
+
+    The sdk-signals fix-r6 gate, same shape: without it the redirect would
+    also remove the old shared-lease 60 s TimeoutError as a side effect, and a
+    run without the host's serialization could silently open a mutation
+    window unguarded. This gate runs before the window opens (from
+    ``redirected``, before the redirected lease is taken) and is fail-closed:
+    the shared lease's owner.json must exist and name a live pid that is not
+    this process itself, the README's 「取不到租约即退出稍后重跑」 contract.
+    Otherwise one reason line goes to stderr and the run exits 2 — this
+    file's existing refusal shape (a refusal, never a verdict). The owner
+    and liveness reads come from the verified ``common`` module, so the gate
+    cannot drift from the lease protocol it polices.
+    """
+    lock = common.LOCK if lock is None else lock
+    previous = common.owner(lock)
+    if previous is None:
+        print(
+            f"#2513 host pre-hold required: {lock / 'owner.json'} is missing "
+            "or invalid; exit and rerun under the host hold",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    pid = previous['pid']
+    if not common.alive(pid):
+        print(
+            f"#2513 host pre-hold required: owner pid {pid} is not alive; "
+            "exit and rerun under the host hold",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    if pid == os.getpid():
+        print(
+            "#2513 host pre-hold required: owner pid is this fixture itself "
+            "— the pre-hold must be the host's, not the fixture's own",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+
+def _redirect_window_parity_lock(out):
+    """#2513 fix-r7 (concurrency P1): redirect this fixture's window lease.
+
+    Returns the restore callable; the caller must invoke it in a ``finally``.
+    The pristine ruler module is still executed from verified snapshot bytes
+    (never mutated disk code) and ``common.py`` still joins the guarded set,
+    so the snapshot entry requirement is the original's, not a copy drifting
+    behind negative_process. The fail-closed host pre-hold gate runs from
+    ``redirected`` before the redirected lease is taken, so a run without the
+    host's serialization refuses instead of opening an unguarded window.
+    """
+    original = negative_process._parity_mutation_lock
+
+    @contextmanager
+    def redirected(window_root, snapshot, timeout):
+        if COMMON_SOURCE not in snapshot:
+            raise RuntimeError(
+                "#166 parity lock requires common.py in guarded sources")
+        # The controller normally creates the writer's output directory before
+        # spawning it (--stop-check / green do), but a directly-invoked writer
+        # must not crash with a bare FileNotFoundError inside the redirect.
+        out.mkdir(parents=True, exist_ok=True)
+        staged = out / 'pristine-common.py'
+        staged.write_bytes(snapshot[COMMON_SOURCE])
+        common = _load_pristine_common(staged)
+        common.guard = lambda lock: TreeLock(
+            lock.with_name(lock.name + ".guard"), timeout=timeout)
+        # The window opens only under the host's pre-held shared lease —
+        # checked here, before anything is mutated.
+        _require_host_lease(common)
+        restored = [False]
+        with common.parity_lock(
+                timeout=timeout, lock=out / "parity-redirect.lock"):
+            try:
+                yield restored
+            finally:
+                if not restored[0]:
+                    # Same fail-closed marker as the unredirected original:
+                    # an unverified restoration must not leave a reusable lease.
+                    common.LIVE_GROUPS.add("source-restore-unverified")
+
+    negative_process._parity_mutation_lock = redirected
+
+    def restore():
+        negative_process._parity_mutation_lock = original
+
+    return restore
+
+
+def shared_hold(staged, hold):
+    """``--shared-hold``: one bounded external holder of the real shared lease.
+
+    The check's stand-in for the host pre-hold. SIGTERM unwinds through
+    ``parity_lock`` so the lease is released before exit (a hard kill would
+    leave the cleanupPending owner behind, which nothing may auto-take over).
+    """
+    common = _load_pristine_common(staged)
+
+    def stop(_signum, _frame):
+        raise _HoldStopped('#2513 shared-hold stopped')
+
+    signal.signal(signal.SIGTERM, stop)
+    try:
+        with common.parity_lock(timeout=SHARED_HOLD_ENTRY_SECONDS):
+            time.sleep(hold)
+    except _HoldStopped as stopped:
+        print(stopped, file=sys.stderr)
+    return 0
+
+
+def _stop_shared_hold(holder):
+    """Terminate the holder and prove it released the lease."""
+    holder.terminate()
+    deadline = time.monotonic() + SHARED_HOLD_EXIT_SECONDS
+    while holder.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.1)
+    if holder.poll() is None:
+        _kill_group(holder)
+        _collect(holder, 30)
+        raise RuntimeError('#2513 the external shared-hold did not stop; its '
+                           'lease release is NOT confirmed')
+    if holder.returncode != 0:
+        raise RuntimeError(f'#2513 the external shared-hold exited '
+                           f'{holder.returncode}; its lease release is NOT confirmed')
+    _collect(holder, 30)
+
+
+def window_lock_check(out):
+    """``--window-lock-check``: the window redirect, machine-checked.
+
+    With the shared lease held by a live external process — the host's own
+    pre-hold when there is one, otherwise this check's bounded holder — the
+    guarded entry must acquire its window lock on the redirect path
+    (``out/parity-redirect.lock``) within the probe bound instead of queueing
+    on the shared lease. This is the condition the kill row pins: revert the
+    redirect and the acquisition queues behind the external holder, the
+    bounded probe times out, and this check fails at its markered assertion
+    (never a 60 s hang and never an unmarked panic).
+    """
+    staged = out / 'pristine-common.py'
+    staged.write_bytes(_head_bytes(root, 'scripts/gateway-parity/common.py', 'HEAD'))
+    common = _load_pristine_common(staged)
+    holder = None
+    previous = common.owner(common.LOCK)
+    if previous is None or not common.alive(previous['pid']) or previous['pid'] == os.getpid():
+        # No live external holder: stage one (own session, bounded hold).
+        holder = subprocess.Popen(
+            [sys.executable, '-I', str(Path(__file__).resolve()),
+             '--shared-hold', str(staged), str(SHARED_HOLD_SECONDS)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True)
+        deadline = time.monotonic() + SHARED_HOLD_ENTRY_SECONDS
+        while True:
+            previous = common.owner(common.LOCK)
+            if (previous is not None and common.alive(previous['pid'])
+                    and previous['pid'] != os.getpid()):
+                break
+            if holder.poll() is not None:
+                raise RuntimeError('#2513 the external shared-hold exited '
+                                   'before acquiring the lease')
+            if time.monotonic() > deadline:
+                _kill_group(holder)
+                raise RuntimeError('#2513 the external shared-hold never '
+                                   'acquired the lease')
+            time.sleep(0.2)
+    try:
+        _require_host_lease(common)
+        restore_window_parity_lock = _redirect_window_parity_lock(out)
+        try:
+            snapshot = {COMMON_SOURCE: _head_bytes(
+                root, 'scripts/gateway-parity/common.py', 'HEAD')}
+            started = time.monotonic()
+            try:
+                with negative_process._parity_mutation_lock(
+                        root, snapshot, WINDOW_LOCK_PROBE_SECONDS) as restored:
+                    assert (out / 'parity-redirect.lock' / 'owner.json').is_file(), (
+                        WINDOW_LOCK_MARKER + '：窗口锁必须在重定向路径 '
+                        'out/parity-redirect.lock 上取到（取得的是别处的租约）')
+                    # The probe mutates nothing; there is no restoration to
+                    # verify, so the window's lease may be released cleanly.
+                    restored[0] = True
+            except TimeoutError as error:
+                raise AssertionError(
+                    WINDOW_LOCK_MARKER + '：外部持有共享租约时窗口仍在共享租约上排队'
+                    f'（重定向失效），探针在 {WINDOW_LOCK_PROBE_SECONDS}s 内未取到窗口锁'
+                ) from error
+            elapsed = time.monotonic() - started
+            assert elapsed < WINDOW_LOCK_PROBE_SECONDS, (
+                WINDOW_LOCK_MARKER + f'：重定向路径取锁阻塞了 {elapsed:.1f}s，'
+                f'超过 {WINDOW_LOCK_PROBE_SECONDS}s 探针界')
+        finally:
+            restore_window_parity_lock()
+        assert not (out / 'parity-redirect.lock').exists(), (
+            WINDOW_LOCK_MARKER + '：窗口退出后重定向租约必须按协议释放')
+    finally:
+        if holder is not None:
+            _stop_shared_hold(holder)
+    return ('KILLED', f'外部持锁下窗口锁在 {WINDOW_LOCK_PROBE_SECONDS}s 界内经'
+            ' out/parity-redirect.lock 取到，未在共享租约上排队')
+
+
+def kill_window_lock(out):
+    """``--kill-window-lock``: the one kill row pinning 「该 fixture 必须能取到窗口锁」.
+
+    Mutates this file's own redirect anchor (inside a ``mutating_sources``
+    window), runs ``--window-lock-check`` as a subprocess and requires the
+    mutant to fail at the row's dedicated marker — a reverted redirect queues
+    on the externally-held shared lease and the bounded probe fails with the
+    markered assertion, not a timeout and not an unmarked panic. Positive,
+    negative and restored runs are all recorded; any non-KILLED row exits
+    non-zero.
+    """
+    self_path = Path(__file__).resolve()
+    name, before, after = WINDOW_LOCK_KILL_ROW
+    rows = []
+
+    def run_mode(label):
+        return run_owned(
+            [sys.executable, '-I', str(self_path), '--window-lock-check',
+             str(out / label)],
+            cwd=root, timeout=180)
+
+    with mutating_sources(root, [self_path], lock_timeout=60) as originals:
+        original = originals[self_path].decode()
+        status, reason, compiled = 'INVALID', 'not run', False
+        try:
+            count = original.count(before)
+            if count != 1:
+                raise RuntimeError(f'#2513 stale anchor {name}: '
+                                   f'expected 1, found {count}')
+            positive = run_mode(name + '-positive')
+            if positive.returncode != 0:
+                raise RuntimeError('#2513 positive --window-lock-check failed '
+                                   f'(rc={positive.returncode}): '
+                                   f'{(positive.stdout + positive.stderr).strip()}')
+            changed = original.replace(before, after, 1)
+            compile(changed, str(self_path), 'exec')
+            compiled = True
+            write_source_atomic(root, self_path, changed.encode())
+            try:
+                result = run_mode(name + '-negative')
+                log = result.stdout + result.stderr
+                if result.returncode == 0:
+                    status, reason = 'SURVIVED', '--window-lock-check passed on the mutant'
+                elif WINDOW_LOCK_MARKER in log:
+                    status, reason = 'KILLED', ('--window-lock-check failed at the '
+                                               'row marker (the redirect queued on '
+                                               'the shared lease)')
+                else:
+                    status, reason = 'INVALID', ('--window-lock-check failed without '
+                                                 'the row marker')
+            finally:
+                write_source_atomic(root, self_path, originals[self_path])
+                if self_path.read_bytes() != originals[self_path]:
+                    raise RuntimeError(f'#2513 restore failed: {name}')
+            restored = run_mode(name + '-restored')
+            if restored.returncode != 0:
+                status, reason = 'INVALID', (reason + '; restored '
+                                             '--window-lock-check did not pass')
+        except Exception as error:
+            status, reason = 'INVALID', f'{type(error).__name__}: {error}'
+        rows.append({'name': name, 'status': status, 'reason': reason,
+                     'compiled': compiled, 'test': '--window-lock-check',
+                     'assertion': WINDOW_LOCK_MARKER})
+        print(f'{name}: {status}: {reason}', flush=True)
+    publish_summary(out, rows)
+    return 0 if rows and rows[0]['status'] == 'KILLED' else 1
+
+
 def writer(out, hold):
     """Independent committed-mode writer: hold the tree lock over one mutant.
 
@@ -263,6 +605,11 @@ def writer(out, hold):
             raise _Stopped(f'{STOPPED_MARKER} before its window closed')
 
     signal.signal(signal.SIGTERM, stop)
+    # #2513 fix-r7 (concurrency P1): this writer runs under the host's
+    # pre-held shared lease (the 28999 lane contract), and its window covers
+    # the parity-guarded capture.py — without the redirect it would queue on
+    # the very lease the host holds for us (60 s TimeoutError, zero evidence).
+    restore_window_parity_lock = _redirect_window_parity_lock(out)
     try:
         try:
             with mutating_sources(root, [capture], lock_timeout=WRITER_LOCK_TIMEOUT):
@@ -303,6 +650,10 @@ def writer(out, hold):
             # exactly as designed, so it is not a failure: exit 0.
             print(stopped, file=sys.stderr)
     finally:
+        # The redirect is restored first on this unwind: it patched a module
+        # global, so leaving it behind would steer every later window in this
+        # process (the writer is a subprocess, but the discipline is the same).
+        restore_window_parity_lock()
         # ``mutating_sources.__exit__`` has restored every guarded byte and
         # released the lock by now, so this instant is the earliest another
         # process can acquire it. Published on the normal path *and* on the
@@ -613,16 +964,23 @@ def green(out):
 
 def red(out):
     """Lease removed while the source guard holds the lock: the #1662 false FAIL."""
-    with mutating_sources(root, [test_source, capture]):
-        original = test_source.read_text()
-        if original.count(LEASE_WAIT_ANCHOR) != 1:
-            raise RuntimeError(f'#1662 stale lease anchor: '
-                               f'{original.count(LEASE_WAIT_ANCHOR)} matches')
-        test_source.write_text(
-            original.replace(LEASE_WAIT_ANCHOR, LEASE_WAIT_REMOVED, 1))
-        capture.write_text(capture.read_text() + CAPTURE_RESIDUE)
-        result, _elapsed = run_cargo(out, 'lease-removed-false-fail',
-                                     [RESIDENT_TEST, '--', '--exact'])
+    # #2513 fix-r7 (concurrency P1): the window covers parity-guarded sources
+    # and this fixture runs under the host's pre-held shared lease, so the
+    # window's lease is the redirected one (see ``_redirect_window_parity_lock``).
+    restore_window_parity_lock = _redirect_window_parity_lock(out)
+    try:
+        with mutating_sources(root, [test_source, capture]):
+            original = test_source.read_text()
+            if original.count(LEASE_WAIT_ANCHOR) != 1:
+                raise RuntimeError(f'#1662 stale lease anchor: '
+                                   f'{original.count(LEASE_WAIT_ANCHOR)} matches')
+            test_source.write_text(
+                original.replace(LEASE_WAIT_ANCHOR, LEASE_WAIT_REMOVED, 1))
+            capture.write_text(capture.read_text() + CAPTURE_RESIDUE)
+            result, _elapsed = run_cargo(out, 'lease-removed-false-fail',
+                                         [RESIDENT_TEST, '--', '--exact'])
+    finally:
+        restore_window_parity_lock()
     return judge(result)
 
 
@@ -775,6 +1133,29 @@ def main():
         if len(arguments) != 3:
             raise SystemExit('#1662 writer usage: --writer OUT HOLD_SECONDS')
         return writer(Path(arguments[1]), float(arguments[2]))
+    if arguments[:1] == ['--shared-hold']:
+        if len(arguments) != 3:
+            raise SystemExit('#2513 shared-hold usage: --shared-hold STAGED_COMMON HOLD_SECONDS')
+        return shared_hold(Path(arguments[1]), float(arguments[2]))
+    if arguments[:1] == ['--window-lock-check']:
+        if len(arguments) != 2:
+            raise SystemExit('#2513 window-lock-check usage: --window-lock-check NEW_OUTPUT_DIR')
+        out = new_output_directory(arguments[1])
+        status, reason = 'INVALID', 'not run'
+        try:
+            status, reason = window_lock_check(out)
+        except Exception as error:
+            # Same shape as stop-check: a crash (including the kill row's
+            # markered AssertionError) still leaves an audit row.
+            status, reason = 'INVALID', f'{type(error).__name__}: {error}'
+        print(f'window-lock-check: {status}: {reason}', flush=True)
+        publish_summary(out, [{'name': 'window-lock-check',
+                               'status': status, 'reason': reason}])
+        return 0 if status == 'KILLED' else 1
+    if arguments[:1] == ['--kill-window-lock']:
+        if len(arguments) != 2:
+            raise SystemExit('#2513 kill-window-lock usage: --kill-window-lock NEW_OUTPUT_DIR')
+        return kill_window_lock(new_output_directory(arguments[1]))
     if arguments[:1] == ['--stop-check']:
         if len(arguments) != 2:
             raise SystemExit('#1662 stop-check usage: --stop-check NEW_OUTPUT_DIR')
@@ -791,7 +1172,12 @@ def main():
                                'status': status, 'reason': reason}])
         return 0 if status == 'KILLED' else 1
     if len(arguments) != 1 or arguments[0].startswith('-'):
-        raise SystemExit('usage: negative_controls.py NEW_OUTPUT_DIR')
+        raise SystemExit('usage: negative_controls.py NEW_OUTPUT_DIR | '
+                          '--stop-check NEW_OUTPUT_DIR | '
+                          '--window-lock-check NEW_OUTPUT_DIR | '
+                          '--kill-window-lock NEW_OUTPUT_DIR | '
+                          '--writer OUT HOLD_SECONDS | '
+                          '--shared-hold STAGED_COMMON HOLD_SECONDS')
     if not os.environ.get('CARGO_TARGET_DIR'):
         raise SystemExit('#1662 CARGO_TARGET_DIR must be supplied by the caller')
     out = new_output_directory(arguments[0])

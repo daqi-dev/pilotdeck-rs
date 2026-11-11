@@ -37,6 +37,16 @@ refusal assertions when the guard's call site is deleted. The kill row's
 exactly-once anchor is that very call line, so --check and the run-time stale
 anchor check both refuse a renamed or removed guard call in round.py.
 
+Guard under test (#2513 fix-r7, boundary P1 + sibling P2#2): round.py's
+``_head_source`` reads the committed object the way the cli-parity and
+native-witness siblings do — /usr/bin/git, fixed PATH, no inherited ``GIT_*``
+(a bare ``git`` here let ``GIT_DIR`` steer the post-lease guard into a decoy
+repository's HEAD; measured pre-fix, evidence-a). The control's phases 4/5
+pin where the compared bytes come from (a mutated worktree, a GIT_DIR-steered
+decoy HEAD), and the two head-source kill rows below are judged by
+``control_round_head_guard_head_source`` against their dedicated phase
+markers, so an unrelated red in the same entry stays INVALID, never KILLED.
+
 Every mutated source equals HEAD before its window opens (mutating_sources);
 each mutant compiles before its control runs; stale anchors abort instead of
 being recorded as SURVIVED.  No shadow repository or HEAD exemption is used.
@@ -95,11 +105,39 @@ mutations = [
      "            _verify_loaded_apparatus()\n",
      "            pass\n",
      'control_round_head_guard'),
+    # #2513 fix-r7 (boundary P1 + sibling P2#2): _head_source reads the
+    # worktree file instead of the committed object — under a mutation
+    # window the read is always-equal (worktree bytes == loaded bytes) and
+    # the guard disarms. The bound control phase (round_head_guard phase 4)
+    # loads pristine-executing bytes, mutates the disk afterwards and steers
+    # GIT_DIR at a decoy HEAD pinning exactly those disk bytes: the mutant
+    # refuses where acceptance is required and its markered assertion goes
+    # red.
+    ('parity-round-head-source-worktree-read', root / 'scripts/parity/round.py',
+     "    result = subprocess.run(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(_REPO_ROOT),\n"
+     "                             'show', f'HEAD:{relative}'],\n"
+     "                            env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "                                 'GIT_CONFIG_GLOBAL': '/dev/null'},\n"
+     "                            capture_output=True, timeout=30)",
+     "    return (_REPO_ROOT / relative).read_bytes()  # mutant: the worktree file, not the committed object",
+     'control_round_head_guard_head_source'),
+    # #2513 fix-r7 (boundary P1): the fixed environment is the whole fix —
+    # inheriting os.environ lets GIT_DIR steer `git -C <root> show HEAD:…`
+    # at a decoy repository's object (measured pre-fix, evidence-a). Both
+    # bound phases go red: the acceptance phase (decoy bytes ≠ executing
+    # bytes, round_head_guard phase 4) and the steering phase (decoy ==
+    # executing, the false-pass the pre-fix shape allowed, phase 5).
+    ('parity-round-head-source-env-inherited', root / 'scripts/parity/round.py',
+     "env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "                                 'GIT_CONFIG_GLOBAL': '/dev/null'},",
+     "env=dict(os.environ),",
+     'control_round_head_guard_head_source'),
 ]
 
 positives = [
     ('parity-round-host-env-isolation', 'control_round_host_env_isolation'),
     ('parity-round-head-guard', 'control_round_head_guard'),
+    ('parity-round-head-source-guard', 'control_round_head_guard_head_source'),
 ]
 
 # Static rosters: the denominators of this run are literals in the source, not
@@ -108,10 +146,13 @@ positives = [
 EXPECTED_MUTATIONS = [
     'parity-round-gateway-mode-strip',
     'parity-round-apparatus-verify-deleted',
+    'parity-round-head-source-worktree-read',
+    'parity-round-head-source-env-inherited',
 ]
 EXPECTED_POSITIVES = [
     'parity-round-host-env-isolation',
     'parity-round-head-guard',
+    'parity-round-head-source-guard',
 ]
 
 # The KILLED judge below greps the control entry's own leak marker, and the
@@ -161,9 +202,32 @@ def control_round_head_guard(scratch):
                              f'编译的轮次在取锁后未被拒绝 (exit={result.returncode})')
 
 
+def control_round_head_guard_head_source(scratch):
+    """#2513 fix-r7: the _head_source phases of the same control must pass.
+
+    Exclusivity: the kill is credited only when the failing phase carries the
+    ``#2513 _head_source`` marker (the dedicated phase-4/phase-5 assertions);
+    an unrelated red in the same control entry stays a RuntimeError (INVALID),
+    never a KILLED.
+    """
+    result = run_control(scratch, 'round-head-head-source', ROUND_GUARD_ENTRY)
+    log = result.stdout + result.stderr
+    if result.returncode != 0:
+        if '#2513' not in log:
+            raise RuntimeError('round_head_guard failed without the #2513 marker '
+                              f'(exit={result.returncode}): {log.strip()}')
+        if '#2513 _head_source' not in log:
+            raise RuntimeError('round_head_guard failed without an _head_source '
+                              f'phase marker (exit={result.returncode}): {log.strip()}')
+        raise AssertionError('#2513 round.py _head_source 读到工作区文件或继承了被引导的'
+                             '环境：提交对象读取的变异体被当场抓住 '
+                             f'(exit={result.returncode})')
+
+
 RUNNERS = {
     'control_round_host_env_isolation': control_round_host_env_isolation,
     'control_round_head_guard': control_round_head_guard,
+    'control_round_head_guard_head_source': control_round_head_guard_head_source,
 }
 
 

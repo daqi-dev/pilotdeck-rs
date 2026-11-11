@@ -1711,6 +1711,20 @@ async fn startup_window_frame_dispatches_and_post_stop_stays_silent() {
         move || waited.lock().expect("#1344 record mutex").rpcs.len() == 1,
     )
     .await;
+    // #2513 fix-r7 (boundary P2#1): the socket handle is saved *before*
+    // `stop()` — the mock's read_frames retain-clears the socket from
+    // `mock.sockets` the moment it parses the client's close frame, while
+    // `stop()` returns once the Close frame is written to the kernel, so
+    // taking it afterwards races an already-empty list and panics on an
+    // unregistered `expect`. The saved `Arc` keeps the socket usable for the
+    // post-stop frame whatever the mock's bookkeeping did with it.
+    let socket = mock
+        .sockets
+        .lock()
+        .expect("#1344 sockets mutex")
+        .last()
+        .cloned()
+        .expect("#2513 the socket opened");
     // #2312 on the new sentinel: a frame after `stop` still stays silent —
     // the closing flag, not an empty runtime, is what drops it.
     bounded(
@@ -1719,13 +1733,6 @@ async fn startup_window_frame_dispatches_and_post_stop_stays_silent() {
     )
     .await
     .expect("#2513 stop result");
-    let socket = mock
-        .sockets
-        .lock()
-        .expect("#1344 sockets mutex")
-        .last()
-        .cloned()
-        .expect("#2513 the socket opened");
     write_text_frame(
         &socket,
         &json!({"type": "message", "payload": {"event": {

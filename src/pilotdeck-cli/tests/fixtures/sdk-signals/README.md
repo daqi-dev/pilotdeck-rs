@@ -281,6 +281,17 @@ capture.py 字节被金样测试 SHA 锚定，跟进单 #2784；重采期间同�
 panic（该格没有 `differing surfaces` 行），不再满足「失败恰为 2 格且两格均为
 stdout 单面」。
 
+#2513 fix-r7 起本车道的租约义务对照如下（车道口径以 grep 现跑为准，本表是
+#2513 时点的快照，不是固定枚举）：
+
+| 命令块 / 装置 | 绑 28999 | 自身与共享租约 `/tmp/pdrs-parity.lock` 的关系 | 宿主是否预持 |
+| --- | --- | --- | --- |
+| `sdk_signal_exit` 矩阵本批（`signal_cases::*` / `pending_abort_*`） | 是 | 不取租约（仅进程内 `SERIAL` 互斥） | **必须预持** |
+| `src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py`（窗口改 gateway 侧源） | 内部 cargo 真 bind | 变异窗口租约自 fix-r4 重定向到证据目录 `parity-redirect.lock`，对共享租约不互斥 | **必须预持** |
+| `src/pilotdeck-gateway/tests/fixtures/sdk-signal-read-lease/negative_controls.py`（GREEN/RED/`--stop-check`，窗口改 cli 侧 `capture.py`） | 常驻测试 `--exact` 只读盘不绑端口 | 变异窗口租约自 fix-r7 同样重定向（`_redirect_window_parity_lock` 同型，`_require_host_lease` 前置闸取不到即退出 2）；不重定向则 writer/red 在宿主持有的共享锁上自排队 60 s 超时 → 全部 INVALID | **必须预持**（与整批同车道；`--window-lock-check` / `--kill-window-lock` 见该 fixture README） |
+| 重采块 `capture.py` | 是 | 自取 cli-parity `parity_lock()`（`probe.mjs` 断言 owner.pid 是它自己） | **不要预持**（预持即 `Blocked`） |
+| D0 Rust 六文件 `sdk_{run,resume,format,settings,sessions_list,sessions_messages}_exit.rs` | — | 各自 `ParityLock::acquire` 同一把锁（180 s 上限） | **不要预持**（预持即整族假 FAIL） |
+
 ```sh
 scripts/cargo-slots.sh
 PDRS_SIGNAL_RESULTS=/absolute/new-evidence-directory \
