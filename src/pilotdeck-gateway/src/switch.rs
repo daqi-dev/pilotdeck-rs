@@ -620,7 +620,13 @@ impl CronStopHandle {
                 StepFailure::step(format!("cron stop failed: {}", cron_message(&error)))
             })?;
             for failure in handle.abort_failures() {
-                eprintln!("native cron stop: in-flight run abort rejected: {failure}");
+                // #2558: a best-effort abort-rejected report (std panics when
+                // a raw console write fails); a panic here would kill the
+                // switch face mid-stop, the halt line's shape.
+                crate::native_process::channels::console_log_line(
+                    &mut std::io::stderr(),
+                    &format!("native cron stop: in-flight run abort rejected: {failure}"),
+                );
             }
             Ok(())
         })

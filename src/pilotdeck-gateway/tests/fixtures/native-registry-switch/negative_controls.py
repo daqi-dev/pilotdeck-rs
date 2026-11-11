@@ -87,9 +87,14 @@ mutations = [
      'let registry: Option<&dyn read::TurnRunReader> = None;',
      'native_process::tests::requests_registry_switch_gates_run_reads', '#1369 run_get with a registry resolves'),
     # The construction receipt is the #1368 registry boundary witness: the
-    # switch must state its resolved state on stderr at startup.
+    # switch must state its resolved state on stderr at startup. Re-anchored
+    # to the #2558 fix-r2 shape (the same receipt line, now through the
+    # non-panicking `console_log_line` writer instead of `eprintln!`).
     ('registry-receipt-not-published', ASSEMBLY,
-     'eprintln!("native run registry {state}");',
+     '''super::channels::console_log_line(
+            &mut std::io::stderr(),
+            &format!("native run registry {state}"),
+        );''',
      'let _ = state;',
      'executable_native_registry_switch', '#1369 executable off registry receipt'),
 ]

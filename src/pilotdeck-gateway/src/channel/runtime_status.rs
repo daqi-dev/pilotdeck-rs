@@ -106,9 +106,15 @@ pub fn create_channel_runtime_status_reporter(pilot_home: PathBuf) -> ChannelRun
             )
         })();
         if let Err(error) = written {
-            eprintln!(
-                "[adapters] failed to write runtime status for {}: {error}",
-                String::from_utf16_lossy(channel_key.units())
+            // #2558: the failure line itself must not panic (std panics when
+            // a raw console write fails) — the status task would die on the
+            // write it only owed a report for.
+            crate::native_process::channels::console_log_line(
+                &mut std::io::stderr(),
+                &format!(
+                    "[adapters] failed to write runtime status for {}: {error}",
+                    String::from_utf16_lossy(channel_key.units())
+                ),
             );
         }
     })

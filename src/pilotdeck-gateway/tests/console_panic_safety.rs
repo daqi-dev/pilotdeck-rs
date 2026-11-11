@@ -7,7 +7,16 @@
 //! `plugins.rs`, fix-r1) — go through the shared `console_log_line`, which
 //! drops the write error like TS's `console.error`, while `println!`/
 //! `eprintln!` panic on a failed write (std behavior). `native_ws.rs`
-//! joined the same shape in #2434. The lib-side probes (`http_proxy::tests`,
+//! joined the same shape in #2434. fix-r2 closed the same face on the
+//! native assembly's own startup witnesses, acquire-miss report, and
+//! default session diagnostics (`native_process/assembly.rs`), the default
+//! tail debug sink (`runtime/turn/runner_tail.rs`), the request-side
+//! best-effort lines (`runtime/turn/submit.rs`,
+//! `runtime/project/interaction_notice.rs`), the status/persist/abort/
+//! registration lines (`channel/runtime_status.rs`,
+//! `channel/weixin/state.rs`, `switch.rs`, `lib.rs`), the model dump
+//! lines (`runtime/model/http.rs`, its stdout receipt included), and
+//! `refresh.rs`'s stdout `log` default. The lib-side probes (`http_proxy::tests`,
 //! `upstream::tests`, `runtime::memory::maintenance::tests`, plus
 //! `native_process::channels_tests`' failing-sink unit case) drive the
 //! reachable sites in re-exec'd children with EPIPE stderr; this file owns
@@ -37,12 +46,14 @@ use std::{
 /// The files that own the #2558 error lines plus the shared writer itself
 /// (its definition in `native_process/channels.rs`, the native entry that
 /// re-exports it, and `native_ws.rs`, which routed its accept-error lines
-/// through the writer in #2434). Kept complete against new callers by
-/// `shared_writer_call_sites_stay_listed`. Scanned through the shared
-/// proc-macro2 lexer (`common/source_inputs`), never a text search:
-/// comments and string literals — including the doc comments that quote
-/// the macro — are token kinds there and cannot false-positive.
-const EPRINTLN_FREE_SOURCES: [&str; 10] = [
+/// through the writer in #2434; fix-r2 added the assembly's own
+/// diagnostics, the default tail/debug/log sinks, and the status/dump/
+/// abort/registration lines listed in the module docs). Kept complete
+/// against new callers by `shared_writer_call_sites_stay_listed`. Scanned
+/// through the shared proc-macro2 lexer (`common/source_inputs`), never a
+/// text search: comments and string literals — including the doc comments
+/// that quote the macro — are token kinds there and cannot false-positive.
+const EPRINTLN_FREE_SOURCES: [&str; 19] = [
     "src/main.rs",
     "src/http_proxy.rs",
     "src/upstream.rs",
@@ -53,6 +64,15 @@ const EPRINTLN_FREE_SOURCES: [&str; 10] = [
     "src/runtime/refresh.rs",
     "src/runtime/replacement.rs",
     "src/runtime/plugins.rs",
+    "src/native_process/assembly.rs",
+    "src/runtime/turn/runner_tail.rs",
+    "src/runtime/turn/submit.rs",
+    "src/runtime/project/interaction_notice.rs",
+    "src/channel/runtime_status.rs",
+    "src/channel/weixin/state.rs",
+    "src/switch.rs",
+    "src/runtime/model/http.rs",
+    "src/lib.rs",
 ];
 
 /// Lexical guard: none of the #2558 files may write an error console line
@@ -60,7 +80,10 @@ const EPRINTLN_FREE_SOURCES: [&str; 10] = [
 /// the two entry lines no child can observe (the accept-error branch has no
 /// portable trigger, and the spawned connection task's panic is contained
 /// by tokio), and it kills every site mutation even where the behavioral
-/// probes already do.
+/// probes already do. Items gated by `#[cfg(test)]` are skipped (fix-r2):
+/// their subtree is libtest-support code that the production build removes
+/// (`assembly.rs`'s embedded-entry `start` keeps one), so a listed file
+/// can carry test-support diagnostics without failing the product scan.
 #[test]
 fn error_console_writes_stay_non_panicking() {
     for relative in EPRINTLN_FREE_SOURCES {
@@ -101,6 +124,80 @@ fn assert_no_eprintln_kills_a_real_eprintln() {
         message.contains("#2558 fixture.rs still writes an error console line"),
         "#2558 the detector's panic must name the offending file, got {message:?}"
     );
+}
+
+/// The cfg(test) exemption (fix-r2) must hold in both directions: a gated
+/// `eprintln!` is libtest-support code and does not fail the scan, while a
+/// production site after a gated item is still detected — an over-eager
+/// skip (say, one that resumes only at end-of-file) would pass the first
+/// half by swallowing the second.
+#[test]
+fn assert_no_eprintln_skips_only_cfg_test_items() {
+    // Gated spellings that must not fail the scan: the `mod tests` block, a
+    // gated `fn` whose generic return type carries a flat `,` (the
+    // `assembly.rs` shape this exemption exists for), and a gated struct
+    // field with productions behind it.
+    for gated in [
+        concat!(
+            "#[cfg(test)]\n",
+            "mod tests {\n",
+            "    fn helper() { eprintln!(\"#2558 test-only line\"); }\n",
+            "}\n",
+        ),
+        concat!(
+            "#[cfg(test)]\n",
+            "pub async fn start() -> Result<u8, u16> { eprintln!(\"#2558 test-only line\"); Ok(0) }\n",
+        ),
+        concat!(
+            "struct Hooks {\n",
+            "    shared: u8,\n",
+            "    #[cfg(test)]\n",
+            "    hooks: u8,\n",
+            "    later: u8,\n",
+            "}\n",
+        ),
+    ] {
+        let tokens = source_inputs::lex_source(gated)
+            .unwrap_or_else(|error| panic!("#2558 lexing the gated fixture: {error}"));
+        assert_no_eprintln(&tokens, "fixture.rs");
+    }
+    // Production sites that must still fail the scan: right after a gated
+    // item, and in the production arm behind a gated match arm (the `,`
+    // boundary the generic-comma rule must not swallow).
+    for adjacent in [
+        concat!(
+            "#[cfg(test)]\n",
+            "mod tests {\n",
+            "    fn helper() { eprintln!(\"#2558 test-only line\"); }\n",
+            "}\n",
+            "fn prod() { eprintln!(\"#2558 production line\"); }\n",
+        ),
+        concat!(
+            "fn prod(mode: u8) {\n",
+            "    match mode {\n",
+            "        #[cfg(test)]\n",
+            "        0 => helper(),\n",
+            "        _ => eprintln!(\"#2558 production line\"),\n",
+            "    }\n",
+            "}\n",
+        ),
+    ] {
+        let tokens = source_inputs::lex_source(adjacent)
+            .unwrap_or_else(|error| panic!("#2558 lexing the adjacent fixture: {error}"));
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            assert_no_eprintln(&tokens, "fixture.rs")
+        }))
+        .expect_err("#2558 a production site must still fail the scan");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        assert!(
+            message.contains("#2558 fixture.rs still writes an error console line"),
+            "#2558 the detector's panic must name the offending file, got {message:?}"
+        );
+    }
 }
 
 /// Every production source file that lexically names the shared writer must
@@ -198,8 +295,9 @@ fn tokens_contain_ident(tokens: &[SourceToken], word: &str) -> bool {
 }
 
 fn assert_no_eprintln(tokens: &[SourceToken], file: &str) {
-    for (index, token) in tokens.iter().enumerate() {
-        match token {
+    let mut index = 0;
+    while index < tokens.len() {
+        match &tokens[index] {
             SourceToken::Ident(word) if word == "eprintln" => {
                 assert!(
                     tokens.get(index + 1) != Some(&SourceToken::Punct('!')),
@@ -207,11 +305,81 @@ fn assert_no_eprintln(tokens: &[SourceToken], file: &str) {
                      panicking `eprintln!` (std panics when the write fails); \
                      route it through `console_log_line` instead"
                 );
+                index += 1;
             }
-            SourceToken::Group { tokens, .. } => assert_no_eprintln(tokens, file),
-            _ => {}
+            SourceToken::Punct('#') if is_cfg_test_attribute(tokens.get(index + 1)) => {
+                index = index_past_cfg_test_item(tokens, index);
+            }
+            SourceToken::Group { tokens, .. } => {
+                assert_no_eprintln(tokens, file);
+                index += 1;
+            }
+            _ => index += 1,
         }
     }
+}
+
+/// The `#[cfg(test)]` attribute shape: a `#` followed by the bracket group
+/// holding exactly `cfg ( test )`. Other predicates — `cfg(all(test, ...))`,
+/// `cfg_attr`, — do not match, so the exemption cannot silently widen: a
+/// test-support `eprintln!` under any other predicate still fails the scan
+/// (fail-closed), and only the one predicate rustc actually keys libtest
+/// support on is skipped.
+fn is_cfg_test_attribute(token: Option<&SourceToken>) -> bool {
+    let Some(SourceToken::Group {
+        delimiter: proc_macro2::Delimiter::Bracket,
+        tokens: predicate,
+    }) = token
+    else {
+        return false;
+    };
+    match predicate.as_slice() {
+        [
+            SourceToken::Ident(name),
+            SourceToken::Group {
+                delimiter: proc_macro2::Delimiter::Parenthesis,
+                tokens: arguments,
+            },
+        ] if name.as_str() == "cfg" => {
+            matches!(arguments.as_slice(), [SourceToken::Ident(subject)] if subject == "test")
+        }
+        _ => false,
+    }
+}
+
+/// Resume the scan past the item a `#[cfg(test)]` attribute gates. The
+/// gated item is test-only code — the production build compiles it out —
+/// so its subtree cannot hold a production error line. The item ends at
+/// its body (the first brace group: `fn` / `mod` / `impl` / block
+/// spellings) or at its own terminator — `;` (`use` / `mod;` / `let`
+/// spellings) or `,` (field / match-arm / element spellings) — whichever
+/// comes first, so the skip never swallows the productions that follow
+/// it: a `#[cfg(test)]` match arm stops at its `,` and the production arms
+/// behind it stay scanned. A `,` only counts at the item's own level: the
+/// commas inside a generic list (`Result<TurnGateway, ProxyError>`, the
+/// `assembly.rs` shape this exists for) sit between an unclosed `<` … `>`
+/// pair and are not delimiters, so they are tracked and skipped. The angle
+/// count is heuristic where expressions meet comparisons (`a <= b` opens
+/// a phantom pair) — a miscount can only miss a `,` terminator, which
+/// skips too far inside one `,`-list, never past a body or `;`.
+fn index_past_cfg_test_item(tokens: &[SourceToken], attribute: usize) -> usize {
+    let mut index = attribute;
+    let mut angle_depth = 0usize;
+    while index < tokens.len() {
+        match &tokens[index] {
+            SourceToken::Group {
+                delimiter: proc_macro2::Delimiter::Brace,
+                ..
+            }
+            | SourceToken::Punct(';') => return index + 1,
+            SourceToken::Punct(',') if angle_depth == 0 => return index + 1,
+            SourceToken::Punct('<') => angle_depth += 1,
+            SourceToken::Punct('>') => angle_depth = angle_depth.saturating_sub(1),
+            _ => {}
+        }
+        index += 1;
+    }
+    index
 }
 
 fn isolated_home() -> PathBuf {

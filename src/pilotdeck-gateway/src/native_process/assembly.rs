@@ -307,7 +307,15 @@ pub(super) async fn start_with_webhook(
         env,
         crate::upload::CLEANUP_INTERVAL,
         Arc::new(|_, result| Box::pin(async move { result })),
-        Arc::new(|error| eprintln!("native project cleanup: {error}")),
+        // #2558: a best-effort cleanup diagnostic, like TS's `console.error`
+        // — an `eprintln!` here panics when the write fails (std behavior)
+        // and would kill the shutdown cleanup this closure still owes.
+        Arc::new(|error| {
+            super::channels::console_log_line(
+                &mut std::io::stderr(),
+                &format!("native project cleanup: {error}"),
+            )
+        }),
         Some(slot.clone()),
         Some(switch_slots.clone()),
         AssemblySeams::default(),
@@ -388,7 +396,13 @@ async fn start_assembly(
         // The #1368/#1370 storage stimulus boundary witness: the controlled
         // entry states its resolved directory at construction, before any turn
         // is driven. The receipt format follows the #1369 construction style.
-        eprintln!("native storage stimulus on {}", dir.display());
+        // #2558: the witness line takes the listening line's non-panicking
+        // shape (std panics when a raw console write fails), so the entry
+        // still serves after writing itself.
+        super::channels::console_log_line(
+            &mut std::io::stderr(),
+            &format!("native storage stimulus on {}", dir.display()),
+        );
     }
     let loop_switch = loop_stimulus_switch(&env)?;
     // #1371: only a resolved *plan* replaces the turn. An armed directory
@@ -402,7 +416,11 @@ async fn start_assembly(
     if let Some(dir) = &loop_switch {
         // #1371: the controlled loop/fence entry states its directory before
         // any turn is driven, in the same construction style as #1370.
-        eprintln!("native loop stimulus on {}", dir.display());
+        // #2558: the storage witness's non-panicking shape.
+        super::channels::console_log_line(
+            &mut std::io::stderr(),
+            &format!("native loop stimulus on {}", dir.display()),
+        );
     }
     if let Some(switch) = &registry_switch {
         // The #1368 registry boundary witness: the switch itself states its
@@ -411,7 +429,11 @@ async fn start_assembly(
             RunRegistrySwitch::On => "on",
             RunRegistrySwitch::Off => "off",
         };
-        eprintln!("native run registry {state}");
+        // #2558: the storage witness's non-panicking shape.
+        super::channels::console_log_line(
+            &mut std::io::stderr(),
+            &format!("native run registry {state}"),
+        );
     }
     // Management can inspect existing skills; turn admission still checks that
     // unsupported skill prompt/tool composition is not silently omitted.
@@ -445,16 +467,31 @@ async fn start_assembly(
     let prepare_mcp_config: Arc<std::sync::OnceLock<Arc<SdkMcpConfig>>> = Arc::default();
     // #1429: report at most once per assembly — a per-acquire stderr write would
     // be unbounded if the publication regressed for good.
-    let acquire_miss_report: AcquireMissReport =
-        acquire_miss_report.unwrap_or_else(|| Arc::new(|message: &str| eprintln!("{message}")));
+    let acquire_miss_report: AcquireMissReport = acquire_miss_report.unwrap_or_else(|| {
+        Arc::new(|message: &str| {
+            // #2558: a best-effort report line — an `eprintln!` here panics
+            // when the write fails (std behavior), killing the prepare
+            // closure that only owed the miss report.
+            super::channels::console_log_line(&mut std::io::stderr(), message)
+        })
+    });
     let prepare_acquire_miss_report = acquire_miss_report.clone();
     let prepare_acquire_miss_reported: Arc<std::sync::OnceLock<()>> = Arc::default();
     // #1433: the prepare closure's MCP composition diagnostics; production
     // logs to stderr like the factory's session diagnostic.
     let prepare_mcp_diagnostic: Option<crate::runtime::mcp::registry::McpDiagnosticSink> = Some(
         Arc::new(|message: String, error: Option<RuntimeError>| match error {
-            Some(error) => eprintln!("native session MCP: {message}: {error}"),
-            None => eprintln!("native session MCP: {message}"),
+            // #2558: best-effort diagnostics — an `eprintln!` here panics
+            // when the write fails (std behavior), killing the prepare
+            // closure over a diagnostic it only owed.
+            Some(error) => super::channels::console_log_line(
+                &mut std::io::stderr(),
+                &format!("native session MCP: {message}: {error}"),
+            ),
+            None => super::channels::console_log_line(
+                &mut std::io::stderr(),
+                &format!("native session MCP: {message}"),
+            ),
         }),
     );
     // The `#[cfg(test)]` seam passes `false` to drive the published-miss branch;
@@ -764,7 +801,15 @@ async fn start_assembly(
         tool_results_dir: Some(Arc::new(move |session_id| {
             super::tools::session_tool_results_dir(&budget_project, session_id)
         })),
-        diagnostic: Arc::new(|d| eprintln!("native session: {d:?}")),
+        // #2558: a best-effort session diagnostic — an `eprintln!` here
+        // panics when the write fails (std behavior), killing the session
+        // task that only owed the diagnostic.
+        diagnostic: Arc::new(|d| {
+            super::channels::console_log_line(
+                &mut std::io::stderr(),
+                &format!("native session: {d:?}"),
+            )
+        }),
     }));
     let built = (|| -> Result<_, ProxyError> {
         // TS parity: an unconfigured runRegistry is simply absent, so the file

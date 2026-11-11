@@ -162,7 +162,15 @@ pub trait RefreshLog: Send + Sync {
 pub struct ConsoleLog;
 impl RefreshLog for ConsoleLog {
     fn log(&self, message: &JsString) {
-        println!("{}", String::from_utf16_lossy(message.units()));
+        // #2558: a best-effort console line, like TS's `console.log` — a
+        // `println!` here panics when the write fails (std behavior), and
+        // this default is the production wiring's log sink
+        // (`native_process/services.rs`), the stdout twin of the `warn`
+        // below (the maintenance default's #2558 fix, same shape).
+        crate::native_process::channels::console_log_line(
+            &mut std::io::stdout(),
+            &String::from_utf16_lossy(message.units()),
+        );
     }
     fn warn(&self, message: &str, detail: WarnDetail<'_>) {
         // #2558: a best-effort console line, like TS's `console.warn` — an
