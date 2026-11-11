@@ -27,7 +27,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (exclusive_write, mutating_sources,
-                              new_output_directory, run_owned, wait_for_slot)
+                              new_output_directory, run_owned, wait_for_slot,
+                              write_source_atomic)
 from negative_panic import named_test_killed
 from negative_suite import invalidate_completed, passed
 
@@ -215,13 +216,24 @@ def main():
                         if original.count(row['old']) != 1:
                             status, reason = 'INVALID', 'mutation anchor is not unique'
                         else:
-                            Path(ROOT / row['path']).write_bytes(
-                                original.replace(row['old'], row['new'], 1).encode())
+                            # #1087 fix-r2: every guarded-source write in the
+                            # window is one atomic rename (#1903 rule, shared
+                            # with ``mutating_sources``) — a truncating
+                            # ``write_bytes`` killed mid-write leaves an empty
+                            # or half-written product source.
+                            write_source_atomic(
+                                ROOT, ROOT / row['path'],
+                                original.replace(row['old'], row['new'], 1).encode(),
+                                mode=(ROOT / row['path']).stat().st_mode & 0o7777)
                             status, reason = classify(row, run(row, env, output, 'negative'))
                 except Exception as error:
                     status, reason = 'INVALID', f'{type(error).__name__}: {error}'
                 finally:
-                    Path(ROOT / row['path']).write_bytes(originals[Path(row['path'])])
+                    # Same #1087 fix-r2 window: the in-loop restore is also one
+                    # rename, never a truncating write_bytes.
+                    write_source_atomic(
+                        ROOT, ROOT / row['path'], originals[Path(row['path'])],
+                        mode=(ROOT / row['path']).stat().st_mode & 0o7777)
                 try:
                     restored = run(row, env, output, 'restored')
                     if not positive_ok(row, restored):

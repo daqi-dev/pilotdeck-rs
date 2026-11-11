@@ -20,7 +20,8 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(root / 'src/pilotdeck-gateway/tests/fixtures'))
 from negative_panic import named_test_killed
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                             write_source_atomic)
 from negative_selection import verdict_exit
 from negative_suite import passed
 
@@ -132,7 +133,14 @@ def main(argv=None):
                 if n != 1:
                     status, reason = 'INVALID', f'stale pattern: {n} matches in {relative}'
                 else:
-                    path.write_text(changed)
+                    # #1087 fix-r2: every guarded-source write in the window
+                    # is one atomic rename (#1903 rule, shared with
+                    # ``mutating_sources``) — a truncating ``write_text``
+                    # killed mid-write leaves an empty or half-written
+                    # product source.
+                    write_source_atomic(
+                        root, path, changed.encode(),
+                        mode=path.stat().st_mode & 0o7777)
                     result = run(out, name, test)
                     save(out, name + '.log', result.stdout + result.stderr)
                     status, reason = classify(result, test, anchor)

@@ -54,7 +54,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned  # noqa: E402
+from negative_process import mutating_sources, run_owned, write_source_atomic  # noqa: E402
 from negative_selection import verdict_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -360,7 +360,14 @@ def main():
                         f"stale anchor: expected 1 occurrence, found {count}",
                     )
                     continue
-                path.write_text(content.replace(before, after, 1), encoding="utf-8")
+                # #1087 fix-r2: every guarded-source write in the window is one
+                # atomic rename (#1903 rule, shared with ``mutating_sources``) —
+                # a truncating ``write_text`` killed mid-write leaves an empty
+                # or half-written product source.
+                write_source_atomic(
+                    ROOT, path, content.replace(before, after, 1).encode("utf-8"),
+                    mode=path.stat().st_mode & 0o7777,
+                )
                 checked = run_owned([NODE, "--check", str(path)], cwd=ROOT, timeout=60)
                 log = checked.stdout + checked.stderr
                 (out / f"{name}.compile.log").write_text(log, encoding="utf-8")
@@ -388,7 +395,12 @@ def main():
                     f"runner error: {type(error).__name__}: {error}",
                 )
             finally:
-                path.write_bytes(original)
+                # Same #1087 fix-r2 window: the in-loop restore is also one
+                # rename, never a truncating write_bytes.
+                write_source_atomic(
+                    ROOT, path, original,
+                    mode=path.stat().st_mode & 0o7777,
+                )
                 if hashlib.sha256(path.read_bytes()).hexdigest() != before_bytes:
                     record(name, "INVALID", "restore mismatch")
                     raise SystemExit(2)

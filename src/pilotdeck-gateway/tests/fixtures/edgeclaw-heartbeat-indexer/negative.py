@@ -36,7 +36,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                             write_source_atomic)
 from negative_selection import verdict_exit
 
 root = Path(__file__).resolve().parents[5]
@@ -935,7 +936,13 @@ with mutating_sources(root, [indexer, entries, file_memory], baseline=baseline) 
                         '(expected 1); update negative.py')
                 texts[path] = text.replace(before, after)
             for path, text in texts.items():
-                path.write_text(text)
+                # #1087 fix-r2: every guarded-source write in the window is
+                # one atomic rename (#1903 rule, shared with
+                # ``mutating_sources``) — a truncating ``write_text`` killed
+                # mid-write leaves an empty or half-written product source.
+                write_source_atomic(
+                    root, path, text.encode(),
+                    mode=path.stat().st_mode & 0o7777)
             slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
             run = cargo_test(test)
             log = run.stdout + run.stderr
@@ -951,14 +958,20 @@ with mutating_sources(root, [indexer, entries, file_memory], baseline=baseline) 
                 reason = 'did not fail at the bound assertion'
         except AnchorExpired as error:
             for original, data in originals.items():
-                original.write_bytes(data)
+                # Same #1087 fix-r2 window: this restore is also one rename,
+                # never a truncating write_bytes.
+                write_source_atomic(root, original, data,
+                                    mode=original.stat().st_mode & 0o7777)
             print(f'ANCHOR EXPIRED: {error}', flush=True)
             sys.exit(2)
         except Exception as error:
             reason = f'{type(error).__name__}: {error}'
         finally:
             for original, data in originals.items():
-                original.write_bytes(data)
+                # Same #1087 fix-r2 window: the in-loop restore is also one
+                # rename, never a truncating write_bytes.
+                write_source_atomic(root, original, data,
+                                    mode=original.stat().st_mode & 0o7777)
         if reason is None:
             killed.append(name)
             print(f'KILLED   {name}: {anchor}', flush=True)

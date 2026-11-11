@@ -139,7 +139,7 @@ TABLES = (
 # Each reason states how many discovery keys the table needs and how many path
 # shapes the scanner could not follow; both are re-measured by
 # test_known_blind_counts_match_the_scan. #2141 carries the per-table fix list.
-# 279 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 202 blind only, 2 with unresolvable shapes only, 75 in both; 1504 keys: 416 bare-filename joins and 1088 shared-helper import keys.
+# 279 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 202 blind only, 2 with unresolvable shapes only, 75 in both; 1512 keys: 416 bare-filename joins and 1096 shared-helper import keys.
 # Why a key a table needs shows up in no table text: the import line spells a
 # module name, while the host keys the helper file it lives in.
 IMPORTED_HELPER_REASON = 'imported shared fixture helper'
@@ -189,10 +189,10 @@ KNOWN_BLIND = {
     'edgeclaw-accessors/negative.py': '5 keys',
     'edgeclaw-capture-turn/negative.py': '6 keys',
     'edgeclaw-dangling-links/negative.py': '3 keys',
-    'edgeclaw-dream-run/negative.py': '1 key',
-    'edgeclaw-dream-runner/negative.py': '1 key',
+    'edgeclaw-dream-run/negative.py': '3 keys',
+    'edgeclaw-dream-runner/negative.py': '3 keys',
     'edgeclaw-dream/negative.py': '3 keys',
-    'edgeclaw-dream/negative_shapes.py': '2 keys',
+    'edgeclaw-dream/negative_shapes.py': '4 keys',
     'edgeclaw-entries/negative.py': '1 key',
     'edgeclaw-entries/negative_fix1.py': '1 key + 1 unresolvable',
     'edgeclaw-entries/negative_ids.py': '1 key',
@@ -204,7 +204,7 @@ KNOWN_BLIND = {
     'edgeclaw-heartbeat-isolation/negative.py': '10 keys',
     'edgeclaw-heartbeat/negative.py': '4 keys',
     'edgeclaw-llm-config/negative.py': '2 keys',
-    'edgeclaw-llm-dream/negative.py': '1 key',
+    'edgeclaw-llm-dream/negative.py': '3 keys',
     'edgeclaw-llm-envelope/negative.py': '1 key',
     'edgeclaw-llm-index/negative.py': '1 key',
     'edgeclaw-llm-recall/negative.py': '1 key',

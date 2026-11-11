@@ -108,13 +108,30 @@ class RestoreTests(unittest.TestCase):
                     if fault == 'exit-verify':
                         raise RuntimeError('#1037 injected guard verify failure')
 
-            def restore(path, data):
+            # #1087 fix-r2: the runtime suites publish every guarded-source
+            # write in the mutation window through `write_source_atomic`
+            # (#1903 rule), so the mid-restore fault is injected on that
+            # channel; the compile-only suite still truncates through
+            # ``Path.write_bytes``, which keeps its own channel.
+            def restore_target(path):
+                target = Path(path)
+                return root / target if not target.is_absolute() else target
+
+            def maybe_inject(path, data):
                 nonlocal injected
+                target = restore_target(path)
                 if (fault == 'mid-restore' and not injected and mutation_entries == 2
-                        and path == paths[mutation_index] and data == snapshots[path]):
+                        and target == paths[mutation_index] and data == snapshots[target]):
                     injected = True
                     raise OSError('#1037 injected mid restore failure')
+
+            def restore_bytes(path, data):
+                maybe_inject(path, data)
                 return write_bytes(path, data)
+
+            def restore_atomic(root_arg, path, data, *, mode=None):
+                maybe_inject(path, data)
+                return write_atomic(root_arg, path, data, mode=mode)
 
             def process(index, stage):
                 nonlocal mutation_index, mutation_entries
@@ -135,11 +152,21 @@ class RestoreTests(unittest.TestCase):
                         'temporary compile result\n', '')
                 test = row['test']
                 if row.get('runner', 'cargo') == 'node':
-                    log = (f"not ok - {test}\n{row['anchors'][0]}\n" if stage == 'negative'
-                           else f'ok - {test}\n')
+                    # #1087: node_test_killed() only accepts a marker inside
+                    # the indented TAP block of the subtest's own
+                    # `not ok N - <name>` line, never on top-level output.
+                    log = (f'not ok 1 - {test}\n  ---\n  {row["anchors"][0]}\n  ...\n'
+                           if stage == 'negative' else f'ok 1 - {test}\n')
                 elif stage == 'negative':
-                    log = (f'test {test} ... FAILED\ntest result: FAILED\n'
-                           f"panicked at fixture: {row['anchors'][0]}\n")
+                    # #1087: named_test_killed() only accepts a marker inside
+                    # the panic payload of the thread libtest names after the
+                    # bound test, so simulate real libtest output instead of a
+                    # synthetic "panicked at" line that no strict judge sees.
+                    log = (f'test {test} ... FAILED\n\n---- {test} stdout ----\n'
+                           f"thread '{test}' panicked at src/fixture.rs:1:1:\n"
+                           f'{row["anchors"][0]}\n'
+                           f'note: run with `RUST_BACKTRACE=1` to display a backtrace\n\n'
+                           f'test result: FAILED. 0 passed; 1 failed; 0 ignored;\n')
                 else:
                     log = f'test {test} ... ok\ntest result: ok. 1 passed; 0 failed;\n'
                 return subprocess.CompletedProcess([], 101 if stage == 'negative' else 0, log, '')
@@ -160,7 +187,14 @@ class RestoreTests(unittest.TestCase):
                                                  process(selected.index(row), stage)))
             stack.enter_context(patch.object(module, 'mutating_sources', new=guard))
             stack.enter_context(patch.object(module, 'invalidate_completed', new=invalidate_and_capture))
-            stack.enter_context(patch.object(Path, 'write_bytes', new=restore))
+            if compile_only:
+                stack.enter_context(patch.object(Path, 'write_bytes', new=restore_bytes))
+            else:
+                # The runtime suites publish through write_source_atomic; the
+                # compile-only suite still truncates through Path.write_bytes.
+                write_atomic = module.write_source_atomic
+                stack.enter_context(patch.object(module, 'write_source_atomic',
+                                                 new=restore_atomic))
             stack.enter_context(patch.dict(os.environ, {
                 'CARGO_TARGET_DIR': str(root / 'unused-target'), 'PDRS_BASELINE': str(root / 'unused-baseline')}))
             args = ['negative.py', '--compile-only', str(output)] if compile_only else ['negative.py', str(output)]
