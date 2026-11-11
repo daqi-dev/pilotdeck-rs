@@ -940,6 +940,52 @@ mutations = [
      CFG + 'seed_read_state_blank_key_gate_order',
      '#2199 a null projectKey falls back like a missing one, '
      'so the sessionKey gate answers the blank key'),
+    # ── #2207 fix-r2 (GLM r3 sibling#1): the same asymmetry the config rows
+    # above close for #2199 held for the session_dir family too — the
+    # admission-null-refused mutant was bound to the resume test alone, so
+    # the (1b) null cells of the other four gate-order tests were guarded
+    # only by their positive assertions. Same mutant text, one code point,
+    # four more bound tests; the marker is already pinned for SESSION_DIR.
+    ('admission-null-refused-close-order', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     DIR + 'close_session_blank_key_gate_order',
+     '#2272 a null projectKey falls back like a missing one, '
+     'so the sessionKey gate answers the blank key'),
+    ('admission-null-refused-delete-order', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     DIR + 'delete_session_blank_key_gate_order',
+     '#2272 a null projectKey falls back like a missing one, '
+     'so the sessionKey gate answers the blank key'),
+    ('admission-null-refused-rename-order', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     DIR + 'rename_session_blank_key_gate_order',
+     '#2272 a null projectKey falls back like a missing one, '
+     'so the sessionKey gate answers the blank key'),
+    ('admission-null-refused-tag-order', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     DIR + 'tag_session_blank_key_gate_order',
+     '#2272 a null projectKey falls back like a missing one, '
+     'so the sessionKey gate answers the blank key'),
     # ── #1864: the three selectors now have a reader. Each write site
     # (permission, thinking, output style), each compose-step read leg
     # (permission, thinking, style merge), the live adapter's per-turn source
@@ -1095,6 +1141,8 @@ mutations = [
 # #2199 fix-r1: the six admission-null-refused-config rows above (DS
 # sibling#1, the #2564 fix-r1 precedent re-applied to the config family)
 # moved the counts to 98 rows / 65 literal-anchor entries.
+# #2207 fix-r2: the four admission-null-refused session_dir rows above
+# (GLM r3 sibling#1) moved the counts to 102 rows / 65 literal-anchor entries.
 LITERAL_ANCHORS = [
     (CONFIG, '#1457 session_model_set accepts the fixture selection'),
     (CONFIG, '#1457 session_model_clear succeeds'),

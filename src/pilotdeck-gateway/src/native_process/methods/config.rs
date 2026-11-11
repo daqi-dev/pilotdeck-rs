@@ -1370,6 +1370,11 @@ mod tests {
     // (#2207: `""` is its own cell, not a `"   "` stand-in; the TS gate
     // treats both alike, Node v22.22.0 probe in
     // `_tmp/20261111-issue-2199/ts-probe-gate.log`).
+    // The session_dir family's `blank_key_gate_order` walks this same
+    // gate-order shape. They are deliberately kept as two same-shape
+    // walkers (per-family parity readability, per-family negative control
+    // rows): a cell added here must be mirrored there, or the other
+    // family's tests keep passing without measuring the new cell.
     async fn config_blank_key_gate_order(
         method: &str,
         valid: fn(Option<&str>, Option<JsValue>, &Requests) -> JsValue,
