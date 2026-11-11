@@ -103,6 +103,10 @@ VERIFY_FIFO = ('upload::tests::upload_verify_attachment_of_a_fifo_leaf_'
                'is_rejected_within_the_watchdog')
 VERIFY_SYMLINK = 'upload::tests::upload_verify_attachment_never_follows_a_symlink_leaf'
 VERIFY_GROWN = 'upload::tests::upload_verify_attachment_of_a_grown_leaf_is_rejected'
+# #2098 fix-r2 (review MM concurrency#1): the absolute ceiling on the
+# summary read — the record's `bytes` paired with the digest read it drives.
+VERIFY_BYTES_CAP = (
+    'upload::tests::upload_verify_attachment_bytes_over_the_absolute_cap_is_rejected')
 READ_AT_FIFO = ('upload::tests::upload_read_at_metadata_swapped_for_a_fifo_'
                 'is_rejected_within_the_watchdog')
 READ_AT_ZERO = ('upload::tests::upload_read_at_metadata_swapped_for_a_dev_zero_symlink_'
@@ -627,6 +631,18 @@ mutations = [
             }''',
      VERIFY_GROWN,
      '#2098 a grown leaf must never pass attachment verification'),
+    # #2098 fix-r2 (review MM concurrency#1): the absolute ceiling on the
+    # summary read. The named test forges the record's `bytes` and `sha256`
+    # together with a sparse leaf of exactly that length — type, length, and
+    # digest all agree — so with this term `if false`-ed the verification
+    # succeeds and the named test's `expect_err` receipt is the kill. The
+    # write side caps a real attachment at 1 GiB, so the over-cap record is
+    # not one the gateway could have written.
+    ('verify-bytes-cap-dropped', STORE,
+     '            if expected_bytes > MAX_ATTACHMENT_READ_BYTES as f64 {',
+     '            if false {',
+     VERIFY_BYTES_CAP,
+     '#2098 a forged bytes past the absolute cap must never verify'),
     # #2098 (S2, `read_at`): the same two flag rows for the record leaf's
     # open, plus the size cap. The cap row `if false`-es the one comparison;
     # the named test extends the leaf past the cap in place, so only that
@@ -1247,7 +1263,8 @@ EXPECTED_NAMES = (
     # S2 read_at 三条：非阻塞打开 / 不跟随链接 / metadata 上限），与上面同一名册
     # 口径：名册与运行时逐名同序，漏一条即整族 rc 2。
     'verify-open-nonblock-dropped', 'verify-open-nofollow-dropped',
-    'verify-hash-length-dropped', 'read-at-open-nonblock-dropped',
+    'verify-hash-length-dropped', 'verify-bytes-cap-dropped',
+    'read-at-open-nonblock-dropped',
     'read-at-open-nofollow-dropped', 'read-at-metadata-cap-dropped',
     'lease-root-link-refused',
     'read-at-upload-root-prefix-dropped',

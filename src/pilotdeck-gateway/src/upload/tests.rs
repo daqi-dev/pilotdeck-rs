@@ -1820,6 +1820,82 @@ fn upload_verify_attachment_of_a_grown_leaf_is_rejected() {
     );
 }
 
+/// #2098 fix-r2 (review MM concurrency#1): the absolute ceiling on the
+/// summary read. The record's `bytes` and `sha256` are forged together with
+/// a sparse leaf of exactly that length — type, length, and digest all
+/// agree, so without the ceiling this record verifies and the digest read
+/// streams the claimed `bytes` off the disk. The write side caps a real
+/// attachment at 1 GiB (`options.max_file_bytes`), so a larger `bytes`
+/// cannot describe a record this gateway wrote; it is refused as the same
+/// integrity failure as the other forged faces.
+#[test]
+fn upload_verify_attachment_bytes_over_the_absolute_cap_is_rejected() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    completed(&h);
+    let leaf = artifact_path(&project);
+    let approved = fs::read(&leaf).expect("#2098 read the approved leaf bytes");
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(&leaf)
+        .expect("#2098 open the stored leaf for the sparse forged length");
+    file.set_len(MAX_ATTACHMENT_READ_BYTES + 1)
+        .expect("#2098 extend the leaf to the forged over-cap length");
+    drop(file);
+    let metadata = metadata_path(&project);
+    let mut record = parse_json(
+        &fs::read_to_string(&metadata).expect("#2098 read the record for the forged bytes"),
+    )
+    .expect("#2098 parse the record for the forged bytes");
+    let mut attachments = array(&record, "attachments").to_vec();
+    assert!(
+        !attachments.is_empty(),
+        "#2098 the completed record carries its attachment"
+    );
+    let mut attachment = attachments.remove(0);
+    // The digest of exactly MAX_ATTACHMENT_READ_BYTES + 1 bytes as the
+    // extended leaf holds them — the approved bytes, then sparse zeros.
+    // With the ceiling dropped this is what `hash_file_exact` computes off
+    // the leaf, so the record is internally consistent and only the cap
+    // refuses it. Streamed, not allocated: the forged length is 1 GiB + 1.
+    let mut digest = Sha256::new();
+    digest.update(&approved);
+    let zeros = [0_u8; 64 * 1024];
+    let mut left = MAX_ATTACHMENT_READ_BYTES + 1 - approved.len() as u64;
+    while left > 0 {
+        let take = zeros.len().min(left as usize);
+        digest.update(&zeros[..take]);
+        left -= take as u64;
+    }
+    set(
+        &mut attachment,
+        "sha256",
+        text(&format!("{:x}", digest.finalize())),
+    );
+    set(
+        &mut attachment,
+        "bytes",
+        JsValue::Number((MAX_ATTACHMENT_READ_BYTES + 1) as f64),
+    );
+    attachments.insert(0, attachment);
+    set(&mut record, "attachments", JsValue::Array(attachments));
+    fs::write(
+        &metadata,
+        json_line(&record).expect("#2098 serialize the forged record"),
+    )
+    .expect("#2098 write the forged record");
+    let error = h
+        .store
+        .verify_attachment("upload-1", "project", None)
+        .expect_err("#2098 a forged bytes past the absolute cap must never verify");
+    assert_eq!(
+        error.code.as_str(),
+        "ATTACHMENT_TAMPERED",
+        "#2098 the absolute ceiling must refuse the over-cap summary read"
+    );
+}
+
 /// #2098 (S2, FIFO T1): `metadata.json` swapped for a FIFO inside
 /// `read_at`'s canonicalize→open window. The approved stat only refuses a
 /// symlink, so the FIFO passes it; the guarded open returns at once and the
