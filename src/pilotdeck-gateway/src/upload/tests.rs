@@ -1180,12 +1180,14 @@ fn upload_metadata_directory_reports_the_read_stage() {
 
 /// #1494: `metadata.json` is swapped for an outside-project symlink inside
 /// `read_at`'s canonicalize→open window. The prefix check already passed on
-/// the pre-swap spelling, and `File::open` follows the link onto the outside
-/// bytes — the approval must instead be bound to the opened handle, whose
-/// own resolved path (`handle_path`, macOS F_GETPATH / Linux /proc/self/fd)
-/// names the outside file. The forged record carries the correct uploadId
-/// and projectKey, so only the handle binding can reject it. RED against the
-/// pre-fix code: the outside record is read back.
+/// the pre-swap spelling, and the outside record carries the correct
+/// uploadId and projectKey. #2098's guarded open (`O_NOFOLLOW`) refuses the
+/// swapped link at the open itself — before the handle binding this test
+/// used to pin — so the observable shape is Node's ELOOP open error naming
+/// the canonical spelling that was asked to open. The refusal is also the
+/// proof of the safety intent: no outside byte is read into the pipeline,
+/// because the record would have to be read back first. RED against the
+/// pre-#2098 code: the open followed the link onto the outside bytes.
 #[cfg(unix)]
 #[test]
 fn upload_read_at_metadata_swapped_between_canonicalize_and_open_is_rejected() {
@@ -1194,6 +1196,9 @@ fn upload_read_at_metadata_swapped_between_canonicalize_and_open_is_rejected() {
     let h = golden_store(&project);
     created(&h);
     let metadata = metadata_path(&project);
+    // The guarded open reports the canonical spelling it was asked to open;
+    // sampled before the swap so it is still the real record's path.
+    let expected_open_path = fs::canonicalize(&metadata).unwrap();
     let outside = project.join("outside-forged.json");
     let mut forged = parse_json(&fs::read_to_string(&metadata).unwrap()).unwrap();
     set(&mut forged, "forgedMarker", text("outside"));
@@ -1215,22 +1220,27 @@ fn upload_read_at_metadata_swapped_between_canonicalize_and_open_is_rejected() {
         "#1494 the swap hook must fire inside the canonicalize→open window"
     );
     let error = result.expect_err("#1494 the swapped-in outside record must never be read back");
+    let expected_open_error = format!(
+        "ELOOP: too many symbolic links encountered, open '{}'",
+        expected_open_path.display()
+    );
     assert_eq!(
         (error.code.as_str(), error.message_string().as_str()),
-        (
-            "PROJECT_PATH_FORBIDDEN",
-            "Upload metadata handle leaves the upload directory."
-        )
+        ("ELOOP", expected_open_error.as_str()),
+        "#2098 the guarded open must refuse the swapped link at the open itself"
     );
 }
 
 /// #1494 (review concurrency#1, mirrored from #1468): the handle check
-/// answers with the object's *current* name. Let the open follow an outside
-/// symlink (so the descriptor references the outside record) and then rename
-/// that record over `metadata.json`: the handle now names a location inside
-/// the upload root, the prefix check ran on the pre-open spelling and passes,
-/// and only the identity recorded before the open exposes the swap. RED
-/// against the previous head, where this returned the forged record.
+/// answers with the object's *current* name. Let the open land on an outside
+/// regular file through a swapped-in hard link (so the descriptor references
+/// the outside record; #2098's guarded open refuses a symlink at the open
+/// itself, so the window swap-in is a hard link onto the outside file) and
+/// then rename that record over `metadata.json`: the handle now names a
+/// location inside the upload root, the prefix check ran on the pre-open
+/// spelling and passes, and only the identity recorded before the open
+/// exposes the swap. RED against the previous head, where this returned the
+/// forged record.
 #[cfg(unix)]
 #[test]
 fn upload_read_at_record_renamed_after_open_is_rejected() {
@@ -1251,7 +1261,7 @@ fn upload_read_at_record_renamed_after_open_is_rejected() {
         let outside = outside.clone();
         move |_path: &Path| {
             fs::remove_file(&metadata).unwrap();
-            std::os::unix::fs::symlink(&outside, &metadata).unwrap();
+            fs::hard_link(&outside, &metadata).unwrap();
             opened.store(true, Ordering::SeqCst);
         }
     };
@@ -1361,8 +1371,11 @@ fn upload_read_at_metadata_swapped_before_approved_stat_is_rejected() {
 /// Segment 1 — `read_at` returning the forged record — is
 /// `upload_read_at_metadata_swapped_between_canonicalize_and_open_is_rejected`
 /// above; the composer's lease handling of such bytes is covered by the
-/// existing services tests (same crate, same lease root). RED against the
-/// pre-fix code: the lease is granted over the outside bytes.
+/// existing services tests (same crate, same lease root). #2098's guarded
+/// open refuses the swapped link at the open itself, so the acquisition
+/// fails with Node's ELOOP open error before any lease is granted — the
+/// refusal is the proof the outside bytes never reach the lease. RED against
+/// the pre-fix code: the lease is granted over the outside bytes.
 #[cfg(unix)]
 #[test]
 fn upload_read_at_forged_record_cannot_reach_the_lease() {
@@ -1371,6 +1384,9 @@ fn upload_read_at_forged_record_cannot_reach_the_lease() {
     let h = golden_store(&project);
     completed(&h);
     let metadata = metadata_path(&project);
+    // The guarded open reports the canonical spelling it was asked to open;
+    // sampled before the swap so it is still the real record's path.
+    let expected_open_path = fs::canonicalize(&metadata).unwrap();
     let secret = project.join("outside-secret.bin");
     fs::write(&secret, b"outside-secret-bytes").unwrap();
     let mut forged = parse_json(&fs::read_to_string(&metadata).unwrap()).unwrap();
@@ -1413,12 +1429,14 @@ fn upload_read_at_forged_record_cannot_reach_the_lease() {
     let error = lease
         .err()
         .expect("#1494 a forged record must never reach the attachment lease");
+    let expected_open_error = format!(
+        "ELOOP: too many symbolic links encountered, open '{}'",
+        expected_open_path.display()
+    );
     assert_eq!(
         (error.code.as_str(), error.message_string().as_str()),
-        (
-            "PROJECT_PATH_FORBIDDEN",
-            "Upload metadata handle leaves the upload directory."
-        )
+        ("ELOOP", expected_open_error.as_str()),
+        "#2098 the guarded open must refuse the swapped link before the lease"
     );
 }
 
