@@ -1345,7 +1345,6 @@ pub fn register_native(
 ) {
     register_native_inner(mounts, responder, None)
 }
-#[cfg(test)]
 pub fn register_native_with_base(
     mounts: &mut super::loader::ChannelLoaderMounts,
     responder: Arc<dyn crate::channel::bluebubbles::InteractionResponder>,

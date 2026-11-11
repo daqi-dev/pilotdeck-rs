@@ -62,18 +62,11 @@ fn edit_input() -> JsValue {
     JsValue::Object(object([
         ("notebook_path", JsValue::from("book.ipynb")),
         ("cell_id", JsValue::from("cell-0")),
-        (
-            "new_source",
-            JsValue::from(
-                "after
-",
-            ),
-        ),
+        ("new_source", JsValue::from("after\n")),
     ]))
 }
 
-const NOTEBOOK: &str = r#"{"cells":[{"cell_type":"code","source":["before
-"],"outputs":[]}],"nbformat":4,"nbformat_minor":0}"#;
+const NOTEBOOK: &str = r#"{"cells":[{"cell_type":"code","source":["before\n"],"outputs":[]}],"nbformat":4,"nbformat_minor":0}"#;
 
 #[tokio::test]
 async fn ordinary_notebook_reads_and_edits_through_the_public_tools() {
