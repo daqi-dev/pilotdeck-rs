@@ -180,6 +180,30 @@ fn roots() -> Fixture {
     }
 }
 
+/// #2775 fix-r1 (review r1, MM concurrency#2): the replay's scratch fixture
+/// directory must not survive a panicking test — the `native-http-served-head-cl0`
+/// negative control dies at the comparison *after* the exchange, so a cleanup
+/// that only runs on the green path leaks `/tmp/pdrs-1209-<uuid>`. A drop
+/// guard cleans up on unwind too.
+struct FixtureDir(PathBuf);
+
+impl Drop for FixtureDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// #2775 fix-r1: the accept-loop task must be aborted on unwind too — a panic
+/// in `capture` used to skip the explicit `abort()` and leave the listener
+/// task to the runtime's exit path instead.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// The routing config of one fixture server: `c` is the TS non-loopback case
 /// (the recorder bound 127.0.0.2, but the address is not part of any golden
 /// bytes, so the replay binds 127.0.0.1 everywhere and only the routing
@@ -214,7 +238,7 @@ async fn exchange(server: &str, request: &[u8], id: &str, fixture: &Fixture) -> 
         .expect("#1209 bind listener");
     let config = config_for(server, fixture);
     let bound = listener.local_addr().expect("#1209 listener local address");
-    let server_task = tokio::spawn(async move {
+    let server_task = AbortOnDrop(tokio::spawn(async move {
         loop {
             let (socket, _) = listener.accept().await.expect("#1209 accept connection");
             let config = config.clone();
@@ -239,7 +263,7 @@ async fn exchange(server: &str, request: &[u8], id: &str, fixture: &Fixture) -> 
                 }
             });
         }
-    });
+    }));
     let mut stream = timeout(DEADLINE, TcpStream::connect(bound))
         .await
         .expect("#1209 connect deadline")
@@ -249,7 +273,7 @@ async fn exchange(server: &str, request: &[u8], id: &str, fixture: &Fixture) -> 
         .await
         .expect("#1209 write request bytes");
     let captured = capture(&mut stream, id).await;
-    server_task.abort();
+    server_task.0.abort();
     captured
 }
 
@@ -299,6 +323,7 @@ async fn capture(stream: &mut TcpStream, id: &str) -> (String, bool) {
 async fn replay(id: &str) {
     let cell = cell(id);
     let fixture = roots();
+    let _scratch = FixtureDir(fixture.parent.clone());
     let (raw, closed) = exchange(&cell.server, &cell.request, &cell.id, &fixture).await;
     let expected = expected_response(&cell, &fixture);
     let admitted = parser_admission(&cell.id);
@@ -313,7 +338,6 @@ async fn replay(id: &str) {
         "#1209 cell {} connection closed flag",
         cell.id
     );
-    let _ = std::fs::remove_dir_all(&fixture.parent);
 }
 
 /// #1359: the golden `static-upper-lower` cell (`GET /upper.txt` against a

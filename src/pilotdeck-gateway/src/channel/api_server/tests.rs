@@ -182,12 +182,16 @@ fn assert_parser_admission_cell_records_its_knob(id: &str, case: &Value) {
 /// `parser_admission_cells_cover_exactly_the_oracle_bare_400s` guard carries.
 /// The api-server set is not "exactly the bare 400s"
 /// — `missing-host` is registered but inert (its 400 is date+chunked, never a
-/// length line) — so the two directions are: every entry exists in the oracle
+/// length line) — so the directions are: every entry exists in the oracle
 /// and none of its recorded expectations carries a `content-length` the mask
-/// could hide (the exemption is needed-or-inert, never harmful), and every
+/// could hide (the exemption is needed-or-inert, never harmful), every
 /// cell whose recorded rejection is the bare parser shape (a 400 whose only
 /// header is `connection`) is registered, so a future bare-400 cell replays
-/// red with hyper's line unmasked instead of silently needing the exemption.
+/// red with hyper's line unmasked instead of silently needing the exemption,
+/// and — fix-r1 (#2775 review, DS sibling#1 + MM boundary#1) — the registered
+/// set is exactly the bare cells plus the inert entry, so a stale widening
+/// fails here by name instead of only at the knob guard's indirect
+/// `other => panic!` arm.
 #[test]
 fn parser_admission_cells_stay_justified_by_the_oracle() {
     let recorded = oracle();
@@ -212,11 +216,13 @@ fn parser_admission_cells_stay_justified_by_the_oracle() {
     let mut bare: Vec<&str> = cases
         .iter()
         .filter(|case| {
-            case["expect"]
-                .as_array()
-                .expect("#1333 expectations")
-                .iter()
-                .all(|expected| {
+            let expectations = case["expect"].as_array().expect("#1333 expectations");
+            // #2775 fix-r1 (MM boundary#2 / DS boundary#1): an empty
+            // expectation list is not a bare 400 — `all` over zero entries is
+            // vacuously true, which would demand the mask for a cell that
+            // recorded no rejection evidence at all.
+            !expectations.is_empty()
+                && expectations.iter().all(|expected| {
                     expected["status"].as_u64() == Some(400)
                         && expected["body"].as_str() == Some("")
                         && expected["headers"]
@@ -237,6 +243,87 @@ fn parser_admission_cells_stay_justified_by_the_oracle() {
     assert!(
         unregistered.is_empty(),
         "#2153 every bare parser-400 cell must be registered for the content-length exemption: {unregistered:?}"
+    );
+    // #2775 fix-r1: the upper bound. The registered list is exactly the
+    // oracle's bare 400s plus the explicit inert exemption below, so
+    // widening it with a cell that never exhibits the registered shape
+    // (say `body-read-timeout`) fails here with its id, not only at the
+    // knob guard's `other => panic!` arm — the guard is self-sufficient.
+    let mut justified = bare
+        .iter()
+        .copied()
+        .chain(INERT_PARSER_ADMISSION_CELLS.iter().copied())
+        .collect::<Vec<&str>>();
+    justified.sort_unstable();
+    let mut registered = PARSER_ADMISSION_CELLS.to_vec();
+    registered.sort_unstable();
+    assert_eq!(
+        registered, justified,
+        "#2775 the registered parser-admission cells must be exactly the oracle's bare 400s plus the inert {INERT_PARSER_ADMISSION_CELLS:?} exemption: a stale entry must fail here, not only at the knob guard"
+    );
+}
+
+/// #2775 fix-r1 (review r1, MM sibling#1 / DS sibling#2): the
+/// `content-length: 0` exemption `PARSER_ADMISSION_CELLS` grants is the
+/// only one left — an injected `content-length: 0` on an unregistered cell
+/// must survive `actual_headers` (a grown length line replays red instead
+/// of the mask normalizing it away), while the registered bare 400's line
+/// stays masked. Sibling lanes carry the same leg (`native_http`,
+/// `native_ws`, `webhook`, `api_web`); this is the api-server lane's.
+#[test]
+fn only_the_registered_cells_mask_a_content_length_zero() {
+    let recorded = oracle();
+    // The recorded first expectation of a cell, rebuilt as the raw side the
+    // replay compares: `stream` is the unregistered host (it records no
+    // length line), `unknown-method` the registered bare 400.
+    let response = |id: &str, inject: bool| {
+        let expected = recorded["cases"]
+            .as_array()
+            .expect("#1333 oracle cases")
+            .iter()
+            .find(|case| case["id"].as_str() == Some(id))
+            .and_then(|case| case["expect"].as_array())
+            .and_then(|expect| expect.first())
+            .unwrap_or_else(|| panic!("#1333 {id}: the oracle cell is missing"));
+        let mut headers = expected["headers"]
+            .as_object()
+            .expect("#1333 oracle headers")
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.clone(),
+                    value
+                        .as_str()
+                        .expect("#1333 oracle header value")
+                        .to_owned(),
+                )
+            })
+            .collect::<BTreeMap<String, String>>();
+        if inject {
+            headers.insert("content-length".to_owned(), "0".to_owned());
+        }
+        RawResponse {
+            status: expected["status"].as_u64().map(|status| status as u16),
+            headers,
+            body: expected["body"]
+                .as_str()
+                .expect("#1333 oracle body")
+                .as_bytes()
+                .to_vec(),
+            error: None,
+        }
+    };
+    assert_ne!(
+        actual_headers(&response("stream", true), false),
+        actual_headers(&response("stream", false), false),
+        "#2775 an injected content-length: 0 on an unregistered cell must not normalize away"
+    );
+    // The registered direction stays masked: hyper's line on the bare 400 is
+    // the one exemption left, so the TS-shaped headers still compare equal.
+    assert_eq!(
+        actual_headers(&response("unknown-method", true), true),
+        actual_headers(&response("unknown-method", false), true),
+        "#2775 the registered bare-400 exemption still masks hyper's content-length: 0"
     );
 }
 
@@ -858,11 +945,20 @@ fn mask_text(text: &str) -> String {
 /// date+chunked on both sides and never carries a length line, so the mask
 /// cannot fire — kept registered because #1683 scoped the pair together).
 /// `parser_admission_cells_stay_justified_by_the_oracle` holds the list
-/// against the oracle in both directions: every entry exists and none can
-/// mask a TS-recorded length line, and every cell whose recorded rejection
-/// is the bare parser shape is in the list, so a future bare-400 cell cannot
-/// replay green with the line unmasked.
+/// against the oracle in all three directions: every entry exists and none
+/// can mask a TS-recorded length line, every cell whose recorded rejection
+/// is the bare parser shape is in the list, and — #2775 fix-r1 — the list is
+/// exactly those bare cells plus the inert entry below, so a future
+/// bare-400 cell cannot replay green with the line unmasked and a stale
+/// widening entry cannot hide behind the knob guard's panic either.
 const PARSER_ADMISSION_CELLS: &[&str] = &["unknown-method", "missing-host"];
+
+/// #2775 fix-r1: the inert half of `PARSER_ADMISSION_CELLS` — `missing-host`
+/// is registered (the #1683 pair) but its 400 is date+chunked and never
+/// carries a length line, so it is not a bare 400. Written as an explicit
+/// set so the guard's upper bound can compare `bare ∪ inert` as an equality
+/// instead of a subset.
+const INERT_PARSER_ADMISSION_CELLS: &[&str] = &["missing-host"];
 
 /// #1683: `parser_admission` scopes the one registered transport difference to
 /// the two cells that actually exhibit it. hyper adds `content-length: 0` to
