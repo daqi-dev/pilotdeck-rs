@@ -24,7 +24,8 @@ class CleanupTests(unittest.TestCase):
 
     def check(self, identities, stop=None, group_error=None):
         stop = stop or subprocess.CompletedProcess([], 0, '', '')
-        with patch.object(cohort, 'container_identity', side_effect=identities), \
+        with patch.object(cohort, 'created_container_id', return_value='a' * 64), \
+             patch.object(cohort, 'container_identity', side_effect=identities), \
              patch.object(cohort.subprocess, 'run', return_value=stop) as stopper, \
              patch.object(cohort.os, 'killpg', side_effect=group_error):
             result = cohort.cleanup_owned_container(self.child, 'owned', Path('/unused'), self.common)
@@ -47,8 +48,22 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(row['pendingOwners'], [12345])
 
     def test_daemon_query_failure_never_means_empty(self):
-        row, _ = self.check([subprocess.CalledProcessError(1, ['docker'])])
+        row, _ = self.check([subprocess.CalledProcessError(1, ['docker']), subprocess.CalledProcessError(1, ['docker'])], group_error=ProcessLookupError())
         self.assertFalse(row['containerAbsentVerified'])
+        self.assertEqual(row['pendingOwners'], [12345])
+
+    def test_failed_first_inventory_still_stops_the_owned_id(self):
+        row, stopper = self.check([subprocess.CalledProcessError(1, ['docker']), None], group_error=ProcessLookupError())
+        self.assertEqual(stopper.call_args.args[0][-1], 'a' * 64)
+        self.assertTrue(row['containerAbsentVerified'])
+
+    def test_missing_create_confirmation_cannot_release_after_client_death(self):
+        with patch.object(cohort, 'created_container_id', return_value=None), \
+             patch.object(cohort, 'container_identity', return_value=None), \
+             patch.object(cohort.os, 'killpg', side_effect=ProcessLookupError()):
+            row = cohort.cleanup_owned_container(self.child, 'owned', Path('/unused'), self.common)
+        self.assertFalse(row['containerAbsentVerified'])
+        self.assertFalse(row['creationConfirmed'])
         self.assertEqual(row['pendingOwners'], [12345])
 
     def test_absent_container_but_present_client_group_retains_owner(self):

@@ -265,7 +265,7 @@ def manifest_inventory(root):
                'host-sidecar-adapter.mjs', 'host-sidecar-source-loader.mjs',
                'host-sidecar-stimulus.mjs', 'run-host.py')]
     # Outer host capture scheduler. It is not loaded by the six-cell TS fixture.
-    paths.append('scripts/a5-19/host-cohort.py')
+    paths += ['scripts/a5-19/host-cohort.py', 'scripts/a5-19/test_host_cohort_cleanup.py']
     inventory.update({'../../' + name: name for name in paths})
     return inventory
 

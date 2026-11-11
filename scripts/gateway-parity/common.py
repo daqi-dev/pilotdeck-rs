@@ -203,6 +203,7 @@ DATA_FILES = (
     'fixtures/session-calibration.json',        # A5.3 E1 fixture; FROZEN hash row
     'fixtures/session-expectations.json',       # A5.4 A19-HOST expectations; FROZEN hash row
     'fixtures/retirement-entry-inventory.json',
+    'fixtures/channel-applicability.json',     # fixed TS channel capabilities; FROZEN hash row
     'fixtures/retirement-methods.json',        # E1 retirement 101-method fixture; FROZEN hash row
     'package.json',                             # npm manifest for A3 tooling
     'package-lock.json',                        # pinned A3 dependency graph

@@ -192,6 +192,7 @@ def capture_ref(plan, job, attempt):
     assert launch['baselineDependencies'] == plan['baselineDependencies']
     assert cleanup['exitCode'] == 0 and cleanup['containerRemaining'] is None and not cleanup['pendingOwners']
     assert cleanup['containerAbsentVerified'] is True and cleanup['clientGroupState'] == 'ESRCH'
+    assert cleanup['creationConfirmed'] is True
     out = attempt / 'inside'
     if job['host'] == 'ts':
         reference = read(out / 'host-capture.json')
@@ -241,6 +242,13 @@ def skip_reason(accepted, count, retry_failed):
     return None
 
 
+def created_container_id(cidfile):
+    cid = cidfile.read_text().strip() if cidfile.exists() else None
+    if cid is not None:
+        assert len(cid) == 64 and all(c in '0123456789abcdef' for c in cid), 'invalid owned container id'
+    return cid
+
+
 def container_identity(name, cidfile):
     # Docker's complete inventory is authoritative for Docker-owned containers.
     # A filtered process/name scan is not an emptiness proof for a process group.
@@ -248,9 +256,7 @@ def container_identity(name, cidfile):
         ['docker', 'container', 'ls', '--all', '--no-trunc', '--format', '{{json .}}'],
         text=True, timeout=5)
     rows = [json.loads(line) for line in listing.splitlines() if line.strip()]
-    cid = cidfile.read_text().strip() if cidfile.exists() else None
-    if cid is not None:
-        assert len(cid) == 64 and all(c in '0123456789abcdef' for c in cid), 'invalid owned container id'
+    cid = created_container_id(cidfile)
     matches = [row for row in rows if row['Names'] == name or (cid and row['ID'] == cid)]
     assert len(matches) <= 1, 'owned container identity is ambiguous'
     if not matches:
@@ -264,9 +270,18 @@ def cleanup_owned_container(child, name, cidfile, common):
     diagnostics = []
     remaining = None
     verified = False
+    creation_confirmed = child is None
     group_state = 'NOT_STARTED' if child is None else 'UNKNOWN'
     try:
-        cid = container_identity(name, cidfile)
+        created = created_container_id(cidfile)
+        creation_confirmed = child is None or created is not None
+        try:
+            cid = container_identity(name, cidfile)
+        except (OSError, subprocess.SubprocessError) as error:
+            # The create response's id still identifies our container when the
+            # inventory request fails. Never fall back to an unverified name.
+            diagnostics.append({'operation': 'initial inventory', 'detail': str(error)})
+            cid = created
         if cid is not None:
             # The attach client may already have exited while the container lives.
             try:
@@ -285,20 +300,24 @@ def cleanup_owned_container(child, name, cidfile, common):
                 group_state = 'PRESENT'
             except ProcessLookupError:
                 group_state = 'ESRCH'
-        # Recheck after client reap: no delayed create can follow a clean result.
+        # A cidfile proves the daemon completed this client's create request.
+        # Without it a killed client could still have a create request in flight.
+        # Even an empty inventory cannot prove that unconfirmed request absent.
+        creation_confirmed = child is None or created_container_id(cidfile) is not None
         for index in range(4):
             remaining = container_identity(name, cidfile)
             if remaining is None:
                 break
             if index < 3:
                 time.sleep(0.1)
-        verified = remaining is None and group_state in ('NOT_STARTED', 'ESRCH')
+        verified = creation_confirmed and remaining is None and group_state in ('NOT_STARTED', 'ESRCH')
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, AssertionError) as error:
         diagnostics.append({'operation': 'cleanup proof', 'detail': str(error)})
     if verified and child is not None:
         common.LIVE_GROUPS.discard(child.pid)
     return {'exitCode': None if child is None else child.returncode,
             'containerRemaining': remaining, 'containerAbsentVerified': verified,
+            'creationConfirmed': creation_confirmed,
             'clientGroupState': group_state, 'cleanupDiagnostics': diagnostics,
             'pendingOwners': sorted(common.LIVE_GROUPS)}
 

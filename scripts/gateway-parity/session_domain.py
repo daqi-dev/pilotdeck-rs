@@ -253,7 +253,8 @@ def hashes():
     # params edit can no longer slip past APPARATUS_CHANGED.
     paths = [SCRIPT / name for name in ('fixtures/session-calibration.json',
                                         'fixtures/session-expectations.json',
-                                        'fixtures/retirement-methods.json', 'fixtures/retirement-entry-inventory.json')]
+                                        'fixtures/retirement-methods.json', 'fixtures/retirement-entry-inventory.json',
+                                        'fixtures/channel-applicability.json')]
     paths += [ROOT / 'scripts/a5-19' / name for name in FIXTURE_NAMES]
     return {**apparatus_hashes(), **{p.relative_to(ROOT).as_posix(): digest(p) for p in paths}}
 
@@ -3065,7 +3066,8 @@ def main():
                         ROOT / 'src/pilotdeck-gateway/tests/fixtures/native-history/subagent-bundle.json'))
                 if args.suite == 'retirement' and all(native_inputs):
                     prerequisites.extend((SCRIPT / 'retirement_entries.py',
-                                          SCRIPT / 'fixtures/retirement-entry-inventory.json'))
+                                          SCRIPT / 'fixtures/retirement-entry-inventory.json',
+                                          SCRIPT / 'fixtures/channel-applicability.json'))
                     if args.retirement_cold_capture:
                         prerequisites.append(SCRIPT / 'retirement_cold.py')
                 missing = [str(path) for path in prerequisites if not path.is_file()]

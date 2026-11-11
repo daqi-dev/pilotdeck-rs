@@ -5894,3 +5894,6 @@ a7d22018a 同头 fmt/严格clippy/四bin通过；6508 Gateway库项全覆盖分�
 ### 2026-11-11 13:15 CST · 真实安装与媒体通过，继续共同头验收
 
 5ab669add严格检查/四bin完成；完整Gateway库分片6531项为6271PASS/1FAIL/259ignored，唯一FAIL是三方接main后的AO负控fixture摘要漏同步，已接精确摘要修复并保留原FAIL。CLI58PASS/2ignored、transport41PASS/1ignored、builtin8PASS、FunASR1PASS；guard直接跑遗漏CARGO的旧51/2失败保留，通过正式cargo入口同头53PASS（今后guard只用cargo test入口）。真实媒体15格全PASS且JPEG符号不外泄；旧1c→5ab两代公开update真实编译原子切换通过，native安装消费者33skills/109资产/实际默认sidecar与退出清理全通过，Docker更新拒绝和Linuxcomm截断误判旧失败均保留。收Slack失败auth清理、Cron原生粘性失败测试、安装观察修复和19+13正式消费者第一批；宿主清理修复7负例及2真实Docker情况通过，尚待新头正式采集与两家复核。150/四host/session/冷切与冻结登记未闭合，不标完整替换。所有测试仅cb8，原正本/前端/快照不动；下一步新共同头编译、渠道与HTTP正式生产器、同头正式全域验收。
+
+
+13:4x增记：a954新头10构建/检查阶段通过，Slack19PASS/2ignored、switch20PASS、AO固定摘要1PASS及19负控锚点检查通过；安装原件351文件已拉回主仓逐SHA核实。正式retirement入口在采样前发现新增渠道JSON漏注册，101样本为0，原BLOCKED保留；普通HTTP/Cron/AlwaysOn六格均退出0，行为独立复核中。补白名单/在途指纹/前置清单三处、宿主create确认与初查失败清理（9负例及2真实Docker通过），以及SMS重载取最新输入marker。尚未完整host/150/冻结/冷切验收，继续按同头采集，不复用旧头通过数。
