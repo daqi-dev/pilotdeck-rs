@@ -28,7 +28,13 @@ the registered residual) and `sms-headers-stop-no-disarm` (the stop watch
 disarming a draining connection's deadline). `#2499` fix-r1 adds two more:
 `sms-headers-grid-inclusive` (an on-grid deadline holding for its successor
 grid point) and `sms-headers-chunked-body-withheld` (a chunked request body
-staying "open" instead of self-locking the handler). `#2026` (decision C) replaced
+staying "open" instead of self-locking the handler). `#2499` fix-r3 widens
+three of those rows into all-cells list bindings for the two same-read
+swallowed-head cells (residual 3's expansion to the shape where the follow-up
+head's bytes never re-cross the gate's accounting): `sms-header-read-no-timeout`
+(the close never comes), `sms-headers-grid-off` (the close lands at the
+deadline itself) and `sms-headers-idle-followup-408` (the close writes the 408
+instead of staying byte-silent). `#2026` (decision C) replaced
 #2035's
 `sms-stop-waits-for-connections` — its detach semantics is now the *mutation*,
 not the production shape — with `sms-stop-no-drain` (the pre-#2026 detach
@@ -60,9 +66,19 @@ switches = [
     # `.timer(..).header_read_timeout(..)` builder arm to the read gate's
     # own deadline (`serve_sms_connection` reads it as `None`); the kill
     # shape is unchanged — the close never comes and the read times out.
+    # #2499 fix-r3 adds the two same-read swallowed-head cells (the
+    # registered residual 3's fix-r3 expansion): without the deadline the
+    # standby window never arms either, so their EOF probes read a window
+    # budget instead of the close.
     ('sms-header-read-no-timeout', SMS / 'mod.rs',
-     'half_sent_head_is_closed_at_the_deadline_and_leaves_no_task',
-     '#1955 the server retired the stalled head at the deadline'),
+     ['half_sent_head_is_closed_at_the_deadline_and_leaves_no_task',
+      'a_follow_up_head_swallowed_in_the_same_read_as_the_previous_request_closes_on_the_standby_landing',
+      'a_follow_up_head_swallowed_with_a_read_ahead_body_segment_closes_on_the_standby_landing'],
+     ['#1955 the server retired the stalled head at the deadline',
+      'swallowed in the same read as the previous request: the idle keep-alive '
+      'connection was never closed',
+      'swallowed with a read-ahead body segment: the idle keep-alive '
+      'connection was never closed']),
     # #2499: the expiry answers with the pre-#2499 zero-byte close instead of
     # Node's 51-byte 408. Killed by the same wall-clock case's byte
     # assertion — the close still comes (at the landing), so only the
@@ -76,12 +92,22 @@ switches = [
     # the +15 s deadline, so the probe between the deadline and the +30 s
     # landing reads it; the on-grid cell's fires at the +30 s deadline the
     # strictly-greater comparison holds for +60 s, so its probe past the
-    # deadline reads it too.
+    # deadline reads it too. #2499 fix-r3 adds the two same-read
+    # swallowed-head cells (the registered residual 3's fix-r3 expansion):
+    # their standby windows anchor at +0.06 s / +10.06 s, so the mutant
+    # closes at the +15.06 s / +25.06 s deadline itself and the +29.46 s
+    # still-open probes read the already-latched EOF.
     ('sms-headers-grid-off', SMS / 'mod.rs',
      ['the_408_lands_on_the_first_grid_point_after_the_deadline',
-      'an_on_grid_deadline_fires_at_its_successor_grid_point'],
+      'an_on_grid_deadline_fires_at_its_successor_grid_point',
+      'a_follow_up_head_swallowed_in_the_same_read_as_the_previous_request_closes_on_the_standby_landing',
+      'a_follow_up_head_swallowed_with_a_read_ahead_body_segment_closes_on_the_standby_landing'],
      ['stays unanswered between its +15 s deadline and the +30 s grid landing',
-      'stays unanswered past its own +30 s deadline']),
+      'stays unanswered past its own +30 s deadline',
+      'the follow-up head swallowed in the same read as the previous request '
+      'keeps the connection open',
+      'the follow-up head swallowed with a read-ahead body segment '
+      'keeps the connection open']),
     # #2499: the deadline never re-anchors at the awaited head's first byte —
     # the connect-anchored or standby arm survives. Killed by all three
     # re-anchor cells: the paused-clock delayed-first-head cell (the
@@ -100,9 +126,20 @@ switches = [
     # response is answered with the 408 too, instead of Node's
     # `keepAliveTimeout` silent close (the registered residual). Killed by
     # the idle keep-alive cell, whose EOF probe must read zero bytes.
+    # #2499 fix-r3 adds the two same-read swallowed-head cells (the
+    # registered residual 3's fix-r3 expansion): their closes ride the same
+    # follow-up-idle path — no first-byte anchor was ever recorded for the
+    # swallowed head — so the mutant writes the 408 there too and their EOF
+    # probes read the bytes instead of the silence.
     ('sms-headers-idle-followup-408', SMS / 'mod.rs',
-     'an_idle_keep_alive_connection_closes_silently_without_a_408',
-     'the idle follow-up head must close byte-silent'),
+     ['an_idle_keep_alive_connection_closes_silently_without_a_408',
+      'a_follow_up_head_swallowed_in_the_same_read_as_the_previous_request_closes_on_the_standby_landing',
+      'a_follow_up_head_swallowed_with_a_read_ahead_body_segment_closes_on_the_standby_landing'],
+     ['the idle follow-up head must close byte-silent',
+      'swallowed in the same read as the previous request: 51 byte(s) arrived '
+      'before the EOF',
+      'swallowed with a read-ahead body segment: 51 byte(s) arrived '
+      'before the EOF']),
     # #2499: the stop watch no longer disarms the armed deadline, so a
     # draining connection gets its 408 mid-drain (Node clears the checker
     # in `httpServerPreClose`). Killed by both stop cells — the paused-clock
