@@ -124,6 +124,8 @@ TABLES = (
     'memory-gateway/negative_controls.py',
     'snapshot-projection/negative_controls.py',
     'metadata-process-cwd/negative_controls.py',
+    # #2887: the user-dialog assembly switch table, born with its anchors.
+    'user-dialog-bus-observer/negative_controls.py',
 )
 
 
@@ -139,7 +141,7 @@ TABLES = (
 # Each reason states how many discovery keys the table needs and how many path
 # shapes the scanner could not follow; both are re-measured by
 # test_known_blind_counts_match_the_scan. #2141 carries the per-table fix list.
-# 279 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 202 blind only, 3 with unresolvable shapes only, 74 in both; 1475 keys: 415 bare-filename joins and 1060 shared-helper import keys.
+# 279 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 202 blind only, 3 with unresolvable shapes only, 74 in both; 1475 keys: 428 bare-filename joins and 1047 shared-helper import keys.
 # Why a key a table needs shows up in no table text: the import line spells a
 # module name, while the host keys the helper file it lives in.
 IMPORTED_HELPER_REASON = 'imported shared fixture helper'

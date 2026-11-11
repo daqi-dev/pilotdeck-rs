@@ -196,7 +196,7 @@ GUARDED = [
     ROOT / 'scripts/a6-host/lifetime.py',
     FIXTURES / '_shared/mutant_switch.py',
     FIXTURES / 'negative_suite.py',
-    FIXTURES / 'negative_process.py',
+    FIXTURES / 'negative_process.py', FIXTURES / 'anchor_selfcheck.py',
     FIXTURES / 'host-event-timeline/oracle.json',
     FIXTURES / 'host-event-timeline/generate.mts',
     FIXTURES / 'live-session/peer.py',
