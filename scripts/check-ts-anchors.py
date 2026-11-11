@@ -19,8 +19,10 @@ TS 基线（resources/PilotDeck，不入库）不动之后，仓内 Rust 注释�
    也用于其它 TS 文件，无法按文件归因）；它们的宿主锚点受名册管，其数值本身由第 2 层守。
 
 2. **TS 实读（`--ts-baseline <path>` 或环境变量 `PDRS_TS_BASELINE`，fail-closed）**：
-   `TS_ANCHORS` 是「锚点名 → 行号 → 该行必须含的签名」表。给出基线路径就逐条实读
-   GatewayWsConnection.ts 核对；路径给了但文件找不到/读不了 → 退 2，不静默跳过。
+   `TS_ANCHORS` 是「锚点名 → 行号 → 该行必须含的签名」表；签名以 `=` 开头表示整行
+   strip 相等（`);` / `},` 这类短签名必须整行判，否则同形收尾行如 `});` 会顶替命中，
+   #2795 fix-r1 条6）。给出基线路径就逐条实读 GatewayWsConnection.ts 核对；
+   路径给了但文件找不到/读不了 → 退 2，不静默跳过。
    没给路径时只跑第 1 层（CI 里没有 resources/ 基线，见 .gitignore）。
    基线钉在 schema-FROZEN.md 的 cc7c4e65（与 CI 两处浅克隆同一冻结 commit）。
 
@@ -59,9 +61,10 @@ REGISTERED_CITATIONS: dict[str, set[str]] = {
     "src/pilotdeck-gateway/src/native_process/methods/cron/cron_tests.rs": {"223-255"},
     "src/pilotdeck-gateway/src/native_process/methods/mcp.rs": {"387-398"},
     "src/pilotdeck-gateway/src/native_process/methods/settings.rs": {"405-425,523-543"},
-    # session_dir.rs 的 :252 由 main 侧 #2199 fix-r3 新增（本批基线 9be18ab83 之后），
-    # rebase 集成时收货侧对冻结基线 cc7c4e65 实读核正后补登：
+    # session_dir.rs 的 :252 由 main 侧 #2199 fix-r3 新增（本批基线 9be18ab83 之后）；
+    # #2795 fix-r1 对冻结基线 cc7c4e65 实读核正并登记第 2 层锚点：
     # :252 = `message: error instanceof Error ? error.message : String(error),`
+    # （见 TS_ANCHORS 的 session_dir_error_message）
     "src/pilotdeck-gateway/src/native_process/methods/session_dir.rs": {"252"},
     "src/pilotdeck-gateway/src/native_process/methods/sop.rs": {"332", "630-637"},
     "src/pilotdeck-gateway/src/native_process/methods/tests.rs": {"481-490", "528-536"},
@@ -91,7 +94,12 @@ REGISTERED_CITATIONS: dict[str, set[str]] = {
 
 # ── 第 2 层：TS 语义锚点（名字 → 行号 → 该行必含的签名）────────────────────
 # 基线：cc7c4e65 的 src/gateway/server/GatewayWsConnection.ts（641 行）。
-# 注册名册里出现的每一个 span，都必须能落回这些锚点标定的行号。
+# 签名约定：裸字符串 = 该行必须含此子串；`=` 前缀（如 `=);`）= 去前缀后整行
+# strip 相等。`);` / `},` 这类短收尾签名必须整行判——子串判会让任何同形收尾行
+# （`});`、`}),`）顶替命中，锚点就名存实亡（#2795 fix-r1 条6）。
+# 注意：REGISTERED_CITATIONS 的 span 与这里的锚点行号**不做**逐一落回机检——
+# 名册 span 的端点（185、243、251、254 等）并非个个都有对应锚点，两层各自独立
+# 判红；span 是否仍指向语义正确的区间，靠登记/改动时对 --ts-baseline 实读核对。
 TS_ANCHORS: list[tuple[str, int, str]] = [
     ("constructor_message_hook", 44, "ws.onMessage"),
     ("close_set_union", 49, "new Set([...this.inFlightSessions, ...this.interactionSessions])"),
@@ -101,7 +109,7 @@ TS_ANCHORS: list[tuple[str, int, str]] = [
     ("submit_session_registration", 126, "this.inFlightSessions.add(sessionKey)"),
     ("event_loop_start", 138, 'event.type === "turn_completed"'),
     ("terminal_event_selection", 157, "lastError ?? lastCompleted"),
-    ("terminal_frame_end", 171, ");"),
+    ("terminal_frame_end", 171, "=);"),
     ("permission_resolved_block", 176, 'frame.method === "permission_decide"'),
     ("success_envelope", 187, 'type: "response", id: frame.id, ok: true, result'),
     ("catch_all", 188, "} catch (error) {"),
@@ -112,8 +120,9 @@ TS_ANCHORS: list[tuple[str, int, str]] = [
     ("fallback_json_arg", 246, "JSON.stringify({"),
     ("fallback_ok_false", 249, "ok: false,"),
     ("fallback_request_failed_code", 251, '"gateway_request_failed"'),
-    ("fallback_error_object_close", 253, "},"),
-    ("fallback_end", 255, ");"),
+    ("session_dir_error_message", 252, "message: error instanceof Error ? error.message : String(error),"),
+    ("fallback_error_object_close", 253, "=},"),
+    ("fallback_end", 255, "=);"),
     ("handle_request_dispatch_call", 175, "await this.dispatchRequest(frame);"),
     ("manager_sessions_case", 309, 'case "manager_sessions":'),
     ("model_catalog_case", 367, 'case "model_catalog_list":'),
@@ -198,10 +207,20 @@ def check_citations(root: Path, registered: dict[str, set[str]] | None = None) -
     return problems
 
 
+class BaselineReadError(Exception):
+    """基线 TS 文件读取失败（IO / 解码）——前置错误（exit 2），不并入判红。"""
+
+
 def resolve_ts_path(baseline: str) -> Path:
-    """接受 PilotDeck 根、resources 目录、或直接指向 .ts 文件的路径。"""
+    """接受 PilotDeck 根、resources 目录、或直接指向该 .ts 文件的路径。"""
     p = Path(baseline)
     if p.is_file():
+        # 直接指向的必须是 GatewayWsConnection.ts 本身：指错文件（任意 .ts）会让
+        # 第 2 层对牛头不对马嘴的行号表做核对，必须拒绝（fail-closed）。
+        if p.name != Path(TS_RELATIVE).name:
+            raise FileNotFoundError(
+                f"基线路径 {baseline!r} 直接指向了 {p.name!r}，不是 {Path(TS_RELATIVE).name!r}"
+            )
         return p
     if p.is_dir():
         for candidate in (p / TS_RELATIVE, p / "PilotDeck" / TS_RELATIVE):
@@ -211,14 +230,27 @@ def resolve_ts_path(baseline: str) -> Path:
 
 
 def check_ts_baseline(ts_path: Path, anchors: list[tuple[str, int, str]] | None = None) -> list[str]:
-    """第 2 层：逐锚点实读 TS 行号与签名。返回判红消息（空 = 通过）。"""
-    lines = ts_path.read_text(encoding="utf-8").split("\n")
+    """第 2 层：逐锚点实读 TS 行号与签名。返回判红消息（空 = 通过）。
+
+    签名以 `=` 开头 → 去前缀后与该行 strip 相等（整行判，条6）；否则子串判。
+    读不了（IO / 解码）→ BaselineReadError，由 main 按 exit 2 处理（fail-closed）。
+    """
+    try:
+        lines = ts_path.read_text(encoding="utf-8").split("\n")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise BaselineReadError(f"基线 TS {ts_path} 读取失败：{exc}") from exc
     problems: list[str] = []
     for name, line, signature in (TS_ANCHORS if anchors is None else anchors):
         if not 1 <= line <= len(lines):
             problems.append(f"TS-DRIFT: {name} 钉在 :{line}，但基线只有 {len(lines)} 行")
             continue
-        if signature not in lines[line - 1]:
+        if signature.startswith("="):
+            if lines[line - 1].strip() != signature[1:]:
+                problems.append(
+                    f"TS-DRIFT: {name} 钉在 :{line}，但该行 strip 后不等于 {signature[1:]!r}（整行判）—— "
+                    f"实读该行：{lines[line - 1].strip()[:100]}"
+                )
+        elif signature not in lines[line - 1]:
             problems.append(
                 f"TS-DRIFT: {name} 钉在 :{line}，但该行没有签名 {signature!r} —— "
                 f"实读该行：{lines[line - 1].strip()[:100]}"
@@ -271,7 +303,8 @@ def _self_check() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         good_lines = [""] * 700
         for _name, line, signature in TS_ANCHORS:
-            good_lines[line - 1] = signature
+            # `=` 前缀是整行判标记，合成时放去前缀的裸签名。
+            good_lines[line - 1] = signature[1:] if signature.startswith("=") else signature
         fake_good = Path(tmp) / "GatewayWsConnection.ts"
         fake_good.write_text("\n".join(good_lines), encoding="utf-8")
         if check_ts_baseline(fake_good):
@@ -281,6 +314,15 @@ def _self_check() -> int:
         fake_bad = Path(tmp) / "GatewayWsConnection-bad.ts"
         fake_bad.write_text("\n".join(bad_lines), encoding="utf-8")
         expect_red("NC4b", check_ts_baseline(fake_bad), "TS-DRIFT")
+
+        # NC6（条6：短签名整行判）：terminal_frame_end 钉在 :171，签名为 `=);`。把该行
+        # 换成同形收尾行 `});` ——旧的子串判会因 `);` ∈ `});` 误判命中，整行 strip
+        # 相等必须判红（同形收尾行挪了位置 ≠ 锚点还在原行）。
+        same_form_lines = list(good_lines)
+        same_form_lines[170] = "});"
+        fake_same_form = Path(tmp) / "GatewayWsConnection-same-form.ts"
+        fake_same_form.write_text("\n".join(same_form_lines), encoding="utf-8")
+        expect_red("NC6", check_ts_baseline(fake_same_form), "TS-DRIFT")
 
     # NC5（fail-closed）：--ts-baseline 给了但文件不存在 → main 必须退 2，不得静默跳过。
     rc = main(["--ts-baseline", "/nonexistent-pilotdeck-baseline-xyz"])
@@ -312,7 +354,11 @@ def main(argv: list[str] | None = None) -> int:
         except FileNotFoundError as exc:
             print(f"FAIL-CLOSED: {exc}", file=sys.stderr)
             return 2
-        problems.extend(check_ts_baseline(ts_path))
+        try:
+            problems.extend(check_ts_baseline(ts_path))
+        except BaselineReadError as exc:
+            print(f"FAIL-CLOSED: {exc}", file=sys.stderr)
+            return 2
     else:
         print("note: 未提供 --ts-baseline / PDRS_TS_BASELINE，只跑引用名册层（CI 形态）")
 

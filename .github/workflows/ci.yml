@@ -366,6 +366,17 @@ jobs:
           python3 -I src/pilotdeck-gateway/tests/fixtures/anchor_selfcheck.py --anchors-only
           python3 -I src/pilotdeck-gateway/tests/fixtures/session-assembly-1316/negative_controls.py --self-check
           python3 -I src/pilotdeck-gateway/tests/fixtures/session-assembly-1316/negative_controls.py --self-check-controls
+      # #2795 fix-r1（评审条1，CI 接线）：GatewayWsConnection.ts 行号锚点机检进
+      # negative-controls 作业。此前该脚本只在宿主链人工跑，CI 上一条都不跑——仓内
+      # Rust 注释引用的行号静默漂移没有机检兜底。本作业没有 resources/ 基线树
+      # （.gitignore），所以只跑第 1 层（引用名册对账）+ --self-check（机检自身的
+      # 变异负控 NC1–NC6，含「同形收尾行挪走必须判红」）；第 2 层对冻结基线
+      # cc7c4e65 的实读在 a51-coverage 作业（那边已浅克隆该 commit）。
+      - name: TS 行号锚点机检（#2795）
+        shell: bash
+        run: |
+          python3 -I scripts/check-ts-anchors.py
+          python3 -I scripts/check-ts-anchors.py --self-check
       # #1989：绑定自身的漂移自检。native 入口的 --check 只由宿主链执行，CI 此前一条
       # 都不跑；这三组是纯 Python（不碰 cargo），逐条变异绑定的源码再要求对应 needle
       # 报错——「把断言改成 assert!(true) / 删掉上限断言 / 改掉换行守卫的返回动作」
@@ -833,6 +844,15 @@ jobs:
           git -C pilotdeck-baseline remote add origin https://github.com/OpenBMB/PilotDeck.git
           git -C pilotdeck-baseline fetch --depth 1 origin "$PILOTDECK_BASELINE_REF"
           git -C pilotdeck-baseline checkout FETCH_HEAD
+      # #2795 fix-r1（评审条1，CI 接线）：本作业已浅克隆冻结基线 cc7c4e65（与
+      # gateway-schema-baseline 同一 commit，schema-FROZEN.md），正好承接
+      # check-ts-anchors.py 的第 2 层——TS_ANCHORS 逐锚点对基线 GatewayWsConnection.ts
+      # 实读核对（含 `=);` / `=},` 整行判的短签名）。路径失效 / 读不了 / 指错文件都
+      # fail-closed 退 2。negative-controls 作业那边只跑第 1 层 + --self-check。
+      - name: TS 锚点对冻结基线实读（#2795）
+        working-directory: .
+        shell: bash
+        run: python3 -I scripts/check-ts-anchors.py --ts-baseline "${{ github.workspace }}/pilotdeck-baseline"
       - name: A5.1 覆盖账本/清单（严格比较，默认带负例）
         working-directory: .
         env:

@@ -199,6 +199,17 @@ mutations.append((
     '        Ok(Some(resource.management().clone()))',
     'native_process::assembly::memory::tests::memory_management_holds_the_generation_lease_through_the_call',
     '#1456 the returned service must own a generation lease'))
+# #2795 fix-r1（条4）：memory_dispatch 的 Forward 臂此前没有配对负控——#1456
+# 的三行盖了 Error 臂与装配侧，禁用网关的测试走 projection 错误，宿主边界
+# 的 Forward→CAPABILITY_UNAVAILABLE 只有 snapshot 族有配对
+# （snapshot-host-boundary-leaked）。变异把 unavailable() 换成普通
+# gateway_request_failed 错误，绑定测试断言 CAPABILITY_UNAVAILABLE 与宿主
+# 相关文案必须失败。
+mutations.append(('memory-host-boundary-leaked', SOURCE,
+     '            Some(MemoryDispatch::Forward) => Err(unavailable()),',
+     '            Some(MemoryDispatch::Forward) => Err(error(None, "x".into())),',
+     'native_process::management_tests::memory_host_boundary_reads_as_capability_unavailable',
+     '#2795 memory_list via management_request on a host-boundary registry'))
 # #1456 review (two lineages): the widened catalog resolution also accepts
 # every *other* registered project and the virtual General workspace; without
 # the isolation gate `memory_wipe` with a foreign key clears the served
@@ -469,7 +480,7 @@ def skipped_on_this_platform(rows, platform=None):
 # and the run still reported "{n}/{n}" and read green. Pin the row count and the
 # roster (order and repeats included) as literals so a dropped, renamed or
 # duplicated mutation is refused before anything runs or compiles.
-EXPECTED_TOTAL = 98
+EXPECTED_TOTAL = 99
 EXPECTED_NAMES = (
     'omit-snapshot',
     'omit-manager',
@@ -525,6 +536,7 @@ EXPECTED_NAMES = (
     'memory-error-as-success',
     'memory-project-key-exact-only',
     'memory-lease-dropped',
+    'memory-host-boundary-leaked',
     'memory-foreign-project-served',
     'memory-foreign-project-served-by-prefix',
     'capability-resolve_settings',

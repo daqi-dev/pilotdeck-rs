@@ -112,3 +112,11 @@ commit 与哈希结构，不调用 Git。Rust 回放见 `tests/host_model_port.r
 中断调用栈里晚到的 provider usage 事件泄漏过端口。测试保持单线程风味是判定
 确定性的前提（多线程调度器下 forwarder 可在中止与发射之间的窗口运行，见
 测试注释与 #1785 的 `sync-abort-mid-stream` 重放案例）。
+
+第二行 `turn-abort-forwarded-to-stream`（#2795 fix-r1 条5）盖 turn_abort 的
+第二组装点：`RouterModelStream` 字面量的 `turn_abort: input.abort`（model_port.rs:291，
+16 空格缩进——与 266 行 `RouterExecuteContext` 的 `.clone()` 装配是两处独立接线）。
+`None` 化后 turn 取消不再经转发任务到达 provider 请求，绑定
+`turn_cancel_between_pulls_closes_the_provider`（消费者坐在两次 pull 之间取消的
+场景），击杀证据为 `wait_client_closed` 5 秒超时的专属消息
+`a turn cancelled between pulls must close the provider request`。

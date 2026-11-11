@@ -33,7 +33,7 @@ from negative_selection import (baseline_passed, claim_dir, missing_target,
                                 refuse_unusable_target, registered,
                                 verdict_exit)  # noqa: E402
 from negative_process import (mutating_sources, node_version, run_owned,
-                              wait_for_slot)  # noqa: E402
+                              tree_lock, wait_for_slot)  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / "src/pilotdeck-gateway/src"
@@ -47,6 +47,7 @@ FIXTURES = ROOT / "src/pilotdeck-gateway/tests/fixtures"
 # those literals in this file. Checked row by row by
 # fixtures/test_negative_discovery_anchors.py.
 DISCOVERY_ANCHORS = (
+    'src/dispatch.rs',
     'src/metadata.rs',
     'fixtures/negative_panic.py',
     'fixtures/negative_process.py',
@@ -375,24 +376,48 @@ def main():
     except ValueError as error:
         print(f"mutation roster drifted: {error}", file=sys.stderr)
         return 2
-    if audit:
-        # Anchors only: no mutation, no compile, no committed-tree requirement
-        # (manager-gateway's mode; a stale anchor is an error, never a
-        # SURVIVED verdict that would only surface in the coordinator's run).
-        for name, path, before, _after, _target, _test, _marker in rows:
-            count = path.read_text(encoding="utf-8").count(before)
-            if count != 1:
-                print(
-                    f"stale anchor {name}: expected 1 occurrence, found {count}",
-                    file=sys.stderr,
-                )
-                return 1
-        print(f"#888 anchors: {len(rows)}/{len(rows)} unique")
-        return 0
+    # Unknown names are refused before any branch can print a green summary:
+    # with a typo'd selection the old order reached the --audit print with
+    # `rows == []`, said `#888 anchors: 0/0` and exited 0 -- the zero
+    # denominator false green that select()/verdict_exit refuse everywhere
+    # else in the family (#1666 / #1734, #2795 fix-r1 条2).
     unknown = selected - ({row[0] for row in mutations} | data_names)
     if unknown:
         print(f"unknown mutation names: {sorted(unknown)}", file=sys.stderr)
         return 2
+    if audit:
+        # A data-only selection (oracle truncation, generator bypass) has no
+        # source anchor; an empty rows list is not an anchors-green.
+        if not rows:
+            print(
+                "no source mutations selected: --audit has no anchors to check",
+                file=sys.stderr,
+            )
+            return 2
+        # Anchors only: no mutation, no compile, no committed-tree requirement
+        # (manager-gateway's mode; a stale anchor is an error, never a
+        # SURVIVED verdict that would only surface in the coordinator's run).
+        # Hold the tree lock while reading (utf16-residual-sort's --check-
+        # anchors precedent): a sibling mutating runner may have a mutant on
+        # disk between its write and restore phases, which would make this
+        # read-only check count `0` and report a spurious stale anchor.
+        try:
+            with tree_lock(ROOT, timeout=60):
+                for name, path, before, _after, _target, _test, _marker in rows:
+                    count = path.read_text(encoding="utf-8").count(before)
+                    if count != 1:
+                        print(
+                            f"stale anchor {name}: expected 1 occurrence, found {count}",
+                            file=sys.stderr,
+                        )
+                        return 1
+        except (OSError, UnicodeDecodeError) as error:
+            # TimeoutError is an OSError subclass: a busy lock or an unreadable
+            # anchor source is a refusal (2), not a miscounted verdict.
+            print(f"--audit tree lock or read failed: {error}", file=sys.stderr)
+            return 2
+        print(f"#888 anchors: {len(rows)}/{len(rows)} unique")
+        return 0
     # The family contract, not a local copy: absent/empty/blank targets and the
     # dot/root/src values are refused by the shared rule, and an already
     # existing directory is a "never started" (2) rather than a bare traceback

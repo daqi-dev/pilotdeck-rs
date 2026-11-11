@@ -35,6 +35,23 @@ ROOT = Path(__file__).resolve().parents[5]
 MODEL_PORT = ROOT / 'src/pilotdeck-gateway/src/host/modules/model_port.rs'
 INTEGRATION = ROOT / 'src/pilotdeck-gateway/tests/host_model_port.rs'
 
+# #2133: neg-for-diff.sh keys a change to a shared helper under `fixtures/**`
+# by that file's `dir/file` and needs the literal in this file to schedule the
+# table from it. The first three keys are each produced twice — the guarded
+# list's bare-filename join (`parents[1] / 'negative_process.py'`) and the
+# imports at the top of this file spell the same key — the last three are the
+# helpers those helpers import (measured by the guard's import sweep).
+# Checked by fixtures/test_negative_discovery_anchors.py
+# (#2795 fix-r1 条3 registration).
+DISCOVERY_ANCHORS = (
+    'fixtures/negative_process.py',
+    'fixtures/negative_selection.py',
+    'fixtures/negative_suite.py',
+    'fixtures/negative_panic.py',
+    'fixtures/negative_scope.py',
+    'fixtures/pending_reanchor.py',
+)
+
 # #2069: the row the #1804 review ran by hand, now in a runnable roster. The
 # mutation drops the `turn_abort` wiring line of the `RouterExecuteContext`
 # literal in `RouterModelPort::stream`; the bound test (single threaded on
@@ -47,6 +64,16 @@ cases = [
      '            turn_abort: None,',
      'a_turn_abort_in_the_provider_call_stack_drops_the_event_at_the_port',
      '#1804 a turn cancelled in the provider call stack yields no event'),
+    # #2795 fix-r1（条5）：turn_abort 的第二组装点——`RouterModelStream` 结构
+    # 字面量（model_port.rs:291，16 空格缩进处）。第一组装点
+    # （`RouterExecuteContext`，266 行）已有 #2069 的配对；这一行把 turn 的
+    # abort 交给转发任务，去掉后「消费者坐在两次 pull 之间取消」不再关掉
+    # provider 请求，绑定测试的 5 秒 wait_client_closed 必须超时失败。
+    ('turn-abort-forwarded-to-stream', MODEL_PORT,
+     '                turn_abort: input.abort,',
+     '                turn_abort: None,',
+     'turn_cancel_between_pulls_closes_the_provider',
+     'a turn cancelled between pulls must close the provider request'),
 ]
 
 # #1666: the denominator is this literal roster, not `len(cases)`. With a
@@ -56,6 +83,7 @@ cases = [
 # same order as the table.
 EXPECTED_NAMES = (
     'turn-abort-wiring-dropped',
+    'turn-abort-forwarded-to-stream',
 )
 
 
