@@ -98,6 +98,14 @@ replay must reproduce:
   this lane by A8.3-API-SERVER-005), and
   `parser_rejections_keep_the_registered_transport_shape` pins the raw bytes so
   the masking cannot hide a missing rejection.
+  `parser_admission_cells_stay_justified_by_the_oracle` holds the registered
+  set against the oracle in all three directions — every entry exists and
+  records no length line the mask could hide, every bare-400 cell (a 400 whose
+  only header is `connection`; an empty expectation list is not one) is
+  registered, and the registered set is exactly those bare cells plus the inert
+  `missing-host` entry, so a stale widening fails by name (#2775) — and
+  `only_the_registered_cells_mask_a_content_length_zero` injects the line on
+  the unregistered `stream` cell to prove the mask cannot normalize it away.
 
 The placeholder is a fixture protocol with a fail-closed reader
 (`channel::api_server::tests::recorded_body`), so a generator change cannot
@@ -213,8 +221,10 @@ raising the cap fails by name, and the `replay-budget-vs-cap` row pins that.
 what is covered (health / models routing, auth bypass, CORS `Vary`, SSE
 `[DONE]`, session header, visible-failure name, gateway status, active-chat
 guard, body limit, body-limit boundary, body-read timeout, request-timeout 408
-shape, default port, parser-level admission). Each row requires the
-positive control to pass and the named `#1333` assertion to fail. It must run
+shape, default port, parser-level admission, the scope of the
+`content-length: 0` mask, and the staleness of its registered cells). Each
+row requires the positive control to pass and the named `#1333` assertion to
+fail. It must run
 after this change is committed (the shared guard compares against `HEAD`); see
 the script header for the exact command.
 
@@ -223,3 +233,11 @@ The `api-server-parser-admission` row replaces the whole
 the Host-less request then fall through to the `/health` route and answer `200`,
 so the recorded `400` cells go red. That is the #1683 defect itself, which is
 why the negative control mutates the wiring rather than a mutant switch.
+
+Two #2775 rows target the mask's own scope instead of the product: the
+`api-server-cl0-mask-always` row rewrites the mask condition in
+`actual_headers` so the `content-length: 0` drop fires for every cell, which
+the injected-line unit test (`only_the_registered_cells_mask_a_content_length_zero`)
+must reject; and the `api-server-admission-stale` row appends a third,
+never-inert cell (`body-read-timeout`) to `PARSER_ADMISSION_CELLS`, which the
+oracle guard's upper-bound assertion must reject as a stale entry.

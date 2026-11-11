@@ -41,6 +41,9 @@ DEFAULT_PORT_TEST = "channel::api_server::tests::unconfigured_port_falls_back_to
 STREAM_SUBMIT_ERR = "channel::api_server::tests::submit_error_stream_turn_emits_channel_submit_failed"
 BUFFERED_SUBMIT_ERR = "channel::api_server::tests::submit_error_buffered_turn_returns_submit_failed"
 API_KEY_CLASSIFICATION = "channel::api_server::tests::api_key_classification_pins_the_checkauth_table"
+CL0_MASK = "channel::api_server::tests::only_the_registered_cells_mask_a_content_length_zero"
+ADMISSION_ORACLE = "channel::api_server::tests::parser_admission_cells_stay_justified_by_the_oracle"
+TESTS = ROOT / "src/pilotdeck-gateway/src/channel/api_server/tests.rs"
 
 mutations = [
     (
@@ -261,6 +264,31 @@ mutations = [
         "    // mutant: parser admission disconnected\n",
         REPLAY,
         "#1333 unknown-method request 0: status differs",
+    ),
+    (
+        # #2775 fix-r1: the `content-length: 0` mask fires regardless of the
+        # admission flag, so the injected-line unit test's unregistered leg
+        # stops failing (the extra length line normalizes away) — the same
+        # shape as native-http's `native-http-cl0-mask-always`.
+        "api-server-cl0-mask-always",
+        TESTS,
+        '        if parser_admission && name == "content-length" && value == "0" {\n',
+        '        if (parser_admission || true) && name == "content-length" && value == "0" {\n',
+        CL0_MASK,
+        "#2775 an injected content-length: 0 on an unregistered cell must not normalize away",
+    ),
+    (
+        # #2775 fix-r1: a stale widening of the registered list — a cell that
+        # never exhibits the registered transport shape (`body-read-timeout`
+        # is Node's 408) — fails the guard's upper-bound assertion by name
+        # instead of only at the knob guard's indirect panic.
+        "api-server-admission-stale",
+        TESTS,
+        'const PARSER_ADMISSION_CELLS: &[&str] = &["unknown-method", "missing-host"];\n',
+        'const PARSER_ADMISSION_CELLS: &[&str] = '
+        '&["unknown-method", "missing-host", "body-read-timeout"];\n',
+        ADMISSION_ORACLE,
+        "#2775 the registered parser-admission cells must be exactly the oracle's bare 400s plus the inert",
     ),
 ]
 
