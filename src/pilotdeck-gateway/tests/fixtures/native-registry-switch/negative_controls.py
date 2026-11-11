@@ -27,6 +27,7 @@ PROCESS = Path(__file__).resolve().parent / 'process.mts'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
+from negative_source import assertion_marker_present
 
 mutations = [
     # The switch itself must resolve "off" to the off state: flipping the
@@ -126,8 +127,11 @@ def main():
     for name, path, old, new, test, assertion in mutations:
         text = path.read_text()
         body = test_body(test)
+        # #2303 fix-r3 (DS sibling#2, the 条 5 same-family follow-up): the
+        # marker must live in code, never in a comment -- the raw-text scan
+        # let a commented-out copy of the assertion satisfy the binding.
         if (text.count(old) != 1 or old == new or
-                not body or f'"{assertion}"' not in body):
+                not body or not assertion_marker_present(body, f'"{assertion}"')):
             stale.append(name)
     if stale:
         raise SystemExit('#1369 stale anchor/test/assertion bindings: ' + ', '.join(stale))

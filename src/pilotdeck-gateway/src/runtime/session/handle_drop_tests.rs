@@ -425,8 +425,15 @@ fn run_drop_generator(
         .env("PDRS_BASELINE", &baseline);
     // #2304 (条 4): the knob-aware entry — a slow host can raise the bound
     // through PDRS_REGEN_TIMEOUT_SECS instead of editing this cell.
-    crate::test_baseline::run_generator(&mut command, "session-drop-release")
-        .expect("#1010 preservation generator completed within its bound")
+    // #2303 fix-r3 (DS concurrency#1): the cell keeps its original 90 s
+    // fail-fast bound as the default; the shared 600 s fixture default
+    // silently loosened this hung-generator backstop 6.7x.
+    crate::test_baseline::run_generator_at_least(
+        &mut command,
+        "session-drop-release",
+        Duration::from_secs(90),
+    )
+    .expect("#1010 preservation generator completed within its bound")
 }
 
 #[test]

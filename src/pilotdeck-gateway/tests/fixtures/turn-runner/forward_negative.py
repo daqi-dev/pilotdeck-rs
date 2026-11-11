@@ -277,6 +277,16 @@ def audit():
 if sys.argv[1:] == ['--audit']:
     audited = audit()
     print(json.dumps(audited,indent=2))
+    # #2303 fix-r3 (DS boundary#2, zero denominator): an empty table is never
+    # "every row checked" -- cases emptied, renamed away or skipped to zero
+    # rows must refuse (2, the never-started exit) instead of passing
+    # hollowly on `int(any(...)) == 0`.
+    if not audited:
+        sys.stderr.write('INVALID: audit produced zero rows (cases emptied, '
+                         'renamed away or skipped?); "every row checked" '
+                         'cannot pass on an empty denominator\n')
+        sys.stderr.flush()
+        raise SystemExit(2)
     raise SystemExit(int(any(row['status'] != 'CHECKED' for row in audited)))
 env=os.environ.copy()
 if not env.get('CARGO_TARGET_DIR'): raise SystemExit('CARGO_TARGET_DIR must be supplied by caller')

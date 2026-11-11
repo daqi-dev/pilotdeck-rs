@@ -553,11 +553,16 @@ fn generator_cleans_owned_work() {
         // 120 s hard deadline (generate.mts clamps PDRS_1011_DEADLINE_MS to
         // [1_000, 120_000], so a host cannot extend the matrix past that cap),
         // which makes the former fixed 180 s outer bound a pure backstop —
-        // the knob-aware default keeps that role without bypassing
-        // PDRS_REGEN_TIMEOUT_SECS.
-        let (status, stdout, stderr) =
-            crate::test_baseline::run_generator(&mut command, "session-factory/projection-cache")
-                .expect("#1011 generator bounded run");
+        // the knob keeps that role without bypassing PDRS_REGEN_TIMEOUT_SECS.
+        // #2303 fix-r3 (DS concurrency#1): the 180 s backstop itself stays
+        // the default (run_generator_at_least); the shared 600 s fixture
+        // default silently loosened it 3.3x.
+        let (status, stdout, stderr) = crate::test_baseline::run_generator_at_least(
+            &mut command,
+            "session-factory/projection-cache",
+            Duration::from_secs(180),
+        )
+        .expect("#1011 generator bounded run");
         assert!(
             status.success() != collision,
             "#1011 generator completed: {}{}",
@@ -676,9 +681,15 @@ fn generator_deadline_cleans_owned_work() {
     // backstop, and the generator's own matrix is hard-capped at 120 s
     // regardless (generate.mts clamps PDRS_1011_DEADLINE_MS to [1_000,
     // 120_000]), so knob-awareness cannot loosen what the cell pins.
-    let (status, stdout, stderr) =
-        crate::test_baseline::run_generator(&mut command, "session-factory/projection-cache")
-            .expect("#1011 generator deadline bounded run");
+    // #2303 fix-r3 (DS concurrency#1): the 180 s outer backstop stays the
+    // default (run_generator_at_least); the shared 600 s fixture default
+    // silently loosened it 3.3x.
+    let (status, stdout, stderr) = crate::test_baseline::run_generator_at_least(
+        &mut command,
+        "session-factory/projection-cache",
+        Duration::from_secs(180),
+    )
+    .expect("#1011 generator deadline bounded run");
     let output = format!(
         "{}{}",
         String::from_utf8_lossy(&stdout),
@@ -758,9 +769,14 @@ fn generator_deadline_reports_cleanup_failure() {
     // #2304 (条 4): the knob-aware entry, same as the deadline cell above —
     // the injected 1 s deadline and the generator's own 120 s hard cap bound
     // the run from the inside; the outer bound stays a pure backstop.
-    let (status, stdout, stderr) =
-        crate::test_baseline::run_generator(&mut command, "session-factory/projection-cache")
-            .expect("#1011 generator deadline failure bounded run");
+    // #2303 fix-r3 (DS concurrency#1): that 180 s backstop stays the default
+    // (run_generator_at_least), not the shared 600 s fixture default.
+    let (status, stdout, stderr) = crate::test_baseline::run_generator_at_least(
+        &mut command,
+        "session-factory/projection-cache",
+        Duration::from_secs(180),
+    )
+    .expect("#1011 generator deadline failure bounded run");
     let output = format!(
         "{}{}",
         String::from_utf8_lossy(&stdout),

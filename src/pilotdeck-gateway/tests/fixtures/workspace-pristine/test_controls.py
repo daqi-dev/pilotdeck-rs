@@ -612,12 +612,18 @@ class WorkspacePristine(unittest.TestCase):
         # include_str! list must name the same five files — the digest is only
         # byte-identical while both sides agree, so an edit on either side
         # without the other is silent drift this test turns red.
+        # fix-r3 (DS boundary#1 + simplify#1): the digest is order-sensitive
+        # — negative_process.py joins SCANNER_IDENTITY_FILES in tuple order
+        # and the example hash.update()s in include_str! order — so the two
+        # lists are pinned in their real order, not as a sorted set: a
+        # single-side reorder changed the digest but kept this test green.
         example = ROOT / 'src/pilotdeck-gateway/examples/workspace_inputs.rs'
-        included = sorted(
+        included = [
             (example.parent / argument).resolve().relative_to(ROOT).as_posix()
-            for argument in re.findall(r'include_str!\("([^"]+)"\)', example.read_text()))
-        self.assertEqual(included, sorted(api.SCANNER_IDENTITY_FILES),
-                         msg='#2305 scanner identity files must match the Rust include_str! list')
+            for argument in re.findall(r'include_str!\("([^"]+)"\)', example.read_text())]
+        self.assertEqual(included, list(api.SCANNER_IDENTITY_FILES),
+                         msg='#2305 scanner identity files must match the Rust include_str! list '
+                             '(order included: both digests concatenate in these orders)')
 
     def test_non_head_baseline_candidate_is_admitted(self):
         # #2106 / #2305 (条 4+6): a candidate pinned to a non-HEAD baseline

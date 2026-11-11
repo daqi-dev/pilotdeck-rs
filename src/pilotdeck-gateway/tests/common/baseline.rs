@@ -649,6 +649,33 @@ pub(crate) fn run_generator(
     run_generator_with_deadline(command, fixture, deadline)
 }
 
+/// [`run_generator`] with the cell's own fail-fast bound restored as the
+/// default (#2303 fix-r3, DS concurrency#1).
+///
+/// Switching these call sites to the knob-aware [`run_generator`] silently
+/// ate the shared 600 s fixture default, loosening their hung-generator
+/// bounds 2–6.7×: a stalled generator occupied the cell for 600 s instead of
+/// reddening at the unit's own value. The `floor` here is that original
+/// per-cell bound; `PDRS_REGEN_TIMEOUT_SECS` still applies on top (a floor,
+/// never a shortening — same rule as [`run_generator`]), so a slow host can
+/// still raise the deadline for these cells without editing them.
+// Not every #[path] consumer of this module has one of these cells.
+#[allow(dead_code)]
+pub(crate) fn run_generator_at_least(
+    command: &mut Command,
+    fixture: &str,
+    floor: Duration,
+) -> Result<(ExitStatus, Vec<u8>, Vec<u8>), String> {
+    let override_secs = std::env::var("PDRS_REGEN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok());
+    let deadline = Duration::from_secs(match override_secs {
+        Some(secs) => secs.max(floor.as_secs()),
+        None => floor.as_secs(),
+    });
+    run_generator_with_deadline(command, fixture, deadline)
+}
+
 /// Testable core of [`run_generator`] with an explicit total deadline.
 #[allow(dead_code)]
 pub(crate) fn run_generator_with_deadline(

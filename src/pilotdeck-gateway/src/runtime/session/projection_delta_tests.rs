@@ -523,9 +523,15 @@ fn tail_generator_cleans_only_owned_work() {
             .arg(&root);
         // #2304 (条 4): the knob-aware entry — a slow host can raise the
         // bound through PDRS_REGEN_TIMEOUT_SECS instead of editing this cell.
-        let (status, stdout, stderr) =
-            crate::test_baseline::run_generator(&mut command, "turn-runner-tail")
-                .expect("#1253 bounded tail generator");
+        // #2303 fix-r3 (DS concurrency#1): the cell keeps its original 120 s
+        // fail-fast bound as the default; the shared 600 s fixture default
+        // silently loosened this hung-generator backstop 5x.
+        let (status, stdout, stderr) = crate::test_baseline::run_generator_at_least(
+            &mut command,
+            "turn-runner-tail",
+            Duration::from_secs(120),
+        )
+        .expect("#1253 bounded tail generator");
         assert!(
             status.success() != collision,
             "#1253 tail generator succeeds: {}{}",
@@ -1085,9 +1091,15 @@ fn factory_generators_clean_only_owned_work() {
         }
         // #2304 (条 4): the knob-aware entry — a slow host can raise the
         // bound through PDRS_REGEN_TIMEOUT_SECS instead of editing this cell.
-        let (status, stdout, stderr) =
-            crate::test_baseline::run_generator(&mut command, "session-factory")
-                .expect("#1253 cleanup generator bounded execution");
+        // #2303 fix-r3 (DS concurrency#1): the cell keeps its original 300 s
+        // fail-fast bound as the default; the shared 600 s fixture default
+        // silently loosened this hung-generator backstop 2x.
+        let (status, stdout, stderr) = crate::test_baseline::run_generator_at_least(
+            &mut command,
+            "session-factory",
+            Duration::from_secs(300),
+        )
+        .expect("#1253 cleanup generator bounded execution");
         // #1281 review: a bare non-zero exit does not prove the cell failed at
         // its intended point — a missing baseline, a bad flag, a crashed loader
         // or an earlier `wx` write (file-snapshot-test and probe both write
