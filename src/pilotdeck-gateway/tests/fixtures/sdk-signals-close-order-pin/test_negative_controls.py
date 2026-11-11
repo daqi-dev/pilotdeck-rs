@@ -45,7 +45,20 @@ exactly like the issue-2495 / SessionRunnerTests precedents:
   passes, so every row is SURVIVED and the run exits 1, the code the
   contract reserves for "the device ran and a control survived". Routing
   that path to rc 0 (a coordinator reads a red device as green) or to rc 2
-  (it reads "the device never ran") must both land here as a red test.
+  (it reads "the device never ran") must both land here as a red test;
+- invalid-verdict: the negative run fails *without* the dedicated #1382
+  marker — the shape a stale anchor produces on real hardware — so the row
+  is INVALID through the verdict path, not the abort path. Every INVALID
+  row the abort modes above produce comes from the ``aborted`` branch, and
+  the runner checks that branch *before* ``if invalid: os._exit(2)``, so
+  the two exit-2 routes are different code: routing the verdict one to
+  rc 0 (a coordinator reads "the device never produced a verdict" as all
+  green) or to rc 1 (it reads it as "a control survived") must both land
+  here as a red test;
+- summary-publish-fault: a healthy all-KILLED run whose summary rename
+  fails — no summary may survive a failed publish (a stale or half-written
+  one would read as evidence), and rc 2 must say the device produced no
+  verdict.
 
 Both senses of exit 1 are pinned: the verdict path's 1 above, and the
 pre-guard refusals' 1 (an unknown selection, a missing CARGO_TARGET_DIR)
@@ -140,6 +153,13 @@ else:
         if (index - 1) % 2 == 0:
             if mode == 'cancel' and control == len(names) - 1:
                 raise KeyboardInterrupt()
+            if mode == 'invalid-verdict':
+                # The verdict path's INVALID row: the negative run fails
+                # without any dedicated #1382 marker (the stale-anchor shape),
+                # so the runner's else branch records INVALID and the exit
+                # must come from the verdict path, never the abort branch.
+                return subprocess.CompletedProcess(
+                    command, 1, 'preflight failed elsewhere\\n', '')
             criterion = runner_globals['mutations'][control][4]
             return subprocess.CompletedProcess(
                 command, 1, __PIN_MARKER__ + '\\n' + criterion + '\\n', '')
@@ -167,6 +187,20 @@ else:
             return raw_write_bytes(self, data)
 
         Path.write_bytes = skip_last_restore
+
+    if mode == 'summary-publish-fault':
+        # The publish step itself: the temp summary file renames onto
+        # summary.json, so fail exactly that rename after an otherwise
+        # healthy run. write_source_atomic (the guard's restore) goes
+        # through os.replace and is untouched.
+        raw_replace = Path.replace
+
+        def fail_summary_publish(self, target):
+            if self.name == 'summary.json.tmp':
+                raise OSError('#1800 injected summary publish failure')
+            return raw_replace(self, target)
+
+        Path.replace = fail_summary_publish
 sys.argv = [str(runner_path), str(out), *names]
 exec(compile(source, str(runner_path), 'exec'), runner_globals if mode != 'busy-lock' else {'__file__': str(runner_path), '__name__': '__main__'})
 """
@@ -401,6 +435,82 @@ class SurvivedVerdictTests(_PinDriver, unittest.TestCase):
                    '/negative_controls.py')
         self.assertEqual(catalog.read_bytes(), before,
                          '#1800 a surviving run must still restore the catalog')
+
+
+class InvalidVerdictTests(_PinDriver, unittest.TestCase):
+    """The verdict path's INVALID edge: no verdict, never rc 0 or 1."""
+
+    def test_invalid_negative_exits_two_on_the_verdict_path(self):
+        # #1800 fix-r2（PR #2979 boundary P1）：三态契约里 INVALID 的判决路径
+        # （非中止）此前零覆盖——本文件每一条 INVALID 行都来自中止分支，而
+        # runner 的判决顺序是 abort 判断先于 `if invalid: os._exit(2)`，两条
+        # 是不同代码路径。把判决路径的退出码删掉（→rc 0，协调者把「装置没出
+        # 判决」读成全绿＝假 PASS）或改成 1（→读成「有控制存活」＝审计误
+        # 判），本文件此前全绿；本用例把它钉成 rc 2。
+        process, summary, tree, before = self.run_pin('invalid-verdict')
+        self.assertEqual(process.returncode, 2,
+                         f'#1800 a verdict-path INVALID run must exit 2: '
+                         f'{process.stderr!r}{process.stdout!r}')
+        self.assertIsNotNone(summary,
+                            '#1800 a verdict-path INVALID run is not an '
+                            'abort: the summary must still be published')
+        self.assertEqual([row['status'] for row in summary['results']],
+                         ['INVALID'] * len(SELECTION),
+                         '#1800 a negative run without the dedicated #1382 '
+                         'marker is INVALID, never KILLED or SURVIVED')
+        self.assertEqual([row['reason'] for row in summary['results']],
+                         ['preflight failed without the dedicated #1382 '
+                          'message'] * len(SELECTION))
+        self.assertEqual(summary['counts'],
+                         {'KILLED': 0, 'SURVIVED': 0, 'INVALID': len(SELECTION)})
+        self.assertEqual(self.counts_line(process.stdout)['counts'],
+                         {'KILLED': 0, 'SURVIVED': 0, 'INVALID': len(SELECTION)})
+        self.assertIn('#1382 INVALID controls', process.stderr)
+        # The rc 2 must come from the verdict path, not the abort branch —
+        # the discriminator that keeps the two exit-2 routes from sharing
+        # this case's coverage.
+        self.assertNotIn('#1382 run did not complete', process.stderr)
+        catalog = (tree / 'src/pilotdeck-gateway/tests/fixtures/sdk-signals'
+                   '/negative_controls.py')
+        self.assertEqual(catalog.read_bytes(), before,
+                         '#1800 an INVALID-verdict run must still restore '
+                         'the catalog')
+
+    def test_unpublished_summary_exits_two_without_a_summary(self):
+        # #1800 fix-r2（PR #2979 boundary P1）：summary 发布失败→rc 2 那条
+        # 路径（temp 写入 + rename，失败须 unlink 且不得留半份/旧份 summary）
+        # 此前同样零覆盖——本用例让一次全 KILLED 的健康运行只在 rename 一步
+        # 失败，钉住「无 summary＝装置没出判决＝rc 2」。
+        base = Path(tempfile.mkdtemp(prefix='pdrs-1800-unpublished-'))
+        _BASES.append(base)
+        out = base / 'out'
+        process, summary, tree, before = self.run_pin(
+            'summary-publish-fault', base=base)
+        self.assertEqual(process.returncode, 2,
+                         f'#1800 a run that cannot publish its summary must '
+                         f'exit 2: {process.stderr!r}{process.stdout!r}')
+        # The rows themselves completed and were recorded as KILLED, so the
+        # rc 2 can only come from the publish branch, never an abort.
+        self.assertIn(': KILLED: ', process.stdout,
+                      '#1800 the publish-fault run must have completed its '
+                      'rows: only the summary rename fails')
+        self.assertNotIn('#1382 run did not complete', process.stderr)
+        self.assertIn('#1382 summary not published: OSError: '
+                      '#1800 injected summary publish failure',
+                      process.stderr)
+        self.assertIsNone(summary,
+                           '#1800 an unpublished summary must leave no '
+                           'summary.json behind')
+        self.assertFalse((out / 'summary.json').exists(),
+                         '#1800 a failed publish must not leave a summary '
+                         'file a later reader could mistake for evidence')
+        self.assertFalse((out / 'summary.json.tmp').exists(),
+                         '#1800 a failed publish must drop its temp file')
+        catalog = (tree / 'src/pilotdeck-gateway/tests/fixtures/sdk-signals'
+                   '/negative_controls.py')
+        self.assertEqual(catalog.read_bytes(), before,
+                         '#1800 a publish-fault run must still restore '
+                         'the catalog')
 
 
 class PreGuardRefusalTests(unittest.TestCase):

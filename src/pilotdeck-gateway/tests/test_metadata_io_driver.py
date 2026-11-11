@@ -1580,8 +1580,13 @@ class EnvironmentControls(unittest.TestCase):
         # 同钉进下限——不钉则该模块在 CI 掏空/整类 skip 无人看见。
         # #1800 fix-r1（PR #2979 concurrency P1，四家 P2 同撞）：-O 步新增
         # 第七模块 sdk-signals-close-order-pin/test_negative_controls.py
-        # （fix-r1 实测 Ran 8、约 2.4 s），同钉进下限与 commands——本 PR
+        # （fix-r1 实测 Ran 8），同钉进下限与 commands——本 PR
         # 复刻了 r41 修的那个洞：加了 CI 命令却没登记，删掉 CI 全绿。
+        # #1800 fix-r2（PR #2979 boundary P1）：判决路径补 invalid-verdict /
+        # summary-publish-fault 两用例（Ran 8→10，本轮实测约 2.5 s——
+        # busy-lock 用例按构造须等满 2 s flock 超时，是该模块耗时下界；
+        # 秒数按实测定，不做预算算术），下限同步抬到 10：不抬则删掉两条
+        # 判决路径用例，CI 仍绿——正是 r41/fix-r1 连环修过的下限漂移洞。
         minimums = (
             ('test_negative_optimize_guards', 10),
             ('settings-gateway/test_negative_controls.py', 13),
@@ -1589,7 +1594,7 @@ class EnvironmentControls(unittest.TestCase):
             ('network-timing/test_negative_controls.py', 10),
             ('test_negative_roster_guards', 6),
             ('issue-2495/test_negative_controls.py', 30),
-            ('sdk-signals-close-order-pin/test_negative_controls.py', 8),
+            ('sdk-signals-close-order-pin/test_negative_controls.py', 10),
         )
         # r39（DS sibling#4 P2）：network-timing 的两条 EACCES 判杀用例按宿主
         # 能力条件跳过（`@unittest.skipUnless(EACCES_STAGEABLE, ...)`——root /
