@@ -62,6 +62,24 @@ python3 -I scripts/gateway-parity/controls/run_all.py --source _tmp/20261014-gat
 
 规约见 `specs/gateway-parity/`；没有已接受差异。自动 UI 恢复、桌面、生产 DOM、全部 101 method、config/扩展热加载与真正 TS 退役均不在 A2 完成声明中。
 
+## #1314 四宿主采集
+
+在已有固定 TS、Node 22.22.0 / ICU 78.2 / libuv 1.52.1 的 cb8 宿主和已有隔离镜像上，从同头构建的四个 ELF、动态库和完整源码清单开一个新队列。输出目录放在该工作树的 `_tmp/`。
+
+```sh
+python3 -I scripts/a5-19/run-host.py cohort prepare \
+  --baseline "$baseline" --node "$node" \
+  --source-manifest "$source_manifest" --binary-manifest "$binary_manifest" \
+  --cohort "$host_output"
+python3 -I scripts/a5-19/run-host.py cohort run --plan "$host_output/plan.json"
+python3 -I scripts/a5-19/run-host.py cohort manifest --plan "$host_output/plan.json" \
+  --output "$host_output/manifest.json"
+python3 -I scripts/gateway-parity/session_domain.py --suite host \
+  --host-manifest "$host_output/manifest.json" --output "$host_output/score"
+```
+
+每格保留原 72 个场景和每场景 5 轮，采集分片均持原宿主租约。恢复时使用同一 plan；已收片重新验证后跳过，失败片保留，排除原因后可用 `--retry-failed` 另开尝试。用 `--job` 或 `--cell` 限定当前窗口不会裁减分母。每个涉及 TS 的分片从原 strace 记录实际依赖文件，队列同时绑定整个已安装依赖树。最后一步要求冻结检查通过。
+
 ## A5.3 / E1 草稿入口
 
 `session_domain.py --suite calibrate --output <新目录>` 持有既有串行锁，原样调用

@@ -79,7 +79,11 @@ def save(path, value):
 
 
 def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    result = hashlib.sha256()
+    with path.open('rb') as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            result.update(block)
+    return result.hexdigest()
 
 
 def verify_native_runtime_libraries(source, binary_manifest):
@@ -108,7 +112,7 @@ def verify_native_runtime_libraries(source, binary_manifest):
         program = row['path']
         path = root / program
         need(path.is_file() and path.resolve() == path and
-             0 < path.stat().st_size <= 512 * 1024 * 1024 and path.stat().st_mode & 0o111,
+             0 < path.stat().st_size <= 2 * 1024 * 1024 * 1024 and path.stat().st_mode & 0o111,
              'invalid native executable: ' + program)
         need(row.get('sha256') == digest(path) and
              row.get('bytes', path.stat().st_size) == path.stat().st_size,

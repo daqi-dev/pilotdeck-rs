@@ -1177,6 +1177,65 @@ mod image_library_tests {
     }
 
     #[test]
+    fn current_generation_requires_source_and_library_inventory_to_agree() {
+        for (image_source, with_libraries) in
+            [(false, false), (false, true), (true, false), (true, true)]
+        {
+            let scratch = Scratch::new();
+            let generation = scratch.0.join("generations/current-test");
+            mkdir(&scratch.0.join("generations")).unwrap();
+            mkdir(&generation).unwrap();
+            mkdir(&generation.join("bin")).unwrap();
+            mkdir(&generation.join("source")).unwrap();
+            mkdir(&generation.join("source/src")).unwrap();
+            if image_source {
+                mkdir(&generation.join("source/src/pilotdeck-image-native")).unwrap();
+                fs::write(
+                    generation.join("source/src/pilotdeck-image-native/Cargo.toml"),
+                    "[package]\nname=\"pilotdeck-image-native\"\n",
+                )
+                .unwrap();
+            }
+            let mut hashes = BTreeMap::new();
+            for name in BINARIES {
+                let path = generation.join("bin").join(name);
+                fs::write(&path, name.as_bytes()).unwrap();
+                hashes.insert(name.into(), hash_file(&path).unwrap());
+            }
+            let mut manifest = Generation {
+                schema_version: 1,
+                generation: "current-test".into(),
+                source_sha: "a".repeat(40),
+                source_checkout: generation.join("source"),
+                bin_hashes: hashes,
+                library_profile: None,
+                library_hashes: BTreeMap::new(),
+            };
+            if with_libraries {
+                let profile = format!("pilotdeck-libs-{}", "b".repeat(64));
+                mkdir(&generation.join("bin").join(&profile)).unwrap();
+                let library = generation.join("bin").join(&profile).join("libvips.so.42");
+                fs::write(&library, b"library fixture").unwrap();
+                manifest
+                    .library_hashes
+                    .insert("libvips.so.42".into(), hash_file(&library).unwrap());
+                manifest.library_profile = Some(profile);
+            }
+            write_json(&generation.join("manifest.json"), &manifest).unwrap();
+            symlink("generations/current-test", scratch.0.join("current")).unwrap();
+            let result = Installation::read_current(&scratch.0);
+            if image_source == with_libraries {
+                assert!(
+                    result.is_ok(),
+                    "source={image_source} libraries={with_libraries}: {result:?}"
+                );
+            } else {
+                assert_eq!(result.unwrap_err().reason, "runtimeMismatch");
+            }
+        }
+    }
+
+    #[test]
     fn copied_libraries_are_manifested_and_tampering_is_rejected() {
         let scratch = Scratch::new();
         let artifacts = scratch.0.join("artifacts");

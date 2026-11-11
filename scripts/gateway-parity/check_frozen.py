@@ -261,6 +261,8 @@ def manifest_inventory(root):
               ('observation_rules.mjs', 'run.py', 'six_cells.mts', 'append-observer.mjs', 'cleanup-observer.mjs',
                'host-sidecar-adapter.mjs', 'host-sidecar-source-loader.mjs',
                'host-sidecar-stimulus.mjs', 'run-host.py')]
+    # Outer host capture scheduler. It is not loaded by the six-cell TS fixture.
+    paths.append('scripts/a5-19/host-cohort.py')
     inventory.update({'../../' + name: name for name in paths})
     return inventory
 

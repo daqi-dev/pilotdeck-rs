@@ -2,16 +2,16 @@
 //! id or `cell-N`, replace/insert/delete it and re-serialize the notebook with
 //! `JSON.stringify(notebook, null, 1)` semantics.
 use super::{
-    ensure_write_snapshot_fresh, field, file_history, message_id, object, record_write_snapshot,
-    resolve_write_path, schema, string, text, tool_error, validate_write_snapshot_fresh,
-    write_text_file,
+    ensure_write_snapshot_fresh_with_reader, field, file_history, message_id, object,
+    record_write_snapshot, resolve_write_path, schema, string, text, tool_error,
+    validate_write_snapshot_fresh_with_reader, write_text_file,
 };
 use crate::{
     host::{HostError, modules::capability::ToolDefinition},
     runtime::tools::{ExecutableTool, ToolError, ToolFuture, ToolOutput, ToolRunContext},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
-use std::{fs, io};
+use std::io;
 
 pub struct EditNotebookTool {
     fields: JsObject,
@@ -149,7 +149,11 @@ fn validate(input: &JsValue, context: &ToolRunContext) -> Result<Option<Vec<JsOb
             "cell_type is required when edit_mode is insert.",
         )]));
     }
-    match validate_write_snapshot_fresh(context, &resolved.absolute) {
+    match validate_write_snapshot_fresh_with_reader(
+        context,
+        &resolved.absolute,
+        read_notebook_snapshot,
+    ) {
         Ok(_) => {}
         Err(error)
             if error.code == "invalid_tool_input"
@@ -205,7 +209,11 @@ async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput
             "File must be a Jupyter notebook (.ipynb file). Use edit_file for non-notebook files.",
         ));
     }
-    let freshness = ensure_write_snapshot_fresh(context, &resolved.absolute)?;
+    let freshness = ensure_write_snapshot_fresh_with_reader(
+        context,
+        &resolved.absolute,
+        read_notebook_snapshot,
+    )?;
     let message = message_id(context);
     let history = file_history(context);
     let history_source = if history.is_some_and(|value| value.requires_authorized_source()) {
@@ -426,14 +434,59 @@ fn missing_cell_error(cell_id: &Option<JsString>, index: usize) -> ToolError {
     )
 }
 
+fn read_notebook_snapshot(path: &JsString) -> Result<String, ToolError> {
+    let bytes =
+        super::notebook_input::read_notebook_input(&super::os_path(path)).map_err(|error| {
+            match error {
+                super::notebook_input::NotebookReadError::Io(error) => {
+                    super::failed(error, "open", path)
+                }
+                super::notebook_input::NotebookReadError::Read(error) => {
+                    super::failed(error, "read", path)
+                }
+                super::notebook_input::NotebookReadError::NotRegular => tool_error(
+                    "invalid_tool_input",
+                    format!("Notebook {} must be a regular file.", text(path)),
+                ),
+                super::notebook_input::NotebookReadError::TooLarge => tool_error(
+                    "result_too_large",
+                    "Notebook source exceeds the 64 MiB input limit.",
+                ),
+            }
+        })?;
+    if bytes.contains(&0) {
+        return Err(tool_error(
+            "invalid_tool_input",
+            format!("{} appears to be a binary file.", text(path)),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
 fn read_notebook_json(path: &JsString) -> Result<String, ToolError> {
-    match fs::read(super::os_path(path)) {
+    match super::notebook_input::read_notebook_input(&super::os_path(path)) {
         Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).into_owned()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Err(tool_error(
-            "file_not_found",
-            format!("File {} does not exist.", text(path)),
+        Err(super::notebook_input::NotebookReadError::Io(error))
+        | Err(super::notebook_input::NotebookReadError::Read(error))
+            if error.kind() == io::ErrorKind::NotFound =>
+        {
+            Err(tool_error(
+                "file_not_found",
+                format!("File {} does not exist.", text(path)),
+            ))
+        }
+        Err(super::notebook_input::NotebookReadError::Io(error))
+        | Err(super::notebook_input::NotebookReadError::Read(error)) => {
+            Err(tool_error("tool_execution_failed", error.to_string()))
+        }
+        Err(super::notebook_input::NotebookReadError::NotRegular) => Err(tool_error(
+            "invalid_tool_input",
+            format!("Notebook {} must be a regular file.", text(path)),
         )),
-        Err(error) => Err(tool_error("tool_execution_failed", error.to_string())),
+        Err(super::notebook_input::NotebookReadError::TooLarge) => Err(tool_error(
+            "result_too_large",
+            "Notebook source exceeds the 64 MiB input limit.",
+        )),
     }
 }
 

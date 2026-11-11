@@ -40,11 +40,13 @@ def read(path):
     return json.loads(Path(path).read_text())
 
 
-def load(name, path):
+def load(name, path, *, committed_source=None):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     source = Path(path).read_bytes()
+    if committed_source is not None and source != committed_source:
+        raise ValueError(f'host producer differs from committed source: {path}')
     exec(compile(source, str(path), 'exec'), module.__dict__)
     module._apparatus_source = source
     return module
@@ -54,7 +56,18 @@ def git(path, *args):
     return subprocess.check_output(['git', '-C', str(path), *args], timeout=10)
 
 
+def cohort(argv):
+    head = git(ROOT, 'rev-parse', 'HEAD').decode().strip()
+    source_path = ROOT / 'scripts/a5-19/host-cohort.py'
+    assert source_path.resolve() == source_path
+    committed = git(ROOT, 'show', f'{head}:scripts/a5-19/host-cohort.py')
+    runner = load('host_fixture_cohort', source_path, committed_source=committed)
+    return runner.main(argv)
+
+
 def main():
+    if sys.argv[1:2] == ['cohort']:
+        return cohort(sys.argv[2:])
     parser = argparse.ArgumentParser(description=__doc__)
     for flag in ('baseline', 'node', 'source-manifest', 'binary-manifest', 'out'):
         parser.add_argument('--' + flag, type=Path, required=True)

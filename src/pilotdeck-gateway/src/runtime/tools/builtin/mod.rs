@@ -15,6 +15,7 @@ pub mod goal;
 pub mod grep;
 pub mod mcp_resources;
 pub mod mcp_tool;
+mod notebook_input;
 pub mod read_file;
 pub mod send_attachment;
 pub mod structured;
@@ -790,6 +791,14 @@ pub(super) fn validate_write_snapshot_fresh(
     context: &crate::runtime::tools::ToolRunContext,
     absolute: &JsString,
 ) -> Result<bool, crate::runtime::tools::ToolError> {
+    validate_write_snapshot_fresh_with_reader(context, absolute, read_text_file)
+}
+
+pub(super) fn validate_write_snapshot_fresh_with_reader(
+    context: &crate::runtime::tools::ToolRunContext,
+    absolute: &JsString,
+    read: fn(&JsString) -> Result<String, crate::runtime::tools::ToolError>,
+) -> Result<bool, crate::runtime::tools::ToolError> {
     let metadata = match fs::metadata(os_path(absolute)) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
@@ -814,7 +823,7 @@ pub(super) fn validate_write_snapshot_fresh(
     }
     let full_read = snapshot.get("offset").is_none() && snapshot.get("limit").is_none();
     if full_read {
-        let previous = read_text_file(absolute)?;
+        let previous = read(absolute)?;
         let recorded = snapshot
             .get("contentHash")
             .and_then(JsValue::as_string)
@@ -946,6 +955,14 @@ pub(super) fn ensure_write_snapshot_fresh(
     context: &crate::runtime::tools::ToolRunContext,
     absolute: &JsString,
 ) -> Result<Freshness, crate::runtime::tools::ToolError> {
+    ensure_write_snapshot_fresh_with_reader(context, absolute, read_text_file)
+}
+
+pub(super) fn ensure_write_snapshot_fresh_with_reader(
+    context: &crate::runtime::tools::ToolRunContext,
+    absolute: &JsString,
+    read: fn(&JsString) -> Result<String, crate::runtime::tools::ToolError>,
+) -> Result<Freshness, crate::runtime::tools::ToolError> {
     let metadata = match fs::metadata(os_path(absolute)) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -970,7 +987,7 @@ pub(super) fn ensure_write_snapshot_fresh(
         .and_then(JsValue::as_number)
         .unwrap_or(f64::NAN);
     let actual_mtime = metadata_mtime_ms(&metadata);
-    let previous = read_text_file(absolute)?;
+    let previous = read(absolute)?;
     let full_read = snapshot.get("offset").is_none() && snapshot.get("limit").is_none();
     if actual_mtime != expected_mtime {
         if full_read {

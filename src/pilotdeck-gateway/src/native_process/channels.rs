@@ -233,10 +233,10 @@ fn default_weixin_maker() -> WeixinChannelMaker {
     Arc::new(|options| Arc::new(WeixinChannel::new(options)))
 }
 
-#[cfg(test)]
 #[derive(Clone, Default)]
 pub struct ChannelEndpointOverrides {
     /// Isolated executable used by actual channel command tests; unavailable in production.
+    #[cfg(test)]
     pub channel_system_cli: Option<PathBuf>,
     pub sms_twilio_api_base: Option<String>,
     pub slack_api_base: Option<String>,
@@ -248,6 +248,27 @@ pub struct ChannelEndpointOverrides {
     pub qq_token_url: Option<String>,
     pub dingtalk_stream_endpoint: Option<String>,
     pub dingtalk_webhook_route: Option<crate::channel::dingtalk::WebhookRoute>,
+}
+
+// The same constructor seams used by actual-Server tests are available to the
+// production executable only behind the already validated explicit loopback env.
+#[cfg(not(test))]
+fn fixture_channel_endpoints() -> ChannelEndpointOverrides {
+    let Some(origin) = test_channel_loopback_origin() else {
+        return ChannelEndpointOverrides::default();
+    };
+    let dingtalk_send = format!("{origin}/dingtalk/send");
+    ChannelEndpointOverrides {
+        slack_api_base: Some(origin.clone()),
+        feishu_api_base: Some(origin.clone()),
+        telegram_api_root: Some(origin.clone()),
+        discord_api_root: Some(origin.clone()),
+        qq_api_base: Some(origin.clone()),
+        qq_token_url: Some(format!("{origin}/qq/token")),
+        dingtalk_stream_endpoint: Some(format!("{origin}/dingtalk/open")),
+        dingtalk_webhook_route: Some(Arc::new(move |_| dingtalk_send.clone())),
+        ..Default::default()
+    }
 }
 
 pub struct NativeChannelsOptions {
@@ -287,7 +308,6 @@ pub struct NativeChannels {
     #[cfg(unix)]
     pub(super) system: OnceLock<Arc<super::channel_system::NativeChannelSystem>>,
     managed_keys: Mutex<Vec<ChannelKey>>,
-    #[cfg(test)]
     endpoints: ChannelEndpointOverrides,
     interaction: Arc<super::channel_interaction::NativeInteractionResponder>,
     pilot_home: PathBuf,
@@ -372,9 +392,12 @@ impl TurnGateway for FeishuTurnGateway {
 
 impl NativeChannels {
     pub fn new(options: NativeChannelsOptions) -> Self {
-        let feishu = options.feishu;
         #[cfg(test)]
-        let feishu = match &options.endpoints.feishu_api_base {
+        let endpoints = options.endpoints;
+        #[cfg(not(test))]
+        let endpoints = fixture_channel_endpoints();
+        let feishu = options.feishu;
+        let feishu = match &endpoints.feishu_api_base {
             Some(base) => FeishuOptions {
                 base_url: base.clone(),
                 ..feishu
@@ -392,6 +415,9 @@ impl NativeChannels {
         });
         let weixin_runtime = runtime.clone();
         let mut weixin = options.weixin;
+        if let Some(origin) = test_channel_loopback_origin() {
+            weixin.login = WeixinChannelOptions::with_login_base_url(origin).login;
+        }
         weixin.runtime_status = Some(Arc::new(move |status| {
             weixin_runtime(weixin_key().as_js(), &weixin_update(&status));
         }));
@@ -410,8 +436,7 @@ impl NativeChannels {
                     .map(|key| ChannelKey::new(*key))
                     .collect(),
             ),
-            #[cfg(test)]
-            endpoints: options.endpoints,
+            endpoints,
             pilot_home: options.pilot_home,
             server: ChannelServer::new(
                 ChannelStartDeps {
@@ -546,13 +571,10 @@ impl NativeChannels {
 
     fn configured_mounts(&self) -> ChannelLoaderMounts {
         let mounts = production_loader_mounts_with_interactions(&self.interaction);
-        #[cfg(test)]
-        let mounts = self.with_test_endpoints(mounts);
-        mounts
+        self.with_endpoint_overrides(mounts)
     }
 
-    #[cfg(test)]
-    fn with_test_endpoints(&self, mut mounts: ChannelLoaderMounts) -> ChannelLoaderMounts {
+    fn with_endpoint_overrides(&self, mut mounts: ChannelLoaderMounts) -> ChannelLoaderMounts {
         if let Some(base) = self.endpoints.slack_api_base.clone() {
             crate::channel::slack::register_native_with_base(
                 &mut mounts,
@@ -692,7 +714,6 @@ impl NativeChannels {
             })),
             ..Default::default()
         };
-        #[cfg(test)]
         let options = QQOptions {
             api_base: self.endpoints.qq_api_base.clone(),
             token_url: self.endpoints.qq_token_url.clone(),

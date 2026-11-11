@@ -527,3 +527,65 @@ fn read_file_rejects_truncated_gif_after_header_and_preserves_valid_input() {
         }
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn read_file_media_allows_symlinked_workspace_and_additional_roots() {
+    use std::os::unix::{ffi::OsStringExt, fs::symlink};
+    let scratch = Scratch::new();
+    let physical = scratch.root.join("physical");
+    fs::create_dir(&physical).unwrap();
+    let alias = scratch.root.join("alias");
+    symlink(&physical, &alias).unwrap();
+    let jpeg = [vec![b'A'; 1024], vec![0xff, 0xd9]].concat();
+    fs::write(physical.join("image.jpg"), &jpeg).unwrap();
+    let non_utf8 = physical.join(std::ffi::OsString::from_vec(b"non-utf8-\xff.jpg".to_vec()));
+    fs::write(&non_utf8, &jpeg).unwrap();
+    symlink(&non_utf8, physical.join("non-utf8-alias.jpg")).unwrap();
+    let cwd = scratch.root.join("ordinary-cwd");
+    fs::create_dir(&cwd).unwrap();
+    let extra_alias = scratch.root.join("extra-alias");
+    symlink(&scratch.outside, &extra_alias).unwrap();
+    fs::write(scratch.outside.join("extra.jpg"), &jpeg).unwrap();
+    symlink(
+        scratch.outside.join("extra.jpg"),
+        physical.join("escape.jpg"),
+    )
+    .unwrap();
+    let run = |cwd: &Path, name: &str, extra: Option<&Path>| {
+        let mut replay = ReplayContext::new(&scratch, cwd);
+        replay
+            .context
+            .fields
+            .insert("modelMultimodal".into(), multimodal(&["image"], None));
+        if let Some(extra) = extra {
+            replay.context.fields.insert(
+                "permissionContext".into(),
+                JsValue::Object(object([
+                    ("mode", JsValue::from("default")),
+                    ("canPrompt", JsValue::Bool(true)),
+                    (
+                        "additionalWorkingDirectories",
+                        JsValue::Array(vec![JsValue::from(extra.to_str().unwrap())]),
+                    ),
+                ])),
+            );
+        }
+        futures_block(ReadFileTool::new().execute(
+            JsValue::Object(object([("file_path", JsValue::from(name))])),
+            replay.context,
+        ))
+    };
+    let output = run(&alias, "image.jpg", None).expect("symlinked workspace root");
+    assert_eq!(text(field(&output.content[0], "type")), "image");
+    let output = run(&alias, "non-utf8-alias.jpg", None).expect("non-UTF-8 symlink target");
+    assert_eq!(text(field(&output.content[0], "type")), "image");
+    let extra_file = extra_alias.join("extra.jpg");
+    let output = run(&cwd, extra_file.to_str().unwrap(), Some(&extra_alias))
+        .expect("symlinked additional root");
+    assert_eq!(text(field(&output.content[0], "type")), "image");
+    assert_eq!(
+        run(&alias, "escape.jpg", None).unwrap_err().code,
+        "path_not_allowed"
+    );
+}

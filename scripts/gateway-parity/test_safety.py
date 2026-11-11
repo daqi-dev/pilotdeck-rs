@@ -2061,6 +2061,14 @@ class ApparatusInputs(unittest.TestCase):
                       'runtimeLibraries': {'path': str(manifest), 'sha256': common.digest(manifest)}}
             check = lambda: common.verify_native_runtime_libraries(source, root / 'manifest.json')
             self.assertEqual(check(), rows)
+            original_program = (root / 'pilotdeck').read_bytes()
+            with (root / 'pilotdeck').open('wb') as large:
+                large.write(b'\x7fELF')
+                large.truncate(2 * 1024 * 1024 * 1024 + 1)
+            with self.assertRaisesRegex(ValueError, 'invalid native executable'):
+                check()
+            executable('pilotdeck', original_program)
+            self.assertEqual(check(), rows)
             original = library.read_bytes()
             library.write_bytes(b'changed native library!')
             with self.assertRaisesRegex(ValueError, 'library bytes'):

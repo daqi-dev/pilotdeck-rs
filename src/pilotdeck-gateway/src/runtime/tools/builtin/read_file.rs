@@ -3,7 +3,7 @@
 //! classification, dedup state and write snapshots. PDF page rendering uses
 //! the same MuPDF JPEG settings as the fixed TS implementation.
 use super::{
-    ResolvedPath, StatKind, cwd as context_cwd, extname, failed, field, is_absolute, join, js_path,
+    ResolvedPath, StatKind, cwd as context_cwd, extname, failed, field, is_absolute, join,
     js_value_string, lower, normalize, number, object, os_path, read_file_bytes,
     record_write_snapshot, resolve_workspace_path, schema, stat, string, text, tool_error, truthy,
 };
@@ -485,7 +485,17 @@ fn read_media_bounded(
         .and_then(|decision| decision.get("type"))
         .and_then(JsValue::as_string)
         .is_some_and(|kind| kind.equals_str("allow"));
-    resolve_workspace_path(&js_path(&real), context, true, allow_outside)?;
+    // Reauthorize using the original spelling: a workspace root itself may
+    // be a symlink. Ensure that it still resolves to the same file we open.
+    resolve_workspace_path(&resolved.absolute, context, true, allow_outside)?;
+    let checked = std::fs::canonicalize(os_path(&resolved.absolute))
+        .map_err(|error| failed(error, "open", &resolved.absolute))?;
+    if checked != real {
+        return Err(tool_error(
+            "path_not_allowed",
+            "Media path changed during authorization.",
+        ));
+    }
     let metadata = std::fs::symlink_metadata(&real)
         .map_err(|error| failed(error, "stat", &resolved.absolute))?;
     if !metadata.file_type().is_file() {
@@ -973,8 +983,25 @@ fn notebook(
     context_stat: &super::Stat,
     read_state_key: &JsString,
 ) -> Result<ToolOutput, ToolError> {
-    let bytes = std::fs::read(os_path(&resolved.absolute))
-        .map_err(|error| failed(error, "open", &resolved.absolute))?;
+    let bytes = super::notebook_input::read_notebook_input(&os_path(&resolved.absolute)).map_err(
+        |error| match error {
+            super::notebook_input::NotebookReadError::Io(error)
+            | super::notebook_input::NotebookReadError::Read(error) => {
+                failed(error, "open", &resolved.absolute)
+            }
+            super::notebook_input::NotebookReadError::NotRegular => tool_error(
+                "invalid_tool_input",
+                format!(
+                    "Notebook {} must be a regular file.",
+                    text(&resolved.absolute)
+                ),
+            ),
+            super::notebook_input::NotebookReadError::TooLarge => tool_error(
+                "result_too_large",
+                "Notebook source exceeds the 64 MiB input limit.",
+            ),
+        },
+    )?;
     let raw = String::from_utf8_lossy(&bytes).into_owned();
     let parsed = pilotdeck_protocol::parse_json(&raw).map_err(|error| {
         let mut tool = tool_error(

@@ -227,6 +227,14 @@ fn executable_native_loop_stimulus() {
             "#1371 provider-armed loop reaches real model",
             "#1371 executable provider arm invokes real model",
         ),
+        (
+            "#1371 provider completion precedes the wait",
+            "#1371 executable provider completion precedes wait",
+        ),
+        (
+            "#1371 provider-armed known outcome completes",
+            "#1371 executable provider armed outcome completes",
+        ),
     ] {
         negative_assert!(assertion != Some(message), "{}", label);
     }

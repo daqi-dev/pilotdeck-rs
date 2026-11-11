@@ -460,7 +460,8 @@ def report(manifest_path, *, session, output):
             measurements = [rows.get((case, k), {'case': case, 'repetition': k, 'status': 'NOT_RUN', 'rule': 'COVERAGE'}) for k in range(1, K+1)]
             case_status, _ = session.common.aggregate_status(*(row['status'] for row in measurements))
             cases.append({'case': case, 'status': case_status, 'measurements': measurements})
-        complete = len(rows) == len(expected) * K
+        complete = (len(rows) == len(expected) * K and
+                    all(row['status'] != 'NOT_RUN' for row in rows.values()))
         if not complete:
             errors.append({'rule': 'COVERAGE', 'detail': 'original 72 × k5 is incomplete'})
         cell_status, _ = session.common.aggregate_status(

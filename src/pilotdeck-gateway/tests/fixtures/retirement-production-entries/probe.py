@@ -6,7 +6,7 @@ from pathlib import Path
 from http.client import HTTPResponse
 sys.dont_write_bytecode=True
 p=argparse.ArgumentParser()
-p.add_argument('--engine',choices=('ts','native'),required=True);p.add_argument('--mode',choices=('http','cron','alwayson'),required=True)
+p.add_argument('--engine',choices=('ts','native'),required=True);p.add_argument('--mode',choices=('http','cron','alwayson','history'),required=True)
 for key in ('baseline','node','cli','sidecar','source-manifest','candidate-manifest','out'):p.add_argument('--'+key,type=Path,required=True)
 a=p.parse_args();a.out=a.out.resolve();a.out.mkdir(parents=True,exist_ok=False);HERE=Path(__file__).resolve().parent
 MAX_REQUESTS=32;MAX_BODY=2*1024*1024;MAX_OUTPUT_TOKENS=256
@@ -34,7 +34,7 @@ class Provider(http.server.BaseHTTPRequestHandler):
  def do_POST(self):
   try:
    self.connection.settimeout(5);length=int(self.headers.get('content-length','0'));assert 0<length<=MAX_BODY and len(requests)<MAX_REQUESTS
-   body=json.loads(self.rfile.read(length));requests.append({'path':self.path,'body':body});text='ENTRY_RUNTIME_REPLY_'+a.mode;self.send_response(200)
+   body=json.loads(self.rfile.read(length));requests.append({'path':self.path,'body':body});text='GP_MOCK_OK' if a.mode=='history' else 'ENTRY_RUNTIME_REPLY_'+a.mode;self.send_response(200)
    if body.get('stream'):
     self.send_header('content-type','text/event-stream');self.send_header('connection','close');self.end_headers()
     rows=[{'choices':[{'index':0,'delta':{'role':'assistant','content':text},'finish_reason':None}]},{'choices':[{'index':0,'delta':{},'finish_reason':'stop'}],'usage':{'prompt_tokens':10,'completion_tokens':5,'total_tokens':15}}]
@@ -52,6 +52,10 @@ port=28478 if a.engine=='ts' else 28479
 env={k:v for k,v in os.environ.items()if k in ('PATH','LANG','LC_ALL','LD_LIBRARY_PATH')};env.update(HOME=str(home),PILOT_HOME=str(home),TMPDIR=str(tmp),DATABASE_PATH=str(home/'auth.db'),WORKSPACES_ROOT=str(a.out/'workspaces'),PILOTDECK_GATEWAY_HOST='127.0.0.1',PILOTDECK_GATEWAY_PORT=str(port),PILOTDECK_GATEWAY_TOKEN=token,PILOTDECK_GATEWAY_TOKEN_PATH=str(home/'token'),PILOTDECK_SKIP_BROWSER_OPEN='1',PILOTDECK_RS_SIDECAR=str(a.sidecar),PDRS_BASELINE=str(a.baseline))
 command=([str(a.node),str(a.baseline/'dist/src/cli/pilotdeck.js')]if a.engine=='ts'else[str(a.cli)])+['server','--host','127.0.0.1','--port',str(port)]
 provenance={'engine':a.engine,'mode':a.mode,'sourceManifest':{'path':str(a.source_manifest),'sha256':sha(a.source_manifest)},'candidateManifest':{'path':str(a.candidate_manifest),'sha256':sha(a.candidate_manifest)},'binaries':{'pilotdeck':sha(a.cli),'sidecar':sha(a.sidecar)},'producerSha256':sha(__file__),'cronDriverSha256':sha(HERE/'cron.mts'),'baselineEntrySha256':sha(a.baseline/'dist/src/cli/pilotdeck.js'),'node':versions,'command':command,'networkNamespace':os.readlink('/proc/self/ns/net'),'formalAcceptance':False}
+if a.mode == 'history':
+ provenance['historyDriverSha256'] = sha(HERE/'history.mts')
+ provenance['registeredHistoryDriverSha256'] = sha(root/'scripts/gateway-parity/session_history_driver.mts')
+ provenance['subagentBundleSha256'] = sha(HERE.parent/'native-history/subagent-bundle.json')
 (a.out/'provenance.json').write_text(json.dumps(provenance,indent=2))
 class ResponseSocket:
  def __init__(self,raw):self.raw=raw
@@ -123,6 +127,17 @@ try:
   code=runner.wait_owned(driver,100)
   assert code==0,('cron driver',code);assert any('ENTRY_BACKGROUND_CRON' in json.dumps(r['body']) for r in requests)
   background=json.loads((a.out/'cron.json').read_text())
+ elif a.mode=='history':
+  driver=start_owned('driver',[a.node,'--import',a.baseline/'node_modules/tsx/dist/loader.mjs',HERE/'history.mts',
+                               a.baseline,HERE.parent/'native-history/subagent-bundle.json',project,home,
+                               f'ws://127.0.0.1:{port}/ws',token,a.out/'history'])
+  code=runner.wait_owned(driver,100)
+  assert code==0,('ordinary history driver',code)
+  ordinary=json.loads((a.out/'history/result.json').read_text())
+  restoration=json.loads((a.out/'history/restoration.json').read_text())
+  assert ordinary['closed'] is True and restoration['pass'] is True
+  assert any(row['body'].get('stream') is True for row in requests)
+  background={'id':'normal-history','u9u10':ordinary,'restoration':restoration}
  else:
   end=time.monotonic()+35
   while time.monotonic()<end:

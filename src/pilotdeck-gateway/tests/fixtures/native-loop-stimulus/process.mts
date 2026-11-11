@@ -526,6 +526,8 @@ try {
       '#1371 bound expires instead of hanging',
       '#1371 bound never fabricates a completion',
       '#1371 provider-armed loop reaches real model',
+      '#1371 provider completion precedes the wait',
+      '#1371 provider-armed known outcome completes',
     ].includes(first)) assertionFailure = first;
   }
   throw error;

@@ -29,6 +29,10 @@ fn negative_fixture_anchors_and_checker_controls() {
     for (script, args) in [
         ("test_anchor_selfcheck.py", &[][..]),
         (
+            "session-domain-cleanup/test_kernel_lease_judging.py",
+            &[][..],
+        ),
+        (
             "test_negative_process.py",
             &[
                 // ProcessControls 持 wait_for_slot / run_owned 的契约测试（含
