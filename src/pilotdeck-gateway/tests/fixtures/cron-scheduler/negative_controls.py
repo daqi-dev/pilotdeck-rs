@@ -301,7 +301,14 @@ def check_manifest():
     # The gold-cell count is another hand copy: the README file bullet says
     # `oracle.json — N 格金样` and the sh-block comment says `含 N 格字节比对`;
     # oracle.json's cells are the artifact both copies describe.
-    cells = len(json.loads(oracle.read_text())['cells'])
+    oracle_payload = json.loads(oracle.read_text())
+    # 修复轮 r6 P2（DS sibling#2，always-on 侧 fix-r3 空 oracle 拒绝的同族）：
+    # oracle 被清空成 {"cells": []}（或整份 {} / 缺 cells 键）且 README 两处
+    # 金样计数同步清零时，下面的 0==0 核对全部空心通过——先拒绝空清单本身，
+    # --check 对被清空的 oracle.json 不再绿灯。
+    cells = len(oracle_payload.get('cells') or [])
+    if not cells:
+        errors.append('oracle.json: the gold-cell manifest is empty')
     for pattern, where in ((r'`oracle\.json` — (\d+) 格金样', 'file list'),
                            (r'含 (\d+) 格字节比对', 'replay comment')):
         found = re.findall(pattern, text)

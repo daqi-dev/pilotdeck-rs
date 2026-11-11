@@ -154,17 +154,14 @@ fn replacement_error(error: crate::runtime::replacement::ReplacementError) -> Re
 /// Preserve each callback's project contract: model mutations require dialog
 /// registration; style callbacks resolve lexical roots without that registry.
 fn lexical_project(requests: &Requests, params: &JsValue) -> Result<PathBuf, RequestError> {
-    match super::input_property(params, "projectKey")?.as_ref() {
-        None | Some(JsValue::Null | JsValue::Undefined) => Ok(requests.options.project.clone()),
-        Some(JsValue::String(key)) => super::super::project_scope::resolve(key),
-        Some(other) => Err(config_error(crate::session_model::path_argument(other))),
-    }
+    let key = super::resolve_project_key(params, &requests.options.project)?;
+    super::super::project_scope::resolve(&key)
 }
 async fn model_project(requests: &Requests, params: &JsValue) -> Result<String, RequestError> {
-    let fallback = JsValue::from(requests.options.project.to_string_lossy().as_ref());
-    let raw = super::input_property(params, "projectKey")?
-        .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
-        .unwrap_or(fallback);
+    let raw = JsValue::String(super::resolve_project_key(
+        params,
+        &requests.options.project,
+    )?);
     let home = requests.options.home.clone();
     let permit = super::session_dir::session_io_permit().await?;
     tokio::task::spawn_blocking(move || {
@@ -3804,6 +3801,51 @@ mod tests {
             !array_field(&fallback, "styles")
                 .iter()
                 .any(|item| item.get("name") == Some(&"probe:compact".into()))
+        );
+        teardown(&r).await;
+    }
+    // #2068 preserves the structured path TypeError and full-CLI raw project key.
+    #[tokio::test]
+    async fn session_model_set_project_key_read_follows_the_ts_chain() {
+        let (_scratch, r) = setup_fixture();
+        let error = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([("projectKey", JsValue::Number(7.0))]),
+            )
+            .await
+            .expect_err("#2068 a non-string projectKey is the path.resolve TypeError");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "ERR_INVALID_ARG_TYPE",
+            "#2068 the non-string projectKey answers the Node TypeError code"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "The \"paths[0]\" argument must be of type string. Received type number (7)",
+            "#2068 the non-string projectKey keeps the path.resolve TypeError message"
+        );
+        let error = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([(
+                    "projectKey",
+                    JsValue::String(JsString::from_utf16(vec![0xd800])),
+                )]),
+            )
+            .await
+            .expect_err("#2068 a surrogate projectKey is a real unknown key");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "PROJECT_NOT_FOUND",
+            "#2068 the surrogate projectKey reaches the registration gate"
+        );
+        let mut expected: Vec<u16> = "Unknown projectKey: ".encode_utf16().collect();
+        expected.push(0xd800);
+        negative_assert_eq!(
+            error.message.units(),
+            expected.as_slice(),
+            "#2068 the surrogate projectKey keeps the original units"
         );
         teardown(&r).await;
     }

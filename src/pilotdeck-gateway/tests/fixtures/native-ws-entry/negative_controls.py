@@ -141,6 +141,12 @@ switches = [
      "#2153 the content-length exemption covers exactly the oracle's 431 cells"),
     ('native-ws-budget-cl0-mask-always', TESTS, PREFIX + 'only_the_registered_cells_mask_a_content_length_zero',
      '#2153 an injected content-length: 0 on a served cell must not normalize away'),
+    # #2789 cluster 2: a stale entry in PARSER_ADMISSION_CELLS admits nothing
+    # through the predicate, so only the direct set-comparison leg of the
+    # coverage guard (the sorted constant against the sorted oracle 431s)
+    # can catch it — the mutant appends one unrecorded id to that leg.
+    ('native-ws-budget-cl0-stale', TESTS, PREFIX + 'parser_admission_cells_cover_exactly_the_oracle_431s',
+     "#2153 the exemption list itself is exactly the oracle's 431 cells, so a stale entry points at the cell to re-check"),
     ('native-http-431-cl0-off', ROOT / 'src/pilotdeck-gateway/src/native_http.rs',
      PREFIX + 'budget_content_length_zero_stays_scoped_to_the_registered_431s',
      '#2153 pin: the registered 431 carries content-length: 0'),

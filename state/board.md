@@ -5886,3 +5886,6 @@ Draft2786已推d1eddc025；cb8 clean1c真实全回归Gateway6240PASS/9FAIL/258ig
 ### 2026-11-11 12:00 CST · 共同候选继续收口，所有构建测试 cb8
 
 a7d22018a 同头 fmt/严格clippy/四bin通过；6508 Gateway库项全覆盖分片为6249PASS/1FAIL/258ignored，唯一WhatsApp失败实证为容器漏挂固定Node所需libuv，同exe补挂后单项通过，原全量FAIL不改写；CLI57PASS/2ignored、transport41PASS/1ignored、builtin7PASS、FunASR1PASS、guard53PASS。新批收取媒体合法别名、Notebook读取与快照实际入口限界及原目录IO兼容、8渠道生产回环装配、普通历史导出恢复生产fixture、四宿主共同采集入口、运行库大debug程序校验修复；尚未编译/正式验收。共享源root独占，Sol三路负责图片真实消费者、渠道生产闭环、普通历史；此前自动安全审查拒绝的权限扩展动作不重试，缺项明确保留。当前Draft2786为a7d；主线固定330542e0，原统一前端树/快照未动。下一步新头cb8严格检查及受影响测试，并行真实消费者与两家增量审阅，随后四host/session/150入口/冷切和冻结登记；完整替换未通过。证据主仓_tmp/20261111-gateway-closeout及各finish目录。
+
+
+12:3x增记：96ea同头fmt/严格clippy/四bin与定向检查全通过，CLI58PASS/2ignored、guard53、transport41/1、Notebook公开3及helper3、媒体alias8均有原件。8渠道生产入站→模型→出站→reload→停机全PASS；普通历史导出恢复双侧10真实请求与重启文件审计通过，仍是诊断不是正式session门。5补充HTTP入口实测合同MATCH，裸debug缺默认技能原FAIL保留，独立安装形状包general10/builtin32通过但真实源码安装另验。四host短采集均CAPTURED，正式224 jobs尚缺220，未假报全量。图片15格两编码FAIL定位MuPDF/libvips JPEG ABI污染，已收链接候选；主线固定接收fe497的57路径，真三方保全双方增量与R13编号冲突证据。下一步新头cb8编译→真实媒体/source-install→同头完整渠道/host/retirement/cold，持续独立双谱系增量收敛。旧FAIL和此前自动安全审查拒绝的未运行项保留，本机无构建。

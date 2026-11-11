@@ -152,6 +152,17 @@ switches = [
     # longer replays.
     ('webhook-http10-framing-off', SOURCE_WEBHOOK, 'http10_request_closes_the_connection',
      '#1684 pin http10: the 1.0 response replays Node\'s header set'),
+    # #2153/#2789: the replay normalization's `content-length: 0` mask is
+    # scoped to the `unknown-method` step through `fn parser_admission`. The
+    # mask-always mutant makes `normalize` ignore its scope flag, so the
+    # injected-line unit test fails; the widening mutant fails the uniqueness
+    # guard, which reads the same predicate.
+    ('webhook-replay-cl0-mask-always', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs',
+     'only_the_registered_step_masks_a_content_length_zero',
+     '#2153 an extra content-length: 0 on an unregistered step must not normalize away'),
+    ('webhook-replay-cl0-wide', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs',
+     'unknown_method_is_the_label_of_exactly_one_oracle_step',
+     "#2153 the unknown-method label belongs to exactly the health-and-routing case's bare parser-level 400"),
 ]
 GUARDED = [SOURCE_WEBHOOK, SOURCE_HMAC, SOURCE_CRON,
     ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs',

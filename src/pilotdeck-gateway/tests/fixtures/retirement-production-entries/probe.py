@@ -53,6 +53,8 @@ env={k:v for k,v in os.environ.items()if k in ('PATH','LANG','LC_ALL','LD_LIBRAR
 command=([str(a.node),str(a.baseline/'dist/src/cli/pilotdeck.js')]if a.engine=='ts'else[str(a.cli)])+['server','--host','127.0.0.1','--port',str(port)]
 provenance={'engine':a.engine,'mode':a.mode,'sourceManifest':{'path':str(a.source_manifest),'sha256':sha(a.source_manifest)},'candidateManifest':{'path':str(a.candidate_manifest),'sha256':sha(a.candidate_manifest)},'binaries':{'pilotdeck':sha(a.cli),'sidecar':sha(a.sidecar)},'producerSha256':sha(__file__),'cronDriverSha256':sha(HERE/'cron.mts'),'baselineEntrySha256':sha(a.baseline/'dist/src/cli/pilotdeck.js'),'node':versions,'command':command,'networkNamespace':os.readlink('/proc/self/ns/net'),'formalAcceptance':False}
 if a.mode == 'history':
+ provenance['diagnosticOnly'] = True
+ provenance['formalAcceptance'] = 'NOT_RUN'
  provenance['historyDriverSha256'] = sha(HERE/'history.mts')
  provenance['registeredHistoryDriverSha256'] = sha(root/'scripts/gateway-parity/session_history_driver.mts')
  provenance['subagentBundleSha256'] = sha(HERE.parent/'native-history/subagent-bundle.json')
@@ -172,6 +174,7 @@ finally:
            'providerRequests':requests,'errors':errors,'serverExitCode':None if child is None else child.returncode,
            'serverPid':None if child is None else child.pid,'listener':listener,'ownedCleanup':audit,
            'binariesUnchanged':unchanged,'formalAcceptance':False,'elapsedSeconds':time.monotonic()-start}
+   if a.mode=='history':result.update(diagnosticOnly=True,formalAcceptance='NOT_RUN')
    (a.out/'result.json').write_text(json.dumps(result,indent=2))
  finally:
   if leased:lease.__exit__(None,None,None)

@@ -5,34 +5,52 @@ Usage: negative_controls.py --check
        negative_controls.py [--compile-only] NEW_OUT [mutation ...]
 Commit the tests and this script first. CARGO_TARGET_DIR is caller-owned.
 Every selected row is reported, including anchor/build/source-guard failures.
-`--check` only proves each mutation anchor is unique; it cannot prove the row's
-assertion string ever reaches a panic payload, so a full run is the only proof
-that a row can go KILLED.
+`--check` proves each mutation anchor is unique and that the hand-copied
+manifest numbers still describe their artifacts (check_manifest, the
+cron-schedule #1509 P2-2d depth): README group-table counts vs oracle.json,
+the README Rows list vs this table, every oracle scenario bound to a replay
+in the Rust sources, every row's bound test actually defined there. It cannot
+prove the row's assertion string ever reaches a panic payload, so a full run
+is the only proof that a row can go KILLED.
 
 Rows bind one mutation to one lib test (run with `--exact`); the kill evidence
-is that test's own panic payload carrying its `#2294` message. The five rows
+is that test's own panic payload carrying its `#2294` message. The six rows
 are the prev-plan §5 targets: the lock gate removed from the gate chain
 (g10), the stop order swapped (cron no longer drains before Always-On), the
 reload rebuilding an unchanged family, describe advertising the always-on
-family with no manager bound, and a fired tick keeping the discovery lock.
+family with no manager bound, and a fired tick keeping the discovery lock;
+plus the #2566 re-arm row: a failing watcher start swapped ahead of its slot
+store, pinning the dead watcher in the slot so ensure never re-arms.
 The bound replays need no Node: they read the committed oracle bytes, so
 every row runs on both platforms.
 """
 from pathlib import Path
 import json
 import os
+import re
 import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import Case, classify, passed
+from negative_suite import Case, classify, declares_test, passed, bind_module_file
 
 root = Path(__file__).resolve().parents[5]
 gates = root / 'src/pilotdeck-gateway/src/runtime/always_on/gates.rs'
 automation = root / 'src/pilotdeck-gateway/src/native_process/assembly/automation.rs'
 capabilities = root / 'src/pilotdeck-gateway/src/native_process/capabilities.rs'
 scheduler = root / 'src/pilotdeck-gateway/src/runtime/always_on/scheduler.rs'
+methods_always_on = root / 'src/pilotdeck-gateway/src/native_process/methods/always_on.rs'
+# 修复轮 r3 P2（simplify）：绑定测试到源文件的映射从 bound_test_source 的
+# 深度 1/2 猜路径启发式换成 #1890 共享装置 bind_module_file 的显式
+# (prefix, path) 清单——未列出的前缀、多余的 `::` 层级、空短名都
+# fail-closed 报错，不再是「找不到文件就返回 None」的软失败。
+bound_modules = (
+    ('runtime::always_on::scheduler::tests::', scheduler),
+    ('runtime::always_on::gates::tests::', gates),
+    ('native_process::assembly::automation::tests::', automation),
+    ('native_process::methods::always_on::tests::', methods_always_on),
+)
 oracle = root / 'src/pilotdeck-gateway/tests/fixtures/always-on-2294/oracle.json'
 GATES_REPLAY = 'runtime::always_on::gates::tests::replays_the_gate_chain_golden'
 B2_REPLAY = 'native_process::assembly::automation::tests::b2_start_stop_order'
@@ -42,6 +60,7 @@ NOT_ADVERTISED = (
     'always_on_methods_are_not_advertised'
 )
 T1_REPLAY = 'runtime::always_on::scheduler::tests::t1_fires_with_state_and_lock_bookkeeping'
+REARM = 'runtime::always_on::scheduler::tests::a_failed_watch_start_re_arms_after_the_root_returns'
 mutations = [
     # The gate chain's lock gate is removed, so g10's held lock answers ok
     # instead of blocked/lock_busy (a held discovery lock no longer short-
@@ -123,12 +142,114 @@ mutations = [
      '                Ok(TickOutcome {\n',
      T1_REPLAY,
      '#2294 t1-fired: the full fire path matches the TS baseline'),
+    # #2566: the failing watcher start runs before the slot store, so the
+    # synchronous on_error -> dispose_watcher() takes from an empty slot and
+    # the dead watcher is stored after — the is_some() early return makes
+    # the failed start permanent (rearm's slot-empty assert kills it).
+    ('watch-start-before-slot-store', scheduler,
+     '        *self\n'
+     '            .shared\n'
+     '            .watcher\n'
+     '            .lock()\n'
+     '            .unwrap_or_else(|e| e.into_inner()) = Some(watcher.clone());\n'
+     '        watcher.start();\n',
+     '        watcher.start();\n'
+     '        *self\n'
+     '            .shared\n'
+     '            .watcher\n'
+     '            .lock()\n'
+     '            .unwrap_or_else(|e| e.into_inner()) = Some(watcher.clone());\n',
+     REARM,
+     '#2294 rearm: on_error disposes the failed watcher out of the slot'),
 ]
 
 
 def check_anchor(row, original):
     if original.count(row[2]) != 1 or row[2] == row[3]:
         raise ValueError(f'{row[0]}: stale or unchanged anchor (count={original.count(row[2])})')
+
+
+readme = Path(__file__).with_name('README.md')
+
+
+def check_manifest():
+    """Every hand-copied number must equal the artifact it describes.
+
+    The README's group-table counts and `Rows:` list, and the `--exact` test
+    name of each mutation, are hand-maintained copies of oracle.json / this
+    file. A copy that drifts is invisible until the cell or row it names is
+    deleted, so `--check` derives them from the sources (#2488, the
+    cron-schedule #1509 P2-2d depth).
+    """
+    errors = []
+    manifest = json.loads(oracle.read_text())
+    # 修复轮 r3 P2（boundary）：空 oracle 让下面每一段核对都空洞通过——
+    # 总数为零、分组表与 Rows 为空、场景绑定无内容——所以先拒绝空清单
+    # 本身，--check 对被清空的 oracle.json 不再空心绿灯。
+    if not manifest:
+        return ['oracle.json: the scenario manifest is empty']
+    counts = {}
+    for entry in manifest:
+        counts[entry['id'][0]] = counts.get(entry['id'][0], 0) + 1
+    text = readme.read_text()
+    # The prose total ("the 58 scenario records") and the group table's
+    # cells column: each row's backticked tokens name the oracle prefixes
+    # it covers (`g*` -> prefix g, `l1` -> prefix l), so the count must
+    # equal their summed cells and the covered prefixes must be exactly
+    # the oracle's — a deleted group row cannot silently pass.
+    total = re.search(r'the (\d+) scenario records', text)
+    if not total:
+        errors.append('README: no scenario-records total in the oracle paragraph')
+    elif int(total.group(1)) != len(manifest):
+        errors.append(f'README: says {total.group(1)} scenario records, oracle has {len(manifest)}')
+    covered = []
+    for line in text.splitlines():
+        row = re.match(r'^\|((?:\s*`[^`]+`,?)+)\s*\| (\d+) \|', line)
+        if not row:
+            continue
+        tokens = re.findall(r'`([^`]+)`', row.group(1))
+        expected = sum(counts.get(token.rstrip('*')[0], 0) for token in tokens)
+        covered.extend(token.rstrip('*')[0] for token in tokens)
+        if expected != int(row.group(2)):
+            errors.append(f'README: {" ".join(tokens)} says {row.group(2)} cells, oracle has {expected}')
+    if sorted(covered) != sorted(counts):
+        errors.append(f'README: group table covers {sorted(set(covered))}, oracle has {sorted(counts)}')
+    # The list lives in its own paragraph (`Rows: `a`, `b`, …`), so scope the
+    # scan to that paragraph: prose elsewhere in the README that mentions the
+    # list would otherwise be swept into `listed` and compared as rows.
+    blocks = [block for block in re.split(r'\n\s*\n', text) if 'Rows:' in block]
+    listed = (re.findall(r'`([a-z0-9-]+)`', blocks[0].split('Rows:', 1)[1])
+              if len(blocks) == 1 else [])
+    if len(blocks) != 1:
+        errors.append(f'README: expected exactly one Rows paragraph, found {len(blocks)}')
+    expected_rows = [row[0] for row in mutations]
+    if listed != expected_rows:
+        errors.append(f"README: Rows list {listed} != mutations {expected_rows}")
+    # Every scenario must be bound to a replay: the oracle id quoted in the
+    # always-on module or the assembly half that replays it.
+    replay = ''.join(p.read_text() for p in sorted(
+        (root / 'src/pilotdeck-gateway/src/runtime/always_on').glob('*.rs')))
+    replay += automation.read_text()
+    for entry in manifest:
+        if f'"{entry["id"]}"' not in replay:
+            errors.append(f'{entry["id"]}: no bound replay in the always-on sources')
+    # 修复轮 r3 P2（simplify）：bind_module_file 显式列出 (prefix, path)，
+    # 绑定到唯一文件；未列出的前缀 / 多余 `::` 层级 / 空短名 fail-closed。
+    bound_sources = {path: path.read_text() for _, path in bound_modules}
+    for row in mutations:
+        ident = row[4].rsplit('::', 1)[-1]
+        try:
+            source, short = bind_module_file(row[4], bound_modules)
+        except ValueError as error:
+            errors.append(f'{row[0]}: {error}')
+            continue
+        # 双谱系评审 P2（DS+MM simplify 两家撞上）：绑定测试存在性复用共享装置
+        # negative_suite.declares_test（#2064 r10 硬化版：注释/字符串先抹白、左
+        # 边界、三拼写折叠），不自写裸正则——注释里的 `fn name(` 满足裸正则，
+        # 满足不了 declares_test，--check 不再空心通过。
+        if not declares_test(bound_sources[source], short):
+            errors.append(f'{row[0]}: bound test {short} is not defined in {source.name}')
+    return errors
 
 
 def main():
@@ -140,7 +261,9 @@ def main():
                 check_anchor(row, row[1].read_text())
             except Exception as error:
                 errors.append(str(error))
-        print('\n'.join(errors) if errors else f'#2294 {len(mutations)} unique anchors checked')
+        errors.extend(check_manifest())
+        print('\n'.join(errors) if errors else
+              f'#2294 {len(mutations)} unique anchors and fixture manifest checked')
         return int(bool(errors))
     compile_only = '--compile-only' in args
     args = [arg for arg in args if arg != '--compile-only']

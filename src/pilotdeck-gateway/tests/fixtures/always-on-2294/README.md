@@ -23,15 +23,39 @@ periodic tick + stop/reload semantics), generated against the TS baseline
 
 Scenario groups map to the TS baseline as:
 
-| group | TS source |
-|---|---|
-| `g*` | `src/always-on/runtime/DiscoveryGates.ts:26-99` |
-| `s*` | `src/always-on/storage/DiscoveryStateStore.ts` |
-| `l1` | `src/always-on/runtime/DiscoveryFire.ts:1145-1163` |
-| `t*`, `i*`, `w1`, `d1` | `src/always-on/runtime/DiscoveryScheduler.ts` |
-| `r*` | `src/always-on/runtime/AlwaysOnRuntime.ts:317-404`, `AlwaysOnManager.ts:185-215` |
-| `b*` | `src/cli/ProjectAutomationBundle.ts` |
+| group | cells | TS source |
+|---|---|---|
+| `g*` | 18 | `src/always-on/runtime/DiscoveryGates.ts:26-99` |
+| `s*` | 10 | `src/always-on/storage/DiscoveryStateStore.ts` |
+| `l1` | 1 | `src/always-on/runtime/DiscoveryFire.ts:1145-1163` |
+| `t*`, `i*`, `w1`, `d1` | 16 | `src/always-on/runtime/DiscoveryScheduler.ts` |
+| `r*` | 2 | `src/always-on/runtime/AlwaysOnRuntime.ts:317-404`, `AlwaysOnManager.ts:185-215` |
+| `b*` | 11 | `src/cli/ProjectAutomationBundle.ts` |
 
 The probe writes its scratch trees under `<out-dir>/scratch/`; nothing here
 depends on the absolute out-dir path except the `t3`/`d1` project keys, which
 the Rust replay re-derives from the golden records themselves.
+
+## Negative controls
+
+`negative_controls.py` mutates one anchored block of the ported sources at a
+time, re-runs the single bound named test, and requires the mutant to be
+killed by that test's own `#2294` panic message. Every bound test replays
+committed oracle bytes or asserts through the fixture harness, so every row
+runs on both Linux and macOS:
+
+```
+python3 -I src/pilotdeck-gateway/tests/fixtures/always-on-2294/negative_controls.py --check
+CARGO_TARGET_DIR=/absolute/build/dir python3 -I src/pilotdeck-gateway/tests/fixtures/always-on-2294/negative_controls.py /tmp/fresh-always-on-negative [mutation ...]
+```
+
+`--check` verifies every anchor matches the tree exactly once, and that the
+hand-copied numbers still describe the artifacts they name: the README
+scenario total and group-table counts equal the `oracle.json` records, the
+Rows list below equals this file's `mutations` in order, every oracle
+scenario has a bound replay in the always-on sources, and every row's bound
+test is actually defined there. The full run writes per-mutant logs plus
+`summary.json` into `OUT` and exits nonzero unless every row is KILLED.
+Rows: `gate-chain-lock-gate-removed`, `stop-order-swapped`,
+`reload-rebuilds-unchanged-family`, `advertise-without-manager`,
+`fired-tick-keeps-the-lock`, `watch-start-before-slot-store`.

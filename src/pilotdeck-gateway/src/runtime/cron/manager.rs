@@ -10,7 +10,10 @@ use std::{
     cell::{Cell, RefCell},
     fs, io,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, Weak},
+    sync::{
+        Arc, Mutex, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -2144,6 +2147,17 @@ pub struct CronManager {
     zone_cache: Arc<CronZoneResolverCache>,
     gateway: Mutex<Option<Arc<dyn CronAgentGateway>>>,
     state: Mutex<ManagerState>,
+    /// #2494: the one shared stop gate. TS has a single stopper (the
+    /// teardown); this embedding adds the switch machine's S1 face, and
+    /// both paths land here — the face through `CronStopHandle::stop_once`
+    /// (its own once-flag only governs that handle), the teardown through
+    /// the automation bundle's provider stop. Whichever runs first owns
+    /// the stop; the later one is a no-op `Ok`, including after a *failed*
+    /// first attempt (the "flag set even by failed stop" intent the face
+    /// pins, lifted onto the shared object so the teardown cannot retry a
+    /// stop the face already attempted). A later `start` re-arms it, the
+    /// same lifecycle the `started` flag keeps.
+    stop_attempted: AtomicBool,
     /// The weak self the runtimes' `sharedActiveRunCount` closures sum
     /// through (CronManager.ts:188's `activeRunCount: () =>
     /// this.activeRunCount()`): the constructor hands it out via
@@ -2177,6 +2191,7 @@ impl CronManager {
                 execution_callbacks: None,
                 runtimes: Vec::new(),
             }),
+            stop_attempted: AtomicBool::new(false),
             self_weak: self_weak.clone(),
         }))
     }
@@ -2287,6 +2302,12 @@ impl CronManager {
             None => migrate_cron_stores(&migration)?,
         }
         self.state.lock().unwrap_or_else(|e| e.into_inner()).started = true;
+        // #2494: a fresh lifecycle re-arms the shared stop latch — the one
+        // consumer that can legitimately stop again after a stop is a
+        // manager that started again (no production path does; the reload
+        // ladder stages fresh managers), and `started` flips in the same
+        // place.
+        self.stop_attempted.store(false, Ordering::SeqCst);
         let project_keys = discover_project_keys(&self.pilot_home, self.options.logger.as_ref())?;
         for project_key in project_keys {
             if self.execution_allowed(&project_key) {
@@ -2309,7 +2330,13 @@ impl CronManager {
 
     /// `stop` (CronManager.ts:105-113). A failing `runtime.stop()` propagates
     /// and leaves the map un-cleared, as the TS `await` chain does.
+    /// #2494: gated by the one shared stop latch — see the field docs. The
+    /// gate is taken *before* the work, so a failed first stop is never
+    /// retried by the second path either; only a later `start` re-arms it.
     pub fn stop(&self) -> Result<(), CronError> {
+        if self.stop_attempted.swap(true, Ordering::SeqCst) {
+            return Ok(());
+        }
         let runtimes = {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             state.started = false;

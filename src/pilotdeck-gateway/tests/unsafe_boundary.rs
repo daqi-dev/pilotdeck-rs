@@ -1188,7 +1188,7 @@ fn registered_build_files(root: &Path) {
         ("rust-toolchain.toml", hashes[0]),
         (
             "src/pilotdeck-image-native/src/lib.rs",
-            "bb29fdcb269848d4473315a13eb6b29f56999b53fb2b4fd17f598432f54218a8",
+            "664ea04f0db8c98c7b42186515687672364e9428472158dcc742f30ee799a3e5",
         ),
         (
             "src/pilotdeck-image-native/Cargo.toml",

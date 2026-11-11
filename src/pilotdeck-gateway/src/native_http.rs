@@ -351,12 +351,26 @@ async fn route<B>(
     let keep_alive = node_keep_alive(request);
     let path = request_path(request);
     if path == "/health" {
-        return Ok(handler_response(
+        let mut response = handler_response(
             hyper::StatusCode::OK,
             "application/json",
             "{\"ok\":true}".to_owned(),
             keep_alive,
-        ));
+        );
+        if crate::mutants::on("native-http-served-head-cl0")
+            && request.method() == hyper::Method::HEAD
+        {
+            // #2776 negative control: an unregistered served response growing
+            // a `content-length: 0` line is the exemption-spread drift the
+            // narrowed replay must catch — the health-head cell compares the
+            // line verbatim (the manual insert rides the HEAD response hyper
+            // writes no framing header of its own for, the same shape the
+            // api-web head-404 control uses).
+            response
+                .headers_mut()
+                .insert(hyper::header::CONTENT_LENGTH, "0".parse().expect("header"));
+        }
+        return Ok(response);
     }
     if path == "/auth/local-token" {
         if config.loopback || crate::mutants::on("native-http-token-loopback-skip") {

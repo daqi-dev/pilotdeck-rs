@@ -324,6 +324,13 @@ struct State {
     generation: Generation,
     attachment: Option<ProjectAutomationAttachment>,
     started: bool,
+    /// #2486: a start that has begun and not verifiably finished — set before
+    /// `start`'s first await, cleared when the start (or its own failure
+    /// cleanup) completes. A caller may drop the start future at any await
+    /// point (the assembly's single-poll builder does), leaving providers
+    /// half-started with `started` still clear; `stop` reads this to still
+    /// drain that generation.
+    attempted: bool,
 }
 
 pub(crate) struct ProjectAutomationBundleOptions {
@@ -372,6 +379,7 @@ impl ProjectAutomationBundle {
                 generation,
                 attachment: None,
                 started: false,
+                attempted: false,
             }),
         })
     }
@@ -591,14 +599,37 @@ impl ProjectAutomationBundle {
                 Self::require_attachment(state.attachment.clone())?,
             )
         };
+        // #2486: the first await below can be the last time this future is
+        // polled — the assembly's synchronous builder drives `start` with a
+        // single `now_or_never` poll, and the failure cleanup's always-on
+        // stop joins the ticker, which only a runtime pass can complete.
+        // `attempted` is what survives the drop, so the teardown's `stop`
+        // still drains this half-started generation.
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .attempted = true;
         if let Err(error) = Self::start_generation(&generation, ALL_CHANGED).await {
             let cleanup = Self::stop_generation(&generation, ALL_CHANGED).await;
+            // A completed cleanup leaves nothing for a later stop to drain;
+            // a failed one may, so `attempted` stays set for the teardown's
+            // compensating `stop` to retry.
+            if cleanup.is_none() {
+                self.state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .attempted = false;
+            }
             return Err(AutomationError::combine(
                 "Project automation startup failed.",
                 vec![Some(error), cleanup.map(|failure| failure.message)],
             ));
         }
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).started = true;
+        {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.started = true;
+            state.attempted = false;
+        }
         Self::publish_generation(&generation, &attachment);
         Ok(status_of(&generation))
     }
@@ -747,13 +778,18 @@ impl ProjectAutomationBundle {
 
     /// `stop` (:260-269): reverse dependency order; the started flag and the
     /// unpublish happen even when a provider stop fails (the TS `finally`).
+    /// #2486: a start whose future was dropped mid-flight leaves `attempted`
+    /// set with `started` clear — that generation still gets its drain here,
+    /// which is the compensating stop the host's failed-initialization
+    /// teardown performs after the builder's single poll read `None`.
     pub(crate) async fn stop(&self) -> Result<(), AutomationError> {
         let generation = {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-            if !state.started {
+            if !state.started && !state.attempted {
                 return Ok(());
             }
             state.started = false;
+            state.attempted = false;
             state.generation.clone()
         };
         let failure = Self::stop_generation(&generation, ALL_CHANGED).await;
@@ -909,6 +945,83 @@ mod tests {
         }
         fn tools(&self) -> Vec<JsString> {
             vec![format!("{}-tool", self.name).into()]
+        }
+    }
+
+    /// #2486: the always-on provider in the shape the assembly's single
+    /// poll sees in production — `start` spawns a task
+    /// (`AlwaysOnScheduler::start`'s `tokio::spawn`), `stop` flags, wakes,
+    /// and joins it (the `task.await` in `AlwaysOnScheduler::stop`), so a
+    /// failing start's cleanup yields exactly where the production one does:
+    /// the join cannot complete without a runtime pass.
+    struct TickerProvider {
+        stopped: Arc<std::sync::atomic::AtomicBool>,
+        notify: Arc<tokio::sync::Notify>,
+        task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+        /// Set by the ticker when it observes the stop flag and returns —
+        /// read after a stop to prove nothing was left running.
+        finished: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl TickerProvider {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                stopped: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                notify: Arc::new(tokio::sync::Notify::new()),
+                task: Arc::new(Mutex::new(None)),
+                finished: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            })
+        }
+
+        fn finished(&self) -> bool {
+            self.finished.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl ProjectAutomationProvider for TickerProvider {
+        fn bind_agent_gateway(
+            &self,
+            _gateway: &ProjectAutomationAgentGateway,
+            _hooks: Option<AlwaysOnBindHooks<'_>>,
+        ) -> Result<(), io::Error> {
+            Ok(())
+        }
+        fn start(self: Arc<Self>) -> AutomationFuture {
+            let (stopped, notify, task, finished) = (
+                self.stopped.clone(),
+                self.notify.clone(),
+                self.task.clone(),
+                self.finished.clone(),
+            );
+            Box::pin(async move {
+                let handle = tokio::spawn(async move {
+                    loop {
+                        notify.notified().await;
+                        if stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                            break;
+                        }
+                    }
+                    finished.store(true, std::sync::atomic::Ordering::SeqCst);
+                });
+                *task.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
+                Ok(())
+            })
+        }
+        fn stop(self: Arc<Self>) -> AutomationFuture {
+            let (stopped, notify, task) =
+                (self.stopped.clone(), self.notify.clone(), self.task.clone());
+            Box::pin(async move {
+                stopped.store(true, std::sync::atomic::Ordering::SeqCst);
+                notify.notify_one();
+                let handle = task.lock().unwrap_or_else(|e| e.into_inner()).take();
+                if let Some(handle) = handle {
+                    let _ = handle.await;
+                }
+                Ok(())
+            })
+        }
+        fn tools(&self) -> Vec<JsString> {
+            Vec::new()
         }
     }
 
@@ -1457,6 +1570,112 @@ mod tests {
             actual_log(&log),
             expected_log("b4-start-failure"),
             "#2294 the failed generation is torn down"
+        );
+    }
+
+    // #2486 测试 A（成功形）: the assembly's synchronous builder drives
+    // `start` with one `now_or_never` poll inside `runtime.block_on`, so a
+    // successful start chain must complete inside that single poll — no
+    // await point on the success path may depend on a runtime pass.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_successful_start_completes_under_the_builders_single_poll() {
+        use futures_util::FutureExt;
+        let log: Arc<Mutex<Vec<String>>> = Arc::default();
+        let (bundle, _opts) = make_bundle(
+            log.clone(),
+            ProjectAutomationConfig {
+                always_on: Some(enabled_ao_config()),
+                cron: empty_cron_section(),
+            },
+            vec![TickerProvider::new()],
+            vec![fake("cron", &log)],
+        );
+        attach_bundle(&bundle, true);
+        let started = std::pin::pin!(bundle.start())
+            .now_or_never()
+            .expect("#2486 a successful start never yields")
+            .expect("#2486 start");
+        negative_assert_eq!(started.always_on, true, "#2486 the ticker provider started");
+        negative_assert_eq!(started.cron, true, "#2486 the cron provider started");
+        bundle.stop().await.expect("#2486 stop");
+    }
+
+    // #2486 测试 A（失败形）: a failing start's cleanup stops the always-on
+    // half by joining its ticker, which yields — the single poll reads
+    // `None` and drops the whole start chain with the real cron failure
+    // still inside it. The compensating stop the host teardown performs
+    // must still drain the half-started generation and leave no ticker
+    // behind (before #2486, `stop` early-returned on `!started` and the
+    // generation stayed live).
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_yielding_start_cleanup_is_drained_by_the_compensating_stop() {
+        use futures_util::FutureExt;
+        let log: Arc<Mutex<Vec<String>>> = Arc::default();
+        let ticker = TickerProvider::new();
+        let (bundle, _opts) = make_bundle(
+            log.clone(),
+            ProjectAutomationConfig {
+                always_on: Some(enabled_ao_config()),
+                cron: empty_cron_section(),
+            },
+            vec![ticker.clone()],
+            vec![provider("cron", &log, Some("cron start boom"), None)],
+        );
+        attach_bundle(&bundle, false);
+        negative_assert_eq!(
+            std::pin::pin!(bundle.start()).now_or_never().is_none(),
+            true,
+            "#2486 the failure cleanup's ticker join yields under the single poll"
+        );
+        bundle
+            .stop()
+            .await
+            .expect("#2486 the compensating stop drains the half-started generation");
+        let log = actual_log(&log);
+        negative_assert_eq!(
+            log.iter().any(|line| line == "cron.start"),
+            true,
+            "#2486 the cron start was attempted"
+        );
+        negative_assert_eq!(
+            log.iter().any(|line| line == "cron.stop"),
+            true,
+            "#2486 the compensating stop tore the cron generation down"
+        );
+        // The dropped first stop detached the ticker with the stop flag set
+        // and a wake permit stored; one scheduler pass retires it.
+        tokio::task::yield_now().await;
+        negative_assert_eq!(
+            ticker.finished(),
+            true,
+            "#2486 the ticker observed the stop and returned"
+        );
+    }
+
+    // #2486 测试 B（awaited 形）: driven to completion instead of dropped,
+    // the same failing start crosses the real provider failure in the
+    // combined error's Display — the yield must not be able to swallow it.
+    #[tokio::test]
+    async fn an_awaited_start_failure_carries_the_cron_error() {
+        let log: Arc<Mutex<Vec<String>>> = Arc::default();
+        let (bundle, _opts) = make_bundle(
+            log.clone(),
+            ProjectAutomationConfig {
+                always_on: Some(enabled_ao_config()),
+                cron: empty_cron_section(),
+            },
+            vec![TickerProvider::new()],
+            vec![provider("cron", &log, Some("cron start boom"), None)],
+        );
+        attach_bundle(&bundle, false);
+        let error = bundle
+            .start()
+            .await
+            .expect_err("#2486 the start failure crosses");
+        negative_assert_eq!(
+            error.to_string().contains("cron start boom"),
+            true,
+            "#2486 the real cron failure surfaces in the crossing error"
         );
     }
 

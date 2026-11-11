@@ -184,5 +184,37 @@ pub(super) fn require_text(
     }
 }
 
+/// Shared nullish project-key read from #2068. Preserve the raw string for
+/// each complete-CLI lexical or registered resolver; non-string values keep
+/// Node paths[0] argument descriptions and the bare description-phase throws.
+pub(super) fn resolve_project_key(
+    params: &JsValue,
+    fallback: &std::path::Path,
+) -> Result<JsString, RequestError> {
+    match input_property(params, "projectKey")?.as_ref() {
+        None | Some(JsValue::Undefined) | Some(JsValue::Null) => {
+            Ok(fallback.to_string_lossy().into_owned().into())
+        }
+        Some(JsValue::String(key)) => Ok(key.clone()),
+        // Node's description phase can itself throw (a truthy primitive
+        // `constructor` or an unconvertible `constructor.name`), and that
+        // bare TypeError/RangeError escapes before `ERR_INVALID_ARG_TYPE` is
+        // ever built: it carries no `code`, and the boundary keeps only
+        // `error.message` — the same Throws mapping `management.rs`
+        // `validate_command_project` gives this arm.
+        Some(other) => match crate::metadata::argument_received(other) {
+            crate::metadata::ArgumentReceived::Text(received) => Err(RequestError {
+                code: "ERR_INVALID_ARG_TYPE".into(),
+                message: crate::metadata::invalid_arg_type_message("paths[0]", &received),
+                details: None,
+                validation: None,
+            }),
+            crate::metadata::ArgumentReceived::Throws { message, .. } => {
+                Err(RequestError::new(message))
+            }
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests;

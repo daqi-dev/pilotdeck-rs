@@ -558,9 +558,12 @@ fn cron_message(error: &CronError) -> String {
 }
 
 /// #1326's one `CronManager` shared between the switch machine (S1) and the
-/// host teardown. The flag makes the stop idempotent: the machine stops it
-/// first; the teardown then observes the earlier stop instead of repeating
-/// it.
+/// host teardown. The flag makes **this handle's** stop idempotent; the
+/// once-semantics across *both* the machine's face and the teardown live
+/// one layer down, in `CronManager::stop`'s shared latch (#2494) — the
+/// teardown stopped going through this handle when #2294 routed the cron
+/// manager behind the automation bundle, so the machine stops it first
+/// and the teardown's provider stop observes the earlier stop there.
 pub struct CronStopHandle {
     manager: Arc<CronManager>,
     stopped: AtomicBool,
@@ -596,8 +599,10 @@ impl CronStopHandle {
         handle
     }
 
-    /// Stop once. A second call (the host teardown after a machine-driven
-    /// stop) observes the earlier stop instead of repeating it.
+    /// Stop once. A second call observes the earlier stop instead of
+    /// repeating it — as does any later `CronManager::stop` through the
+    /// shared latch (#2494), the path the host teardown's provider stop
+    /// takes.
     pub fn stop_once(&self) -> Result<(), CronError> {
         let _serial = self.stop_serial.lock().unwrap_or_else(|e| e.into_inner());
         if self.stopped.swap(true, Ordering::SeqCst) {

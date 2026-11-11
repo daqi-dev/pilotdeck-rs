@@ -232,6 +232,116 @@ jobs:
         with:
           # 变异前要按 git show HEAD:<path> 证明源码未被改动
           fetch-depth: 0
+      # 盲区⑤ fix-r1（#2780 MM P1-2）：同款 runner 镜像漂移守卫复制进本 job——
+      # 本 job 同样 runs-on ubuntu-24.04、装同一 rust 工具链跑同一批 cargo 测试
+      # （上限 150 min），镜像漂移时 KILLED/SURVIVED 结论可能被翻转，负控必须在
+      # 镜像与 rust job 一致的前提下才有判别力。fix-r2（#2780 MM）：反向断言改
+      # 白名单值等（ci.yml + pr-gate.yml 全部 runs-on == 钉定标签），并加
+      # $ImageOS/$ImageVersion 构建维度断言（两 job 同绿 ⟺ 同一镜像构建）；
+      # 脚本与 rust job 的守卫逐字相同（test_metadata_io_driver 逐字全等机检）。
+      - name: runner 镜像漂移守卫（#2762）
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 期望值单点：本步四个钉值全在下面四个变量里（fix-r2 起两副本由
+          # test_metadata_io_driver 逐字全等机检钉住，改钉必须两处同改）。
+          # fix-r3（#2780 anthropic boundary P1，协调者裁 b）：构建号钉值从单一
+          # 精确值改为钉值集合 expected_image_versions（空格分隔，命中任一即绿）。
+          expected="24.04"
+          expected_label="ubuntu-24.04"
+          expected_image_os="ubuntu24"
+          expected_image_versions="20261101.360.1"
+          # PDRS_IMAGE_GUARD_OS_RELEASE 只重定向 os-release 的读取路径（供本仓
+          # 守卫逻辑自测注入假 os-release），钉值比对不变；该行被机检钉死。
+          os_release="${PDRS_IMAGE_GUARD_OS_RELEASE:-/etc/os-release}"
+          actual=""
+          if [ -r "$os_release" ]; then
+            . "$os_release"
+            actual="${VERSION_ID:-}"
+          fi
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::runner 镜像漂移：实际 OS 版本=\"${actual:-<读不到>}\"，钉定=\"$expected\"（#2762：全仓稳定红先查 runner 镜像，别逐个测试倒查）" >&2
+            exit 1
+          fi
+          # fix-r2（#2780 MM P1）：构建维度。GitHub 托管镜像按构建滚动，VERSION_ID
+          # 不变的镜像重指 / 滚动窗口内两 job 落在不同构建都会翻转 KILLED/SURVIVED
+          # 结论。fix-r3（#2780 anthropic boundary P1，协调者裁 b）：单一精确构建号
+          # 在滚动窗口内没有稳定绿值（fleet 分批换版本），改为钉值集合——两副本钉
+          # 同一集合，实际值命中任一成员即绿。滚动窗口处置流程：① 守卫红且错误行
+          # 显示的「实际构建号」经值班协调者确认为上游 runner-images 新滚动版本后，
+          # 把该值追加进 expected_image_versions（两副本同改，全等机检强制），当轮
+          # 恢复绿；② 窗口结束（上游该版本 rollout 完成、实际值连续几天稳定在新值）
+          # 后由值班协调者删旧值，收窄回单值。谁做/何时：值班协调者，红当轮加新值、
+          # 窗口结束当轮删旧值。窗口内两 job 可能落在集合内不同构建上，「同绿」语义
+          # 放宽为「同在已登记集合」；需要严格同构建的对拍/负控结论时先删旧值收窄
+          # 再跑。空集合与未提供实际值都 fail-closed：不提供不等于命中集合。
+          image_os="${ImageOS:-}"
+          image_version="${ImageVersion:-}"
+          if [ -z "${expected_image_versions// /}" ]; then
+            echo "::error::钉值集合 expected_image_versions 为空，fail-closed（#2780 fix-r3：空集合守卫哑炮）" >&2
+            exit 1
+          fi
+          if [ "$image_os" != "$expected_image_os" ] || [ -z "$image_version" ]; then
+            echo "::error::runner 镜像漂移：实际 ImageOS=\"${image_os:-<未提供>}\" ImageVersion=\"${image_version:-<未提供>}\"，钉定 ImageOS=$expected_image_os ImageVersion∈{$expected_image_versions}（#2780 fix-r3：镜像滚动先红再改钉，别拿漂移构建上的结论）" >&2
+            exit 1
+          fi
+          version_hit=0
+          for member in $expected_image_versions; do
+            if [ "$image_version" = "$member" ]; then
+              version_hit=1
+              break
+            fi
+          done
+          if [ "$version_hit" -ne 1 ]; then
+            echo "::error::runner 镜像漂移：实际 ImageVersion=\"$image_version\" 不在钉定集合 {$expected_image_versions}（#2780 fix-r3：确认为上游新滚动版本后把该值追加进集合，两副本同改）" >&2
+            exit 1
+          fi
+          echo "runner 镜像守卫通过：OS 版本 $actual / ImageOS $image_os / ImageVersion $image_version ∈ 钉定集合 {$expected_image_versions}"
+          # fix-r2（#2780 MM P1）：反向断言从「字面量 ubuntu-latest 黑名单 × 仅
+          # ci.yml」改为白名单值等——ci.yml 与 pr-gate.yml 的全部非注释 runs-on 值
+          # 必须等于钉定标签，任何其他值（ubuntu-latest / -arm / 26.04 / 22.04 /
+          # matrix 拼装）一律红。键形态连引号键一起认（#2017 先例）。fix-r1 的
+          # 「目标可读前置核 + grep rc 三分」口径保留，另加零命中 fail-closed。
+          for guard_target in .github/workflows/ci.yml .github/workflows/pr-gate.yml; do
+            if [ ! -r "$guard_target" ]; then
+              echo "::error::反向断言目标 $guard_target 不可读，fail-closed（#2780 fix-r2：断言不许哑炮放行）" >&2
+              exit 1
+            fi
+            rc=0
+            raw="$(grep -nE "^[[:space:]]*['\"]?runs-on['\"]?[[:space:]]*:" "$guard_target")" || rc=$?
+            if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
+              echo "::error::grep 检查 $guard_target 异常退出 rc=$rc，fail-closed（#2780 fix-r2）" >&2
+              exit 1
+            fi
+            if [ -z "$raw" ]; then
+              echo "::error::$guard_target 一条 runs-on 都没解析到，fail-closed（#2780 fix-r2：白名单不许静默通过）" >&2
+              exit 1
+            fi
+            while IFS= read -r hit; do
+              [ -n "$hit" ] || continue
+              body="${hit#*:}"
+              trimmed="${body#"${body%%[![:space:]]*}"}"
+              key="${trimmed%%:*}"
+              key="${key//[[:space:]]/}"
+              case "$key" in
+                runs-on|\'runs-on\'|\"runs-on\") ;;
+                *) echo "::error::$guard_target 解析到非 runs-on 行 \"$hit\"，fail-closed（#2780 fix-r2）" >&2
+                   exit 1 ;;
+              esac
+              value="${trimmed#*:}"
+              value="${value%%#*}"
+              value="${value//\"/}"
+              value="${value//\'/}"
+              value="${value//[[:space:]]/}"
+              if [ "$value" != "$expected_label" ]; then
+                echo "::error::$guard_target 的 runs-on 值 \"$value\" != 钉定 \"$expected_label\"（#2762：全部 runs-on 必须钉 $expected_label）" >&2
+                printf '%s\n' "$hit" >&2
+                exit 1
+              fi
+            done <<< "$raw"
+          done
+          echo "runs-on 白名单反向断言通过：ci.yml 与 pr-gate.yml 非注释 runs-on 全部 == $expected_label"
       - name: 锁定工具链
         shell: bash
         run: rustup show active-toolchain
@@ -283,6 +393,13 @@ jobs:
           # （stale 扫描在树锁内读净树，锁忙本身也是 rc 2 拒跑）；全量杀灭轮（需要 cargo
           # 与净树）仍由协调者在宿主跑。
           python3 -I src/pilotdeck-gateway/tests/fixtures/issue-2495/negative_controls.py --check
+          # #2488（#2566 先行补上 re-arm 行，#2488 再把 --check 深度对齐 cron-schedule）：
+          # always-on-2294 负控夹具的 --check 也进 CI——锚点 / README 场景总数与分组
+          # 计数 / Rows 名册 / 每个场景绑定回放 / 每条变异绑定的测试真的存在，任一
+          # 漂移即本步非零退出；全量杀灭轮（需要 cargo 与净树）仍由协调者在宿主跑。
+          # 名册闭集（名字+顺序+条数+夹具字节 SHA）另由 always_on 模块自己的
+          # negative_controls_manifest Rust 测试钉死（随 rust job 跑）。
+          python3 -I src/pilotdeck-gateway/tests/fixtures/always-on-2294/negative_controls.py --check
       # #2516 fix-r1（P2-a 5）：槽位探针残余负控全量进 CI。纯 Python 零 cargo
       # （变异体经 published_module 内存发布，不写树、不需要净树），全量含基线
       # 17 例 + 七杀 + 名册核验，任一 SURVIVED / INVALID / 名册漂移即本步非零
@@ -443,6 +560,118 @@ jobs:
         with:
           # --base needs merge-base history for PRs and merge queue commits.
           fetch-depth: 0
+      # 盲区⑤（#2762 防复发，人批 2026-11-10）：runner 镜像漂移守卫。#2763 把全部
+      # runs-on 钉回 ubuntu-24.04，但「标签被改回漂移标签 / 24.04 标签被平台重指到
+      # 新镜像」都没有任何机检——#2762 那次是三个测试稳定红、merge queue 整批被踢、
+      # 约一天才定位到镜像。本步 fail-fast：OS / $ImageOS / $ImageVersion 三个维度
+      # 与下方四个钉值不一致立即红，错误行同打实际与期望两个值。放在 rust job 的
+      # checkout 之后第一步：#2762 的三个红测试都在本 job，漂移先红在这里，别等
+      # 全量测试跑完才红。fix-r2（#2780 MM）：期望值单点定义在四个变量（改钉两副本
+      # 同改，test_metadata_io_driver 逐字全等机检强制）；反向断言改白名单值等——
+      # ci.yml 与 pr-gate.yml 的全部非注释 runs-on 必须等于钉定标签。
+      - name: runner 镜像漂移守卫（#2762）
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 期望值单点：本步四个钉值全在下面四个变量里（fix-r2 起两副本由
+          # test_metadata_io_driver 逐字全等机检钉住，改钉必须两处同改）。
+          # fix-r3（#2780 anthropic boundary P1，协调者裁 b）：构建号钉值从单一
+          # 精确值改为钉值集合 expected_image_versions（空格分隔，命中任一即绿）。
+          expected="24.04"
+          expected_label="ubuntu-24.04"
+          expected_image_os="ubuntu24"
+          expected_image_versions="20261101.360.1"
+          # PDRS_IMAGE_GUARD_OS_RELEASE 只重定向 os-release 的读取路径（供本仓
+          # 守卫逻辑自测注入假 os-release），钉值比对不变；该行被机检钉死。
+          os_release="${PDRS_IMAGE_GUARD_OS_RELEASE:-/etc/os-release}"
+          actual=""
+          if [ -r "$os_release" ]; then
+            . "$os_release"
+            actual="${VERSION_ID:-}"
+          fi
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::runner 镜像漂移：实际 OS 版本=\"${actual:-<读不到>}\"，钉定=\"$expected\"（#2762：全仓稳定红先查 runner 镜像，别逐个测试倒查）" >&2
+            exit 1
+          fi
+          # fix-r2（#2780 MM P1）：构建维度。GitHub 托管镜像按构建滚动，VERSION_ID
+          # 不变的镜像重指 / 滚动窗口内两 job 落在不同构建都会翻转 KILLED/SURVIVED
+          # 结论。fix-r3（#2780 anthropic boundary P1，协调者裁 b）：单一精确构建号
+          # 在滚动窗口内没有稳定绿值（fleet 分批换版本），改为钉值集合——两副本钉
+          # 同一集合，实际值命中任一成员即绿。滚动窗口处置流程：① 守卫红且错误行
+          # 显示的「实际构建号」经值班协调者确认为上游 runner-images 新滚动版本后，
+          # 把该值追加进 expected_image_versions（两副本同改，全等机检强制），当轮
+          # 恢复绿；② 窗口结束（上游该版本 rollout 完成、实际值连续几天稳定在新值）
+          # 后由值班协调者删旧值，收窄回单值。谁做/何时：值班协调者，红当轮加新值、
+          # 窗口结束当轮删旧值。窗口内两 job 可能落在集合内不同构建上，「同绿」语义
+          # 放宽为「同在已登记集合」；需要严格同构建的对拍/负控结论时先删旧值收窄
+          # 再跑。空集合与未提供实际值都 fail-closed：不提供不等于命中集合。
+          image_os="${ImageOS:-}"
+          image_version="${ImageVersion:-}"
+          if [ -z "${expected_image_versions// /}" ]; then
+            echo "::error::钉值集合 expected_image_versions 为空，fail-closed（#2780 fix-r3：空集合守卫哑炮）" >&2
+            exit 1
+          fi
+          if [ "$image_os" != "$expected_image_os" ] || [ -z "$image_version" ]; then
+            echo "::error::runner 镜像漂移：实际 ImageOS=\"${image_os:-<未提供>}\" ImageVersion=\"${image_version:-<未提供>}\"，钉定 ImageOS=$expected_image_os ImageVersion∈{$expected_image_versions}（#2780 fix-r3：镜像滚动先红再改钉，别拿漂移构建上的结论）" >&2
+            exit 1
+          fi
+          version_hit=0
+          for member in $expected_image_versions; do
+            if [ "$image_version" = "$member" ]; then
+              version_hit=1
+              break
+            fi
+          done
+          if [ "$version_hit" -ne 1 ]; then
+            echo "::error::runner 镜像漂移：实际 ImageVersion=\"$image_version\" 不在钉定集合 {$expected_image_versions}（#2780 fix-r3：确认为上游新滚动版本后把该值追加进集合，两副本同改）" >&2
+            exit 1
+          fi
+          echo "runner 镜像守卫通过：OS 版本 $actual / ImageOS $image_os / ImageVersion $image_version ∈ 钉定集合 {$expected_image_versions}"
+          # fix-r2（#2780 MM P1）：反向断言从「字面量 ubuntu-latest 黑名单 × 仅
+          # ci.yml」改为白名单值等——ci.yml 与 pr-gate.yml 的全部非注释 runs-on 值
+          # 必须等于钉定标签，任何其他值（ubuntu-latest / -arm / 26.04 / 22.04 /
+          # matrix 拼装）一律红。键形态连引号键一起认（#2017 先例）。fix-r1 的
+          # 「目标可读前置核 + grep rc 三分」口径保留，另加零命中 fail-closed。
+          for guard_target in .github/workflows/ci.yml .github/workflows/pr-gate.yml; do
+            if [ ! -r "$guard_target" ]; then
+              echo "::error::反向断言目标 $guard_target 不可读，fail-closed（#2780 fix-r2：断言不许哑炮放行）" >&2
+              exit 1
+            fi
+            rc=0
+            raw="$(grep -nE "^[[:space:]]*['\"]?runs-on['\"]?[[:space:]]*:" "$guard_target")" || rc=$?
+            if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
+              echo "::error::grep 检查 $guard_target 异常退出 rc=$rc，fail-closed（#2780 fix-r2）" >&2
+              exit 1
+            fi
+            if [ -z "$raw" ]; then
+              echo "::error::$guard_target 一条 runs-on 都没解析到，fail-closed（#2780 fix-r2：白名单不许静默通过）" >&2
+              exit 1
+            fi
+            while IFS= read -r hit; do
+              [ -n "$hit" ] || continue
+              body="${hit#*:}"
+              trimmed="${body#"${body%%[![:space:]]*}"}"
+              key="${trimmed%%:*}"
+              key="${key//[[:space:]]/}"
+              case "$key" in
+                runs-on|\'runs-on\'|\"runs-on\") ;;
+                *) echo "::error::$guard_target 解析到非 runs-on 行 \"$hit\"，fail-closed（#2780 fix-r2）" >&2
+                   exit 1 ;;
+              esac
+              value="${trimmed#*:}"
+              value="${value%%#*}"
+              value="${value//\"/}"
+              value="${value//\'/}"
+              value="${value//[[:space:]]/}"
+              if [ "$value" != "$expected_label" ]; then
+                echo "::error::$guard_target 的 runs-on 值 \"$value\" != 钉定 \"$expected_label\"（#2762：全部 runs-on 必须钉 $expected_label）" >&2
+                printf '%s\n' "$hit" >&2
+                exit 1
+              fi
+            done <<< "$raw"
+          done
+          echo "runs-on 白名单反向断言通过：ci.yml 与 pr-gate.yml 非注释 runs-on 全部 == $expected_label"
       # rustup 读仓库根的 rust-toolchain.toml，装锁定的版本与 fmt/clippy
       - shell: bash
         run: rustup show active-toolchain

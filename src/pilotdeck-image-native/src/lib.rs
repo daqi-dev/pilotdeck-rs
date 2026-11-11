@@ -79,6 +79,9 @@ pub fn stage_and_link() {
     let os = env::var("CARGO_CFG_TARGET_OS").expect("target OS");
     match os.as_str() {
         "linux" => {
+            // MuPDF bundles a different libjpeg ABI into Rust static archives.
+            // Keep those symbols private so libvips binds its own shared codecs.
+            println!("cargo:rustc-link-arg=-Wl,--exclude-libs,ALL");
             println!(
                 "cargo:rustc-link-arg=-Wl,-rpath-link,{}/lib",
                 prefix.display()

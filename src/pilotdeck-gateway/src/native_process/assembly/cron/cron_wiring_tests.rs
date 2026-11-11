@@ -602,6 +602,9 @@ async fn a_budget_cut_cleanup_still_disposes_factory_and_project() {
         "#1959 the failure surfaces the discovery error, not a swallowed start: {failure}"
     );
     let recorded = order.lock().expect("#1959 cleanup order lock").clone();
+    // #2486: the automation slot is attached before start. The integrated
+    // lifetime stops cron first, then automation (already drained by its
+    // failed start), before the channels stage exhausts the budget here.
     negative_assert_eq!(
         recorded,
         [

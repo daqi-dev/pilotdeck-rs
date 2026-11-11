@@ -57,3 +57,33 @@
 决定：native 路径以已配置项目根的打开目录句柄为授权来源，兼容同一根的配置别名和 canonical 路径；逐组件 nofollow，拒绝外根、符号链接及非独占普通文件；全体路径预检后再修改。拒绝不能借未认证 transcript 自动扩大权限。单次审批过的项目外文件目前没有可认证的持久授权记录，因此该回退场景保守拒绝，必须在完整替换差异账中保留，不能称完全 TS 等价。可撤回：将来可接已有明确授权根或另建可信授权消费者后拓展；本轮不静默放宽。
 
 依据：native methods/tools.rs 的 rewind 入口只限制 transcript 位置；runtime/rewind.rs 读取 trackedFileBackups/expectedFileStates；storage/file_history.rs 原空 expected 表不产生冲突，Null 备份会删除记录指定路径。当前 portable restore 未确认能注入 file_snapshot_recorded，不将其写成已证实攻击入口。测试断言覆盖根外路径、父/叶符号链接、硬链接、合法路径先于恶意路径时无部分修改，以及正常重启后回退。候选、前像和实测索引：主仓 `_tmp/20261110-gateway-integration/received-rewind-target-guard/`；r65 正常闭环通过，安全增量待 r66。
+## #1457 批次 3（#1868+#1651+#2703）共享件偏离——AI 代批，待人复核
+
+- 卡点：#1651 条目 2 的 `run_cases` 修法落在 M6 独占共享件 `tests/fixtures/negative_suite.py:304`，而批次 3 车道（wt-1868，cb8，GLM）非 M6 车道。
+- 依据：memory「m6-owner-shared-negctl」（共享装置归 M6 车道，别的单不碰）+ 先例 #1084/#1135/#1254 同型处置。
+- 判定：批准批次任务书口径——只对齐 native-config 自有文件（negative_controls.py），共享件收敛登记「已并入 M6 #1099」并留处置素材，不碰 negative_suite.py。
+- 落点义务：处置写 #1651 跟踪单评论（附 M6 #1099 正文/清单逐字承接该条目的证据，目标单前置不晚于 #1357 相关节点）；board 行仅镜像。
+- 可撤回：是（若复核不同意，撤回该处置改等 M6 收口）。
+
+## 通道单「推迟到 A 阶段以后」= 不做了——人 2026-11-10 22:4x 直接拍板（最高优先级人令）
+
+- 卡点：#1302 正式记录（11-04）为「全做，协议核心 + 全部 19 个 channel」，据此组批分析判 13 张无车道通道单「须实装」并派了实装车道；人本轮补充确认推翻：**「推迟到 A 阶段以后」的通道单按「不做了」记一笔了事**。
+- 人令原文：「补充确认：『推迟到A阶段以后』的通道单子可以按『不做了』记一笔了事。」（2026-11-10 22:4x，对话直发）
+- 判定：通道销账按「判定不修」处置，依据=本条人令；**只覆盖带「推迟到 A 阶段以后 / [A 之后]」标记的通道单**，A 阶段内已在做/已完成的（#1316 #1328 #1333 #1336 #1343 #1344 等有车道单）不 retroactive 取消。
+- 已执行：停派 p2batch-n/o 通道实装车道（撤单或停 worker）；p2batch-j/l（slack/always-on 非通道）不受影响。
+- 影响面：工作量 -13 张实装（约 15.5 人日出关键路径）；#1353「drain 全入口」的口径须同步收窄（后续在 #1353 登记口径：未实装通道不在 drain 范围，由本条人令背书）。
+- #1302 原正式记录与本条冲突时，**以本条（更新的人令）为准**；不回改 #1302 历史，本卡即覆盖证据。
+
+## Grok Bot 通道定位：备胎评审谱系，不做主力（AI 判定，依 11-10 01:1x 人令备案；应人问「还能不能用 grok bot」）
+
+- 通道实测（2026-11-10 23:4x）：`scripts/grokbot-call.py`（Cursor 个人 key，`CURSOR_ACCESS_TOKEN` 于 `.env.local`，直连 api.cursor.com）活性探测成功（回复 OK；首试 SSL 失败、数秒后重试成功，属代理切节点瞬断，与当晚 GitHub TLS 同源）。
+- 定位：独立谱系（xAI），可计非作者评审；但不在 fleet 四池、无 runner、接口未文档化、走个人 Cursor 账号无并发计量——**只当备胎**：① MM Token Plan 打满且重试仍 429 时顶第二家评审；② DS/MM 分歧需第三家仲裁时优先叫它（仲裁仍首选实测）。主力评审仍是 DS + MM。
+- 用法约束（沿用脚本头注释）：提示词先落文件、外发前过权限/密钥检查、原始输出必须贴全。
+
+## #1953 r49 停轮裁决：开 r50（scope 模型并集语义），硬停条件不变（AI 判定，依 11-10 01:1x 人令备案）
+
+- 卡点：r49 结构性轮全绿交付（9a1b4cf8a）后，DS 四角色评审报 P0×2/P1×4，probe-r49d 逐条实测仲裁全部确认，合计同族新 P0×6 / P1×5（探针与日志 `_tmp/20261109-issue-1953-revival/r49/probe-r49d.*`）。按 `state/decisions-20261110-longtail-closure-rule.md` 判据 3 车道停手回报（正确执行）。
+- 判断（为何不停收口）：6 个 P0（try 包裹 / 闭包内使用 / 嵌套 def 遮蔽×2 / `from operator import *` / 类体 import）与 3 个 store 族 P1 共享**单一根因**——`_import_binding_origins` 的 scope 模型（模块级只读 `tree.body`、函数 scope 单值 overwrite）不取并集。这是结构性第二层（改一处语义灭 9 洞），不是词汇枚举（memory「lexical-verdict-fix-nonconvergence」警示的逐轮补词形态）。r49 修的是「识别键」（字面属性链→绑定解析），r50 修的是「取值域」（单值→并集）——两层不同，判据 1 的结构性要求仍满足。
+- 执行：r50 = scope 模型并集语义重写（模块 + 嵌套 def + 类体 + try 块 + star import）+ match 族（MatchAs 洗白）+ store/mapping 族（ior 合并键 / from-imported 非限定 setitem / `_sys_modules_write_values` ior 写）当轮全修；修法类型声明仍「结构性」，附测试真实遍历的 scope×import 形态矩阵。
+- 硬停条件（不变）：r50 评审（DS+MM）再出**同族** P0/P1 → 停轮，#1953 按残差登记收口（已确认洞写进 README 残差清单 + 开 P2-跟进族承接），不再开 r51。尺子域下游（#2050 #2213 #1954 #2214）继续压后其收敛。
+- MM 评审排 00:50 错峰（Token Plan 午夜重置，四车道错峰 00:05/00:20/00:35/00:50）。
