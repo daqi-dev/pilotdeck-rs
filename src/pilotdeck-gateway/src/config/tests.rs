@@ -636,7 +636,8 @@ fn array_stringification_keeps_the_yaml_collection_tag() {
     let value = JsValue::Array(vec![JsValue::Object(set), JsValue::Number(3.0)]);
     assert_eq!(
         DiagnosticText::from(js_string(&value)).0.units(),
-        "[object Set],3".encode_utf16().collect::<Vec<_>>()
+        "[object Set],3".encode_utf16().collect::<Vec<_>>(),
+        "#1833 C1: the joiner keeps the collection tag (#1550 修 r6)"
     );
 }
 
@@ -661,6 +662,33 @@ fn config_array_set_values_keep_the_collection_tag() {
         "Unsupported schemaVersion [object Set],3."
             .encode_utf16()
             .collect::<Vec<_>>()
+    );
+}
+
+/// A bare tagged object takes the `js_string` object arm, not the array join:
+/// the two implementations share one tag source, so this arm must keep the
+/// class too (#1833 C1).
+#[test]
+fn config_object_value_keeps_the_collection_tag() {
+    let metadata = Metadata {
+        home: PathBuf::from("<PILOT_HOME>"),
+        cwd: PathBuf::from("/offline"),
+        files: FixtureFiles {
+            data: "schemaVersion: !!set {a: }\n".as_bytes().to_vec(),
+            kind: None,
+        },
+    };
+    let error = match super::load(&metadata, &Env::new()) {
+        Ok(_) => panic!("fatal schemaVersion diagnostic must fail the load"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, "CONFIG_SCHEMA_VERSION_UNSUPPORTED", "#1833 C1");
+    assert_eq!(
+        error.message.units(),
+        "Unsupported schemaVersion [object Set]."
+            .encode_utf16()
+            .collect::<Vec<_>>(),
+        "#1833 C1: the object arm reads the same tag source as the joiner"
     );
 }
 
@@ -700,14 +728,17 @@ fn coercion_error_class_survives_both_config_call_sites() {
             },
         };
         let error = match super::load(&metadata, &Env::new()) {
-            Ok(_) => panic!("{site}: a throwing String(value) must fail the load"),
+            Ok(_) => panic!("#1833 {site}: a throwing String(value) must fail the load"),
             Err(error) => error,
         };
-        assert_eq!(error.name, "TypeError", "{site}");
+        assert_eq!(
+            error.name, "TypeError",
+            "#1833 {site}: the coercion error class must survive the load"
+        );
         assert_eq!(
             error.message.to_utf8().ok().as_deref(),
             Some("Cannot convert object to primitive value"),
-            "{site}"
+            "#1833 {site}: the V8 wording must survive the load"
         );
     }
 }
@@ -733,4 +764,44 @@ fn string_coercion_errors_keep_their_class() {
         Err("TypeError")
     );
     assert_eq!(string_coercible(&JsValue::from("1")), Ok(()));
+}
+
+/// #1833 B1: the shared check-and-map both YAML load sites (and
+/// `encodeURIComponent`) go through. The load-level tests above can only
+/// produce `NotPrimitive` — the YAML depth cap (782) keeps a `StackOverflow`
+/// out of a real `load` — so the helper pins both kinds directly: a mapping
+/// collapsed back to one hardcoded kind fails here even while every
+/// load-level test stays green.
+#[test]
+fn require_string_coercible_keeps_both_error_kinds() {
+    let mut deep = JsValue::Number(1.0);
+    for _ in 0..crate::js_value::MAX_ARRAY_DEPTH + 1 {
+        deep = JsValue::Array(vec![deep]);
+    }
+    let error = require_string_coercible(&deep)
+        .expect_err("#1833 nesting past the shared depth bound must throw");
+    assert_eq!(
+        error.name, "RangeError",
+        "#1833 StackOverflow must map to RangeError, not a collapsed class"
+    );
+    assert_eq!(
+        error.message.to_utf8().ok().as_deref(),
+        Some(crate::js_value::StackOverflow::MESSAGE),
+        "#1833 the RangeError must keep the V8 wording"
+    );
+    let error = require_string_coercible(&object([("toString", JsValue::Null)]))
+        .expect_err("#1833 an own toString property must throw");
+    assert_eq!(
+        error.name, "TypeError",
+        "#1833 NotPrimitive must map to TypeError, not a collapsed class"
+    );
+    assert_eq!(
+        error.message.to_utf8().ok().as_deref(),
+        Some(crate::js_value::ToStringError::NOT_PRIMITIVE),
+        "#1833 the TypeError must keep the V8 wording"
+    );
+    assert!(
+        require_string_coercible(&JsValue::from("1")).is_ok(),
+        "#1833 a coercible value must not throw"
+    );
 }
