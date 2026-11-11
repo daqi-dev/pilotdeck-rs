@@ -33,12 +33,21 @@ if any(
 import tempfile
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-parity-pyc-')
 sys.dont_write_bytecode = True
+# CPython has already compiled this entry before it can acquire a lease
+# (#2513 fix-r2, MM r2 concurrency#1): a round launched while a negative-control
+# mutation window held mutated bytes on disk would otherwise run the mutant's
+# main() after the window restored the file and released the lease. Capture the
+# executing object now — never a later read of a file the window may already
+# have restored — for the post-lease HEAD verification (gateway-parity #166
+# precedent).
+_apparatus_code = sys._getframe().f_code
 
 import argparse
 from contextlib import contextmanager
 import fcntl
 import importlib.util
 import json
+import marshal
 import math
 import os
 from pathlib import Path
@@ -46,6 +55,7 @@ import shlex
 import shutil
 import subprocess
 import signal
+from types import CodeType
 import time
 import uuid
 
@@ -62,13 +72,71 @@ def _load(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
-    spec.loader.exec_module(module)
+    # #2513 fix-r2: read once, compile, execute exactly those bytes and record
+    # them — the post-lease verification compares the recorded bytes to HEAD,
+    # never a second read of a file a mutation window may already have restored.
+    source = path.read_bytes()
+    module._apparatus_source = source
+    exec(compile(source, str(path), 'exec'), module.__dict__)
     if Path(module.__file__).resolve() != path:
         raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
     return module
 
 
 G = _load('g03_compare', _HERE / 'g03_compare.py')
+
+_REPO_ROOT = _HERE.parent.parent
+
+
+def _head_source(relative):
+    return subprocess.check_output(
+        ['git', '-C', str(_REPO_ROOT), 'show', f'HEAD:{relative}'], timeout=30)
+
+
+def _code_fingerprint(code):
+    """Stable full code serialization (gateway-parity #166 precedent).
+
+    Marshal v2 omits execution-dependent reference-sharing records. Normalize
+    newer constant types before serializing; tag tuples too to avoid collisions
+    with the slice representation. The transformed code is never executed.
+    """
+    def normalize(value):
+        if isinstance(value, CodeType):
+            return value.replace(co_consts=tuple(normalize(item) for item in value.co_consts))
+        if isinstance(value, slice):
+            return ('slice', normalize(value.start), normalize(value.stop), normalize(value.step))
+        if isinstance(value, tuple):
+            return ('tuple', tuple(normalize(item) for item in value))
+        if isinstance(value, frozenset):
+            return ('frozenset', tuple(sorted((normalize(item) for item in value),
+                                             key=lambda item: marshal.dumps(item, 2))))
+        return value
+    return marshal.dumps(normalize(code), 2)
+
+
+def _verify_loaded_apparatus():
+    """Compare executing code, never restored disk bytes, to HEAD (#2513 fix-r2).
+
+    The lease is taken inside main(), but CPython compiles this entry and loads
+    g03_compare before that; a round started inside a mutation window therefore
+    holds the window's mutant. After acquiring the lease, refuse before any
+    work unless the executing entry (code-object fingerprint, nested functions
+    included) and g03_compare (the recorded bytes that actually executed) match
+    HEAD. Missing provenance fails closed. A mutant that deletes this
+    verification itself escapes self-verification — the same boundary
+    gateway-parity's #166 verified_parity_lock documents; the negative-control
+    kill rows cover the deletion case.
+    """
+    expected_entry = _head_source('scripts/parity/round.py')
+    if not isinstance(_apparatus_code, CodeType):
+        raise ValueError('#2513 loaded apparatus differs from HEAD: scripts/parity/round.py')
+    expected_code = compile(expected_entry, _apparatus_code.co_filename, 'exec',
+                            dont_inherit=True, optimize=sys.flags.optimize)
+    if (_code_fingerprint(_apparatus_code) != _code_fingerprint(expected_code)):
+        raise ValueError('#2513 loaded apparatus differs from HEAD: scripts/parity/round.py')
+    source = getattr(G, '_apparatus_source', None)
+    if not isinstance(source, bytes) or source != _head_source('scripts/parity/g03_compare.py'):
+        raise ValueError('#2513 loaded apparatus differs from HEAD: scripts/parity/g03_compare.py')
 
 LOCK = Path('/tmp/pdrs-parity.lock')
 LOCK_MAX_AGE = 40 * 60
@@ -250,6 +318,14 @@ def parity_lock(lock=LOCK, takeovers=None):
                 print(f'waiting for {lock}', file=sys.stderr, flush=True)
                 announced = True
             time.sleep(2)
+        if lock == LOCK:
+            # #2513 fix-r2 (MM r2 concurrency#1): this round may have been
+            # compiled inside a mutation window. Verify the executing code
+            # against HEAD now that the lease is held (gateway-parity #166
+            # verified_parity_lock precedent) and refuse before any work if it
+            # differs. Controls redirect lock to a temp path and never take
+            # the shared lease, so they are exempt by construction.
+            _verify_loaded_apparatus()
         yield
     finally:
         # 释放也挂起信号：清理/残留记录必须完整落盘后才投递中断。只有本次启动
@@ -335,7 +411,8 @@ def main():
         ap.error('node executable not found')
     env = os.environ.copy()
     for key in ('PILOTDECK_CONFIG_PATH', 'PILOTDECK_STORAGE_ROOT', 'PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND',
-                'PILOTDECK_AGENT_LOOP_SIDECAR_PATH', 'PILOTDECK_AGENT_LOOP_TCP_HOST', 'PILOTDECK_AGENT_LOOP_TCP_PORT'):
+                'PILOTDECK_AGENT_LOOP_SIDECAR_PATH', 'PILOTDECK_AGENT_LOOP_TCP_HOST', 'PILOTDECK_AGENT_LOOP_TCP_PORT',
+                'PILOTDECK_GATEWAY_MODE'):
         env.pop(key, None)
     env.update(PDRS_BASELINE=str(G.BASELINE), PDRS_SIDE=args.side, PDRS_EXPECTED_SHA256=expected,
                PILOTDECK_AGENT_LOOP_TRANSPORT='stdio', PATH=str(Path(node).parent) + os.pathsep + env.get('PATH', ''),

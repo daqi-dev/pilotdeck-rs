@@ -104,6 +104,10 @@ SCRIPTS = (
     # refuse_unusable_target + verdict_exit); its startup refusals join the
     # machine-checked matrix here, and its --check is also wired into CI.
     ('issue-2495/negative_controls.py', (), ()),
+    # #2513 fix-r1 (review P2#2): the parity-env-isolation table moved its
+    # claim_dir behind the selection and target refusals, so its "never
+    # started" contract joins the matrix; its --check is also wired into CI.
+    ('parity-env-isolation/negative_controls.py', (), ('-I',)),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption
@@ -408,6 +412,50 @@ class UnknownControlIsRefused(unittest.TestCase):
                         out.exists(),
                         f'{script} (optimize={optimize}) refused but still created '
                         f'its evidence directory {out}')
+
+    def test_parity_env_isolation_refuses_flag_shaped_argv(self):
+        """#2513 fix-r2 (DS r2 boundary#1): the two newest startup refusals need rows.
+
+        ``run()`` always places the output directory first, so neither shape is
+        reachable through the matrix: a flag-shaped first argument (a mistyped
+        mode) and ``--check`` with extra arguments. If the ``startswith('-')``
+        guard regressed, a mistyped mode would become ``claim_dir`` plus a
+        mutation window on the live tree (#2513 fix-r1 review P2#3) — the
+        exact scenario the guard exists to stop — and this row would go red
+        instead of silently staying green.
+        """
+        script = 'parity-env-isolation/negative_controls.py'
+        for argv in (['--bogus'], ['--check', 'extra']):
+            with self.subTest(argv=argv):
+                directory = Path(tempfile.mkdtemp(prefix='negctl-2513-',
+                                                  dir=self.base))
+                _CLEANUP.append(directory)
+                out = directory / 'out'
+                env = dict(os.environ)
+                env.setdefault('PDRS_BASELINE', str(directory / 'pinned-ts-checkout'))
+                env.setdefault('CARGO_TARGET_DIR', str(directory / 'cargo-target'))
+                result = subprocess.run(
+                    [sys.executable, '-I', str(FIXTURES / script), *argv],
+                    cwd=str(FIXTURES), env=env, capture_output=True, text=True,
+                    timeout=300)
+                self.assertEqual(
+                    result.returncode, 2,
+                    f'{script} {argv} must refuse to run: '
+                    f'stdout={result.stdout!r} stderr={result.stderr!r}')
+                self.assertNotIn('0/0', result.stdout,
+                                 f'{script} {argv} must not report an empty run')
+                # "Never started": no evidence directory anywhere this argv
+                # could have claimed — not the prepared out, and not a
+                # directory named after the flag itself (what claim_dir would
+                # have created from a flag-shaped first argument).
+                self.assertFalse(out.exists(), f'{script} {argv} created {out}')
+                stray = FIXTURES / argv[0]
+                try:
+                    self.assertFalse(
+                        stray.exists(),
+                        f'{script} {argv} refused but still created {stray}')
+                finally:
+                    shutil.rmtree(stray, ignore_errors=True)
 
     def test_existing_output_directory_is_refused(self):
         """A taken evidence directory means "never started" (2), not a run (1).

@@ -40,6 +40,14 @@ spec = importlib.util.spec_from_file_location('witness_collector', ROOT / 'scrip
 c = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(c)
 
+# #2513 fix-r5: the HEAD tables below are derived from the collector's
+# APPARATUS_FILES, so a manifest entry added to collect.py cannot leave the
+# tests behind (the DS review P1: native_evidence.py and _guard.py were
+# missing from all three hand-copied lists while the verification loop had
+# already moved on).
+HEAD_FILES = ('scripts/native-witness/collect.py',) + tuple(
+    relative for relative, _ in c.APPARATUS_FILES)
+
 
 def signal_lease_child(folder, phase, signum):
     """Real signals in a disposable process; never touch the global lease/ports."""
@@ -116,6 +124,7 @@ def signal_lease_child(folder, phase, signum):
     worker.join.side_effect = lambda **_: hit('cleanup-failed' if phase == 'cleanup-failed' else 'cleanup-join')
     caught = None
     with mock.patch.object(c, 'parity_lock', side_effect=lambda **_: original_lock(lock=lock)), \
+            mock.patch.object(c, '_verify_loaded_apparatus'), \
             mock.patch.object(c.common, 'save', side_effect=publish), \
             mock.patch.object(c.common.shutil, 'rmtree', side_effect=remove), \
             mock.patch.object(c.common.time, 'sleep', side_effect=lambda _: hit('waiting')), \
@@ -563,6 +572,7 @@ class WitnessTests(unittest.TestCase):
             return c.WireClient(28999, time.monotonic() + 5)
         error = None
         with mock.patch.object(c, 'parity_lock', return_value=nullcontext()), \
+                mock.patch.object(c, '_verify_loaded_apparatus'), \
                 mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket'), \
                 mock.patch.object(c.socket, 'create_connection', side_effect=fault) as opened, \
                 mock.patch.object(c, '_native_run', side_effect=connect):
@@ -712,6 +722,7 @@ class WitnessTests(unittest.TestCase):
         lock = self.folder / 'parity.lock'
         real_lock = c.parity_lock
         with real_lock(lock=lock), mock.patch.object(c, 'parity_lock', side_effect=lambda **_: real_lock(timeout=0.01, lock=lock)), \
+                mock.patch.object(c, '_verify_loaded_apparatus'), \
                 mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket') as bind, \
                 mock.patch.object(c, '_native_run') as run:
             original = (lock / 'owner.json').read_bytes()
@@ -719,6 +730,89 @@ class WitnessTests(unittest.TestCase):
                 c.native_run('', '', self.folder / 'blocked')
             self.assertTrue((lock / 'owner.json').read_bytes() == original, '#1140 predecessor lease unchanged')
             self.assertTrue(bind.call_count == run.call_count == 0, '#1140 busy lease never touches ports or process')
+
+    def test_the_apparatus_manifest_is_a_closed_set(self):
+        # #2513 fix-r5: the HEAD tables derive from APPARATUS_FILES, so the
+        # derivation alone cannot notice a manifest that silently lost an
+        # entry — this test names the members and makes any change deliberate
+        # (the DS review P1 was exactly a lost pair of transitive loads).
+        self.assertEqual({relative for relative, _ in c.APPARATUS_FILES}, {
+            'scripts/native-witness/witness.py',
+            'scripts/native-witness/stimulus_plan.py',
+            'scripts/native-witness/stimulus_driver.py',
+            'scripts/gateway-parity/common.py',
+            'scripts/gateway-parity/native_evidence.py',
+            'scripts/gateway-parity/_guard.py'})
+
+    def test_apparatus_verified_after_lease(self):
+        # #2513 fix-r4: the lease serializes mutation windows, not loads; the
+        # collector started inside a window must be refused after the lease —
+        # and the verification itself must actually run (its own negative row).
+        # fix-r5: the requested set must cover the whole APPARATUS_FILES
+        # manifest, not merely be non-empty — a loop that skipped the
+        # transitive native_evidence/_guard entries would still pass the old
+        # bool(requested) assertion.
+        from contextlib import nullcontext
+        heads = {relative: (ROOT / relative).read_bytes() for relative in HEAD_FILES}
+        requested = []
+        def head_source(relative):
+            requested.append(relative)
+            return heads[relative]
+        with mock.patch.object(c, '_head_source', side_effect=head_source), \
+                mock.patch.object(c, 'parity_lock', return_value=nullcontext()), \
+                mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket'), \
+                mock.patch.object(c, '_native_run', return_value='finished'), redirect_stdout(io.StringIO()):
+            self.assertTrue(c.native_run('', '', self.folder / 'unused') == 'finished', '#2513 verified apparatus reaches collection')
+            # assertTrue, not assertEqual: the negative-control harness binds
+            # this control by the single-line AssertionError marker registered
+            # in negative.py ('#2513 post-lease apparatus verification cannot
+            # be bypassed'); assertEqual would emit a multi-line set diff the
+            # marker regex cannot match. Same-strength assertion either way.
+            self.assertTrue(set(requested) == set(HEAD_FILES),
+                            '#2513 post-lease apparatus verification cannot be bypassed'
+                            ' (the requested set must cover the whole APPARATUS_FILES manifest)')
+
+    def test_apparatus_provenance_refused_after_lease(self):
+        # #2513 fix-r4: apparatus bytes recorded at load time must match HEAD
+        # after the lease; a mutation-window load of a sibling is refused.
+        # fix-r5: the transitive loads (native_evidence via witness, _guard
+        # via native_evidence) are manifest rows of their own.
+        from contextlib import nullcontext
+        heads = {relative: (ROOT / relative).read_bytes() for relative in HEAD_FILES}
+        with mock.patch.object(c, '_head_source', side_effect=lambda relative: heads[relative]), \
+                mock.patch.object(c, 'parity_lock', return_value=nullcontext()), \
+                mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket'), \
+                mock.patch.object(c, '_native_run', return_value='finished'), redirect_stdout(io.StringIO()):
+            self.assertTrue(c.native_run('', '', self.folder / 'unused') == 'finished', '#2513 matching apparatus reaches collection')
+            heads['scripts/native-witness/witness.py'] += b'\n# 2513 mutated provenance'
+            with self.assertRaises(c.Blocked, msg='#2513 imported apparatus provenance is verified after the lease'):
+                c.native_run('', '', self.folder / 'unused')
+            heads['scripts/native-witness/witness.py'] = (ROOT / 'scripts/native-witness/witness.py').read_bytes()
+            heads['scripts/gateway-parity/native_evidence.py'] += b'\n# 2513 mutated provenance'
+            with self.assertRaises(c.Blocked, msg='#2513 transitive native_evidence provenance is verified after the lease'):
+                c.native_run('', '', self.folder / 'unused')
+            heads['scripts/gateway-parity/native_evidence.py'] = (ROOT / 'scripts/gateway-parity/native_evidence.py').read_bytes()
+            heads['scripts/gateway-parity/_guard.py'] += b'\n# 2513 mutated provenance'
+            with self.assertRaises(c.Blocked, msg='#2513 transitive _guard provenance is verified after the lease'):
+                c.native_run('', '', self.folder / 'unused')
+
+    def test_apparatus_entry_fingerprint_refused_after_lease(self):
+        # #2513 fix-r4: the executing entry code object itself, not restored
+        # disk bytes, must match HEAD after the lease.
+        from contextlib import nullcontext
+        heads = {relative: (ROOT / relative).read_bytes() for relative in HEAD_FILES}
+        def run_case():
+            with mock.patch.object(c, 'parity_lock', return_value=nullcontext()), \
+                    mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket'), \
+                    mock.patch.object(c, '_native_run', return_value='finished'), redirect_stdout(io.StringIO()):
+                return c.native_run('', '', self.folder / 'unused')
+        with mock.patch.object(c, '_head_source', side_effect=lambda relative: heads[relative]):
+            self.assertTrue(run_case() == 'finished', '#2513 matching executing entry reaches collection')
+            mutated = compile(heads['scripts/native-witness/collect.py'] + b'\n_2513_mutant = 1\n',
+                              c._apparatus_code.co_filename, 'exec', dont_inherit=True)
+            with mock.patch.object(c, '_apparatus_code', mutated):
+                with self.assertRaises(c.Blocked, msg='#2513 executing entry code is verified after the lease'):
+                    run_case()
 
     def test_signal_lease_phases(self):
         phases = ('waiting', 'acquire', 'preflight-gateway', 'preflight-provider', 'provider-start',
@@ -774,6 +868,7 @@ class WitnessTests(unittest.TestCase):
             probe.__enter__.return_value = probe
             probe.__exit__.return_value = False
         with mock.patch.object(c, 'parity_lock', return_value=nullcontext()), \
+                mock.patch.object(c, '_verify_loaded_apparatus'), \
                 mock.patch.object(sys, 'platform', 'linux'), \
                 mock.patch.object(c.socket, 'socket', side_effect=probes), \
                 mock.patch.object(c, '_native_run', return_value='done'), redirect_stdout(io.StringIO()):
@@ -843,6 +938,7 @@ class WitnessTests(unittest.TestCase):
                     raise KeyboardInterrupt('deterministic owned cancellation')
                 return 'finished'
             with mock.patch.object(c, 'parity_lock', side_effect=lambda **_: real_lock(lock=lock)), \
+                    mock.patch.object(c, '_verify_loaded_apparatus'), \
                     mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket') as bind, \
                     mock.patch.object(c, '_native_run', side_effect=run):
                 bind.return_value.__enter__.return_value.bind.side_effect = lambda *_: self.assertTrue(lock.is_dir(), '#1140 lease precedes fixed port bind')
@@ -873,6 +969,7 @@ class WitnessTests(unittest.TestCase):
                 if address[1] == busy:
                     raise OSError(errno.EADDRINUSE, 'deterministic occupied port')
             with mock.patch.object(c, 'parity_lock', return_value=nullcontext()), \
+                    mock.patch.object(c, '_verify_loaded_apparatus'), \
                     mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket') as sockets, \
                     mock.patch.object(c, '_native_run') as run:
                 sockets.return_value.__enter__.return_value.bind.side_effect = bind
@@ -890,6 +987,7 @@ class WitnessTests(unittest.TestCase):
             server = c.BoundedHTTPServer.__new__(c.BoundedHTTPServer)
             server.server_bind()
         with mock.patch.object(c, 'parity_lock', return_value=nullcontext()), \
+                mock.patch.object(c, '_verify_loaded_apparatus'), \
                 mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket'), \
                 mock.patch.object(c.http.server.HTTPServer, 'server_bind', side_effect=OSError(errno.EADDRINUSE, 'provider bind race')), \
                 mock.patch.object(c, '_native_run', side_effect=provider_bind):
@@ -907,6 +1005,7 @@ class WitnessTests(unittest.TestCase):
         def run(*_, **__):
             c.wait_ready(tracer, self.folder, 28999, 0)
         with mock.patch.object(c, 'parity_lock', return_value=nullcontext()), \
+                mock.patch.object(c, '_verify_loaded_apparatus'), \
                 mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket') as sockets, \
                 mock.patch.object(c, '_native_run', side_effect=run):
             sockets.return_value.__enter__.return_value.bind.side_effect = [None, None, OSError(errno.EADDRINUSE, 'gateway bind race')]

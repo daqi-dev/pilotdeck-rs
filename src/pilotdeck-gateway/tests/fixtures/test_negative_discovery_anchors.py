@@ -76,8 +76,9 @@ join, a display string that only looks like a path, a package initialiser whose
 own imports must be keyed, and new blind, import-only or unresolvable tables
 appearing outside both registers.
 
-Scope: the four tables named by #2133 are the ones that carry anchors today;
-adding a table to ``TABLES`` is the whole opt-in, and the rule then demands its
+Scope: the four tables named by #2133 are the ones that carried anchors first,
+and ``parity-env-isolation`` (#2513 fix-r1) joined them with its two import
+keys. Adding a table to ``TABLES`` is the whole opt-in, and the rule then demands its
 ``DISCOVERY_ANCHORS`` match its own keys. Everything else that already builds
 repository paths from bare file names, or imports a shared helper without
 spelling its key, is listed in ``KNOWN_BLIND`` with a measured reason (the register's own
@@ -124,6 +125,11 @@ TABLES = (
     'memory-gateway/negative_controls.py',
     'snapshot-projection/negative_controls.py',
     'metadata-process-cwd/negative_controls.py',
+    # #2513 fix-r1 (review P1-1): the parity-env-isolation table arrived with
+    # its own kill row and a #1066-registered entry point, so it joined TABLES
+    # instead of KNOWN_BLIND — a change to negative_process/negative_selection
+    # schedules it instead of passing silently.
+    'parity-env-isolation/negative_controls.py',
 )
 
 
@@ -139,7 +145,7 @@ TABLES = (
 # Each reason states how many discovery keys the table needs and how many path
 # shapes the scanner could not follow; both are re-measured by
 # test_known_blind_counts_match_the_scan. #2141 carries the per-table fix list.
-# 279 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 202 blind only, 3 with unresolvable shapes only, 74 in both; 1475 keys: 415 bare-filename joins and 1060 shared-helper import keys.
+# 279 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 203 blind only, 3 with unresolvable shapes only, 73 in both; 1475 keys: 415 bare-filename joins and 1060 shared-helper import keys.
 # Why a key a table needs shows up in no table text: the import line spells a
 # module name, while the host keys the helper file it lives in.
 IMPORTED_HELPER_REASON = 'imported shared fixture helper'
@@ -310,7 +316,10 @@ KNOWN_BLIND = {
     'operation-ledger/negative.py': '6 keys',
     'output-schema/negative.py': '5 keys',
     'p01-preflight/negative_controls.py': '6 keys + 1 unresolvable',
-    'parity-lock-release/negative_controls.py': '6 keys + 1 unresolvable',
+    # #2513 fix-r2: the lock-family predicate now resolves (the fix-r1
+    # (ROOT / path).resolve().is_relative_to spelling was the one unresolvable
+    # shape; the shared parity_guarded call keyes the helpers normally).
+    'parity-lock-release/negative_controls.py': '6 keys',
     # #2398 parity-subprocess-hardening 与 #1891 sidecar-liveness：随 #2136
     # fix-r41 合并 main（c3100a2b7）到达的两张新表，无 DISCOVERY_ANCHORS，
     # 按 #2141 规则以实测键数登记为 blind；补锚点归 #2141 修表清单。
@@ -4936,7 +4945,11 @@ class DiscoveryAnchorTests(unittest.TestCase):
             'unresolvable files and places': (r'\*\*(\d+) 个文件\*\*含 \*\*(\d+) 处\*\*'
                                               r'解析器跟不下去的路径形状'),
             'registered table keys': r'，共 (\d+) 条键）',
-            'registered table count': r'只登记 #2133 点名的 (\d+) 张表',
+            # fix-r1 (#2513): the fifth registered table is not #2133-named,
+            # so the paragraph now names both provenances and the count lives
+            # on the whole register (the rewording rewrote this parse, which
+            # is the binding the docstring above promises).
+            'registered table count': r'本闸门当前登记 \*\*(\d+) 张表\*\*',
             'head-timeout split': (r'量到 (\d+) 条键（(\d+) 条裸文件名、'
                                    r'(\d+) 条 import）'),
             'host-grep-unreachable tables': (

@@ -32,6 +32,10 @@ ENTRIES = (
     'scripts/parity/controls/lock_release.py',
     'scripts/parity/controls/run_all.py',
     'scripts/parity/controls/multimodal.py',
+    # #2513 fix-r1 (review P2#1): the host-env isolation control carries the
+    # same -I/os-preload/samefile reinsertion preamble; a drift in it was
+    # previously unjudged (missing from this machine-checked roster).
+    'scripts/parity/controls/host_env_isolation.py',
     'scripts/parity/controls/review_r1.py',
     'scripts/check-approval-provenance.py',
     'scripts/test-approval-provenance.py',

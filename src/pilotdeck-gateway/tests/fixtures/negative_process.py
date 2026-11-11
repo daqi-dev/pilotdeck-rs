@@ -50,6 +50,33 @@ CARGO_SLOTS_SAMPLE_SECONDS = 10.0
 # larger cap — still bounded, still below any caller's total budget.
 CARGO_SLOTS_CALL_SECONDS = 300.0
 
+# The repo-relative source prefixes whose mutation windows must hold the
+# shared /tmp/pdrs-parity.lock lease. Six families take that one lease
+# through their own copies of the same protocol: scripts/gateway-parity/
+# (common.py), scripts/parity/ (round.py), scripts/cli-parity/ (common.py),
+# scripts/ui-server-parity/ (calibrate.sh), scripts/native-witness/
+# (collect.py) and src/pilotdeck-cli/tests/ (the Rust ParityLock copies in
+# the six sdk_*_exit.rs tests) — #2513 fix-r3 (DS sibling#1 + MM boundary#1:
+# the fix-r2 predicate still missed the last two, so native-stimulus-plan
+# windows mutated collect.py and the sdk fixtures mutated the Rust lock
+# holders without holding the lease). One predicate, one spelling:
+# parity-lock-release's `shared` computation and cli-parity-lock-bounded's
+# `--check` read this same definition, and every file that references the
+# lease path or calls parity_lock must either live under one of these
+# prefixes or sit in the registered-mentions table of
+# ParityLockHolderReconciliation (test_negative_process.py) — a seventh
+# family cannot be added to one consumer and missed by another.
+PARITY_GUARDED_PREFIXES = ("scripts/gateway-parity/", "scripts/parity/",
+                           "scripts/cli-parity/", "scripts/ui-server-parity/",
+                           "scripts/native-witness/",
+                           "src/pilotdeck-cli/tests/")
+
+
+def parity_guarded(relative):
+    """True when a repo-relative source belongs to the shared parity lock family."""
+    return relative.startswith(PARITY_GUARDED_PREFIXES)
+
+
 # Depth of the source-restore critical section and the signal it swallowed.
 # Read and written from a signal handler, which runs on the main thread between
 # bytecodes, so plain globals are enough.
@@ -430,6 +457,63 @@ def _head_bytes(root, relative, baseline):
     except RuntimeError as error:
         raise SourceBaselineError(root, relative,
                                   f"cannot read {baseline} bytes: {error}")
+
+
+def _baseline_has_file(root, relative, baseline):
+    """Three-valued: True (tracked), False (baseline tree lacks it), or raise.
+
+    #2513 fix-r4 (review 条3): a ``git show`` failure must not collapse into
+    "absent". ``git ls-tree --name-only <ref> -- <path>`` exits 0 with no
+    output only when the baseline tree is resolvable and genuinely has no
+    such path; a tracked-but-unreadable blob, a bad ref or a git failure
+    re-raises instead of granting an exemption.
+    """
+    try:
+        _head_bytes(root, relative, baseline)
+        return True
+    except SourceBaselineError as error:
+        try:
+            listing = _git(root, "ls-tree", "--name-only", baseline, "--",
+                           relative)
+        except RuntimeError as resolve_error:
+            raise SourceBaselineError(
+                root, relative,
+                f"cannot resolve {baseline} tree: {resolve_error}"
+            ) from resolve_error
+        if listing.strip():
+            # Tracked by the baseline but unreadable: a git failure, never
+            # an exemption.
+            raise error
+        return False
+
+
+def _baseline_tracks_ruler(root, baseline, *, allow_unleased=False):
+    """True when this tree's baseline itself contains the lease protocol.
+
+    #2513 fix-r3: the guarded prefixes now reach into ``src/pilotdeck-cli``
+    ``/tests``, and synthetic fixture trees (workspace-pristine) mirror that
+    layout without carrying scripts/gateway-parity. The shared lease belongs
+    to checkouts that track the ruler; a tree whose baseline does not cannot
+    host a live lease consumer. A real-repo window whose tracked ruler went
+    missing on disk still fails closed in the auto-add below.
+
+    #2513 fix-r4 (review 条3): "baseline tree lacks the ruler" and "git could
+    not answer" no longer share the False return — only a resolvable ls-tree
+    with no hit is an absence. A ``--baseline`` that predates the lease
+    protocol while this checkout's own HEAD tracks the ruler (a real repo,
+    the live-lease case) is refused without the explicit ``allow_unleased``
+    opt-in; there is no silent downgrade.
+    """
+    if _baseline_has_file(root, "scripts/gateway-parity/common.py", baseline):
+        return True
+    if baseline != "HEAD" and _baseline_has_file(
+            root, "scripts/gateway-parity/common.py", "HEAD") and not allow_unleased:
+        raise SourceBaselineError(
+            root, "scripts/gateway-parity/common.py",
+            f"baseline {baseline} predates the lease protocol; guarded "
+            "sources would mutate without the shared lease; pass "
+            "allow_unleased (CLI: --allow-unleased) to opt in explicitly")
+    return False
 
 
 def target_environment(root, env=None):
@@ -929,7 +1013,8 @@ def write_source_atomic(root, path, data, *, mode=None):
 
 
 @contextmanager
-def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
+def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900,
+                      allow_unleased=False):
     """Lock the tree, prove ``paths`` are pristine, snapshot, mutate, restore.
 
     ``paths`` must be repo-relative or absolute paths inside ``root``. Every
@@ -943,10 +1028,25 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
 
     Nested product-only use by one thread is supported through TreeLock;
     parity mutation windows must not nest their non-reentrant ruler lease.
-    Any scripts/gateway-parity path requires common.py in the guarded set:
-    acquire the shared parity lease before yielding, then retain it through
-    restoration and byte verification. Lease polling and each guard flock
-    acquisition have separate 60s bounds; a busy lock fails before source writes.
+    Any parity-guarded path (PARITY_GUARDED_PREFIXES: the gateway-parity,
+    parity, cli-parity, ui-server-parity, native-witness and
+    pilotdeck-cli-tests families share the one lease) takes the shared
+    parity lease — a live parity round imports round.py, a live cli-parity
+    round imports common.py, a live witness collector imports collect.py and
+    a live sdk test acquires the lease from this checkout's Rust copies, so
+    the mutation window must be mutually exclusive with all of them
+    (#2513 fix-r1 review P1-3, widened in fix-r2 to the four-family and in
+    fix-r3 to the six-family predicate; synthetic trees that do not track
+    the ruler skip the lease — _baseline_tracks_ruler, which since fix-r4
+    distinguishes a resolvable absence from a git failure and refuses a
+    pre-lease ``--baseline`` on a ruler-tracking checkout unless
+    ``allow_unleased`` opts in). The lease
+    protocol loads common.py from verified bytes, so the module joins the
+    guarded set even when the caller named only another family's source.
+    Acquire the shared parity lease before yielding,
+    then retain it through restoration and byte verification. Lease polling and
+    each guard flock acquisition have separate 60s bounds; a busy lock fails
+    before source writes.
     """
     root = Path(root).resolve()
     normalized = []
@@ -966,6 +1066,37 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
         _assert_workspace_sources(root, baseline)
         _ensure_workspace_scanner()
         _assert_product_pristine(root, baseline)
+        # #2513 fix-r1 (review P1-3): a scripts/parity mutation window must
+        # hold the same shared /tmp/pdrs-parity.lock lease a live parity round
+        # takes (that round imports round.py from this checkout), exactly like
+        # the scripts/gateway-parity windows already do. fix-r2 (DS r2
+        # sibling#1 + concurrency#1): the predicate is the one shared
+        # PARITY_GUARDED_PREFIXES spelling — cli-parity (common.py) and
+        # ui-server-parity (calibrate.sh) take the same lease, so their
+        # windows must be mutually exclusive with live rounds too. fix-r3
+        # (DS sibling#1 + MM boundary#1): native-witness (collect.py) and
+        # src/pilotdeck-cli/tests (the Rust ParityLock copies) join the
+        # family. The lease protocol loads common.py from verified snapshot
+        # bytes, so the module joins the guarded set (pristine-checked and
+        # byte-verified like every caller path, never mutated) even when the
+        # caller named only another family's source — without this, every
+        # caller would have to remember an invariant gateway-parity callers
+        # already pay for. A tree whose baseline does not track the ruler
+        # (workspace-pristine's synthetic mirrors) has no live lease consumer
+        # and skips the lease; a real checkout still fails closed if the
+        # tracked ruler is missing on disk in the auto-add below.
+        parity = (any(parity_guarded(relative)
+                      for _alias, _path, relative in normalized)
+                  and _baseline_tracks_ruler(root, baseline,
+                                             allow_unleased=allow_unleased))
+        if parity and "scripts/gateway-parity/common.py" not in {
+                _relative for _alias, _path, _relative in normalized}:
+            common = root / "scripts/gateway-parity/common.py"
+            if not common.is_file():
+                raise SourceBaselineError(
+                    root, "scripts/gateway-parity/common.py", "missing file")
+            normalized.append((common, common,
+                               "scripts/gateway-parity/common.py"))
         baseline_bytes = {path: _head_bytes(root, relative, baseline)
                           for _alias, path, relative in normalized}
         for _alias, path, relative in normalized:
@@ -979,8 +1110,6 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
         # 继承了。传回去才不会有 mode-only `git diff` 把下一次 preflight 卡死。
         snapshot_modes = {path: path.stat().st_mode & 0o7777
                           for _alias, path, _relative in normalized}
-        parity = any(relative.startswith("scripts/gateway-parity/")
-                     for _alias, _path, relative in normalized)
         lock = (_parity_mutation_lock(root, snapshot, min(lock_timeout, 60))
                 if parity else nullcontext())
         with lock as restored:

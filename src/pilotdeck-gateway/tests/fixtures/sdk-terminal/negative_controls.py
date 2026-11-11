@@ -90,6 +90,13 @@ def main():
     env.pop(ReceiptRun.PARENT_ENV, None)
     out = Path(args[0]).resolve()
     out.mkdir(parents=True, exist_ok=False)
+    # #2513 fix-r3: the guarded set spans src/pilotdeck-cli/tests, so this
+    # window holds /tmp/pdrs-parity.lock while the bound tests' ParityLock
+    # acquires that same non-reentrant lease. Redirect the in-window tests
+    # to a private lease in this run's evidence directory — a window and
+    # its own children must not queue 180 s behind the lease the window
+    # itself holds. Unset, the Rust side keeps the pre-fix behaviour.
+    env['PDRS_SDK_TEST_PARITY_LOCK'] = str(out / 'parity-redirect.lock')
     command = ['cargo','test','--offline','--manifest-path','src/Cargo.toml','-p','pilotdeck-cli']
 
     def run(label, test, run_env, compile=False):

@@ -198,7 +198,16 @@ struct ParityLock {
 }
 impl ParityLock {
     async fn acquire() -> Self {
-        Self::acquire_at(Path::new("/tmp/pdrs-parity.lock"), Duration::from_secs(180))
+        // #2513 fix-r3: the shared /tmp/pdrs-parity.lock lease stays the
+        // default; the mutation-window fixtures that already hold it set
+        // PDRS_SDK_TEST_PARITY_LOCK so their in-window bound tests take a
+        // private redirected lease instead of queueing 180 s behind the one
+        // non-reentrant lease their own window holds. Unset, the bytes are
+        // the pre-fix behaviour exactly.
+        let path = std::env::var_os("PDRS_SDK_TEST_PARITY_LOCK")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/tmp/pdrs-parity.lock"));
+        Self::acquire_at(&path, Duration::from_secs(180))
             .await
             .expect("#1029 D0 parity lease acquisition failed (bounded wait; no reclaim)")
     }

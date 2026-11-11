@@ -9,7 +9,9 @@ positive. All verdicts are published only after the source guard has verified
 restoration. New/dirty source and test files must first be committed by the
 coordinator; this script never creates a second checkout or bypasses HEAD.
 """
+from contextlib import contextmanager
 import difflib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -19,8 +21,10 @@ import sys
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import negative_process
 from negative_process import (
     SourceBaselineError,
+    TreeLock,
     _head_bytes,
     exclusive_write,
     mutating_sources,
@@ -549,6 +553,65 @@ def raw_text(value):
     return value or ""
 
 
+def _redirect_window_parity_lock(out):
+    """#2513 fix-r4 (review 条2): redirect this family's window lease.
+
+    This family's contract is a host-pre-held /tmp/pdrs-parity.lock: the host
+    serializes every 28999 lane user and runs this fixture under that hold (see
+    the sdk-signals README). Since fix-r3 the mutation window itself would take
+    that same shared lease — against the host holding it for us — and fail after
+    60 s with zero evidence (实测 pre-fix: `TimeoutError: parity lock wait
+    exceeded 60s`, every row INVALID). The Python twin of the Rust families'
+    PDRS_SDK_TEST_PARITY_LOCK redirect: the window's `common.parity_lock` call
+    point is redirected to `out/parity-redirect.lock`, an unshared lease in
+    this run's evidence directory, same owner/guard/stale-takeover protocol.
+    Mutual exclusion against live rounds is not weakened — the host pre-hold
+    provides it for the whole run, which is exactly the README contract.
+
+    Returns the restore callable; the caller must invoke it in a `finally`.
+    The pristine ruler module is still executed from verified snapshot bytes
+    (never mutated disk code) and `common.py` still joins the guarded set, so
+    the snapshot entry requirement is the original's, not a copy drifting
+    behind negative_process.
+    """
+    original = negative_process._parity_mutation_lock
+
+    @contextmanager
+    def redirected(root, snapshot, timeout):
+        path = root / "scripts/gateway-parity/common.py"
+        if path not in snapshot:
+            raise RuntimeError(
+                "#166 parity lock requires common.py in guarded sources")
+        # Stage the verified snapshot bytes, then load them through the same
+        # importlib shape the other checked fixtures use — a bare exec would
+        # re-open the anchor_selfcheck dynamic-write hole this family closed.
+        staged = out / "pristine-common.py"
+        staged.write_bytes(snapshot[path])
+        spec = importlib.util.spec_from_file_location(
+            "negative_pristine_parity_sdk_signals", staged)
+        common = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(common)
+        common.guard = lambda lock: TreeLock(
+            lock.with_name(lock.name + ".guard"), timeout=timeout)
+        restored = [False]
+        with common.parity_lock(
+                timeout=timeout, lock=out / "parity-redirect.lock"):
+            try:
+                yield restored
+            finally:
+                if not restored[0]:
+                    # Same fail-closed marker as the unredirected original: an
+                    # unverified restoration must not leave a reusable lease.
+                    common.LIVE_GROUPS.add("source-restore-unverified")
+
+    negative_process._parity_mutation_lock = redirected
+
+    def restore():
+        negative_process._parity_mutation_lock = original
+
+    return restore
+
+
 def main():
     # #1885 r8: the pre-lock catalog check proves the close-order ledger too
     # (`registered_unordered_close_ids`), so a drift here is the same guard
@@ -705,6 +768,10 @@ def main():
         )
         print(f"{name}: {status}: {reason}", flush=True)
 
+    # #2513 fix-r4 (review 条2): the window's own lease must not be the one
+    # the host is pre-holding for this run — see
+    # `_redirect_window_parity_lock` above for the contract argument.
+    restore_window_parity_lock = _redirect_window_parity_lock(out)
     try:
         with mutating_sources(root, guarded) as originals:
             phase = "body"
@@ -825,6 +892,8 @@ def main():
         invalidate_completed(results, reason)
         for name, _path, _old, _new, test, assertion in selected[len(results):]:
             record(name, test, assertion, "INVALID", reason, False)
+    finally:
+        restore_window_parity_lock()
 
     if len(results) != len(selected):
         raise RuntimeError("#1145 fixed selected result denominator")
