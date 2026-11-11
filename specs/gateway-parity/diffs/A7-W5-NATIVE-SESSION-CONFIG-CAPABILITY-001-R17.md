@@ -94,9 +94,11 @@ workspace id。
 `services.rs` submit 门；`module_host.rs` `public_skills_create_input` 与
 `config.rs` `seed_read_state` 两读点仍在 #2882 待办。**同键两族两判（登记
 在案，不改）**：`management.rs` `admit_management_project` /
-`snapshot_restore` 的 `targetProjectKey` 门与 `assembly/memory.rs` 的
-`serves_project` 仍是 strict `to_utf8`（R8:28 / R13 已登记的 deferred，
-#2562 任务书 P3 记录在案）——残留键（lossy 形命中配置项目）在 submit /
+`snapshot_restore` 的 `targetProjectKey` 门仍是 strict `to_utf8`（R8:28 /
+R13 已登记的 deferred，#2562 任务书 P3 记录在案）；`assembly/memory.rs` 的
+`serves_project` 亦仍 strict `to_utf8`（**本件首次登记**——R8:28 与 R13 的
+deferred 清单均未列此处，fix-r3 按 MM sibling 复核改准出处，此前误标
+「R8:28 / R13 已登记」）——残留键（lossy 形命中配置项目）在 submit /
 close / config 侧被服务、在这些门仍被拒。不放宽判分，不改
 #2562/#2272 已钉的 nullish 回落格与 #2083 已登记的入口层叠。
 
@@ -129,7 +131,14 @@ close / config 侧被服务、在这些门仍被拒。不放宽判分，不改
   唯一拒点）。fix 头定向复跑：fix-r1 两行 `negctl-fix-r1-targeted.log`
   2/2 KILLED；fix-r2 三行（含新行）`negctl-fix-r2-targeted.log` 3/3 KILLED。
 - 回归：`submit_workspace_id` 过滤 2/2（#2562 格）、`native_process::`
-  模块 391/391、gateway lib 全量 5371 passed / 2 failed / 237 ignored
+  家族过滤在 head `6e857a941` 复跑 390 passed / 0 failed / 54 ignored
+  （rc=0、恰一行 `test result:`，2026-11-12 实测
+  `_tmp/20261112-issue-2617-fixr3/family-rerun.out`；fix-r3 按 MM boundary
+  复核改数——早前 20261111 摘录 `native-process-family-postfix.out` 记
+  390 passed / 1 failed，失败用例
+  `settings_tests::reload_ticket_releases_after_settlement` 在本次 head
+  复跑通过（family-rerun.out:342），非可复现失败，旧「391/391」表述作废）、
+  gateway lib 全量 5371 passed / 2 failed / 237 ignored
   （worker cb8 原始输出 `cargo-test-no-run.out` /
   `gateway-lib-full-postfix.out`；2 失败之一为 feishu / wecom_callback
   测试共用固定端口 18990 的套件内并发撞面 `EADDRINUSE`、另一为时序预算，
