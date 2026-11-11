@@ -12,6 +12,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import textwrap
 import tomllib
 import types
@@ -45,6 +46,21 @@ def restore_wiring_problems(guard):
 
 
 class EnvironmentControls(unittest.TestCase):
+    # #2136 fix-r38（MM concurrency P2a）：#2133 自检步的挂起预算只有一处真相源
+    # ——ci.yml 该步的 `timeout-minutes` 派生成秒，既钉该步的键值，也作真跑钉
+    # 子进程的超时。r37 的旧值 900 s 比步预算 600 s 松：扫描面涨到 601–900 s
+    # 时守钉仍绿（它只证明「900 s 内跑完」）而 CI 步先被 600 s 掐红，守钉给出
+    # 与实际步相反的结论。两处从同一常量派生后不会再各自漂移。
+    # fix-r39（DS sibling#2 / boundary#2 / concurrency#3 / simplify#1，四家同源）：
+    # 其余被钉的步照此各设常量——r38 只改了 #2133 一处，#1666/#1570 的真跑钉
+    # 仍写死 900 s（步预算 300 s；模块退化到 301–900 s 时守钉仍绿而 CI 步先
+    # 红，假 PASS 方向）；#994 手抄 900 s 恰与步预算同值但无派生。driver 步
+    # 自身（本类全套 86 条，r38 实测本机 764 s）同样按实测 + 余量钉 30 min。
+    discovery_anchor_step_budget = 600
+    optimize_guards_step_budget = 300
+    copy_manifest_step_budget = 300
+    isolation_step_budget = 900
+    driver_step_budget = 1800
     nextest_command = ('cargo nextest run --workspace --no-fail-fast --profile ci '
                        '--config-file ../.config/nextest.toml')
     doctest_command = 'cargo test --workspace --doc'
@@ -1299,6 +1315,15 @@ class EnvironmentControls(unittest.TestCase):
             self.assertNotIn(key, fields, '#994 isolation CI step must be unconditional and required')
         self.assertIn(fields.get('working-directory'), (None, ('.', [])),
                       '#994 isolation CI step must run from repository root')
+        # #2136 fix-r38（MM sibling P2）：套件 r38 干净树实测 23 条约 354 s
+        #（CI 约 583 s），挂起时占满 job 默认 360 分钟；步级超时须声明且被钉住。
+        # r39（DS boundary#2 P2）：值从 isolation_step_budget 同源派生，不再手抄。
+        self.assertEqual(
+            fields.get('timeout-minutes'),
+            (str(self.isolation_step_budget // 60), []),
+            '#994 the isolation CI step must declare timeout-minutes: %d; '
+            'without it a hung suite silently falls back to the 360-minute '
+            'job default' % (self.isolation_step_budget // 60))
 
     def test_required_job_runs_the_copy_manifest_self_test(self):
         # #1570: the fix is a derivation, and the only thing that runs its
@@ -1319,6 +1344,385 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(fields.get('working-directory'),
                          ('src/pilotdeck-gateway/tests/fixtures', []),
                          '#1570 the self-test imports _shared, so it runs from the fixtures dir')
+        # #2136 fix-r38（MM sibling P2）：r37 实测约 21 s，同 -O 步钉住步级超时。
+        # r39（DS boundary#2 P2）：值从 copy_manifest_step_budget 同源派生。
+        self.assertEqual(
+            fields.get('timeout-minutes'),
+            (str(self.copy_manifest_step_budget // 60), []),
+            '#1570 the copy-manifest self-test step must declare '
+            'timeout-minutes: %d; without it a hung step silently falls back '
+            'to the 360-minute job default'
+            % (self.copy_manifest_step_budget // 60))
+
+    def test_required_job_runs_the_discovery_anchor_self_check(self):
+        # #2133 fix-r34（MM 评审 P1）：「网关负控发现锚点自检」是唯一执行 #2133 闸门
+        # 的 CI 步。删步、加 if、加 continue-on-error 或改错工作目录，此前全仓无红，
+        # 闸门在 CI 静默不跑，正是 #2133 要防的「尺子假通过」。同 job 同形自测步的
+        # 守卫覆盖此前并不齐（fix-r35 按 DS sibling P1 更正此注释的事实面）：
+        # #994 有守卫 + 变异负控；#1570 有守卫但无变异负控；-O 不变性步
+        # （#1666/#1734）自本轮起有（test_required_job_runs_the_optimize_guards_
+        # self_tests）；#1570 变异负控与 #1203 CLI 循环、gitleaks 自检步的守卫
+        # 登记在 #2844（P2-跟进，前置于 #2141）。
+        command = 'python3 -B -m unittest -v test_negative_discovery_anchors'
+        jobs = self.ci_jobs('#2133')
+        steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#2133')
+        matching = [step for step in steps if self.ci_run_commands(step, '#2133') == [command]]
+        self.assertEqual(len(matching), 1,
+                         '#2133 required CI job must run the discovery-anchor self-check')
+        fields = self.ci_step_fields(matching[0], '#2133')
+        for key in ('if', 'continue-on-error'):
+            self.assertNotIn(key, fields,
+                             '#2133 the self-check CI step must be unconditional')
+        self.assertEqual(fields.get('working-directory'),
+                         ('src/pilotdeck-gateway/tests/fixtures', []),
+                         '#2133 the self-check imports the fixtures tree, '
+                         'so it runs from the fixtures dir')
+        # #2136 fix-r38（DS sibling P2 / MM concurrency P2a，两家同条）：r37 给
+        # 该步新加的 `timeout-minutes: 10`（挂起时占满 job 默认 360 分钟把同
+        # job 别步拖死）此前无任何机检——删掉该键全仓仍绿。照 negative-controls
+        # job 的 `timeout-minutes: 150` 钉法把它钉住，且与真跑钉的子进程超时
+        # 同源（discovery_anchor_step_budget）。
+        self.assertEqual(
+            fields.get('timeout-minutes'),
+            (str(self.discovery_anchor_step_budget // 60), []),
+            '#2133 the self-check step must declare timeout-minutes: %d '
+            '(the discovery_anchor_step_budget); a deleted or inflated '
+            'step timeout silently falls back to the 360-minute job '
+            'default and drags the whole job'
+            % (self.discovery_anchor_step_budget // 60))
+
+    # #2136 fix-r39（DS sibling#3 P1 / boundary#1 P1，两家独立撞上同条）：
+    # `unittest -v` 的 skip 行有三种实测形状（_tmp/20261110-pr2136-revival/
+    # r39-skip-format.log，Python 3.14 实跑）：
+    #   ① 无 docstring：`test_x (mod.C.test_x) ... skipped 'reason'`——名字
+    #      与 skipped 同行，r38 的正则只认这一种；
+    #   ② 带 docstring：runner 先单打一行 `test_x (mod.C.test_x)`，再在
+    #      docstring 首行那行打 `Doc first line. ... skipped 'reason'`——
+    #      名字在前一行，r38 的行首正则两行都抓不到（假 PASS：skip 检查
+    #      静默失效，被钉套件里带 docstring 的测试被 skip 不会红）；
+    #   ③ subTest 子项：两空格缩进且 `)` 与 `...` 之间多 `[msg]`：
+    #      `  test_x (mod.C.test_x) [child] ... skipped 'reason'`——行首
+    #      `^(\S+)` 抓不到缩进行。
+    # 解析成 (名字, 原因) 列表；解析不了的 `... skipped` 行一律 fail-closed
+    # 抛错，格式再漂移时红而不是静默漏判。自身的正反例单测见
+    # test_the_verbose_skip_reading_covers_every_channel。
+    @staticmethod
+    def _verbose_skipped_tests(out):
+        skipped = []
+        lines = [line.rstrip() for line in out.splitlines()]
+        for index, line in enumerate(lines):
+            tail = re.search(r" \.\.\. skipped (['\"])(.*)\1$", line)
+            if tail is None:
+                continue
+            reason = tail.group(2)
+            # 形状 ① / ③：名字与 skipped 同行（③ 带缩进与 `[msg]`）。
+            same = re.match(
+                r'\s*(test_\S+) \([^)]*\)(?: \[[^\]]*\])? \.\.\. skipped', line)
+            if same is not None:
+                skipped.append((same.group(1), reason))
+                continue
+            # 形状 ②：名字在紧邻的上一行（`test_x (mod.C.test_x)` 独占一行）。
+            if index and re.fullmatch(r'(test_\S+) \([^)]*\)', lines[index - 1]):
+                skipped.append(
+                    (re.match(r'(test_\S+) \(', lines[index - 1]).group(1), reason))
+                continue
+            raise AssertionError(
+                '#2136 unparseable unittest skip line: %r' % line)
+        return skipped
+
+    def _assert_skip_channels_agree(self, out, skipped, tag):
+        # r39（DS boundary#1 P1）：名字解析与汇总计数两通道互证——
+        # `OK (skipped=N)` 把三种形状全部计入；解析漏形（格式漂移）时两者
+        # 不等即红，单靠任何一通道都不许。
+        counted = re.search(r'skipped=(\d+)', out)
+        total = int(counted.group(1)) if counted else 0
+        self.assertEqual(
+            len(skipped), total,
+            '%s the parsed skip lines (%d) must equal the unittest summary '
+            'skipped=%d; a mismatch means the verbose format drifted and one '
+            'of the two channels is blind' % (tag, len(skipped), total))
+
+    def _assert_suite_really_runs(self, tag, module, minimum, timeout,
+                                  allowed_skips=()):
+        # r39（DS simplify#1 P2）：四条真跑钉的同构断言抽成一处——r38 前是四份
+        # 约 45 行的拷贝，超时值与 skip 判法已经各漂各的。真跑一遍被钉套件并核：
+        # 「Ran N」下限（掏空 / 整类 skip 后退 0 的洞）、skip 名字 ⊆ 白名单
+        # （条目 = (名字, 原因文本)，无条件 @unittest.skip 冒充条件跳过会因原因
+        # 不匹配而红）、两通道计数相等、无 expectedFailure / unexpected
+        # successes、套件自身 rc=0。白名单默认为空：无登记条件跳过的套件
+        # 任何 skip 都红。
+        fixtures = Path(__file__).resolve().parent / 'fixtures'
+        try:
+            cp = subprocess.run(
+                [sys.executable, '-B', '-m', 'unittest', '-v', module],
+                cwd=fixtures, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self.fail('%s the %s subprocess timed out (>%d s, the CI step '
+                      'budget); a hung or stalled gate must not pass silently'
+                      % (tag, module, timeout))
+        out = cp.stdout + cp.stderr
+        ran = re.search(r'^Ran (\d+) tests? in ', out, re.M)
+        self.assertIsNotNone(
+            ran,
+            '%s the %s run must print a "Ran N tests" summary line; a broken '
+            'or empty entry point must not pass. Tail: %s'
+            % (tag, module, out[-800:]))
+        self.assertGreaterEqual(
+            int(ran.group(1)), minimum,
+            '%s %s must run at least %d tests; an emptied, renamed-away, or '
+            'skipped module still exits 0 and the gate is silently empty '
+            '(ran %s)' % (tag, module, minimum, ran.group(1)))
+        skipped = self._verbose_skipped_tests(out)
+        self._assert_skip_channels_agree(out, skipped, tag)
+        self.assertTrue(
+            set(skipped) <= set(allowed_skips),
+            '%s only the registered host-conditional skips in %s may be '
+            'skipped (allowed: %s); any other skip still exits 0 and the '
+            'gate silently passes (skipped: %s)'
+            % (tag, module, sorted(allowed_skips), sorted(skipped)))
+        for marker in ('expected failures=', 'unexpected successes='):
+            self.assertNotIn(
+                marker, out,
+                '%s %s must not lean on the expectedFailure channel: %s '
+                'keeps unittest exit 0 while a real test is not asserted '
+                '(found %s)' % (tag, module, marker, marker))
+        self.assertEqual(
+            cp.returncode, 0,
+            '%s the %s suite itself must pass (rc=%d). Tail: %s'
+            % (tag, module, cp.returncode, out[-800:]))
+        return out
+
+    def test_step_budgets_derive_whole_minute_timeouts(self):
+        # r40（DS r39 boundary#1 P2）：budget→`timeout-minutes` 用 `// 60` 截断，
+        # 「同一常量同源派生」只在预算是整分钟数时成立——610 s 会让 CI 步被钉成
+        # 600 s 而真跑钉拿 610 s（步比钉先红，r38 修掉的假 PASS 方向悄悄复活），
+        # 而守卫的等式断言照样过。把「整分钟」机检为不变式，而不是靠巧合。
+        for name in ('discovery_anchor_step_budget',
+                     'optimize_guards_step_budget',
+                     'copy_manifest_step_budget',
+                     'isolation_step_budget',
+                     'driver_step_budget'):
+            budget = getattr(self, name)
+            self.assertEqual(
+                budget % 60, 0,
+                '#2136 %s=%d must be a whole number of minutes: the CI step '
+                'pins budget // 60 while the pin passes budget seconds, and a '
+                'non-whole-minute budget silently makes the step tighter '
+                'than the pin it claims to match' % (name, budget))
+
+    def test_the_verbose_skip_reading_covers_every_channel(self):
+        # r39（DS boundary#3 P2）：skip 判读助手自身的负控——r38 版正则对
+        # docstring / subTest 形状零命中而 `空集 ⊆ 白名单` 恒真，没有任何用例
+        # 能证明「漏掉一个 skip 必须红」。这里用固定文本覆盖三种实测形状 +
+        # 计数通道互证 + fail-closed + 空输出，全为纯函数判读，不起子进程。
+        transcript = (
+            "test_plain (m.C.test_plain) ... skipped 'plain reason'\n"
+            "test_docstringed (m.C.test_docstringed)\n"
+            "Docstring first line. ... skipped \"docstring reason\"\n"
+            "test_ok (m.C.test_ok) ... ok\n"
+            "  test_subtest (m.C.test_subtest) [child] ... skipped "
+            "'subtest reason'\n"
+            "Ran 4 tests in 0.001s\n\nOK (skipped=3)\n")
+        self.assertEqual(
+            self._verbose_skipped_tests(transcript),
+            [('test_plain', 'plain reason'),
+             ('test_docstringed', 'docstring reason'),
+             ('test_subtest', 'subtest reason')])
+        self._assert_skip_channels_agree(
+            transcript, self._verbose_skipped_tests(transcript), '#r39')
+        # 计数通道与名字通道不符（漂移形状）必须红：
+        with self.assertRaises(AssertionError):
+            self._assert_skip_channels_agree(
+                transcript.replace('skipped=3', 'skipped=2'),
+                self._verbose_skipped_tests(transcript), '#r39')
+        # 解析不了的 skip 行必须 fail-closed，而不是静默漏判：
+        with self.assertRaises(AssertionError):
+            self._verbose_skipped_tests(
+                "??? ... skipped 'unparseable'\n"
+                "Ran 1 test in 0.001s\n\nOK (skipped=1)\n")
+        # 空输出：无 skip 行、无 skipped= 汇总，两通道一致为 0。
+        empty = 'Ran 0 tests in 0.000s\n\nOK\n'
+        self.assertEqual(self._verbose_skipped_tests(empty), [])
+        self._assert_skip_channels_agree(empty, [], '#r39')
+
+    def test_the_discovery_anchor_self_check_collects_real_tests(self):
+        # #2136 fix-r35（DS boundary P2）→ fix-r36（MiniMax r35 boundary P0）：
+        # 上面的守卫只钉「步存在 + 无条件 + cwd」，钉不住该步真的执行了非零且
+        # 非 skip 的测试——把模块掏空或整类 @unittest.skip 后，
+        # `python3 -B -m unittest -v` 收集 0 个测试仍退 0，CI 绿而 #2133 闸门
+        # 静默为空。r35 的旧钉（装载模块走 suite 栈 + 实例 __unittest_skip__）
+        # 探不到 setUpModule / setUpClass 抛 SkipTest 的**结果通道**——那条路径
+        # unittest 打「Ran 0 tests / OK (skipped=1)」退 0，旧钉仍见 total=201、
+        # skipped=[]（实测 _tmp/20261110-pr2136-revival/p0-repro-r36.log）。只有
+        # 真跑一遍并看「Ran N tests」与「skipped=」才能同时覆盖方法级 / 类级 /
+        # fixture 级 skip 与整体掏空；全套件实测约 60 s。
+        # r39（DS simplify#1）：同构断言抽成 _assert_suite_really_runs（含
+        # r37 登记的 expectedFailure 通道洞，见
+        # _tmp/20261110-pr2136-revival/r37-expected-failure-channel.log）。
+        self._assert_suite_really_runs(
+            '#2133', 'test_negative_discovery_anchors', 205,
+            self.discovery_anchor_step_budget)
+
+    def test_the_optimize_guards_self_tests_collect_real_tests(self):
+        # #2136 fix-r37（MM sibling P1）：上面 -O 步的守卫同样只钉「步存在 +
+        # 无条件 + cwd」，钉不住五条命令真的收集到测试——掏空 / skip 任一
+        # 模块，`python3 -B -m unittest -v` 退 0，#1666/#1734 的 -O 判别力
+        # 在 CI 静默为空。逐模块跑一遍并核「Ran N」下限与无 skip/期望失败；
+        # 下限取 r37 实测（_tmp/20261110-pr2136-revival/
+        # r37-sibling-module-baselines.log：10/13/8/10/6，合计 47，约 15 s）。
+        # r41（合并 main c3100a2b7 带入 #2590 fix-r2）：-O 步新增第六模块
+        # issue-2495/test_negative_controls.py（r41 实测 Ran 30、约 4 s），
+        # 同钉进下限——不钉则该模块在 CI 掏空/整类 skip 无人看见。
+        minimums = (
+            ('test_negative_optimize_guards', 10),
+            ('settings-gateway/test_negative_controls.py', 13),
+            ('test_negative_run_guards', 8),
+            ('network-timing/test_negative_controls.py', 10),
+            ('test_negative_roster_guards', 6),
+            ('issue-2495/test_negative_controls.py', 30),
+        )
+        # r39（DS sibling#4 P2）：network-timing 的两条 EACCES 判杀用例按宿主
+        # 能力条件跳过（`@unittest.skipUnless(EACCES_STAGEABLE, ...)`——root /
+        # CAP_DAC_OVERRIDE 宿主读得了 mode-000 文件，#1922 的拒绝路径无法钉；
+        # 本仓明确支持 root 宿主，ci.yml 的 PDRS_REQUIRE_PERMISSION_FAULTS）。
+        # 与 #1570 的大小写文件系统跳过同类：环境条件跳过按 (名字, 原因) 登记
+        # 白名单，白名单外的任何 skip（含无条件 @unittest.skip）仍红。
+        registered_conditional_skips = {
+            'network-timing/test_negative_controls.py': {
+                ('test_controls_module_read_eacces_is_refused',
+                 '#1922 this host can read a mode-000 file; EACCES cannot '
+                 'be staged'),
+                ('test_private_catalog_eacces_is_refused',
+                 '#1922 this host can read a mode-000 file; EACCES cannot '
+                 'be staged'),
+            },
+        }
+        # r39（DS concurrency#2 P2）：超时失败不再包在 subTest 里——subTest 吞
+        # 异常继续下一模块，五个各挂 300 s 会把钉烧到 25 分钟；首个挂起即整条
+        # 红。总耗时一并钉在步预算上：五个各自 299 s 的「都合规」组合同样
+        # 超出它所钉的 CI 步预算（300 s），不许守钉比步长寿。
+        started = time.monotonic()
+        for module, minimum in minimums:
+            self._assert_suite_really_runs(
+                '#1666', module, minimum, self.optimize_guards_step_budget,
+                registered_conditional_skips.get(module, ()))
+        self.assertLessEqual(
+            time.monotonic() - started, self.optimize_guards_step_budget,
+            '#1666 the five -O self-test modules together must fit the -O '
+            'step budget (%d s); five near-miss modules must not outlive '
+            'the CI step they pin' % self.optimize_guards_step_budget)
+
+    def test_the_copy_manifest_self_test_collects_real_tests(self):
+        # #2136 fix-r37（MM sibling P1）：#1570 的自测步守卫同样只钉步存在，
+        # 钉不住 `_shared.test_compile_inputs` 真的收集到测试——掏空或整类
+        # skip 后退 0，compile_inputs 的覆盖面在 CI 静默为空。r37 实测
+        # Ran 82（约 21 s，同上 baselines.log）。
+        # r38（DS sibling P1）：`_shared.test_compile_inputs` 有一条按文件系统
+        # 大小写条件跳过的真测试（`test_compile_inputs.py` 的
+        # `test_a_case_alias_of_the_repository_is_not_outside`：临时目录大写后
+        # 不存在即 `skipTest('case-sensitive filesystem')`——Linux CI 的
+        # case-sensitive ext4 上必发、darwin 上不发）。r37 的零 skip 断言只在
+        # 大小写不敏感的文件系统上成立，会把必跑步在 CI 上打红；改为「跳过
+        # 集合 ⊆ 已登记条件跳过白名单」——白名单外的任何 skip（含整类掏空，
+        # 82 条全 skip）仍红。
+        # r39（DS sibling#3 / boundary#1 P1）：白名单条目同时钉名字与原因文本
+        # （无条件 @unittest.skip('flaky') 冒充条件跳过会因原因不匹配而红），
+        # skip 判读换 fail-closed 解析 + 计数互证（见 _verbose_skipped_tests），
+        # 超时从 copy_manifest_step_budget 同源派生。
+        registered_conditional_skips = {
+            ('test_a_case_alias_of_the_repository_is_not_outside',
+             'case-sensitive filesystem'),
+        }
+        self._assert_suite_really_runs(
+            '#1570', '_shared.test_compile_inputs', 82,
+            self.copy_manifest_step_budget, registered_conditional_skips)
+
+    def test_the_shared_isolation_regressions_collect_real_tests(self):
+        # #2136 fix-r38（DS sibling P2 / MM sibling P1，两家独立撞上同条）：
+        # #994 隔离步的守卫同样只钉「步存在 + 无条件 + cwd」，钉不住该套件
+        # 真的收集到测试——`test_negative_adaptive_isolation.py` 以
+        # `unittest.main(verbosity=2)` 收尾，掏空或整类 skip 后 `Ran 0 tests`
+        # 仍退 0，#994 的隔离/候选基线闸门在 CI 静默为空。真跑一遍并核
+        # 「Ran N」下限与无 skip / 期望失败；下限取 r38 干净树实测（23 条，
+        # 354 s；CI 步约 583 s，均在 900 s 子进程上限内——该套件自身要求
+        # 树与 HEAD 一致（SourceBaselineError fail-closed），脏树上本钉红且
+        # 报基线不匹配，与 CI 步本身的前提相同，属预期红。实测
+        # _tmp/20261110-pr2136-revival/r38-994-baseline-clean.log。
+        # r39（DS sibling#3 / boundary#1 P1）：skip 判读换 fail-closed 解析 +
+        # 计数互证（docstring / subTest 形状 r38 的行首正则全漏），超时从
+        # isolation_step_budget 同源派生。
+        self._assert_suite_really_runs(
+            '#994', 'test_negative_adaptive_isolation', 23,
+            self.isolation_step_budget)
+
+    def test_required_job_runs_the_optimize_guards_self_tests(self):
+        # #2136 fix-r35（DS sibling P1）：-O 不变性自测步（#1666/#1734）与
+        # #2133 步同 job 同形——它跑的正是负控守卫的 -O 判别力（含 #2309
+        # roster-guards），但删步、加 if、加 continue-on-error 或改错 cwd
+        # 此前全仓无红。照 #994/#2133 的三件套补上；五形变异负控见
+        # test_optimize_guards_self_test_ci_regressions_are_rejected。
+        # r41（合并 main）：#2590 fix-r2 给本步加了第六条命令
+        # （issue-2495/test_negative_controls.py），一并钉入 commands——
+        # 删掉它同样必须红。
+        commands = ('python3 -B -m unittest -v test_negative_optimize_guards',
+                    'python3 -B -m unittest -v settings-gateway/test_negative_controls.py',
+                    'python3 -B -m unittest -v test_negative_run_guards',
+                    'python3 -B -m unittest -v network-timing/test_negative_controls.py',
+                    'python3 -B -m unittest -v test_negative_roster_guards',
+                    'python3 -B -m unittest -v issue-2495/test_negative_controls.py')
+        jobs = self.ci_jobs('#1666')
+        steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#1666')
+        matching = [step for step in steps
+                    if all(command in self.ci_run_commands(step, '#1666')
+                           for command in commands)]
+        self.assertEqual(len(matching), 1,
+                         '#1666 required CI job must run the -O invariance self-tests')
+        fields = self.ci_step_fields(matching[0], '#1666')
+        for key in ('if', 'continue-on-error'):
+            self.assertNotIn(key, fields,
+                             '#1666 the -O self-test step must be unconditional '
+                             'and required')
+        self.assertEqual(fields.get('working-directory'),
+                         ('src/pilotdeck-gateway/tests/fixtures', []),
+                         '#1666 the -O self-tests import the fixtures tree, '
+                         'so the step runs from the fixtures dir')
+        # #2136 fix-r38（MM sibling P2）：五个模块 r37 实测合计约 15 s，挂起时
+        # 占满 job 默认 360 分钟；步级超时同样须声明且被钉住。
+        # r39（DS boundary#2 P2）：值从 optimize_guards_step_budget 同源派生。
+        self.assertEqual(
+            fields.get('timeout-minutes'),
+            (str(self.optimize_guards_step_budget // 60), []),
+            '#1666 the -O self-test step must declare timeout-minutes: %d; '
+            'without it a hung step silently falls back to the 360-minute '
+            'job default' % (self.optimize_guards_step_budget // 60))
+
+    def test_required_job_runs_the_environment_controls(self):
+        # #2136 fix-r39（DS sibling#1 / concurrency#2 P2）：r38 给四个被钉的
+        # 步补了 timeout-minutes，唯独**真正跑这些真跑钉的那一步**（本类全套
+        # 86 条，含 #994/#1570/#1666/#2133 四条真跑钉，r38 实测本机 764 s）
+        # 没有步级超时，挂起时回落 job 默认 360 分钟——正是那四条钉注释里
+        # 要消灭的场景搬到了本步。照 #2133 步同法声明并钉住（30 min ≈ 2.4×
+        # 余量，从 driver_step_budget 派生）。
+        command = ('\'"$RUNNER_TEMP/pyyaml-pinned/bin/python" -m unittest -v '
+                   'test_metadata_io_driver.EnvironmentControls\'')
+        jobs = self.ci_jobs('#2136')
+        steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#2136')
+        matching = [step for step in steps if self.ci_run_commands(step, '#2136') == [command]]
+        self.assertEqual(len(matching), 1,
+                         '#2136 required CI job must run the EnvironmentControls suite')
+        fields = self.ci_step_fields(matching[0], '#2136')
+        for key in ('if', 'continue-on-error'):
+            self.assertNotIn(key, fields,
+                             '#2136 the EnvironmentControls step must be unconditional')
+        self.assertEqual(
+            fields.get('working-directory'), ('src/pilotdeck-gateway/tests', []),
+            '#2136 the EnvironmentControls suite runs from the gateway tests dir')
+        self.assertEqual(
+            fields.get('timeout-minutes'),
+            (str(self.driver_step_budget // 60), []),
+            '#2136 the EnvironmentControls step must declare timeout-minutes: '
+            '%d; without it a hung step silently falls back to the '
+            '360-minute job default' % (self.driver_step_budget // 60))
 
     def test_negative_controls_job_runs_the_gateway_fixture(self):
         # #1632 P2-3：这个 job 存在的唯一理由是让夹具真的跑起来；删掉执行步、
@@ -1468,6 +1872,543 @@ class EnvironmentControls(unittest.TestCase):
                '#1632 the run leaves its evidence behind')
         self.check_ci_mutations(cases, 'test_negative_controls_job_runs_the_gateway_fixture', '#1632')
 
+    # #2780 fix-r2（MM 三条 P1 的登记半边 + P2-a）：runner 镜像漂移守卫是 ci.yml
+    # 里两份 inline 脚本（rust / negative-controls 各一份），此前删除它、只改一份、
+    # 把钉值改漂、把扫描面从两份 workflow 收窄回 ci.yml，都没有任何闸门会红。
+    # 这里从 ci.yml 之外钉住：存在性、双副本逐字全等、四个钉值的单一来源，以及
+    # ci.yml 与 pr-gate.yml 全部非注释 runs-on 值必须等于守卫钉定的标签。
+    runner_image_guard_step_name = 'runner 镜像漂移守卫（#2762）'
+    runner_image_guard_anchor = '      - name: runner 镜像漂移守卫（#2762）\n'
+    runner_image_guard_scan_line = (
+        'for guard_target in .github/workflows/ci.yml .github/workflows/pr-gate.yml; do')
+    runner_image_guard_os_release_override = (
+        'os_release="${PDRS_IMAGE_GUARD_OS_RELEASE:-/etc/os-release}"')
+
+    def runner_image_guard_scripts(self, issue='#2780'):
+        """两个守卫 step 的 run 块原文（含 YAML 缩进）与剥缩进后的可执行脚本。
+
+        按 step 锚点行到下一个 step / job 头切片，不经 ci_steps 的规范化——规范化
+        会剥缩进、丢空行，「逐字全等」要的是原文比对（sibling#3 / concurrency#3）。
+        """
+        text = (Path(__file__).resolve().parents[3]
+                / '.github/workflows/ci.yml').read_text()
+        lines = text.split('\n')
+        indexes = [i for i, line in enumerate(lines)
+                   if line == '      - name: ' + self.runner_image_guard_step_name]
+        self.assertEqual(len(indexes), 2,
+                         f'{issue} exactly two runner image guard steps exist; deleting '
+                         'one (or both) must turn this red, not pass silently')
+        found = {}
+        for i in indexes:
+            owner = None
+            for k in range(i, -1, -1):
+                header = re.fullmatch(r'  ([\w-]+):', lines[k])
+                if header:
+                    owner = header[1]
+                    break
+            self.assertIsNotNone(owner, f'{issue} the guard step lives inside a job')
+            self.assertNotIn(owner, found,
+                             f'{issue} one guard step per job, not more')
+            end = len(lines)
+            for j in range(i + 1, len(lines)):
+                line = lines[j]
+                # step 直属键 8 空格、run 块 ≥10 空格；任何非空且 <8 缩进的行
+                # （下一 step 的 `- ` 项或其 6 空格注释、job 级键、job 头）即边界。
+                if line.strip() and (not line.startswith(' ')
+                                     or len(line) - len(line.lstrip(' ')) < 8):
+                    end = j
+                    break
+            region = lines[i:end]
+            try:
+                run_at = region.index('        run: |')
+            except ValueError:
+                self.fail(f'{issue} the {owner} guard step carries a literal run block')
+            block = region[run_at + 1:]
+            while block and not block[-1].strip():
+                block.pop()
+            self.assertTrue(block, f'{issue} the {owner} guard run block is not empty')
+            conditional = [line for line in region
+                           if re.fullmatch(r"""        ['\"]?(if|continue-on-error)['\"]?:.*""", line)]
+            self.assertFalse(conditional,
+                             f'{issue} the guard steps stay unconditional; a skipped or '
+                             'failure-ignored guard is a silently missing guard')
+            raw = '\n'.join(block) + '\n'
+            script = ''.join(line[10:] + '\n' if line.startswith(' ' * 10)
+                            else line + '\n' for line in block)
+            found[owner] = (raw, script)
+        self.assertEqual(set(found), {'rust', 'negative-controls'},
+                         f'{issue} the guard steps live exactly in the two cargo jobs '
+                         'whose KILLED/SURVIVED comparability the guard protects')
+        return found
+
+    def runner_image_guard_pins(self, script, issue='#2780'):
+        """从守卫脚本文本反向派生四个钉值（expected* 变量）——机检侧不另抄一份，
+        钉值的单一来源就是守卫脚本本身（boundary#1 / boundary#2）。fix-r3 起构建
+        号是钉值集合 expected_image_versions（空格分隔，命中任一即绿）。"""
+        matches = re.findall(r'^(expected[a-z_]*)="([^"]*)"$', script, re.M)
+        self.assertEqual(len(matches), 4,
+                         f'{issue} the guard defines exactly the four pin variables')
+        pins = {}
+        for name, value in matches:
+            self.assertNotIn(name, pins,
+                             f'{issue} each pin is defined exactly once: {name}')
+            pins[name] = value
+        self.assertEqual(set(pins), {'expected', 'expected_label', 'expected_image_os',
+                                     'expected_image_versions'},
+                         f'{issue} the guard pins are exactly the registered four')
+        # 三值互相锁定：标签 / 镜像族从 OS 版本派生，任何一处单独改钉先红在这里。
+        self.assertEqual(pins['expected_label'], 'ubuntu-' + pins['expected'],
+                         f'{issue} the pinned label derives from the pinned OS version')
+        self.assertEqual(pins['expected_image_os'], 'ubuntu' + pins['expected'].split('.')[0],
+                         f'{issue} the pinned image family derives from the pinned OS '
+                         'version major ($ImageOS keeps the major only, '
+                         'e.g. ubuntu-24.04 -> ubuntu24)')
+        # fix-r3（#2780 P2-a 主题 3）：构建号钉值集合的格式契约——非空、单空格
+        # 分隔、无重复成员、每个成员都是上游 runner-images 构建号形态
+        # （YYYYMMDD.N.M）。空集合运行时也会 fail-closed，但先红在这里。
+        members = pins['expected_image_versions'].split(' ')
+        self.assertTrue(members and all(members),
+                        f'{issue} the pinned image-version set is non-empty and '
+                        'single-space separated; an empty or stray-space set would '
+                        'fail-closed at runtime and must be rejected here too')
+        self.assertEqual(len(members), len(set(members)),
+                         f'{issue} no duplicate members in the pinned image-version set')
+        for member in members:
+            self.assertRegex(member, r'^\d{8}\.\d+\.\d+$',
+                             f'{issue} each pinned image version looks like a '
+                             'runner-images build stamp (YYYYMMDD.N.M)')
+        pins['expected_image_versions_members'] = members
+        return pins
+
+    def runner_image_guard_scan_targets(self, script, issue='#2780'):
+        """从守卫脚本的扫描行反向派生扫描面（单一来源，不另抄清单）——登记测试
+        再把它与 .github/workflows 目录对账：新增工作流文件不进扫描面先红
+        （#2780 fix-r3 P2-a 主题 1 的 Python 侧目录派生；让 shell 自己扫目录
+        动守卫块扫描逻辑，超出钉值集合化范围，开 P2-跟进单）。"""
+        self.assertIn(self.runner_image_guard_scan_line + '\n', script,
+                      f'{issue} the guard keeps the runs-on scan for-loop')
+        head, sep, _ = self.runner_image_guard_scan_line.partition('; do')
+        self.assertTrue(sep, f'{issue} the scan line keeps its for-loop shape')
+        prefix = 'for guard_target in '
+        self.assertTrue(head.startswith(prefix),
+                        f'{issue} the scan line keeps its iteration variable')
+        targets = head[len(prefix):].split()
+        self.assertTrue(targets, f'{issue} the scan line carries at least one target')
+        return targets
+
+    def workflow_runs_on_values(self, text, issue='#2780'):
+        """镜像守卫白名单判定的 Python 侧：全部非注释 runs-on 值（键形态连引号键
+        一起认，值剥行尾注释 / 引号 / 空白，与守卫脚本同一口径）。"""
+        values = []
+        for line in text.split('\n'):
+            stripped = line.lstrip()
+            if not stripped or stripped.startswith('#'):
+                continue
+            matched = re.fullmatch(r"""['\"]?runs-on['\"]?[ \t]*:(.*)""", stripped)
+            if not matched:
+                continue
+            value = matched[1].split('#', 1)[0].replace('"', '').replace("'", '')
+            values.append(re.sub(r'[ \t\r]', '', value))
+        return values
+
+    def test_runner_image_guard_steps_are_registered_and_identical(self):
+        guards = self.runner_image_guard_scripts('#2780')
+        # 单副本分叉（只改一份的钉值 / 逻辑）在这里红：两个 job 的判据不允许各守各的。
+        self.assertEqual(guards['rust'][0], guards['negative-controls'][0],
+                         '#2780 the two guard run blocks stay verbatim-identical; '
+                         'editing only one copy forks what the two jobs check')
+        script = guards['rust'][1]
+        # 扫描面：#2763 的钉版口径是「全部 runs-on」，pr-gate.yml 的合并闸门 job
+        # 不许掉出白名单（sibling#2 / concurrency#2 / boundary#4）。
+        self.assertIn(self.runner_image_guard_scan_line + '\n', script,
+                      '#2780 the guard scans both workflows, not only ci.yml')
+        # 注入口被删会让下方逻辑自测退化成依赖宿主 os-release（不确定性）。
+        self.assertEqual(script.count(self.runner_image_guard_os_release_override), 1,
+                         '#2780 the guard keeps the self-test os-release override')
+        pins = self.runner_image_guard_pins(script, '#2780')
+        jobs = self.ci_jobs('#2780')
+        for job in ('rust', 'negative-controls'):
+            steps = self.ci_steps(job, jobs[job], '#2780')
+            guards_in_job = [step for step in steps
+                             if self.ci_step_fields(step, '#2780').get('name')
+                             == (self.runner_image_guard_step_name, [])]
+            self.assertEqual(len(guards_in_job), 1,
+                             '#2780 exactly one runner image guard step per cargo job')
+            self.assertEqual(steps.index(guards_in_job[0]), 1,
+                             '#2780 the guard sits immediately after checkout '
+                             '(fail-fast before any heavy step)')
+            fields = self.ci_step_fields(guards_in_job[0], '#2780')
+            self.assertEqual(fields.get('working-directory'), ('.', []),
+                             '#2780 the guard reads the workflow files from the repository root')
+            self.assertEqual(fields.get('shell'), ('bash', []),
+                             '#2780 the guard pins the fail-fast shell')
+            for key in ('if', 'continue-on-error'):
+                self.assertNotIn(key, fields,
+                                 '#2780 the guard steps stay unconditional')
+        # 白名单值等的机检侧：钉定标签从守卫脚本派生（单一来源），扫描面也从守卫
+        # 脚本的扫描行派生（单一来源，fix-r3 P2-a 主题 1 Python 侧目录派生），并与
+        # .github/workflows 目录对账：新增工作流文件不进扫描面先红在这里（shell 侧
+        # 自动扫目录动守卫块扫描逻辑，开 P2-跟进单）。两个 workflow 的全部非注释
+        # runs-on 值必须等于钉定标签——arm / 26.04 / 22.04 / ubuntu-latest /
+        # matrix 拼装 / 引号键写法全都过不去（sibling#1 / boundary#1）。
+        root = Path(__file__).resolve().parents[3]
+        targets = self.runner_image_guard_scan_targets(script, '#2780')
+        actual_workflows = sorted(
+            str(path.relative_to(root)) for path in (root / '.github/workflows').iterdir()
+            if path.is_file() and path.suffix in ('.yml', '.yaml'))
+        self.assertEqual(sorted(targets), actual_workflows,
+                         '#2780 the guard scan surface must cover every workflow file '
+                         'under .github/workflows; a workflow outside the scan list '
+                         'silently escapes the runs-on whitelist')
+        for relative in targets:
+            values = self.workflow_runs_on_values((root / relative).read_text(), '#2780')
+            self.assertTrue(values,
+                            f'#2780 must carry runs-on lines the guard can see: '
+                            f'{relative}; zero parsed hits would silently pass the whitelist')
+            self.assertEqual(set(values), {pins['expected_label']},
+                             f'#2780 every non-comment runs-on must equal the guard-pinned '
+                             f'label {pins["expected_label"]} (in {relative})')
+            # fix-r3（#2780 anthropic boundary#2 Python 侧）：flow 风格 job（`x:
+            # {runs-on: ...}`）与可复用 workflow 调用（job 级 uses:）不产生行首
+            # runs-on:，行级白名单（shell 守卫与 Python 镜像同口径）都扫不到——用
+            # 「job 数 == runs-on 命中数」对账 + 禁 job 级 uses: 钉死；配对负控见
+            # rejects_registration_drift 的 flow-style-job-escapes-whitelist。
+            import yaml
+            flow = yaml.safe_load((root / relative).read_text())
+            flow_jobs = flow.get('jobs') or {}
+            self.assertTrue(flow_jobs,
+                            f'#2780 {relative} carries jobs the guard can audit')
+            self.assertFalse([name for name, body in flow_jobs.items()
+                              if isinstance(body, dict) and 'uses' in body],
+                             f'#2780 no job may be a reusable-workflow call (uses:) in '
+                             f'{relative}; such a job escapes the line-based runs-on '
+                             'whitelist entirely')
+            self.assertEqual(len(flow_jobs), len(values),
+                             f'#2780 every job in {relative} must own exactly one '
+                             'line-based runs-on hit; a flow-style job would otherwise '
+                             'silently escape the whitelist')
+        # fix-r3（#2780 P2-a 主题 2）：守卫读的三个环境变量不许被任何工作流自己
+        # 定义——step / job / workflow 任一层 env 一旦钉死 ImageOS / ImageVersion /
+        # PDRS_IMAGE_GUARD_OS_RELEASE，守卫读到的就是自产假值，漂移永远不红（配对
+        # 负控见 rejects_registration_drift 的 *-env-neuters-* 两条）。正则只认
+        # 「键:」形态，守卫脚本正文里的 ${ImageVersion:-} 引用不会误伤。
+        for relative in targets:
+            offenders = [line for line in (root / relative).read_text().split('\n')
+                         if re.match(r"^\s*['\"]?(ImageOS|ImageVersion"
+                                     r"|PDRS_IMAGE_GUARD_OS_RELEASE)['\"]?\s*:", line)]
+            self.assertFalse(offenders,
+                             f'#2780 no workflow may define the guard env vars itself '
+                             f'(ImageOS/ImageVersion/PDRS_IMAGE_GUARD_OS_RELEASE) in '
+                             f'{relative}; a self-defined env neuters runner drift '
+                             'detection')
+
+    def test_runner_image_guard_rejects_registration_drift(self):
+        # #2780 fix-r2：登记断言的内存变异负控。每条都必须让上面的登记测试红在
+        # 绑定的失败消息上——删守卫步（两个 job 各一条）、单副本分叉、扫描面收窄、
+        # 注入口被删、步被条件化、错位、钉值互相矛盾、runs-on 漂移（含 pr-gate.yml
+        # 与引号键形态）。改动 ci.yml 的用 ci.yml 路由，改动 pr-gate.yml 的用
+        # pr-gate.yml 路由（check_ci_mutations 的按文件名路由，#1809 r9 口径）。
+        workflow = self.ci_workflow_fixture()
+        guards = self.runner_image_guard_scripts('#2780')
+        step = (self.runner_image_guard_anchor + '        working-directory: .\n'
+                '        shell: bash\n        run: |\n' + guards['negative-controls'][0])
+        self.assertEqual(workflow.count(step), 2, '#2780 both guard steps share one shape')
+        ci_cases = [('guard-step-removed-negative-controls',
+                     workflow.replace(step, '', 1),
+                     '#2780 exactly two runner image guard steps exist')]
+        head, _, tail = workflow.partition(step)
+        ci_cases.append(('guard-step-removed-rust', head + step + tail.replace(step, '', 1),
+                         '#2780 exactly two runner image guard steps exist'))
+        ci_cases.append(('guard-copies-diverge',
+                         workflow.replace('          expected="24.04"\n',
+                                           '          expected="26.04"\n', 1),
+                         '#2780 the two guard run blocks stay verbatim-identical'))
+        for label, old, new, message in (
+                ('scan-target-narrowed',
+                 '          for guard_target in .github/workflows/ci.yml '
+                 '.github/workflows/pr-gate.yml; do\n',
+                 '          for guard_target in .github/workflows/ci.yml; do\n',
+                 '#2780 the guard scans both workflows'),
+                ('os-release-override-removed',
+                 '          os_release="${PDRS_IMAGE_GUARD_OS_RELEASE:-/etc/os-release}"\n',
+                 '          os_release=/etc/os-release\n',
+                 '#2780 the guard keeps the self-test os-release override'),
+                ('pins-inconsistent',
+                 '          expected_image_os="ubuntu24"\n',
+                 '          expected_image_os="ubuntu-24"\n',
+                 '#2780 the pinned image family derives from the pinned OS version')):
+            self.assertEqual(workflow.count(old), 2, f'#2780 both copies carry {label}')
+            ci_cases.append((label, workflow.replace(old, new), message))
+        ci_cases.append(('guard-step-conditional',
+                         workflow.replace(self.runner_image_guard_anchor,
+                                           self.runner_image_guard_anchor
+                                           + '        if: false\n'),
+                         '#2780 the guard steps stay unconditional'))
+        # 错位：在 negative-controls 的守卫前插一个哑步（锚点用本 job 独有的注释行），
+        # 守卫挪到 index 2，fail-fast 语义丢失。
+        shift_anchor = ('      # 盲区⑤ fix-r1（#2780 MM P1-2）：同款 runner 镜像漂移守卫'
+                        '复制进本 job——\n')
+        self.assertEqual(workflow.count(shift_anchor), 1, '#2780 unique shift anchor')
+        ci_cases.append(('guard-shifted-past-toolchain',
+                         workflow.replace(shift_anchor,
+                                          '      - run: \'true\'\n' + shift_anchor, 1),
+                         '#2780 the guard sits immediately after checkout'))
+        for label, new in (('runs-on-arm-drift', '    runs-on: ubuntu-24.04-arm'),
+                           ('runs-on-latest-regression', '    runs-on: ubuntu-latest'),
+                           ('runs-on-matrix-assembly',
+                            '    runs-on: ubuntu-${{ matrix.os }}')):
+            ci_cases.append((label,
+                             workflow.replace('    runs-on: ubuntu-24.04', new, 1),
+                             '#2780 every non-comment runs-on must equal the guard-pinned '
+                             'label'))
+        # fix-r3（#2780 P2-a 主题 2/3）：钉值集合与守卫 env 的配对负控。集合类变异
+        # 两副本同改（保持逐字全等，让红落在绑定断言上而不是分叉断言上）。
+        pin_line = '          expected_image_versions="20261101.360.1"\n'
+        self.assertEqual(workflow.count(pin_line), 2,
+                         '#2780 both copies carry the image-version pin')
+        for label, new, message in (
+                ('pin-set-emptied',
+                 '          expected_image_versions=""\n',
+                 '#2780 the pinned image-version set is non-empty'),
+                ('pin-set-duplicate-member',
+                 '          expected_image_versions="20261101.360.1 20261101.360.1"\n',
+                 '#2780 no duplicate members in the pinned image-version set'),
+                ('pin-set-malformed-member',
+                 '          expected_image_versions="20261101.360.1 latest"\n',
+                 '#2780 each pinned image version looks like a runner-images build '
+                 'stamp'),
+                ('guard-fifth-pin',
+                 pin_line + '          expected_extra="x"\n',
+                 '#2780 the guard defines exactly the four pin variables')):
+            ci_cases.append((label, workflow.replace(pin_line, new), message))
+        # 重复定义钉值：把 expected_label 换成第二个 expected_image_versions——总匹配
+        # 数仍是 4，红在「每个钉值只定义一次」而不是总数断言上。
+        self.assertEqual(
+            workflow.count('          expected_label="ubuntu-24.04"\n'), 2,
+            '#2780 both copies carry the label pin (anchor for duplicate-pin mutant)')
+        ci_cases.append(('guard-duplicate-pin',
+                         workflow.replace('          expected_label="ubuntu-24.04"\n',
+                                           '          expected_image_versions='
+                                           '"20261231.1.0"\n'),
+                         '#2780 each pin is defined exactly once'))
+        # 守卫 env 冒犯（主题 2）：两副本同插 step 级 env / 头部插 workflow 级 env，
+        # 守卫读到的将是自产假值——必须红在 env 冒犯断言上。
+        self.assertTrue(workflow.startswith('name: ci\n'),
+                        '#2780 ci.yml keeps its head anchor for the env mutant')
+        ci_cases.append(('guard-env-step-neuters-version',
+                         workflow.replace(self.runner_image_guard_anchor,
+                                           self.runner_image_guard_anchor
+                                           + '        env:\n'
+                                             '          ImageVersion: 20261101.360.1\n'),
+                         '#2780 no workflow may define the guard env vars itself'))
+        ci_cases.append(('workflow-env-neuters-imageos',
+                         workflow.replace('name: ci\n',
+                                           'name: ci\n\nenv:\n  ImageOS: ubuntu24\n', 1),
+                         '#2780 no workflow may define the guard env vars itself'))
+        # fix-r3（#2780 P2-a 主题 3 补遗 + anthropic boundary#2）：working-directory
+        # 漂移、同 job 重复守卫、flow 风格 job 绕过行级白名单——各自红在绑定断言。
+        self.assertEqual(workflow.count(self.runner_image_guard_anchor
+                                        + '        working-directory: .\n'), 2,
+                         '#2780 both guard steps pin working-directory at repo root')
+        ci_cases.append(('guard-working-directory-drift',
+                         workflow.replace(self.runner_image_guard_anchor
+                                          + '        working-directory: .\n',
+                                          self.runner_image_guard_anchor
+                                          + '        working-directory: src\n'),
+                         '#2780 the guard reads the workflow files from the '
+                         'repository root'))
+        ci_cases.append(('guard-duplicated',
+                         workflow.replace(shift_anchor, step + shift_anchor, 1),
+                         '#2780 exactly two runner image guard steps exist'))
+        # flow 风格 job 绕过行级白名单的配对负控走 pr-gate.yml 路由：ci.yml 侧的
+        # 行式 job 声明守卫（ci_jobs 的 unsupported job declaration）会先红，构造
+        # 不出只红在本断言上的 ci 变异——那层是 ci.yml 独立的既有防御，这里的牙
+        # 由 pr-gate.yml 路由证明（该文件无同款行式守卫）。
+        self.check_ci_mutations(ci_cases,
+                                'test_runner_image_guard_steps_are_registered_and_identical',
+                                '#2780')
+        gate_text = (Path(__file__).resolve().parents[3]
+                     / '.github/workflows/pr-gate.yml').read_text()
+        self.assertEqual(gate_text.count('    runs-on: ubuntu-24.04\n'), 1,
+                         '#2780 unique pr-gate runs-on anchor')
+        gate_cases = [
+            ('pr-gate-runs-on-latest',
+             gate_text.replace('    runs-on: ubuntu-24.04\n', '    runs-on: ubuntu-latest\n'),
+             '#2780 every non-comment runs-on must equal the guard-pinned label'),
+            ('pr-gate-runs-on-quoted-key',
+             gate_text.replace('    runs-on: ubuntu-24.04\n',
+                               "    'runs-on': ubuntu-latest\n"),
+             '#2780 every non-comment runs-on must equal the guard-pinned label'),
+            ('pr-gate-runs-on-removed',
+             gate_text.replace('    runs-on: ubuntu-24.04\n', ''),
+             '#2780 must carry runs-on lines the guard can see'),
+            # fix-r3（anthropic boundary#2 配对负控）：flow 风格 job 的 runs-on 行
+            # 不在行首，行级白名单（shell 守卫与 Python 镜像同口径）扫不到——红在
+            # 「job 数 == runs-on 命中数」对账断言上。
+            ('pr-gate-flow-style-job-escapes-whitelist',
+             gate_text.replace('jobs:\n',
+                               'jobs:\n'
+                               '  x: {runs-on: ubuntu-latest, steps: '
+                               '[{run: true}]}\n', 1),
+             '#2780 every job in .github/workflows/pr-gate.yml must own '
+             'exactly one line-based runs-on hit'),
+        ]
+        self.check_ci_mutations(gate_cases,
+                                'test_runner_image_guard_steps_are_registered_and_identical',
+                                '#2780', mutated='pr-gate.yml')
+
+    def test_runner_image_guard_logic_self_check(self):
+        # #2780 fix-r2（P2-a / concurrency#3 / boundary#3）：守卫逻辑的行为自测。
+        # 跑从 ci.yml 提取的真实脚本（不 mock、不另写副本）：正控必须绿，每条拒绝
+        # 路径必须红在专属错误标记上——OS 漂移 / $ImageOS 漂移 / $ImageVersion 漂移
+        # 与缺失（构建维度）/ runs-on 值漂移（含 ubuntu-latest 回归）/ 目标不可读 /
+        # grep rc>=2 / 零命中。fix-r3 增补：os-release 边界（无 VERSION_ID / 不可
+        # 读）、pr-gate 值漂移逻辑级负控、引号键绿路径、钉值集合行为（第二成员绿 /
+        # 空集合红）。逐条跑完再汇总，任一非 KILLED 即红（不遇第一条失败就中止）。
+        # $ImageOS/$ImageVersion 在真实 runner 上的存在性与格式属评审推断（本环境
+        # 无 GitHub 托管 runner），守卫按 fail-closed 设计覆盖。
+        guards = self.runner_image_guard_scripts('#2780')
+        script = guards['negative-controls'][1]
+        pins = self.runner_image_guard_pins(script, '#2780')
+        root = Path(__file__).resolve().parents[3]
+        ci_text = (root / '.github/workflows/ci.yml').read_text()
+        gate_text = (root / '.github/workflows/pr-gate.yml').read_text()
+        results = []
+        greens = []
+        positive = None
+
+        def world(guard_ci=ci_text, guard_gate=gate_text, os_version=None, env=None,
+                  ci_is_dir=False, skip_gate=False, os_release_missing=False):
+            def build(work):
+                flows = work / '.github/workflows'
+                flows.mkdir(parents=True)
+                if ci_is_dir:
+                    (flows / 'ci.yml').mkdir()
+                else:
+                    (flows / 'ci.yml').write_text(guard_ci)
+                if not skip_gate:
+                    (flows / 'pr-gate.yml').write_text(guard_gate)
+                # fix-r3（#2780 P2-a 主题 4）：os_version 三态——None=写钉定值（正
+                # 控）、''=文件在但无 VERSION_ID（边界：actual 退回空）、其余=具体漂
+                # 移值。旧写法 os_version or pins[...] 会把 '' 吞成钉定值，边界用例
+                # 根本跑不到（DS boundary 的原报告点）。
+                environment = {'PATH': '/usr/bin:/bin',
+                               'ImageOS': pins['expected_image_os'],
+                               'ImageVersion': pins['expected_image_versions_members'][0]}
+                if os_release_missing:
+                    environment['PDRS_IMAGE_GUARD_OS_RELEASE'] = str(
+                        work / 'nonexistent-os-release')
+                else:
+                    release = work / 'os-release'
+                    if os_version is None:
+                        release.write_text(f'VERSION_ID="{pins["expected"]}"\n')
+                    elif os_version == '':
+                        release.write_text('NAME="Ubuntu"\n')
+                    else:
+                        release.write_text(f'VERSION_ID="{os_version}"\n')
+                    environment['PDRS_IMAGE_GUARD_OS_RELEASE'] = str(release)
+                environment.update(env or {})
+                return environment
+            return build
+
+        def run_guard(name, build, expect_pass, marker=None, extra_green=False,
+                      guard_script=None):
+            nonlocal positive
+            with tempfile.TemporaryDirectory() as temp:
+                completed = subprocess.run(
+                    ['bash', '-c', guard_script or script], cwd=temp,
+                    env=build(Path(temp)), capture_output=True, text=True, timeout=60)
+            if expect_pass:
+                ok = (completed.returncode == 0
+                      and 'runner 镜像守卫通过' in completed.stdout
+                      and 'runs-on 白名单反向断言通过' in completed.stdout)
+                detail = (f'rc={completed.returncode} stdout={completed.stdout!r} '
+                          f'stderr={completed.stderr!r}')
+                if extra_green:
+                    greens.append((name, ok, detail))
+                else:
+                    positive = (name, ok, detail)
+                return
+            ok = completed.returncode != 0 and marker in completed.stderr
+            status = ('KILLED' if ok
+                      else 'SURVIVED' if completed.returncode == 0 else 'INVALID')
+            results.append((name, status))
+            print(f'#2780 {name}: {status}: rc={completed.returncode} '
+                  f'stderr={completed.stderr!r}', flush=True)
+
+        run_guard('baseline-green', world(), expect_pass=True)
+        run_guard('os-version-drift', world(os_version='26.04'), expect_pass=False,
+                  marker='实际 OS 版本="26.04"')
+        run_guard('image-os-drift', world(env={'ImageOS': 'ubuntu26'}), expect_pass=False,
+                  marker='实际 ImageOS="ubuntu26"')
+        run_guard('image-version-drift',
+                  world(env={'ImageVersion': '20261101.999.0'}), expect_pass=False,
+                  marker='ImageVersion="20261101.999.0"')
+        run_guard('image-version-missing', world(env={'ImageVersion': ''}),
+                  expect_pass=False, marker='ImageVersion="<未提供>"')
+        run_guard('runs-on-arm-drift',
+                  world(guard_ci=ci_text.replace('    runs-on: ubuntu-24.04',
+                                                 '    runs-on: ubuntu-24.04-arm', 1)),
+                  expect_pass=False, marker='runs-on 值 "ubuntu-24.04-arm"')
+        run_guard('runs-on-latest-regression',
+                  world(guard_ci=ci_text.replace('    runs-on: ubuntu-24.04',
+                                                 '    runs-on: ubuntu-latest', 1)),
+                  expect_pass=False, marker='runs-on 值 "ubuntu-latest"')
+        run_guard('guard-target-unreadable', world(skip_gate=True), expect_pass=False,
+                  marker='不可读')
+        # grep rc>=2 的确定性触发：目标做成目录（-r 对目录为真、grep 报 rc=2）。
+        # BSD grep（macOS）对目录的退出码未实测，非 Linux 显式跳过并记原因，不静默通过。
+        if sys.platform == 'linux':
+            run_guard('grep-rc2-directory-target', world(ci_is_dir=True),
+                      expect_pass=False, marker='异常退出 rc=2')
+        else:
+            print(f'#2780 grep-rc2-directory-target: SKIPPED: rc>=2 of GNU grep on a '
+                  f'directory is not verified on {sys.platform}', flush=True)
+        run_guard('no-runs-on-parsed', world(guard_ci=''), expect_pass=False,
+                  marker='一条 runs-on 都没解析到')
+        # fix-r3（#2780 P2-a 主题 4）：os-release 边界——文件在但无 VERSION_ID /
+        # 文件读不到，actual 都退回空，必须红在「<读不到>」上而不是静默过。
+        run_guard('os-version-missing', world(os_version=''), expect_pass=False,
+                  marker='实际 OS 版本="<读不到>"')
+        run_guard('os-release-unreadable', world(os_release_missing=True),
+                  expect_pass=False, marker='实际 OS 版本="<读不到>"')
+        # pr-gate 侧值漂移的逻辑级负控；引号键是绿路径不是死代码（守卫键形态
+        # 连引号键一起认，#2017 先例）。
+        run_guard('pr-gate-runs-on-latest',
+                  world(guard_gate=gate_text.replace('    runs-on: ubuntu-24.04',
+                                                     '    runs-on: ubuntu-latest', 1)),
+                  expect_pass=False, marker='runs-on 值 "ubuntu-latest"')
+        run_guard('quoted-key-pr-gate-green',
+                  world(guard_gate=gate_text.replace('    runs-on: ubuntu-24.04',
+                                                     "    'runs-on': ubuntu-24.04", 1)),
+                  expect_pass=True, extra_green=True)
+        # fix-r3（#2780 anthropic boundary P1，钉值集合）：命中任一成员即绿、空集合
+        # fail-closed。只改提取出的脚本文本（不动 ci.yml）：临时扩一个第二成员，
+        # 实际值落在第二成员上必须绿；集合清空必须红在专属错误上。
+        pin_line = re.search(r'^expected_image_versions="[^"]*"$', script, re.M)[0]
+        second_member = '20261231.1.0'
+        script_two_members = script.replace(
+            pin_line, pin_line[:-1] + f' {second_member}"')
+        run_guard('image-version-set-second-member-green',
+                  world(env={'ImageVersion': second_member}), expect_pass=True,
+                  extra_green=True, guard_script=script_two_members)
+        run_guard('pin-set-emptied-at-runtime', world(), expect_pass=False,
+                  marker='钉值集合 expected_image_versions 为空',
+                  guard_script=script.replace(pin_line, 'expected_image_versions=""'))
+        # 「解析到非 runs-on 行」分支是纵深防御：grep 正则 ^\s*['\"]?runs-on['\"]?\s*:
+        # 只可能产出键剥引号/空白后等于 runs-on 的行，注入不出别的键——机检侧无法
+        # 从 YAML 文本确定性造出该分支的触发输入，不设行为用例（依据本注释，不是
+        # 遗漏）。
+        self.assertTrue(positive and positive[1],
+                        f'#2780 the guard logic positive control must pass: {positive}')
+        self.assertTrue(greens and all(ok for _, ok, _ in greens),
+                        f'#2780 every extra green path must stay green: {greens}')
+        self.assertTrue(results and all(status == 'KILLED' for _, status in results),
+                        f'#2780 every guard-logic mutant must die on its own marker: '
+                        f'{results}')
+        print(f'#2780 guard logic negative summary: {{'
+              f'"KILLED": {len(results)}}}', flush=True)
+
     def test_isolation_ci_regressions_are_rejected(self):
         workflow = self.ci_workflow_fixture()
         command = 'run: python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_adaptive_isolation.py'
@@ -1480,7 +2421,118 @@ class EnvironmentControls(unittest.TestCase):
              '#994 isolation CI step must be unconditional and required'),
             ('isolation-ci-wrong-cwd', 'working-directory: src\n        ' + command,
              '#994 isolation CI step must run from repository root'))]
+        # r38（MM sibling P2）：删掉步级超时，回落 job 默认 360 分钟。
+        # r39（DS sibling#2 P2）：补「膨胀」形——把值改成 360 同样失去挂起
+        # 保护（#2133 步已两形齐全，其余只有 removed）。
+        timeout_message = ('#994 the isolation CI step must declare '
+                           'timeout-minutes: 15')
+        cases.append(('isolation-ci-timeout-removed',
+                      workflow.replace('        timeout-minutes: 15\n', '', 1),
+                      timeout_message))
+        cases.append(('isolation-ci-timeout-inflated',
+                      workflow.replace('        timeout-minutes: 15\n',
+                                       '        timeout-minutes: 360\n', 1),
+                      timeout_message))
         self.check_ci_mutations(cases, 'test_required_job_runs_shared_isolation_regressions', '#994')
+
+    def test_discovery_anchor_self_check_ci_regressions_are_rejected(self):
+        # #2133 fix-r34（MM 评审 P1）：与 #994 同形的变异负控——删步 /
+        # 注释掉 / 加 if / 加 continue-on-error / 改错 working-directory，
+        # 每形必须杀在上一条守卫的专属断言上，而不是别的失败点（#1570 缺
+        # 变异负控，登记在 #2844，见上一条守卫注释）。
+        workflow = self.ci_workflow_fixture()
+        command = 'run: python3 -B -m unittest -v test_negative_discovery_anchors'
+        cases = [(name, workflow.replace(command, changed, 1), message)
+                 for name, changed, message in (
+            ('discovery-self-check-removed', 'run: true',
+             '#2133 required CI job must run the discovery-anchor self-check'),
+            ('discovery-self-check-commented', '# ' + command,
+             '#2133 required CI job must run the discovery-anchor self-check'),
+            ('discovery-self-check-skipped', 'if: false\n        ' + command,
+             '#2133 the self-check CI step must be unconditional'),
+            ('discovery-self-check-ignored', 'continue-on-error: true\n        ' + command,
+             '#2133 the self-check CI step must be unconditional'))]
+        # wrong-cwd 不能照 #994 在 run 行前插一行（本步已有 working-directory，
+        # 会先死在重复键上）：按步名锚定改掉它本来的值。
+        cases.append(('discovery-self-check-wrong-cwd',
+                      workflow.replace(
+                          '- name: 网关负控发现锚点自检（#2133）\n'
+                          '        working-directory: src/pilotdeck-gateway/tests/fixtures\n',
+                          '- name: 网关负控发现锚点自检（#2133）\n'
+                          '        working-directory: src\n', 1),
+                      '#2133 the self-check imports the fixtures tree, '
+                      'so it runs from the fixtures dir'))
+        # r38（DS sibling P2 / MM concurrency P2a）：timeout-minutes 两形——删掉
+        # 该键回落 job 默认 360 分钟；把值改成 360 同样失去挂起保护。
+        timeout_message = ('#2133 the self-check step must declare '
+                           'timeout-minutes: 10')
+        cases.append(('discovery-self-check-timeout-removed',
+                      workflow.replace('        timeout-minutes: 10\n', '', 1),
+                      timeout_message))
+        cases.append(('discovery-self-check-timeout-inflated',
+                      workflow.replace('timeout-minutes: 10', 'timeout-minutes: 360', 1),
+                      timeout_message))
+        self.check_ci_mutations(
+            cases, 'test_required_job_runs_the_discovery_anchor_self_check', '#2133')
+
+    def test_optimize_guards_self_test_ci_regressions_are_rejected(self):
+        # #2136 fix-r35（DS sibling P1）：-O 不变性步（#1666/#1734）的变异负控，
+        # 与 #994 / #2133 同形。该步是 run 块（五条命令），删掉其中任一条
+        # （以 #2309 roster-guards 为代表）必须杀在「必须跑全部五条」的断言上；
+        # if / continue-on-error / 错 cwd 按步名锚定插入或改值。
+        workflow = self.ci_workflow_fixture()
+        name_line = '- name: 网关负控守卫 -O 不变性自测（#1666/#1734）\n'
+        command = 'python3 -B -m unittest -v test_negative_roster_guards'
+        cases = [(name_, workflow.replace(old, new, 1), message)
+                 for name_, old, new, message in (
+            ('optimize-self-test-removed', command + '\n', '',
+             '#1666 required CI job must run the -O invariance self-tests'),
+            ('optimize-self-test-commented', command, '# ' + command,
+             '#1666 required CI job must run the -O invariance self-tests'),
+            ('optimize-self-test-skipped', name_line,
+             name_line + '        if: false\n',
+             '#1666 the -O self-test step must be unconditional and required'),
+            ('optimize-self-test-ignored', name_line,
+             name_line + '        continue-on-error: true\n',
+             '#1666 the -O self-test step must be unconditional and required'),
+            ('optimize-self-test-wrong-cwd',
+             name_line + '        working-directory: src/pilotdeck-gateway/tests/fixtures\n',
+             name_line + '        working-directory: src\n',
+             '#1666 the -O self-tests import the fixtures tree, '
+             'so the step runs from the fixtures dir'),
+            # r38（MM sibling P2）：删掉步级超时，回落 job 默认 360 分钟。
+            # r39（DS sibling#2 P2）：补「膨胀」形；锚串带后续 run 块头——
+            # ci.yml 里 `timeout-minutes: 5` 还有 #1570 步一份。
+            ('optimize-self-test-timeout-removed',
+             'timeout-minutes: 5\n        run: |', 'run: |',
+             '#1666 the -O self-test step must declare timeout-minutes: 5'),
+            ('optimize-self-test-timeout-inflated',
+             'timeout-minutes: 5\n        run: |', 'timeout-minutes: 360\n        run: |',
+             '#1666 the -O self-test step must declare timeout-minutes: 5'))]
+        self.check_ci_mutations(
+            cases, 'test_required_job_runs_the_optimize_guards_self_tests', '#1666')
+
+    def test_environment_controls_step_ci_regressions_are_rejected(self):
+        # r39（DS sibling#1 P2）：driver 步（跑 EnvironmentControls 全套）的
+        # 超时变异负控——删掉 / 膨胀都必须杀在新守卫的超时断言上；锚串带
+        # run 行（该 run 标量全仓唯一），不与其它步的 timeout 行混淆。
+        workflow = self.ci_workflow_fixture()
+        timeout_message = ('#2136 the EnvironmentControls step must declare '
+                           'timeout-minutes: 30')
+        timeout_line = '        timeout-minutes: 30\n'
+        run_line = ('        run: \'"$RUNNER_TEMP/pyyaml-pinned/bin/python" '
+                    '-m unittest -v test_metadata_io_driver.EnvironmentControls\'\n')
+        cases = [
+            ('environment-controls-timeout-removed',
+             workflow.replace(timeout_line + run_line, run_line),
+             timeout_message),
+            ('environment-controls-timeout-inflated',
+             workflow.replace(timeout_line + run_line,
+                              '        timeout-minutes: 360\n' + run_line),
+             timeout_message),
+        ]
+        self.check_ci_mutations(
+            cases, 'test_required_job_runs_the_environment_controls', '#2136')
 
     def test_each_npm_job_sets_up_its_own_node_before_installing(self):
         runtime_jobs = set()

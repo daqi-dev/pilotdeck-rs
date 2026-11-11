@@ -43,6 +43,21 @@ LIB_TESTS = {
     "runtime::memory::gateway::tests::require_management_project_key_only_trims_for_emptiness",
 }
 
+# #2133: neg-for-diff.sh finds this table by the literal `dir/file` of every
+# changed .rs file. Every row below is written as `SOURCE / "runtime/memory/x.rs"`,
+# so the discovery key is already spelled inline and needs no anchor; the
+# shared fixtures its import chain reaches do (the loop keys any change under
+# `fixtures/**`, and the import alone does not put `fixtures/negative_*.py` in
+# this file's text). A row rewritten as `SOURCE / "mod.rs"` makes its key depend
+# on the constant and turns fixtures/test_negative_discovery_anchors.py red
+# until the anchor is declared here.
+DISCOVERY_ANCHORS = (
+    'fixtures/negative_panic.py',
+    'fixtures/negative_process.py',
+    'fixtures/negative_selection.py',
+    'fixtures/negative_scope.py',
+)
+
 # (name, path, before, after, marker, bound test). The marker is the
 # dedicated per-cell message that proves the intended assertion fired, not
 # an unrelated unwrap/compile error; the bound test is the full libtest name

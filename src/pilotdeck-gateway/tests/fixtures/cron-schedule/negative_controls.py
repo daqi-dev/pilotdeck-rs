@@ -31,7 +31,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import Case, classify, passed
+from negative_suite import Case, classify, declares_test, passed
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/cron/schedule.rs'
@@ -206,8 +206,17 @@ def check_manifest():
     """
     errors = []
     manifest = json.loads(oracle.read_text())
+    # 修复轮 r6 P2（DS sibling#2，always-on 侧 fix-r3 空 oracle 拒绝的同族）：
+    # 各节被清空成 []（README 计数表同步归零）时逐节 0==0、replay 绑定循环
+    # 零次，全部空心通过；整份被删成 {} 则在下面 KeyError 冒 traceback——先
+    # 拒绝空清单本身，--check 对被清空的 oracle.json 不再绿灯。
+    if not manifest:
+        return ['oracle.json: the scenario manifest is empty']
     text = readme.read_text()
     for section in SECTIONS:
+        if not manifest.get(section):
+            errors.append(f'oracle.json: section {section} is empty')
+            continue
         match = re.search(rf'^\| `{section}` \| (\d+) \|', text, re.M)
         count = len(manifest[section])
         if not match:
@@ -233,8 +242,12 @@ def check_manifest():
                 errors.append(f"{section}/{entry['name']}: no bound named replay in schedule_tests.rs")
     for row in mutations:
         ident = row[4].rsplit('::', 1)[-1]
-        if not re.search(rf'\bfn {re.escape(ident)}\(', replay_source) \
-                and not re.search(rf'^\s+{re.escape(ident)} => "', replay_source, re.M):
+        # 修复轮 r3 P1（DS 评审，r2 P2 升级）：绑定测试存在性不再用自写裸
+        # 正则——注释/字符串里的 `fn name(` 或 `name => "` 满足裸正则，
+        # 满足不了 declares_test（#2064 r10 硬化版：先抹白注释/字符串、
+        # 左边界、fn 与 match-arm 两拼写折叠成一条规则），与 always-on
+        # 侧 fix-r1 同一规则，合并登记在 #2303 条目 6/17。
+        if not declares_test(replay_source, ident):
             errors.append(f'{row[0]}: bound test {ident} is not defined in schedule_tests.rs')
     return errors
 

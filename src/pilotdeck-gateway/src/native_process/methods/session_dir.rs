@@ -47,11 +47,13 @@ fn gateway_error(code: &'static str, message: impl Into<String>) -> RequestError
 /// Resolves `projectKey` from params, falling back to the configured project.
 /// Returns the resolved path string.
 fn resolve_project(requests: &Requests, params: &JsValue) -> Result<String, RequestError> {
-    let project = params
-        .get("projectKey")
-        .and_then(JsValue::as_string)
-        .and_then(|s| s.to_utf8().ok())
-        .unwrap_or_else(|| requests.options.project.to_string_lossy().into_owned());
+    // #2068: the TS read is `input.projectKey ?? fallbackProjectRoot`
+    // (`ProjectRuntimeRegistry.resolve` / `resolveProjectKey`), so the shared
+    // nullish read replaces the old `to_utf8().ok()` chain — a non-string key
+    // answers the bare `path.resolve` TypeError instead of silently listing
+    // the configured project, and a lone-surrogate key is a real (unserved)
+    // key instead of the fallback.
+    let project = super::resolve_project_key(params, &requests.options.project)?;
     if !requests.options.serves_project(&project) {
         return Err(gateway_error(
             "CAPABILITY_UNAVAILABLE",
@@ -78,6 +80,36 @@ fn require_session_key(params: &JsValue) -> Result<JsString, RequestError> {
         "INVALID_SESSION_KEY",
         "sessionKey is required.",
     )
+}
+
+/// The `input.projectKey ? \`project=${input.projectKey}:\` : ""` read
+/// (InProcessGateway.ts:2029): plain truthiness, not a trim gate — a blank or
+/// BOM-only key keeps its prefix, a non-string truthy key is stringified into
+/// it, and only the nullish spellings and the empty string drop it (#2068
+/// probe: `project=7:` / `project= :` / `project=﻿:` all measured). The
+/// rendering is the shared JS `String(value)` walk, and the prefix keeps the
+/// key's raw UTF-16 units, so a lone surrogate survives into the sessionKey
+/// the way the TS template literal keeps it. A rendering that throws (an own
+/// non-callable `toString`, a too-deep array) is the boundary's
+/// `gateway_request_failed` with the **bare** V8 text — the TS boundary
+/// serializes `error.message` only, no `name:` prefix
+/// (GatewayWsConnection.ts:252; probe `probe-2068-r2.out`; `runs.rs`
+/// `template_text` gives its run-key template the same mapping).
+fn project_prefix_units(params: &JsValue) -> Result<Vec<u16>, RequestError> {
+    match super::input_property(params, "projectKey")?.as_ref() {
+        None | Some(JsValue::Undefined) | Some(JsValue::Null) => Ok(Vec::new()),
+        Some(JsValue::String(key)) if key.units().is_empty() => Ok(Vec::new()),
+        Some(JsValue::Bool(false)) => Ok(Vec::new()),
+        Some(JsValue::Number(n)) if *n == 0.0 || n.is_nan() => Ok(Vec::new()),
+        Some(other) => {
+            let rendered = crate::js_value::to_string_units_checked(other)
+                .map_err(|error| RequestError::new(error.message()))?;
+            let mut units: Vec<u16> = "project=".encode_utf16().collect();
+            units.extend(rendered);
+            units.push(u16::from(b':'));
+            Ok(units)
+        }
+    }
 }
 
 /// Build a transcript adapter for the configured project.
@@ -189,24 +221,22 @@ impl Requests {
             .cloned()
             .ok_or_else(|| RequestError::new("channelKey must be a string."))?;
         let suffix = uuid::Uuid::new_v4().simple().to_string();
-        let project_prefix = params
-            .get("projectKey")
-            .and_then(JsValue::as_string)
-            .and_then(|s| s.to_utf8().ok())
-            .filter(|s| !s.is_empty())
-            .map(|p| format!("project={}:", p))
-            .unwrap_or_default();
-        let session_key = format!(
-            "{}:{}s_{}",
-            channel_key
-                .to_utf8()
-                .map_err(|_| RequestError::new("channelKey must be a valid UTF-8 string."))?,
-            project_prefix,
-            suffix,
-        );
+        let project_prefix = project_prefix_units(params)?;
+        // UTF-16 assembly: the prefix may carry the projectKey's lone
+        // surrogates, and the sessionKey is a JsString on the wire either way.
+        // `to_utf8` stays the channelKey's registered gate (A7.8); once it
+        // passes, `units()` is that same text's UTF-16 encoding.
+        let mut session_units = channel_key
+            .to_utf8()
+            .map_err(|_| RequestError::new("channelKey must be a valid UTF-8 string."))?
+            .encode_utf16()
+            .collect::<Vec<u16>>();
+        session_units.push(u16::from(b':'));
+        session_units.extend_from_slice(&project_prefix);
+        session_units.extend(format!("s_{suffix}").encode_utf16());
         Ok(object([(
             "sessionKey",
-            JsValue::String(session_key.into()),
+            JsValue::String(JsString::from_utf16(session_units)),
         )]))
     }
 
@@ -1021,14 +1051,19 @@ mod tests {
             true,
             "#1455 require_session_key keeps the lone-surrogate key for every caller"
         );
-        let blank = object([("sessionKey", "  ".into())]);
-        let err = require_session_key(&blank)
-            .expect_err("#1455 require_session_key rejects the blank key for every caller");
-        negative_assert_eq!(
-            err.code.as_str(),
-            "INVALID_SESSION_KEY",
-            "#1455 require_session_key rejects the blank key for every caller"
-        );
+        // #2207: the zero-length spelling rides the same guard-level pin, so
+        // both blank spellings are covered once for all five callers instead
+        // of only in the request-level gate-order loops.
+        for key in ["  ", ""] {
+            let blank = object([("sessionKey", key.into())]);
+            let err = require_session_key(&blank)
+                .expect_err("#1455 require_session_key rejects the blank key for every caller");
+            negative_assert_eq!(
+                err.code.as_str(),
+                "INVALID_SESSION_KEY",
+                "#1455 require_session_key rejects the blank key for every caller"
+            );
+        }
     }
 
     // #1455 G7: the shared `?.trim()` gate accepts a lone-surrogate key the
@@ -1075,6 +1110,11 @@ mod tests {
     const ISOLATED_PROJECT_MESSAGE: &str =
         "The isolated native process serves only its configured project.";
 
+    // Two families walk this same gate-order shape — this one and config's
+    // `config_blank_key_gate_order`. They are deliberately kept as two
+    // same-shape walkers (per-family parity readability, per-family negative
+    // control rows): a cell added here must be mirrored there, or the other
+    // family's tests keep passing without measuring the new cell.
     async fn blank_key_gate_order(method: &str) {
         let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#2090 fixture");
@@ -1083,11 +1123,16 @@ mod tests {
         // are both forced to answer.
         const UNSERVED_PROJECT: &str = "/nonexistent/pdrs-2090";
         // (1) No `projectKey`: the fallback is the configured project, so the
-        // family's own sessionKey gate answers — for an absent key and for a
-        // blank one alike.
+        // family's own sessionKey gate answers — for an absent key, a blank
+        // one, and the zero-length spelling alike. #2207: `""` gets its own
+        // cell instead of riding the `"   "` representative; the two agree on
+        // the TS gate (`"".trim()` and `"   ".trim()` are both `""`, Node
+        // v22.22.0 probe in `_tmp/20261111-issue-2199/ts-probe-gate.log`), so
+        // no divergence of its own is registered.
         for (label, params) in [
             ("missing", object([])),
             ("blank", object([("sessionKey", "   ".into())])),
+            ("empty", object([("sessionKey", "".into())])),
         ] {
             let expected = format!("#2090 a {label} sessionKey is rejected");
             let error =
@@ -1131,37 +1176,62 @@ mod tests {
         // before the method dispatch, so the first code is the admission one.
         // The valid-key control answering identically is what proves admission
         // — not the key — decides here.
-        for (label, params) in [
-            (
-                "blank key + unserved project",
-                object([
-                    ("sessionKey", "   ".into()),
-                    ("projectKey", UNSERVED_PROJECT.into()),
-                ]),
-            ),
-            (
-                "valid key + unserved project",
-                object([
-                    ("sessionKey", "pdrs-2090-control".into()),
-                    ("projectKey", UNSERVED_PROJECT.into()),
-                ]),
-            ),
+        // #2199: an explicit empty-string `projectKey` — present, not nullish —
+        // resolves against the process cwd on both sides (TS `resolve("")` =
+        // cwd, `projectRegistry.ts` `resolveProjectKey`; Rust `serves_project`
+        // runs the same `resolve_process_path("")` = cwd), so it is just
+        // another explicit project key. The fixture's cwd is not the scratch
+        // project, so admission refuses it like the unserved path below; a cwd
+        // equal to the configured project would admit it through to the
+        // sessionKey gate on both sides alike (Node v22.22.0 probe:
+        // `path.resolve("") === process.cwd()`), so it has no divergence of
+        // its own — the unserved-project answer family (R9 difference 3)
+        // covers it. #2199: the relative-path spellings ride the same cwd
+        // resolution — R9 and R11 assign them to #2199 together with the
+        // empty string — `"."` resolves to the cwd and `"foo"` to its child,
+        // both outside the configured project here, so they answer in the
+        // same unserved-admission family.
+        // The premise these spellings lean on, asserted instead of assumed:
+        // the process cwd is not the configured project, so `""` / `"."` /
+        // `"foo"` resolve unserved. If the fixture ever moves its project to
+        // the cwd, this pin turns red instead of silently flipping the
+        // cells below to the admitted-through side.
+        let cwd_key = std::env::current_dir()
+            .expect("#2090 fixture cwd")
+            .to_string_lossy()
+            .into_owned();
+        negative_assert_eq!(
+            r.options.serves_project(&cwd_key),
+            false,
+            "#2090 the fixture premise: the process cwd is not the configured project"
+        );
+        for (label, project) in [
+            ("unserved project", UNSERVED_PROJECT),
+            ("relative-dot projectKey", "."),
+            ("relative-path projectKey", "foo"),
+            ("empty-string projectKey", ""),
         ] {
-            let expected = format!("#2090 admission refuses {label}");
-            let error =
-                crate::runtime::turn::gateway::GatewayRequests::request(&r, method.into(), params)
-                    .await
-                    .expect_err(&expected);
-            negative_assert_eq!(
-                error.code.as_str(),
-                "gateway_request_failed",
-                "#2090 admission answers an unserved project before the sessionKey gate"
-            );
-            negative_assert_eq!(
-                key_message(&error),
-                ISOLATED_PROJECT_MESSAGE,
-                "#2090 the admission message is the isolated-project one"
-            );
+            for (key_label, key) in [("blank key", "   "), ("valid key", "pdrs-2090-control")] {
+                let params = object([("sessionKey", key.into()), ("projectKey", project.into())]);
+                let expected = format!("#2090 admission refuses {label} with a {key_label}");
+                let error = crate::runtime::turn::gateway::GatewayRequests::request(
+                    &r,
+                    method.into(),
+                    params,
+                )
+                .await
+                .expect_err(&expected);
+                negative_assert_eq!(
+                    error.code.as_str(),
+                    "gateway_request_failed",
+                    "#2090 admission answers an unserved project before the sessionKey gate"
+                );
+                negative_assert_eq!(
+                    key_message(&error),
+                    ISOLATED_PROJECT_MESSAGE,
+                    "#2090 the admission message is the isolated-project one"
+                );
+            }
         }
 
         // (3) #2272: a valid sessionKey with `projectKey: null` runs the
@@ -1762,6 +1832,268 @@ mod tests {
         negative_assert!(
             String::from_utf16_lossy(served_key.units()).starts_with("pdrs-2564:project="),
             "#2564 a served project string keeps the project= prefix"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #2068: the family's projectKey read is the shared `?? fallback` shape —
+    // every TS chain that consumes it (`ProjectRuntimeRegistry.resolve` for
+    // listSessions, `dialog.projects.resolveProjectKey` for delete/rename/tag)
+    // starts at Node's `path.resolve`, so a non-string key answers the
+    // `TypeError [ERR_INVALID_ARG_TYPE]` whose `code` the boundary preserves
+    // (`hasStructuredErrorCode`; the frozen oracle's `project-number` WS
+    // original is `ERR_INVALID_ARG_TYPE`), never the configured-project
+    // fallback the old `to_utf8().ok()` chain silently gave. The received
+    // descriptions come from the shared `argument_received` port: the `-0` and
+    // constructor spellings below are the shapes `runtime/manager/tests.rs`
+    // and the `probe-2068-r2.out` cells pinned (a hand-written frame keeps
+    // `-0`'s sign through JSON), and the last two cells are Node's
+    // description phase throwing its own bare TypeError — no `code`, so the
+    // boundary answers `gateway_request_failed` with the bare message.
+    #[tokio::test]
+    async fn list_sessions_non_string_project_key_answers_the_path_resolve_type_error() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        for (label, value, received) in [
+            ("number", JsValue::Number(7.0), "type number (7)"),
+            ("negative-zero", JsValue::Number(-0.0), "type number (-0)"),
+            ("boolean", JsValue::Bool(true), "type boolean (true)"),
+            ("array", JsValue::Array(Vec::new()), "an instance of Array"),
+            ("object", object([]), "an instance of Object"),
+            (
+                "constructor-null",
+                object([("constructor", JsValue::Null)]),
+                "[Object]",
+            ),
+            (
+                "constructor-name-null",
+                object([("constructor", object([("name", JsValue::Null)]))]),
+                "an instance of null",
+            ),
+            (
+                "constructor-name-array",
+                object([(
+                    "constructor",
+                    object([("name", JsValue::Array(Vec::new()))]),
+                )]),
+                "an instance of ",
+            ),
+        ] {
+            let error = r
+                .session_dir_request("list_sessions".into(), object([("projectKey", value)]))
+                .await
+                .expect_err("#2068 a non-string projectKey is the path.resolve TypeError");
+            negative_assert_eq!(
+                error.code.as_str(),
+                "ERR_INVALID_ARG_TYPE",
+                "#2068 the {label} projectKey answers the Node TypeError code"
+            );
+            negative_assert_eq!(
+                key_message(&error),
+                format!("The \"paths[0]\" argument must be of type string. Received {received}"),
+                "#2068 the {label} projectKey keeps the path.resolve TypeError message"
+            );
+        }
+        for (label, value, message) in [
+            (
+                "constructor-number",
+                object([("constructor", JsValue::Number(5.0))]),
+                "Cannot use 'in' operator to search for 'name' in 5",
+            ),
+            (
+                "constructor-name-tostring-shadow",
+                object([(
+                    "constructor",
+                    object([("name", object([("toString", "x".into())]))]),
+                )]),
+                "Cannot convert object to primitive value",
+            ),
+        ] {
+            let error = r
+                .session_dir_request("list_sessions".into(), object([("projectKey", value)]))
+                .await
+                .expect_err("#2068 a non-string projectKey is the path.resolve TypeError");
+            negative_assert_eq!(
+                error.code.as_str(),
+                "gateway_request_failed",
+                "#2068 the {label} projectKey's description throw answers the boundary code"
+            );
+            negative_assert_eq!(
+                key_message(&error),
+                message,
+                "#2068 the {label} projectKey's description throw keeps the bare message"
+            );
+        }
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #2068: strings the old `to_utf8().ok()` filter folded onto the
+    // configured project are real keys on the TS side (`path.resolve` takes
+    // any string; the probe's blank / BOM-only / lone-surrogate projectKeys
+    // all reached the catalog as project roots), so each answers the
+    // unserved-project refusal instead of listing the configured project.
+    // The null cell is the fallback control #2564 pinned at the entry.
+    #[tokio::test]
+    async fn list_sessions_string_project_keys_are_real_keys_not_the_fallback() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        for (label, value) in [
+            ("blank", JsValue::from("  ")),
+            ("bom-only", JsValue::from("\u{feff}")),
+            (
+                "lone-surrogate",
+                JsValue::String(JsString::from_utf16(vec![0xd800])),
+            ),
+        ] {
+            let error = r
+                .session_dir_request("list_sessions".into(), object([("projectKey", value)]))
+                .await
+                .expect_err("#2068 a string projectKey is a real key, never the fallback");
+            negative_assert_eq!(
+                error.code.as_str(),
+                "CAPABILITY_UNAVAILABLE",
+                "#2068 the {label} projectKey reaches the capability gate"
+            );
+            negative_assert_eq!(
+                key_message(&error),
+                ISOLATED_PROJECT_MESSAGE,
+                "#2068 the {label} projectKey keeps the isolation message"
+            );
+        }
+        let value = r
+            .session_dir_request(
+                "list_sessions".into(),
+                object([("projectKey", JsValue::Null)]),
+            )
+            .await
+            .expect("#2068 a null projectKey still falls back to the configured project");
+        negative_assert!(
+            matches!(value.get("sessions"), Some(JsValue::Array(_))),
+            "#2068 the null fallback lists the configured project"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #2068: `newSession`'s projectKey read is plain truthiness
+    // (InProcessGateway.ts:2029, probe `probe-2068.out`): the prefix keeps a
+    // blank, BOM-only, lone-surrogate and non-string truthy key, and only the
+    // nullish spellings and the falsy scalars drop it. The lone surrogate is
+    // asserted on raw UTF-16 units because it must survive into the
+    // sessionKey the way the TS template literal keeps it.
+    #[tokio::test]
+    async fn new_session_project_key_prefix_follows_ts_truthiness() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        let key_of = |project_key: JsValue| {
+            r.session_dir_request(
+                "new_session".into(),
+                object([
+                    ("channelKey", "pdrs-2068".into()),
+                    ("projectKey", project_key),
+                ]),
+            )
+        };
+        let key_units = |result: Result<JsValue, RequestError>, gate: &str| -> Vec<u16> {
+            result
+                .expect(gate)
+                .get("sessionKey")
+                .and_then(JsValue::as_string)
+                .cloned()
+                .expect("#2068 new_session answers a sessionKey")
+                .units()
+                .to_vec()
+        };
+        for (label, value, prefix) in [
+            ("number", JsValue::Number(7.0), "project=7:"),
+            ("true", JsValue::Bool(true), "project=true:"),
+            ("blank", JsValue::from(" "), "project= :"),
+            ("bom-only", JsValue::from("\u{feff}"), "project=\u{feff}:"),
+        ] {
+            let units = key_units(
+                key_of(value).await,
+                "#2068 a truthy projectKey generates a session key",
+            );
+            let expected: Vec<u16> = format!("pdrs-2068:{prefix}s_").encode_utf16().collect();
+            negative_assert!(
+                units.starts_with(&expected),
+                "#2068 the {label} projectKey keeps its truthiness prefix"
+            );
+        }
+        // The lone surrogate: raw unit between `project=` and `:`, not a
+        // dropped prefix and not a lossy replacement.
+        let units = key_units(
+            key_of(JsValue::String(JsString::from_utf16(vec![0xd800]))).await,
+            "#2068 a surrogate projectKey generates a session key",
+        );
+        let expected: Vec<u16> = "pdrs-2068:project=".encode_utf16().collect();
+        negative_assert_eq!(
+            units.get(..expected.len() + 2),
+            Some(
+                expected
+                    .iter()
+                    .copied()
+                    .chain([0xd800, u16::from(b':')])
+                    .collect::<Vec<u16>>()
+                    .as_slice()
+            ),
+            "#2068 the surrogate projectKey keeps its raw unit inside the prefix"
+        );
+        // Falsy spellings: the nullish pair, the empty string, 0, NaN and false.
+        for (label, value) in [
+            ("null", JsValue::Null),
+            ("empty", JsValue::from("")),
+            ("zero", JsValue::Number(0.0)),
+            ("nan", JsValue::Number(f64::NAN)),
+            ("false", JsValue::Bool(false)),
+        ] {
+            let units = key_units(
+                key_of(value).await,
+                "#2068 a falsy projectKey generates a session key",
+            );
+            let expected: Vec<u16> = "pdrs-2068:s_".encode_utf16().collect();
+            negative_assert!(
+                units.starts_with(&expected),
+                "#2068 the {label} projectKey drops the prefix"
+            );
+        }
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #2068 fix-r1: a truthy projectKey whose JS `String()` rendering throws
+    // (an own non-callable `toString` shadowing the inherited one — JSON
+    // cannot carry a callable, so any wire-visible one is the shadow) fails
+    // `new_session` with the boundary's `gateway_request_failed` and the
+    // **bare** V8 text: the TS boundary serializes `error.message` only, no
+    // `name:` prefix (GatewayWsConnection.ts:252; probe `probe-2068-r2.out`;
+    // the #1604 q3/q7 probes pinned the same mapping for the run-key
+    // template).
+    #[tokio::test]
+    async fn new_session_throwing_project_key_prefix_answers_the_boundary_typeerror() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        let error = r
+            .session_dir_request(
+                "new_session".into(),
+                object([
+                    ("channelKey", "pdrs-2068".into()),
+                    ("projectKey", object([("toString", JsValue::Null)])),
+                ]),
+            )
+            .await
+            .expect_err("#2068 a throwing projectKey rendering fails new_session");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "gateway_request_failed",
+            "#2068 the ToPrimitive failure answers the boundary code"
+        );
+        negative_assert_eq!(
+            key_message(&error),
+            "Cannot convert object to primitive value",
+            "#2068 the ToPrimitive failure keeps the bare V8 text"
         );
         r.owner.shutdown().await.expect("#1310 shutdown");
         r.project.dispose().await.expect("#1310 dispose");
