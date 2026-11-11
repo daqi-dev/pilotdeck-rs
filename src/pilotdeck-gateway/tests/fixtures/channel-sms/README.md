@@ -30,6 +30,18 @@ passing silently, a truncated boundary cell no longer counts as probing the
 cap, and `boundary_body_cases_match_the_fixture` checks the table and the
 fixture against each other in both directions.
 
+#2041: that "recorded bytes minus `truncate`" wire length is derived **once**
+— `wire_body_len_checked` (`tests.rs`) is the only copy, and the boundary
+gate (`recorded_request_body_lengths`), `build_raw` (`build_raw_parts` cuts
+the wire body to it while the head keeps the recorded full-length
+`Content-Length`) and the `body-read-timeout` stall-shape check all call it.
+`gate_and_build_raw_share_the_wire_body_length` pins the equivalence directly
+(the gate's number is the count of body bytes `build_raw` puts after the
+head, over a synthetic truncation table and every oracle cell), so the three
+sites cannot fork back into the parallel derivations that agreed only by
+coincidence; the `sms-oracle-wire-body-len-fork` switch replays that fork and
+is killed by the same test.
+
 ## oracle.json
 
 Each case is run twice per generation and must produce identical
@@ -107,10 +119,11 @@ the crate re-runs this and requires byte-identical output.
 
 ## Negative controls
 
-`negative_controls.py` runs the channel's 77 `#996` compile-time switches
-(`crate::mutants::on("sms-…")`; 26 → 77, `#1984`, `#1957`, `#1913`,
-`#2152` added `sms-oracle-recorded-omit-host` and `#2691` added the three
-port-guard switches — the `switches` table is the truth source) through the shared
+`negative_controls.py` runs the channel's 78 `#996` compile-time switches
+(`crate::mutants::on("sms-…")`; 26 → 78, `#1984`, `#1957`, `#1913`,
+`#2152` added `sms-oracle-recorded-omit-host`, `#2691` added the three
+port-guard switches and `#2041` added `sms-oracle-wire-body-len-fork` —
+the `switches` table is the truth source) through the shared
 `_shared/mutant_switch` executor: one precompile, then per switch a
 positive run, the mutated kill run (bound oracle cell + assertion) and
 a restored re-run. `mutating_sources` cannot run pre-commit (new files
@@ -123,7 +136,7 @@ python3 -I negative_controls.py <new-output-dir> # full run, exit != 0
                                                  # unless all KILLED
 ```
 
-#1729：`negative_controls.py` 现有 **77** 个开关（以 `switches` 表为准；#1729 当时 69，`#1901` 加 1，`#1984` 加 `sms-oracle-boundary-unregistered`，`#1957` 加 `sms-oracle-signed-signature-header`，`#1913` 加 `sms-oracle-recorded-version`，`#2152` 加 `sms-oracle-recorded-omit-host`，`#2691` 加 `sms-port-preflight-v6-any-host` 与 `sms-pin-bind-race-unchecked`，fix-r2 再加 `sms-port-preflight-bind-probe-skipped`），新增 39 个录制字段/预算保护（#1813 另加 1 个 `sms-oracle-null-sentinel`，`#1790` 另加 3 个 permission 跨 await 标志守卫）。每项先编译开关分支，再对普通断言运行正控、变异、复原；错型诊断包含 #1339、字段和实际值。
+#1729：`negative_controls.py` 现有 **78** 个开关（以 `switches` 表为准；#1729 当时 69，`#1901` 加 1，`#1984` 加 `sms-oracle-boundary-unregistered`，`#1957` 加 `sms-oracle-signed-signature-header`，`#1913` 加 `sms-oracle-recorded-version`，`#2152` 加 `sms-oracle-recorded-omit-host`，`#2691` 加 `sms-port-preflight-v6-any-host` 与 `sms-pin-bind-race-unchecked`，fix-r2 再加 `sms-port-preflight-bind-probe-skipped`，`#2041` 加 `sms-oracle-wire-body-len-fork`），新增 39 个录制字段/预算保护（#1813 另加 1 个 `sms-oracle-null-sentinel`，`#1790` 另加 3 个 permission 跨 await 标志守卫）。每项先编译开关分支，再对普通断言运行正控、变异、复原；错型诊断包含 #1339、字段和实际值。
 
 #1813：当时 **66** 个开关（`#1790` 后为 69）。`wait-sends.count` / `wait-rpcs.count` 改为必填（缺席即失败：TS 侧 `length >= undefined` 永不满足、3 s 超时，Rust 侧过去按 0 读成空操作，同一输入两端结论相反）；`turn` / `permissionError` / `permissionGate` / `permissionDelivered` / `sendBlockAt` / `sendError` 的 `null` 哨兵统一走 `recorded_present`（生成器对前五个写 `?? null`、对 `permissionDelivered` 写 `?? true`，读取端一律把显式 `null` 当缺席，手改 oracle 不会让某一个字段的口径漂移）。
 
