@@ -1,5 +1,7 @@
 """Toolchain starts are mocked; watchdog controls run only this Python interpreter."""
 import ast
+import contextlib
+import fcntl
 import hashlib
 import importlib.util
 import json
@@ -6202,6 +6204,33 @@ self_check_controls_run | return | return problems
             cls._lex_entry_negative_process = module
         return cls._lex_entry_negative_process
 
+    # fix-r3 (DS concurrency #1): the unconditional tree-lock wait is
+    # budgeted to the caller's own 300 s — the scan's run_owned below and
+    # the control-side run_test subprocess (the gateway entry-guard and
+    # batch mutation controls both default timeout=300) agree on that
+    # figure, so a sibling mutation window longer than it can never be
+    # waited out inside any caller's budget.
+    _LEX_ENTRY_LOCK_WAIT = 300
+
+    @classmethod
+    @contextlib.contextmanager
+    def _lex_entry_tree_lock(cls, negative, root):
+        # fix-r3 (DS concurrency #1): a window longer than the budget must
+        # surface as this guard's own AssertionError — a bare TimeoutError
+        # reads as a crash in the harness log, not as a refusal. The
+        # refusal keeps the waited budget and the busy-lock source for
+        # the owner; TreeLock reentry makes nesting with a caller's own
+        # lease safe.
+        wait = cls._LEX_ENTRY_LOCK_WAIT
+        try:
+            with negative.tree_lock(root, timeout=wait):
+                yield
+        except TimeoutError as error:
+            raise AssertionError(
+                '#2115 the lex entry refused to wait out a sibling mutation '
+                f'window longer than its {wait} s tree-lock budget: '
+                f'{error}') from error
+
     @classmethod
     def _run_lex_fn_items(cls, request):
         # #2115: run (and, once, bootstrap) the lexing entry. fix-r1 (DS
@@ -6258,8 +6287,11 @@ self_check_controls_run | return | return problems
         # lease the cold bootstrap below takes — never outside it (see
         # build_inputs_digest). A sibling's window is either closed
         # before the lease or this read waits it out and answers on the
-        # restored bytes.
-        with negative.tree_lock(root):
+        # restored bytes. fix-r3 (DS concurrency #1): the wait is
+        # budgeted to the caller's own 300 s and an overlong window
+        # surfaces as this guard's own refusal, never a bare
+        # TimeoutError (see _lex_entry_tree_lock).
+        with cls._lex_entry_tree_lock(negative, root):
             digest = build_inputs_digest()
         if not executable.is_file():
             with negative.tree_lock(root):
@@ -6330,7 +6362,7 @@ self_check_controls_run | return | return problems
             # matches the tree as it stands under the lock is not stale;
             # a refusal that survives must quote the digest it refused
             # against, so the owner can verify it.
-            with negative.tree_lock(root):
+            with cls._lex_entry_tree_lock(negative, root):
                 digest = build_inputs_digest()
             if document.get('scanner_sha256') != digest:
                 raise AssertionError(
@@ -7241,8 +7273,12 @@ self_check_controls_run | return | return problems
         # real tree; the end-to-end shape is the mutation control bound to
         # this test): the shared lexer answers as its mutant bytes
         # whenever the lease is not held, and as the real bytes while it
-        # is.
-        import contextlib
+        # is. fix-r3 (DS sibling #1 / boundary #1 / concurrency #2): the
+        # simulated window now covers the fixture's own snapshot too (it
+        # must answer under the same lease — outside it, the window it
+        # exists to simulate would corrupt its own healthy value), and
+        # every digest read is counted so a read path the probe cannot
+        # see fails loudly instead of passing silently.
         negative = self._lex_entry_process()
         root = Path(__file__).resolve().parents[3]
         crate = root/'src/pilotdeck-gateway'
@@ -7250,11 +7286,10 @@ self_check_controls_run | return | return problems
                    crate/'tests/common/source_inputs.rs',
                    crate/'Cargo.toml', root/'src/Cargo.toml',
                    root/'src/Cargo.lock')
-        pristine = {path: path.read_bytes() for path in sources}
-        healthy = hashlib.sha256(b''.join(pristine[path]
-                                          for path in sources)).hexdigest()
         held = []
         served_mutant = []
+        digest_reads = []
+        fixture_ready = []
         real_lock = negative.tree_lock
         real_read = Path.read_bytes
 
@@ -7271,41 +7306,60 @@ self_check_controls_run | return | return problems
             if sources[1] == path:
                 if not held:
                     served_mutant.append(True)
-                    return (pristine[sources[1]]
-                            + b'\n// fix-r2 sibling window\n')
-                return real_read(path)
+                    return real_read(path) + b'\n// fix-r2 sibling window\n'
+                if fixture_ready:
+                    digest_reads.append(True)
             return real_read(path)
 
-        with tempfile.TemporaryDirectory() as target:
-            executable = Path(target)/'debug/examples/lex_fn_items'
-            executable.parent.mkdir(parents=True)
-            executable.write_text(
-                '#!/bin/sh\n'
-                'printf \'{"scanner_sha256": "' + healthy
-                + '", "files": {"window.rs": {"fns": '
-                  '[{"name": "window"}]}}}\\n\'\n')
-            executable.chmod(0o755)
-            with patch.dict(os.environ, {'CARGO_TARGET_DIR': target}):
-                with patch.object(negative, 'tree_lock', leased_lock), \
-                        patch.object(Path, 'read_bytes', windowed_read):
+        with patch.object(negative, 'tree_lock', leased_lock), \
+                patch.object(Path, 'read_bytes', windowed_read):
+            with negative.tree_lock(root):
+                pristine = {path: path.read_bytes() for path in sources}
+            self.assertTrue(
+                served_mutant == [],
+                '#2115 the fixture must snapshot the build inputs under '
+                'the tree lock — a sibling mutation window was served to '
+                'the snapshot')
+            fixture_ready.append(True)
+            healthy = hashlib.sha256(b''.join(pristine[path]
+                                              for path in sources)).hexdigest()
+            with tempfile.TemporaryDirectory() as target:
+                executable = Path(target)/'debug/examples/lex_fn_items'
+                executable.parent.mkdir(parents=True)
+                executable.write_text(
+                    '#!/bin/sh\n'
+                    'printf \'{"scanner_sha256": "' + healthy
+                    + '", "files": {"window.rs": {"fns": '
+                      '[{"name": "window"}]}}}\\n\'\n')
+                executable.chmod(0o755)
+                with patch.dict(os.environ, {'CARGO_TARGET_DIR': target}):
                     try:
                         inventory = self._lex_fn_items(
                             {'window.rs': 'fn window() {}\n'})
                     except AssertionError as error:
+                        self.assertTrue(
+                            served_mutant == [],
+                            '#2115 the lex entry read its build-input '
+                            'summaries outside the tree lock — a sibling '
+                            'mutation window was served to the digest')
                         self.fail('#2115 the lex entry must wait out a '
                                   'sibling mutation window and admit the '
                                   'binary that matches the tree it finds '
                                   f'under the lock: {error}')
             self.assertTrue(
-                [item['name'] for item in inventory['window.rs']['fns']]
-                == ['window'],
-                '#2115 a waited-out sibling window must leave the lex '
-                'entry answering, not refusing')
+                digest_reads == [True],
+                '#2115 the digest reads never went through the probed '
+                'read path — the entry read its build inputs another way')
             self.assertTrue(
                 served_mutant == [],
                 '#2115 the lex entry read its build-input summaries '
                 'outside the tree lock — a sibling mutation window was '
                 'served to the digest')
+            self.assertTrue(
+                [item['name'] for item in inventory['window.rs']['fns']]
+                == ['window'],
+                '#2115 a waited-out sibling window must leave the lex '
+                'entry answering, not refusing')
 
     def test_lex_entry_re_reads_the_tree_before_refusing(self):
         # fix-r2 (boundary P1): reading under the lease still only proves
@@ -7318,7 +7372,13 @@ self_check_controls_run | return | return problems
         # said. The transient is simulated at the read (same
         # no-real-mutation rule as the sibling-window control above): the
         # shared lexer answers as its mutant bytes exactly once — on the
-        # first summary read — and as the real bytes afterwards.
+        # first summary read — and as the real bytes afterwards. fix-r3
+        # (DS boundary #1): the sibling window (mutant bytes whenever the
+        # lease is not held) now covers the re-read too, so a re-read
+        # outside the lease is caught here and in the refusal control
+        # below, not only the first read; fix-r3 (DS sibling #1 /
+        # concurrency #2): the fixture snapshot answers under the lease
+        # and the digest reads are counted.
         negative = self._lex_entry_process()
         root = Path(__file__).resolve().parents[3]
         crate = root/'src/pilotdeck-gateway'
@@ -7326,38 +7386,81 @@ self_check_controls_run | return | return problems
                    crate/'tests/common/source_inputs.rs',
                    crate/'Cargo.toml', root/'src/Cargo.toml',
                    root/'src/Cargo.lock')
-        pristine = {path: path.read_bytes() for path in sources}
-        healthy = hashlib.sha256(b''.join(pristine[path]
-                                          for path in sources)).hexdigest()
+        held = []
+        served_mutant = []
+        digest_reads = []
+        fixture_ready = []
         reads = []
+        real_lock = negative.tree_lock
         real_read = Path.read_bytes
 
+        @contextlib.contextmanager
+        def leased_lock(path, **kwargs):
+            with real_lock(path, **kwargs):
+                held.append(True)
+                try:
+                    yield
+                finally:
+                    held.pop()
+
         def transient_read(path):
-            if sources[1] == path and not reads:
-                reads.append(True)
-                return pristine[sources[1]] + b'\n// fix-r2 transient bytes\n'
+            if sources[1] == path:
+                if not held:
+                    served_mutant.append(True)
+                    return real_read(path) + b'\n// fix-r2 sibling window\n'
+                if fixture_ready:
+                    digest_reads.append(True)
+                    if not reads:
+                        reads.append(True)
+                        return (real_read(path)
+                                + b'\n// fix-r2 transient bytes\n')
             return real_read(path)
 
-        with tempfile.TemporaryDirectory() as target:
-            executable = Path(target)/'debug/examples/lex_fn_items'
-            executable.parent.mkdir(parents=True)
-            executable.write_text(
-                '#!/bin/sh\n'
-                'printf \'{"scanner_sha256": "' + healthy
-                + '", "files": {"reread.rs": {"fns": '
-                  '[{"name": "reread"}]}}}\\n\'\n')
-            executable.chmod(0o755)
-            with patch.dict(os.environ, {'CARGO_TARGET_DIR': target}):
-                with patch.object(Path, 'read_bytes', transient_read):
+        with patch.object(negative, 'tree_lock', leased_lock), \
+                patch.object(Path, 'read_bytes', transient_read):
+            with negative.tree_lock(root):
+                pristine = {path: path.read_bytes() for path in sources}
+            self.assertTrue(
+                served_mutant == [],
+                '#2115 the fixture must snapshot the build inputs under '
+                'the tree lock — a sibling mutation window was served to '
+                'the snapshot')
+            fixture_ready.append(True)
+            healthy = hashlib.sha256(b''.join(pristine[path]
+                                              for path in sources)).hexdigest()
+            with tempfile.TemporaryDirectory() as target:
+                executable = Path(target)/'debug/examples/lex_fn_items'
+                executable.parent.mkdir(parents=True)
+                executable.write_text(
+                    '#!/bin/sh\n'
+                    'printf \'{"scanner_sha256": "' + healthy
+                    + '", "files": {"reread.rs": {"fns": '
+                      '[{"name": "reread"}]}}}\\n\'\n')
+                executable.chmod(0o755)
+                with patch.dict(os.environ, {'CARGO_TARGET_DIR': target}):
                     try:
                         inventory = self._lex_fn_items(
                             {'reread.rs': 'fn reread() {}\n'})
                     except AssertionError as error:
+                        self.assertTrue(
+                            served_mutant == [],
+                            '#2115 the lex entry read its build-input '
+                            'summaries outside the tree lock — a sibling '
+                            'mutation window was served to the digest')
                         self.fail('#2115 the lex entry caught transient '
                                   'bytes in its first digest; the refusal '
                                   'must re-read under the tree lock and '
                                   'admit the binary that matches the tree '
                                   f'as it stands: {error}')
+            self.assertTrue(
+                digest_reads == [True, True],
+                '#2115 the digest reads never went through the probed '
+                'read path — the entry read its build inputs another way')
+            self.assertTrue(
+                served_mutant == [],
+                '#2115 the lex entry read its build-input summaries '
+                'outside the tree lock — a sibling mutation window was '
+                'served to the digest')
             self.assertTrue(
                 [item['name'] for item in inventory['reread.rs']['fns']]
                 == ['reread'],
@@ -7371,7 +7474,10 @@ self_check_controls_run | return | return problems
         # digest, so the message may not quote the transient bytes the
         # first digest caught. Same one-shot transient simulation as the
         # re-read control above; the binary this time reports a foreign
-        # digest, so the refusal is genuine.
+        # digest, so the refusal is genuine. fix-r3 (DS sibling #1 /
+        # boundary #1 / concurrency #2): the fixture snapshot answers
+        # under the lease, the sibling window covers the re-read, and the
+        # digest reads are counted.
         negative = self._lex_entry_process()
         root = Path(__file__).resolve().parents[3]
         crate = root/'src/pilotdeck-gateway'
@@ -7379,44 +7485,125 @@ self_check_controls_run | return | return problems
                    crate/'tests/common/source_inputs.rs',
                    crate/'Cargo.toml', root/'src/Cargo.toml',
                    root/'src/Cargo.lock')
-        pristine = {path: path.read_bytes() for path in sources}
-        transient = dict(pristine)
-        transient[sources[1]] = (pristine[sources[1]]
-                                 + b'\n// fix-r2 transient bytes\n')
-
-        def digest_of(tree):
-            return hashlib.sha256(b''.join(tree[path]
-                                          for path in sources)).hexdigest()
-
-        healthy = digest_of(pristine)
-        transient_digest = digest_of(transient)
+        held = []
+        served_mutant = []
+        digest_reads = []
+        fixture_ready = []
         reads = []
+        real_lock = negative.tree_lock
         real_read = Path.read_bytes
 
+        @contextlib.contextmanager
+        def leased_lock(path, **kwargs):
+            with real_lock(path, **kwargs):
+                held.append(True)
+                try:
+                    yield
+                finally:
+                    held.pop()
+
         def transient_read(path):
-            if sources[1] == path and not reads:
-                reads.append(True)
-                return transient[sources[1]]
+            if sources[1] == path:
+                if not held:
+                    served_mutant.append(True)
+                    return real_read(path) + b'\n// fix-r2 sibling window\n'
+                if fixture_ready:
+                    digest_reads.append(True)
+                    if not reads:
+                        reads.append(True)
+                        return (real_read(path)
+                                + b'\n// fix-r2 transient bytes\n')
             return real_read(path)
 
-        with tempfile.TemporaryDirectory() as target:
-            executable = Path(target)/'debug/examples/lex_fn_items'
-            executable.parent.mkdir(parents=True)
-            executable.write_text(
-                '#!/bin/sh\n'
-                'printf \'{"scanner_sha256": "not-this-tree"}\\n\'\n')
-            executable.chmod(0o755)
-            with patch.dict(os.environ, {'CARGO_TARGET_DIR': target}):
-                with patch.object(Path, 'read_bytes', transient_read):
+        with patch.object(negative, 'tree_lock', leased_lock), \
+                patch.object(Path, 'read_bytes', transient_read):
+            with negative.tree_lock(root):
+                pristine = {path: path.read_bytes() for path in sources}
+            self.assertTrue(
+                served_mutant == [],
+                '#2115 the fixture must snapshot the build inputs under '
+                'the tree lock — a sibling mutation window was served to '
+                'the snapshot')
+            fixture_ready.append(True)
+            transient = dict(pristine)
+            transient[sources[1]] = (pristine[sources[1]]
+                                     + b'\n// fix-r2 transient bytes\n')
+
+            def digest_of(tree):
+                return hashlib.sha256(b''.join(tree[path]
+                                              for path in sources)).hexdigest()
+
+            healthy = digest_of(pristine)
+            transient_digest = digest_of(transient)
+            with tempfile.TemporaryDirectory() as target:
+                executable = Path(target)/'debug/examples/lex_fn_items'
+                executable.parent.mkdir(parents=True)
+                executable.write_text(
+                    '#!/bin/sh\n'
+                    'printf \'{"scanner_sha256": "not-this-tree"}\\n\'\n')
+                executable.chmod(0o755)
+                with patch.dict(os.environ, {'CARGO_TARGET_DIR': target}):
                     with self.assertRaises(AssertionError) as caught:
                         self._lex_fn_items({'cites.rs': 'fn cites() {}\n'})
         message = str(caught.exception)
+        self.assertTrue(
+            digest_reads == [True, True],
+            '#2115 the digest reads never went through the probed read '
+            'path — the entry read its build inputs another way')
+        self.assertTrue(
+            served_mutant == [],
+            '#2115 the lex entry read its build-input summaries outside '
+            'the tree lock — a sibling mutation window was served to the '
+            'digest')
         self.assertTrue(healthy in message,
                         '#2115 the refusal must cite the digest re-read '
                         'under the tree lock')
         self.assertTrue(transient_digest not in message,
                         '#2115 the refusal must not cite the transient '
                         'first digest')
+
+    def test_lex_entry_names_an_overlong_window_as_its_own_refusal(self):
+        # fix-r3 (DS concurrency #1): the unconditional tree-lock wait is
+        # budgeted to the caller's own 300 s (the scan's run_owned and the
+        # control-side run_test subprocess alike), and a window longer
+        # than the budget must surface as this guard's own AssertionError
+        # — a bare TimeoutError reads as a crash in the harness log, not
+        # as a refusal. The lease is held through a second flock on the
+        # same lock file: flock ownership is per open file description, so
+        # a second fd held by this very process conflicts exactly like
+        # another process's lease (probed at fix-r3), and closing it in
+        # the finally releases the kernel lock — no orphan process to
+        # reap.
+        negative = self._lex_entry_process()
+        root = Path(__file__).resolve().parents[3]
+        fd = os.open(root/'.negative-source.lock', os.O_RDWR | os.O_CREAT)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            with tempfile.TemporaryDirectory() as target:
+                with patch.dict(os.environ, {'CARGO_TARGET_DIR': target}):
+                    with patch.object(type(self), '_LEX_ENTRY_LOCK_WAIT',
+                                      2.0):
+                        try:
+                            self._lex_fn_items(
+                                {'lockwait.rs': 'fn lockwait() {}\n'})
+                        except AssertionError as error:
+                            message = str(error)
+                        except TimeoutError as error:
+                            self.fail('#2115 an overlong sibling window '
+                                      'must surface as the lex entry\'s '
+                                      'own AssertionError, not a raw '
+                                      f'TimeoutError: {error!r}')
+                        else:
+                            self.fail('#2115 the lex entry must refuse '
+                                      'while the tree lock is held past '
+                                      'its budget, not answer')
+        finally:
+            os.close(fd)
+        self.assertRegex(message, '#2115 the lex entry refused to wait out '
+                                  'a sibling mutation window longer than '
+                                  'its')
+        self.assertIn('2.0 s', message)
+        self.assertIn('.negative-source.lock', message)
 
     def test_pair_exception_registry_cannot_go_stale(self):
         # fix-r1 (DS sibling #3): permission_fault_pair_exceptions had no
