@@ -1565,7 +1565,7 @@ class EnvironmentControls(unittest.TestCase):
 
     def test_the_optimize_guards_self_tests_collect_real_tests(self):
         # #2136 fix-r37（MM sibling P1）：上面 -O 步的守卫同样只钉「步存在 +
-        # 无条件 + cwd」，钉不住五条命令真的收集到测试——掏空 / skip 任一
+        # 无条件 + cwd」，钉不住七条命令真的收集到测试——掏空 / skip 任一
         # 模块，`python3 -B -m unittest -v` 退 0，#1666/#1734 的 -O 判别力
         # 在 CI 静默为空。逐模块跑一遍并核「Ran N」下限与无 skip/期望失败；
         # 下限取 r37 实测（_tmp/20261110-pr2136-revival/
@@ -1573,6 +1573,10 @@ class EnvironmentControls(unittest.TestCase):
         # r41（合并 main c3100a2b7 带入 #2590 fix-r2）：-O 步新增第六模块
         # issue-2495/test_negative_controls.py（r41 实测 Ran 30、约 4 s），
         # 同钉进下限——不钉则该模块在 CI 掏空/整类 skip 无人看见。
+        # #1800 fix-r1（PR #2979 concurrency P1，四家 P2 同撞）：-O 步新增
+        # 第七模块 sdk-signals-close-order-pin/test_negative_controls.py
+        # （fix-r1 实测 Ran 8、约 2.4 s），同钉进下限与 commands——本 PR
+        # 复刻了 r41 修的那个洞：加了 CI 命令却没登记，删掉 CI 全绿。
         minimums = (
             ('test_negative_optimize_guards', 10),
             ('settings-gateway/test_negative_controls.py', 13),
@@ -1580,6 +1584,7 @@ class EnvironmentControls(unittest.TestCase):
             ('network-timing/test_negative_controls.py', 10),
             ('test_negative_roster_guards', 6),
             ('issue-2495/test_negative_controls.py', 30),
+            ('sdk-signals-close-order-pin/test_negative_controls.py', 8),
         )
         # r39（DS sibling#4 P2）：network-timing 的两条 EACCES 判杀用例按宿主
         # 能力条件跳过（`@unittest.skipUnless(EACCES_STAGEABLE, ...)`——root /
@@ -1598,8 +1603,8 @@ class EnvironmentControls(unittest.TestCase):
             },
         }
         # r39（DS concurrency#2 P2）：超时失败不再包在 subTest 里——subTest 吞
-        # 异常继续下一模块，五个各挂 300 s 会把钉烧到 25 分钟；首个挂起即整条
-        # 红。总耗时一并钉在步预算上：五个各自 299 s 的「都合规」组合同样
+        # 异常继续下一模块，七个各挂 300 s 会把钉烧到 35 分钟；首个挂起即整条
+        # 红。总耗时一并钉在步预算上：七个各自 299 s 的「都合规」组合同样
         # 超出它所钉的 CI 步预算（300 s），不许守钉比步长寿。
         started = time.monotonic()
         for module, minimum in minimums:
@@ -1608,8 +1613,8 @@ class EnvironmentControls(unittest.TestCase):
                 registered_conditional_skips.get(module, ()))
         self.assertLessEqual(
             time.monotonic() - started, self.optimize_guards_step_budget,
-            '#1666 the five -O self-test modules together must fit the -O '
-            'step budget (%d s); five near-miss modules must not outlive '
+            '#1666 the seven -O self-test modules together must fit the -O '
+            'step budget (%d s); seven near-miss modules must not outlive '
             'the CI step they pin' % self.optimize_guards_step_budget)
 
     def test_the_copy_manifest_self_test_collects_real_tests(self):
@@ -1664,12 +1669,16 @@ class EnvironmentControls(unittest.TestCase):
         # r41（合并 main）：#2590 fix-r2 给本步加了第六条命令
         # （issue-2495/test_negative_controls.py），一并钉入 commands——
         # 删掉它同样必须红。
+        # #1800 fix-r1（PR #2979 concurrency P1，四家 P2 同撞）：第七条命令
+        # （sdk-signals-close-order-pin/test_negative_controls.py）同步钉入
+        # commands——子集判断下多一条不红，不钉则删掉 CI 里这行仍全绿。
         commands = ('python3 -B -m unittest -v test_negative_optimize_guards',
                     'python3 -B -m unittest -v settings-gateway/test_negative_controls.py',
                     'python3 -B -m unittest -v test_negative_run_guards',
                     'python3 -B -m unittest -v network-timing/test_negative_controls.py',
                     'python3 -B -m unittest -v test_negative_roster_guards',
-                    'python3 -B -m unittest -v issue-2495/test_negative_controls.py')
+                    'python3 -B -m unittest -v issue-2495/test_negative_controls.py',
+                    'python3 -B -m unittest -v sdk-signals-close-order-pin/test_negative_controls.py')
         jobs = self.ci_jobs('#1666')
         steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#1666')
         matching = [step for step in steps
@@ -2477,8 +2486,8 @@ class EnvironmentControls(unittest.TestCase):
 
     def test_optimize_guards_self_test_ci_regressions_are_rejected(self):
         # #2136 fix-r35（DS sibling P1）：-O 不变性步（#1666/#1734）的变异负控，
-        # 与 #994 / #2133 同形。该步是 run 块（五条命令），删掉其中任一条
-        # （以 #2309 roster-guards 为代表）必须杀在「必须跑全部五条」的断言上；
+        # 与 #994 / #2133 同形。该步是 run 块（七条命令），删掉其中任一条
+        # （以 #2309 roster-guards 为代表）必须杀在「必须跑全部七条」的断言上；
         # if / continue-on-error / 错 cwd 按步名锚定插入或改值。
         workflow = self.ci_workflow_fixture()
         name_line = '- name: 网关负控守卫 -O 不变性自测（#1666/#1734）\n'
