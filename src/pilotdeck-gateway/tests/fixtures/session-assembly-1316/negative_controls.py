@@ -16,11 +16,20 @@ sources in place (compound `with stop_run(), mutating_sources(...)`), and
 `CARGO_TARGET_DIR` only isolates build artifacts, not source files -- a plain
 cargo test / build sharing this tree during the mutation window compiles a
 mutant and produces unrelated false failures. Who holds
-`.negative-source.lock` and what it does/does not exclude: see the header of
-`tests/common/read_lease.rs` (both crates) and the `mutating_sources`
-section of `tests/fixtures/README.md` -- the canonical wording; this
-docstring keeps only the operative rule above. A lock's release (e.g. after
-a SIGKILLed runner) does not prove the tree is clean.
+`.negative-source.lock` and what it does/does not exclude -- writers
+exclusive, Rust readers sharing the lease, a SIGKILLed runner's leftover
+mutant keeping readers red: see the header of
+`src/pilotdeck-gateway/tests/common/read_lease.rs` (the canonical wording;
+`src/pilotdeck-cli/tests/common/read_lease.rs` is its enforced twin); the
+in-lock behavior of `mutating_sources`/`build_snapshot` is a separate
+subject, covered by the scanner section of
+`src/pilotdeck-gateway/tests/fixtures/README.md`. Two facts that header
+does not state, both operative here: lockless read-only checkers (the
+`--check`-style branches of sibling fixtures) are not excluded either, so
+one sharing this tree during a mutation window reads a mutant and can
+false-fail; and a lock holder blocked behind a shared reader is waiting,
+not hung -- SIGKILLing it leaves the mutant in the tree. A lock's release
+does not prove the tree is clean.
 
 Modes: `--self-check` proves the slot guard still exits bounded under
 `python3 -O` (#1632); `--slot-guard-probe BUSY_SCRIPT TIMEOUT` is the child

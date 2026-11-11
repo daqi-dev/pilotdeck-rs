@@ -53,11 +53,17 @@ Run with no other writers in this worktree: the runner rewrites the guarded
 sources in place, and `CARGO_TARGET_DIR` only isolates build artifacts, not
 source files — a plain `cargo test` / `cargo build` sharing this tree during
 the mutation window compiles a mutant and produces unrelated false failures.
-Who holds `.negative-source.lock` and what it does/does not exclude: see
-the header of `tests/common/read_lease.rs` (both crates) and the
-`mutating_sources` section of `tests/fixtures/README.md` — the canonical
-wording; this README keeps only the operative rule above. A lock's release
-(e.g. after a SIGKILLed runner) does not prove the tree is clean.
+Who holds `.negative-source.lock` and what it does/does not exclude —
+writers exclusive, Rust readers sharing the lease, a SIGKILLed runner's
+leftover mutant keeping readers red: see the header of
+`src/pilotdeck-gateway/tests/common/read_lease.rs` (the canonical wording;
+`src/pilotdeck-cli/tests/common/read_lease.rs` is its enforced twin). Two
+facts that header does not state, both operative here: this runner's
+`--check` (`negative_controls.py:252`) takes no lock, so a run sharing
+this tree during someone else's mutation window reads a mutant and can
+false-fail; and a lock holder blocked behind a shared reader is waiting,
+not hung — SIGKILLing it leaves the mutant in the tree. A lock's release
+does not prove the tree is clean.
 
 `--check` verifies every anchor matches the tree exactly once, and that the
 hand-copied numbers still describe the artifacts they name: the README
