@@ -1021,14 +1021,19 @@ mod tests {
             true,
             "#1455 require_session_key keeps the lone-surrogate key for every caller"
         );
-        let blank = object([("sessionKey", "  ".into())]);
-        let err = require_session_key(&blank)
-            .expect_err("#1455 require_session_key rejects the blank key for every caller");
-        negative_assert_eq!(
-            err.code.as_str(),
-            "INVALID_SESSION_KEY",
-            "#1455 require_session_key rejects the blank key for every caller"
-        );
+        // #2207: the zero-length spelling rides the same guard-level pin, so
+        // both blank spellings are covered once for all five callers instead
+        // of only in the request-level gate-order loops.
+        for key in ["  ", ""] {
+            let blank = object([("sessionKey", key.into())]);
+            let err = require_session_key(&blank)
+                .expect_err("#1455 require_session_key rejects the blank key for every caller");
+            negative_assert_eq!(
+                err.code.as_str(),
+                "INVALID_SESSION_KEY",
+                "#1455 require_session_key rejects the blank key for every caller"
+            );
+        }
     }
 
     // #1455 G7: the shared `?.trim()` gate accepts a lone-surrogate key the
@@ -1145,11 +1150,17 @@ mod tests {
         // equal to the configured project would admit it through to the
         // sessionKey gate on both sides alike (Node v22.22.0 probe:
         // `path.resolve("") === process.cwd()`), so it has no divergence of
-        // its own — the unserved-project answer family (R8 difference 3)
-        // covers it.
+        // its own — the unserved-project answer family (R9 difference 3)
+        // covers it. #2199: the relative-path spellings ride the same cwd
+        // resolution — R9 and R11 assign them to #2199 together with the
+        // empty string — `"."` resolves to the cwd and `"foo"` to its child,
+        // both outside the configured project here, so they answer in the
+        // same unserved-admission family.
         for (label, project) in [
             ("unserved project", UNSERVED_PROJECT),
             ("empty-string projectKey", ""),
+            ("relative-dot projectKey", "."),
+            ("relative-path projectKey", "foo"),
         ] {
             for (key_label, key) in [("blank key", "   "), ("valid key", "pdrs-2090-control")] {
                 let params = object([("sessionKey", key.into()), ("projectKey", project.into())]);

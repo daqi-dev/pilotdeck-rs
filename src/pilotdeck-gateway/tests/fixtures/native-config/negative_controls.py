@@ -873,6 +873,73 @@ mutations = [
      ['#2199 seed_read_state rejects a blank sessionKey',
       '#2199 the sessionKey gate answers a missing, blank, or empty key '
       'under the configured project']),
+    # ── #2199 fix-r1 (DS sibling#1, same lineage as the #2564 fix-r1
+    # precedent above): the null `projectKey` cells of the six config
+    # gate-order tests were guarded only by their positive assertions. With
+    # the null arm dropped the admission refusal (isolated-project message)
+    # answers before the family's own `?.trim()` gate, so the (1b) cell's
+    # INVALID_SESSION_KEY code assertion must die. Same mutant text as
+    # `admission-null-refused` above: one code point, six bound tests.
+    ('admission-null-refused-config-set', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     CFG + 'session_model_set_blank_key_gate_order',
+     '#2199 a null projectKey falls back like a missing one, '
+     'so the sessionKey gate answers the blank key'),
+    ('admission-null-refused-config-clear', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     CFG + 'session_model_clear_blank_key_gate_order',
+     '#2199 a null projectKey falls back like a missing one, '
+     'so the sessionKey gate answers the blank key'),
+    ('admission-null-refused-config-permission', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     CFG + 'set_permission_mode_blank_key_gate_order',
+     '#2199 a null projectKey falls back like a missing one, '
+     'so the sessionKey gate answers the blank key'),
+    ('admission-null-refused-config-thinking', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     CFG + 'set_session_thinking_blank_key_gate_order',
+     '#2199 a null projectKey falls back like a missing one, '
+     'so the sessionKey gate answers the blank key'),
+    ('admission-null-refused-config-style', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     CFG + 'set_output_style_blank_key_gate_order',
+     '#2199 a null projectKey falls back like a missing one, '
+     'so the sessionKey gate answers the blank key'),
+    ('admission-null-refused-config-seed', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     CFG + 'seed_read_state_blank_key_gate_order',
+     '#2199 a null projectKey falls back like a missing one, '
+     'so the sessionKey gate answers the blank key'),
     # ── #1864: the three selectors now have a reader. Each write site
     # (permission, thinking, output style), each compose-step read leg
     # (permission, thinking, style merge), the live adapter's per-turn source
@@ -1025,6 +1092,9 @@ mutations = [
 # to 80 rows / 62 literal-anchor entries.
 # #2199: the six config-family gate-order tests joined the same form, so the
 # counts moved to 92 rows / 64 literal-anchor entries.
+# #2199 fix-r1: the six admission-null-refused-config rows above (DS
+# sibling#1, the #2564 fix-r1 precedent re-applied to the config family)
+# moved the counts to 98 rows / 65 literal-anchor entries.
 LITERAL_ANCHORS = [
     (CONFIG, '#1457 session_model_set accepts the fixture selection'),
     (CONFIG, '#1457 session_model_clear succeeds'),
@@ -1088,6 +1158,8 @@ LITERAL_ANCHORS = [
              'the sessionKey gate'),
     (CONFIG, '#2199 the sessionKey gate answers a missing, blank, or empty '
              'key under the configured project'),
+    (CONFIG, '#2199 a null projectKey falls back like a missing one, '
+             'so the sessionKey gate answers the blank key'),
     (MANAGEMENT_TESTS, '#2562 explicit null is not an error with the recorder on'),
     (LIVE_TESTS, "#1864 the stored mode reaches the live session's next turn"),
     (FACTORY_TESTS,

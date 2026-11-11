@@ -1447,11 +1447,17 @@ mod tests {
         // equal to the configured project would admit it through to the
         // sessionKey gate on both sides alike (Node v22.22.0 probe:
         // `path.resolve("") === process.cwd()`), so it has no divergence of
-        // its own — the unserved-project answer family (R8 difference 3)
-        // covers it.
+        // its own — the unserved-project answer family (R9 difference 3)
+        // covers it. #2199: the relative-path spellings ride the same cwd
+        // resolution — R9 and R11 assign them to #2199 together with the
+        // empty string — `"."` resolves to the cwd and `"foo"` to its child,
+        // both outside the configured project here, so they answer in the
+        // same unserved-admission family.
         for (label, project) in [
             ("unserved project", UNSERVED_PROJECT),
             ("empty-string projectKey", ""),
+            ("relative-dot projectKey", "."),
+            ("relative-path projectKey", "foo"),
         ] {
             for (key_label, key) in [
                 ("blank key", Some("   ")),
