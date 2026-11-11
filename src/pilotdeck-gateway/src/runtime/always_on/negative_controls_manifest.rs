@@ -24,7 +24,11 @@ const CONTROLS: &str = include_str!("../../../tests/fixtures/always-on-2294/nega
 /// The digest of [`CONTROLS`]: any fixture edit — even one that keeps the
 /// row list intact — must re-pin this consciously, next to the row-list
 /// change that explains it.
-const CONTROLS_SHA256: &str = "57b3416f7a33a7f65d0ae52001462483dfa1dca8e34e3784242279e9ca7faa72";
+///
+/// Re-pinned for #2303 fix-r2 S2-S4: `check_manifest` 的 per-row 收账重构
+/// （`declares_test` 检查移入 `bind_module_file` 的 try 块，其 ValueError
+/// 拒绝不再裸穿成 traceback——条 4），行集未动（仍为上方 6 行）。
+const CONTROLS_SHA256: &str = "12499e5f5e38ef31ac999808686f46a6fb1ae80a29c302c31d2e9b5a1a5f8f56";
 
 /// The closed set itself: every mutation row's name, in the order the
 /// table holds it. Shrink, reorder and rename all fail the test below;

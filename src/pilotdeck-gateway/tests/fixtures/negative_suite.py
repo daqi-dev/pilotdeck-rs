@@ -15,6 +15,14 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_selection import (claim_dir, missing_target, refuse,
                                 refuse_unusable_target)
 
+# #2303 (条 1/20): the two hand-rolled Rust lexers converged into
+# ``negative_source`` (the more complete scan, carrying the #2064 refusal
+# rules); these re-exports keep the historical names for the audit bindings
+# and the meta tests. The fn-form left boundary and the table-form separator
+# (#2303 条 9/19) live there so every matcher shares one口径.
+from negative_source import (FN_LEFT as _FN_LEFT, TABLE_LEFT as _TABLE_LEFT,
+                             rust_code_only as _rust_code_only)
+
 
 @dataclass
 class Case:
@@ -57,106 +65,6 @@ def bind_module_file(test, modules):
     raise ValueError('bound test module not audited: ' + test)
 
 
-_FN_QUALIFIERS = ('async', 'const', 'unsafe', 'extern', 'pub', 'default')
-
-# #2064 r10: the ``fn`` form's left boundary. A plain word boundary would
-# refuse ``async fn case_a`` (compaction glues the qualifier onto ``fn``), so
-# the boundary whitelists exactly the qualifier words -- and only as whole
-# words: ``run_fncase_a(`` and ``xpubfncase_a(`` stay refused because their
-# qualifier-looking suffix does not start at a word boundary of its own.
-_FN_LEFT = r'(?<!\w)(?:(?:' + '|'.join(_FN_QUALIFIERS) + r'))*'
-
-# #2064 r11: ``c``/``cr`` are legal Rust C-string prefixes; leaving them out
-# let a raw C string's inner quote close a bogus plain string and return the
-# carried text to the code view (an audit hole, not a crash). ``cr`` must be
-# tried before ``c`` or the ``r`` is left behind as code.
-_STRING_START = re.compile(r'(?:cr|c|br|rb|r|b)?(#*)"')
-# #2064 r11: ``'\u{…}'`` / ``'\xNN'`` are single-char literals whose escape
-# bodies the old pattern could not close, so their quotes leaked into the code
-# view and could pair into bogus ``'x'`` matches eating neighbouring code.
-_CHAR_START = re.compile(r"b?'(?:\\u\{[0-9A-Fa-f_]+\}|\\x[0-9A-Fa-f]{2}|\\.|[^\\'])'")
-_WORD = re.compile(r'\w')
-
-
-def _token_start(source, index):
-    """True when ``index`` is not glued to the tail of an identifier."""
-    return index == 0 or not _WORD.match(source[index - 1])
-
-
-def _rust_code_only(source):
-    """Return ``source`` with every comment and literal replaced by a space.
-
-    #2064 r10: a binding that a comment or a string literal satisfies is a
-    binding that audits nothing (``// fn case_a(`` passed the old matcher), so
-    the noise carriers are blanked before any form is matched. The scan is a
-    single pass that knows only the lexical shapes Rust itself guarantees;
-    anything it cannot close -- an unterminated string, char or comment --
-    raises instead of guessing, per the fail-closed scanning rule (#449 /
-    #1166: a hand-rolled guess that mis-lexes is worse than refusing).
-    """
-    code = []
-    i, length = 0, len(source)
-    while i < length:
-        if source.startswith('//', i):
-            end = source.find('\n', i)
-            i = length if end < 0 else end
-            code.append(' ')
-            continue
-        if source.startswith('/*', i):
-            depth, i = 1, i + 2
-            while depth:
-                if source.startswith('/*', i):
-                    depth, i = depth + 1, i + 2
-                elif source.startswith('*/', i):
-                    depth, i = depth - 1, i + 2
-                elif i >= length:
-                    raise ValueError('unterminated Rust block comment')
-                else:
-                    i += 1
-            code.append(' ')
-            continue
-        start = None
-        if source[i] == '"' or (source[i] in 'rbc' and _token_start(source, i)):
-            start = _STRING_START.match(source, i)
-        if start is not None:
-            hashes = start.group(1) or ''
-            i = start.end()
-            # #2064 r4: a raw hash delimiter with no ``r``-bearing prefix
-            # (``c#"…"#``) is not legal Rust -- rustc 1.99.0 rejects it with
-            # ``error: prefix `c` is unknown`` -- so refuse it instead of
-            # guessing a plain string whose inner quote would return the
-            # carried text to the code view (#449 / #1166 fail-closed rule).
-            if hashes and 'r' not in start.group(0):
-                raise ValueError('invalid Rust string prefix with raw hash delimiter')
-            if 'r' in start.group(0):
-                close = source.find('"' + hashes, i)
-                if close < 0:
-                    raise ValueError('unterminated Rust raw string')
-                i = close + 1 + len(hashes)
-            else:
-                # A literal newline is legal inside a Rust string, so only
-                # the end of the source can prove the literal unterminated.
-                while True:
-                    if i >= length:
-                        raise ValueError('unterminated Rust string')
-                    if source[i] == '"':
-                        i += 1
-                        break
-                    i += 2 if source[i] == '\\' else 1
-            code.append(' ')
-            continue
-        char = None
-        if source[i] == "'" or (source[i] == 'b' and _token_start(source, i)):
-            char = _CHAR_START.match(source, i)
-        if char is not None:
-            i = char.end()
-            code.append(' ')
-            continue
-        code.append(source[i])
-        i += 1
-    return ''.join(code)
-
-
 def declares_test(source, short, macro=None):
     """True when ``source`` declares ``short`` as a function or a table row.
 
@@ -165,26 +73,33 @@ def declares_test(source, short, macro=None):
     match arm), so a mistyped row would audit nothing while ``--check``
     stayed green. Comments and string/char literals are blanked before
     matching (#2064 r10): a binding that a comment carrier satisfies is
-    equally hollow. Whitespace is stripped so the three drifted spellings
-    (``'fn ' + name``, ``'fn' + name``, ``name + ' =>'``) collapse into one
-    rule, and every form requires a left boundary: a longer identifier that
-    merely ends in ``short`` -- ``run_fncase_a(`` or ``xcase_a =>`` -- must
-    not satisfy the binding. Compaction glues the function qualifiers onto
-    ``fn`` (``async fn foo`` becomes ``asyncfnfoo``), so the ``fn`` form's
-    boundary whitelists exactly the qualifier words, and only as whole words.
-    ``macro`` accepts the table form ``macro!(short, ...)`` used by the
-    live-stream cases.
+    equally hollow. Every form requires a left boundary: a longer identifier
+    that merely ends in ``short`` -- ``run_fncase_a(`` or ``xcase_a =>`` --
+    must not satisfy the binding.
+
+    #2303 (条 9/19): the forms match the *whitespace-preserving* code view
+    (``_rust_code_only`` keeps whitespace; only comments and literals are
+    blanked). The fn form requires ``fn`` to stand as its own word: real
+    whitespace behind it (compaction used to glue ``async fn foo`` into
+    ``asyncfnfoo``, which also let the one-identifier ``asyncfncase_a(``
+    satisfy the form) and a word boundary in front of it (a qualifier glued
+    onto ``fn`` -- ``asyncfn`` -- is one longer identifier, not a
+    declaration). The table form
+    requires a table separator (``{``, ``,`` or a newline) in front of the
+    row, so a match-arm binding pattern (``Ok(case_a) =>``) no longer stands
+    in for a declared row. ``macro`` accepts the table form
+    ``macro!(short, ...)`` used by the live-stream cases.
     """
     if not short:
         raise ValueError('declares_test needs a short name')
-    compact = ''.join(_rust_code_only(source).split())
+    code = _rust_code_only(source)
     escaped = re.escape(short)
-    if re.search(_FN_LEFT + r'fn' + escaped + r'\(', compact):
+    if re.search(_FN_LEFT + escaped + r'\s*\(', code):
         return True
-    if re.search(r'(?<!\w)' + escaped + '=>', compact):
+    if re.search(_TABLE_LEFT + escaped + r'\s*=>', code):
         return True
     return bool(macro) and re.search(
-        r'(?<!\w)' + re.escape(macro) + r'\(' + escaped + ',', compact) is not None
+        r'(?<!\w)' + re.escape(macro) + r'\(\s*' + escaped + r'\s*,', code) is not None
 
 
 def case_labels(cases):

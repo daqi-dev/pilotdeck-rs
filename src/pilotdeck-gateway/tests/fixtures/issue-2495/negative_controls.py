@@ -76,6 +76,7 @@ from negative_process import (SourceBaselineError, mutating_sources,
 from negative_selection import (claim_dir, missing_target, refuse,
                                 refuse_unusable_target, registered, verdict_exit)
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
+from negative_source import assertion_marker_present
 
 mutations = [
     # The #2495 bug itself: the accumulation moved back behind the note
@@ -205,8 +206,11 @@ def stale_names():
         # following the host locale (same read the shared matrix uses).
         text = path.read_text(encoding='utf-8')
         body = test_body(test)
+        # #2303 fix-r3 (DS sibling#2, the 条 5 same-family follow-up): the
+        # marker must live in code, never in a comment -- the raw-text scan
+        # let a commented-out copy of the assertion satisfy the binding.
         if (text.count(old) != 1 or old == new or
-                not body or f'"{assertion}"' not in body):
+                not body or not assertion_marker_present(body, f'"{assertion}"')):
             stale.append(name)
     return stale
 

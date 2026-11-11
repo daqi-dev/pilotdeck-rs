@@ -47,6 +47,9 @@ DISCOVERY_ANCHORS = (
     'fixtures/negative_panic.py', 'fixtures/negative_selection.py',
     'fixtures/pending_reanchor.py', 'fixtures/anchor_selfcheck.py',
     'fixtures/negative_scope.py',
+    # #2303: ``negative_suite`` now forwards its Rust lexer to
+    # ``negative_source``, so the transitive import key is owed here too.
+    'fixtures/negative_source.py',
     '_shared/mutant_switch.py',
 )
 switches = [

@@ -189,6 +189,17 @@ def main():
     for _, filename, old, new, _, _ in mutations:
         mutate((root / filename).read_text(), None, [(old, new)])
     if sys.argv[1:] == ['--audit']:
+        # #2303 fix-r4 (DS concurrency#1 / MM sibling#1, zero denominator): an
+        # empty table is never "every anchor effective" -- mutations emptied,
+        # renamed away or skipped to zero rows must refuse (2, the
+        # never-started exit) instead of printing a PASS over zero anchors.
+        if not mutations:
+            sys.stderr.write('INVALID: audit produced zero anchors (mutations '
+                             'emptied, renamed away or skipped?); "every '
+                             'anchor effective" cannot pass on an empty '
+                             'denominator\n')
+            sys.stderr.flush()
+            return 2
         print(f'PASS: #1253 {len(mutations)} unique effective mutation anchors (static only)')
         return 0
     parser = argparse.ArgumentParser(description=__doc__)
@@ -215,6 +226,15 @@ def main():
                        for name, *_ in selected_mutations]
     publish_summary(out, results)
     (out / 'compilation.json').write_text(json.dumps(compilation, indent=2) + '\n')
+    # #2303 fix-r4 (zero denominator): run_cases refuses an empty table but
+    # this runner discards its exit code, so an emptied mutations table would
+    # still publish an empty summary and pass on `int(any([])) == 0`.
+    if not results:
+        sys.stderr.write('INVALID: run produced zero rows (mutations emptied, '
+                         'renamed away or skipped?); "every row killed" '
+                         'cannot pass on an empty denominator\n')
+        sys.stderr.flush()
+        return 2
     return int(any(row['status'] != 'KILLED' for row in results))
 
 

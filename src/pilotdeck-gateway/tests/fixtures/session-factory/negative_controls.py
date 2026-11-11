@@ -459,6 +459,18 @@ def audit():
         except Exception as error:
             rows.append(dict(mutation=name, status='INVALID', reason=str(error)))
     print(json.dumps(rows, indent=2))
+    # #2303 fix-r4 (DS concurrency#1 / MM sibling#1, zero denominator): an
+    # empty table is never "every row checked" -- cases emptied, renamed away
+    # or skipped to zero rows must refuse (2, the never-started exit) instead
+    # of passing hollowly on `int(any([])) == 0`. The #1210 README count guard
+    # above only proves table==README, so a mechanical rename that zeroes both
+    # still needs this second fence.
+    if not rows:
+        sys.stderr.write('INVALID: audit produced zero rows (cases emptied, '
+                         'renamed away or skipped?); "every row checked" '
+                         'cannot pass on an empty denominator\n')
+        sys.stderr.flush()
+        return 2
     return int(any(row['status'] != 'CHECKED' for row in rows))
 
 # #1908 (from #1692 r15-4): ONE dispatch rule for every mode. Whole-argv
@@ -625,4 +637,14 @@ counts={status:sum(r['status']==status for r in results) for status in ('KILLED'
 with (out/'summary.json').open('x') as summary:
     json.dump(dict(controls=results,counts=counts),summary,indent=2);summary.write('\n')
 print(json.dumps(counts),flush=True)
+# #2303 fix-r4 (zero denominator): an empty run is never "every row
+# killed/compiled" -- the #1210 README count guard only covers --audit, so a
+# cleared cases table passing through the run path must refuse here instead
+# of publishing an all-zero summary and passing on `int(any([])) == 0`.
+if not results:
+    sys.stderr.write('INVALID: run produced zero rows (cases emptied, '
+                     'renamed away or skipped?); "every row killed" '
+                     'cannot pass on an empty denominator\n')
+    sys.stderr.flush()
+    raise SystemExit(2)
 raise SystemExit(int(any(r['status']!=('COMPILED' if compile_only else 'KILLED') for r in results)))

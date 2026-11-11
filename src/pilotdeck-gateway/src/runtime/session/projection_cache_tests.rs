@@ -549,7 +549,15 @@ fn generator_cleans_owned_work() {
                     .join("tests/fixtures/session-factory/projection-cache/generate.mts"),
             )
             .arg(&scratch);
-        let (status, stdout, stderr) = crate::test_baseline::run_generator_with_deadline(
+        // #2304 (条 4): the knob-aware entry. The generator self-bounds at a
+        // 120 s hard deadline (generate.mts clamps PDRS_1011_DEADLINE_MS to
+        // [1_000, 120_000], so a host cannot extend the matrix past that cap),
+        // which makes the former fixed 180 s outer bound a pure backstop —
+        // the knob keeps that role without bypassing PDRS_REGEN_TIMEOUT_SECS.
+        // #2303 fix-r3 (DS concurrency#1): the 180 s backstop itself stays
+        // the default (run_generator_at_least); the shared 600 s fixture
+        // default silently loosened it 3.3x.
+        let (status, stdout, stderr) = crate::test_baseline::run_generator_at_least(
             &mut command,
             "session-factory/projection-cache",
             Duration::from_secs(180),
@@ -618,6 +626,19 @@ fn generator_cleans_owned_work() {
     }
 }
 
+/// #2304 (条 1): the projection-cache generator's `.generation-owner` conflict
+/// cell — `generator_cleans_owned_work` above pins the marker's existence and
+/// identity inside its work-cleanup inventory, but nothing pre-seeded a
+/// foreign `.generation-owner` and expected the generator to refuse the
+/// directory (#2116 item 2's minimum for every marker-writing generator: the
+/// exclusive `wx` open exits with EEXIST and the foreign bytes survive). The
+/// cell shape lives in `test_baseline::generation_owner_marker_cell`.
+#[test]
+#[ignore = "requires the pinned Node v22.22.0 TS baseline"]
+fn projection_cache_generator_writes_owned_marker() {
+    crate::test_baseline::generation_owner_marker_cell("session-factory/projection-cache");
+}
+
 #[test]
 #[ignore = "requires the pinned Node v22.22.0 TS baseline"]
 fn generator_deadline_cleans_owned_work() {
@@ -655,7 +676,15 @@ fn generator_deadline_cleans_owned_work() {
         // #1890 review: the injection switch must never leak in from the host,
         // or this clean-path test would silently skip the removal it checks.
         .env_remove("PDRS_1011_DEADLINE_CLEANUP_FAIL");
-    let (status, stdout, stderr) = crate::test_baseline::run_generator_with_deadline(
+    // #2304 (条 4): the knob-aware entry. The injected 1 s deadline plus the
+    // 60 s hold bound this cell from the inside; the outer bound is only a
+    // backstop, and the generator's own matrix is hard-capped at 120 s
+    // regardless (generate.mts clamps PDRS_1011_DEADLINE_MS to [1_000,
+    // 120_000]), so knob-awareness cannot loosen what the cell pins.
+    // #2303 fix-r3 (DS concurrency#1): the 180 s outer backstop stays the
+    // default (run_generator_at_least); the shared 600 s fixture default
+    // silently loosened it 3.3x.
+    let (status, stdout, stderr) = crate::test_baseline::run_generator_at_least(
         &mut command,
         "session-factory/projection-cache",
         Duration::from_secs(180),
@@ -697,6 +726,10 @@ fn generator_deadline_cleans_owned_work() {
         [".generation-owner", "work-foreign"],
         "#1011 deadline exit leaves no work-* behind"
     );
+    // #2304 (条 6): the Drop guard above swallows removal errors (it runs on
+    // both the normal and the panic path); this explicit removal asserts the
+    // scratch is reclaimable at cell end (7ec70ebff r4 shape, DS r2 P2).
+    std::fs::remove_dir_all(&scratch.0).expect("#1011 remove deadline test scratch");
 }
 
 #[test]
@@ -733,7 +766,12 @@ fn generator_deadline_reports_cleanup_failure() {
         .env("PDRS_1011_DEADLINE_MS", "1000")
         .env("PDRS_1011_DEADLINE_HOLD_MS", "60000")
         .env("PDRS_1011_DEADLINE_CLEANUP_FAIL", "1");
-    let (status, stdout, stderr) = crate::test_baseline::run_generator_with_deadline(
+    // #2304 (条 4): the knob-aware entry, same as the deadline cell above —
+    // the injected 1 s deadline and the generator's own 120 s hard cap bound
+    // the run from the inside; the outer bound stays a pure backstop.
+    // #2303 fix-r3 (DS concurrency#1): that 180 s backstop stays the default
+    // (run_generator_at_least), not the shared 600 s fixture default.
+    let (status, stdout, stderr) = crate::test_baseline::run_generator_at_least(
         &mut command,
         "session-factory/projection-cache",
         Duration::from_secs(180),
@@ -757,6 +795,10 @@ fn generator_deadline_reports_cleanup_failure() {
             && errors.contains("injected cleanup failure"),
         "#1011 generator deadline names the cleanup failure on stderr: {errors}"
     );
+    // #2304 (条 6): the Drop guard above swallows removal errors (it runs on
+    // both the normal and the panic path); this explicit removal asserts the
+    // scratch is reclaimable at cell end (7ec70ebff r4 shape, DS r2 P2).
+    std::fs::remove_dir_all(&scratch.0).expect("#1011 remove deadline failure test scratch");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

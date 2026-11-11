@@ -18,6 +18,7 @@ SOURCE = ROOT / 'src/pilotdeck-gateway/tests/live_e2e.rs'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import ReceiptRun, declares_test, invalidate_completed, judge, passed
+from negative_source import assertion_marker_present
 
 TEST = 'case_directories_use_cargo_tmpdir'
 mutations = [
@@ -39,16 +40,27 @@ def main():
     parser.add_argument('output', nargs='?')
     parser.add_argument('selected', nargs='*')
     args = parser.parse_args()
+    # #2303 (条 4): every row is audited before the refusal, and a scanner
+    # refusal (ValueError) becomes one named INVALID record per row instead
+    # of a raw traceback on the first failure -- the session-factory /
+    # session-drop-release audit shape.
     stale = []
     for name, path, old, new, test, assertion in mutations:
         text = path.read_text()
-        # #1890: the same declaration rule as every other audit entry, not
-        # another bare `fn name()` spelling that drifts on its own.
-        if (text.count(old) != 1 or old == new or
-                not declares_test(text, test) or f'"{assertion}"' not in text):
-            stale.append(name)
+        try:
+            # #1890: the same declaration rule as every other audit entry, not
+            # another bare `fn name()` spelling that drifts on its own.
+            # #2303 (条 5): the assertion marker must live in code, never in
+            # a comment -- the raw-text scan let a commented-out copy of the
+            # assertion satisfy the binding after the real one was deleted.
+            if (text.count(old) != 1 or old == new
+                    or not declares_test(text, test)
+                    or not assertion_marker_present(text, f'"{assertion}"')):
+                raise ValueError('stale anchor/test/assertion binding')
+        except Exception as error:
+            stale.append(f'{name}: {type(error).__name__}: {error}')
     if stale:
-        raise SystemExit('#1056 stale anchor/test/assertion bindings: ' + ', '.join(stale))
+        raise SystemExit('#1056 binding audit INVALID rows: ' + '; '.join(stale))
     if args.check:
         print(f'#1056 {len(mutations)} unique anchors and assertion bindings: OK')
         return 0

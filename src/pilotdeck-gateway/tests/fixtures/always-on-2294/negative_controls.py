@@ -235,15 +235,16 @@ def check_manifest():
         ident = row[4].rsplit('::', 1)[-1]
         try:
             source, short = bind_module_file(row[4], bound_modules)
+            # 双谱系评审 P2（DS+MM simplify 两家撞上）：绑定测试存在性复用共享装置
+            # negative_suite.declares_test（#2064 r10 硬化版：注释/字符串先抹白、左
+            # 边界、三拼写折叠），不自写裸正则——注释里的 `fn name(` 满足裸正则，
+            # 满足不了 declares_test，--check 不再空心通过。
+            # #2303（条 4）：declares_test 的 fail-closed 拒绝（ValueError）随
+            # bind_module_file 走同一 per-row 收账，不再裸穿成 traceback。
+            if not declares_test(bound_sources[source], short):
+                errors.append(f'{row[0]}: bound test {short} is not defined in {source.name}')
         except ValueError as error:
             errors.append(f'{row[0]}: {error}')
-            continue
-        # 双谱系评审 P2（DS+MM simplify 两家撞上）：绑定测试存在性复用共享装置
-        # negative_suite.declares_test（#2064 r10 硬化版：注释/字符串先抹白、左
-        # 边界、三拼写折叠），不自写裸正则——注释里的 `fn name(` 满足裸正则，
-        # 满足不了 declares_test，--check 不再空心通过。
-        if not declares_test(bound_sources[source], short):
-            errors.append(f'{row[0]}: bound test {short} is not defined in {source.name}')
     return errors
 
 

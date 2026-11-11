@@ -32,6 +32,7 @@ PROCESS = Path(__file__).resolve().parent / 'process.mts'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_panic import panic_evidence
+from negative_source import assertion_marker_present, fn_qualifier_run
 from negative_suite import invalidate_completed, passed
 
 EXECUTABLE = 'executable_native_loop_stimulus'
@@ -144,7 +145,9 @@ class Case:
 
 
 STRING = re.compile(r'r#"(?:[^"]|"(?!#))"#|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', re.S)
-ANCHOR_FN = r'^\s*(?:pub(?:\([^)]*\))? )?(?:async )?fn {}\('
+# #2303 (条 2): every qualifier word from the shared list, so
+# ``const fn`` / ``unsafe fn`` / ``extern "C" fn`` resolve as anchors too.
+ANCHOR_FN = r'^\s*' + fn_qualifier_run(r'[ \t]+') + r'*fn {}\('
 
 
 def strip_literals(line):
@@ -232,8 +235,11 @@ def main():
     for name, path, old, new, test, assertion in mutations:
         text = path.read_text()
         body = test_body(test)
+        # #2303 fix-r3 (DS sibling#2, the 条 5 same-family follow-up): the
+        # marker must live in code, never in a comment -- the raw-text scan
+        # let a commented-out copy of the assertion satisfy the binding.
         if (text.count(old) != 1 or old == new or
-                not body or f'"{assertion}"' not in body):
+                not body or not assertion_marker_present(body, f'"{assertion}"')):
             stale.append(name)
     if stale:
         raise SystemExit('#1371 stale anchor/test/assertion bindings: ' + ', '.join(stale))

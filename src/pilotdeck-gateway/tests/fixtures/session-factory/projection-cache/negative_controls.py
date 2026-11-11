@@ -193,6 +193,17 @@ def main():
     for _, filename, old, new, _, _ in mutations:
         mutate((root / filename).read_text(), None, [(old, new)])
     if sys.argv[1:] == ['--audit']:
+        # #2303 fix-r4 (DS concurrency#1 / MM sibling#1, zero denominator): an
+        # empty table is never "every anchor bound" -- mutations emptied,
+        # renamed away or skipped to zero rows must refuse (2, the
+        # never-started exit) instead of printing a PASS over zero anchors.
+        if not mutations:
+            sys.stderr.write('INVALID: audit produced zero anchors (mutations '
+                             'emptied, renamed away or skipped?); "every '
+                             'anchor bound" cannot pass on an empty '
+                             'denominator\n')
+            sys.stderr.flush()
+            return 2
         # #1210: bound test names may come from the matrix_tests! macro table,
         # so a plain `fn <name>` scan would not find them. Accept either the
         # direct function or the `name=>"case"` table entry; anything else
@@ -206,13 +217,20 @@ def main():
                    ('runtime::session::factory::projection_cache_tests::', 'projection_cache_tests.rs'))
         sources = {name: (root / 'src/pilotdeck-gateway/src/runtime/session' / name).read_text()
                    for _, name in modules}
+        # #2303 (条 4 同类跟改): every row is audited before the refusal, and
+        # a scanner refusal (ValueError) becomes one named record per row
+        # instead of a raw traceback on the first failure (the session-
+        # factory / session-drop-release audit shape).
+        invalid = []
         for _name, _filename, _old, _new, test, _assertion in mutations:
             try:
                 file, short = bind_module_file(test, modules)
-            except ValueError as error:
-                raise SystemExit(f'#1210 {error}')
-            if not declares_test(sources[file], short):
-                raise SystemExit(f'#1210 bound test not found for {short}: {test}')
+                if not declares_test(sources[file], short):
+                    raise ValueError(f'bound test not found for {short}: {test}')
+            except Exception as error:
+                invalid.append(f'{test}: {type(error).__name__}: {error}')
+        if invalid:
+            raise SystemExit('#1210 binding audit INVALID rows: ' + '; '.join(invalid))
         print('PASS: #1011 projection cache mutation anchors (static only)')
         return 0
     if len(sys.argv) != 2:

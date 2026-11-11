@@ -247,8 +247,14 @@ def check_manifest():
         # 满足不了 declares_test（#2064 r10 硬化版：先抹白注释/字符串、
         # 左边界、fn 与 match-arm 两拼写折叠成一条规则），与 always-on
         # 侧 fix-r1 同一规则，合并登记在 #2303 条目 6/17。
-        if not declares_test(replay_source, ident):
-            errors.append(f'{row[0]}: bound test {ident} is not defined in schedule_tests.rs')
+        # #2303（条 4 同类跟改，fix-r3 DS sibling#1）：declares_test 的
+        # fail-closed 拒绝（ValueError）落进本清单的 per-row 收账（孪生
+        # cron-scheduler 的形状），不再裸穿成 traceback。
+        try:
+            if not declares_test(replay_source, ident):
+                errors.append(f'{row[0]}: bound test {ident} is not defined in schedule_tests.rs')
+        except Exception as error:
+            errors.append(f'{row[0]}: {type(error).__name__}: {error}')
     return errors
 
 

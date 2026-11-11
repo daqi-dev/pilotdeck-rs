@@ -140,6 +140,7 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/config-store/negative_controls.p
   还包括 scanner 字面输入集——`src` 外也有），而 `stash create` 只快照 worktree——落在其中、未
   commit 的改动要先 `git add` 暂存，否则全行报 `source baseline mismatch`；比对范围之外的改动
   （如 `state/`）不参与该比对。字面输入集口径与冷、暖 scanner target 下该逃生口的可用条件
-  统一见 `_negkit/README.md` 的「现状（#2106 实测）」段。
+  统一见上级 [`fixtures/README.md`](../README.md)「共享输入扫描器」节（#2305 条 1 归位；
+  原 `_negkit/README.md` 的「现状（#2106 实测）」段只留指针）。
 - 产物：每行 `-positive` / `-negative` / `-restored` 日志与 `summary.json`
   （`controls[]` + `counts`），全 `KILLED` 退出码 0。

@@ -36,6 +36,7 @@ from negative_selection import (claim_dir, missing_target, refuse,
                                 refuse_unusable_target, registered, select,
                                 verdict_exit)
 from negative_suite import Case, classify, passed, publish_summary
+from negative_source import assertion_marker_present
 
 ROOT = Path(__file__).resolve().parents[5]
 NATIVE_PROCESS = ROOT / 'src/pilotdeck-gateway/src/native_process.rs'
@@ -235,7 +236,10 @@ def check_errors():
             errors.append(f'{name}: anchor equals replacement')
         if not body:
             errors.append(f'{name}: bound test {test} not found exactly once')
-        elif assertion not in body:
+        # #2303 fix-r3 (DS sibling#2, the 条 5 same-family follow-up): the
+        # marker must live in code, never in a comment -- the raw-text scan
+        # let a commented-out copy of the assertion satisfy the binding.
+        elif not assertion_marker_present(body, assertion):
             errors.append(f'{name}: marker not in the bound test body')
     return errors
 

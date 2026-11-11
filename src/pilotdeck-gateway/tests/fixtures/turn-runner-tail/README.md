@@ -28,3 +28,21 @@ python3 src/pilotdeck-gateway/tests/fixtures/turn-runner-tail/schemata.py _tmp/9
 ```
 
 每个开关绑定本单断言消息；anchor 过期、编译失败、错误测试失败都是 INVALID，不能算作 KILLED。契约见 `specs/negative-controls/README.md`。46 项完整负控适合交协调者在宿主运行，不在长会话中后台启动。
+
+## #2116/#2304 `.generation-owner` 判据与手工负控
+
+`generate.mts` 的 `.generation-owner` 是对 OUT 的首个 `wx` 写入（早于 `run-*` 工作根分配），身份串 `turn-runner-tail\n`：OUT 已被外来 marker 标记时，生成器在写出任何输出前于该独占 open 处以 EEXIST 退出，外来 owner 字节不被覆写。`tail_generator_cleans_only_owned_work` 已在清理判据里钉 marker 存在与身份，但冲突格此前缺失。
+
+#2304（条 1）新增专用用例 `tail_generator_writes_owned_marker`（`runtime::session::factory::projection_delta_tests`）：成功格钉 marker 存在且内容为身份串，冲突格预置外来 `.generation-owner`，断言失败点落在独占 open（输出同时含 `EEXIST` 与 `.generation-owner`）、外来字节保留、且冲突格 OUT 只剩外来 marker（首写 listing）。用例形状收敛在共享 `tests/common/baseline.rs::generation_owner_marker_cell`（#2304 条 2）。
+
+沿用 #2116 口径不为该 `#[ignore]` 断言登记自动化负控（不扩 `schemata.py` 的开关表）；判据强度由手工负控留档保证：`{flag:'wx'}`→`{flag:'w'}`、marker 写入改 no-op、身份串换邻居夹具（`turn-runner`）三只 `generate.mts` 变异各使绑定断言 FAILED（KILLED），恢复后复跑通过。复跑正控的钉版环境（Node v22.22.0 / ICU 78.2、`PDRS_BASELINE` 指向 `cc7c4e65` 检出、从仓库根加 `--manifest-path src/Cargo.toml`）统一见上级 [`fixtures/README.md`](../README.md) 的「手工负控钉版环境（#2304 条 3）」段；`test result:` 行须为 `1 passed; 0 failed`：
+
+```sh
+cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib \
+  runtime::session::factory::projection_delta_tests::tail_generator_writes_owned_marker \
+  -- --exact --include-ignored
+```
+
+手工负控复跑：对 `generate.mts` 的 marker 写入行分别施加上述三只变异，同命令复跑须 FAILED 于对应 `#2116` 绑定断言（`test result:` 行含 `1 failed`）；每只跑完 `git checkout -- <generate.mts>` 恢复并核对工作区干净，复跑正控须回到 `1 passed; 0 failed`。
+
+第四只变异（#2304 条 5）：在 marker 写入前落一个输出写（等价于把 marker 后移到首个输出写之后），绑定用例 FAILED 于冲突格首写 listing 断言「collision cell writes nothing before the exclusive marker open」，`git checkout --` 恢复后复跑回到 `1 passed; 0 failed`——三只已登记变异都死在更早断言，该 listing 断言由此获得自己的负控留档。

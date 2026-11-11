@@ -1566,9 +1566,16 @@ class AuditBindingTests(unittest.TestCase):
         # returns to the code view, so the binding audits a carrier.
         self.assertFalse(suite.declares_test('let s = c"fn case_a() {";', 'case_a'),
                          '#2064 a C string literal must not satisfy the fn form')
+        # (#2303: the scanner now fails closed on the shapes this carrier used
+        # to expose, so a refusal counts as a carrier hit here -- the
+        # prefix-set/gate mutants die at this bound assertion either way.)
+        try:
+            declared = suite.declares_test(
+                'let s = cr#"x"fn case_a(){"#; let q = \'"\';', 'case_a')
+        except ValueError:
+            declared = True
         self.assertFalse(
-            suite.declares_test('let s = cr#"x"fn case_a(){"#; let q = \'"\';', 'case_a'),
-            '#2064 a raw C string literal must not satisfy the fn form')
+            declared, '#2064 a raw C string literal must not satisfy the fn form')
         # r4: a raw hash delimiter with no ``r``-bearing prefix (``c#"…"#``)
         # is not legal Rust (rustc 1.99.0: ``error: prefix `c` is unknown``);
         # the scanner must refuse it instead of guessing a plain string whose
@@ -1585,6 +1592,59 @@ class AuditBindingTests(unittest.TestCase):
                          '#2064 a line comment must not satisfy the table form')
         self.assertFalse(suite.declares_test('let s = "case_a => 1";', 'case_a'),
                          '#2064 a string literal must not satisfy the table form')
+
+    def test_declares_test_ignores_raw_byte_string_carriers(self):
+        # #2303 (条 16): without ``br`` in the prefix set the raw byte string's
+        # inner quote closes a bogus plain string and the carried fn text
+        # returns to the code view (the r11 ``cr`` hole's sibling). Deleting
+        # the ``br`` alternative instead trips the unknown-prefix refusal, so
+        # the refusal is counted as a carrier hit here and the deletion mutant
+        # dies at this bound assertion either way.
+        try:
+            declared = suite.declares_test('let s = br#"x"fn case_a(){"y"#;', 'case_a')
+        except ValueError:
+            declared = True
+        self.assertFalse(
+            declared, '#2064 a raw byte string literal must not satisfy the fn form')
+
+    def test_declares_test_refuses_unknown_hash_prefixes(self):
+        # #2303 (条 15): a multi-letter prefix the prefix table cannot match
+        # (``cb``/``rc``/``cc``) leaves its ``#`` as code; rustc 1.99.0
+        # rejects these shapes as unknown prefixes (unreachable in
+        # compilable source), so the scanner refuses instead of letting the
+        # inner quote return the carried fn text to the code view.
+        for prefix in ('cb', 'rc', 'cc'):
+            with self.subTest(prefix=prefix):
+                with self.assertRaises(
+                        ValueError,
+                        msg='#2303 an unknown string prefix must fail closed'):
+                    suite.declares_test(f'let s = {prefix}#"x"fn case_a(){{"y"#;',
+                                        'case_a')
+        # ``rb`` is not a legal raw prefix either (legal ones are exactly
+        # ``r``/``br``/``cr``): the old ``'r' in prefix`` judgment let it
+        # borrow the ``r`` and pass the raw-string gate. The refusal reason is
+        # pinned too -- re-adding the prefix to the table only turns the
+        # unknown-prefix refusal into the invalid-prefix one, which is still
+        # a guess about a shape rustc rejects outright.
+        with self.assertRaises(
+                ValueError,
+                msg='#2303 the rb prefix must not borrow the raw-string gate') as raised:
+            suite.declares_test('let s = rb#"x"fn case_a(){"y"#;', 'case_a')
+        self.assertIn('unknown Rust string prefix', str(raised.exception),
+                      '#2303 the rb prefix must not borrow the raw-string gate')
+
+    def test_declares_test_unterminated_comments_and_raws_are_refused(self):
+        # #2303 (条 18): every fail-closed raise the scanner documents is
+        # pinned -- the block-comment and raw-string raises had no test, so a
+        # regression that guessed instead of raising would have audited the
+        # guess (an unterminated char literal stays code by design: it may be
+        # a lifetime or a loop label).
+        with self.assertRaises(
+                ValueError, msg='#2303 an unterminated block comment must fail closed'):
+            suite.declares_test('/* unterminated fn case_a() {', 'case_a')
+        with self.assertRaises(
+                ValueError, msg='#2303 an unterminated raw string must fail closed'):
+            suite.declares_test('let s = r#"fn case_a() {', 'case_a')
 
     def test_rust_code_only_blanks_escape_char_literals(self):
         # #2064 r11: ``'\u{…}'`` / ``'\xNN'`` are single-char literals; the
@@ -1619,6 +1679,11 @@ class AuditBindingTests(unittest.TestCase):
         self.assertFalse(
             suite.declares_test('let x = run_fncase_a();', 'case_a'),
             '#1890 a longer identifier must not satisfy the fn form')
+        # The same hole with ``fn`` at word start: a name glued directly behind
+        # ``fn`` is one identifier (`fncase_a`), not a declaration.
+        self.assertFalse(
+            suite.declares_test('let x = fncase_a();', 'case_a'),
+            '#1890 a longer identifier must not satisfy the fn form')
         self.assertFalse(
             suite.declares_test('mycase!(case_a,);', 'case_a', 'case!'),
             '#1890 a longer macro name must not satisfy the table form')
@@ -1633,6 +1698,32 @@ class AuditBindingTests(unittest.TestCase):
         self.assertFalse(
             suite.declares_test('let x = xpubfncase_a();', 'case_a'),
             '#2064 a qualifier suffix inside a longer identifier must not satisfy the fn form')
+        # #2303 (条 19): the qualifier must be separated from ``fn`` by real
+        # whitespace in the code view -- the compacted matcher could not tell
+        # ``async fn case_a`` from the one identifier ``asyncfncase_a``.
+        self.assertFalse(
+            suite.declares_test('let x = asyncfncase_a();', 'case_a'),
+            '#2303 a qualifier glued onto fn is an identifier, not a declaration')
+        self.assertFalse(
+            suite.declares_test('let x = {pubfncase_a();', 'case_a'),
+            '#2303 a pub glued onto fn is an identifier, not a declaration')
+        # ``fn`` itself is load-bearing: without it the form is satisfied by a
+        # bare call, which is not a declaration.
+        self.assertFalse(
+            suite.declares_test('let x = case_a();', 'case_a'),
+            '#2303 a call is not a declaration')
+        # A qualifier glued onto ``fn`` (``asyncfn``) is one longer identifier
+        # even when the name behind it is properly separated; the word
+        # boundary in front of ``fn`` refuses it.
+        self.assertFalse(
+            suite.declares_test('let x = asyncfn case_a();', 'case_a'),
+            '#2303 a qualifier glued onto fn is an identifier, not a declaration')
+        # #2303 (条 9): a match-arm binding pattern is not a declared table
+        # row; the old bare ``(?<!\w)`` boundary let ``Ok(case_a) =>`` stand
+        # in because ``(`` is not a word character.
+        self.assertFalse(
+            suite.declares_test('match r { Ok(case_a) => 1 }', 'case_a'),
+            '#2303 a match-arm binding pattern must not satisfy the table form')
 
 
 BASELINE_DEFAULTS = (

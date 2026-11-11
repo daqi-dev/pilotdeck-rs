@@ -38,6 +38,9 @@ DISCOVERY_ANCHORS = (
     'fixtures/negative_selection.py',
     'fixtures/pending_reanchor.py',
     'fixtures/negative_scope.py',
+    # #2303: ``negative_suite`` now forwards its Rust lexer to
+    # ``negative_source``, so the transitive import key is owed here too.
+    'fixtures/negative_source.py',
 )
 MUTATIONS = [
     ('root-fallback', META,

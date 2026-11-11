@@ -11,6 +11,7 @@ FIXTURE = Path(__file__).resolve().parent
 sys.path.insert(0, str(FIXTURE.parent))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import Case, classify, declares_test, passed, invalidate_completed, publish_summary
+from negative_source import assertion_marker_present
 
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/main.rs'
 TESTS = ROOT / 'src/pilotdeck-gateway/tests/proxy_listen_address.rs'
@@ -57,18 +58,34 @@ def main():
     args = parser.parse_args()
     tests = TESTS.read_text()
     gate = GATE.read_text()
+    # #2303 (条 4): every row is audited before the refusal, and a scanner
+    # refusal (ValueError) becomes one named INVALID record per row instead
+    # of a raw traceback on the first failure -- the session-factory /
+    # session-drop-release audit shape.
+    invalid = []
     for name, path, old, new, test, assertion in mutations:
-        if path.read_text().count(old) != 1 or old == new:
-            raise RuntimeError(f'#1131 {name}: stale or invalid anchor')
         # The oracle-provenance mutant dies inside the shared baseline gate, so
         # its marker is bound against the gate's own source (the background-panic
         # provenance precedent); every other marker stays bound to the test file.
         markers = gate if path == ORACLE else tests
-        # #1890: one shared declaration rule instead of another bare-name
-        # spelling. This crate's tests carry no module path (a single
-        # integration-test file), so the binding is the file plus the name.
-        if not declares_test(tests, test) or assertion not in markers:
-            raise RuntimeError(f'#1131 {name}: stale test/assertion binding')
+        try:
+            if path.read_text().count(old) != 1 or old == new:
+                raise ValueError('stale or invalid anchor')
+            # #1890: one shared declaration rule instead of another bare-name
+            # spelling. This crate's tests carry no module path (a single
+            # integration-test file), so the binding is the file plus the name.
+            # #2303 (条 5): the marker must live in code, never in a comment
+            # -- the bare raw-text scan let a commented-out copy of the
+            # assertion keep the binding green after the real one was gone.
+            # The needle stays unquoted: the oracle-commit row's marker lives
+            # inside the gate's formatted literal.
+            if (not declares_test(tests, test)
+                    or not assertion_marker_present(markers, assertion)):
+                raise ValueError('stale test/assertion binding')
+        except Exception as error:
+            invalid.append(f'{name}: {type(error).__name__}: {error}')
+    if invalid:
+        raise RuntimeError('#1131 binding audit INVALID rows: ' + '; '.join(invalid))
     if args.check:
         print(f'#1131 {len(mutations)} anchors and test bindings valid')
         return 0

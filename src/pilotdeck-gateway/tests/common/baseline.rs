@@ -361,6 +361,104 @@ pub(crate) fn regenerates_identically_with(fixture: &str, corrupt_committed: boo
     fs::remove_dir_all(&scratch).expect("#280 remove owned regeneration scratch");
 }
 
+/// #2304 (条 2): the `.generation-owner` marker cell — one home for the
+/// ~75-line shape the turn-prompt-hooks / turn-runner / append-delta marker
+/// tests each carried by hand (Scratch guard, node+tsx command assembly, the
+/// collision/success pair, EEXIST+path, foreign bytes preserved, first-write
+/// listing, explicit tail removal). `fixture` is the directory under
+/// `tests/fixtures`; the scratch tag and the owner identity derive from it,
+/// and the generator runs through the shared knob-aware [`run_generator`]
+/// entry. The marker must be the generator's first `wx` write: the collision
+/// cell pins that nothing else landed in OUT before the exclusive open
+/// failed, so a marker moved past the first output write cannot pass (the
+/// #2116 item-5 fourth mutant). Callers are `#[ignore]` tests.
+#[allow(dead_code)]
+pub(crate) fn generation_owner_marker_cell(fixture: &str) {
+    // #1890 caliber: the manual negative controls make these assertions
+    // panic on purpose, so a plain trailing remove_dir_all would never run
+    // and leave the scratch behind in /tmp. The Drop guard cleans both paths.
+    struct Scratch(std::path::PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    let tag = fixture.replace('/', "-");
+    let identity = format!("{fixture}\n");
+    for collision in [false, true] {
+        let root = std::env::temp_dir().join(format!("pdrs-2116-{tag}-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root)
+            .unwrap_or_else(|error| panic!("#2116 create {fixture} marker scratch: {error}"));
+        let _scratch = Scratch(root.clone());
+        if collision {
+            // A realistic foreign owner: the parent factory generator's marker.
+            fs::write(root.join(".generation-owner"), "session-factory\n")
+                .unwrap_or_else(|error| panic!("#2116 seed foreign owner marker: {error}"));
+        }
+        let baseline = std::path::PathBuf::from(
+            std::env::var_os("PDRS_BASELINE")
+                .unwrap_or_else(|| panic!("#2116 {fixture} TS baseline configured")),
+        );
+        let mut command = generator_command(fixture, &root, &root, &baseline);
+        let (status, stdout, stderr) = run_generator(&mut command, fixture)
+            .unwrap_or_else(|error| panic!("#2116 {fixture} marker generator run: {error}"));
+        let output = format!(
+            "{}{}",
+            String::from_utf8_lossy(&stdout),
+            String::from_utf8_lossy(&stderr)
+        );
+        assert!(
+            status.success() != collision,
+            "#2116 {fixture} generator succeeds only without a foreign owner marker: {output}"
+        );
+        if collision {
+            // A nonzero exit alone also matches an earlier crash or a deadline
+            // kill; pin the failure to the marker's exclusive open (#1281
+            // caliber: path and code both have to show up).
+            assert!(
+                output.contains("EEXIST") && output.contains(".generation-owner"),
+                "#2116 {fixture} generator fails on the exclusive owner marker open: {output}"
+            );
+            assert_eq!(
+                fs::read_to_string(root.join(".generation-owner"))
+                    .unwrap_or_else(|error| panic!("#2116 read foreign owner marker: {error}")),
+                "session-factory\n",
+                "#2116 failed {fixture} generation preserves the foreign owner bytes"
+            );
+            // The marker is the first write into OUT: pin that the generator
+            // wrote nothing else before the exclusive open failed, or a moved
+            // (still-wx) marker write would pass every assertion above.
+            let mut names: Vec<_> = fs::read_dir(&root)
+                .unwrap_or_else(|error| panic!("#2116 list {fixture} collision scratch: {error}"))
+                .map(|entry| entry.expect("#2116 read scratch entry").file_name())
+                .collect();
+            names.sort();
+            assert_eq!(
+                names,
+                [std::ffi::OsString::from(".generation-owner")],
+                "#2116 {fixture} collision cell writes nothing before the exclusive marker open"
+            );
+        } else {
+            assert!(
+                !output.contains("EEXIST"),
+                "#2116 {fixture} generator success cell reports no collision: {output}"
+            );
+            assert_eq!(
+                fs::read_to_string(root.join(".generation-owner")).unwrap_or_else(|error| {
+                    panic!("#2116 read {fixture} ownership marker: {error}")
+                }),
+                identity,
+                "#2116 {fixture} generator writes its ownership marker"
+            );
+        }
+        // #2116 r4: the Drop guard above swallows removal errors (it runs on
+        // both the normal and the panic path); this explicit removal asserts
+        // the scratch is reclaimable at cell end (DS r2 P2).
+        fs::remove_dir_all(&root)
+            .unwrap_or_else(|error| panic!("#2116 remove {fixture} marker scratch: {error}"));
+    }
+}
+
 /// sha256 of every regular file below `root`, keyed by its `/`-joined relative
 /// path. Special node kinds are failures, not silently skipped entries.
 fn digest_tree(root: &Path) -> std::collections::BTreeMap<String, String> {
@@ -547,6 +645,33 @@ pub(crate) fn run_generator(
     let deadline = Duration::from_secs(match override_secs {
         Some(secs) => secs.max(fixture_default),
         None => fixture_default,
+    });
+    run_generator_with_deadline(command, fixture, deadline)
+}
+
+/// [`run_generator`] with the cell's own fail-fast bound restored as the
+/// default (#2303 fix-r3, DS concurrency#1).
+///
+/// Switching these call sites to the knob-aware [`run_generator`] silently
+/// ate the shared 600 s fixture default, loosening their hung-generator
+/// bounds 2–6.7×: a stalled generator occupied the cell for 600 s instead of
+/// reddening at the unit's own value. The `floor` here is that original
+/// per-cell bound; `PDRS_REGEN_TIMEOUT_SECS` still applies on top (a floor,
+/// never a shortening — same rule as [`run_generator`]), so a slow host can
+/// still raise the deadline for these cells without editing them.
+// Not every #[path] consumer of this module has one of these cells.
+#[allow(dead_code)]
+pub(crate) fn run_generator_at_least(
+    command: &mut Command,
+    fixture: &str,
+    floor: Duration,
+) -> Result<(ExitStatus, Vec<u8>, Vec<u8>), String> {
+    let override_secs = std::env::var("PDRS_REGEN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok());
+    let deadline = Duration::from_secs(match override_secs {
+        Some(secs) => secs.max(floor.as_secs()),
+        None => floor.as_secs(),
     });
     run_generator_with_deadline(command, fixture, deadline)
 }

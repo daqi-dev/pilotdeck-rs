@@ -37,6 +37,7 @@ import unittest
 from negative_panic import (marker_kills_named_test, named_test_failed,
                             named_test_killed, panic_evidence,
                             single_failed_test_run)
+from negative_source import declares_function
 from negative_suite import declares_test
 
 NAMED = 'pkg::tests::named'
@@ -403,6 +404,13 @@ class PanicBlockCriterion(unittest.TestCase):
                 # a stale mention in a comment or a string as its declaration.
                 self.assertTrue(declares_test(tests_source, test),
                                 '#2064 the named test must be declared in projector_tests.rs')
+                # #2303 (条 3): the shared rule also accepts the table and
+                # macro forms; this binding means a real function declaration,
+                # so pin the fn form itself (the old local assertIn pinned
+                # `fn <name>(` before the binding went through declares_test).
+                self.assertTrue(declares_function(tests_source, test),
+                                '#2303 the named test must be declared as a fn '
+                                'in projector_tests.rs')
 
     def test_plugin_runtime_generic_assert_eq_marker_is_rejected(self):
         # The first plugin-runtime repair added `assertion `left == right`

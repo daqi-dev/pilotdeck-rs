@@ -386,6 +386,16 @@ def audit():
         except Exception as error:
             rows.append(dict(mutation=name, status='INVALID', reason=str(error)))
     print(json.dumps(rows, indent=2))
+    # #2303 fix-r4 (DS concurrency#1 / MM sibling#1, zero denominator): an
+    # empty table is never "every row checked" -- cases emptied, renamed away
+    # or skipped to zero rows must refuse (2, the never-started exit) instead
+    # of passing hollowly on `int(any([])) == 0`.
+    if not rows:
+        sys.stderr.write('INVALID: audit produced zero rows (cases emptied, '
+                         'renamed away or skipped?); "every row checked" '
+                         'cannot pass on an empty denominator\n')
+        sys.stderr.flush()
+        return 2
     return int(any(row['status'] != 'CHECKED' for row in rows))
 
 
@@ -526,5 +536,15 @@ temporary = summary.with_name(summary.name + '.tmp')
 temporary.write_text(json.dumps(dict(controls=results, counts=counts), indent=2) + '\n')
 temporary.replace(summary)
 print(json.dumps(counts), flush=True)
+# #2303 fix-r4 (zero denominator): an empty run is never "every row
+# killed/compiled" -- the same refusal as the audit exit above, so a cleared
+# cases table cannot publish an all-zero summary and pass on the empty
+# `int(any([])) == 0`.
+if not results:
+    sys.stderr.write('INVALID: run produced zero rows (cases emptied, '
+                     'renamed away or skipped?); "every row killed" '
+                     'cannot pass on an empty denominator\n')
+    sys.stderr.flush()
+    raise SystemExit(2)
 raise SystemExit(int(any(r['status'] != ('COMPILED' if compile_only else 'KILLED')
                         for r in results)))
