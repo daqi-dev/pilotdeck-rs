@@ -770,6 +770,21 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for UpgradeReadGate<S> {
         // #1517: the bytes are only *handed off* — Node's `finish` needs the
         // flush — so the same write also holds the response's in-flight
         // window open until `poll_flush` confirms the drain.
+        // fix-r2: the mirror is set at the hand-off too, not at the
+        // transport's acceptance — Node's `_headerSent` flips at
+        // `res.write`, before the wire accepts a single byte
+        // (`probe-1517-c.json`: a pipelined second response whose head sits
+        // in the JS outputData queue with `res.socket === null` already
+        // reports `headersSent === true`, zero bytes on the wire), so a head
+        // whose first write the transport refuses — a kernel send buffer the
+        // previous traffic filled, parked in hyper's write buffer — still
+        // counts as started and the expiry destroys silently instead of
+        // writing a 408 ahead of it. The mutant reverts to the
+        // byte-accepted condition — the pre-fix-r2 mirror — so the expiry
+        // arms the 408 into the never-accepted head's connection.
+        if !buf.is_empty() && !crate::mutants::on("native-http-headersent-needs-acceptance") {
+            self.response_head_written = true;
+        }
         match Pin::new(&mut self.stream).poll_write(cx, buf) {
             Poll::Ready(Ok(written)) => {
                 if written > 0 {

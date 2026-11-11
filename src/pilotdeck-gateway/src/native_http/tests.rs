@@ -4404,11 +4404,18 @@ async fn unflushed_tail_never_at_gate_withholds_late_head_like_ts() {
 /// (`probe-1517-t3.out` T3b: the +150 s grid passes with the connection
 /// open and no 408, the tail flushes only when the client resumes, the full
 /// body plus terminator arrives, and the close is the post-finish idle
-/// one) — so the stand-by re-arm must not open a window at the frame
-/// hand-off either; it waits for the flush. Binds the negative control
-/// `native-http-standby-rearm-ignores-unflushed` (the stand-by armed at the
-/// hand-off, so the +150 s grid expiry clears the `_headerSent` mirror and
-/// writes the 408 into the still-stuck connection).
+/// one) — so the stand-by re-arm must not open a window while the write
+/// side has not flushed either; the re-arm generation is consumed at the
+/// first `poll_read` after the release only once a flush has cleared the
+/// tail. Binds the negative control
+/// `native-http-standby-rearm-ignores-unflushed` (the mutant drops that
+/// flush condition — the re-arm is consumed at the first `poll_read`
+/// after the release, the pre-fix-r1 shape — so the stand-by deadline
+/// lands on the +150 s grid; there the expiry still finds the
+/// `_headerSent` mirror set, because the release-latched `write_pending`
+/// blocks its clear, and closes the still-stuck connection silently via
+/// `timeout_408_closed` — no 408 is written — so the probe at +150.5 s
+/// reads the latched EOF instead of the quiet window).
 #[tokio::test(start_paused = true)]
 async fn unflushed_tail_no_follow_up_head_opens_no_window_like_ts() {
     manual_clock(async {
@@ -4510,6 +4517,127 @@ async fn unflushed_tail_no_follow_up_head_opens_no_window_like_ts() {
         ended_by_408_close(
             served,
             "the no-follow-up-head connection future ends at the idle close",
+        );
+    })
+    .await;
+}
+
+/// #1517 fix-r2 (review concurrency #1, the never-accepted head): Node sets
+/// `_headerSent` at `res.write` — the hand-off, before the wire accepts a
+/// byte (`probe-1517-c.json`: the pipelined second response whose head sits
+/// in the JS outputData queue with `res.socket === null` reports
+/// `headersSent === true` while the client has received zero bytes) — so a
+/// response head parked behind a full transport still counts as started:
+/// the expiry destroys silently, never a 51-byte 408 ahead of the head. The
+/// parked-from-start write side stands in for a kernel send buffer the
+/// previous traffic filled (the same determinism
+/// `ParkedWriteTransport`'s doc claims for the tail quadrant). Binds the
+/// negative control `native-http-headersent-needs-acceptance` (the mirror
+/// reverts to the byte-accepted condition — the pre-fix-r2 behavior — so
+/// the grid expiry arms the 408 into the never-accepted head's connection
+/// and the close never lands while parked).
+#[tokio::test(start_paused = true)]
+async fn unaccepted_head_grid_destroys_silently_like_ts() {
+    manual_clock(async {
+        let grid_anchor = tokio::time::Instant::now();
+        let (server, mut client) = tokio::io::duplex(4096);
+        let park = WritePark::default();
+        let transport = ParkedWriteTransport {
+            inner: server,
+            park: park.clone(),
+        };
+        let (_stop, stop_rx) = watch::channel(false);
+        // Never released: the response stays in flight, so the follow-up
+        // half head withholds behind it and nothing but the half head's own
+        // deadline can end this connection.
+        let (_release_tx, release_rx) = watch::channel(false);
+        let last = "x".repeat(8192);
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            transport,
+            move |_request, _lease| {
+                let release = release_rx.clone();
+                let last = last.clone();
+                async move {
+                    hyper::Response::builder()
+                        .status(hyper::StatusCode::OK)
+                        .header(hyper::header::CONTENT_TYPE, "text/plain")
+                        .body(held_body("part1-", &last, release))
+                        .map_err(std::io::Error::other)
+                }
+            },
+            stop_rx,
+            None,
+            Some(grid_anchor),
+        ));
+        // Park before the request even lands: from the very start the
+        // transport accepts no byte, so the response head itself — not just
+        // its tail — parks inside hyper's write buffer.
+        park.park();
+        client
+            .write_all(&latin1_bytes(
+                "GET /held HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            ))
+            .await
+            .expect("#1517-f2 write the streaming request");
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // t = +89 s: the follow-up half head. Its deadline (+149 s)
+        // quantizes to +150 s.
+        tokio::time::advance(Duration::from_millis(89_000)).await;
+        client
+            .write_all(&latin1_bytes(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Len",
+            ))
+            .await
+            .expect("#1517-f2 write the follow-up half head");
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // t ≈ +149.9 s: just before the half head's deadline landing — Node
+        // is still open here, and so is the parked lane.
+        tokio::time::advance(Duration::from_millis(60_900)).await;
+        probe_still_open(
+            &mut client,
+            "#1517-f2 the never-accepted head keeps the connection open before the deadline",
+        )
+        .await;
+        // The +150 s grid landing: Node destroys the started response —
+        // `_headerSent` was set at `res.write` — without the 408. The whole
+        // head is still parked inside hyper's write buffer, so the silent
+        // close here is the mirror at the hand-off doing its work.
+        eof_after_idle_close(
+            &mut client,
+            Duration::from_millis(200),
+            "#1517-f2 the never-accepted head's close lands at the +150 s grid point",
+        )
+        .await;
+        park.unpark();
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // The close discarded the parked response wholesale: not one byte
+        // was ever accepted by the transport, so the resumed drain sees
+        // nothing — not the parked 200 head, not the held chunk, and above
+        // all no 51-byte 408 ahead of them (Node's destroy drops the same
+        // queue).
+        let mut remainder = Vec::new();
+        drain_until_closed(
+            &mut client,
+            &mut remainder,
+            8,
+            "the never-accepted head drain",
+        )
+        .await;
+        assert!(
+            remainder.is_empty(),
+            "#1517-f2 the never-accepted head's close discards the parked response — the resumed drain sees no bytes and no 408, got {:?}",
+            latin1_string(&remainder)
+        );
+        let served = task.await.expect("#1517-f2 task join");
+        ended_by_408_close(
+            served,
+            "the never-accepted head's connection future ends at the grid-point close",
         );
     })
     .await;

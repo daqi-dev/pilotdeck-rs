@@ -264,10 +264,13 @@ switches = [
     # next head anywhere on the wire, Node has no headersTimeout window at all
     # (`probe-1517-t3.out` T3b: the +150 s grid passes open, the tail flushes
     # only on the client's resume), so the stand-by re-arm waits for the
-    # flush. The mutant arms the stand-by deadline at the frame hand-off —
-    # the pre-fix-r1 behavior — so the +150 s grid expiry closes the
-    # connection that Node keeps open past its landing: the probe at +150.5 s
-    # reads the latched EOF instead of the quiet window.
+    # flush. The mutant drops the flush condition — the re-arm generation is
+    # consumed at the first `poll_read` after the release (the pre-fix-r1
+    # shape, not at the frame hand-off) — so the stand-by deadline lands on
+    # the +150 s grid; there the release-latched `write_pending` keeps the
+    # `_headerSent` mirror set and the expiry closes the stuck connection
+    # silently (`timeout_408_closed`, no 408 is written): the probe at
+    # +150.5 s reads the latched EOF instead of the quiet window.
     ('native-http-standby-rearm-ignores-unflushed', SOURCE_PROXY,
      'unflushed_tail_no_follow_up_head_opens_no_window_like_ts',
      '#1517 with no follow-up head, no window opens at the grid point while the tail is stuck'),
@@ -282,6 +285,19 @@ switches = [
     ('native-http-flush-clear-off', SOURCE_PROXY,
      'served_follow_up_head_dribble_408s_like_ts',
      'dribbled follow-up head: EOF before the 408 arrived'),
+    # #1517 fix-r2 (review concurrency #1, the never-accepted head): Node
+    # sets `_headerSent` at `res.write` — the hand-off, before the wire
+    # accepts a byte (`probe-1517-c.json`: the pipelined second response
+    # whose head sits in the JS outputData queue reports `headersSent ===
+    # true` with zero client bytes) — so a response head parked behind a full
+    # transport still counts as started and the expiry destroys silently.
+    # The mutant reverts the mirror to the byte-accepted condition — the
+    # pre-fix-r2 behavior — so the grid expiry arms the 51-byte 408 into the
+    # never-accepted head's connection and the close never lands while the
+    # transport is parked.
+    ('native-http-headersent-needs-acceptance', SOURCE_PROXY,
+     'unaccepted_head_grid_destroys_silently_like_ts',
+     "#1517-f2 the never-accepted head's close lands at the +150 s grid point"),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_ws.rs',
