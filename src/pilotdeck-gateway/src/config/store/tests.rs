@@ -309,6 +309,103 @@ async fn failures_keep_snapshot_version_and_only_config_error_diagnostics() {
     assert_eq!(*lock(&events), vec![(1.0, 2.0)]);
 }
 
+/// #1833 A1/A2, the rationale end to end: a binding failure must not report
+/// the loader's `PilotConfigError` class, because only that name replaces the
+/// retained reload diagnostics. TS propagates the raw `YAMLParseError`
+/// (yaml's `parse` throws `doc.errors[0]`), the `TypeError` from
+/// `path.join(bindingId)` and the fs `Error` from the sops read race — the
+/// baseline therefore keeps the previous reload's diagnostics; a Rust-side
+/// default name would clear them.
+#[tokio::test]
+async fn binding_error_classes_keep_the_retained_reload_diagnostics() {
+    fn codes(store: &ConfigStore) -> Vec<String> {
+        store
+            .diagnostics()
+            .iter()
+            .map(|d| {
+                d.get("code")
+                    .and_then(JsValue::as_string)
+                    .unwrap()
+                    .to_utf8()
+                    .unwrap()
+            })
+            .collect()
+    }
+    let root = Root::new();
+    root.write(BASE);
+    let mut options = StoreOptions::new(
+        &root.0,
+        &root.0,
+        Env::from([
+            (
+                "PILOT_HOME".to_owned(),
+                root.0.to_string_lossy().into_owned(),
+            ),
+            (
+                "STAFFDECK_PROJECT_BINDING_ENABLED".to_owned(),
+                "true".to_owned(),
+            ),
+            (
+                "STAFFDECK_FORMAL_API_ORIGIN".to_owned(),
+                "https://staffdeck.invalid".to_owned(),
+            ),
+            ("STAFFDECK_COPY_TENANT_ID".to_owned(), "tenant".to_owned()),
+        ]),
+    );
+    options.project = Some(root.0.to_string_lossy().into_owned());
+    options.loaded_at = Arc::new(|| "1970-01-01T00:00:00.000Z".to_owned());
+    let store = ConfigStore::new(options).expect("#1833 initial load");
+    // Establish the retained diagnostics with a plain config failure first.
+    root.write(&BASE.replace("schemaVersion: 1", "schemaVersion: 2"));
+    let error = store.reload("manual").await.unwrap_err();
+    assert_eq!(
+        error.name, "PilotConfigError",
+        "#1833 the setup failure must be a config diagnostic failure"
+    );
+    assert_eq!(
+        codes(&store),
+        ["CONFIG_SCHEMA_VERSION_UNSUPPORTED"],
+        "#1833 the retained diagnostics start non-empty"
+    );
+    // The binding store enables the bound project; its sops.json is invalid.
+    let staffdeck = root.0.join("staffdeck");
+    std::fs::create_dir_all(staffdeck.join("binding-1")).expect("#1833 binding dirs");
+    let binding_store = format!(
+        r#"{{"version":1,"installationId":"installation","projects":[{{"projectRoot":{},"bindingId":"binding-1","agentId":"agent","status":"bound","origin":"https://staffdeck.invalid","tenantId":"tenant"}}]}}"#,
+        serde_json::to_string(&root.0.to_string_lossy().into_owned()).unwrap()
+    );
+    std::fs::write(staffdeck.join("project-bindings.json"), &binding_store)
+        .expect("#1833 binding store");
+    std::fs::write(staffdeck.join("binding-1/sops.json"), "sops: [unclosed\n")
+        .expect("#1833 sops bundle");
+    let error = store.reload("manual").await.unwrap_err();
+    assert_eq!(
+        error.name, "YAMLParseError",
+        "#1833 the sops yaml failure must keep yaml's own class"
+    );
+    assert_eq!(
+        codes(&store),
+        ["CONFIG_SCHEMA_VERSION_UNSUPPORTED"],
+        "#1833 a YAMLParseError reload keeps the retained diagnostics"
+    );
+    // A non-string bindingId: `path.join`'s TypeError, same rule.
+    std::fs::write(
+        staffdeck.join("project-bindings.json"),
+        binding_store.replace("\"bindingId\":\"binding-1\"", "\"bindingId\":5"),
+    )
+    .expect("#1833 rewrite the binding store");
+    let error = store.reload("manual").await.unwrap_err();
+    assert_eq!(
+        error.name, "TypeError",
+        "#1833 the path.join failure must keep Node's class"
+    );
+    assert_eq!(
+        codes(&store),
+        ["CONFIG_SCHEMA_VERSION_UNSUPPORTED"],
+        "#1833 a TypeError reload keeps the retained diagnostics"
+    );
+}
+
 #[tokio::test]
 async fn panicking_listener_is_isolated() {
     let root = Root::new();

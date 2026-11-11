@@ -301,13 +301,20 @@ pub(crate) fn parse_cors_origins(value: &JsValue) -> Vec<String> {
             .collect(),
         JsValue::Array(items) => items
             .iter()
-            .map(|item| match item {
-                JsValue::String(text) => js_string_value(text),
-                JsValue::Undefined => "undefined".to_owned(),
-                JsValue::Null => "null".to_owned(),
-                JsValue::Bool(value) => value.to_string(),
-                JsValue::Number(number) => crate::dispatch::error_number(*number),
-                _ => "[object Object]".to_owned(),
+            .map(|item| {
+                // `value.map(String)`: the shared joiner keeps a tagged
+                // object's class (`[object Set]`), joins a nested array and
+                // formats numbers like `String()` (`-0` is `"0"`), where this
+                // arm used to be a hand-rolled copy that printed
+                // `[object Object]` for every object and nested array (Node
+                // v22.22.0 probe:
+                // `_tmp/20261112-issue-1833/impl-r1/node-probe/c2-parse-cors-probe.out`).
+                // `corsOrigins` is only constructed by tests today, so the
+                // surface is pinned by unit tests. `String(item)` can also
+                // throw (a too-deep join, an own `toString`), which the TS
+                // constructor propagates; resolve is infallible, so those
+                // entries drop out instead.
+                crate::js_value::display(item).unwrap_or_default()
             })
             .filter(|item| !item.is_empty())
             .collect(),
