@@ -46,14 +46,12 @@ const TYPING_STATUS_TYPING: f64 = 1.0;
 type WeixinConnector =
     hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>;
 
+/// The shared rustls connector (`runtime::model::http`), not a private copy
+/// (#1725 item 9: the copy dropped the connect-timeout setting). The CDN
+/// client in [`super::media`] and the shared IM `http_client` use the same
+/// construction.
 fn weixin_connector() -> WeixinConnector {
-    let mut http = hyper_util::client::legacy::connect::HttpConnector::new();
-    http.enforce_http(false);
-    hyper_rustls::HttpsConnectorBuilder::new()
-        .with_tls_config(crate::runtime::model::http::webpki_client_config())
-        .https_or_http()
-        .enable_http1()
-        .wrap_connector(http)
+    crate::runtime::model::http::https_connector(crate::runtime::model::http::webpki_client_config())
 }
 
 /// TS errors reaching `formatWeixinError` keep their `name`; the formatted
