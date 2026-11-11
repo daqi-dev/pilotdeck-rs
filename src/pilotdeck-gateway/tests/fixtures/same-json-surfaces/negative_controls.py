@@ -360,7 +360,19 @@ def main():
         registered(cases, EXPECTED_NAMES)
     except Exception as error:
         refuse('case roster drifted from the static inventory: ' + repr(error))
-    if not preflight():
+    # #2795 fix-r4（评审 sibling P1 同族跟改，半修补齐）：preflight() 的锚点读
+    # （含 bound() 的 test_safety 读）也要持树锁读——兄弟变异运行器在自己的
+    # write 与 restore 之间可能把变异体留在盘上，无锁读会把核对错在它不拥有
+    # 的源上；锁忙 / 读失败是拒跑（2）。本窗口只包只读预检面，与下方 memory /
+    # mutating_sources 窗口是顺序关系，锁先释放再重取，无同进程嵌套。
+    try:
+        with tree_lock(root, timeout=60):
+            preflight_ok = preflight()
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'tree lock or anchor read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        return 2
+    if not preflight_ok:
         return 2
     # Before the evidence directory is claimed: a drifted budget invariant is
     # "never started", like every other startup refusal (#2425).

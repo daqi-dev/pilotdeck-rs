@@ -115,19 +115,27 @@ def _test_classes():
     A prefix table drifts silently: #1510's
     `test_port_reservation_is_exclusive_across_processes` lives in
     LifecycleTests, but no prefix rule can say so, and a wrong class turns the
-    control into a loader ERROR (INVALID) instead of a verdict.  Parsed once at
-    import, before any case mutates a source.
+    control into a loader ERROR (INVALID) instead of a verdict.  Parsed once
+    per process and cached; #2795 fix-r4（机检钉「读在锁内」实测红）: the
+    parse used to run at import, outside every lock window — a sibling
+    mutation round holds its own write/restore window on this very fixture
+    (the manifest-count-minus-one row mutates it), so the first parse now
+    happens inside preflight()'s tree lock, before any case mutates a source.
     """
+    global TEST_CLASSES
+    if TEST_CLASSES is not None:
+        return TEST_CLASSES
     mapping = {}
     for node in ast.parse(fixture.read_text()).body:
         if isinstance(node, ast.ClassDef):
             for item in node.body:
                 if isinstance(item, ast.FunctionDef) and item.name.startswith('test_'):
                     mapping[item.name] = node.name
+    TEST_CLASSES = mapping
     return mapping
 
 
-TEST_CLASSES = _test_classes()
+TEST_CLASSES = None
 
 
 def bound(test):
@@ -136,7 +144,7 @@ def bound(test):
     # i.e. the synthetic rows NegativeRunnerTests patches in.  preflight()
     # rejects a real row whose test is not defined there, so the fallback can
     # never silently mask a wrong class.
-    classname = TEST_CLASSES.get(test)
+    classname = _test_classes().get(test)
     if classname is None:
         classname = ('LifecycleTests' if test.startswith('test_collector_profile_')
                      else 'NegativeRunnerTests' if test.startswith('test_negative_')
@@ -146,18 +154,30 @@ def bound(test):
 
 def preflight():
     # Read-only: this never executes a mutant or bypasses the HEAD guard.
-    errors = []
-    for name, path, before, after, test in cases:
-        if test not in TEST_CLASSES:
-            errors.append(f'UNKNOWN TEST {name}: {test} is not defined in {fixture.name}')
-        text = path.read_text()
-        if text.count(before) != 1:
-            errors.append(f'STALE ANCHOR {name}: {text.count(before)} matches')
-        else:
-            try:
-                compile(text.replace(before, after, 1), str(path), 'exec')
-            except SyntaxError as error:
-                errors.append(f'INVALID compile {name}: {error}')
+    # #2795 fix-r4（评审 sibling P1 同族跟改，半修补齐）：本文件已给变异臂加
+    # tree_lock，唯独 preflight() 留在锁外——兄弟变异运行器在自己的 write 与
+    # restore 之间可能把变异体留在盘上，无锁读会把核对错在它不拥有的源上；
+    # 锁忙 / 读失败是拒跑（2）。本窗口只包只读预检面，与下方 memory /
+    # mutating_sources 窗口是顺序关系，锁先释放再重取，无同进程嵌套。
+    try:
+        with tree_lock(root, timeout=60):
+            errors = []
+            test_classes = _test_classes()
+            for name, path, before, after, test in cases:
+                if test not in test_classes:
+                    errors.append(f'UNKNOWN TEST {name}: {test} is not defined in {fixture.name}')
+                text = path.read_text()
+                if text.count(before) != 1:
+                    errors.append(f'STALE ANCHOR {name}: {text.count(before)} matches')
+                else:
+                    try:
+                        compile(text.replace(before, after, 1), str(path), 'exec')
+                    except SyntaxError as error:
+                        errors.append(f'INVALID compile {name}: {error}')
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'tree lock or anchor read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        raise SystemExit(2)
     if errors:
         print('\n'.join(errors), file=sys.stderr)
         raise SystemExit(2)

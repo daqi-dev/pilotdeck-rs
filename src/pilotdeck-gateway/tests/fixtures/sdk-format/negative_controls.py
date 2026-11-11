@@ -11,7 +11,8 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic
+from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic, tree_lock
+
 from negative_suite import ReceiptRun, judge, passed
 
 root = Path(__file__).resolve().parents[5]
@@ -165,12 +166,24 @@ def main():
         if not mutations:
             # #1364: an empty manifest must fail closed, not "0 anchors checked".
             raise SystemExit('#1097 anchors: empty mutation manifest; refusing to pass')
-        failures = []
-        for row in mutations:
-            try:
-                check(row)
-            except Exception as error:
-                failures.append(str(error))
+        # #2795 fix-r4（评审 sibling P1 同族跟改）：sdk 族互变异同一批源
+        # （common/sdk_exit.rs、sdk/turn.rs、sdk/transport.rs 等），锚点核对要持
+        # 树锁读——兄弟变异运行器在自己的 write 与 restore 之间可能把变异体
+        # 留在盘上，无锁读会把核对错在它不拥有的源上；锁忙 / 读失败是拒跑
+        # （2）。本窗口只包只读核对面，与后续 mutating_sources 是顺序关系，
+        # 锁先释放再重取，无同进程嵌套。
+        try:
+            with tree_lock(root, timeout=60):
+                failures = []
+                for row in mutations:
+                    try:
+                        check(row)
+                    except Exception as error:
+                        failures.append(str(error))
+        except (TimeoutError, OSError, UnicodeDecodeError) as error:
+            print(f'tree lock or anchor read failed: '
+                  f'{type(error).__name__}: {error}', file=sys.stderr)
+            raise SystemExit(2)
         print('\n'.join(failures) if failures else f'#1097 {len(mutations)} anchors checked')
         return int(bool(failures))
     compile_only = '--compile-only' in args

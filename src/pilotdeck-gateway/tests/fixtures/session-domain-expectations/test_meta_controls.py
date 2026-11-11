@@ -25,7 +25,63 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import negative_controls as gate
 
 
+class _RecordingTreeLock:
+    """#2795 fix-r4（评审建议①）：真 TreeLock 会 os.open(O_RDWR|O_CREAT) 落
+    ``.negative-source.lock``——被下面的只读审计钩子判写（#1279 standalone
+    红过），且让本套件依赖锁文件空闲。与 test_negative_roster_guards.py 的
+    ``_RecordingTreeLock`` 同形：记录锁获取/释放与读的相对顺序，只验「读面在
+    锁内」的语义，不落真锁文件。"""
+
+    def __init__(self, events):
+        self.events = events
+        self.held = False
+        self.calls = []
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return self
+
+    def __enter__(self):
+        self.events.append('lock-enter')
+        self.held = True
+        return self
+
+    def __exit__(self, *_exc):
+        self.held = False
+        self.events.append('lock-exit')
+        return False
+
+
+def _pinned_anchor_reads(events, lock):
+    """Patch ``Path.read_text`` so every anchor read records lock-held state.
+
+    A read outside the lock window is the race fix-r3 closed (a sibling
+    runner's mutant between its write and restore phases), so it lands in
+    ``events`` as an ``unlocked-read`` the assertions can reject.
+    """
+    real_read_text = Path.read_text
+
+    def recording_read_text(self, *args, **kwargs):
+        if not lock.held:
+            events.append(('unlocked-read', str(self)))
+        return real_read_text(self, *args, **kwargs)
+
+    return patch.object(Path, 'read_text', recording_read_text)
+
+
 class DriftTests(unittest.TestCase):
+    def setUp(self):
+        # #2795 fix-r4（评审建议①）：main() 的预检（panel_table）与 check_anchors
+        # 都取真树锁——真 TreeLock 会 os.open(O_RDWR|O_CREAT) 落锁文件，被
+        # test_list_is_read_only / test_standalone_check_anchors 的只读审计钩子
+        # 判写，也让整套件依赖 .negative-source.lock 空闲。统一换成记录桩；
+        # 「读面在锁内」由 _pinned_anchor_reads 单测钉住。
+        self.lock_events = []
+        self.lock = _RecordingTreeLock(self.lock_events)
+        patcher = patch.object(gate, 'tree_lock', self.lock)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     @classmethod
     def setUpClass(cls):
         cls.expectations = gate.panel_table('EXPECTATION_CASES')
@@ -143,12 +199,18 @@ class DriftTests(unittest.TestCase):
         selected = gate.MUTATIONS[:1]
         with patch.object(sys, 'argv', ['negative_controls.py', '--list', '--check-anchors',
                                       '--only', selected[0][0]]), \
+                _pinned_anchor_reads(self.lock_events, self.lock), \
                 patch.object(gate, 'check_anchors', wraps=gate.check_anchors) as anchors, \
                 contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertTrue(gate.main() == 0,
                             '#1190 list-anchors: valid anchors and listing must pass')
         self.assertTrue(anchors.call_count == 1 and anchors.call_args.args == (selected,),
                         '#1190 list-anchors: selected anchors must execute before listing')
+        unlocked = [event for event in self.lock_events
+                    if isinstance(event, tuple) and event[0] == 'unlocked-read']
+        self.assertTrue(not unlocked and 'lock-enter' in self.lock_events,
+                        '#1190 list-anchors: the anchor read must happen inside '
+                        f'the tree lock window: {self.lock_events!r}')
         report, separator, payload = output.getvalue().partition('\n')
         self.assertTrue(report == '1 anchors: ok' and bool(separator),
                         '#1190 list-anchors: anchor report must precede listing')
@@ -228,7 +290,11 @@ class DriftTests(unittest.TestCase):
             raise AssertionError(f'#1279 standalone-anchors: filesystem writes forbidden: {event}')
 
         sys.addaudithook(audit)
+        # #2795 fix-r4（评审建议①）：真 TreeLock 的 os.open(O_RDWR|O_CREAT) 会被
+        # 上面的审计钩子判写（实测红：filesystem writes forbidden: open）；setUp
+        # 已换成 _RecordingTreeLock 记录桩，只验「读面在锁内」。
         with patch.object(sys, 'argv', ['negative_controls.py', '--check-anchors']), \
+                _pinned_anchor_reads(self.lock_events, self.lock), \
                 patch.object(gate, 'check_anchors', wraps=gate.check_anchors) as anchors, \
                 contextlib.redirect_stdout(io.StringIO()) as output, \
                 contextlib.redirect_stderr(io.StringIO()) as errors:
@@ -238,6 +304,23 @@ class DriftTests(unittest.TestCase):
                                 '#1279 standalone-anchors: rc must be 0 without --output/--source')
             finally:
                 active = False
+        unlocked = [event for event in self.lock_events
+                    if isinstance(event, tuple) and event[0] == 'unlocked-read']
+        self.assertTrue(not unlocked,
+                        '#2795 every anchor read must happen with the tree lock '
+                        f'held: {unlocked!r}')
+        self.assertTrue(self.lock_events
+                        and self.lock_events[0] == 'lock-enter'
+                        and self.lock_events[-1] == 'lock-exit',
+                        f'#2795 the lock must wrap the whole anchor loop: '
+                        f'{self.lock_events!r}')
+        # 两次顺序窗口（panel_table 预检 + check_anchors），无嵌套；
+        # 每次都必须锁 fixture 根 + 60 s 有界等待。
+        self.assertTrue(len(self.lock.calls) >= 2
+                        and all(call == ((gate.ROOT,), {'timeout': 60})
+                                for call in self.lock.calls),
+                        f'#2795 the anchor preflight must lock the fixture root '
+                        f'with the 60 s bounded wait: {self.lock.calls!r}')
         self.assertGreater(len(gate.MUTATIONS), 0,
                            '#1364 empty-anchors: the shipped mutation table must not be empty')
         self.assertTrue(anchors.call_count == 1

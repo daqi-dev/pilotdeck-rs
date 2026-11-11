@@ -341,8 +341,19 @@ def main():
                              'the delivered post-commit run (a dirty rehearsal may '
                              'pass git stash create)')
     args = parser.parse_args()
-    expectation_cases = panel_table('EXPECTATION_CASES')
-    calibration_cases = panel_table('CALIBRATION_CASES')
+    # #2795 fix-r4（清单外同形，C 节实测红）：panel_table 的两处读必须在树锁内
+    # ——gateway-entry-guard 变异同一 controls/session_domain.py，兄弟变异轮的
+    # write/restore 窗口会把变异体留在盘上，无锁解析会把绑定核对错在它不拥有
+    # 的源上；锁忙 / 读失败是拒跑（2）。本窗口只包只读预检面，与后续
+    # check_anchors / 变异轮是顺序关系，锁先释放再重取，无同进程嵌套。
+    try:
+        with tree_lock(ROOT, timeout=60):
+            expectation_cases = panel_table('EXPECTATION_CASES')
+            calibration_cases = panel_table('CALIBRATION_CASES')
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'tree lock or anchor read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        return 2
     counts = derived_counts(expectation_cases, calibration_cases, MUTATIONS)
     drift = [('BINDING DRIFT', message) for message in
              check_bindings(expectation_cases, MUTATIONS, BOUND, UNAFFECTED)]

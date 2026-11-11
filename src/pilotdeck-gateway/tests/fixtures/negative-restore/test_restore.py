@@ -235,7 +235,11 @@ class McpRestoreTests(RestoreTests):
         module = MODULES[self.suite_name]
         with tempfile.TemporaryDirectory(prefix='pdrs-1037-main-') as directory:
             output = Path(directory) / 'evidence'
-            with patch.object(module, 'audit'), \
+            # #2795 fix-r4（CI 红）：fix-r3 给 mcp-http-encoding main() 加了
+            # 「audit(rows) 非 0 即 rc 2」；裸 patch 返回 MagicMock（真值）会让
+            # main 在 compile_controls 之前提前返回，compile.call_count 变 0。
+            # 桩成 0（锚点干净）才能测到 run_cases 失败的传播路径。
+            with patch.object(module, 'audit', return_value=0), \
                     patch.object(module, 'compile_controls', return_value=True) as compiled, \
                     patch.object(module, 'run_cases', return_value=1) as run, \
                     patch.dict(os.environ, {'CARGO_TARGET_DIR': str(Path(directory) / 'unused')}), \

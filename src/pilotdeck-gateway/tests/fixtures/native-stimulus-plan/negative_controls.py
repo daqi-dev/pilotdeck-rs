@@ -155,16 +155,27 @@ def full_test(test):
 
 
 def preflight():
-    errors = []
-    for name, path, before, after, _test in cases:
-        text = path.read_text()
-        if text.count(before) != 1:
-            errors.append('STALE ANCHOR ' + name)
-        else:
-            try:
-                compile(text.replace(before, after, 1), str(path), 'exec')
-            except SyntaxError as error:
-                errors.append('INVALID compile ' + name + ': ' + str(error))
+    # #2795 fix-r4（评审 sibling P1 同族跟改，半修补齐）：本文件已给变异臂加
+    # tree_lock，唯独 preflight() 留在锁外——兄弟变异运行器在自己的 write 与
+    # restore 之间可能把变异体留在盘上，无锁读会把核对错在它不拥有的源上；
+    # 锁忙 / 读失败是拒跑（2）。本窗口只包只读预检面，与后续 memory /
+    # mutating_sources 窗口是顺序关系，锁先释放再重取，无同进程嵌套。
+    try:
+        with tree_lock(root, timeout=60):
+            errors = []
+            for name, path, before, after, _test in cases:
+                text = path.read_text()
+                if text.count(before) != 1:
+                    errors.append('STALE ANCHOR ' + name)
+                else:
+                    try:
+                        compile(text.replace(before, after, 1), str(path), 'exec')
+                    except SyntaxError as error:
+                        errors.append('INVALID compile ' + name + ': ' + str(error))
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'tree lock or anchor read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        raise SystemExit(2)
     if errors:
         raise SystemExit('\n'.join(errors))
     print(f'#1368 {len(cases)} unique anchors; all Python mutants compile')

@@ -1236,6 +1236,395 @@ class SnapshotAuditReadSurface(unittest.TestCase):
                         f'and the read failure: {run.stderr!r}')
 
 
+# ---------------------------------------------------------------------------
+# #2795 fix-r4 (D 节)：只读锚点入口名册——「读必须发生在锁窗口内」机检。
+# fix-r2/fix-r3 给个把入口的 --audit / --check-anchors 补了树锁（manager /
+# snapshot 有上面的专用机检），fix-r4 把 B 节全部入口 + fix-r3 已修的 21 个
+# 入口钉成一张名册：每个入口用真实 main()（或在 import 期分发的入口用真实
+# 源码 exec）驱动其只读锚点模式，只有 ``tree_lock`` 和读面被记名——
+# 锁外任何 ``Path.read_text`` / ``read_bytes`` 都是红。名册的登记签名是
+# 拒跑消息本身（``tree lock or anchor read failed`` / ``tree lock or
+# read failed`` / ``tree lock or stale read failed``），扫描双向保真：长出
+# 同形防务的入口不登记就红（防下批再漏），登记的入口不存在也红。
+# ---------------------------------------------------------------------------
+
+# The refusal message every family entry prints on a busy lock or a failed
+# read. Three spellings exist (fix-r4's neutral prefix, fix-r3's mode-qualified
+# forms, and issue-2495's own stale-scan wording from #2590 fix-r3b); a new
+# same-family entry must match one of them or the scan stays blind to it.
+READ_SURFACE_MARKER = re.compile(
+    r'''tree lock or (?:anchor read|read|stale read) failed''')
+
+
+class ReadSurfaceSpec:
+    """One roster row: how to drive an entry's read-only anchor surface.
+
+    ``argv`` drives the entry's own check/audit mode; ``root_name`` is the
+    module attribute that names the entry's tree root (ROOT / root / REPO /
+    repo -- the entries never agreed); ``dispatch_at_exec`` marks the entries
+    whose dispatch runs at import time (no ``__main__`` guard: output-schema,
+    task-budget-zero, js-math-zero, session-drop-release, session-factory,
+    turn-runner/*) -- loading them with the test runner's own argv would start
+    a mutation round, so their source executes with the check argv and the
+    lock seam already patched; ``ok_codes`` lists the clean-run exit codes
+    (workspace-pristine keeps two pre-existing #1666 stale anchors whose
+    ``--check`` legitimately reports them as rc 1 -- recorded in RESULT).
+    """
+
+    def __init__(self, argv, root_name, dispatch_at_exec=False, ok_codes=(0,)):
+        self.argv = tuple(argv)
+        self.root_name = root_name
+        self.dispatch_at_exec = dispatch_at_exec
+        self.ok_codes = tuple(ok_codes)
+
+
+READ_SURFACE_ROSTER = {
+    # --check families (fix-r4 B 节，评审 sibling P1 同族跟改).
+    'attach-followups-a/negative_controls.py': ReadSurfaceSpec(['--check'], 'ROOT'),
+    'attach-twopass-1460/negative_controls.py': ReadSurfaceSpec(['--check'], 'ROOT'),
+    'host-model-port/negative_controls.py': ReadSurfaceSpec(['--check'], 'ROOT'),
+    'live-e2e-tmpdir/negative_controls.py': ReadSurfaceSpec(['--check'], 'ROOT'),
+    'mode-routing/negative_controls.py': ReadSurfaceSpec(['--check'], 'ROOT'),
+    'native-loop-stimulus/negative_controls.py': ReadSurfaceSpec(['--check'], 'ROOT'),
+    'native-process/negative_controls.py': ReadSurfaceSpec(['--check'], 'ROOT'),
+    'native-registry-switch/negative_controls.py': ReadSurfaceSpec(['--check'], 'ROOT'),
+    'native-storage-stimulus/negative_controls.py': ReadSurfaceSpec(['--check'], 'ROOT'),
+    'native-ws-entry/negative_controls.py': ReadSurfaceSpec(['--check'], 'ROOT'),
+    'switch-state-machine/negative_controls.py': ReadSurfaceSpec(['--check'], 'ROOT'),
+    'workspace-pristine/negative_controls.py': ReadSurfaceSpec(
+        ['--check'], 'ROOT', ok_codes=(0, 1)),
+    'issue-297/negative_controls.py': ReadSurfaceSpec(['--check'], 'root'),
+    'issue-297-domain-fold/negative_controls.py': ReadSurfaceSpec(['--check'], 'root'),
+    'sdk-cli-lifecycle/negative_controls.py': ReadSurfaceSpec(['--check'], 'root'),
+    'sdk-format/negative_controls.py': ReadSurfaceSpec(['--check'], 'root'),
+    'sdk-run/negative_controls.py': ReadSurfaceSpec(['--check'], 'root'),
+    'sdk-sessions-list/negative_controls.py': ReadSurfaceSpec(['--check'], 'root'),
+    'sdk-sessions-messages/negative_controls.py': ReadSurfaceSpec(['--check'], 'root'),
+    'sdk-settings/negative_controls.py': ReadSurfaceSpec(['--check'], 'root'),
+    'sdk-terminal/negative_controls.py': ReadSurfaceSpec(['--check'], 'root'),
+    'sdk-mcp-session-tools/negative_controls.py': ReadSurfaceSpec(['--check'], 'ROOT'),
+    'js-math-zero/negative.py': ReadSurfaceSpec(['--check'], 'root', dispatch_at_exec=True),
+    'task-budget-zero/negative.py': ReadSurfaceSpec(['--check'], 'root', dispatch_at_exec=True),
+    # --check-anchors families (fix-r3 的 21 个入口 + fix-r4 同形).
+    'closure_guard_negative.py': ReadSurfaceSpec(['--check-anchors'], 'REPO'),
+    'p01-preflight/negative_controls.py': ReadSurfaceSpec(['--check-anchors'], 'REPO'),
+    'gateway-entry-guard/negative_controls.py': ReadSurfaceSpec(['--check-anchors'], 'ROOT'),
+    'parity-lock-release/negative_controls.py': ReadSurfaceSpec(['--check-anchors'], 'ROOT'),
+    'session-domain-expectations/negative_controls.py': ReadSurfaceSpec(
+        ['--check-anchors'], 'ROOT'),
+    'session-domain-lock-release/negative_controls.py': ReadSurfaceSpec(
+        ['--check-anchors'], 'ROOT'),
+    'session-domain-native/negative_controls.py': ReadSurfaceSpec(
+        ['--check-anchors'], 'ROOT'),
+    'handle-path-macos/negative_controls.py': ReadSurfaceSpec(['--check'], 'ROOT'),
+    'mcp-gateway/negative_controls.py': ReadSurfaceSpec(['--check-anchors'], 'root'),
+    'native-collation/negative_controls.py': ReadSurfaceSpec(['--check-anchors'], 'root'),
+    'native-session-e2e/negative_controls.py': ReadSurfaceSpec(['--check-anchors'], 'root'),
+    'native-stimulus-plan/negative_controls.py': ReadSurfaceSpec(['--check-anchors'], 'root'),
+    'native-witness/negative.py': ReadSurfaceSpec(['--check-anchors'], 'root'),
+    'same-json-surfaces/negative_controls.py': ReadSurfaceSpec(['--check-anchors'], 'root'),
+    'skills-external/negative_controls.py': ReadSurfaceSpec(['--check-anchors'], 'root'),
+    'utf16-residual-sort/negative_controls.py': ReadSurfaceSpec(['--check-anchors'], 'root'),
+    'model-http-encoding/negative.py': ReadSurfaceSpec(['--check-anchors'], 'root'),
+    'output-schema/negative.py': ReadSurfaceSpec(
+        ['--check-anchors'], 'repo', dispatch_at_exec=True),
+    # --audit families (fix-r2/fix-r3 先例 + fix-r4 同形).
+    'manager-gateway/negative_controls.py': ReadSurfaceSpec(['--audit'], 'root'),
+    'snapshot-projection/negative_controls.py': ReadSurfaceSpec(['--audit'], 'ROOT'),
+    'mcp-http-corrupt-body/negative_controls.py': ReadSurfaceSpec(['--audit'], 'root'),
+    'mcp-http-encoding/negative.py': ReadSurfaceSpec(['--audit'], 'root'),
+    'permission-mode-surrogate/negative_controls.py': ReadSurfaceSpec(['--audit'], 'root'),
+    'transcript-trim/negative_controls.py': ReadSurfaceSpec(['--audit'], 'root'),
+    'session-factory/negative_controls.py': ReadSurfaceSpec(
+        ['--audit'], 'root', dispatch_at_exec=True),
+    'session-factory/append-delta/negative_controls.py': ReadSurfaceSpec(
+        ['--audit'], 'root'),
+    'session-factory/projection-cache/negative_controls.py': ReadSurfaceSpec(
+        ['--audit'], 'root'),
+    'session-drop-release/negative_controls.py': ReadSurfaceSpec(
+        ['--audit'], 'root', dispatch_at_exec=True),
+    'turn-runner/forward_negative.py': ReadSurfaceSpec(
+        ['--audit'], 'root', dispatch_at_exec=True),
+    'turn-runner/integrity_negative.py': ReadSurfaceSpec(
+        ['--audit'], 'root', dispatch_at_exec=True),
+    # issue-2495: #2590 fix-r3b 的同族先例，拒跑消息是自己的 stale 措辞；
+    # 名册登记后同样被「锁内读」机检覆盖（其专用 mismatch 机检在
+    # RegisteredEntryRosterGuard，二者互补不重复）。
+    'issue-2495/negative_controls.py': ReadSurfaceSpec(['--check'], 'ROOT'),
+}
+
+
+class ReadSurfaceDrive:
+    """One driven read-only run of a roster entry's real check/audit mode."""
+
+    def __init__(self, code, stdout, stderr, events, lock_calls, root):
+        self.code = code
+        self.stdout = stdout
+        self.stderr = stderr
+        self.events = events
+        self.lock_calls = lock_calls
+        self.root = root
+
+
+# The in-drive half of the read-surface machine check. It runs as its own
+# ``python3 -I`` process because four roster entries (native-session-e2e,
+# native-stimulus-plan, native-witness, same-json-surfaces) refuse any
+# non-isolated interpreter at module top -- the roster drives every entry
+# the same way, through a real isolated interpreter with a real argv, which
+# is also closer to how CI runs the entries than an in-process main() call.
+# Only the read surface's seams are stubbed: ``negative_process.tree_lock``
+# becomes a recording fake (refusing on a busy lock) and ``Path.read_text``
+# / ``Path.read_bytes`` record every read that happens with the lock not
+# held. The argv parsing, the roster checks, the real anchors and the
+# refusal shapes all run through the entry's real code; no cargo, no tree
+# mutation, no evidence directory. The driver prints exactly one JSON line.
+_READ_SURFACE_DRIVER = '''
+import importlib.util
+import io
+import json
+import os
+import pathlib
+import sys
+from contextlib import redirect_stdout, redirect_stderr
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+fixtures = pathlib.Path(payload["fixtures"])
+entry_dir = (fixtures / payload["script"]).parent
+# A real script launch puts the entry's own directory on sys.path (for
+# turn-runner's _negative_common); ``-I`` strips it, so put it back.
+sys.path.insert(0, str(fixtures))
+sys.path.insert(0, str(entry_dir))
+import negative_process
+
+events = []
+
+class RecordingTreeLock:
+    def __init__(self, busy):
+        self.busy = busy
+        self.held = False
+        self.calls = []
+    def __call__(self, *args, **kwargs):
+        self.calls.append([[str(arg) for arg in args], kwargs])
+        return self
+    def __enter__(self):
+        if self.busy:
+            raise TimeoutError("read-surface drive: lock timeout (#2795 fix-r4)")
+        events.append("lock-enter")
+        self.held = True
+        return self
+    def __exit__(self, *_exc):
+        self.held = False
+        events.append("lock-exit")
+        return False
+
+lock = RecordingTreeLock(payload["busy"])
+real_read_text = pathlib.Path.read_text
+real_read_bytes = pathlib.Path.read_bytes
+
+def pinned_read_text(self, *args, **kwargs):
+    if not lock.held:
+        events.append(["unlocked-read", "read_text", str(self)])
+    return real_read_text(self, *args, **kwargs)
+
+def pinned_read_bytes(self, *args, **kwargs):
+    # output-schema audits byte anchors; the same held-lock pin must sit on
+    # the bytes read, not only on the text one.
+    if not lock.held:
+        events.append(["unlocked-read", "read_bytes", str(self)])
+    return real_read_bytes(self, *args, **kwargs)
+
+module = None
+code = "driver: the entry did not exit"
+stdout, stderr = io.StringIO(), io.StringIO()
+os.environ.update(payload["env"])
+sys.argv = [payload["wrapper"], *payload["argv"]]
+pathlib.Path.read_text = pinned_read_text
+pathlib.Path.read_bytes = pinned_read_bytes
+try:
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        entry = fixtures / payload["script"]
+        spec = importlib.util.spec_from_file_location("read_surface_entry", entry)
+        module = importlib.util.module_from_spec(spec)
+        saved = sys.path[:]
+        try:
+            negative_process.tree_lock = lock
+            spec.loader.exec_module(module)
+        finally:
+            sys.path[:] = saved
+        if not payload["dispatch_at_exec"]:
+            module.tree_lock = lock
+            code = module.main()
+        else:
+            code = "dispatch ran to import completion without exiting"
+except SystemExit as error:
+    # ``raise SystemExit()`` (no code) is a process exit status of 0; a
+    # string code is a usage error the assertions reject by shape.
+    if error.code is None:
+        code = 0
+    elif isinstance(error.code, int):
+        code = error.code
+    else:
+        code = "sys.exit(%r)" % (error.code,)
+except (TimeoutError, OSError, UnicodeDecodeError) as error:
+    # A refusal must be a returned 2 with the family message, never an
+    # exception escaping the entry (a bare traceback reads as rc 1 on the
+    # host and carries no dedicated refusal message).
+    code = "uncaught %s: %s" % (type(error).__name__, error)
+except ValueError as error:
+    code = "uncaught ValueError: %s" % (error,)
+finally:
+    pathlib.Path.read_text = real_read_text
+    pathlib.Path.read_bytes = real_read_bytes
+root = getattr(module, payload["root_name"], None)
+print(json.dumps({
+    "code": code,
+    "stdout": stdout.getvalue(),
+    "stderr": stderr.getvalue(),
+    "events": events,
+    "lock_calls": lock.calls,
+    "root": None if root is None else str(root),
+}))
+'''
+
+
+def _drive_read_surface(testcase, script, spec, *, busy=False):
+    """Drive one roster entry's read-only anchor surface through real code."""
+    base = Path(tempfile.mkdtemp(prefix='negctl-2795r4-'))
+    testcase.addCleanup(shutil.rmtree, base, ignore_errors=True)
+    driver = base / 'read-surface-driver.py'
+    driver.write_text(_READ_SURFACE_DRIVER)
+    payload = base / 'payload.json'
+    payload.write_text(json.dumps({
+        'fixtures': str(FIXTURES),
+        'script': script,
+        'argv': list(spec.argv),
+        'busy': busy,
+        'dispatch_at_exec': spec.dispatch_at_exec,
+        'root_name': spec.root_name,
+        'wrapper': str(base / 'wrapper-launch.py'),
+        'env': _environment(base),
+    }))
+    try:
+        result = subprocess.run(
+            [sys.executable, '-I', '-B', str(driver), str(payload)],
+            cwd=str(FIXTURES), capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        return ReadSurfaceDrive('driver timeout after 300 s', '', '', [], [], None)
+    if result.returncode != 0:
+        return ReadSurfaceDrive(
+            f'driver exit {result.returncode}: {result.stderr[-400:]!r}',
+            result.stdout, result.stderr, [], [], None)
+    report = json.loads(result.stdout)
+    return ReadSurfaceDrive(report['code'], report['stdout'], report['stderr'],
+                            report['events'], report['lock_calls'],
+                            report['root'])
+
+
+class ReadOnlyAnchorReadSurfaceRoster(unittest.TestCase):
+    """The read-only anchor entry roster: every read happens inside the lock.
+
+    Each test loops the whole register so a row cannot be added without
+    inheriting both pins (reads-inside-the-lock and the busy-lock refusal),
+    and the scan keeps the register honest in both directions: an entry that
+    grows the family refusal without registering fails the scan, and a
+    registered entry that stops matching the signature fails it the same way
+    (the defence left the source, so the register row is stale).
+    """
+
+    def test_registered_entries_exist(self):
+        for script, spec in READ_SURFACE_ROSTER.items():
+            with self.subTest(script=script):
+                self.assertTrue((FIXTURES / script).is_file(),
+                                f'#2795 {script} is registered but does not exist')
+                # A vacuous row disarms the loop assertions silently: the
+                # argv, the root name and the ok codes must all be real.
+                self.assertTrue(spec.argv and spec.root_name and spec.ok_codes,
+                                f'#2795 {script}: the roster row must carry a '
+                                'mode argv, a root constant name and clean-run '
+                                'exit codes')
+
+    def test_every_read_only_anchor_entry_is_registered(self):
+        found = {str(path.relative_to(FIXTURES))
+                 for path in FIXTURES.rglob('*.py')
+                 if not path.name.startswith('test_')
+                 and READ_SURFACE_MARKER.search(path.read_text(encoding='utf-8'))}
+        self.assertTrue(found == set(READ_SURFACE_ROSTER),
+                        f'#2795 every entry whose read-only anchor surface '
+                        f'refuses through the family message must be '
+                        f'machine-checked through this roster '
+                        f'(unregistered={sorted(found - set(READ_SURFACE_ROSTER))} '
+                        f'stale={sorted(set(READ_SURFACE_ROSTER) - found)})')
+
+    def test_the_scan_detects_a_new_family_entry(self):
+        # The kill shape the scan exists for: the next batch adds the same
+        # family defence to another entry and forgets the register row. The
+        # predicate is demonstrated on a synthetic tree (never the real one).
+        with tempfile.TemporaryDirectory(prefix='negctl-2795r4-scan-') as base:
+            synthetic = Path(base) / 'new-family' / 'negative_controls.py'
+            synthetic.parent.mkdir()
+            synthetic.write_text(
+                "print('tree lock or anchor read failed: demo')\n")
+            found = {str(path.relative_to(base))
+                     for path in Path(base).rglob('*.py')
+                     if not path.name.startswith('test_')
+                     and READ_SURFACE_MARKER.search(path.read_text(encoding='utf-8'))}
+        self.assertTrue(found == {'new-family/negative_controls.py'}
+                        and 'new-family/negative_controls.py'
+                        not in READ_SURFACE_ROSTER,
+                        '#2795 the scan predicate must flag a new same-family '
+                        'entry, which the register test above then reports as '
+                        'unregistered (red)')
+
+    def test_each_entry_reads_only_inside_the_tree_lock(self):
+        repo_root = str(FIXTURES.parents[3])
+        for script, spec in sorted(READ_SURFACE_ROSTER.items()):
+            with self.subTest(script=script):
+                run = _drive_read_surface(self, script, spec)
+                self.assertIn(run.code, spec.ok_codes,
+                              f'#2795 {script}: the clean read-only run must '
+                              f'exit in {spec.ok_codes}, got {run.code!r}; '
+                              f'stderr={run.stderr[:400]!r}')
+                unlocked = [event for event in run.events
+                           if isinstance(event, list)]
+                self.assertTrue(not unlocked,
+                                f'#2795 {script}: every anchor read must happen '
+                                f'with the shared tree lock held (a sibling '
+                                f'runner may have a mutant on disk between its '
+                                f'write and restore phases): {unlocked[:3]!r}')
+                self.assertTrue(run.events
+                                and run.events[0] == 'lock-enter'
+                                and run.events[-1] == 'lock-exit',
+                                f'#2795 {script}: the lock must wrap the reads, '
+                                f'not merely be taken: {run.events!r}')
+                # The lock argument is the pin the drive exists for: the
+                # entry's own module-level root const (ROOT / root / REPO /
+                # repo -- they never agreed), which is always the repo root,
+                # always with the 60 s bounded wait.
+                self.assertTrue(run.root == repo_root,
+                                f'#2795 {script}: {spec.root_name} must name '
+                                f'the repo root {repo_root}, got {run.root!r}')
+                self.assertTrue(run.lock_calls
+                                and all(call == [[run.root], {'timeout': 60}]
+                                        for call in run.lock_calls),
+                                f'#2795 {script}: the read surface must lock '
+                                f'the entry\'s own tree root with the 60 s '
+                                f'bounded wait, got {run.lock_calls!r}')
+
+    def test_each_entry_refuses_when_the_tree_lock_is_busy(self):
+        for script, spec in sorted(READ_SURFACE_ROSTER.items()):
+            with self.subTest(script=script):
+                run = _drive_read_surface(self, script, spec, busy=True)
+                self.assertTrue(run.code == 2,
+                                f'#2795 {script}: a busy tree lock is a '
+                                f'refusal to start (2), got {run.code!r}')
+                self.assertIn('tree lock or', run.stderr,
+                              f'#2795 {script}: the refusal must name the '
+                              f'lock wait on stderr: {run.stderr[:400]!r}')
+                self.assertTrue(run.events == [],
+                                f'#2795 {script}: a refused run must read no '
+                                f'anchors: {run.events!r}')
+
+
 class RecordingRegistry:
     """Delegate to the real registry, recording the identity ``for_script`` got."""
 

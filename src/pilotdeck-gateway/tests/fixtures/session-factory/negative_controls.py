@@ -395,21 +395,23 @@ def row_name(row):
 
 
 def audit():
-    # #1210: the README's declared mutation count must match the table, so a
-    # future drift fails --audit instead of waiting for a reviewer.
-    readme = (Path(__file__).with_name('README.md')).read_text()
-    declared = re.search(r'(\d+) 项变异绑定完整', readme)
-    if declared is None or int(declared.group(1)) != len(cases):
-        raise SystemExit(f'#1210 README mutation count drift: README says '
-                         f'{declared and declared.group(1)}, table has {len(cases)}')
     rows = []
     # #2795 fix-r3（sibling P1 同族跟改，manager-gateway fix-r2 先例）：锚点核对
     # 也要持树锁读——兄弟变异运行器在自己的 write 与 restore 之间可能把变异体
     # 留在盘上，无锁读会把核对错在它不拥有的源上；锁忙 / 读失败是整轮拒跑
     # （2），不能折成 INVALID 行（宿主会读成 rc 1 的假 FAIL）。audit 是
     # --audit 独立模式，与变异轮无同进程嵌套。
+    # #2795 fix-r4（清单外同形）：README 变异数核对也是树内读，一并入锁窗。
     try:
         with tree_lock(root, timeout=60):
+            # #1210: the README's declared mutation count must match the table,
+            # so a future drift fails --audit instead of waiting for a reviewer.
+            readme = (Path(__file__).with_name('README.md')).read_text()
+            declared = re.search(r'(\d+) 项变异绑定完整', readme)
+            if declared is None or int(declared.group(1)) != len(cases):
+                raise SystemExit(f'#1210 README mutation count drift: README '
+                                 f'says {declared and declared.group(1)}, table '
+                                 f'has {len(cases)}')
             for case in cases:
                 name, changes, scope, test, assertion = row_parts(case)
                 try:

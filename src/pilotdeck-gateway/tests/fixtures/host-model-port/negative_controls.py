@@ -25,7 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (defer_signal_exit, mutating_sources, run_owned,
-                               wait_for_slot, write_source_atomic)
+                               tree_lock, wait_for_slot, write_source_atomic)
 from negative_selection import (claim_dir, missing_target, refuse,
                                 refuse_unusable_target, registered, select,
                                 verdict_exit)
@@ -103,20 +103,31 @@ def function_body(name, text):
 
 def check_errors():
     """The `--check` verdict: every anchor and marker binding is intact."""
-    errors = []
-    port = MODEL_PORT.read_text(encoding='utf-8')
-    tests = INTEGRATION.read_text(encoding='utf-8')
-    for name, path, old, new, test, assertion in cases:
-        if port.count(old) != 1:
-            errors.append(f'{name}: anchor occurs {port.count(old)} times')
-        if old == new:
-            errors.append(f'{name}: anchor equals replacement')
-        body = function_body(test, tests)
-        if not body:
-            errors.append(f'{name}: bound test {test} not found exactly once')
-        elif assertion not in body:
-            errors.append(f'{name}: marker not in the bound test body')
-    return errors
+    # #2795 fix-r4（评审 sibling P1 同族跟改；本入口是本 PR 自己新增并接线进
+    # CI 的，读的 MODEL_PORT / INTEGRATION 正是本夹具自己 guarded 名单成员）：
+    # 锚点核对要持树锁读——杀灭轮 write 与 restore 之间变异体在盘上，无锁读
+    # 会把核对错在自己不拥有的源上；锁忙 / 读失败是拒跑（2），不是裸
+    # traceback。本窗口只包只读核对面，与后续 mutating_sources 是顺序关系，
+    # 锁先释放再重取，无同进程嵌套。
+    try:
+        with tree_lock(ROOT, timeout=60):
+            errors = []
+            port = MODEL_PORT.read_text(encoding='utf-8')
+            tests = INTEGRATION.read_text(encoding='utf-8')
+            for name, path, old, new, test, assertion in cases:
+                if port.count(old) != 1:
+                    errors.append(f'{name}: anchor occurs {port.count(old)} times')
+                if old == new:
+                    errors.append(f'{name}: anchor equals replacement')
+                body = function_body(test, tests)
+                if not body:
+                    errors.append(f'{name}: bound test {test} not found exactly once')
+                elif assertion not in body:
+                    errors.append(f'{name}: marker not in the bound test body')
+            return errors
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        refuse(f'tree lock or anchor read failed: '
+               f'{type(error).__name__}: {error}')
 
 
 def terminate_cleanly(signum, _frame):

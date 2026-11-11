@@ -41,7 +41,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
 from negative_selection import (claim_dir, missing_target, refuse,
                                refuse_unusable_target, select)
 
@@ -328,7 +328,20 @@ mode, arguments = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else (None, [
 if mode == '--check':
     if arguments:
         raise SystemExit(f'--check takes no arguments: {arguments!r}\n{USAGE}')
-    check_anchors({path: path.read_text() for _name, path, _b, _a, _t in cases})
+    # #2795 fix-r4（评审 sibling P1 同族跟改）：--check 的字典推导裸读全部锚点
+    # 源，本入口还变异与已修 mcp-http-* 重叠的 http.rs——兄弟变异运行器在自己
+    # 的 write 与 restore 之间可能把变异体留在盘上，无锁读会把核对错在它不
+    # 拥有的源上；锁忙 / 读失败是拒跑（2），不是裸 traceback。本窗口只包
+    # 只读核对面，与后续 mutating_sources 是顺序关系，锁先释放再重取，
+    # 无同进程嵌套。
+    try:
+        with tree_lock(root, timeout=60):
+            check_anchors({path: path.read_text()
+                           for _name, path, _b, _a, _t in cases})
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'tree lock or anchor read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        raise SystemExit(2)
     raise SystemExit(0)
 if mode == '--self-test':
     if arguments:
