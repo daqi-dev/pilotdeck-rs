@@ -1,9 +1,14 @@
 /**
- * P12：A4 零字节格的 GatewayServer 实例级补测（≥65s 观测，右删失判据）。
- * 零字节 TCP 连接（建连后不发任何字节）持有下 server.close() 是否 settle：
- * Node headersTimeout 默认 60s——若 close 后计时器仍驱动，则 ~60s settle；
- * 若 close 清掉 connections checker（A8.3-CH-SMS-012-R1 的机制推断），则永不 settle。
- * 70s 观测窗区分两者。观察窗有界；结束时收尸（销毁 socket、若 close 已 settle 则等待完成）。
+ * P12：A4 零字节格的 GatewayServer 实例级补测（右删失判据）。
+ * 零字节 TCP 连接（建连后不发任何字节）持有下 server.close() 是否 settle。
+ * 机制口径（#2259 修正，原「~60s settle、70s 窗区分两者」作废）：headersTimeout
+ * 到期不是 60s 即 408——锚点 +60 s 由 30 s connections-checker 网格裁断，零字节
+ * 首头 408 实测落在 90,004 ms（specs/gateway-parity/diffs/A8.3-CH-SMS-012.md:37-52）。
+ * 因此 70s 窗只证右删失下界：区分「408 才 settle」与「close 清 checker ⇒ 永不
+ * settle」（A8.3-CH-SMS-012-R1 的机制推断）须 ≥95 s（保守 120 s）观测
+ * （-R1.md:114-120），不得作对拍判 PASS 依据。本装置保留 70s 窗（历史口径），
+ * 补 ≥95 s 观测须改 WINDOW_MS 另跑。观察窗有界；结束时收尸（销毁 socket、
+ * 若 close 已 settle 则等待完成）。
  */
 import { writeSync } from "node:fs";
 import { connect } from "node:net";
@@ -47,7 +52,7 @@ async function main() {
     () => { closeSettled = true; },
   );
 
-  // 70s 观测窗（区分「永不 settle」与「60s headersTimeout 后 settle」）
+  // 70s 观测窗（只证右删失下界——< 408 裁断点实测 90,004 ms，见 #2259 头注）
   while (Date.now() - t0 < WINDOW_MS && !closeSettled) {
     await sleep(500);
   }
@@ -57,7 +62,7 @@ async function main() {
     closeSettled,
     note: closeSettled
       ? "close 在观测窗内 settle（时间见 elapsedMs）"
-      : "70s 窗内不 settle ⇒ 区分于 60s headersTimeout（右删失下界 70s）",
+      : "70s 窗内不 settle（右删失下界 70s；70s < 408 裁断点实测 90,004 ms，区分不了「408 才 settle」与「永不 settle」，见 #2259）",
     socketEventsFromServerSide: socketEvents,
     socketLocalStillOpen: !zeroByte.destroyed,
   });

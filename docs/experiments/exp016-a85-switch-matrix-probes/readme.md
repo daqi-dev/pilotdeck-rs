@@ -48,7 +48,7 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
 | p9_background_descendants | #2251 条目 3 | 同组 TERM 免疫后代零残留（组 SIGKILL 覆盖）；setsid 跨组后代逃逸存活（ppid→1、自有 pgid；任务 pid 锚定的 ppid 链漏检） |
 | p10_background_hangs | #2251 条目 4 | start 永不 settle ⇒ dispose 卡 whenStartsDrained（3s 窗右删失）；快照写挂起 ⇒ TERM 已杀、dispose 卡 `await done`（settleEntry 停 store.write） |
 | p11_child/p11_driver | §4.5 S1–S3 接纳 + 连接两态 | closing 窗口内 E5 新任务被接纳（running）；断开 ⇒ dispose 杀（码 0 零残留）；保持 ⇒ close 永不 settle，SIGKILL 后 detached 任务成孤儿 |
-| p12_zero_byte_close | A4 零字节 ≥65s | GatewayServer 实例级：零字节连接使 close() 70s 窗不 settle（>60s headersTimeout，右删失下界 70s）、服务端不主动断该连接 |
+| p12_zero_byte_close | A4 零字节（#2259 口径修正：须 ≥95 s（保守 120 s）观测，70s 窗只到右删失下界） | GatewayServer 实例级：零字节连接使 close() 70s 窗不 settle（右删失下界 70s；70 s 窗 < 408 裁断点实测 90,004 ms——锚点 +60 s 由 30 s connections-checker 网格裁断，见 matrix §六 A4 格内标注 #2259）、服务端不主动断该连接 |
 | p13_empty_set | #2255 空集合格 | 组件级三格 + 全空五步组合级：全部 0–4ms 落定（空集合不挂起、退出路径可达） |
 | p14_child/p14_half_stop | #2255 半停格 | 真 cron 先真停不回滚 + alwaysOn stop 失败：单失败原样抛、finally 照走 unpublish、二次 stop no-op；server 级半停窗口 E1/E2 可服务、后续四步照走、退出码 0 |
 | p15_child/p15_driver | #2255 单飞 + 退出码抬升 | 重复信号（SIGTERM×2+SIGINT）下 automation.stop 恰 1 次（两层单飞缓存）；挂起窗口内 late unhandledRejection ⇒ exit 1（对照 0） |
@@ -68,7 +68,7 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
    （无二次超时）；是否加界归 #1353 决策卡。
 5. **E5 在 S1–S3 照常接纳 + 孤儿路径**（p11）：接纳面只看运行时自身状态；提交连接保持打开 ⇒
    S4 不可达 ⇒ SIGKILL 旧进程后 detached 任务成孤儿。
-6. **零字节格**（p12）：GatewayServer 实例级右删失下界 70s，>headersTimeout(60s)。
+6. **零字节格**（p12）：GatewayServer 实例级右删失下界 70s——70 s 窗未过 408 裁断点（锚点 +60 s 由 30 s connections-checker 网格裁断、实测落点 90,004 ms），区分「408 才 settle」与「close 清 checker ⇒ 永不 settle」须 ≥95 s（保守 120 s）观测、不得作对拍判 PASS 依据（#2259）。
 7. **空集合不挂起**（p13）：零任务/零 channel/零连接下全部停机面 0–4ms 落定——「空集合快速干净退出」
    断言有基线支撑（A13 同构）。
 8. **半停无重试**（p14）：部分组件停成后失败——已停不回滚、失败组件永不再被停（二次 stop no-op）、
