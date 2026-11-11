@@ -64,6 +64,8 @@ python3 -I scripts/gateway-parity/controls/run_all.py --source _tmp/20261014-gat
 
 ## #1314 四宿主采集
 
+清理回归：`python3 -I scripts/a5-19/test_host_cohort_cleanup.py scripts/a5-19/host-cohort.py`。完整 HTTP 比较负控：`python3 -I scripts/gateway-parity/test_retirement_standard_http.py`；流程成功标记不能替代返回全字段、模型请求和原件落盘比较。
+
 在已有固定 TS、Node 22.22.0 / ICU 78.2 / libuv 1.52.1 的 cb8 宿主和已有隔离镜像上，从同头构建的四个 ELF、动态库和完整源码清单开一个新队列。输出目录放在该工作树的 `_tmp/`。
 
 ```sh

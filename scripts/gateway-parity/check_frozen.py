@@ -257,6 +257,7 @@ def manifest_inventory(root):
               'scripts/gateway-parity/fixtures/retirement-entry-inventory.json',
               'scripts/gateway-parity/fixtures/channel-applicability.json',
               'src/pilotdeck-gateway/tests/fixtures/retirement-production-entries/probe.py',
+              'src/pilotdeck-gateway/tests/fixtures/retirement-production-entries/capture.py',
               'src/pilotdeck-gateway/tests/fixtures/retirement-production-entries/cron.mts',
               'src/pilotdeck-gateway/tests/fixtures/retirement-production-entries/history.mts',
               'src/pilotdeck-gateway/tests/fixtures/native-history/subagent-bundle.json']

@@ -94,8 +94,6 @@ struct SlackRuntime {
     /// `this.app`: non-null from the `new BoltApp(...)` assignment until the
     /// real handle's `stop()` clears it.
     app: Option<LiveApp>,
-    /// `this.botUserId`: the `auth.test` `user_id`, `null` before and after.
-    bot_user_id: JsValue,
 }
 
 #[derive(Clone)]
@@ -108,6 +106,8 @@ struct SlackShared {
     generation: AtomicU64,
     stopping: tokio::sync::watch::Sender<bool>,
     readers: StdMutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// Auth identity never waits behind a socket ACK holding runtime.
+    bot_user_id: StdMutex<JsValue>,
     boundaries: StdMutex<Boundaries>,
     runtime: tokio::sync::Mutex<SlackRuntime>,
     /// The permission state machine behind its own `std` mutex, the #1790
@@ -173,7 +173,7 @@ impl ChannelHandle for SlackHandle {
             // (a full send buffer parks the send forever).
             let sink = {
                 let mut runtime = shared.runtime.lock().await;
-                runtime.bot_user_id = JsValue::Null;
+                *shared.bot_user_id.lock().expect("Slack bot identity mutex") = JsValue::Null;
                 runtime.app.take().and_then(|app| app.sink)
             };
             if let Some(mut sink) = sink {
@@ -259,6 +259,7 @@ impl SlackChannel {
                 generation: AtomicU64::new(0),
                 stopping: tokio::sync::watch::channel(false).0,
                 readers: StdMutex::new(Vec::new()),
+                bot_user_id: StdMutex::new(JsValue::Null),
                 boundaries: StdMutex::new(Boundaries {
                     logger: None,
                     gateway,
@@ -268,7 +269,6 @@ impl SlackChannel {
                     elicitation: ImElicitationHelper::default(),
                     active_chats: Arc::new(StdMutex::new(HashSet::new())),
                     app: None,
-                    bot_user_id: JsValue::Null,
                 }),
                 permissions: Arc::new(StdMutex::new(ImPermissionHelper::default())),
                 bot_token,
@@ -464,13 +464,7 @@ async fn start_session(shared: &Arc<SlackShared>, generation: u64) -> Result<(),
         .filter(|value| !matches!(value, JsValue::Undefined | JsValue::Null))
         .cloned()
         .unwrap_or_else(|| user_id.clone());
-    {
-        let mut runtime = shared.runtime.lock().await;
-        if !is_current_transport(shared, generation) {
-            return Err("Slack transport stopped".into());
-        }
-        runtime.bot_user_id = user_id;
-    }
+    record_authenticated_bot(shared, generation, user_id).await?;
     ready.send_replace(true);
     shared.log(
         "info",
@@ -479,6 +473,22 @@ async fn start_session(shared: &Arc<SlackShared>, generation: u64) -> Result<(),
             String::from_utf16_lossy(super::sms::js_string_of(&connected_as).units())
         ),
     );
+    Ok(())
+}
+
+// This operation has no I/O and never holds the identity guard across await.
+// Keep the generation check under that same guard so a stale auth completion
+// cannot overwrite an identity installed by a newer transport.
+async fn record_authenticated_bot(
+    shared: &Arc<SlackShared>,
+    generation: u64,
+    user_id: JsValue,
+) -> Result<(), String> {
+    let mut identity = shared.bot_user_id.lock().expect("Slack bot identity mutex");
+    if !is_current_transport(shared, generation) {
+        return Err("Slack transport stopped".into());
+    }
+    *identity = user_id;
     Ok(())
 }
 
@@ -838,10 +848,11 @@ async fn admit_frame(shared: &Arc<SlackShared>, event: JsValue, race: bool) -> O
     let user_id = event_field(&event, "user")
         .cloned()
         .unwrap_or(JsValue::Undefined);
-    let bot_user_id = {
-        let runtime = shared.runtime.lock().await;
-        runtime.bot_user_id.clone()
-    };
+    let bot_user_id = shared
+        .bot_user_id
+        .lock()
+        .expect("Slack bot identity mutex")
+        .clone();
     // `userId && this.botUserId && userId === this.botUserId`
     if super::sms::truthy(&user_id) && super::sms::truthy(&bot_user_id) && user_id == bot_user_id {
         return None;
@@ -1549,3 +1560,6 @@ fn endpoint_url(base: &JsString, path: &str) -> String {
 }
 #[cfg(test)]
 mod native_tests;
+
+#[cfg(test)]
+mod auth_identity_tests;

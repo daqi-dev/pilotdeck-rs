@@ -82,6 +82,9 @@ import json
 from urllib.parse import unquote, urlsplit
 
 
+standard_http = _load('retirement_standard_http', _apparatus / 'retirement_standard_http.py')
+
+
 COUNTS = {'gateway.method': 101, 'gateway.http': 14, 'gateway.channel-http': 13,
           'gateway.channel': 19, 'gateway.background': 2, 'gateway.ws': 1}
 
@@ -133,9 +136,9 @@ def http_frame(row):
     return method, unquote(urlsplit(target).path), response.status, body
 
 
-def valid_http(row, key, folder):
+def valid_http(row, key, folder, runtime_project=None):
     method, target, status, body = http_frame(row)
-    project = folder / 'project'
+    project = Path(runtime_project) if runtime_project else folder / 'project'
     base = f'/api/web/projects/{project}'
     if key == '<unmatched-404>':
         return method == 'GET' and target == '/entry-missing-42.txt' and status == 404 and body == 'not found'
@@ -168,7 +171,7 @@ def valid_http(row, key, folder):
     if route.endswith('/files/read'):
         return value.get('projectKey') == str(project) and 'ENTRY_NOTE_42' in json.dumps(value)
     if route.endswith('/files/write'):
-        return value == {'ok': True} and (project / 'acceptance-http-write.txt').read_bytes() == b'ENTRY_HTTP_WRITE_42\n'
+        return value == {'ok': True} and (folder / 'project/acceptance-http-write.txt').read_bytes() == b'ENTRY_HTTP_WRITE_42\n'
     if route.endswith('/files/tree'):
         return value.get('projectKey') == str(project) and 'note.txt' in json.dumps(value)
     return value.get('projectKey') == str(project)
@@ -542,7 +545,9 @@ def production_results(d, native, baseline, entry_root):
                       and provenance['networkNamespace'] == preflight['networkNamespace'],
                       'ENTRY_PRODUCTION_SOURCE', f'{mode}/{engine} comes from a different build or isolated run')
             argv = provenance['command']
-            listener = ['server', '--host', '127.0.0.1', '--port', '28479' if engine == 'native' else '28478']
+            port = provenance.get('runtime', {}).get('gatewayPort', 28479 if engine == 'native' else 28478)
+            d.require(type(port) is int and 28000 <= port < 29000, 'ENTRY_PRODUCTION_SOURCE', 'invalid isolated listener')
+            listener = ['server', '--host', '127.0.0.1', '--port', str(port)]
             d.require(argv[-len(listener):] == listener and
                       (argv[:-len(listener)] == [native.identities['host']['path']] if engine == 'native'
                        else len(argv) == len(listener) + 2 and Path(argv[0]).name == 'node'
@@ -600,7 +605,8 @@ def report_entries(d, native, baseline, methods, rounds, coverage, outcome, *, p
                     continue
                 folder, raw, digest = found
                 pointers.append({'path': str(folder / 'result.json'), 'sha256': digest})
-                port = 28478 if engine == 'ts' else 28479
+                runtime = d.read(folder / 'provenance.json').get('runtime', {})
+                port = runtime.get('gatewayPort', 28478 if engine == 'ts' else 28479)
                 owner = raw.get('listener') or {}
                 if (type(raw['serverExitCode']) is not int or raw['serverExitCode'] != 0 or raw['errors']
                         or raw['binariesUnchanged'] is not True or raw.get('ownedCleanup', {}).get('allStopped') is not True
@@ -611,16 +617,23 @@ def report_entries(d, native, baseline, methods, rounds, coverage, outcome, *, p
                     profiles.append(raw_background(d, folder, mode, raw))
                 else:
                     record = [r for r in raw['http'] if r['id'] == key]
-                    profiles.append(valid_http(record[0], identity, folder) if len(record) == 1 else False)
+                    profiles.append(valid_http(record[0], identity, folder, runtime.get('project')) if len(record) == 1 else False)
             if any(profile is False for profile in profiles):
                 state = 'FAIL'
             elif all(profile is True for profile in profiles):
-                state = 'PASS'
+                state = 'BLOCKED'  # Successful business invariants alone are not parity.
             elif all(isinstance(profile, tuple) for profile in profiles) and profiles[0] != profiles[1]:
                 state = 'FAIL'
-            detail = {'profileResults': profiles, 'scope': 'production HTTP data or timer/durable behavior',
+            try:
+                full = standard_http.comparison(d, observed, mode, identity)
+            except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+                full = {'status': 'FAIL', 'rule': 'ENTRY_FULL_COMPARISON_EVIDENCE', 'detail': str(error)}
+            if state != 'FAIL' and all(profile is True for profile in profiles):
+                state = full['status']
+            detail = {'profileResults': profiles, 'scope': 'full production HTTP/model/durable comparison',
+                      'fullComparison': full,
                       'missing': ('configured success/admission or Feishu callback' if mode == 'http' else
-                                  'same-head positive timer and persistence on both sides') if state == 'BLOCKED' else None}
+                                  'full-background-wire-model-disk-comparison') if state == 'BLOCKED' else None}
         else:
             cell = channels[key]
             state = cell['status']

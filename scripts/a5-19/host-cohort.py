@@ -368,7 +368,7 @@ def start(cohort, plan, job, common, scoring, wait, *, retry_failed=False):
             # Never write a failure marker into an attempt this process did not create.
             print(json.dumps({'status': 'INCOMPLETE', 'job': job['id'],
                               'rule': 'ATTEMPT_COLLISION', 'attempt': str(attempt)}), flush=True)
-            return False
+            return None
         save(attempt / 'launch.json', {'job': job, 'planSha256': sha(cohort / 'plan.json'), 'container': name,
                                        'command': command, 'hostNamespace': os.readlink('/proc/self/ns/net'), 'diskBudget': level,
                                        'runtimeLibraries': plan['runtimeLibraries'],

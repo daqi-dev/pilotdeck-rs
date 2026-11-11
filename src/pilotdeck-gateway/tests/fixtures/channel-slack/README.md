@@ -124,8 +124,26 @@ JSON解析失败路径。两者均要求失败句柄无驻留reader/Arc，并保
 cleanup先abort本次reader再等锁，并验证旧generation失败不影响新reader/app；
 不依赖真实socket缓冲写满。
 
-例行负控表现在是14行编译期开关＋5行source-patch（之前14＋4）；原
+例行负控表现在是14行编译期开关＋8行source-patch（此前14＋5）；原
 `slack-auth-failure-abandon-off`只删除ok:false分支的三参cleanup调用，新增
 `slack-auth-error-abandon-off`只删除Err分支的三参调用，分别绑定上述
 独立Mock测试；两锚在当前源码各精确出现1次。36格TS oracle及其输入不变。
 实现与登记形状补正见`A8.3-CH-SLACK-001-R3.md`；原R2字节保留。
+
+
+## 受控停车测试的例行负控
+
+新增三条source-patch，均使用同一例行matrix_main，不启动权限或安全竞态实验。
+正样必须先在同head跑绑定测试，负样必须编译并在指定失败锚被kill，恢复后再绿；
+静态锚点命中不算KILLED。每个修改锚在合并后的生产源码精确出现一次。
+
+| 负控 | 实际生产改动 | 独立绑定测试与失败锚 |
+| --- | --- | --- |
+| slack-auth-cleanup-lock-before-abort | 把本次reader.abort移到runtime锁之后，恢复停车死锁 | native_tests::auth_failure_aborts_the_reader_before_waiting_for_its_runtime_lock；auth failure queued behind its parked reader |
+| slack-stale-cleanup-clears-readers | 本次reader取消后误清空真实shared.readers registry | native_tests::stale_auth_failure_aborts_only_its_reader_and_keeps_the_new_app；old auth failure removed the new reader registry entry |
+| slack-auth-success-waits-for-runtime | 成功auth写身份前恢复等待runtime锁 | auth_identity_tests::successful_auth_records_identity_without_waiting_for_a_parked_ack；successful auth queued behind ACK |
+
+旧代测试将new实际登记到shared.readers，且先等待old被被测函数取消，再记录新代
+reader、registry身份与app是否保留，之后才做测试清理。成功auth测试保留停车ACK，
+只写独立短锁内身份，不取消该reader。两测试源均进入GUARDED，不能换测试体后
+沿用旧head结果。14个编译期开关＋8个source-patch合计22项，TS36格本金样不变。

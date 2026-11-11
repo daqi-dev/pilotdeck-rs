@@ -8,6 +8,7 @@ sys.dont_write_bytecode=True
 p=argparse.ArgumentParser()
 p.add_argument('--engine',choices=('ts','native'),required=True);p.add_argument('--mode',choices=('http','cron','alwayson','history'),required=True)
 for key in ('baseline','node','cli','sidecar','source-manifest','candidate-manifest','out'):p.add_argument('--'+key,type=Path,required=True)
+p.add_argument('--provider-port',type=int,default=0);p.add_argument('--gateway-port',type=int)
 a=p.parse_args();a.out=a.out.resolve();a.out.mkdir(parents=True,exist_ok=False);HERE=Path(__file__).resolve().parent
 MAX_REQUESTS=32;MAX_BODY=2*1024*1024;MAX_OUTPUT_TOKENS=256
 root=HERE.parents[4];runner_path=root/'scripts/gateway-parity/run_round.py'
@@ -44,14 +45,15 @@ class Provider(http.server.BaseHTTPRequestHandler):
     raw=json.dumps({'choices':[{'index':0,'message':{'role':'assistant','content':'{"title":"Entry fixture"}'},'finish_reason':'stop'}]}).encode();self.send_header('content-type','application/json');self.send_header('content-length',str(len(raw)));self.end_headers();self.wfile.write(raw)
    self.wfile.flush()
   except Exception as error:errors.append('provider '+repr(error));self.close_connection=True
-server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Provider);server.daemon_threads=False;threading.Thread(target=server.serve_forever,daemon=True).start()
+server=http.server.ThreadingHTTPServer(('127.0.0.1',a.provider_port),Provider);server.daemon_threads=False;threading.Thread(target=server.serve_forever,daemon=True).start()
 config={'schemaVersion':1,'agent':{'model':'fixture/mock','maxOutputTokens':MAX_OUTPUT_TOKENS,'maxContextTokens':64000},'model':{'providers':{'fixture':{'protocol':'openai','url':f'http://127.0.0.1:{server.server_port}/v1','apiKey':'mock-only','models':{'mock':{}}}}},'extension':{'builtinPluginsEnabled':{'browser-use':False,'funasr':False,'windows-skills':False}},'telemetry':{'enabled':False},'cron':{'enabled':a.mode=='cron','timezone':'UTC'}}
 if a.mode=='alwayson':config['alwaysOn']={'trigger':{'tickIntervalMinutes':0.01,'cooldownMinutes':1,'dailyBudget':1,'recentUserMsgMinutes':0},'projects':{str(project):{'enabled':True}}}
 (home/'pilotdeck.yaml').write_text(json.dumps(config,indent=2))
-port=28478 if a.engine=='ts' else 28479
+port=a.gateway_port if a.gateway_port is not None else (28478 if a.engine=='ts' else 28479)
 env={k:v for k,v in os.environ.items()if k in ('PATH','LANG','LC_ALL','LD_LIBRARY_PATH')};env.update(HOME=str(home),PILOT_HOME=str(home),TMPDIR=str(tmp),DATABASE_PATH=str(home/'auth.db'),WORKSPACES_ROOT=str(a.out/'workspaces'),PILOTDECK_GATEWAY_HOST='127.0.0.1',PILOTDECK_GATEWAY_PORT=str(port),PILOTDECK_GATEWAY_TOKEN=token,PILOTDECK_GATEWAY_TOKEN_PATH=str(home/'token'),PILOTDECK_SKIP_BROWSER_OPEN='1',PILOTDECK_RS_SIDECAR=str(a.sidecar),PDRS_BASELINE=str(a.baseline))
 command=([str(a.node),str(a.baseline/'dist/src/cli/pilotdeck.js')]if a.engine=='ts'else[str(a.cli)])+['server','--host','127.0.0.1','--port',str(port)]
 provenance={'engine':a.engine,'mode':a.mode,'sourceManifest':{'path':str(a.source_manifest),'sha256':sha(a.source_manifest)},'candidateManifest':{'path':str(a.candidate_manifest),'sha256':sha(a.candidate_manifest)},'binaries':{'pilotdeck':sha(a.cli),'sidecar':sha(a.sidecar)},'producerSha256':sha(__file__),'cronDriverSha256':sha(HERE/'cron.mts'),'baselineEntrySha256':sha(a.baseline/'dist/src/cli/pilotdeck.js'),'node':versions,'command':command,'networkNamespace':os.readlink('/proc/self/ns/net'),'formalAcceptance':False}
+provenance['runtime']={'home':str(home),'project':str(project),'tmp':str(tmp),'workspaces':str(a.out/'workspaces'),'providerUrl':config['model']['providers']['fixture']['url'],'gatewayPort':port}
 if a.mode == 'history':
  provenance['diagnosticOnly'] = True
  provenance['formalAcceptance'] = False
@@ -92,6 +94,9 @@ def read_after_reap():
          'sha256':{'runHistory':hashlib.sha256(history_bytes).hexdigest(),
                    'events':hashlib.sha256(events_bytes).hexdigest()}}
 
+# Same fixture input mtimes on both sides; response Last-Modified remains exact.
+for seeded in sorted(a.out.rglob('*'),reverse=True):
+ if seeded.is_file():os.utime(seeded,(1700000000,1700000000))
 common.install_shutdown()
 try:
  lease.__enter__();leased=True
