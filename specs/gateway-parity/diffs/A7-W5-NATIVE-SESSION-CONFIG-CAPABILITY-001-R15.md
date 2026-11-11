@@ -55,7 +55,7 @@ probe4 的 config 族 TS 口径一致）」一行只描述 #1604 到 #1623 r1 �
 绑定 `resume_session_rejects_lone_surrogate_session_key`。-R6 所记「41 条锚点」
 计数随后续批次增长，复算命令
 `python3 -I src/pilotdeck-gateway/tests/fixtures/native-config/negative_controls.py --check`，
-以实报为准（fix-r2 时点 88 变异锚 / 75 literal anchor），本条不再固化数字。
+以实报为准（fix-r2 时点 126 变异锚 / 80 literal anchor），本条不再固化数字。
 fix-r2 机器判据新增
 `rewind_files_rejects_lone_surrogate_session_key` /
 `rewind_files_keeps_fffd_and_paired_surrogate_keys`

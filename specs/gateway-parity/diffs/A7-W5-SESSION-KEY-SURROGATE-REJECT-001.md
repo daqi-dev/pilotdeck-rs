@@ -42,7 +42,7 @@ file-history 目录。
 `src/pilotdeck-gateway/src/native_process/methods/mod.rs:199`
 `require_session_key`：先走家族共享 `require_text`（blank/非字符串门不变，
 #1604），再对通过者的 UTF-16 单元做 `has_unpaired_surrogate`
-（`mod.rs:221`，`char::decode_utf16(...).any(|unit| unit.is_err())`——与
+（`mod.rs:228`，`char::decode_utf16(...).any(|unit| unit.is_err())`——与
 存储层 `String::from_utf16_lossy` 同一次走查，判定不可能分歧）检查，含
 孤立代理即以守卫族同构的 domain error 拒绝
 （`INVALID_SESSION_KEY` + `sessionKey must not contain an unpaired surrogate.`，
@@ -141,7 +141,7 @@ subagents/tasks 注册表，`task.session_id == *session_key` 精确 JsString
   `required_trimmed`）、`archive-entry-surrogate-guard-removed`
   （`native_archive.rs` 门分支 `if false`），均须 KILLED。计数不写死：
   `python3 -I src/pilotdeck-gateway/tests/fixtures/native-config/negative_controls.py --check`
-  实报为准（fix-r2 时点 88 变异锚 / 75 literal anchor 全过）。
+  实报为准（fix-r2 时点 126 变异锚 / 80 literal anchor 全过，rebase 后 `--check` 复算同数）。
 - 复算：`cargo test -p pilotdeck-gateway --lib -- surrogate` 须全绿
   （r1 十一例 + fix-r2 六例
   `submit_turn_{rejects,keeps}_*` / `rewind_files_{rejects,keeps}_*` /
