@@ -124,7 +124,9 @@ jobs:
         # #2136 fix-r38（MM sibling P2）：五个模块 r37 实测合计约 15 s，
         # 挂起时同样占满 job 默认 360 分钟；由 driver 守卫钉住。
         # r41（合并 main）：#2590 fix-r2 增第六模块（issue-2495，实测
-        # Ran 30、约 4 s），真跑钉与守卫已同步扩到六模块。
+        # Ran 30、约 4 s），真跑钉与守卫当时同步扩到六模块。
+        # #1800 fix-r1（PR #2979）：增第七模块（sdk-signals-close-order-pin），
+        # 真跑钉与守卫已同步扩到七模块；fix-r2 判决路径补两用例后 Ran 10。
         timeout-minutes: 5
         run: |
           python3 -B -m unittest -v test_negative_optimize_guards
