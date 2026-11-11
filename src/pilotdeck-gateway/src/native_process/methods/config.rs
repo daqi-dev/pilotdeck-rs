@@ -66,8 +66,9 @@ pub(super) fn trimmed_string_is_non_empty(value: &JsString) -> bool {
     !crate::metadata::js_trim(&String::from_utf16_lossy(value.units())).is_empty()
 }
 
-/// The TS `input.sessionKey?.trim()` gate shared by five of the seven
-/// methods: a present string that is non-empty after JS trim, else
+/// The TS `input.sessionKey?.trim()` gate shared by six of the seven methods
+/// (every one but `output_styles_list`, which has no params gate): a present
+/// string that is non-empty after JS trim, else
 /// INVALID_SESSION_KEY. A non-null non-string throws the bare TypeError the
 /// TS optional-chain call produces on the wire
 /// (A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R2 ②).
@@ -1356,6 +1357,283 @@ mod tests {
             negative_assert_eq!(error_text(&error), message, "#1457 {label} message");
         }
         teardown(&r).await;
+    }
+
+    // #2199: request-level gate order for the config family — the session
+    // directory's #2090 shape (`session_dir.rs` `blank_key_gate_order`)
+    // applied to the six methods that share `require_session_key`. The tests
+    // above call `session_config_request` directly, so nothing measured the
+    // request-level isolated-project admission (`requests.rs`) that runs
+    // before the dispatch; these cells go through `GatewayRequests::request`
+    // so both gates that can answer a bad key prove their order. Admission
+    // answers an unserved `projectKey` (`gateway_request_failed`) even when
+    // `sessionKey` is blank; with the project admitted — or omitted or null,
+    // which fall back to the configured one (#2272's nullish read) — the
+    // missing, blank, or zero-length key answers `INVALID_SESSION_KEY`
+    // (#2207: `""` is its own cell, not a `"   "` stand-in; the TS gate
+    // treats both alike, Node v22.22.0 probe in
+    // `_tmp/20261111-issue-2199/ts-probe-gate.log`).
+    async fn config_blank_key_gate_order(
+        method: &str,
+        valid: fn(Option<&str>, Option<JsValue>, &Requests) -> JsValue,
+    ) {
+        let (_scratch, r) = setup_fixture();
+        // A path no `createLocalGateway` registry can resolve, so the two
+        // mechanisms that reject it (TS registry vs this process's admission)
+        // are both forced to answer.
+        const UNSERVED_PROJECT: &str = "/nonexistent/pdrs-2199";
+        // The seed cells need a real file with a stable mtime; the other
+        // methods ignore it.
+        let seed_file = r.options.project.join("gate-order-seed.txt");
+        std::fs::write(&seed_file, "seeded\n").expect("#2199 gate-order seed file");
+
+        // (1) No `projectKey`: the fallback is the configured project, so the
+        // family's own sessionKey gate answers — for an absent key, a blank
+        // one, and the zero-length spelling alike.
+        for (label, key) in [
+            ("missing", None),
+            ("blank", Some("   ")),
+            ("empty", Some("")),
+        ] {
+            let params = valid(key, None, &r);
+            let expected = format!("#2199 {method} rejects a {label} sessionKey");
+            let error =
+                crate::runtime::turn::gateway::GatewayRequests::request(&r, method.into(), params)
+                    .await
+                    .expect_err(&expected);
+            negative_assert_eq!(
+                error.code.as_str(),
+                "INVALID_SESSION_KEY",
+                "#2199 the sessionKey gate answers a missing, blank, or empty key under the configured project"
+            );
+            negative_assert_eq!(
+                error_text(&error),
+                "sessionKey is required.",
+                "#2199 the gate message matches the TS provider gate"
+            );
+        }
+
+        // (1b) An explicit `projectKey: null` is "not provided" for the
+        // admission too (#2272: the TS nullish read `input.projectKey ??
+        // fallback`), so the fallback is the configured project and the
+        // sessionKey gate answers the blank key exactly as (1).
+        {
+            let params = valid(Some("   "), Some(JsValue::Null), &r);
+            let error =
+                crate::runtime::turn::gateway::GatewayRequests::request(&r, method.into(), params)
+                    .await
+                    .expect_err(&format!(
+                        "#2199 {method} rejects a blank sessionKey under a null projectKey"
+                    ));
+            negative_assert_eq!(
+                error.code.as_str(),
+                "INVALID_SESSION_KEY",
+                "#2199 a null projectKey falls back like a missing one, so the sessionKey gate answers the blank key"
+            );
+            negative_assert_eq!(
+                error_text(&error),
+                "sessionKey is required.",
+                "#2199 the gate message matches the TS provider gate under a null projectKey"
+            );
+        }
+
+        // (2) Project outside the configured one: request admission answers
+        // before the method dispatch, so the first code is the admission one.
+        // The valid-key control answering identically is what proves
+        // admission — not the key — decides here. #2199: an explicit
+        // empty-string `projectKey` — present, not nullish — resolves against
+        // the process cwd on both sides (TS `resolve("")` = cwd,
+        // `projectRegistry.ts` `resolveProjectKey`; Rust `serves_project`
+        // runs the same `resolve_process_path("")` = cwd), so it is just
+        // another explicit project key. The fixture's cwd is not the scratch
+        // project, so admission refuses it like the unserved path; a cwd
+        // equal to the configured project would admit it through to the
+        // sessionKey gate on both sides alike (Node v22.22.0 probe:
+        // `path.resolve("") === process.cwd()`), so it has no divergence of
+        // its own — the unserved-project answer family (R8 difference 3)
+        // covers it.
+        for (label, project) in [
+            ("unserved project", UNSERVED_PROJECT),
+            ("empty-string projectKey", ""),
+        ] {
+            for (key_label, key) in [
+                ("blank key", Some("   ")),
+                ("valid key", Some("pdrs-2199-control")),
+            ] {
+                let params = valid(key, Some(project.into()), &r);
+                let expected =
+                    format!("#2199 admission refuses {label} with a {key_label} on {method}");
+                let error = crate::runtime::turn::gateway::GatewayRequests::request(
+                    &r,
+                    method.into(),
+                    params,
+                )
+                .await
+                .expect_err(&expected);
+                negative_assert_eq!(
+                    error.code.as_str(),
+                    "gateway_request_failed",
+                    "#2199 admission answers an unserved project before the sessionKey gate"
+                );
+                negative_assert_eq!(
+                    error_text(&error),
+                    "The isolated native process serves only its configured project.",
+                    "#2199 the admission message is the isolated-project one"
+                );
+            }
+        }
+
+        // (3) A valid sessionKey with `projectKey: null` runs the method on
+        // the configured project — the fallback the handler's own nullish
+        // `resolve_project` read gives a nullish key.
+        {
+            let params = valid(Some("pdrs-2199-control"), Some(JsValue::Null), &r);
+            let result =
+                crate::runtime::turn::gateway::GatewayRequests::request(&r, method.into(), params)
+                    .await;
+            match method {
+                "session_model_set" => {
+                    let value = result.expect(
+                        "#2199 session_model_set answers a valid key under a null projectKey",
+                    );
+                    negative_assert_eq!(
+                        value.get("sessionKey").and_then(JsValue::as_string),
+                        Some(&JsString::from("pdrs-2199-control")),
+                        "#2199 session_model_set echoes the sessionKey under a null projectKey"
+                    );
+                    let effective = value.get("effective").expect("#2199 effective selection");
+                    negative_assert_eq!(
+                        effective.get("provider").and_then(JsValue::as_string),
+                        Some(&JsString::from("test")),
+                        "#2199 the stored selection applies under the configured project"
+                    );
+                }
+                "session_model_clear" => {
+                    negative_assert!(
+                        matches!(result, Ok(JsValue::Undefined)),
+                        "#2199 session_model_clear answers undefined for a valid key under a null projectKey"
+                    );
+                }
+                "set_permission_mode"
+                | "set_session_thinking"
+                | "set_output_style"
+                | "seed_read_state" => {
+                    let value = result
+                        .expect("#2199 the method answers a valid key under a null projectKey");
+                    negative_assert_eq!(
+                        value.get("applied"),
+                        Some(&JsValue::Bool(true)),
+                        "#2199 the method applies on the configured project under a null projectKey"
+                    );
+                }
+                _ => unreachable!("config_blank_key_gate_order called for an unknown method"),
+            }
+        }
+
+        teardown(&r).await;
+    }
+
+    /// The per-method request shapes for `config_blank_key_gate_order`: the
+    /// sessionKey cell, the optional `projectKey` cell, and the fields each
+    /// method needs past its own sessionKey gate.
+    fn gate_order_params(
+        key: Option<&str>,
+        project: Option<JsValue>,
+        extra: &[(&'static str, JsValue)],
+    ) -> JsValue {
+        let mut fields: Vec<(&'static str, JsValue)> = Vec::new();
+        if let Some(key) = key {
+            fields.push(("sessionKey", key.into()));
+        }
+        fields.extend_from_slice(extra);
+        if let Some(project) = project {
+            fields.push(("projectKey", project));
+        }
+        object(fields)
+    }
+
+    fn set_cell_params(key: Option<&str>, project: Option<JsValue>, _r: &Requests) -> JsValue {
+        gate_order_params(
+            key,
+            project,
+            &[("selection", selection("model", "test", "test"))],
+        )
+    }
+
+    fn clear_cell_params(key: Option<&str>, project: Option<JsValue>, _r: &Requests) -> JsValue {
+        gate_order_params(key, project, &[])
+    }
+
+    fn permission_cell_params(
+        key: Option<&str>,
+        project: Option<JsValue>,
+        _r: &Requests,
+    ) -> JsValue {
+        gate_order_params(key, project, &[("mode", "default".into())])
+    }
+
+    fn thinking_cell_params(key: Option<&str>, project: Option<JsValue>, _r: &Requests) -> JsValue {
+        gate_order_params(
+            key,
+            project,
+            &[(
+                "thinking",
+                object([("enabled", JsValue::Bool(true)), ("mode", "high".into())]),
+            )],
+        )
+    }
+
+    fn style_cell_params(key: Option<&str>, project: Option<JsValue>, _r: &Requests) -> JsValue {
+        gate_order_params(key, project, &[("name", JsValue::Null)])
+    }
+
+    fn seed_cell_params(key: Option<&str>, project: Option<JsValue>, r: &Requests) -> JsValue {
+        let file = r.options.project.join("gate-order-seed.txt");
+        let mtime_ms = std::fs::metadata(&file)
+            .expect("#2199 gate-order seed metadata")
+            .modified()
+            .expect("#2199 gate-order seed mtime")
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("#2199 gate-order seed mtime is after the epoch")
+            .as_millis() as f64;
+        gate_order_params(
+            key,
+            project,
+            &[
+                ("path", "gate-order-seed.txt".into()),
+                ("mtime", JsValue::Number(mtime_ms)),
+            ],
+        )
+    }
+
+    #[tokio::test]
+    async fn session_model_set_blank_key_gate_order() {
+        config_blank_key_gate_order("session_model_set", set_cell_params).await;
+    }
+
+    #[tokio::test]
+    async fn session_model_clear_blank_key_gate_order() {
+        config_blank_key_gate_order("session_model_clear", clear_cell_params).await;
+    }
+
+    #[tokio::test]
+    async fn set_permission_mode_blank_key_gate_order() {
+        config_blank_key_gate_order("set_permission_mode", permission_cell_params).await;
+    }
+
+    #[tokio::test]
+    async fn set_session_thinking_blank_key_gate_order() {
+        config_blank_key_gate_order("set_session_thinking", thinking_cell_params).await;
+    }
+
+    #[tokio::test]
+    async fn set_output_style_blank_key_gate_order() {
+        config_blank_key_gate_order("set_output_style", style_cell_params).await;
+    }
+
+    #[tokio::test]
+    async fn seed_read_state_blank_key_gate_order() {
+        config_blank_key_gate_order("seed_read_state", seed_cell_params).await;
     }
 
     #[tokio::test]
