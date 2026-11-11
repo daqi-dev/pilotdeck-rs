@@ -1604,7 +1604,7 @@ class EnvironmentControls(unittest.TestCase):
             ('network-timing/test_negative_controls.py', 10),
             ('test_negative_roster_guards', 6),
             ('issue-2495/test_negative_controls.py', 30),
-            ('sdk-signals-close-order-pin/test_negative_controls.py', 13),
+            ('sdk-signals-close-order-pin/test_negative_controls.py', 14),
         )
         # r39（DS sibling#4 P2）：network-timing 的两条 EACCES 判杀用例按宿主
         # 能力条件跳过（`@unittest.skipUnless(EACCES_STAGEABLE, ...)`——root /

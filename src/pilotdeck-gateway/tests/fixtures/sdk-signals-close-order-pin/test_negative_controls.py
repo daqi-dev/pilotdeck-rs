@@ -77,6 +77,13 @@ exactly like the issue-2495 / SessionRunnerTests precedents:
   verdict: the run still exits 2 with the "#1382 INVALID controls"
   diagnostic, so a folded-in ``os._exit(0)`` on the pipe branch cannot
   pass a no-verdict run off as green.
+- survived-pipe: the last cell of the same 3-state-by-2-reader grid —
+  a SURVIVED run (every phase green, rc 1 is the only signal a red
+  device gives through ``... | head``) with the counts line hitting a
+  closed pipe. Swallowing the pipe must not collapse the tri-state:
+  the run still exits 1, so a regression folding the verdict codes to
+  ``os._exit(2 if invalid else 0)`` (dropping the SURVIVED code, a red
+  device read as rc 0 = all green) cannot pass a pipe-read run off.
 
 Both senses of exit 1 are pinned: the verdict path's 1 above, and the
 pre-guard refusals' 1 (an unknown selection, a missing CARGO_TARGET_DIR)
@@ -159,7 +166,7 @@ else:
         # stage-queue shape).
         index = calls['count']
         calls['count'] += 1
-        if mode == 'survived':
+        if mode in ('survived', 'survived-pipe'):
             # The verdict edge no abort mode can reach: every phase green, so
             # the negative run's preflight still passes and the row survives.
             return subprocess.CompletedProcess(
@@ -220,7 +227,8 @@ else:
 
         Path.replace = fail_summary_publish
 
-    if mode in ('stdout-pipe-fault', 'invalid-verdict-pipe'):
+    if mode in ('stdout-pipe-fault', 'invalid-verdict-pipe',
+                'survived-pipe'):
         # #1800 fix-r4（DS sibling#2 / boundary#1，两家同撞）：管道分支与
         # 两个 except 的先后次序此前零仓内覆盖——合并或调序成统一的
         # `except OSError` 后，健康的 `... | head` 运行会从「吞管道、按判
@@ -501,6 +509,45 @@ class SurvivedVerdictTests(_PinDriver, unittest.TestCase):
                    '/negative_controls.py')
         self.assertEqual(catalog.read_bytes(), before,
                          '#1800 a surviving run must still restore the catalog')
+
+    def test_survived_with_a_closed_pipe_still_exits_one(self):
+        # #1800 fix-r6（DS sibling P2，升 b 类）：三态×管道矩阵的最后一格
+        # ——SURVIVED 运行（全相位绿，rc 1 是红装置经 ``... | head`` 给出的
+        # 唯一信号）读到 counts 行时管道已关。吞管道必须不吞三态：回归把
+        # 判决段塌成两态（如 `os._exit(2 if invalid else 0)`，丢掉 rc 1）
+        # 时，健康用例（rc 0）与 INVALID 用例（rc 2）照绿，唯独本腿会把
+        #「有控制存活」读成 rc 0（协调者读成全绿＝假 PASS）——本用例钉 rc 1。
+        process, summary, tree, before = self.run_pin('survived-pipe')
+        self.assertEqual(process.returncode, 1,
+                         '#1800 a SURVIVED run read through a closed pipe '
+                         'must still exit 1 — swallowing the pipe error must '
+                         'not collapse the tri-state verdict codes: '
+                         f'rc={process.returncode}, stderr={process.stderr!r}')
+        self.assertIn('#1382 SURVIVED controls', process.stderr,
+                      '#1800 the SURVIVED diagnostic must still reach stderr '
+                      'after the pipe branch')
+        self.assertNotIn('#1382 stdout summary write failed', process.stderr,
+                         '#1800 the pipe error is swallowed, not diagnosed')
+        self.assertNotIn('#1382 run did not complete', process.stderr,
+                         '#1800 rc 1 is the verdict path, never an abort')
+        self.assertNotIn('"counts"', process.stdout,
+                         '#1800 the counts line never reached the reader: '
+                         'the pipe closed at it')
+        self.assertIsNotNone(summary,
+                            '#1800 a SURVIVED run is not an abort: the '
+                            'summary must still be published')
+        self.assertEqual([row['status'] for row in summary['results']],
+                         ['SURVIVED'] * len(SELECTION),
+                         '#1800 the rows are SURVIVED on the verdict path, '
+                         'with the pipe fault layered on top')
+        self.assertEqual(summary['counts'],
+                         {'KILLED': 0, 'SURVIVED': len(SELECTION),
+                          'INVALID': 0})
+        catalog = (tree / 'src/pilotdeck-gateway/tests/fixtures/sdk-signals'
+                   '/negative_controls.py')
+        self.assertEqual(catalog.read_bytes(), before,
+                         '#1800 a SURVIVED pipe run must still restore the '
+                         'catalog')
 
 
 class InvalidVerdictTests(_PinDriver, unittest.TestCase):
