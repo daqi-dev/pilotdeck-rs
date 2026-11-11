@@ -1374,15 +1374,19 @@ pub(super) const DOMAIN_TYPES: &[&str] = &[
     "plan_todo_progressed",
     "goal_changed",
 ];
+/// Non-null object. Arrays are their own `JsValue` arm, so this is also the
+/// WebHistory `isRecord` predicate (WebHistoryProjections.ts:408-410:
+/// `typeof value === "object" && value !== null && !Array.isArray(value)`).
 fn plain_object(value: &JsValue) -> bool {
     value.as_object().is_some()
 }
+
 /// WebHistoryProjections.ts:79,321-324: messageContainsToolResult. This is a
 /// JS `.some` call, not canonical-message validation: primitive blocks are
 /// allowed and a matching block stops further reads. Returns whether a
 /// tool-result block was found; `validate_hydrated_message` is the `Ok(())`
 /// projection of the same reads the hydrate gate needs.
-fn message_contains_tool_result(message: &JsValue) -> AdapterResult<bool> {
+pub(crate) fn message_contains_tool_result(message: &JsValue) -> AdapterResult<bool> {
     if nullish(message) {
         return Err(cannot_read(message, "content"));
     }
@@ -2204,10 +2208,6 @@ fn length_positive(value: &JsValue) -> AdapterResult<bool> {
         .map(|number| number > 0.0)
         .map_err(|_| AdapterError::Range(js_value::StackOverflow::MESSAGE.into()))
 }
-/// TS isRecord (WebHistoryProjections.ts:408-410): objects only.
-fn is_record(value: &JsValue) -> bool {
-    value.as_object().is_some()
-}
 /// TS positiveNumber (:404-406): a finite number greater than zero.
 fn positive_number(value: &JsValue) -> Option<f64> {
     value
@@ -2238,7 +2238,7 @@ fn project_context_budget(entry: &JsValue, index: &JsValue) -> AdapterResult<Opt
         return Ok(None);
     }
     let detail = field(entry, "detail");
-    if !is_record(detail) {
+    if !plain_object(detail) {
         return Ok(None);
     }
     let display_used = positive_number(field(detail, "displayUsed"));
@@ -2470,25 +2470,17 @@ pub fn project_web_history(entries: &[JsValue]) -> AdapterResult<WebHistoryView>
             continue;
         }
         // `[...artifacts]`: an array copies its elements and a string
-        // iterates code points; any other shape is not iterable.
+        // iterates code points (the shared `js_value::code_point_chunks`
+        // walk, same as permission denials and the host stream events); any
+        // other shape is not iterable.
         let spread = match &artifacts {
             JsValue::Array(items) => JsValue::Array(items.clone()),
-            JsValue::String(text) => {
-                let mut units = text.units().iter().copied().peekable();
-                let mut items = Vec::new();
-                while let Some(first) = units.next() {
-                    let mut item = vec![first];
-                    if (0xd800..=0xdbff).contains(&first)
-                        && units
-                            .peek()
-                            .is_some_and(|next| (0xdc00..=0xdfff).contains(next))
-                    {
-                        item.push(units.next().expect("#2044 paired low surrogate"));
-                    }
-                    items.push(JsValue::String(JsString::from_utf16(item)));
-                }
-                JsValue::Array(items)
-            }
+            JsValue::String(text) => JsValue::Array(
+                js_value::code_point_chunks(text.units())
+                    .into_iter()
+                    .map(|chunk| JsValue::String(JsString::from_utf16(chunk.to_vec())))
+                    .collect(),
+            ),
             _ => return Err(AdapterError::Type("artifacts is not iterable".into())),
         };
         // `{...entry, artifacts}`: only objects match the `file_artifacts`

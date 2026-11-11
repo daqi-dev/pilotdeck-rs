@@ -1807,3 +1807,50 @@ fn web_history_visible_failures_filtered() {
         "#2044 turns with a visible failure status leave the error rows"
     );
 }
+
+/// #2043 fix-r1 (simplify P2): the fileArtifact finalize `[...artifacts]`
+/// spread of a string iterates code points through the shared
+/// `js_value::code_point_chunks` walk. The `artifacts-str-tool-turn` golden
+/// row is ASCII only, so this test is the branch's own surrogate-pair pin —
+/// a later re-inlined per-unit loop would fail here even though the shared
+/// helper's factory golden still passes. Real TS/Node v22.22.0:
+/// `[...'a\u{1F600}\uD800b']` yields `'a'`, `'\u{1F600}'`, `'\uD800'`, `'b'`.
+#[test]
+fn web_history_string_artifacts_spread_by_code_point() {
+    let tool_turn = r#"{"version":1,"type":"durable_message","entryId":"web-1","parentEntryId":"web-0","sequence":1,"sessionId":"session-745","turnId":"tools","createdAt":"2026-10-28T00:00:00.000Z","message":{"role":"assistant","content":[{"type":"tool_result"}]}}"#;
+    let artifacts_row = r#"{"version":1,"type":"file_artifacts","entryId":"web-2","parentEntryId":"web-1","sequence":2,"sessionId":"session-745","turnId":"tools","createdAt":"2026-10-28T00:00:00.000Z","artifacts":"x"}"#;
+    // The lone surrogate cannot ride a JSON literal (serde_json would replace
+    // it), so the artifacts string is planted as a hand-built JsString.
+    let mut row = match js(artifacts_row) {
+        JsValue::Object(ref row) => row.clone(),
+        _ => panic!("#2044 web history string artifacts row object"),
+    };
+    row.insert(
+        "artifacts".into(),
+        JsValue::String(JsString::from_utf16(vec![
+            0x61, 0xd83d, 0xde00, 0xd800, 0x62,
+        ])),
+    );
+    let entries = [js(tool_turn), JsValue::Object(row)];
+    let view = project_web_history(&entries).expect("#2044 web history projection replay");
+    assert_eq!(
+        view.file_artifacts.len(),
+        1,
+        "#2044 the tool-result turn keeps its string artifacts row"
+    );
+    let units: Vec<Vec<u16>> = match field(&view.file_artifacts[0], "artifacts") {
+        JsValue::Array(items) => items
+            .iter()
+            .map(|value| match value {
+                JsValue::String(text) => text.units().to_vec(),
+                _ => panic!("#2044 string artifacts spread into strings"),
+            })
+            .collect(),
+        _ => panic!("#2044 string artifacts spread into an array"),
+    };
+    assert_eq!(
+        units,
+        vec![vec![0x61], vec![0xd83d, 0xde00], vec![0xd800], vec![0x62]],
+        "#2044 string artifacts spread by code point"
+    );
+}
