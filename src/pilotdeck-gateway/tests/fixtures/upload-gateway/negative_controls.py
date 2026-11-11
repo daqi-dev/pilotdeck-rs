@@ -301,15 +301,42 @@ mutations = [
         let provider = self.require()?;
         gateway_record(&provider.get(&upload_id)?)''', ORDER,
      'get must require the provider before validating uploadId'),
-    # #1494: the read_at handle binding. read-at-handle-check-dropped
-    # removes it outright; read-at-check-before-open restores the pre-fix
-    # shape — a check of the pre-open path spelling, which the canonicalize→
-    # open swap already passed — so both must turn their named tests red.
-    # #2098 re-anchor note: the binding region gained the descriptor type
-    # term between the name check and the identity check; both mutants keep
-    # that term (it is #2098's, not the #1494 binding) and drop exactly the
-    # halves these rows have always dropped.
-    ('read-at-handle-check-dropped', STORE, '''                let handle_inside = match crate::handle_path::opened_path(&file) {
+    # #1494: the read_at handle binding, re-anchored for #2098 fix-r2
+    # (review DS#1 / MM, two families hit the same finding). The r1 ruling
+    # moved both named tests' swap into the `BetweenCanonicalizeAndOpen`
+    # window with a symlink and their assertions to the guarded open's
+    # ELOOP — under the previous rows the mutants only edited terms after
+    # the open, so the open already refused the link and both rows survived
+    # without evidence. fix-r2 makes each mutant the genuine pre-fix
+    # shape: the open itself reverts to a bare `File::open`, which follows
+    # the swapped link onto the outside bytes, so the dropped #1494 terms
+    # are reachable again and each named test dies on its own receipt.
+    # `read-at-handle-check-dropped` drops the handle binding and the
+    # identity term outright — the outside record is read back, and the
+    # named test's `expect_err` receipt is the kill. Both mutants keep
+    # #2098's type term and size cap: those are this PR's, not the #1494
+    # binding, and their own rows pin them.
+    ('read-at-handle-check-dropped', STORE, '''        let bytes = match open_artifact_guarded(&canonical_path) {
+            // UploadStore.ts:384 reads through `readFile` (node:fs/promises): an
+            // open error names its path, a descriptor read error (EISDIR after a
+            // directory swap, EIO, ...) is `read` without one (node v22.22.0,
+            // `_tmp/20261025-issue-656/node-probe/read-stages.out`).
+            Ok(mut file) => {
+                #[cfg(test)]
+                swap_test_hook::notify(swap_test_hook::SwapWindow::AfterOpen, &canonical_path);
+                // #1494: bind the approval to the opened handle — the
+                // platform's own resolved path for the descriptor must still
+                // name a location inside the canonical upload root, and a
+                // handle with no resolvable path is never read either
+                // (fail closed, like the #1468 lease binding). The identity
+                // term below also refuses a benign concurrent store rewrite
+                // (`write` renames a fresh `metadata.json` over the old one):
+                // that mismatch is indistinguishable from a post-approval
+                // rename of an outside vnode into the root, and a retry would
+                // re-read the now-in-root replacement and hand the attacker
+                // the bytes. The availability trade-off is owned by the
+                // #1494 P2 follow-up.
+                let handle_inside = match crate::handle_path::opened_path(&file) {
                     Ok(handle) => handle.starts_with(&upload_root),
                     Err(_) => false,
                 };
@@ -350,7 +377,21 @@ mutations = [
                         ));
                     }
                 }
-''', '''                let opened = match file.metadata() {
+''', '''        let bytes = match File::open(&canonical_path) {
+            // UploadStore.ts:384 reads through `readFile` (node:fs/promises): an
+            // open error names its path, a descriptor read error (EISDIR after a
+            // directory swap, EIO, ...) is `read` without one (node v22.22.0,
+            // `_tmp/20261025-issue-656/node-probe/read-stages.out`).
+            Ok(mut file) => {
+                #[cfg(test)]
+                swap_test_hook::notify(swap_test_hook::SwapWindow::AfterOpen, &canonical_path);
+                // #2098: the open is the guarded family, so the terms that
+                // make it safe run on the one descriptor it returned. The
+                // type term refuses a `metadata.json` swapped for a FIFO
+                // (the `O_NONBLOCK` open returned at once) or a device, and
+                // the length terms below refuse the sparse-file and
+                // same-inode-append faces of the unbounded read.
+                let opened = match file.metadata() {
                     Ok(metadata) => metadata,
                     Err(e) => return Err(UploadError::io(e, "stat", None)),
                 };
@@ -367,12 +408,34 @@ mutations = [
                 }
 ''', READ_AT_SWAP,
      '#1494 the swapped-in outside record must never be read back'),
-    # The genuine pre-fix shape is both missing guards at once: the handle
-    # binding *and* the pre-open identity. Restoring only the spelling check
-    # leaves the r2 identity term in place, which refuses the swapped record
-    # with its own message — the named test then dies on a different
-    # assertion, which is not evidence for this row (review boundary P1).
-    ('read-at-check-before-open', STORE, '''                let handle_inside = match crate::handle_path::opened_path(&file) {
+    # The pre-#1494 shape is a check of the pre-open spelling: the bare
+    # `File::open` follows the swapped link onto the outside bytes, and the
+    # spelling check passes because the canonicalize→open swap never
+    # changed the checked spelling — the forged record reaches the
+    # attachment lease and the named test's `expect` receipt is the kill.
+    # The #1494 handle binding and identity term are dropped with it, while
+    # #2098's type term and size cap stay (their own rows pin them).
+    ('read-at-check-before-open', STORE, '''        let bytes = match open_artifact_guarded(&canonical_path) {
+            // UploadStore.ts:384 reads through `readFile` (node:fs/promises): an
+            // open error names its path, a descriptor read error (EISDIR after a
+            // directory swap, EIO, ...) is `read` without one (node v22.22.0,
+            // `_tmp/20261025-issue-656/node-probe/read-stages.out`).
+            Ok(mut file) => {
+                #[cfg(test)]
+                swap_test_hook::notify(swap_test_hook::SwapWindow::AfterOpen, &canonical_path);
+                // #1494: bind the approval to the opened handle — the
+                // platform's own resolved path for the descriptor must still
+                // name a location inside the canonical upload root, and a
+                // handle with no resolvable path is never read either
+                // (fail closed, like the #1468 lease binding). The identity
+                // term below also refuses a benign concurrent store rewrite
+                // (`write` renames a fresh `metadata.json` over the old one):
+                // that mismatch is indistinguishable from a post-approval
+                // rename of an outside vnode into the root, and a retry would
+                // re-read the now-in-root replacement and hand the attacker
+                // the bytes. The availability trade-off is owned by the
+                // #1494 P2 follow-up.
+                let handle_inside = match crate::handle_path::opened_path(&file) {
                     Ok(handle) => handle.starts_with(&upload_root),
                     Err(_) => false,
                 };
@@ -413,8 +476,21 @@ mutations = [
                         ));
                     }
                 }
-''',
-     '''                let opened = match file.metadata() {
+''', '''        let bytes = match File::open(&canonical_path) {
+            // UploadStore.ts:384 reads through `readFile` (node:fs/promises): an
+            // open error names its path, a descriptor read error (EISDIR after a
+            // directory swap, EIO, ...) is `read` without one (node v22.22.0,
+            // `_tmp/20261025-issue-656/node-probe/read-stages.out`).
+            Ok(mut file) => {
+                #[cfg(test)]
+                swap_test_hook::notify(swap_test_hook::SwapWindow::AfterOpen, &canonical_path);
+                // #2098: the open is the guarded family, so the terms that
+                // make it safe run on the one descriptor it returned. The
+                // type term refuses a `metadata.json` swapped for a FIFO
+                // (the `O_NONBLOCK` open returned at once) or a device, and
+                // the length terms below refuse the sparse-file and
+                // same-inode-append faces of the unbounded read.
+                let opened = match file.metadata() {
                     Ok(metadata) => metadata,
                     Err(e) => return Err(UploadError::io(e, "stat", None)),
                 };
@@ -430,6 +506,12 @@ mutations = [
                     ));
                 }
                 let handle_inside = canonical_path.starts_with(&upload_root);
+                if !handle_inside {
+                    return Err(UploadError::dialog(
+                        "PROJECT_PATH_FORBIDDEN",
+                        "Upload metadata handle leaves the upload directory.",
+                    ));
+                }
 ''',
      LEASE_CHAIN,
      '#1494 a forged record must never reach the attachment lease'),
