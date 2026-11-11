@@ -3433,6 +3433,7 @@ class ApparatusVerificationTests(unittest.TestCase):
     def heads(self, common_source):
         return {
             'scripts/cli-parity/run_round.py': (SCRIPT / 'run_round.py').read_bytes(),
+            'scripts/cli-parity/_bootstrap.py': (SCRIPT / '_bootstrap.py').read_bytes(),
             'scripts/cli-parity/common.py': common_source,
             'scripts/cli-parity/compare.py': _run_round._compare_module._apparatus_source,
             'scripts/cli-parity/policy.py': _run_round._policy_module._apparatus_source,
@@ -3449,7 +3450,9 @@ class ApparatusVerificationTests(unittest.TestCase):
         with patch.object(_run_round, '_head_source',
                           side_effect=lambda relative: heads[relative]), \
                 patch.object(_common, '_apparatus_source', b'# mutant common bytes\n'), \
-                self.assertRaises(ValueError) as caught:
+                self.assertRaises(ValueError,
+                                  msg='#2513 a mutated common.py must be '
+                                      'refused after the lease') as caught:
             _run_round._verify_loaded_apparatus()
         self.assertEqual(str(caught.exception),
                          '#2513 loaded apparatus differs from HEAD: '
@@ -3460,11 +3463,100 @@ class ApparatusVerificationTests(unittest.TestCase):
         with patch.object(_run_round, '_head_source',
                           side_effect=lambda relative: heads[relative]), \
                 patch.object(_common, '_apparatus_source', None), \
-                self.assertRaises(ValueError) as caught:
+                self.assertRaises(ValueError,
+                                  msg='#2513 missing common.py provenance '
+                                      'must fail closed') as caught:
             _run_round._verify_loaded_apparatus()
         self.assertEqual(str(caught.exception),
                          '#2513 loaded apparatus differs from HEAD: '
                          'scripts/cli-parity/common.py')
+
+    def test_mutated_compare_is_refused(self):
+        heads = self.heads(_common._apparatus_source)
+        heads['scripts/cli-parity/compare.py'] += b'\n# 2513 mutated head\n'
+        with patch.object(_run_round, '_head_source',
+                          side_effect=lambda relative: heads[relative]), \
+                self.assertRaises(ValueError,
+                                  msg='#2513 a mutated compare.py must be '
+                                      'refused after the lease') as caught:
+            _run_round._verify_loaded_apparatus()
+        self.assertEqual(str(caught.exception),
+                         '#2513 loaded apparatus differs from HEAD: '
+                         'scripts/cli-parity/compare.py')
+
+    def test_mutated_policy_is_refused(self):
+        heads = self.heads(_common._apparatus_source)
+        heads['scripts/cli-parity/policy.py'] += b'\n# 2513 mutated head\n'
+        with patch.object(_run_round, '_head_source',
+                          side_effect=lambda relative: heads[relative]), \
+                self.assertRaises(ValueError,
+                                  msg='#2513 a mutated policy.py must be '
+                                      'refused after the lease') as caught:
+            _run_round._verify_loaded_apparatus()
+        self.assertEqual(str(caught.exception),
+                         '#2513 loaded apparatus differs from HEAD: '
+                         'scripts/cli-parity/policy.py')
+
+    def test_mutated_bootstrap_is_refused(self):
+        # fix-r4 boundary#2: the loader's executing code object is verified
+        # like the entry's — a mutated bootstrap under the lease would keep
+        # loading apparatus through the mutant's load().
+        heads = self.heads(_common._apparatus_source)
+        mutant = compile(heads['scripts/cli-parity/_bootstrap.py']
+                          + b'\n_2513_bootstrap_mutant = 1\n',
+                          _run_round._bootstrap._bootstrap_code.co_filename, 'exec',
+                          dont_inherit=True, optimize=sys.flags.optimize)
+        with patch.object(_run_round, '_head_source',
+                          side_effect=lambda relative: heads[relative]), \
+                patch.object(_run_round._bootstrap, '_bootstrap_code', mutant), \
+                self.assertRaises(ValueError,
+                                  msg='#2513 a mutated _bootstrap.py must be '
+                                      'refused after the lease') as caught:
+            _run_round._verify_loaded_apparatus()
+        self.assertEqual(str(caught.exception),
+                         '#2513 loaded apparatus differs from HEAD: '
+                         'scripts/cli-parity/_bootstrap.py')
+
+    def test_missing_bootstrap_code_fails_closed(self):
+        heads = self.heads(_common._apparatus_source)
+        with patch.object(_run_round, '_head_source',
+                          side_effect=lambda relative: heads[relative]), \
+                patch.object(_run_round._bootstrap, '_bootstrap_code', None), \
+                self.assertRaises(ValueError,
+                                  msg='#2513 a missing bootstrap code object '
+                                      'must fail closed') as caught:
+            _run_round._verify_loaded_apparatus()
+        self.assertEqual(str(caught.exception),
+                         '#2513 loaded apparatus differs from HEAD: '
+                         'scripts/cli-parity/_bootstrap.py')
+
+    def test_head_source_failure_is_blocked(self):
+        # A git read that cannot answer is a Blocked refusal, never a
+        # comparison against missing bytes.
+        with patch.object(_run_round, '_head_source',
+                          side_effect=Blocked('cannot read HEAD source '
+                                             'scripts/cli-parity/common.py: sabotage')), \
+                self.assertRaises(Blocked,
+                                  msg='#2513 a HEAD read failure must refuse '
+                                      'the round, not compare against nothing'):
+            _run_round._verify_loaded_apparatus()
+
+    def test_entry_fingerprint_mismatch_is_refused(self):
+        heads = self.heads(_common._apparatus_source)
+        mutant = compile(heads['scripts/cli-parity/run_round.py']
+                         + b'\n_2513_entry_mutant = 1\n',
+                         _run_round._apparatus_code.co_filename, 'exec',
+                         dont_inherit=True, optimize=sys.flags.optimize)
+        with patch.object(_run_round, '_head_source',
+                          side_effect=lambda relative: heads[relative]), \
+                patch.object(_run_round, '_apparatus_code', mutant), \
+                self.assertRaises(ValueError,
+                                  msg='#2513 a mutated executing entry must '
+                                      'be refused after the lease') as caught:
+            _run_round._verify_loaded_apparatus()
+        self.assertEqual(str(caught.exception),
+                         '#2513 loaded apparatus differs from HEAD: '
+                         'scripts/cli-parity/run_round.py')
 
 
 if __name__ == '__main__':

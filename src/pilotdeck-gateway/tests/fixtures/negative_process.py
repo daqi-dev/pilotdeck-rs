@@ -459,7 +459,35 @@ def _head_bytes(root, relative, baseline):
                                   f"cannot read {baseline} bytes: {error}")
 
 
-def _baseline_tracks_ruler(root, baseline):
+def _baseline_has_file(root, relative, baseline):
+    """Three-valued: True (tracked), False (baseline tree lacks it), or raise.
+
+    #2513 fix-r4 (review 条3): a ``git show`` failure must not collapse into
+    "absent". ``git ls-tree --name-only <ref> -- <path>`` exits 0 with no
+    output only when the baseline tree is resolvable and genuinely has no
+    such path; a tracked-but-unreadable blob, a bad ref or a git failure
+    re-raises instead of granting an exemption.
+    """
+    try:
+        _head_bytes(root, relative, baseline)
+        return True
+    except SourceBaselineError as error:
+        try:
+            listing = _git(root, "ls-tree", "--name-only", baseline, "--",
+                           relative)
+        except RuntimeError as resolve_error:
+            raise SourceBaselineError(
+                root, relative,
+                f"cannot resolve {baseline} tree: {resolve_error}"
+            ) from resolve_error
+        if listing.strip():
+            # Tracked by the baseline but unreadable: a git failure, never
+            # an exemption.
+            raise error
+        return False
+
+
+def _baseline_tracks_ruler(root, baseline, *, allow_unleased=False):
     """True when this tree's baseline itself contains the lease protocol.
 
     #2513 fix-r3: the guarded prefixes now reach into ``src/pilotdeck-cli``
@@ -468,12 +496,24 @@ def _baseline_tracks_ruler(root, baseline):
     to checkouts that track the ruler; a tree whose baseline does not cannot
     host a live lease consumer. A real-repo window whose tracked ruler went
     missing on disk still fails closed in the auto-add below.
+
+    #2513 fix-r4 (review 条3): "baseline tree lacks the ruler" and "git could
+    not answer" no longer share the False return — only a resolvable ls-tree
+    with no hit is an absence. A ``--baseline`` that predates the lease
+    protocol while this checkout's own HEAD tracks the ruler (a real repo,
+    the live-lease case) is refused without the explicit ``allow_unleased``
+    opt-in; there is no silent downgrade.
     """
-    try:
-        _head_bytes(root, "scripts/gateway-parity/common.py", baseline)
-    except SourceBaselineError:
-        return False
-    return True
+    if _baseline_has_file(root, "scripts/gateway-parity/common.py", baseline):
+        return True
+    if baseline != "HEAD" and _baseline_has_file(
+            root, "scripts/gateway-parity/common.py", "HEAD") and not allow_unleased:
+        raise SourceBaselineError(
+            root, "scripts/gateway-parity/common.py",
+            f"baseline {baseline} predates the lease protocol; guarded "
+            "sources would mutate without the shared lease; pass "
+            "allow_unleased (CLI: --allow-unleased) to opt in explicitly")
+    return False
 
 
 def target_environment(root, env=None):
@@ -973,7 +1013,8 @@ def write_source_atomic(root, path, data, *, mode=None):
 
 
 @contextmanager
-def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
+def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900,
+                      allow_unleased=False):
     """Lock the tree, prove ``paths`` are pristine, snapshot, mutate, restore.
 
     ``paths`` must be repo-relative or absolute paths inside ``root``. Every
@@ -996,7 +1037,10 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
     the mutation window must be mutually exclusive with all of them
     (#2513 fix-r1 review P1-3, widened in fix-r2 to the four-family and in
     fix-r3 to the six-family predicate; synthetic trees that do not track
-    the ruler skip the lease — _baseline_tracks_ruler). The lease
+    the ruler skip the lease — _baseline_tracks_ruler, which since fix-r4
+    distinguishes a resolvable absence from a git failure and refuses a
+    pre-lease ``--baseline`` on a ruler-tracking checkout unless
+    ``allow_unleased`` opts in). The lease
     protocol loads common.py from verified bytes, so the module joins the
     guarded set even when the caller named only another family's source.
     Acquire the shared parity lease before yielding,
@@ -1043,7 +1087,8 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
         # tracked ruler is missing on disk in the auto-add below.
         parity = (any(parity_guarded(relative)
                       for _alias, _path, relative in normalized)
-                  and _baseline_tracks_ruler(root, baseline))
+                  and _baseline_tracks_ruler(root, baseline,
+                                             allow_unleased=allow_unleased))
         if parity and "scripts/gateway-parity/common.py" not in {
                 _relative for _alias, _path, _relative in normalized}:
             common = root / "scripts/gateway-parity/common.py"

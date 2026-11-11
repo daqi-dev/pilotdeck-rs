@@ -358,6 +358,54 @@ mutations = [
      "            raise RuntimeError(\n"
      "                f'#1023-9: {target} released after the {timeout}s deadline; no bound run started')\n"
      "        yield"),
+    # #2513 fix-r4 (review sibling#2 + boundary#2): the post-lease apparatus
+    # verification must not skip any of its five surfaces — dropping one from
+    # the loop (or disarming one check) lets a mutated module run under the
+    # lease while the bound ApparatusVerificationTests row goes red.
+    ('apparatus-common-unverified',
+     run_round,
+     "    for name, module in (('common', _common), ('compare', _compare_module),\n"
+     "                         ('policy', _policy_module)):",
+     "    for name, module in (('compare', _compare_module),\n"
+     "                         ('policy', _policy_module)):"),
+    ('apparatus-compare-unverified',
+     run_round,
+     "    for name, module in (('common', _common), ('compare', _compare_module),\n"
+     "                         ('policy', _policy_module)):",
+     "    for name, module in (('common', _common),\n"
+     "                         ('policy', _policy_module)):"),
+    ('apparatus-policy-unverified',
+     run_round,
+     "    for name, module in (('common', _common), ('compare', _compare_module),\n"
+     "                         ('policy', _policy_module)):",
+     "    for name, module in (('common', _common), ('compare', _compare_module)):"),
+    ('apparatus-provenance-unchecked',
+     run_round,
+     "        if not isinstance(source, bytes) or source != _head_source(f'scripts/cli-parity/{name}.py'):",
+     "        if False:"),
+    ('apparatus-head-failure-swallowed',
+     run_round,
+     "    expected_entry = _head_source('scripts/cli-parity/run_round.py')",
+     "    try:\n"
+     "        expected_entry = _head_source('scripts/cli-parity/run_round.py')\n"
+     "    except Blocked:\n"
+     "        return  # mutant: a HEAD read failure is swallowed"),
+    ('apparatus-entry-fingerprint-unchecked',
+     run_round,
+     "    if _code_fingerprint(_apparatus_code) != _code_fingerprint(expected_code):",
+     "    if False and _code_fingerprint(_apparatus_code) != _code_fingerprint(expected_code):"),
+    ('apparatus-bootstrap-unverified',
+     run_round,
+     "    if _code_fingerprint(bootstrap_code) != _code_fingerprint(expected_bootstrap):",
+     "    if False and _code_fingerprint(bootstrap_code) != _code_fingerprint(expected_bootstrap):"),
+    ('apparatus-bootstrap-missing-accepted',
+     run_round,
+     "    bootstrap_code = getattr(_bootstrap, '_bootstrap_code', None)\n"
+     "    if not isinstance(bootstrap_code, CodeType):\n"
+     "        raise ValueError('#2513 loaded apparatus differs from HEAD: scripts/cli-parity/_bootstrap.py')",
+     "    bootstrap_code = getattr(_bootstrap, '_bootstrap_code', None)\n"
+     "    if not isinstance(bootstrap_code, CodeType):\n"
+     "        bootstrap_code = compile(_head_source('scripts/cli-parity/_bootstrap.py'), str(_bootstrap_path), 'exec')"),
 ]
 
 # #1666: the denominator is this static roster, not `len(mutations)`. Deleting
@@ -388,6 +436,14 @@ EXPECTED_NAMES = (
     'script-parent-metadata-allowed',
     'baseline-parent-metadata-allowed',
     'lease-late-arrival-runs-bound-test',
+    'apparatus-common-unverified',
+    'apparatus-compare-unverified',
+    'apparatus-policy-unverified',
+    'apparatus-provenance-unchecked',
+    'apparatus-head-failure-swallowed',
+    'apparatus-entry-fingerprint-unchecked',
+    'apparatus-bootstrap-unverified',
+    'apparatus-bootstrap-missing-accepted',
 )
 tests = {
     'allow-rule-drops-port': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
@@ -413,6 +469,22 @@ tests = {
     'baseline-parent-metadata-allowed': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
     'lease-late-arrival-runs-bound-test':
         'MachineLeaseTests.test_bound_run_lease_late_arrival_does_not_start_bound_run',
+    'apparatus-common-unverified':
+        'ApparatusVerificationTests.test_mutated_common_is_refused',
+    'apparatus-compare-unverified':
+        'ApparatusVerificationTests.test_mutated_compare_is_refused',
+    'apparatus-policy-unverified':
+        'ApparatusVerificationTests.test_mutated_policy_is_refused',
+    'apparatus-provenance-unchecked':
+        'ApparatusVerificationTests.test_missing_provenance_fails_closed',
+    'apparatus-head-failure-swallowed':
+        'ApparatusVerificationTests.test_head_source_failure_is_blocked',
+    'apparatus-entry-fingerprint-unchecked':
+        'ApparatusVerificationTests.test_entry_fingerprint_mismatch_is_refused',
+    'apparatus-bootstrap-unverified':
+        'ApparatusVerificationTests.test_mutated_bootstrap_is_refused',
+    'apparatus-bootstrap-missing-accepted':
+        'ApparatusVerificationTests.test_missing_bootstrap_code_fails_closed',
 }
 # The exclusive assertion message each mutant must turn red. A string is one
 # marker; a tuple lists the alternative markers of one assertion family (the
@@ -457,6 +529,32 @@ failure_fragments = {
     'baseline-parent-metadata-allowed': '#933-2: the base RUST profile changed',
     'lease-late-arrival-runs-bound-test':
         '#1023-9: a lease released after the deadline must not start the bound run',
+    # Each apparatus row's marker is the bound test's own msg (the
+    # not-raised shape); the ValueError-shape fallback is the module the
+    # mutant stopped verifying — both name #2513 exclusively.
+    'apparatus-common-unverified':
+        ('#2513 a mutated common.py must be refused after the lease',
+         "#2513 loaded apparatus differs from HEAD: scripts/cli-parity/common.py"),
+    'apparatus-compare-unverified':
+        ('#2513 a mutated compare.py must be refused after the lease',
+         "#2513 loaded apparatus differs from HEAD: scripts/cli-parity/compare.py"),
+    'apparatus-policy-unverified':
+        ('#2513 a mutated policy.py must be refused after the lease',
+         "#2513 loaded apparatus differs from HEAD: scripts/cli-parity/policy.py"),
+    'apparatus-provenance-unchecked':
+        ('#2513 missing common.py provenance must fail closed',
+         "#2513 loaded apparatus differs from HEAD: scripts/cli-parity/common.py"),
+    'apparatus-head-failure-swallowed':
+        '#2513 a HEAD read failure must refuse the round, not compare against nothing',
+    'apparatus-entry-fingerprint-unchecked':
+        ('#2513 a mutated executing entry must be refused after the lease',
+         "#2513 loaded apparatus differs from HEAD: scripts/cli-parity/run_round.py"),
+    'apparatus-bootstrap-unverified':
+        ('#2513 a mutated _bootstrap.py must be refused after the lease',
+         "#2513 loaded apparatus differs from HEAD: scripts/cli-parity/_bootstrap.py"),
+    'apparatus-bootstrap-missing-accepted':
+        ('#2513 a missing bootstrap code object must fail closed',
+         "#2513 loaded apparatus differs from HEAD: scripts/cli-parity/_bootstrap.py"),
 }
 
 SEPARATOR = '-' * 70

@@ -416,6 +416,49 @@ MUTATIONS = [
      "            'cleanupPending': True}", "            'cleanupPending': False}"),
     ('mutation-invalid-as-pass', COMMON,
      "'INVALID': 'BLOCKED'", "'INVALID': 'PASS'"),
+    # #2513 fix-r4 (review 条3): the three fail-open shapes of the ruler
+    # baseline check — a git failure, an unreadable tracked blob and a
+    # pre-lease --baseline — must each be a refusal, never a silent
+    # exemption, while guarded sources mutate.
+    ('ruler-git-failure-exempted', PROCESS,
+     '            raise SourceBaselineError(\n'
+     '                root, relative,\n'
+     '                f"cannot resolve {baseline} tree: {resolve_error}"\n'
+     '            ) from resolve_error',
+     '            return False  # mutant: a git failure reads as ruler absence'),
+    ('ruler-unreadable-blob-exempted', PROCESS,
+     '        if listing.strip():\n'
+     '            # Tracked by the baseline but unreadable: a git failure, never\n'
+     '            # an exemption.\n'
+     '            raise error\n'
+     '        return False',
+     '        if listing.strip():\n'
+     '            # Tracked by the baseline but unreadable: a git failure, never\n'
+     '            # an exemption.\n'
+     '            return False  # mutant: an unreadable ruler reads as absence\n'
+     '        return False'),
+    ('ruler-pre-lease-silent', PROCESS,
+     '        raise SourceBaselineError(\n'
+     '            root, "scripts/gateway-parity/common.py",\n'
+     '            f"baseline {baseline} predates the lease protocol; guarded "\n'
+     '            "sources would mutate without the shared lease; pass "\n'
+     '            "allow_unleased (CLI: --allow-unleased) to opt in explicitly")',
+     '        return False  # mutant: a pre-lease baseline silently drops the lease'),
+    # #2513 fix-r4 (review boundary#3): the reconciliation scan must see the
+    # concatenated, f-string and raw-fragment spellings of the lease path —
+    # reverting one dimension reopens the spelling blind spot the review
+    # demonstrated and the bound row must go red.
+    ('references-path-fragment-blind', PROCESS_TEST,
+     '                if token.type in (tokenize.STRING, tokenize.FSTRING_MIDDLE) \\\n'
+     '                        and cls.LOCK_FILE in token.string:',
+     '                if token.type == tokenize.STRING and cls.LOCK_PATH in token.string:'),
+    ('references-fstring-blind', PROCESS_TEST,
+     '                if token.type in (tokenize.STRING, tokenize.FSTRING_MIDDLE) \\\n'
+     '                        and cls.LOCK_FILE in token.string:',
+     '                if token.type == tokenize.STRING and cls.LOCK_FILE in token.string:'),
+    ('references-raw-fragment-blind', PROCESS_TEST,
+     '            if cls.LOCK_FILE in text:',
+     '            if cls.LOCK_PATH in text:'),
 ]
 CHECKS = {
     'empty-aggregate-pass': ('ApparatusInputs.test_deadline_not_run_has_dedicated_exit_code', '#952 empty or all-None aggregation must be FAIL/1'),
@@ -562,12 +605,21 @@ CHECKS = {
     'release-entry-unmasked': ('Safety.test_release_guard_interrupt_publishes_pending_before_delivery', '#209 release entry interrupt must publish pending groups'),
     'acquisition-marker-missing': ('Safety.test_cleanup_record_write_failure_keeps_preexisting_marker', '#209 lock must be marked before spawning'),
     'mutation-invalid-as-pass': ('ApparatusInputs.test_deadline_not_run_has_dedicated_exit_code', '#166 source control verdict mapping'),
+    'ruler-git-failure-exempted': ('BaselineTracksRuler.test_git_failure_fails_closed', '#2513 a git failure must not read as ruler absence'),
+    'ruler-unreadable-blob-exempted': ('BaselineTracksRuler.test_tracked_but_unreadable_blob_fails_closed', '#2513 a tracked ruler that cannot be read must not read as absent'),
+    'ruler-pre-lease-silent': ('BaselineTracksRuler.test_pre_lease_baseline_requires_explicit_opt_in', '#2513 a pre-lease baseline must not silently drop the lease'),
+    'references-path-fragment-blind': ('ParityLockHolderReconciliation.test_concatenated_lock_spelling_is_still_caught', '#2513 a concatenated lease-path spelling must still count as a lock reference'),
+    'references-fstring-blind': ('ParityLockHolderReconciliation.test_fstring_lock_spelling_is_still_caught', '#2513 an f-string lease-path spelling must still count as a lock reference'),
+    'references-raw-fragment-blind': ('ParityLockHolderReconciliation.test_raw_fragment_spelling_is_still_caught', '#2513 a raw filename fragment must still count as a lock reference'),
 }
 
 
 def run(out, label, test):
     script = (DRIVER_TEST if test.startswith('AggregationAudit.') else
-              PROCESS_TEST if test.startswith('ParityMutationLock.') else SAFETY)
+              PROCESS_TEST if test.startswith(('ParityMutationLock.',
+                                               'BaselineTracksRuler.',
+                                               'ParityLockHolderReconciliation.'))
+              else SAFETY)
     result = run_owned([sys.executable, '-I', '-B', str(script), test, '-v'], cwd=ROOT, timeout=120)
     (out / (label + '.log')).write_text(result.stdout + result.stderr)
     return result

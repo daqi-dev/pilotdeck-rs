@@ -152,6 +152,11 @@ def _verify_loaded_apparatus():
     escapes self-verification — the same boundary scripts/parity/round.py's
     fix-r2 verification documents; the negative-control kill rows cover the
     deletion case.
+
+    #2513 fix-r4 (review boundary#2): the bootstrap's executing code is
+    verified the same way — it is this entry's own loader, so a mutated
+    bootstrap under the lease would keep loading apparatus through the
+    mutant's ``load`` even when the three modules above are pristine.
     """
     expected_entry = _head_source('scripts/cli-parity/run_round.py')
     if not isinstance(_apparatus_code, CodeType):
@@ -160,6 +165,14 @@ def _verify_loaded_apparatus():
                             dont_inherit=True, optimize=sys.flags.optimize)
     if _code_fingerprint(_apparatus_code) != _code_fingerprint(expected_code):
         raise ValueError('#2513 loaded apparatus differs from HEAD: scripts/cli-parity/run_round.py')
+    bootstrap_code = getattr(_bootstrap, '_bootstrap_code', None)
+    if not isinstance(bootstrap_code, CodeType):
+        raise ValueError('#2513 loaded apparatus differs from HEAD: scripts/cli-parity/_bootstrap.py')
+    expected_bootstrap = compile(_head_source('scripts/cli-parity/_bootstrap.py'),
+                                bootstrap_code.co_filename, 'exec',
+                                dont_inherit=True, optimize=sys.flags.optimize)
+    if _code_fingerprint(bootstrap_code) != _code_fingerprint(expected_bootstrap):
+        raise ValueError('#2513 loaded apparatus differs from HEAD: scripts/cli-parity/_bootstrap.py')
     for name, module in (('common', _common), ('compare', _compare_module),
                          ('policy', _policy_module)):
         source = getattr(module, '_apparatus_source', None)

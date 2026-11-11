@@ -249,9 +249,13 @@ trace 位置与 dispatched abort 的先后、reset 之后无 wire 事件；再�
 宁多勿漏）；间接绑定者不含 28999 字面量、grep 抓不到，判定口径是「执行路径会真实
 到达 `TcpListener::bind("127.0.0.1:28999")`（mock 端口）的入口都算」——不含字面量
 的调用方顺着 `--test sdk_signal_exit` / `signal_cases::` 这类测试选择器找，现知一处：
-`src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py`（自身不取
-parity 锁，内部 cargo test 选 `signal_cases::*` / `pending_abort_*` 真 bind 28999，
-与本节矩阵同样须宿主先持租约再跑）。**自取租约者是例外，宿主不要为它们预持**：重采块
+`src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py`（其变异窗口
+自 #2513 fix-r3 起是共享租约消费方——`src/pilotdeck-cli/tests/` 已入锁族谓词；自
+#2513 fix-r4 起该窗口自身的租约**重定向**到本批证据目录内的
+`parity-redirect.lock`（`PDRS_SDK_TEST_PARITY_LOCK` 的 Python 同型，见其
+`_redirect_window_parity_lock`），对共享租约仍不互斥，内部 cargo test 选
+`signal_cases::*` / `pending_abort_*` 真 bind 28999，与本节矩阵同样须宿主先持租约
+再跑）。**自取租约者是例外，宿主不要为它们预持**：重采块
 `capture.py:45`（cli-parity 的 `parity_lock()`；`probe.mjs:17-18` 断言 owner.pid 是
 capture.py 自己，预持即 `Blocked`）；D0 Rust 家族——名单以
 `grep -l 'ParityLock::acquire' src/pilotdeck-cli/tests/*.rs` 现跑为准（当前恰六个

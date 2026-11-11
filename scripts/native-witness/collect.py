@@ -12,37 +12,121 @@ import hashlib
 import http.server
 import importlib.util
 import json
+import marshal
 import os
 from pathlib import Path
 import re
 import select
 import signal
 import socket
+import subprocess
 import threading
 import time
+from types import CodeType
 
-spec = importlib.util.spec_from_file_location('native_witness', Path(__file__).with_name('witness.py'))
-w = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(w)
-spec = importlib.util.spec_from_file_location('native_stimulus_plan', Path(__file__).with_name('stimulus_plan.py'))
-stimuli = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(stimuli)
-spec = importlib.util.spec_from_file_location('native_stimulus_driver', Path(__file__).with_name('stimulus_driver.py'))
-stimulus_driver = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(stimulus_driver)
+# Captured at import time: the code object actually executing this entry
+# (#2513 fix-r4). The post-lease apparatus verification compares this
+# fingerprint to HEAD; a mutation-window load of this file differs.
+_apparatus_code = sys._getframe().f_code
+
+
+def _load_apparatus(name, path):
+    """Explicit source load: isolated sys.path, executed bytes recorded.
+
+    The recorded ``_apparatus_source`` is exactly what exec compiled — the
+    #2513 post-lease verification compares it to HEAD (cli-parity fix-r3
+    precedent; common.py already carried the provenance guard).
+    """
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    module._apparatus_source = path.read_bytes()
+    exec(compile(module._apparatus_source, str(path), 'exec'), module.__dict__)
+    return module
+
+
+w = _load_apparatus('native_witness', Path(__file__).with_name('witness.py'))
+stimuli = _load_apparatus('native_stimulus_plan', Path(__file__).with_name('stimulus_plan.py'))
+stimulus_driver = _load_apparatus('native_stimulus_driver', Path(__file__).with_name('stimulus_driver.py'))
 # Explicit source load preserves the frozen auditor's isolated sys.path and
 # records executed bytes for its existing provenance guard.
 common_path = Path(__file__).resolve().parents[1] / 'gateway-parity/common.py'
-spec = importlib.util.spec_from_file_location('native_witness_common', common_path)
-common = importlib.util.module_from_spec(spec)
-common._apparatus_source = common_path.read_bytes()
-exec(compile(common._apparatus_source, str(common_path), 'exec'), common.__dict__)
-sys.modules[spec.name] = common
+common = _load_apparatus('native_witness_common', common_path)
+sys.modules['native_witness_common'] = common
 parity_lock = common.parity_lock
 
 
 class Blocked(w.Incomplete):
     """A shared lease or fixed port is unavailable; no fallback endpoint."""
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _head_source(relative):
+    # The committed object only, read like cli-parity's fix-r3 guard: no
+    # worktree file, no config-steered git, fresh environment.
+    result = subprocess.run(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(ROOT),
+                             'show', f'HEAD:{relative}'],
+                            env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+                                 'GIT_CONFIG_GLOBAL': '/dev/null'},
+                            capture_output=True, timeout=30)
+    if result.returncode:
+        raise Blocked('cannot read HEAD source ' + relative + ': '
+                      + result.stderr.decode(errors='replace').strip())
+    return result.stdout
+
+
+def _code_fingerprint(code):
+    """Stable full code serialization (cli-parity fix-r3 #2513 precedent).
+
+    Marshal v2 omits execution-dependent reference-sharing records. Normalize
+    newer constant types before serializing; tag tuples too to avoid collisions
+    with the slice representation. The transformed code is never executed.
+    """
+    def normalize(value):
+        if isinstance(value, CodeType):
+            return value.replace(co_consts=tuple(normalize(item) for item in value.co_consts))
+        if isinstance(value, slice):
+            return ('slice', normalize(value.start), normalize(value.stop), normalize(value.step))
+        if isinstance(value, tuple):
+            return ('tuple', tuple(normalize(item) for item in value))
+        if isinstance(value, frozenset):
+            return ('frozenset', tuple(sorted((normalize(item) for item in value),
+                                             key=lambda item: marshal.dumps(item, 2))))
+        return value
+    return marshal.dumps(normalize(code), 2)
+
+
+def _verify_loaded_apparatus():
+    """Compare executing code, never restored disk bytes, to HEAD (#2513 fix-r4).
+
+    The lease is taken inside native_run, but CPython compiles this entry and
+    _load_apparatus loads witness/stimulus_plan/stimulus_driver/common from
+    disk at import time, before that; a collector started inside a mutation
+    window therefore holds the window's mutant — the lease serializes disk
+    writes, not loads. After acquiring the lease, refuse before any owned
+    process unless the executing entry (code-object fingerprint, nested
+    functions included) and the four imported apparatus modules (the
+    ``_apparatus_source`` bytes that actually executed) match HEAD. Missing
+    provenance fails closed. A mutant that deletes this verification itself
+    escapes self-verification — the same boundary scripts/parity/round.py's
+    fix-r2 verification documents; the negative-control kill rows cover the
+    deletion case.
+    """
+    expected_entry = _head_source('scripts/native-witness/collect.py')
+    if not isinstance(_apparatus_code, CodeType):
+        raise ValueError('#2513 loaded apparatus differs from HEAD: scripts/native-witness/collect.py')
+    expected_code = compile(expected_entry, _apparatus_code.co_filename, 'exec',
+                            dont_inherit=True, optimize=sys.flags.optimize)
+    if _code_fingerprint(_apparatus_code) != _code_fingerprint(expected_code):
+        raise ValueError('#2513 loaded apparatus differs from HEAD: scripts/native-witness/collect.py')
+    for relative, module in (('scripts/native-witness/witness.py', w),
+                             ('scripts/native-witness/stimulus_plan.py', stimuli),
+                             ('scripts/native-witness/stimulus_driver.py', stimulus_driver),
+                             ('scripts/gateway-parity/common.py', common)):
+        source = getattr(module, '_apparatus_source', None)
+        if not isinstance(source, bytes) or source != _head_source(relative):
+            raise ValueError('#2513 loaded apparatus differs from HEAD: ' + relative)
 
 
 @contextmanager
@@ -262,6 +346,14 @@ def native_run(gateway, sidecar, output, port=28999, session_domain=False, regis
             lease.enter_context(parity_lock(timeout=1))
         except TimeoutError as error:
             raise Blocked('#1140 BLOCKED: parity lease unavailable') from error
+        # The lease serializes concurrent mutation windows on disk; it says
+        # nothing about code loaded before it (#2513 fix-r4). Refuse before
+        # any owned process unless the executing entry and the loaded
+        # apparatus bytes match HEAD.
+        try:
+            _verify_loaded_apparatus()
+        except ValueError as error:
+            raise Blocked(str(error)) from error
         # Check both fixed endpoints before launching any owned process.
         # The shared lease spans the bind handoff and provider cleanup.
         for candidate, reuse_address in ((port, False), (port + 1, True)):

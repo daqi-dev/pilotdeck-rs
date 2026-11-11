@@ -16,6 +16,14 @@ if not hasattr(sys, '_cli_parity_pycache_prefix'):
 sys.pycache_prefix = sys._cli_parity_pycache_prefix
 sys.dont_write_bytecode = True
 
+# #2513 fix-r4 (review boundary#2): the executing code object of this loader
+# itself, captured before anything else can replace the file on disk. Entries
+# re-exec this module and then verify this fingerprint against HEAD after the
+# lease (run_round._verify_loaded_apparatus) — a bootstrap mutated inside a
+# mutation window would otherwise keep loading unverified apparatus modules
+# under the lease.
+_bootstrap_code = sys._getframe().f_code
+
 
 # One inventory for the apparatus tests and their negative-control driver.
 ENTRY_FILES = ('compare.py', 'controls.py', 'host_negative_controls.py',
