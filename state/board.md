@@ -6084,3 +6084,36 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | 2944 等 DS 出块 | 出块定级（MM P0×2 待对拍） | coord2/e7 | 滚动 |
 | 磁盘 | 175.5 WARN：合入树逐张回收（wt-2199 9.5G / wt-2186 / 2682 收尾 50.3G） | coord2/e7 | 16:30 |
 | 下次两小时交接 | ~17:1x 前写段（不空等） | coord2/e7 | 17:11 |
+
+## 2026-11-11 17:0x（15:11–17:00，coord2/e7 两小时交接段·五收货收官+两真阻塞处置+四修复轮在飞）
+
+开场核时：`date` 实跑 16:5x。本段主基调：**收货子代理五单收官开出 #2964–#2968，两处真阻塞（2964 姊妹线语义冲突 / 2967 R6 append-only 违例）当场处置，四条修复轮（2513/2759/2558/2499 增评）派上 cb8**。human-comments 空转无新人回复。用户三问（进度/瓶颈/加速）已用实测数据作答（吞吐 11-09:14 → 11-10:40 → 11-11 至 16:29:6；开 issue ≈833、P2 跟进 699）。
+
+- **五收货收官**（子代理 47 分钟）：#2965（1725/2055）/#2966（2115/1937/1943）/#2967（2775 批 fix-r1）/#2968（2795 八单批，含 ci.yml 真合并 + 名册 42→43 补登）四张 MERGEABLE；**#2964（2759）CONFLICTING**——与已合 #2756 线撞真语义冲突（3 文件 8 块），诊断贴 PR 评论 6790969302。
+- **#2967 R6 转正（协调者）**：worker 改了 main 已有的 R6（写时 #2874 未合、合规；合后成 append-only 违例）→ R6 还原 main 原字节 + 补登内容逐字转落新件 `A8.4-NATIVE-HTTP-001-R7.md`（提交 2a29769a0 已推）。自证：check-frozen-delivery `BLOCKED 0 / READY 3`、gateway-parity check_frozen --base PASS（30 entries）、gitleaks 2 commits no leaks。R7 独立评审引用待 PR 双家收敛后回填。
+- **#2759 fix-r2（整合轮）派 cb8**（远端 pid 3586078）：任务书点名两线非回退面（2759 头体切分+freeSockets 直测 / 2756 keepAliveProbe 单源+pool-at-close 显式行），逐块真合并 + P16 实跑复验 + matrix --check，8 块处置表进 RESULT。
+- **#2513 fix-r3 派 cb8**（pid 3534241）：双谱系 fix-r2 评审四 P1 去重三实项——①锁族谓词漏 `scripts/native-witness/`（DS+MM 同撞）②漏 `src/pilotdeck-cli/tests/` 直取锁者③cli-parity 取锁后执行码核验缺（DS+MM 同撞）+ 条4 P2 顺手（双列表漂移）。**前缀枚举第三次漏成员 → 升结构性**：六前缀 + 全仓持锁者对账机检（fail-closed）+ 取锁后 HEAD 比对。④冻结重登记（round.py + host_env_isolation.py）归协调者随最终 head 一次做。
+- **#2558 fix-r1 补派**（pid 3649725）：首派死于网络 SSL；重派撞远端陈旧 state=done → `echo harvested` 清后成功。segments 闸两次拒（缺分段表/scope 行 modules 非整数）补齐后过。
+- **#2499 fix-r1 交付收货**（提交 4113b6c1d 已推）→ 增量 DS+MM 评审在跑（pid 73731/73732）。
+- **评审收敛**：2932 DS boundary 第四跑 PASS（P0=0 P1=0，与 mm3 双家收敛 fix-r2；fix-r3 P2-b 升格项在 cb8 跑）；2957 fix-r2 MM 四角色 PASS P1=0、DS boundary ERROR 补跑中；**2098/PR2944 出两真 P1**——DS boundary：`read-at-handle-check-dropped` 负控非单因子（变异同时退 guarded open）；MM boundary：超读界记录被 skip 静默抹掉致幂等回放绕过+并发少计（TS 需实测 validateManifest 是否限 name 长度）→ 待 DS sibling 补跑（unrecognized_model）齐后派 fix-r3。
+- **#2692/PR2960**：r1-ds4 concurrency PASS **P1=1**（router 标签键写成活会话身份+交互总线键，`"\0\0raw:null"` 与 null 撞键、跨会话读/答）；boundary TIMEOUT（1800s 不够）→ ds5 2400s + MM 三角色（第二家）在跑。
+- **新 PR 评审派发**：2967/2968 各 DS 三角色 + MM 四角色（pid 64677–64680）；2965/2966 待通道腾位。
+- **队列**：#2943（1781/1805 stimulus 守卫收口）在队 pos1；#2963（board 15:11 段+决策卡四）CI 过（唯一 FAILURE 为 pr-gate 非必需）已确认在队。
+- **在飞**：2513 fix-r3 · 2759 fix-r2 · 2558 fix-r1 · 1517 fix-r3（cb8 四路）· 2887 b3 · 2499 增评 · 1087 r3（macmini）· 2617 r4 负控（本机，56 行磨）· 2098/2957/2692/2967/2968 评审九组。
+
+#### 未结义务表（17:0x，下一步动作 / 唯一责任人 / 最迟复查时间）
+
+| 义务 | 下一步 | 责任人 | 最迟复查 |
+|---|---|---|---|
+| **#2186/#2157 关单链（逾期 16:00）** | 核 #2879 合入内容覆盖两单判据 → 收尾自查评论 → 关单；本段让位五收货真阻塞，下段第一件事 | coord2/e7 | 17:40 |
+| #2963 出队后推 board 本段 | state/board-e7-2313 本地提交（含本段），#2963 MERGED 后 push + 开 state PR | coord2/e7 | 滚动 |
+| 2098 fix-r3 | DS sibling 补跑出块 → 两 P1（负控单因子夹具 + 幂等回放绕过，含 TS validateManifest 实测）任务书派 cb8 | coord2/e7 | 17:30 |
+| 2692 fix 轮 | ds5 boundary + MM 三角色出块 → P1 汇总（router 标签键碰撞）→ fix 任务书 | coord2/e7 | 17:30 |
+| 2513 冻结登记 | fix-r3 交付后协调者 --write（round.py+host_env_isolation.py+事件文件，评审路径回填）| coord2/e7 | 滚动 |
+| 2965/2966 评审 | 通道腾位即派 DS+MM | coord2/e7 | 18:00 |
+| 2617 r4 → 2692 全量杀灭 | 2617 磨完 56 行 → 本机负控串行排 2692 | coord2/e7 | 滚动 |
+| 2098 宿主 68 行 upload-gateway 全量负控 | 评审收敛后 mine | coord2/e7 | 滚动 |
+| 18931 sms 宿主假红重跑 | 2617 交付后 mine | coord2/e7 | 滚动 |
+| 2499/2932/2939 收口链 | 各自 fix 轮交付 → 增量评审 → 入队 | coord2/e7 | 滚动 |
+| 2887 b3（A+#2788 R2 件） | glm.exit 落 → 收货 → Part B 冻结 --write 归协调者 | coord2/e7 | 滚动 |
+| 下次两小时交接 | ~19:1x 前写段（不空等） | coord2/e7 | 19:11 |
