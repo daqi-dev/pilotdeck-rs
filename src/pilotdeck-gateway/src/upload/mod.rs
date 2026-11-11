@@ -872,6 +872,20 @@ impl UploadStore {
                 .metadata()
                 .map_err(|e| UploadError::io(e, "stat", None))?;
             let expected_bytes = number(attachment, "bytes");
+            // #2098 fix-r2 (review MM concurrency#1): an absolute ceiling on
+            // the summary read. `bytes` is record data, not a measurement
+            // this gateway made, so a forged record pairing it with a
+            // matching sparse leaf turns the digest read into a multi-TiB
+            // stream without this bound. The write side caps a real
+            // attachment at `options.max_file_bytes` (default 1 GiB), so a
+            // record beyond the ceiling cannot be one this gateway wrote;
+            // it is refused as the same integrity failure as the terms
+            // below — the user-perceivable difference is only that an
+            // inconsistent record of that shape is refused at once instead
+            // of being read to its claimed length.
+            if expected_bytes > MAX_ATTACHMENT_READ_BYTES as f64 {
+                return Err(attachment_integrity_failed(attachment));
+            }
             // A directory is deliberately not refused here: its read fails
             // at once with Node's `EISDIR … read` descriptor-read shape
             // (#656), so it is neither the FIFO's wait nor the device's
@@ -1787,7 +1801,14 @@ fn lease_link_matches(
 fn lease_link_content_matches(file: &mut File, expected_sha256: &str, expected_bytes: f64) -> bool {
     // No digest or no usable length is a refusal, not a pass: a missing
     // record field must never turn the length term into "read to EOF".
-    if expected_sha256.is_empty() || !expected_bytes.is_finite() || expected_bytes < 0.0 {
+    // #2098 fix-r2 adds the same absolute ceiling `verified` enforces, so
+    // the two readers of one record can never be talked into different
+    // lengths by the record's own `bytes`.
+    if expected_sha256.is_empty()
+        || !expected_bytes.is_finite()
+        || expected_bytes < 0.0
+        || expected_bytes > MAX_ATTACHMENT_READ_BYTES as f64
+    {
         return false;
     }
     hash_file_exact(file, expected_bytes as u64).is_ok_and(|digest| digest == expected_sha256)
@@ -1838,6 +1859,15 @@ fn hash_file_exact(file: &mut File, limit: u64) -> Result<String> {
 /// this bound; the cap exists so a leaf swapped for a sparse file cannot
 /// turn the read into an unbounded one, not as a validation of real records.
 const MAX_METADATA_JSON_BYTES: u64 = 64 * 1024 * 1024;
+
+/// #2098 fix-r2 (review MM concurrency#1): the absolute ceiling on an
+/// attachment summary read — the record's `bytes` paired with the digest
+/// read it drives. The value is chosen to match the write side's own bound
+/// (`UploadOptions::max_file_bytes`, default 1 GiB), so no record this
+/// gateway wrote is ever refused; the ceiling exists so a forged record
+/// paired with a matching sparse leaf cannot turn the digest read into an
+/// unbounded one.
+const MAX_ATTACHMENT_READ_BYTES: u64 = 1024 * 1024 * 1024;
 
 /// [`hash_file_exact`]'s byte form, for the record leaf: read exactly `len`
 /// bytes and require the file to end there. A `read_to_end` here would let
