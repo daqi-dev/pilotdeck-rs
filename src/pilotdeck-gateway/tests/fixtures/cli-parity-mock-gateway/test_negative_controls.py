@@ -405,6 +405,7 @@ FAILED (failures=1)
 
         out = tmp / 'evidence'
         with patch.object(negative_controls, 'mutations', [(name, copies[0], old, new)]), \
+             patch.object(negative_controls, 'EXPECTED_NAMES', (name,)), \
              patch.object(negative_controls, 'policy', copies[0]), \
              patch.object(negative_controls, 'common', copies[1]), \
              patch.object(negative_controls, 'compare', copies[2]), \

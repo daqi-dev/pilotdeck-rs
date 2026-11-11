@@ -445,12 +445,19 @@ def check_static():
     """Assert this fixture's guarded set triggers the shared parity lease.
 
     #2513 fix-r2 (DS r2 concurrency#1): the guarded set is scripts/cli-parity
-    — the third family that takes /tmp/pdrs-parity.lock. If a future edit moves
-    these apparatus files or the family prefix drifts, mutating_sources would
-    silently stop taking the lease and a live cli-parity round could again
-    interleave with a mutation window; this static gate fails closed (exit 2)
-    before any window opens, without taking the lease itself (no output
-    directory is created, so it never self-locks).
+    — the third family that takes /tmp/pdrs-parity.lock. fix-r3 widened the
+    one predicate to six families (gateway-parity, parity, cli-parity,
+    ui-server-parity, native-witness, pilotdeck-cli-tests) and gave the entry
+    the same post-lease check scripts/parity/round.py got in fix-r2:
+    run_round.py refuses to proceed unless the executing entry and the
+    import-time apparatus equal HEAD, so a round started while this window
+    held mutated bytes cannot run the mutant even if it wins the lease after
+    the window restores the files. If a future edit moves these apparatus
+    files or the family prefix drifts, mutating_sources would silently stop
+    taking the lease and a live cli-parity round could again interleave with
+    a mutation window; this static gate fails closed (exit 2) before any
+    window opens, without taking the lease itself (no output directory is
+    created, so it never self-locks).
     """
     guarded = {path.resolve().relative_to(root).as_posix()
                for path in (RUNNER, common, test_script)}

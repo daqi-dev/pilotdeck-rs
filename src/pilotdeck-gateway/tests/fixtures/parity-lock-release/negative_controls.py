@@ -503,7 +503,8 @@ def main():
         # RUNNER is guarded too because the runner rows mutate this delivered
         # runner to prove the cancellation regression bites (#1059).
         # Any parity-guarded source (the shared parity_guarded predicate, one
-        # spelling for the four lock families — #2513 fix-r2) makes
+        # spelling for the six lock families — #2513 fix-r2, widened in fix-r3)
+        # makes
         # mutating_sources take that same lease itself, from verified bytes;
         # the fix-r1 local copy only knew scripts/gateway-parity, so a
         # round-only subset (--only a1-release-ungated mutates only

@@ -274,7 +274,11 @@ cli-parity 自己的装置与 `calibrate.sh` 不打这句。
 （`src/pilotdeck-cli/tests/*_exit.rs`，同一 `.guard` + `owner.json` 契约，另加 `O_NOFOLLOW` +
 `S_ISREG`（`is_file()`）与 `nlink==1` 加固）：
 等待上限 **180 s**，超时即测试失败、绝不接管；`cargo test` 与全量对拍撞在一起时，这类等待属正常排队。
-它同样不写 `cleanupPending`（见上）。
+它同样不写 `cleanupPending`（见上）。#2513 fix-r3 起 `src/pilotdeck-cli/tests/` 本身进了
+`PARITY_GUARDED_PREFIXES` 六前缀（负控窗口持这把锁），同一批负控会给窗内 `cargo test` 设
+`PDRS_SDK_TEST_PARITY_LOCK` 指向本行证据目录里的私有锁——窗口已持真锁，窗内子进程不得
+再对同一把非重入锁排队 180 s；变量未设时字节行为与修前完全一致（仍取
+`/tmp/pdrs-parity.lock`）。
 
 **历史上不在这套租约里的**：`scripts/fe-parity/README.md` 曾有一批配方直接
 `mkdir /tmp/pdrs-parity.lock || exit 1` + `trap 'rmdir' EXIT`——没有 `.guard`、没有 `owner.json`，

@@ -3299,9 +3299,12 @@ class ContractTests(unittest.TestCase):
              patch('run_round.node_identity', return_value=dict(PINNED_NODE)), \
              patch('run_round.sandbox_profile', return_value='synthetic policy'), \
              patch('run_round.parity_lock', return_value=nullcontext({'pid': 1})), \
+             patch('run_round._verify_loaded_apparatus') as verify_apparatus, \
              patch('run_round.preflight', side_effect=Blocked('synthetic EPERM')) as preflight, \
              patch('run_round.run_round') as product, redirect_stdout(io.StringIO()):
             self.assertEqual(main(), 2)
+            # #2513 fix-r3: the post-lease apparatus gate runs before any work.
+            verify_apparatus.assert_called_once()
             preflight.assert_called_once()
             product.assert_not_called()
         summary = json.loads((output / 'summary.json').read_text())
@@ -3325,6 +3328,7 @@ class ContractTests(unittest.TestCase):
              patch('run_round.baseline_identity', return_value={'sourceHead': HEAD}), \
              patch('run_round.node_identity', return_value=dict(PINNED_NODE)), \
              patch('run_round.parity_lock', return_value=nullcontext({'pid': 1})), \
+             patch('run_round._verify_loaded_apparatus'), \
              patch('run_round.preflight', return_value={'synthetic': 'preflight'}), \
              patch('run_round.compare', return_value={'status': 'FAIL', 'failures': [{'rule': 'synthetic'}],
                                                      'scenarios': 0}), \
@@ -3413,6 +3417,54 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(record['audit']['allStopped'])
         with self.assertRaises(ProcessLookupError):
             os.killpg(record['pid'], 0)
+
+
+class ApparatusVerificationTests(unittest.TestCase):
+    """#2513 fix-r3 (DS sibling#3 + MM sibling#1): the post-lease entry check.
+
+    The entry is compiled before the lease exists, so a round started inside
+    a mutation window holds the window's mutant unless it refuses after the
+    lease. These cells drive ``run_round._verify_loaded_apparatus`` against a
+    controlled HEAD — no git, no lease, so they stay hermetic on a dirty
+    tree: the pristine path accepts, and mutated or missing common.py
+    provenance refuses with the single-line #2513 message.
+    """
+
+    def heads(self, common_source):
+        return {
+            'scripts/cli-parity/run_round.py': (SCRIPT / 'run_round.py').read_bytes(),
+            'scripts/cli-parity/common.py': common_source,
+            'scripts/cli-parity/compare.py': _run_round._compare_module._apparatus_source,
+            'scripts/cli-parity/policy.py': _run_round._policy_module._apparatus_source,
+        }
+
+    def test_pristine_apparatus_passes(self):
+        heads = self.heads(_common._apparatus_source)
+        with patch.object(_run_round, '_head_source',
+                          side_effect=lambda relative: heads[relative]):
+            _run_round._verify_loaded_apparatus()
+
+    def test_mutated_common_is_refused(self):
+        heads = self.heads(_common._apparatus_source)
+        with patch.object(_run_round, '_head_source',
+                          side_effect=lambda relative: heads[relative]), \
+                patch.object(_common, '_apparatus_source', b'# mutant common bytes\n'), \
+                self.assertRaises(ValueError) as caught:
+            _run_round._verify_loaded_apparatus()
+        self.assertEqual(str(caught.exception),
+                         '#2513 loaded apparatus differs from HEAD: '
+                         'scripts/cli-parity/common.py')
+
+    def test_missing_provenance_fails_closed(self):
+        heads = self.heads(_common._apparatus_source)
+        with patch.object(_run_round, '_head_source',
+                          side_effect=lambda relative: heads[relative]), \
+                patch.object(_common, '_apparatus_source', None), \
+                self.assertRaises(ValueError) as caught:
+            _run_round._verify_loaded_apparatus()
+        self.assertEqual(str(caught.exception),
+                         '#2513 loaded apparatus differs from HEAD: '
+                         'scripts/cli-parity/common.py')
 
 
 if __name__ == '__main__':

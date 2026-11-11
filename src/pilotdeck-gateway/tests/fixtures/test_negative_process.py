@@ -8,6 +8,7 @@ this worktree.
 import errno
 import io
 import json
+import re
 from contextlib import contextmanager, nullcontext
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ import sys
 import tempfile
 import threading
 import time
+import tokenize
 import unittest
 from types import ModuleType
 from unittest.mock import patch
@@ -1140,26 +1142,31 @@ class MutatingSources(unittest.TestCase):
 
 
 class ParityGuardedPredicate(unittest.TestCase):
-    """#2513 fix-r2 (DS r2 sibling#1 + concurrency#1): one shared spelling.
+    """#2513 fix-r2→fix-r3 (DS sibling#1 + MM boundary#1): one shared spelling.
 
     ``parity_guarded`` decides whose mutation window holds
-    /tmp/pdrs-parity.lock. Four families take that lease through their own
-    copies of the protocol; the fix-r1 inline predicate covered only two, so
-    cli-parity windows mutated the lock implementation itself without holding
-    the lease. The consumers (mutating_sources' parity branch,
-    parity-lock-release's shared copy, cli-parity-mock-gateway's inner-lock
-    stand-down and cli-parity-lock-bounded's --check) all read this one
-    definition, so the family set is pinned here: a fifth family must be a
-    deliberate change, not a missed one.
+    /tmp/pdrs-parity.lock. Six families take that lease through their own
+    copies of the protocol; the fix-r1 inline predicate covered only two,
+    fix-r2 widened it to four, and fix-r3 added native-witness (collect.py)
+    and the pilotdeck-cli Rust tests (the sdk ParityLock copies), whose
+    windows previously mutated real lease holders without holding the lease.
+    The consumers (mutating_sources' parity branch, parity-lock-release's
+    shared copy, cli-parity-mock-gateway's inner-lock stand-down and
+    cli-parity-lock-bounded's --check) all read this one definition, so the
+    family set is pinned here: a seventh family must be a deliberate change,
+    not a missed one — and ParityLockHolderReconciliation below reds on any
+    lock reference outside the family and the registered-mentions table.
     """
 
     def test_the_family_set_is_pinned(self):
         self.assertEqual(
             negative_process.PARITY_GUARDED_PREFIXES,
             ("scripts/gateway-parity/", "scripts/parity/",
-             "scripts/cli-parity/", "scripts/ui-server-parity/"))
+             "scripts/cli-parity/", "scripts/ui-server-parity/",
+             "scripts/native-witness/",
+             "src/pilotdeck-cli/tests/"))
 
-    def test_all_four_lock_families_are_guarded(self):
+    def test_all_six_lock_families_are_guarded(self):
         for relative in ("scripts/gateway-parity/common.py",
                          "scripts/gateway-parity/run_round.py",
                          "scripts/parity/round.py",
@@ -1167,7 +1174,14 @@ class ParityGuardedPredicate(unittest.TestCase):
                          "scripts/cli-parity/common.py",
                          "scripts/cli-parity/run_round.py",
                          "scripts/ui-server-parity/calibrate.py",
-                         "scripts/ui-server-parity/calibrate.sh"):
+                         "scripts/ui-server-parity/calibrate.sh",
+                         "scripts/native-witness/collect.py",
+                         "src/pilotdeck-cli/tests/sdk_run_exit.rs",
+                         "src/pilotdeck-cli/tests/sdk_settings_exit.rs",
+                         "src/pilotdeck-cli/tests/sdk_sessions_list_exit.rs",
+                         "src/pilotdeck-cli/tests/sdk_resume_exit.rs",
+                         "src/pilotdeck-cli/tests/sdk_format_exit.rs",
+                         "src/pilotdeck-cli/tests/sdk_sessions_messages_exit.rs"):
             self.assertTrue(negative_process.parity_guarded(relative),
                             f'{relative} takes /tmp/pdrs-parity.lock '
                             'and must be in the lease family')
@@ -1175,10 +1189,164 @@ class ParityGuardedPredicate(unittest.TestCase):
     def test_lookalikes_outside_the_family_are_not_guarded(self):
         for relative in ("", "scripts/parity", "scripts/round.py",
                          "scripts/gateway-parityx/common.py",
+                         "scripts/native-witnessx/collect.py",
+                         "src/pilotdeck-cli/src/sdk.rs",
+                         "src/pilotdeck-cli/test/x.rs",
                          "src/pilotdeck-gateway/tests/fixtures/negative_process.py",
                          "specs/parity/README.md"):
             self.assertFalse(negative_process.parity_guarded(relative),
                              f'{relative} must not take the shared lease')
+
+
+class ParityLockHolderReconciliation(unittest.TestCase):
+    """#2513 fix-r3 (DS sibling#1 + MM boundary#1): machine-checked holder list.
+
+    The four-prefix predicate of fix-r2 still missed scripts/native-witness
+    (collect.py) and src/pilotdeck-cli/tests (the Rust ParityLock copies),
+    so their mutation windows never held /tmp/pdrs-parity.lock. Widening the
+    predicate alone would leave the next family one review away, so this
+    check re-derives the holder inventory from the tree itself: every code
+    file that names the lease path or calls parity_lock must live under a
+    guarded prefix or carry a registered reason here. A seventh family, or a
+    stray copy of the protocol, fails closed instead of shipping silently.
+    """
+
+    # The one lease path and the one protocol name every reference uses.
+    LOCK_PATH = '/tmp/pdrs-parity.lock'
+    LOCK_NAME = re.compile(r'\bparity_lock\b')
+    # Code files only; .md/.txt are documentation, and the raw grep over the
+    # whole tree (RESULT, fix-r3) shows every non-code mention is a doc.
+    SUFFIXES = frozenset({'.py', '.rs', '.mjs', '.js', '.sh', '.bash'})
+    SKIP_DIRS = frozenset({'.git', '_build', '_tmp', '__pycache__',
+                           'node_modules', 'target', '.venv'})
+
+    # Out-of-family files that reference the lease, each with the reason it
+    # is safe: temp-lock redirects, protocol copies exercised on temporary
+    # paths, or the lease machinery and its own tests. Every entry must keep
+    # referencing the lease (test_registered_mentions_still_reference_the_lease)
+    # or the registration is stale and reds too.
+    REGISTERED_MENTIONS = {
+        'src/pilotdeck-gateway/tests/fixtures/negative_process.py':
+            'the predicate and the mutation-window lease machinery itself',
+        'src/pilotdeck-gateway/tests/fixtures/test_negative_process.py':
+            'this reconciliation check, the family pin and the '
+            'ParityMutationLock mechanism tests',
+        'src/pilotdeck-gateway/tests/fixtures/cli-parity-lock-bounded/'
+        'negative_controls.py':
+            'the docstring documents the shared lease; --check consumes the '
+            'one parity_guarded predicate',
+        'src/pilotdeck-gateway/tests/fixtures/cli-parity-mock-gateway/'
+        'negative_controls.py':
+            'the inner machine lock loads the guarded scripts/cli-parity/'
+            'common.py and stands down while its own window holds the lease',
+        'src/pilotdeck-gateway/tests/fixtures/cli-parity-mock-gateway/'
+        'test_negative_controls.py':
+            'machine-lock tests acquire temporary leases only',
+        'src/pilotdeck-gateway/tests/fixtures/native-session-e2e/test_e2e.py':
+            'cells redirect parity_lock to per-case temporary leases '
+            '(lock=...); one string is a documented payload',
+        'src/pilotdeck-gateway/tests/fixtures/native-topology/run.py':
+            'real consumer through gateway common; its mutation window '
+            '(negative_signals.py) only runs cells that redirect to a '
+            'temporary lease (test_signals.py), so no in-window real acquirer',
+        'src/pilotdeck-gateway/tests/fixtures/native-topology/test_signals.py':
+            'replays run.py with parity_lock patched to a temporary lease',
+        'src/pilotdeck-gateway/tests/fixtures/native-witness/'
+        'test_authentication.py':
+            'cells acquire temporary leases only (lock=...)',
+        'src/pilotdeck-gateway/tests/fixtures/native-witness/test_witness.py':
+            'cells patch parity_lock to temporary leases or nullcontext',
+        'src/pilotdeck-gateway/tests/fixtures/parity-lock-release/'
+        'negative_controls.py':
+            'release-protocol copy exercised on temporary lock paths',
+        'src/pilotdeck-gateway/tests/fixtures/parity-lock-release/'
+        'test_lock_release.py':
+            'release-protocol tests on temporary lock paths',
+        'src/pilotdeck-gateway/tests/fixtures/session-domain-lock-release/'
+        'test_lock_release.py':
+            'release-protocol tests on temporary lock paths',
+        'src/pilotdeck-gateway/tests/fixtures/session-lease/test_lease.py':
+            'lease-protocol tests on temporary paths',
+    }
+
+    @classmethod
+    def references(cls, path):
+        """The reference kinds one code file makes to the shared lease.
+
+        Python is scanned with tokenize so comments do not count and
+        docstrings do; the other code files get the equivalent raw match.
+        """
+        text = path.read_text(errors='replace')
+        found = set()
+        if path.suffix == '.py':
+            for token in tokenize.generate_tokens(io.StringIO(text).readline):
+                if token.type == tokenize.STRING and cls.LOCK_PATH in token.string:
+                    found.add('path')
+                elif token.type == tokenize.NAME and cls.LOCK_NAME.fullmatch(token.string):
+                    found.add('name')
+        else:
+            if cls.LOCK_PATH in text:
+                found.add('path')
+            if cls.LOCK_NAME.search(text):
+                found.add('name')
+        return found
+
+    @classmethod
+    def unregistered(cls, root):
+        """(relative, kinds) for every lock reference outside family + table."""
+        violations = []
+        for path in sorted(root.rglob('*')):
+            if not path.is_file() or path.suffix not in cls.SUFFIXES:
+                continue
+            relative = path.relative_to(root)
+            if any(part in cls.SKIP_DIRS or part.startswith('.')
+                   for part in relative.parts[:-1]):
+                continue
+            found = cls.references(path)
+            if found and not (negative_process.parity_guarded(relative.as_posix())
+                              or relative.as_posix() in cls.REGISTERED_MENTIONS):
+                violations.append((relative.as_posix(), '+'.join(sorted(found))))
+        return violations
+
+    def test_every_lock_reference_is_guarded_or_registered(self):
+        violations = self.unregistered(Path(__file__).resolve().parents[4])
+        self.assertTrue(not violations,
+                        '#2513 out-of-family lock references: '
+                        + '; '.join(f'{rel} ({kinds})' for rel, kinds in violations))
+
+    def test_registered_mentions_still_reference_the_lease(self):
+        root = Path(__file__).resolve().parents[4]
+        stale = [relative for relative in self.REGISTERED_MENTIONS
+                 if not self.references(root / relative)]
+        self.assertTrue(not stale,
+                        '#2513 stale registered mentions (no reference left): '
+                        + ', '.join(sorted(stale)))
+
+    def test_a_new_out_of_family_holder_fails_closed(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-2513-reconcile-') as temp:
+            root = Path(temp).resolve()
+            holder = root / 'src/pilotdeck-gateway/tests/fixtures/nowhere/oracle.py'
+            holder.parent.mkdir(parents=True)
+            holder.write_text('from somewhere import parity_lock\n')
+            family = root / 'scripts/native-witness/collect.py'
+            family.parent.mkdir(parents=True)
+            family.write_text('parity_lock = common.parity_lock\n')
+            self.assertEqual([row[0] for row in self.unregistered(root)],
+                             [holder.relative_to(root).as_posix()],
+                             '#2513 an unregistered out-of-family holder must '
+                             'red the reconciliation')
+
+    def test_a_family_member_alone_stays_green(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-2513-reconcile-') as temp:
+            root = Path(temp).resolve()
+            family = root / 'src/pilotdeck-cli/tests/sdk_run_exit.rs'
+            family.parent.mkdir(parents=True)
+            family.write_text(
+                'Self::acquire_at(Path::new("/tmp/pdrs-parity.lock"), '
+                'Duration::from_secs(180))\n')
+            self.assertTrue(not self.unregistered(root),
+                            '#2513 a guarded-prefix holder needs no '
+                            'registration to stay green')
 
 
 class ParityMutationLock(unittest.TestCase):

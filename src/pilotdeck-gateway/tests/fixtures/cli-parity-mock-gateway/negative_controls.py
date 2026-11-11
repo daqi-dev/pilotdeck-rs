@@ -105,9 +105,18 @@ fixture_test = root / 'src/pilotdeck-gateway/tests/fixtures/cli-parity-mock-gate
 # window. The per-test machine_parity_lock below would then block on the same
 # non-reentrant lease until its 90s bound and void every row; the window is
 # already holding it, so the per-test inner lock must stand down.
+# fix-r3 (DS concurrency#3): one function feeds both the stand-down decision
+# and the mutating_sources call below — the two lists used to be hand-copied,
+# so a future edit could add a guarded source to one and miss the other. The
+# globals are read at call time, so entry-guard tests can patch individual
+# sources to copies under their own directories.
+def _machine_lease_sources():
+    return [policy, common, compare, run_round, mock_gateway,
+            isolation_probe, fixture]
+
+
 _WINDOW_HOLDS_MACHINE_LEASE = any(parity_guarded(path.resolve().relative_to(root).as_posix())
-                                 for path in (policy, common, compare, run_round,
-                                              mock_gateway, isolation_probe, fixture))
+                                 for path in _machine_lease_sources())
 
 # The real cli-parity driver serialises a whole round on this same mkdir lease
 # (common.py: LOCK = /tmp/pdrs-parity.lock). Loading common.py by explicit path
@@ -679,8 +688,7 @@ def main():
         raise SystemExit(2)
     summary = []
     try:
-        with mutating_sources(root, [policy, common, compare, run_round, mock_gateway,
-                                     isolation_probe, fixture],
+        with mutating_sources(root, _machine_lease_sources(),
                               baseline=args.baseline) as snapshots:
             for name, path, old, new in rows:
                 status, reason, stage, before = 'INVALID', '', 'anchor', None
