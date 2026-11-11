@@ -5905,3 +5905,8 @@ a7d22018a 同头 fmt/严格clippy/四bin通过；6508 Gateway库项全覆盖分�
 
 
 14:2x增记：f32十构建阶段/受影响回归通过（Slack21+2实际Server、SMS244、switch20、AO1、HTTP9及cleanup9），同实际cur/端口的普通HTTP两侧启动退出0；完整比较仍FAIL，发现Server漏调用既有技能迁移、Router事件未接日志以及项目birthtime/目录mtime差。候选已接两处产品初始化、输入mtime一致与人批仅空会话项目createdAt元数据补齐；旧FAIL原件已拉回主仓。HTTP5完整producer/consumer及共用进程身份证据候选收取，尚待新头8格。GLM捕获HTTP新增库未进三处自检和Slack负控裸assert无receipt两项P1，候选已修，待实际自检/3变异复验及双谱系增量；媒体28格首采16CAPTURED/12FAIL，权限待答与WeCom夹具AMR期望定位，保留原件；17IM独立批进行中。完整替换仍未通过，不把新候选或编译成绩当验收。
+
+
+### 2026-11-11 16:0x CST · 本机新会话交接，cb8继续构建测试
+
+用户选择本机新会话接续，本轮封包后释放Gateway写入所有权，不迁移机器、不切用户服务。产品d20439f8981a7fd70004a661ed40432ccb837454已推Draft2786，cb8同头十阶段构建/严格检查全部exit0，标准HTTP12测试与注册合同4测试实际PASS；32份原始构建记录已回存主仓逐SHA核验，8256个已登记源码文件与本机逐SHA一致。no-run仅测试编译，不当全回归。独立评审仍有公共HTTP状态行/类型漂移P0和Feishu穷尽/加载认证/响应配对P1，#2961已获人批但未完成双审/真实TS复算/登记；完整替换未通过、PR不入队。f32媒体56格按原runs核准为Native16CAPTURED/3FAIL/9同错阻塞、TS9FAIL/19同错阻塞，非双侧通过；19原生渠道CAPTURED仍缺完整同输入TS引用。未收response-pairing与media-context补丁有基点/SHA；19+13消费者WIP不得整文件覆盖。正本仍主仓_build/wt-gateway-integration，原cli-gateway-setup/8e32树未动；27a0他线GPUI未提交与draft.rs已快照保全、不代提交。main只读观察40a8fca04，本批仍固定fe497，MCP/config/session_dir新增待下批真合。交接入口主仓_tmp/20261111-gateway-closeout/handoff/HANDOFF.md，RESUME.md可交新会话，FINAL-STATE.json记录最终HEAD/工作区/远端现场；所有旧FAIL/NOT_RUN保留。下一任务先修评分器阻断、收两小补丁并接真实TS参考，再同头150/四host/session/retirement/冷切回滚/完整回归与实效。此前自动安全审查拒绝的A7权限扩展不重试绕过；其余普通授权继续。本次只追加交接状态，不重编纯状态提交。
