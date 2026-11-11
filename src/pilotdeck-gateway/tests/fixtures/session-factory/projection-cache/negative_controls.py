@@ -52,6 +52,16 @@ mutations = [
      '(valid_envelope(value, &self.key.session_id, &entries) || true)',
      'runtime::session::factory::projection_cache_tests::invalid_future',
      '#1011 invalid envelope is rejected before hydrate'),
+    # #2043: the anchor comparison must reject a checkpoint whose anchor
+    # disagrees with the log entry at the watermark; accepting it hydrates the
+    # wrong rows (stale checkpoint silently reused, #2043 P0). The mutation
+    # compares the checkpoint anchor with itself, skipping the log side.
+    ('anchor-mismatch-accepted',
+     'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs',
+     '.all(|key| field(&expected, key) == field(field(value, "anchor"), key))',
+     '.all(|key| field(field(value, "anchor"), key) == field(field(value, "anchor"), key))',
+     'runtime::session::factory::projection_cache_tests::checkpoint_states_restore_identically',
+     '#2043 mismatched anchor checkpoint is not silently reused'),
     ('concurrent-append-lost',
      'src/pilotdeck-gateway/src/runtime/session/factory.rs',
      'self.inner.append(key, entry)?;',

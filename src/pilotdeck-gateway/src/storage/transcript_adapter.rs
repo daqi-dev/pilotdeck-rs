@@ -1377,26 +1377,18 @@ pub(super) const DOMAIN_TYPES: &[&str] = &[
 fn plain_object(value: &JsValue) -> bool {
     value.as_object().is_some()
 }
-/// WebHistoryProjections.ts:79,321-324: messageContainsToolResult during
-/// hydrate. This is a JS `.some` call, not canonical-message validation:
-/// primitive blocks are allowed and a matching block stops further reads.
-fn validate_hydrated_message(message: &JsValue) -> AdapterResult<()> {
-    let property_error = |value: &JsValue, property: &str| {
-        AdapterError::Type(format!(
-            "Cannot read properties of {} (reading '{property}')",
-            if matches!(value, JsValue::Null) {
-                "null"
-            } else {
-                "undefined"
-            }
-        ))
-    };
+/// WebHistoryProjections.ts:79,321-324: messageContainsToolResult. This is a
+/// JS `.some` call, not canonical-message validation: primitive blocks are
+/// allowed and a matching block stops further reads. Returns whether a
+/// tool-result block was found; `validate_hydrated_message` is the `Ok(())`
+/// projection of the same reads the hydrate gate needs.
+fn message_contains_tool_result(message: &JsValue) -> AdapterResult<bool> {
     if nullish(message) {
-        return Err(property_error(message, "content"));
+        return Err(cannot_read(message, "content"));
     }
     let content = field(message, "content");
     if nullish(content) {
-        return Err(property_error(content, "some"));
+        return Err(cannot_read(content, "some"));
     }
     let JsValue::Array(blocks) = content else {
         return Err(AdapterError::Type(
@@ -1405,15 +1397,18 @@ fn validate_hydrated_message(message: &JsValue) -> AdapterResult<()> {
     };
     for block in blocks {
         if nullish(block) {
-            return Err(property_error(block, "type"));
+            return Err(cannot_read(block, "type"));
         }
         if is_str(field(block, "type"), "tool_result")
             || is_str(field(block, "type"), "tool_result_reference")
         {
-            break;
+            return Ok(true);
         }
     }
-    Ok(())
+    Ok(false)
+}
+fn validate_hydrated_message(message: &JsValue) -> AdapterResult<()> {
+    message_contains_tool_result(message).map(|_| ())
 }
 /// WebHistoryProjections.ts:313-318: the three transcript entry types whose
 /// `message` the fileArtifact reducer reads on hydrate.
@@ -2155,6 +2150,425 @@ pub fn project_subagent_references(entries: &[JsValue]) -> AdapterResult<Subagen
         }
     }
     Ok(references)
+}
+
+/// TS `WebHistoryProjectionResult` (WebHistoryProjections.ts:48-54): the five
+/// `web-history.*` cells `projectWebHistory` (:279-311) exposes to the host.
+/// The two Set-typed states are projection-internal, so every field holds the
+/// finalized value the driver's `snapshot` returns.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WebHistoryView {
+    /// `fileArtifacts`: finalize rows `{...entry, artifacts: [...artifacts]}`.
+    pub file_artifacts: Vec<JsValue>,
+    /// `agentStatuses`: the raw reduce state (this cell has no finalize).
+    pub agent_statuses: Vec<JsValue>,
+    /// `turnErrors`: finalize-filtered `turn_result` error rows.
+    pub turn_errors: Vec<JsValue>,
+    /// `tokenUsage`: `{latestContextBudget?, latestCompactBudget?,
+    /// latestTurnUsage?}` (no finalize).
+    pub token_usage: JsValue,
+    /// `incompleteTurnIds`: the finalize-filtered durable-message turn ids.
+    pub incomplete_turn_ids: Vec<JsValue>,
+}
+impl Default for WebHistoryView {
+    fn default() -> Self {
+        Self {
+            file_artifacts: Vec::new(),
+            agent_statuses: Vec::new(),
+            turn_errors: Vec::new(),
+            token_usage: JsValue::Undefined,
+            incomplete_turn_ids: Vec::new(),
+        }
+    }
+}
+/// TS `value.length` as the ECMAScript property read sees it: arrays and
+/// strings carry the property, an object carries its own `length` key and every
+/// other value reads `undefined`.
+fn length_property(value: &JsValue) -> JsValue {
+    match value {
+        JsValue::Array(items) => JsValue::Number(items.len() as f64),
+        JsValue::String(text) => JsValue::Number(text.len_utf16() as f64),
+        JsValue::Object(_) => field(value, "length").clone(),
+        _ => JsValue::Undefined,
+    }
+}
+/// `entry.artifacts.length > 0` (WebHistoryProjections.ts:85 and the finalize
+/// re-check :95): the `.length` read throws on nullish, and `> 0` is the
+/// ECMAScript relational comparison — `undefined` gives NaN (false) while a
+/// string `'0x10'` coerces to 16.
+fn length_positive(value: &JsValue) -> AdapterResult<bool> {
+    if nullish(value) {
+        return Err(cannot_read(value, "length"));
+    }
+    js_value::to_number(&length_property(value))
+        .map(|number| number > 0.0)
+        .map_err(|_| AdapterError::Range(js_value::StackOverflow::MESSAGE.into()))
+}
+/// TS isRecord (WebHistoryProjections.ts:408-410): objects only.
+fn is_record(value: &JsValue) -> bool {
+    value.as_object().is_some()
+}
+/// TS positiveNumber (:404-406): a finite number greater than zero.
+fn positive_number(value: &JsValue) -> Option<f64> {
+    value
+        .as_number()
+        .filter(|number| number.is_finite() && *number > 0.0)
+}
+/// TS hasPositiveUsage (:395-402); the caller already ran the `!usage` falsy
+/// guard, and no field read here can throw on a non-nullish value.
+fn has_positive_usage(usage: &JsValue) -> bool {
+    [
+        "inputTokens",
+        "outputTokens",
+        "cacheReadTokens",
+        "cacheWriteTokens",
+        "totalTokens",
+    ]
+    .iter()
+    .any(|key| positive_number(field(usage, key)).is_some())
+}
+/// TS projectContextBudget (WebHistoryProjections.ts:327-365): an
+/// `agent_status_message` `context_budget` event whose detail record carries
+/// usable `used`/`total` numbers. Optional fields spread in only when their
+/// `positiveNumber` read is defined.
+fn project_context_budget(entry: &JsValue, index: &JsValue) -> AdapterResult<Option<JsObject>> {
+    if !is_str(field(entry, "type"), "agent_status_message")
+        || !is_str(field(entry, "event"), "context_budget")
+    {
+        return Ok(None);
+    }
+    let detail = field(entry, "detail");
+    if !is_record(detail) {
+        return Ok(None);
+    }
+    let display_used = positive_number(field(detail, "displayUsed"));
+    let Some(used) = display_used.or_else(|| positive_number(field(detail, "used"))) else {
+        return Ok(None);
+    };
+    let Some(total) = positive_number(field(detail, "total")) else {
+        return Ok(None);
+    };
+    let effective_total = positive_number(field(detail, "effectiveTotal")).unwrap_or(total);
+    let mut usage = JsObject::new();
+    usage.insert("used".into(), JsValue::Number(used));
+    if let Some(display_used) = display_used {
+        usage.insert("displayUsed".into(), JsValue::Number(display_used));
+    }
+    if let Some(budget_used) = positive_number(field(detail, "budgetUsed")) {
+        usage.insert("budgetUsed".into(), JsValue::Number(budget_used));
+    }
+    usage.insert("total".into(), JsValue::Number(total));
+    usage.insert("effectiveTotal".into(), JsValue::Number(effective_total));
+    usage.insert(
+        "reservedOutputTokens".into(),
+        JsValue::Number(positive_number(field(detail, "reservedOutputTokens")).unwrap_or(0.0)),
+    );
+    if let Some(state) = field(detail, "state").as_string() {
+        usage.insert("state".into(), JsValue::String(state.clone()));
+    }
+    if let Some(ratio) = field(detail, "ratio").as_number()
+        && ratio.is_finite()
+    {
+        usage.insert("ratio".into(), JsValue::Number(ratio));
+    }
+    usage.insert("source".into(), JsValue::String("history".into()));
+    usage.insert("exact".into(), JsValue::Bool(true));
+    let mut budget = JsObject::new();
+    budget.insert("index".into(), index.clone());
+    budget.insert("usage".into(), JsValue::Object(usage));
+    Ok(Some(budget))
+}
+/// TS projectCompactBudget (:367-393): a `control_boundary` compact boundary
+/// whose `compactMetadata.postTokens` is a positive number. `boundary.kind` is
+/// read before any shape check, so a nullish boundary throws there; `in` only
+/// runs on objects because a primitive boundary reads `.kind` as `undefined`.
+fn project_compact_budget(entry: &JsValue, index: &JsValue) -> AdapterResult<Option<JsObject>> {
+    let boundary = field(entry, "boundary");
+    if !is_str(field(entry, "type"), "control_boundary") {
+        return Ok(None);
+    }
+    if nullish(boundary) {
+        return Err(cannot_read(boundary, "kind"));
+    }
+    if !is_str(field(boundary, "kind"), "compact") {
+        return Ok(None);
+    }
+    if !(boundary
+        .as_object()
+        .is_some_and(|object| object.contains_key("subtype"))
+        && is_str(field(boundary, "subtype"), "compact_boundary"))
+    {
+        return Ok(None);
+    }
+    let metadata = field(boundary, "compactMetadata");
+    if nullish(metadata) {
+        return Err(cannot_read(metadata, "postTokens"));
+    }
+    let Some(post_tokens) = positive_number(field(metadata, "postTokens")) else {
+        return Ok(None);
+    };
+    let mut budget = JsObject::new();
+    budget.insert("index".into(), index.clone());
+    budget.insert("postTokens".into(), JsValue::Number(post_tokens));
+    if let Some(pre_tokens) = positive_number(field(metadata, "preTokens")) {
+        budget.insert("preTokens".into(), JsValue::Number(pre_tokens));
+    }
+    if let Some(summarized) = positive_number(field(metadata, "messagesSummarized")) {
+        budget.insert("messagesSummarized".into(), JsValue::Number(summarized));
+    }
+    Ok(Some(budget))
+}
+/// TS `projectWebHistory` (WebHistoryProjections.ts:279-311) over the web-only
+/// registry (:266-277). The driver builds each cell by scanning the whole log
+/// before any finalize runs (SessionProjectionDriver.ts:44-52,186-218), so the
+/// read order below is pass by pass: the constructor's `lastSequence` first,
+/// then fileArtifact, agentStatuses, turnErrors, tokenUsage and incompleteTurn
+/// reduce, then the finalize filters. Every read that throws is modelled with
+/// its V8 TypeError text (fixture rows `webHistory` in
+/// tests/fixtures/session-factory; real Node v22.22.0 evidence) and every
+/// shape the reducers ignore projects as-is.
+pub fn project_web_history(entries: &[JsValue]) -> AdapterResult<WebHistoryView> {
+    // SessionProjectionDriver.ts:47-48 with lastSequence (:232-234): the
+    // constructor reads `entry.sequence` through `Math.max` before any
+    // reducer, so a nullish element reports 'sequence', not 'type'.
+    for entry in entries {
+        if nullish(entry) {
+            return Err(cannot_read(entry, "sequence"));
+        }
+    }
+    let mut view = WebHistoryView::default();
+    // #2044 negative control, one switch shared by both fileArtifact reads:
+    // the tool-result turn is forgotten, so the finalize filter applies to it.
+    let tool_turns_ignored = crate::mutants::on("web-history-tool-turn-ignored");
+    // fileArtifact reduce (:78-89) over the whole log: the tool-result turn
+    // set first, then the `file_artifacts` rows with a positive `.length`.
+    let mut turns_with_tool_results: Vec<JsValue> = Vec::new();
+    for entry in entries {
+        if is_durable_message_entry(entry) && message_contains_tool_result(field(entry, "message"))?
+        {
+            let turn_id = field(entry, "turnId").clone();
+            if !tool_turns_ignored
+                && !turns_with_tool_results
+                    .iter()
+                    .any(|seen| same_value_zero(seen, &turn_id))
+            {
+                turns_with_tool_results.push(turn_id);
+            }
+        } else if is_str(field(entry, "type"), "file_artifacts")
+            && length_positive(field(entry, "artifacts"))?
+        {
+            view.file_artifacts.push(entry.clone());
+        }
+    }
+    // agentStatuses reduce (:124-128) reads `entry.type` only.
+    for entry in entries {
+        if is_str(field(entry, "type"), "agent_status_message") {
+            view.agent_statuses.push(entry.clone());
+        }
+    }
+    // turnErrors reduce (:147-164): the visible-failure set first, then the
+    // error `turn_result` rows. `entry.detail?.visible !== false` reads a
+    // nullish detail as `undefined !== false` (true), and a `turn_result`
+    // reads `result.type` — a nullish result throws there.
+    let mut visible_failure_status_turn_ids: Vec<JsValue> = Vec::new();
+    for entry in entries {
+        if is_str(field(entry, "type"), "agent_status_message")
+            && is_str(field(entry, "kind"), "error")
+            && field(field(entry, "detail"), "visible") != &JsValue::Bool(false)
+        {
+            let turn_id = field(entry, "turnId").clone();
+            if !visible_failure_status_turn_ids
+                .iter()
+                .any(|seen| same_value_zero(seen, &turn_id))
+            {
+                visible_failure_status_turn_ids.push(turn_id);
+            }
+        }
+        if is_str(field(entry, "type"), "turn_result") {
+            let result = field(entry, "result");
+            if nullish(result) {
+                return Err(cannot_read(result, "type"));
+            }
+            if is_str(field(result, "type"), "error") {
+                view.turn_errors.push(entry.clone());
+            }
+        }
+    }
+    // tokenUsage reduce (:200-215): contextBudget, then compactBudget, then
+    // turn usage; `index` is the log position. hasPositiveUsage runs its
+    // falsy `!usage` guard first, so a nullish usage never reaches the field
+    // reads (:395-396).
+    let mut latest_context_budget: Option<JsObject> = None;
+    let mut latest_compact_budget: Option<JsObject> = None;
+    let mut latest_turn_usage: Option<JsObject> = None;
+    for (index, entry) in entries.iter().enumerate() {
+        let index = JsValue::Number(index as f64);
+        if let Some(budget) = project_context_budget(entry, &index)? {
+            latest_context_budget = Some(budget);
+            continue;
+        }
+        if let Some(budget) = project_compact_budget(entry, &index)? {
+            latest_compact_budget = Some(budget);
+            continue;
+        }
+        if is_str(field(entry, "type"), "turn_result") {
+            let usage = field(field(entry, "result"), "usage");
+            if js_truthy(usage)
+                && has_positive_usage(usage)
+                && let Some(object) = usage.as_object()
+            {
+                latest_turn_usage = Some(object.clone());
+            }
+        }
+    }
+    // fileArtifact finalize (:90-97): the first cell `snapshot` views. A turn
+    // with a tool result keeps its artifacts verbatim; every other row filters
+    // `workspace_diff` out, so `artifacts.filter` must exist — the only shapes
+    // that reduced in past `.length > 0` without being an array are strings
+    // and objects, and both report the missing method.
+    let mut file_rows = Vec::new();
+    for entry in &view.file_artifacts {
+        let artifacts = field(entry, "artifacts");
+        let turn_id = field(entry, "turnId");
+        let tool_result_turn = !tool_turns_ignored
+            && turns_with_tool_results
+                .iter()
+                .any(|seen| same_value_zero(seen, turn_id));
+        let artifacts = if tool_result_turn || crate::mutants::on("web-history-workspace-diff-kept")
+        {
+            // #2044 negative control (second arm): the filter never runs.
+            artifacts.clone()
+        } else {
+            let kept = match artifacts {
+                JsValue::Array(items) => {
+                    let mut kept = Vec::with_capacity(items.len());
+                    for artifact in items {
+                        if nullish(artifact) {
+                            return Err(cannot_read(artifact, "source"));
+                        }
+                        if !is_str(field(artifact, "source"), "workspace_diff") {
+                            kept.push(artifact.clone());
+                        }
+                    }
+                    kept
+                }
+                _ if crate::mutants::on("web-history-finalize-nonarray-empty") => {
+                    // #2044 negative control: the broken artifacts row is
+                    // dropped instead of the filter call being reported.
+                    Vec::new()
+                }
+                _ => {
+                    return Err(AdapterError::Type(
+                        "entry.artifacts.filter is not a function".into(),
+                    ));
+                }
+            };
+            JsValue::Array(kept)
+        };
+        // `artifacts.length > 0 ? [...] : []`: a filtered-out row disappears.
+        if !length_positive(&artifacts)? {
+            continue;
+        }
+        // `[...artifacts]`: an array copies its elements and a string
+        // iterates code points; any other shape is not iterable.
+        let spread = match &artifacts {
+            JsValue::Array(items) => JsValue::Array(items.clone()),
+            JsValue::String(text) => {
+                let mut units = text.units().iter().copied().peekable();
+                let mut items = Vec::new();
+                while let Some(first) = units.next() {
+                    let mut item = vec![first];
+                    if (0xd800..=0xdbff).contains(&first)
+                        && units
+                            .peek()
+                            .is_some_and(|next| (0xdc00..=0xdfff).contains(next))
+                    {
+                        item.push(units.next().expect("#2044 paired low surrogate"));
+                    }
+                    items.push(JsValue::String(JsString::from_utf16(item)));
+                }
+                JsValue::Array(items)
+            }
+            _ => return Err(AdapterError::Type("artifacts is not iterable".into())),
+        };
+        // `{...entry, artifacts}`: only objects match the `file_artifacts`
+        // type read, so the spread target always exists.
+        let Some(mut row) = entry.as_object().cloned() else {
+            continue;
+        };
+        row.insert("artifacts".into(), spread);
+        file_rows.push(JsValue::Object(row));
+    }
+    view.file_artifacts = file_rows;
+    // turnErrors finalize (:166-168): drop rows whose turn has a visible
+    // failure status.
+    if !crate::mutants::on("web-history-visible-error-kept") {
+        // #2044 negative control: visible failures stay in the rows.
+        view.turn_errors.retain(|entry| {
+            !visible_failure_status_turn_ids
+                .iter()
+                .any(|seen| same_value_zero(seen, field(entry, "turnId")))
+        });
+    }
+    // tokenUsage state: `{}` with the latest of each budget the log carried.
+    let mut token_usage = JsObject::new();
+    if !crate::mutants::on("web-history-context-budget-dropped")
+        && let Some(budget) = latest_context_budget
+    {
+        // #2044 negative control: the context budget never lands.
+        token_usage.insert("latestContextBudget".into(), JsValue::Object(budget));
+    }
+    if !crate::mutants::on("web-history-compact-budget-dropped")
+        && let Some(budget) = latest_compact_budget
+    {
+        // #2044 negative control: the compact budget never lands.
+        token_usage.insert("latestCompactBudget".into(), JsValue::Object(budget));
+    }
+    if !crate::mutants::on("web-history-turn-usage-dropped")
+        && let Some(usage) = latest_turn_usage
+    {
+        // #2044 negative control: the turn usage never lands.
+        token_usage.insert("latestTurnUsage".into(), JsValue::Object(usage));
+    }
+    view.token_usage = JsValue::Object(token_usage);
+    // incompleteTurns reduce (:226-240) and finalize (:241-243): both read
+    // only `entry.type` and `entry.turnId`.
+    let mut durable_message_turn_ids: Vec<JsValue> = Vec::new();
+    let mut completed_turn_ids: Vec<JsValue> = Vec::new();
+    for entry in entries {
+        if is_str(field(entry, "type"), "turn_result") {
+            let turn_id = field(entry, "turnId").clone();
+            if !completed_turn_ids
+                .iter()
+                .any(|seen| same_value_zero(seen, &turn_id))
+            {
+                completed_turn_ids.push(turn_id);
+            }
+        }
+        if is_durable_message_entry(entry) {
+            let turn_id = field(entry, "turnId").clone();
+            if !durable_message_turn_ids
+                .iter()
+                .any(|seen| same_value_zero(seen, &turn_id))
+            {
+                durable_message_turn_ids.push(turn_id);
+            }
+        }
+    }
+    view.incomplete_turn_ids = if crate::mutants::on("web-history-incomplete-turn-kept") {
+        // #2044 negative control: completed turns stay in the list.
+        durable_message_turn_ids
+    } else {
+        durable_message_turn_ids
+            .into_iter()
+            .filter(|turn_id| {
+                !completed_turn_ids
+                    .iter()
+                    .any(|seen| same_value_zero(seen, turn_id))
+            })
+            .collect()
+    };
+    Ok(view)
 }
 
 /// ProjectSessionStorage.ts:239-245 on POSIX: runs of `/` or `\` become `-`,

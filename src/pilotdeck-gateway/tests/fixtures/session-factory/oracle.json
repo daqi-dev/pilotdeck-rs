@@ -23841,6 +23841,1691 @@
       }
     }
   ],
+  "webHistory": [
+    {
+      "name": "full",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "tools",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "durable_message",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_result"
+              }
+            ]
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "web-2",
+          "parentEntryId": "web-1",
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "tools",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "file_artifacts",
+          "artifacts": [
+            {
+              "source": "workspace_diff",
+              "path": "a"
+            },
+            {
+              "source": "session",
+              "path": "b"
+            },
+            {
+              "path": "c"
+            }
+          ]
+        },
+        {
+          "version": 1,
+          "entryId": "web-3",
+          "parentEntryId": "web-2",
+          "sequence": 3,
+          "sessionId": "session-745",
+          "turnId": "plain",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "file_artifacts",
+          "artifacts": [
+            {
+              "source": "workspace_diff"
+            },
+            {
+              "source": "session"
+            }
+          ]
+        },
+        {
+          "version": 1,
+          "entryId": "web-4",
+          "parentEntryId": "web-3",
+          "sequence": 4,
+          "sessionId": "session-745",
+          "turnId": "info",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "agent_status_message",
+          "kind": "info",
+          "detail": {}
+        },
+        {
+          "version": 1,
+          "entryId": "web-5",
+          "parentEntryId": "web-4",
+          "sequence": 5,
+          "sessionId": "session-745",
+          "turnId": "hidden",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "agent_status_message",
+          "kind": "error",
+          "detail": {
+            "visible": false
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "web-6",
+          "parentEntryId": "web-5",
+          "sequence": 6,
+          "sessionId": "session-745",
+          "turnId": "shown",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "agent_status_message",
+          "kind": "error"
+        },
+        {
+          "version": 1,
+          "entryId": "web-7",
+          "parentEntryId": "web-6",
+          "sequence": 7,
+          "sessionId": "session-745",
+          "turnId": "hidden",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "error"
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "web-8",
+          "parentEntryId": "web-7",
+          "sequence": 8,
+          "sessionId": "session-745",
+          "turnId": "shown",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "error"
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "web-9",
+          "parentEntryId": "web-8",
+          "sequence": 9,
+          "sessionId": "session-745",
+          "turnId": "budget",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "agent_status_message",
+          "event": "context_budget",
+          "detail": {
+            "displayUsed": 5,
+            "used": 7,
+            "total": 100,
+            "effectiveTotal": 90,
+            "reservedOutputTokens": 3,
+            "state": "ok",
+            "ratio": 0.5,
+            "budgetUsed": 6
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "web-10",
+          "parentEntryId": "web-9",
+          "sequence": 10,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "control_boundary",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "postTokens": 100,
+              "preTokens": 200,
+              "messagesSummarized": 3
+            }
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "web-11",
+          "parentEntryId": "web-10",
+          "sequence": 11,
+          "sessionId": "session-745",
+          "turnId": "last",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success",
+            "usage": {
+              "inputTokens": 2,
+              "outputTokens": 3,
+              "extra": "kept"
+            },
+            "permissionDenials": []
+          }
+        }
+      ],
+      "view": {
+        "fileArtifacts": [
+          {
+            "version": 1,
+            "entryId": "web-2",
+            "parentEntryId": "web-1",
+            "sequence": 2,
+            "sessionId": "session-745",
+            "turnId": "tools",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "file_artifacts",
+            "artifacts": [
+              {
+                "source": "workspace_diff",
+                "path": "a"
+              },
+              {
+                "source": "session",
+                "path": "b"
+              },
+              {
+                "path": "c"
+              }
+            ]
+          },
+          {
+            "version": 1,
+            "entryId": "web-3",
+            "parentEntryId": "web-2",
+            "sequence": 3,
+            "sessionId": "session-745",
+            "turnId": "plain",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "file_artifacts",
+            "artifacts": [
+              {
+                "source": "session"
+              }
+            ]
+          }
+        ],
+        "agentStatuses": [
+          {
+            "version": 1,
+            "entryId": "web-4",
+            "parentEntryId": "web-3",
+            "sequence": 4,
+            "sessionId": "session-745",
+            "turnId": "info",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "agent_status_message",
+            "kind": "info",
+            "detail": {}
+          },
+          {
+            "version": 1,
+            "entryId": "web-5",
+            "parentEntryId": "web-4",
+            "sequence": 5,
+            "sessionId": "session-745",
+            "turnId": "hidden",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "agent_status_message",
+            "kind": "error",
+            "detail": {
+              "visible": false
+            }
+          },
+          {
+            "version": 1,
+            "entryId": "web-6",
+            "parentEntryId": "web-5",
+            "sequence": 6,
+            "sessionId": "session-745",
+            "turnId": "shown",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "agent_status_message",
+            "kind": "error"
+          },
+          {
+            "version": 1,
+            "entryId": "web-9",
+            "parentEntryId": "web-8",
+            "sequence": 9,
+            "sessionId": "session-745",
+            "turnId": "budget",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "agent_status_message",
+            "event": "context_budget",
+            "detail": {
+              "displayUsed": 5,
+              "used": 7,
+              "total": 100,
+              "effectiveTotal": 90,
+              "reservedOutputTokens": 3,
+              "state": "ok",
+              "ratio": 0.5,
+              "budgetUsed": 6
+            }
+          }
+        ],
+        "turnErrors": [
+          {
+            "version": 1,
+            "entryId": "web-7",
+            "parentEntryId": "web-6",
+            "sequence": 7,
+            "sessionId": "session-745",
+            "turnId": "hidden",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "turn_result",
+            "result": {
+              "type": "error"
+            }
+          }
+        ],
+        "tokenUsage": {
+          "latestContextBudget": {
+            "index": 8,
+            "usage": {
+              "used": 5,
+              "displayUsed": 5,
+              "budgetUsed": 6,
+              "total": 100,
+              "effectiveTotal": 90,
+              "reservedOutputTokens": 3,
+              "state": "ok",
+              "ratio": 0.5,
+              "source": "history",
+              "exact": true
+            }
+          },
+          "latestCompactBudget": {
+            "index": 9,
+            "postTokens": 100,
+            "preTokens": 200,
+            "messagesSummarized": 3
+          },
+          "latestTurnUsage": {
+            "inputTokens": 2,
+            "outputTokens": 3,
+            "extra": "kept"
+          }
+        },
+        "incompleteTurnIds": [
+          "tools"
+        ]
+      }
+    },
+    {
+      "name": "workspace-diff-filtered",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "plain",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "file_artifacts",
+          "artifacts": [
+            {
+              "source": "workspace_diff"
+            },
+            {
+              "source": "session"
+            },
+            {
+              "path": "c"
+            }
+          ]
+        }
+      ],
+      "view": {
+        "fileArtifacts": [
+          {
+            "version": 1,
+            "entryId": "web-1",
+            "parentEntryId": "web-0",
+            "sequence": 1,
+            "sessionId": "session-745",
+            "turnId": "plain",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "file_artifacts",
+            "artifacts": [
+              {
+                "source": "session"
+              },
+              {
+                "path": "c"
+              }
+            ]
+          }
+        ],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "name": "tool-turn-keeps-diff",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "tools",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "durable_message",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_result"
+              }
+            ]
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "web-2",
+          "parentEntryId": "web-1",
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "tools",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "file_artifacts",
+          "artifacts": [
+            {
+              "source": "workspace_diff"
+            }
+          ]
+        }
+      ],
+      "view": {
+        "fileArtifacts": [
+          {
+            "version": 1,
+            "entryId": "web-2",
+            "parentEntryId": "web-1",
+            "sequence": 2,
+            "sessionId": "session-745",
+            "turnId": "tools",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "file_artifacts",
+            "artifacts": [
+              {
+                "source": "workspace_diff"
+              }
+            ]
+          }
+        ],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": [
+          "tools"
+        ]
+      }
+    },
+    {
+      "name": "artifacts-primitive-elements",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "file_artifacts",
+          "artifacts": [
+            5
+          ]
+        },
+        {
+          "version": 1,
+          "entryId": "web-2",
+          "parentEntryId": "web-1",
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "file_artifacts",
+          "artifacts": [
+            {
+              "type": "x"
+            }
+          ]
+        }
+      ],
+      "view": {
+        "fileArtifacts": [
+          {
+            "version": 1,
+            "entryId": "web-1",
+            "parentEntryId": "web-0",
+            "sequence": 1,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "file_artifacts",
+            "artifacts": [
+              5
+            ]
+          },
+          {
+            "version": 1,
+            "entryId": "web-2",
+            "parentEntryId": "web-1",
+            "sequence": 2,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "file_artifacts",
+            "artifacts": [
+              {
+                "type": "x"
+              }
+            ]
+          }
+        ],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "name": "artifacts-str",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "file_artifacts",
+          "artifacts": "str"
+        }
+      ],
+      "error": {
+        "name": "TypeError",
+        "message": "entry.artifacts.filter is not a function"
+      }
+    },
+    {
+      "name": "artifacts-str-tool-turn",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "tools",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "durable_message",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_result"
+              }
+            ]
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "web-2",
+          "parentEntryId": "web-1",
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "tools",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "file_artifacts",
+          "artifacts": "str"
+        }
+      ],
+      "view": {
+        "fileArtifacts": [
+          {
+            "version": 1,
+            "entryId": "web-2",
+            "parentEntryId": "web-1",
+            "sequence": 2,
+            "sessionId": "session-745",
+            "turnId": "tools",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "file_artifacts",
+            "artifacts": [
+              "s",
+              "t",
+              "r"
+            ]
+          }
+        ],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": [
+          "tools"
+        ]
+      }
+    },
+    {
+      "name": "artifacts-hex-length",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "file_artifacts",
+          "artifacts": {
+            "length": "0x10"
+          }
+        }
+      ],
+      "error": {
+        "name": "TypeError",
+        "message": "entry.artifacts.filter is not a function"
+      }
+    },
+    {
+      "name": "artifacts-hex-length-tool-turn",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "tools",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "durable_message",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_result"
+              }
+            ]
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "web-2",
+          "parentEntryId": "web-1",
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "tools",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "file_artifacts",
+          "artifacts": {
+            "length": "0x10"
+          }
+        }
+      ],
+      "error": {
+        "name": "TypeError",
+        "message": "artifacts is not iterable"
+      }
+    },
+    {
+      "name": "artifact-null",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "file_artifacts",
+          "artifacts": [
+            null
+          ]
+        }
+      ],
+      "error": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'source')"
+      }
+    },
+    {
+      "name": "artifact-null-tool-turn",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "tools",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "durable_message",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_result"
+              }
+            ]
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "web-2",
+          "parentEntryId": "web-1",
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "tools",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "file_artifacts",
+          "artifacts": [
+            null
+          ]
+        }
+      ],
+      "view": {
+        "fileArtifacts": [
+          {
+            "version": 1,
+            "entryId": "web-2",
+            "parentEntryId": "web-1",
+            "sequence": 2,
+            "sessionId": "session-745",
+            "turnId": "tools",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "file_artifacts",
+            "artifacts": [
+              null
+            ]
+          }
+        ],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": [
+          "tools"
+        ]
+      }
+    },
+    {
+      "name": "artifacts-empty",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "file_artifacts",
+          "artifacts": []
+        }
+      ],
+      "view": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "name": "artifacts-missing",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "file_artifacts"
+        }
+      ],
+      "error": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'length')"
+      }
+    },
+    {
+      "name": "artifacts-null",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "file_artifacts",
+          "artifacts": null
+        }
+      ],
+      "error": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'length')"
+      }
+    },
+    {
+      "name": "message-null",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "durable_message",
+          "message": null
+        }
+      ],
+      "error": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'content')"
+      }
+    },
+    {
+      "name": "message-content-number",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "durable_message",
+          "message": {
+            "role": "assistant",
+            "content": 5
+          }
+        }
+      ],
+      "error": {
+        "name": "TypeError",
+        "message": "message.content.some is not a function"
+      }
+    },
+    {
+      "name": "content-null-block",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "durable_message",
+          "message": {
+            "role": "assistant",
+            "content": [
+              null
+            ]
+          }
+        }
+      ],
+      "error": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'type')"
+      }
+    },
+    {
+      "name": "turn-error-visibility",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "hidden",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "agent_status_message",
+          "kind": "error",
+          "detail": {
+            "visible": false
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "web-2",
+          "parentEntryId": "web-1",
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "shown",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "agent_status_message",
+          "kind": "error"
+        },
+        {
+          "version": 1,
+          "entryId": "web-3",
+          "parentEntryId": "web-2",
+          "sequence": 3,
+          "sessionId": "session-745",
+          "turnId": "visible-flag",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "agent_status_message",
+          "kind": "error",
+          "detail": {
+            "visible": true
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "web-4",
+          "parentEntryId": "web-3",
+          "sequence": 4,
+          "sessionId": "session-745",
+          "turnId": "primitive-detail",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "agent_status_message",
+          "kind": "error",
+          "detail": 5
+        },
+        {
+          "version": 1,
+          "entryId": "web-5",
+          "parentEntryId": "web-4",
+          "sequence": 5,
+          "sessionId": "session-745",
+          "turnId": "hidden",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "error"
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "web-6",
+          "parentEntryId": "web-5",
+          "sequence": 6,
+          "sessionId": "session-745",
+          "turnId": "shown",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "error"
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "web-7",
+          "parentEntryId": "web-6",
+          "sequence": 7,
+          "sessionId": "session-745",
+          "turnId": "visible-flag",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "error"
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "web-8",
+          "parentEntryId": "web-7",
+          "sequence": 8,
+          "sessionId": "session-745",
+          "turnId": "primitive-detail",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "error"
+          }
+        }
+      ],
+      "view": {
+        "fileArtifacts": [],
+        "agentStatuses": [
+          {
+            "version": 1,
+            "entryId": "web-1",
+            "parentEntryId": "web-0",
+            "sequence": 1,
+            "sessionId": "session-745",
+            "turnId": "hidden",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "agent_status_message",
+            "kind": "error",
+            "detail": {
+              "visible": false
+            }
+          },
+          {
+            "version": 1,
+            "entryId": "web-2",
+            "parentEntryId": "web-1",
+            "sequence": 2,
+            "sessionId": "session-745",
+            "turnId": "shown",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "agent_status_message",
+            "kind": "error"
+          },
+          {
+            "version": 1,
+            "entryId": "web-3",
+            "parentEntryId": "web-2",
+            "sequence": 3,
+            "sessionId": "session-745",
+            "turnId": "visible-flag",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "agent_status_message",
+            "kind": "error",
+            "detail": {
+              "visible": true
+            }
+          },
+          {
+            "version": 1,
+            "entryId": "web-4",
+            "parentEntryId": "web-3",
+            "sequence": 4,
+            "sessionId": "session-745",
+            "turnId": "primitive-detail",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "agent_status_message",
+            "kind": "error",
+            "detail": 5
+          }
+        ],
+        "turnErrors": [
+          {
+            "version": 1,
+            "entryId": "web-5",
+            "parentEntryId": "web-4",
+            "sequence": 5,
+            "sessionId": "session-745",
+            "turnId": "hidden",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "turn_result",
+            "result": {
+              "type": "error"
+            }
+          }
+        ],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "name": "turn-result-null-result",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": null
+        }
+      ],
+      "error": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'type')"
+      }
+    },
+    {
+      "name": "usage-null",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success",
+            "usage": null
+          }
+        }
+      ],
+      "view": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "name": "usage-primitive",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success",
+            "usage": 5
+          }
+        }
+      ],
+      "view": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "name": "compact-metadata-null",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "control_boundary",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": null
+          }
+        }
+      ],
+      "error": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'postTokens')"
+      }
+    },
+    {
+      "name": "boundary-null",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "control_boundary",
+          "boundary": null
+        }
+      ],
+      "error": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'kind')"
+      }
+    },
+    {
+      "name": "context-budget",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "agent_status_message",
+          "event": "context_budget",
+          "detail": {
+            "displayUsed": 5,
+            "used": 7,
+            "total": 100,
+            "effectiveTotal": 90,
+            "reservedOutputTokens": 3,
+            "state": "ok",
+            "ratio": 0.5,
+            "budgetUsed": 6
+          }
+        }
+      ],
+      "view": {
+        "fileArtifacts": [],
+        "agentStatuses": [
+          {
+            "version": 1,
+            "entryId": "web-1",
+            "parentEntryId": "web-0",
+            "sequence": 1,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "agent_status_message",
+            "event": "context_budget",
+            "detail": {
+              "displayUsed": 5,
+              "used": 7,
+              "total": 100,
+              "effectiveTotal": 90,
+              "reservedOutputTokens": 3,
+              "state": "ok",
+              "ratio": 0.5,
+              "budgetUsed": 6
+            }
+          }
+        ],
+        "turnErrors": [],
+        "tokenUsage": {
+          "latestContextBudget": {
+            "index": 0,
+            "usage": {
+              "used": 5,
+              "displayUsed": 5,
+              "budgetUsed": 6,
+              "total": 100,
+              "effectiveTotal": 90,
+              "reservedOutputTokens": 3,
+              "state": "ok",
+              "ratio": 0.5,
+              "source": "history",
+              "exact": true
+            }
+          }
+        },
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "name": "context-budget-partial",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "agent_status_message",
+          "event": "context_budget",
+          "detail": {
+            "used": 2,
+            "total": 10
+          }
+        }
+      ],
+      "view": {
+        "fileArtifacts": [],
+        "agentStatuses": [
+          {
+            "version": 1,
+            "entryId": "web-1",
+            "parentEntryId": "web-0",
+            "sequence": 1,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "agent_status_message",
+            "event": "context_budget",
+            "detail": {
+              "used": 2,
+              "total": 10
+            }
+          }
+        ],
+        "turnErrors": [],
+        "tokenUsage": {
+          "latestContextBudget": {
+            "index": 0,
+            "usage": {
+              "used": 2,
+              "total": 10,
+              "effectiveTotal": 10,
+              "reservedOutputTokens": 0,
+              "source": "history",
+              "exact": true
+            }
+          }
+        },
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "name": "context-budget-used-fallback",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "agent_status_message",
+          "event": "context_budget",
+          "detail": {
+            "used": 2,
+            "displayUsed": 0,
+            "total": 10,
+            "effectiveTotal": 8
+          }
+        }
+      ],
+      "view": {
+        "fileArtifacts": [],
+        "agentStatuses": [
+          {
+            "version": 1,
+            "entryId": "web-1",
+            "parentEntryId": "web-0",
+            "sequence": 1,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "agent_status_message",
+            "event": "context_budget",
+            "detail": {
+              "used": 2,
+              "displayUsed": 0,
+              "total": 10,
+              "effectiveTotal": 8
+            }
+          }
+        ],
+        "turnErrors": [],
+        "tokenUsage": {
+          "latestContextBudget": {
+            "index": 0,
+            "usage": {
+              "used": 2,
+              "total": 10,
+              "effectiveTotal": 8,
+              "reservedOutputTokens": 0,
+              "source": "history",
+              "exact": true
+            }
+          }
+        },
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "name": "compact-budget",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "control_boundary",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "postTokens": 100,
+              "preTokens": 200,
+              "messagesSummarized": 3
+            }
+          }
+        }
+      ],
+      "view": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {
+          "latestCompactBudget": {
+            "index": 0,
+            "postTokens": 100,
+            "preTokens": 200,
+            "messagesSummarized": 3
+          }
+        },
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "name": "compact-budget-nopost",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "control_boundary",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "preTokens": 200
+            }
+          }
+        }
+      ],
+      "view": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "name": "turn-usage",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success",
+            "usage": {
+              "inputTokens": 2,
+              "outputTokens": 3,
+              "extra": "kept"
+            },
+            "permissionDenials": []
+          }
+        }
+      ],
+      "view": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {
+          "latestTurnUsage": {
+            "inputTokens": 2,
+            "outputTokens": 3,
+            "extra": "kept"
+          }
+        },
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "name": "incomplete",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "durable_message",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "x"
+              }
+            ]
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "web-2",
+          "parentEntryId": "web-1",
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "durable_message",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "y"
+              }
+            ]
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "web-3",
+          "parentEntryId": "web-2",
+          "sequence": 3,
+          "sessionId": "session-745",
+          "turnId": "B",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "durable_message",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "z"
+              }
+            ]
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "web-4",
+          "parentEntryId": "web-3",
+          "sequence": 4,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success"
+          }
+        }
+      ],
+      "view": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": [
+          "B"
+        ]
+      }
+    },
+    {
+      "name": "empty",
+      "entries": [],
+      "view": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "name": "null-entry",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "file_artifacts",
+          "artifacts": []
+        },
+        null
+      ],
+      "error": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'sequence')"
+      }
+    },
+    {
+      "name": "primitive-entries",
+      "entries": [
+        42,
+        "text",
+        true
+      ],
+      "view": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "name": "near-miss-type",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "File_Artifacts",
+          "artifacts": "str"
+        },
+        {
+          "version": 1,
+          "entryId": "web-2",
+          "parentEntryId": "web-1",
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "file_artifacts ",
+          "artifacts": "str"
+        }
+      ],
+      "view": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "name": "error-priority-finalize-vs-reduce",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "file_artifacts",
+          "artifacts": "str"
+        },
+        {
+          "version": 1,
+          "entryId": "web-2",
+          "parentEntryId": "web-1",
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": null
+        }
+      ],
+      "error": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'type')"
+      }
+    },
+    {
+      "name": "error-priority-reduce-passes",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "web-1",
+          "parentEntryId": "web-0",
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "file_artifacts",
+          "artifacts": null
+        },
+        {
+          "version": 1,
+          "entryId": "web-2",
+          "parentEntryId": "web-1",
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": null
+        }
+      ],
+      "error": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'length')"
+      }
+    }
+  ],
   "storageErrors": [
     {
       "entries": [
