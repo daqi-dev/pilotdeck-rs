@@ -181,5 +181,51 @@ pub(super) fn require_text(
     }
 }
 
+/// `input.projectKey ?? fallbackProjectRoot` — the projectKey read the
+/// session_dir and config families share (#2068; probes
+/// `_tmp/20261110-issue-2068/probe/probe-2068.out` and `probe-2068-r2.out`,
+/// Node v22.22.0). Only the nullish spellings fall back to the configured
+/// project; a string is a real key, converted lossily for the
+/// configured-project comparison (#2083's treatment — a lone surrogate
+/// reaches the unserved-key refusal, it does not fold onto the configured
+/// project); anything else is Node `path.resolve`'s `TypeError
+/// [ERR_INVALID_ARG_TYPE]`, built from the shared `argument_received` /
+/// `invalid_arg_type_message` ports so the wording and the `-0` /
+/// constructor spellings cannot drift from the family's other `paths[0]`
+/// guards (`session_model.rs` `path_argument`, `skills/mod.rs` `path_arg`,
+/// `management.rs` `validate_command_project`). The code survives the
+/// boundary (`hasStructuredErrorCode`; the frozen oracle's `project-number`
+/// WS original is `ERR_INVALID_ARG_TYPE`), and Node's description-phase
+/// throws are bare TypeErrors that serialize as `gateway_request_failed`
+/// with the bare message.
+pub(super) fn resolve_project_key(
+    params: &JsValue,
+    fallback: &std::path::Path,
+) -> Result<String, RequestError> {
+    match input_property(params, "projectKey")?.as_ref() {
+        None | Some(JsValue::Undefined) | Some(JsValue::Null) => {
+            Ok(fallback.to_string_lossy().into_owned())
+        }
+        Some(JsValue::String(key)) => Ok(String::from_utf16_lossy(key.units())),
+        // Node's description phase can itself throw (a truthy primitive
+        // `constructor` or an unconvertible `constructor.name`), and that
+        // bare TypeError/RangeError escapes before `ERR_INVALID_ARG_TYPE` is
+        // ever built: it carries no `code`, and the boundary keeps only
+        // `error.message` — the same Throws mapping `management.rs`
+        // `validate_command_project` gives this arm.
+        Some(other) => match crate::metadata::argument_received(other) {
+            crate::metadata::ArgumentReceived::Text(received) => Err(RequestError {
+                code: "ERR_INVALID_ARG_TYPE".into(),
+                message: crate::metadata::invalid_arg_type_message("paths[0]", &received),
+                details: None,
+                validation: None,
+            }),
+            crate::metadata::ArgumentReceived::Throws { message, .. } => {
+                Err(RequestError::new(message))
+            }
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests;

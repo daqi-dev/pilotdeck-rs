@@ -779,6 +779,13 @@ async fn upgrade_budget_boundary_matches_ts() {
 /// the 431 shape fails here with its id, and a stale list entry points at
 /// the cell to re-check — widening or dropping the predicate fails here
 /// instead of re-widening the replay's mask.
+/// #2789 (cluster 2): the predicate-inferred comparison above is blind to a
+/// stale entry — an id the oracle does not record admits nothing, so the
+/// inference stays green while the constant carries dead weight (and a future
+/// oracle reusing the id as a served cell would silently inherit the
+/// exemption). The sorted constant therefore also has to equal the sorted
+/// oracle 431 set directly; `native-ws-budget-cl0-stale` appends one
+/// unrecorded id, which only this leg catches.
 #[test]
 fn parser_admission_cells_cover_exactly_the_oracle_431s() {
     let recorded = budget_oracle();
@@ -802,9 +809,28 @@ fn parser_admission_cells_cover_exactly_the_oracle_431s() {
     oracle_431s.sort_unstable();
     negative_assert_eq!(
         admitted,
-        oracle_431s,
+        oracle_431s.clone(),
         "#2153 the content-length exemption covers exactly the oracle's 431 cells"
     );
+    let mut listed = listed_admission_cells();
+    listed.sort_unstable();
+    negative_assert_eq!(
+        listed,
+        oracle_431s,
+        "#2153 the exemption list itself is exactly the oracle's 431 cells, so a stale entry points at the cell to re-check"
+    );
+}
+
+/// #2789: the listed cells the direct set comparison reads — the constant,
+/// with the stale-entry mutant appending one id the oracle does not record.
+/// Only the direct leg of `parser_admission_cells_cover_exactly_the_oracle_431s`
+/// sees it: the predicate-inferred admitted set stays green on a stale entry.
+fn listed_admission_cells() -> Vec<&'static str> {
+    let mut listed = PARSER_ADMISSION_CELLS.to_vec();
+    if crate::mutants::on("native-ws-budget-cl0-stale") {
+        listed.push("plain-16123");
+    }
+    listed
 }
 
 /// #2153: the raw-pin anchors, standalone literals the native-ws-entry

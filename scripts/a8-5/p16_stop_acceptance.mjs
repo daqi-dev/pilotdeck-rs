@@ -14,8 +14,8 @@ import { connect, createServer } from "node:net";
 import http from "node:http";
 import { writeSync } from "node:fs";
 import {
-  makeFakeGateway, makeHome, makeStaticDir, Recorder, sleep, tcpRefused,
-  makePaths, parseProbeArgs, TOKEN,
+  makeFakeGateway, makeHome, makeStaticDir, keepAliveProbe, keepAlivePremise,
+  Recorder, sleep, tcpRefused, makePaths, parseProbeArgs, TOKEN,
 } from "./common.mjs";
 
 const { BASE, RAW_DIR } = makePaths(parseProbeArgs("p16-stop-acceptance"), "p16_stop_acceptance");
@@ -96,16 +96,6 @@ function watchSock(sock, events, label) {
   sock.on("data", (c) => events.push({ label, event: "data", bytes: c.length, at: Date.now() }));
 }
 
-/** Connection 头值（裸层取「connection:」后的值串、node 层取头原值）→ 是否含
- * keep-alive token：小写、去 OWS、按逗号切分（容忍 `Connection:keep-alive`、
- * 行尾空白、多值列表）。close 优先（RFC 7230 §6.1：close 出现即收尾不持久，
- * 即使同列表还有 keep-alive）。头缺失的语义不在本函数——由调用方结合
- * 「完整 HTTP/1.1 响应头」按 RFC 7230 §6.3 判隐式 keep-alive。#2662 fix-r3。 */
-function keepAliveToken(v) {
-  const tokens = v.toLowerCase().split(",").map((t) => t.trim());
-  return !tokens.includes("close") && tokens.includes("keep-alive");
-}
-
 async function partA() {
   const { startPilotDeckServer } = await import(`${BASE}/dist/src/cli/pilotdeckServer.js`);
   const server = await startPilotDeckServer({
@@ -121,11 +111,18 @@ async function partA() {
   // （显式 close）时 FIN 来自响应结束而非 server.close()，观察 1/2 的结论适用条件就变了，
   // 记 rawPremise、不成立时降级 note。「头缺失 = 隐式 keep-alive（RFC 7230 §6.3）」只在
   // **完整 HTTP/1.1 响应头**下成立：dataPromise 2s 兜底 resolve 的空/半截 buf、以及
-  // HTTP/1.0 的缺省 close，都不得判成立（防空真）；归一与 pooledPremise 共用 keepAliveToken。
+  // HTTP/1.0 的缺省 close，都不得判成立（防空真）。
+  // #2756 fix-r1（simplify P2）：隐式规则不再内联第二份——与 node 层共用 common 的
+  // keepAlivePremise（单源）；headComplete/http11/connHeader 原值照旧入 record，
+  // 口径差异见 common.mjs keepAlivePremise doc（非 1.1 + 显式 keep-alive token）。
   const headComplete = raw.head.includes("\r\n\r\n");
   const http11 = /^HTTP\/1\.1 /.test(statusLine);
   const connValue = connHeader === undefined ? undefined : connHeader.slice(connHeader.indexOf(":") + 1);
-  const rawPremise = headComplete && http11 && (connValue === undefined ? true : keepAliveToken(connValue));
+  const { premise: rawPremise } = keepAlivePremise({
+    ok: headComplete,
+    connection: connValue,
+    httpVersion: http11 ? "1.1" : "1.0",
+  });
   log("A/raw-keepalive-request1", { statusLine, connHeader, headComplete, http11, rawPremise });
   const rawEvents = [];
   watchSock(raw.sock, rawEvents, "raw-ka");
@@ -137,40 +134,51 @@ async function partA() {
   // （agent 不入池）时，观察 3 的 agent 复用直测无效，跳过并记
   // A/SKIP-agent-reuse，不再以「close 前池化」的 note 产出错误前提的
   // 证据记录；Connection 头与裸层 rawPremise 的 connHeader 对称捕获（行号易漂，见变量名）。
-  const agent = new http.Agent({ keepAlive: true, keepAliveMsecs: 1000 });
-  const pooled1 = await new Promise((res) => {
-    const req = http.request({ host: "127.0.0.1", port: PORT_A, path: "/health", agent, timeout: 3000 }, (r) => {
-      let body = "";
-      r.on("data", (c) => (body += c));
-      r.on("end", () => res({ ok: true, status: r.statusCode, httpVersion: r.httpVersion, connection: r.headers["connection"] }));
-    });
-    req.on("timeout", () => { req.destroy(); res({ ok: false, error: "timeout" }); });
-    req.on("error", (e) => res({ ok: false, code: e.code, message: e.message }));
-    req.end();
-  });
-  const pooledConnection = typeof pooled1.connection === "string" ? pooled1.connection.toLowerCase() : undefined;
-  // #2662：入池前提断言——ok 且 Connection: keep-alive 才意味着 socket 会入池。
-  // fix-r1 boundary#1 + fix-r2：头缺失仅在响应完整（ok）且 HTTP/1.1 时按隐式
-  // keep-alive 放行（HTTP/1.0 缺省 close 不放行）；显式 close 仍不成立；
-  // token 归一与裸层 rawPremise 共用 keepAliveToken（不再两处分叉）。
-  const pooledPremise =
-    pooled1.ok === true &&
-    (pooledConnection === undefined ? String(pooled1.httpVersion) === "1.1" : keepAliveToken(pooledConnection));
+  // #2756（r5 concurrency/simplify 收敛）：内联 agent 炮台与 common.mjs 的
+  // keepAliveProbe 同构，收敛共用；前提判定随 once 返回（premise/premiseReason，
+  // 判定形状 = 原 #2662 fix-r1/r2 的 ok + 缺头按完整 HTTP/1.1 隐式 + close 优先，
+  // 与 p2b/p1_p2/p6 三探针同形）。
+  const ka = await keepAliveProbe(PORT_A);
+  const pooled1 = await ka.once("/health");
+  const pooledPremise = pooled1.premise === true;
+  // fix-r2（DS sibling#1 撞条）：note 不再断言「复用直测前提成立」——该断言在
+  // 池被服务端空闲超时收空时与 A/SKIP-pool-drained-before-reuse / agentReuse
+  // skipped 互为反证；收窄为「请求 1 已入池」，close 前是否仍占用指向 SKIP 行。
+  // fix-r3（Grok sibling P3）：指向改 A/pool-at-close 显式行（复检处无论结果都
+  // 落一行），不再以「SKIP 行未出现」作负证据推断（该行缺席与「仍占用」在
+  // SKIP 行本身缺席时不可辨）。
   log("A/agent-pooled-request1", {
     pooled1,
     pooledPremise,
     note: pooledPremise
-      ? "close() 前经该 agent 完成请求 1、socket 入池（复用直测前提成立）"
+      ? "请求 1 已入池（close() 前经该 agent 完成）；close 前池内是否仍占用见 A/pool-at-close 显式行（不成立时另落 A/SKIP-pool-drained-before-reuse）"
       : "复用直测前提未成立（pooled1 失败或 Connection 非 keep-alive，socket 未入池）——见 A/SKIP-agent-reuse",
   });
   if (!pooledPremise) {
     log("A/SKIP-agent-reuse", {
-      reason: pooled1.ok !== true
+      reason: pooled1.premiseReason === "request-failed"
         ? "pooled1 failed"
-        : pooledConnection === undefined
+        : pooled1.premiseReason === "no-header-non-http/1.1"
           ? "响应缺 Connection 头且非 HTTP/1.1（隐式 keep-alive 不适用），socket 未入池"
           : "响应 Connection 显式非 keep-alive（close 等），socket 未入池",
       pooled1,
+    });
+  }
+  // #2756 fix-r1（boundary P1 仲裁）：入池前提是「close 前最后一刻池内仍有该 idle
+  // socket」，不是 pooled1 的一次性快照——S0→close 跨过服务端空闲收尾窗（实测
+  // ~5.5–6s）时池已被收空，close 的 FIN 无池内 socket 可拆、agent 丢弃重建路径
+  // 未被走到，观察 3 的复用直测退化为纯新连接（错误串可相同但解释失据）。复检
+  // 必须在 close 前：server.close() 本身 ~11ms 内即 FIN 掉池内 socket（close 后
+  // 池必空，实测见轮次证据 exp-close-pool.out 场景①）。
+  const freeSocketsAtClose = ka.freeSocketCount();
+  const pooledAtClose = pooledPremise && freeSocketsAtClose > 0;
+  // fix-r3（Grok sibling P3）：池占用复检无论结果都落显式行——close 前池状态
+  // 不再靠「SKIP 行未出现」负证据推断。
+  log("A/pool-at-close", { pooledAtClose, freeSocketsAtClose, pooledPremise });
+  if (pooledPremise && !pooledAtClose) {
+    log("A/SKIP-pool-drained-before-reuse", {
+      reason: "池在 close 前被服务端空闲超时收尾（pooled1 入池后、close() 前池已空）",
+      note: "复用直测降级：close 的 FIN 无池内 idle socket 可拆、agent 丢弃重建路径未被走到，close 后观测是新连接撞已关 listener（新连接对照已由 fetchNew/newTcpRefused 覆盖），「agent 丢弃已关 socket 重建连」解释失据",
     });
   }
 
@@ -237,24 +245,27 @@ async function partA() {
   // 观察 3：同 agent（close 前已池化）复用 + fetch 新连接 + 新 TCP
   // #2662：前提不成立时跳过 agent 复用直测（池为空时测到的是新连接而非
   // 复用，证据无效）；fetch 新连接与新 TCP 探测与入池无关，照常记录。
-  const agentReuse = pooledPremise
-    ? await new Promise((res) => {
-        const req = http.request({ host: "127.0.0.1", port: PORT_A, path: "/health", agent, timeout: 3000 }, (r) => {
-          let body = "";
-          r.on("data", (c) => (body += c));
-          r.on("end", () => res({ ok: true, status: r.statusCode }));
-        });
-        req.on("timeout", () => { req.destroy(); res({ ok: false, error: "timeout" }); });
-        // #2662（P3 顺带）：connect 相位判定改 e.code，免 message 格式漂移。
-        req.on("error", (e) => res({ ok: false, code: e.code, message: e.message, phase: e.code === "ECONNREFUSED" ? "connect-phase" : "other" }));
-        req.end();
-      })
-    : { skipped: true, reason: "复用直测前提未成立（见 A/SKIP-agent-reuse）" };
-  agent.destroy();
+  // #2756：复用直测改经 common keepAliveProbe 同一 agent（once 错误路径带
+  // code/message 分立字段；connect 相位判定保留 e.code，免 message 格式漂移）。
+  // fix-r1：前提改为 pooledAtClose（close 前最后一刻池占用，见 A/SKIP-pool-
+  // drained-before-reuse）；失败分支保留 once 原字段（error 等随 {...r} 带出，
+  // #2756 fix-r1 评审 concurrency P2——「疑似挂起」须与其它非预期形状可辨），
+  // 成功分支另带 reusedSocket（fix-r2 措辞限定：close 后正常重建连与池提前
+  // 收尾的新连接同为 false、无判别力，判别依据是上面的池占用复检，作参考）。
+  // fix-r2（Grok simplify#2）：两处 reason 三元提局部常量，消除双份漂移面。
+  const reuseSkipReason = pooledPremise
+    ? "池在 close 前被服务端空闲超时收尾（见 A/SKIP-pool-drained-before-reuse）"
+    : "复用直测前提未成立（见 A/SKIP-agent-reuse）";
+  const agentReuse = pooledAtClose
+    ? await ka.once("/health").then((r) => (r.ok === true
+        ? r
+        : { ...r, phase: r.code === "ECONNREFUSED" ? "connect-phase" : "other" }))
+    : { skipped: true, reason: reuseSkipReason };
+  ka.destroy();
   // #2662 fix-r3：note 随实测状态推导，不再无条件断言 ECONNREFUSED/connect 相位
   // 与裸层对照——agentReuse 非预期形状或裸层前提未成立时对应句不产出。
   const reuseNote = agentReuse.skipped
-    ? "agent 复用直测跳过（前提未成立，见 A/SKIP-agent-reuse）；fetch 新连接与 newTcpRefused 与入池无关，照常记录"
+    ? `agent 复用直测跳过（${reuseSkipReason}）；fetch 新连接与 newTcpRefused 与入池无关，照常记录`
     : agentReuse.ok !== true && agentReuse.code === "ECONNREFUSED"
       ? "同 agent（close 前池化，见 A/agent-pooled-request1）复用直测：ECONNREFUSED 是 connect 相位错误（agent 丢弃已被服务端关闭的 socket 后重建连），非同 socket 报错"
         + (rawPremise && finBeforeWrite

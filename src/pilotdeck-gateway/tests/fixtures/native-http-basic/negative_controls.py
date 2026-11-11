@@ -219,6 +219,23 @@ switches = [
     # respondJson is close-delimited, so the pinned webhook reply turns red.
     ('native-http-http10-framing-off', SOURCE, 'http10_webhook_json_is_close_delimited',
      "#1947 pin pin-http10-webhook: the 1.0 webhook reply is close-delimited, no content-length"),
+    # #2153/#2776/#2789: the `content-length: 0` exemption is scoped to the
+    # registered bare parser-level 400s (PARSER_ADMISSION_CELLS, 11 of the 88
+    # cells) through `fn parser_admission`. The widening mutant fails the
+    # coverage guard's through-the-predicate comparison; the mask-always
+    # mutant makes `normalize` ignore its scope flag, so the injected-line
+    # unit test fails; the product mutant drops the registered wire line the
+    # raw pin holds; the served mutant grows the line on an unregistered cell
+    # (the sized empty body hyper adds the line to), which the replay must
+    # compare verbatim — the narrowing has teeth end to end.
+    ('native-http-cl0-wide', SOURCE_TESTS, 'parser_admission_cells_cover_exactly_the_oracle_bare_400s',
+     "#2153 the exemption predicate admits exactly the oracle's bare-400 cells"),
+    ('native-http-cl0-mask-always', SOURCE_TESTS, 'only_the_registered_cells_mask_a_content_length_zero',
+     '#2153 an injected content-length: 0 on the unregistered health cell must not normalize away'),
+    ('native-http-parser-400-cl0-off', SOURCE, 'content_length_zero_stays_scoped_to_the_registered_rejections',
+     '#2153 pin bad-method-foo: the registered bare 400 carries content-length: 0'),
+    ('native-http-served-head-cl0', SOURCE, 'health_head',
+     '#1209 cell health-head normalized response'),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_ws.rs',

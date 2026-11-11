@@ -44,7 +44,7 @@ const BOT_TOKEN = 'xoxb-1';
 const APP_TOKEN = 'xoxa-1';
 const USER_ID = 'U123';
 const BOT_NAME = 'slackbot';
-// 18183-18198 (r2 triage's free segment). 35 cases run strictly sequentially,
+// 18183-18198 (r2 triage's free segment). 36 cases run strictly sequentially,
 // so the 16 ports round-robin; every listener is closed before the next case
 // binds (both Node and the Rust replay set SO_REUSEADDR).
 const PORT_BASE = 18183;
@@ -506,6 +506,14 @@ scenario({ name: 'active-skip', turns: [{ gate: 'turn-1', events: [textDelta('�
   start, send(messageEvent('第一句')), wait({ rpcs: 1 }), send(messageEvent('第二句')),
   wait({ logs: 2 }), release('turn-1'), wait({ requests: 3 }), stop('done'),
 ] });
+// 矩阵 14 的姊妹格（#2313）：R × 连发两帧（两帧之间无 wait）——TS stub 对每个
+// message 帧同步调 handler，`handleSlackMessage` 到 `activeChats.add` 为同步段，
+// 帧序即入场序：第一帧入回合，第二帧判 already active。此前 35 格两帧之间都有
+// wait 或 gate，对拍覆盖不到保序（P2 #2313 的覆盖缺口）。
+scenario({ name: 'back-to-back-frames', turns: HELLO_TURN, steps: [
+  start, send(messageEvent('第一句')), send(messageEvent('第二句')),
+  wait({ rpcs: 1, requests: 3 }), stop('done'),
+] });
 // 矩阵 15：R × 同一文本 turn 完成后再投：再执行（无事件级去重）。
 scenario({
   name: 'redelivery-after-turn',
@@ -607,7 +615,7 @@ scenario({ name: 'no-channel-silent', turns: HELLO_TURN, steps: [
   start, send(messageEvent('hi', { channel: undefined })), settle(), stop('done'),
 ] });
 
-const EXPECTED_CASE_COUNT = 35;
+const EXPECTED_CASE_COUNT = 36;
 assert.equal(definitions.length, EXPECTED_CASE_COUNT, '#1344 case count');
 
 // ---- run every case twice; the two records must be deep-equal ------------------
