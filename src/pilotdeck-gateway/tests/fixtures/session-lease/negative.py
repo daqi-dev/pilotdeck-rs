@@ -27,7 +27,7 @@ readme = Path(__file__).with_name('README.md')
 # injected in memory (see one()) in every mode; an in-place committed mutation
 # would false-fail that test and a SIGKILLed run would leave a mutant behind.
 guarded_sources = [common, source, test_file, Path(__file__).resolve(), cli, readme]
-EXPECTED_CASES = 26
+EXPECTED_CASES = 27
 # Independent total: update deliberately when adding or retiring a control.
 cases = [
     ('cli-term-raises-twice', cli, 'def interrupted(signum, frame):\n    if isinstance(sys.exception(), KeyboardInterrupt):', 'def interrupted(signum, frame):\n    if isinstance(None, KeyboardInterrupt):', 'test_cli_cancel_unwind'),
@@ -54,6 +54,11 @@ cases = [
     ('capture-term-raises-twice', capture, '    if isinstance(sys.exception(), KeyboardInterrupt):\n        return\n    raise KeyboardInterrupt(f\'#1145 capture interrupted by signal {signum}\')', '    if isinstance(None, KeyboardInterrupt):\n        return\n    raise KeyboardInterrupt(f\'#1145 capture interrupted by signal {signum}\')', 'test_capture_cancel_unwind'),
     ('memory-rehearsal-without-lock', Path(__file__).resolve(), '        if memory:\n            with tree_' + 'lock(root, timeout=900):\n                for row in selected:\n                    one(row)\n        else:', '        if memory:\n            for row in selected:\n                one(row)\n        else:', 'test_memory_rehearsal_holds_tree_lock'),
     ('omit-lease-case', Path(__file__).resolve(), "    ('cl" + "i-term-raises-twice', cli, 'def interrupted(signum, frame):\\n    if isinstance(sys.exception(), KeyboardInterrupt):', 'def interrupted(signum, frame):\\n    if isinstance(None, KeyboardInterrupt):', 'test_cli_cancel_unwind'),\n", '', 'test_expected_case_count'),
+    # fix-r2 (#1528 review): an equal-length swap (drop one row, paste
+    # another over it) keeps len(cases) == EXPECTED_CASES, so the count
+    # check alone let a retired control vanish with the summary still
+    # green; validate_case_count now also refuses non-unique names.
+    ('duplicate-lease-case', Path(__file__).resolve(), "    ('cli-term-raises-twi" + "ce', cli, 'def interrupted(signum, frame):\\n    if isinstance(sys.exception(), KeyboardInterrupt):', 'def interrupted(signum, frame):\\n    if isinstance(None, KeyboardInterrupt):', 'test_cli_cancel_unwind'),\n", "    ('cli-alarm-raises-twi" + "ce', cli, 'def lease_expired(signum, frame):\\n    if isinstance(sys.exception(), KeyboardInterrupt):', 'def lease_expired(signum, frame):\\n    if isinstance(None, KeyboardInterrupt):', 'test_cli_cancel_unwind'),\n", 'test_expected_case_count'),
     ('capture-guarded-again', Path(__file__).resolve(), 'guarded_' + 'sources = [common, source, test_file, Path(__file__).resolve(), cli, readme]', 'guarded_' + 'sources = [common, source, test_file, Path(__file__).resolve(), cli, readme, capture]', 'test_guarded_sources_exclude_captured_fixture'),
     ('capture-committed-disk-write', Path(__file__).resolve(), 'inject = memory or path not in guarded_' + 'sources', 'inject = memory', 'test_capture_case_mutates_memory_only'),
 ]
@@ -75,9 +80,17 @@ messages = {
 
 
 def validate_case_count():
+    # fix-r2 (#1528 review): the count alone cannot catch an equal-length
+    # swap -- drop one row and paste another over it and len(cases) still
+    # matches, so the uniqueness of the names is refused here too (same
+    # shape as the e2e runner's #1535 guard).
+    names = {row[0] for row in cases}
     if len(cases) != EXPECTED_CASES:
         raise SystemExit(f'#a5b lease negative case inventory is complete: '
                          f'expected {EXPECTED_CASES}, got {len(cases)}')
+    if len(names) != EXPECTED_CASES:
+        raise SystemExit(f'#a5b lease negative case inventory is complete: '
+                         f'expected {EXPECTED_CASES} unique names, got {len(names)}')
 
 
 def preflight():

@@ -69,7 +69,7 @@ LEASE_ACQUIRE_SECONDS = PER_CASE_LEASE_SECONDS + BOUND_TEST_SECONDS
 # the scoring-side shapes in session_domain.py and the recorder/contract-side
 # shapes in collect.py, so neither the collector's output nor the frozen audit
 # can silently drift away from the P1 recorder contract.
-EXPECTED_CASES = 33
+EXPECTED_CASES = 34
 # Independent total: update deliberately when adding or retiring a control.
 cases = [
     ('decoder-frame-for-send-rows', session, "        require(len(decoded) == 1\n                and decoded[0].get('raw' if row['direction'] == 'send' else 'frame') == row['frame'],\n                'OBSERVER_WIRE', 'wire observation disagrees with recorder')\n", "        require(len(decoded) == 1\n                and decoded[0].get('frame') == row['frame'],\n                'OBSERVER_WIRE', 'wire observation disagrees with recorder')\n", 'test_e2e_scores_real_capture'),
@@ -100,6 +100,12 @@ cases = [
     # forwarding -- dropping the kwarg silently reverts to the shared 900 s
     # default, the exact starvation #1528 closed, while every mock stays green.
     ('lease-acquire-budget-dropped', runner, "                with mutating_sources(root, paths, baseline=baseline, lock_timeout=LEASE_ACQUIRE_SECONDS) as originals:\n", "                with mutating_sources(root, paths, baseline=baseline) as originals:\n", 'test_negative_parity_acquire_budget_follows_lock_timeout'),
+    # fix-r2 (#1528 review): the composition pin only priced the stages the
+    # events sequence records -- a bare run() bound stage inside the lease
+    # window (not wrapped in passed, no event) held real time no assertion
+    # counted while every check stayed green. The per-case timeouts multiset
+    # is the judge now, and this row proves it can fail.
+    ('bare-bound-run-in-window', runner, "                    if not passed(run(name + '-positive', test)):\n                        raise ValueError('positive bound test did not pass')\n                    write_source_atomic(root, path, changed.encode())\n", "                    if not passed(run(name + '-positive', test)):\n                        raise ValueError('positive bound test did not pass')\n                    run(name + '-bare-bound-stage', test)\n                    write_source_atomic(root, path, changed.encode())\n", 'test_negative_lease_bound_composition'),
     ('lease-cancel-swallowed', runner, "                        compiled = True\n                        status = classify(run(name + '-negative', test), test, messages[name])", "                        compiled = True\n                        try:\n                            status = classify(run(name + '-negative', test), test, messages[name])\n                        except BaseException:\n                            pass", 'test_negative_lease_released_and_loud_on_cancellation'),
     ('memory-rehearsal-without-lock', Path(__file__).resolve(), '        if memory:\n            with tree_' + 'lock(root, timeout=900):\n                for row in selected:\n                    one(row)\n        else:', '        if memory:\n            for row in selected:\n                one(row)\n        else:', 'test_memory_rehearsal_holds_tree_lock'),
     ('port-lease-not-exclusive', fixture, '        fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)\n', '        fcntl.flock(lease, fcntl.LOCK_UN)\n', 'test_port_reservation_is_exclusive_across_processes'),
@@ -144,6 +150,7 @@ messages = {
     'chain-manifest-count-minus-one': '#1402 chain denominators derive from the calibration manifest',
     'lease-enter-without-release': '#1402 a cancelled case must release the parity lease and stay loud',
     'lease-bound-erased': '#1402 the per-case lease bound is composed and below the stale-lease age',
+    'bare-bound-run-in-window': '#1402 the per-case lease bound is composed and below the stale-lease age',
     'lease-acquire-budget-dropped': '#1528 the parity lease acquire budget follows the caller lock timeout',
     'lease-cancel-swallowed': '#1402 a cancelled case must release the parity lease and stay loud',
     'memory-rehearsal-without-lock': '#1398 e2e memory rehearsal holds the source tree lock',
