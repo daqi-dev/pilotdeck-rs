@@ -299,8 +299,9 @@ impl ChannelStatePersistence {
     }
 
     /// `flush` — cancels pending timers and awaits a drained write for every
-    /// dirty or in-flight key. Returns the first write error, as the TS
-    /// `Promise.all` rejection does.
+    /// dirty or in-flight key. Returns the first write error in key order,
+    /// not `Promise.all`'s temporally first rejection — a registered
+    /// intentional deviation (`A8.3-CH-WEIXIN-FLUSH-001`).
     pub async fn flush(&self) -> Result<(), String> {
         {
             let mut inner = self.shared.inner.lock().unwrap_or_else(|e| e.into_inner());
