@@ -476,6 +476,105 @@ class MutantSwitchTests(unittest.TestCase):
                         '#1037 injected exit failure'),
                         '#1037 invalidation must preserve the completed diagnostic')
 
+    def test_run_voids_rows_when_baseexception_interrupts(self):
+        """#1087 fix-r1: a BaseException mid-suite must void every row.
+
+        The executor used to publish every completed row inside the guarded
+        window and only catch ``Exception``, so a cancellation (Ctrl-C,
+        SystemExit) skipped both the invalidation and the final publish,
+        leaving an all-KILLED summary whose exit checks never ran. The summary
+        now exists only after the exit checks, and the interruption publishes
+        a voided INVALID one before re-raising.
+        """
+        rows = [binding('first'), binding('second')]
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp) / 'out'
+            out.mkdir()
+            guarded = [Path(temp) / 'guarded.rs']
+            guarded[0].write_text('fixture\n')
+            binary = Path(temp) / 'test-binary'
+            binary.write_bytes(b'fixture binary\n')
+            window = {'summary_existed': False}
+
+            def process(command, **kwargs):
+                if command[:2] == ['git', 'rev-parse']:
+                    return SimpleNamespace(returncode=0, stdout='test-head\n', stderr='')
+                if command[0] == 'cargo':
+                    return SimpleNamespace(returncode=0, stdout='build fixture', stderr='')
+                if command[1] == 'second':
+                    window['summary_existed'] = (out / 'summary.json').exists()
+                    raise KeyboardInterrupt('canceled mid-suite')
+                return result(command[1],
+                              'FAILED' if kwargs['env'].get(shared.SELECTOR) else 'ok',
+                              '#996 ' + command[1], 'fixture.rs')
+
+            with patch.object(shared, 'run_owned', side_effect=process), \
+                    patch.object(shared, 'wait_for_slot',
+                                 return_value=SimpleNamespace(stdout='', stderr='')), \
+                    patch.object(shared, 'artifact', return_value=binary), \
+                    patch('sys.stderr') as quiet:
+                quiet.write = lambda *_: None
+                with self.assertRaises(KeyboardInterrupt):
+                    shared.run(Path(temp), out, rows, {}, guarded=guarded)
+            message = '#1087 a mid-suite BaseException must void every row and re-raise'
+            self.assertFalse(window['summary_existed'],
+                             message + ' (a summary was readable inside the guarded window)')
+            self.assertTrue((out / 'summary.json').is_file(),
+                            message + ' (the interruption must still publish one)')
+            document = json.loads((out / 'summary.json').read_text())
+            self.assertEqual(document['counts'],
+                             {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 2},
+                             message + ' (no row may stay KILLED)')
+            self.assertTrue(all('runner: KeyboardInterrupt' in row['reason']
+                                for row in document['controls']),
+                            message + ' (the reason was not recorded)')
+
+    def test_run_normalizes_systemexit_after_voiding(self):
+        """#1087 fix-r1: a SystemExit mid-suite voids, then exits 2.
+
+        With the INVALID summary on disk the raw exit code must never decide
+        how a coordinator reads the run (#1059 fix-r2, the #1061 rule): 256
+        and -256 truncate to a zero POSIX status and a string code exits 1.
+        """
+        rows = [binding('first'), binding('second')]
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp) / 'out'
+            out.mkdir()
+            binary = Path(temp) / 'test-binary'
+            binary.write_bytes(b'fixture binary\n')
+
+            def process(command, **kwargs):
+                if command[:2] == ['git', 'rev-parse']:
+                    return SimpleNamespace(returncode=0, stdout='test-head\n', stderr='')
+                if command[0] == 'cargo':
+                    return SimpleNamespace(returncode=0, stdout='build fixture', stderr='')
+                if command[1] == 'second':
+                    raise SystemExit(7)
+                return result(command[1],
+                              'FAILED' if kwargs['env'].get(shared.SELECTOR) else 'ok',
+                              '#996 ' + command[1], 'fixture.rs')
+
+            with patch.object(shared, 'run_owned', side_effect=process), \
+                    patch.object(shared, 'wait_for_slot',
+                                 return_value=SimpleNamespace(stdout='', stderr='')), \
+                    patch.object(shared, 'artifact', return_value=binary), \
+                    patch('sys.stderr') as quiet:
+                quiet.write = lambda *_: None
+                with self.assertRaises(SystemExit) as caught:
+                    shared.run(Path(temp), out, rows, {}, guarded=[])
+            message = '#1087 a mid-suite SystemExit must void the rows and exit 2'
+            self.assertEqual(caught.exception.code, 2,
+                             message + ' (the raw code must be normalized)')
+            self.assertTrue((out / 'summary.json').is_file(),
+                            message + ' (the interruption must still publish one)')
+            document = json.loads((out / 'summary.json').read_text())
+            self.assertEqual(document['counts'],
+                             {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 2},
+                             message + ' (no row may stay KILLED)')
+            self.assertTrue(all('runner: SystemExit' in row['reason']
+                                for row in document['controls']),
+                            message + ' (the reason was not recorded)')
+
     def test_denominator_drift_fails_the_whole_suite(self):
         # #996 fix-r4 review P1: the static whitelist and the import-time audit
         # both stop at module scope, so a main() that shrinks (or grows) the
@@ -1081,10 +1180,17 @@ def negative_controls():
     replaced by the pre-fix prose verdict (the migration's lost receipt
     requirement) must fail the replay test, and a ``ReceiptRun`` whose config
     never reaches the child must fail the authentic-kill test, both at their
-    ``#996-pr3`` assertions.
+    ``#996-pr3`` assertions.  #1087 fix-r1: ``publish_summary`` no-opped must
+    fail the interruption tests — the pre-fix BaseException path published
+    nothing at all, so the voided INVALID summary never reached the disk both
+    tests read.
     """
     def noop_invalidation(module):
         return patch.object(module, 'invalidate_completed', new=lambda *_a, **_k: None)
+
+    def silent_publish(module):
+        """The pre-fix BaseException shape: the run ends with no summary at all."""
+        return patch.object(module, 'publish_summary', new=lambda *_a, **_k: None)
 
     def noop_denominator(module):
         return patch.object(module, 'enforce_denominator', new=lambda *_a, **_k: None)
@@ -1136,6 +1242,10 @@ def negative_controls():
          'judge-noop', noop_judge, '#996-pr3'),
         (ReceiptProtocolTests, 'test_authentic_nonce_receipts_kill_every_switch',
          'receipts-silent', silent_receipts, '#996-pr3'),
+        (MutantSwitchTests, 'test_run_voids_rows_when_baseexception_interrupts',
+         'publish-silent', silent_publish, '#1087'),
+        (MutantSwitchTests, 'test_run_normalizes_systemexit_after_voiding',
+         'publish-silent', silent_publish, '#1087'),
     )
     results = []
     for test_class, method, mutation, patcher, marker in targets:
@@ -1166,6 +1276,6 @@ def negative_controls():
 if __name__ == '__main__':
     if sys.argv[1:] == ['--negative-controls']:
         raise SystemExit(negative_controls())
-    if sys.argv[1:]:
-        raise SystemExit('usage: test_mutant_switch.py [--negative-controls]')
+    # Any other arguments are unittest's own ``Class.method`` selectors, the
+    # same per-method scope the in-memory negative controls judge by.
     unittest.main()

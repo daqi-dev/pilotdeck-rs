@@ -139,7 +139,7 @@ TABLES = (
 # Each reason states how many discovery keys the table needs and how many path
 # shapes the scanner could not follow; both are re-measured by
 # test_known_blind_counts_match_the_scan. #2141 carries the per-table fix list.
-# 278 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 202 blind only, 2 with unresolvable shapes only, 74 in both; 1492 keys: 413 bare-filename joins and 1079 shared-helper import keys.
+# 278 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 202 blind only, 2 with unresolvable shapes only, 74 in both; 1496 keys: 413 bare-filename joins and 1083 shared-helper import keys.
 # Why a key a table needs shows up in no table text: the import line spells a
 # module name, while the host keys the helper file it lives in.
 IMPORTED_HELPER_REASON = 'imported shared fixture helper'
@@ -191,7 +191,7 @@ KNOWN_BLIND = {
     'edgeclaw-dangling-links/negative.py': '3 keys',
     'edgeclaw-dream-run/negative.py': '1 key',
     'edgeclaw-dream-runner/negative.py': '1 key',
-    'edgeclaw-dream/negative.py': '1 key',
+    'edgeclaw-dream/negative.py': '3 keys',
     'edgeclaw-dream/negative_shapes.py': '2 keys',
     'edgeclaw-entries/negative.py': '1 key',
     'edgeclaw-entries/negative_fix1.py': '1 key + 1 unresolvable',
@@ -210,7 +210,7 @@ KNOWN_BLIND = {
     'edgeclaw-llm-recall/negative.py': '1 key',
     'edgeclaw-llm-telemetry/negative.py': '6 keys',
     'edgeclaw-llm/negative.py': '1 key',
-    'edgeclaw-messages/negative.py': '2 keys',
+    'edgeclaw-messages/negative.py': '4 keys',
     'edgeclaw-native-default/negative.py': '11 keys',
     'edgeclaw-provider/negative.py': '11 keys',
     'edgeclaw-real-provider/negative.py': '2 keys',

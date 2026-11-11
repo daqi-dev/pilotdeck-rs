@@ -323,6 +323,58 @@ raise SystemExit(module.main())
         self.assertTrue(disk.get('direct') == stale,
                         message + ' (the direct channel was written before verification)')
 
+    def test_mutation_writes_are_atomic(self):
+        """Every guarded-source write must be one atomic rename.
+
+        A truncating ``write_text``/``write_bytes`` inside the mutation
+        window leaves an empty or half-written source when the runner is
+        killed mid-write; the runner is in its own guarded set, so a 0-byte
+        runner would exit 0 without running any row and a half file could not
+        even preflight (#1087 fix-r1; the #1903 rule shared by
+        ``mutating_sources``).
+        """
+        message = '#1087 every guarded-source write must be one atomic rename'
+        out = Path(tempfile.mkdtemp(prefix='atomic-', dir=self.root)) / 'run'
+        source = self.source
+        captured = []
+
+        class Guard:
+            def __enter__(self):
+                return {source: b'x = 0\n'}
+
+            def __exit__(self, *exc):
+                return False
+
+        def mutating(root, paths, **kwargs):
+            return Guard()
+
+        def atomic(root, path, data, *, mode=None):
+            captured.append((path, bytes(data), mode))
+
+        with patch.multiple(self.runner,
+                            MUTATIONS=[('one', source, 'x = 0', 'x = 1')],
+                            CHECKS={'one': ('Safety.test_one',
+                                            '#166 exclusive message')},
+                            mutating_sources=mutating,
+                            run_owned=self._run_owned(),
+                            write_source_atomic=atomic), \
+                patch.object(sys, 'argv',
+                             [str(Path(self.runner.__file__).resolve()), '--output',
+                              str(out), '--only', 'one']):
+            code = self.runner.main()
+        self.assertTrue(code == 0, message + ' (the sample run must stay green)')
+        mutant_writes = [row for row in captured if row[1] == b'x = 1\n']
+        restore_writes = [row for row in captured if row[1] == b'x = 0\n']
+        self.assertTrue(len(mutant_writes) == 1,
+                        message + ' (the mutant must be applied through one rename)')
+        self.assertTrue(len(restore_writes) >= 1,
+                        message + ' (the restore must go through one rename too)')
+        mode = source.stat().st_mode & 0o7777
+        self.assertTrue(all(row[0] == source and row[2] == mode for row in captured),
+                        message + ' (each write must keep the source path and mode)')
+        self.assertTrue(source.read_text() == 'x = 0\n',
+                        message + ' (the tree must end restored)')
+
     def test_existing_evidence_is_refused_byte_identical(self):
         """A pre-existing evidence directory is refused, never edited.
 

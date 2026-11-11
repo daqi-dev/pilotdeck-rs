@@ -25,7 +25,8 @@ import tempfile
 sys.dont_write_bytecode = True
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-166-negative-pyc-')
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                              write_source_atomic)
 from negative_process import committed_status_contract
 from negative_suite import invalidate_completed
 
@@ -458,6 +459,18 @@ MUTATIONS = [
      "    results.append({'mutation': name, 'status': status, 'reason': reason})\n"
      "    print(f'{name}: {status}: {reason}', flush=True)\n"
      "    (out / 'summary.json').write_text(json.dumps(results, indent=2) + '\\n')"),
+    # #1087 fix-r1: the mutation application and the in-loop restore are both
+    # put back to truncating writes — the runner is in its own guarded set, so
+    # a write killed mid-flight leaves a 0-byte runner that exits 0 without
+    # running any row (#1903 rule).
+    ('runner-truncating-mutant-write', NEGATIVE,
+     "                    write_source_atomic(ROOT, source, mutant.encode(),\n"
+     "                                        mode=source.stat().st_mode & 0o7777)",
+     "                    source.write_text(mutant)"),
+    ('runner-truncating-restore-write', NEGATIVE,
+     "                    write_source_atomic(ROOT, source, originals[source],\n"
+     "                                        mode=source.stat().st_mode & 0o7777)",
+     "                    source.write_bytes(originals[source])"),
 ]
 CHECKS = {
     'empty-aggregate-pass': ('ApparatusInputs.test_deadline_not_run_has_dedicated_exit_code', '#952 empty or all-None aggregation must be FAIL/1'),
@@ -607,6 +620,8 @@ CHECKS = {
     'runner-baseexception-narrowed': ('RunnerInvalidationControls.test_final_guard_interrupt_rewrites_summary', '#1061 a cancellation must void the rows and publish INVALID'),
     'runner-publish-before-verify': ('RunnerInvalidationControls.test_interrupt_during_void_publish_leaves_no_killed_summary', '#1061 no summary may be readable before restore verification'),
     'runner-stale-summary-kept': ('RunnerInvalidationControls.test_interrupt_during_void_publish_leaves_no_killed_summary', '#1061 no summary may be readable before restore verification'),
+    'runner-truncating-mutant-write': ('RunnerInvalidationControls.test_mutation_writes_are_atomic', '#1087 every guarded-source write must be one atomic rename'),
+    'runner-truncating-restore-write': ('RunnerInvalidationControls.test_mutation_writes_are_atomic', '#1087 every guarded-source write must be one atomic rename'),
 }
 
 
@@ -701,7 +716,13 @@ def main():
                     (out / (name + '-compile.log')).write_text('Python compile: PASS\n')
                     positive = run(out, name + '-positive', test)
                     require_positive(positive)
-                    source.write_text(mutant)
+                    # #1087 fix-r1: the runner itself is in the guarded set,
+                    # so a truncating ``write_text`` killed mid-write would
+                    # leave a 0-byte runner that exits 0 without running any
+                    # row (or a half file that cannot even preflight) — every
+                    # guarded-source write is one atomic rename (#1903 rule).
+                    write_source_atomic(ROOT, source, mutant.encode(),
+                                        mode=source.stat().st_mode & 0o7777)
                     negative = run(out, name + '-negative', test)
                     text = negative.stdout + negative.stderr
                     if negative.returncode == 0:
@@ -713,7 +734,10 @@ def main():
                 except Exception as error:
                     status, reason = 'INVALID', f'{type(error).__name__}: {error}'
                 finally:
-                    source.write_bytes(originals[source])
+                    # Same #1087 fix-r1 window: the in-loop restore must also
+                    # be one rename, never a truncating write_bytes.
+                    write_source_atomic(ROOT, source, originals[source],
+                                        mode=source.stat().st_mode & 0o7777)
                 try:
                     restored = run(out, name + '-restored', test)
                     if restored.returncode != 0:
