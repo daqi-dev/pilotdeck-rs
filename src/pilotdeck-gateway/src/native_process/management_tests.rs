@@ -2200,6 +2200,52 @@ async fn snapshot_success_matches_ts() {
         .expect("#1231 snapshot registry disposal");
 }
 
+/// #2797: the snapshot family's only production consumption point maps a
+/// requires_host boundary to `CAPABILITY_UNAVAILABLE`
+/// (native_process/management.rs:236-242), like the skills (`skill_error`)
+/// and memory (`memory_dispatch`) siblings. The trigger is the production
+/// errno path — a `manifest.json` symlinked to a directory reads as `EISDIR`
+/// (the storage oracle's `manifest-read-dir` shape) and `snapshot_list`
+/// admits no errno, so the projection answers the R19 host boundary, which
+/// this route must surface as the host-dependent refusal instead of a
+/// `NODE_IO_REQUIRED` wire error.
+#[cfg(unix)]
+#[tokio::test]
+async fn snapshot_requires_host_reads_as_capability_unavailable() {
+    let (scratch, requests) = setup();
+    let manifest_dir = requests
+        .options
+        .home
+        .join("storage/workspaces/a8-main/sessions/s/snapshots/x");
+    std::fs::create_dir_all(&manifest_dir).expect("#2797 create snapshot dir");
+    std::os::unix::fs::symlink(&manifest_dir, manifest_dir.join("manifest.json"))
+        .expect("#2797 plant manifest.json symlink to a directory");
+    negative_assert_eq!(
+        call(
+            &requests,
+            &json!("snapshot_list"),
+            &json!({"projectKey": "<root>/project"}),
+            &scratch.0
+        )
+        .await,
+        json!({"error": {
+            "code": "CAPABILITY_UNAVAILABLE",
+            "message": "Native gateway cannot execute this host-dependent operation."
+        }}),
+        "#2797 host-dependent snapshot read rejected"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#2797 owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#2797 registry disposal");
+}
+
 #[tokio::test]
 async fn skill_import_success_conflict_and_overwrite_match_ts() {
     let (scratch, requests) = setup();

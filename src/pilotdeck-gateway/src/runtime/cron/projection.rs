@@ -3,7 +3,7 @@
 //! the `requireCron` gate, and the response envelope. Ownership per the TS
 //! layers — the capabilities slice (InProcessGateway.ts:2114-2122), the
 //! unconfigured gate (InProcessGateway.ts:3016-3022), and the error
-//! serialization branches (GatewayWsConnection.ts:215-255) — none of which
+//! serialization branches (GatewayWsConnection.ts:223-255) — none of which
 //! validate parameters (that stays in `methods.rs`/`manager.rs`).
 use pilotdeck_protocol::{JsValue, stringify_json};
 
@@ -14,7 +14,7 @@ use super::{
 
 /// The six cron control names, exactly as InProcessGateway.ts:2114-2122
 /// splices them into the capabilities list (`options.cron` configured) and
-/// GatewayWsConnection.ts:464-470 routes them.
+/// GatewayWsConnection.ts:464-475 routes them.
 pub const CRON_METHODS: [&str; 6] = [
     "cron_create",
     "cron_list",
@@ -37,7 +37,7 @@ pub fn require_cron(controller: Option<&CronManager>) -> Result<&CronManager, Cr
     })
 }
 
-/// The WS dispatch slice for the six names (GatewayWsConnection.ts:464-470
+/// The WS dispatch slice for the six names (GatewayWsConnection.ts:464-475
 /// `this.options.gateway.cronCreate(frame.params as never)` over
 /// InProcessGateway.ts:2603-2625): gate, then delegate to the adapter.
 /// `None` means the method is not ours — the caller keeps routing.
@@ -64,7 +64,7 @@ pub fn dispatch(
     })
 }
 
-/// GatewayWsConnection.ts:237-255: a `DialogGatewayError` (or any error
+/// GatewayWsConnection.ts:223-243 and 245-255: a `DialogGatewayError` (or any error
 /// whose `code` is a string — the cron paths only ever produce the former)
 /// keeps its code; every other thrown value falls back to
 /// `gateway_request_failed`. The `SkillValidationError`/`SkillManagerError`
@@ -74,7 +74,7 @@ pub fn wire_error_code(error: &CronError) -> &str {
     error.code().unwrap_or("gateway_request_failed")
 }
 
-/// The response envelope GatewayWsConnection.ts:187 and 236-253 build:
+/// The response envelope GatewayWsConnection.ts:187 and 223-255 build:
 /// `{type: "response", id, ok: true, result}` or
 /// `{type: "response", id, ok: false, error: {code, message}}`. `None` is the
 /// `JSON.stringify` codec failure the WS layer cannot send (the caller

@@ -1654,7 +1654,12 @@ fn a_caller_budget_decides_the_failure_teardown_bound() {
 /// slack) left every test green while a legitimate slow cleanup got cut
 /// mid-poll. The observable is the deadline the host actually enforces: a
 /// cleanup that finishes just inside `declared + SLACK` (but past the raw
-/// `declared`) must be allowed to complete.
+/// `declared`) must be allowed to complete. #2482: the sleep deliberately
+/// splits the slack window — half a second past the raw budget, half a
+/// second inside the production cut (the 10 ms-era 5 ms margins flipped
+/// under load); the exact slack arithmetic is pinned deterministically by
+/// `a_slow_refused_owner_does_not_shrink_the_cleanup_bound` above, this e2e
+/// pair only discriminates the gross wiring regressions.
 #[test]
 fn the_declared_cleanup_budget_reaches_the_initialization_teardown() {
     let declared = std::time::Duration::from_millis(300);
@@ -1684,7 +1689,11 @@ fn the_declared_cleanup_budget_reaches_the_initialization_teardown() {
 /// #2081: the other side of the wiring pin — the deadline must not be larger
 /// than `declared_cleanup_budget` either, or a runaway cleanup would hold the
 /// failure report for longer than the embedding declared. A cleanup sleeping
-/// past the declared bound must be cut.
+/// past the declared bound must be cut. #2482: the sleep sits a full slack
+/// past the cut (the 10 ms-era 10 ms margin flipped under load), so the cut
+/// lands well before the completion flag can be set; the exact bound
+/// arithmetic is pinned deterministically by
+/// `a_slow_refused_owner_does_not_shrink_the_cleanup_bound` above.
 #[test]
 fn the_declared_cleanup_budget_does_not_outlive_the_declared_bound() {
     let declared = std::time::Duration::from_millis(300);
@@ -1817,7 +1826,14 @@ async fn a_refused_owner_and_a_hung_cleanup_cost_the_two_bounds_together() {
 /// thread, so the caller got an opaque "gateway host initialization stopped"
 /// with the coordinator and its interactions left live instead of the
 /// declared deadline semantics. A fast cleanup still completes, the builder
-/// error is reported verbatim, and the coordinator is disposed.
+/// error is reported verbatim, and the coordinator is disposed. #2482
+/// inventory: like the drain twin (#2458), this is a behavior anchor for
+/// the waiver-vs-deadline choice — the 20 ms cleanup settles under either,
+/// and a tokio `timeout(budget, …)` saturates MAX into a far-future timer
+/// instead of panicking — so it discriminates only the historic std
+/// unchecked-arith panic (which changes the reported error). The tier
+/// routing that actually decides the waiver is pinned deterministically by
+/// `the_clock_edge_tier_decision_is_deterministic` below.
 #[test]
 fn a_maximal_teardown_budget_still_reports_the_builder_error() {
     let coordinator_disposed = Arc::new(AtomicBool::new(false));

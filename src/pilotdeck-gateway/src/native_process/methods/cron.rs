@@ -2,7 +2,7 @@
 //! request registry. The method bodies live in `runtime::cron` (#1325); this
 //! family owns only the routing seam — the `requireCron` capability gate
 //! (InProcessGateway.ts:3016-3022) and the `CronError` → `RequestError`
-//! projection across GatewayWsConnection.ts:215-255.
+//! projection across GatewayWsConnection.ts:194-255.
 use super::super::requests::Requests;
 use crate::runtime::{
     connection::{Call, RequestError},
@@ -13,21 +13,21 @@ use std::sync::Arc;
 
 // `CRON_METHODS` (projection.rs:18) is the single owner of the six names —
 // the same table InProcessGateway.ts:2114-2122 splices into capabilities and
-// GatewayWsConnection.ts:464-470 routes. Keeping one `&str` source means the
+// GatewayWsConnection.ts:464-475 routes. Keeping one `&str` source means the
 // family cannot drift from the projection layer's dispatch slice.
 pub(super) const METHODS: &[&str] = &cron::CRON_METHODS;
 pub(super) const HANDLER: super::Handler = super::Handler::AfterAdmission(Requests::cron_request);
 
-// GatewayWsConnection.ts:215-255, arm by arm, for every error the six cron
+// GatewayWsConnection.ts:194-255, arm by arm, for every error the six cron
 // methods can surface:
-// - `SkillValidationError` / `SkillManagerError` (lines 199-218) rank above
+// - `SkillValidationError` / `SkillManagerError` (lines 194-222) rank above
 //   everything else, but no cron path constructs them — unreachable here.
 // - `DialogGatewayError` (a `CronError::gateway` carries `name:
 //   "DialogGatewayError"` plus a code) or any error with a structured code
-//   (lines 219-252): `{code: error.code, message: error.message}`. `details`
+//   (lines 223-243): `{code: error.code, message: error.message}`. `details`
 //   and the `sop_status` HTTP splice never apply to cron.
 // - Everything else — the plain `Error`/`TypeError`/`RangeError` names —
-//   falls to the last arm (lines 253-260): `{code:
+//   falls to the last arm (lines 245-255): `{code:
 //   "gateway_request_failed", message}` with the thrown value's own message.
 // `wire_error_code` encodes exactly that split (`code().unwrap_or(
 // "gateway_request_failed")`), and `CronError::message()` is the thrown

@@ -53,6 +53,10 @@ mutations = [
     ('limit-fraction-truncated', SOURCE, 'n.fract() == 0.0 && (1.0..=100.0).contains(n)', '(1.0..=100.0).contains(n)', TEST, '#1231 method wire result'),
     ('missing-project-defaulted', SOURCE, 'validate_command_project(params)?;', 'if false { validate_command_project(params)?; }', TEST, '#1231 method wire result'),
     ('host-boundary-leaked', SOURCE, 'if e.requires_host {\n        return unavailable();\n    }', 'if false && e.requires_host {\n        return unavailable();\n    }', ADMISSION, '#1231 host-dependent skill rejected'),
+    # #2797 P2-2: the snapshot family's own host-boundary branch at the only
+    # production consumption point (management.rs:236-242), paired with its
+    # bound test like the skills row above.
+    ('snapshot-host-boundary-leaked', SOURCE, '            .map_err(|e| {\n                if e.requires_host() {\n                    unavailable()\n                } else {\n                    error(e.code(), e.message().clone())\n                }\n            });', '            .map_err(|e| {\n                if false && e.requires_host() {\n                    unavailable()\n                } else {\n                    error(e.code(), e.message().clone())\n                }\n            });', 'native_process::management_tests::snapshot_requires_host_reads_as_capability_unavailable', '#2797 host-dependent snapshot read rejected'),
     ('surrogate-target-accepted', SOURCE, '!s.to_utf8().is_ok_and(|p| self.options.serves_project(&p))', 's.to_utf8().is_ok_and(|p| !self.options.serves_project(&p))', ADMISSION, '#1231 surrogate restore target admission'),
     ('capability-invented-always_on_apply', CAPABILITIES,
      'Capability { name: "commands_list", methods: &[], wired: compiled_in }',
@@ -465,7 +469,7 @@ def skipped_on_this_platform(rows, platform=None):
 # and the run still reported "{n}/{n}" and read green. Pin the row count and the
 # roster (order and repeats included) as literals so a dropped, renamed or
 # duplicated mutation is refused before anything runs or compiles.
-EXPECTED_TOTAL = 97
+EXPECTED_TOTAL = 98
 EXPECTED_NAMES = (
     'omit-snapshot',
     'omit-manager',
@@ -475,6 +479,7 @@ EXPECTED_NAMES = (
     'limit-fraction-truncated',
     'missing-project-defaulted',
     'host-boundary-leaked',
+    'snapshot-host-boundary-leaked',
     'surrogate-target-accepted',
     'capability-invented-always_on_apply',
     'capability-snapshot_list',

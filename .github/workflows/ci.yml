@@ -400,6 +400,10 @@ jobs:
           # 名册闭集（名字+顺序+条数+夹具字节 SHA）另由 always_on 模块自己的
           # negative_controls_manifest Rust 测试钉死（随 rust job 跑）。
           python3 -I src/pilotdeck-gateway/tests/fixtures/always-on-2294/negative_controls.py --check
+          # #2069（同 #1433/#1354/#2391 先例）：host-model-port 的 turn_abort 接线负控
+          # --check 也进 CI——该行变异此前只在 #1804 评审期人工跑过，锚点/绑定/静态名册
+          # 任一漂移即本步非零退出；全量杀灭轮（需要 cargo 与净树）仍由协调者在宿主跑。
+          python3 -I src/pilotdeck-gateway/tests/fixtures/host-model-port/negative_controls.py --check
       # #2516 fix-r1（P2-a 5）：槽位探针残余负控全量进 CI。纯 Python 零 cargo
       # （变异体经 published_module 内存发布，不写树、不需要净树），全量含基线
       # 17 例 + 七杀 + 名册核验，任一 SURVIVED / INVALID / 名册漂移即本步非零

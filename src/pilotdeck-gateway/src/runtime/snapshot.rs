@@ -1268,6 +1268,80 @@ mod tests {
         );
     }
 
+    /// #2797: `dispatch_forwards_requires_host_boundary` reaches `Forward`
+    /// through an injected resolver, but production never injects one — the
+    /// reachable trigger is a provider read errno. This fixture is the storage
+    /// oracle's `manifest-read-dir` shape (workspace-snapshot/oracle.json):
+    /// a `manifest.json` symlinked to a directory reads as `EISDIR`, and
+    /// since `snapshot_list` / `snapshot_get` admit no errno and
+    /// `snapshot_restore` only `ENOENT`, `project_error`'s `_` arm maps it to
+    /// the `NODE_IO_REQUIRED` host boundary — asserted here at `dispatch`
+    /// through the production `SnapshotProjects` resolver, not just at the
+    /// error-shape tests.
+    #[cfg(unix)]
+    #[test]
+    fn dispatch_forwards_a_provider_read_errno() {
+        let scratch = TempDir::new();
+        let home = scratch.0.join("pilot-home");
+        let project = scratch.0.join("project");
+        let snapshot_root = scratch.0.join("snapshots");
+        fs::create_dir_all(&home).expect("#2797 create home");
+        fs::create_dir_all(&project).expect("#2797 create project");
+        let registry = home.join("projects/p-main");
+        fs::create_dir_all(&registry).expect("#2797 create registry dir");
+        fs::write(registry.join(".cwd"), project.to_string_lossy().as_bytes())
+            .expect("#2797 write marker");
+        let manifest_dir = snapshot_root.join("workspaces/p-main/sessions/s/snapshots/x");
+        fs::create_dir_all(&manifest_dir).expect("#2797 create snapshot dir");
+        // `readFile` follows the symlink and fails at Node's own read-stage
+        // EISDIR; the walk's lstat does not.
+        std::os::unix::fs::symlink(&manifest_dir, manifest_dir.join("manifest.json"))
+            .expect("#2797 plant manifest.json symlink to a directory");
+        let provider =
+            crate::storage::create_workspace_snapshot_provider(WorkspaceSnapshotConfig {
+                root: snapshot_root.to_string_lossy().into_owned(),
+                snapshot_root: snapshot_root.to_string_lossy().into_owned(),
+            });
+        let gateway = SnapshotGateway::new(
+            Some(provider),
+            SnapshotProjects::new(&home, &scratch.0),
+            "/fallback",
+        );
+        let project_key = project.to_string_lossy().into_owned();
+        let mut forwarded: Vec<&str> = Vec::new();
+        for (method, input) in [
+            (
+                "snapshot_list",
+                params(&[("projectKey", project_key.as_str().into())]),
+            ),
+            (
+                "snapshot_get",
+                params(&[
+                    ("projectKey", project_key.as_str().into()),
+                    ("snapshotId", "x".into()),
+                ]),
+            ),
+            (
+                "snapshot_restore",
+                params(&[
+                    ("projectKey", project_key.as_str().into()),
+                    ("snapshotId", "x".into()),
+                ]),
+            ),
+        ] {
+            assert_eq!(
+                gateway.dispatch(method, &input),
+                Some(SnapshotDispatch::Forward),
+                "#2797 {method} must forward the production EISDIR read errno"
+            );
+            forwarded.push(method);
+        }
+        assert_eq!(
+            forwarded, SNAPSHOT_WS_METHODS,
+            "#2797 every snapshot method must reach the Forward arm through the errno path"
+        );
+    }
+
     /// A8.2-pr2 keeps the native component unregistered: default dispatch must
     /// keep forwarding all three methods to the TS host.
     #[test]

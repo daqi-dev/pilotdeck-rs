@@ -1,7 +1,7 @@
 //! #1326 A8 U8 family tests: the six cron names route through the registry
 //! to `Requests::cron_request`, the unconfigured `None` answers the
 //! `requireCron` gate verbatim, and the `CronError` → `RequestError`
-//! projection reproduces the GatewayWsConnection.ts:215-255 arms.
+//! projection reproduces the GatewayWsConnection.ts:223-255 arms.
 
 use super::*;
 use crate::runtime::cron::{CronManager, CronManagerConfig, CronManagerOptions};
@@ -221,7 +221,7 @@ async fn unconfigured_cron_answers_the_require_cron_gate() {
     drop(scratch);
 }
 
-/// GatewayWsConnection.ts:215-255 for the three thrown classes the six
+/// GatewayWsConnection.ts:223-255 for the three thrown classes the six
 /// methods can surface through a configured runtime: the plain
 /// `Error`/`TypeError`/`RangeError` names all fall to the last arm's
 /// `gateway_request_failed` with the thrown message; the `DialogGatewayError`
