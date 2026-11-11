@@ -54,6 +54,23 @@ common = _load_apparatus('native_witness_common', common_path)
 sys.modules['native_witness_common'] = common
 parity_lock = common.parity_lock
 
+# The verified apparatus manifest (#2513 fix-r5): every module this entry
+# executes is compared to HEAD after the lease. witness.py imports
+# native_evidence at its own import time and native_evidence imports _guard,
+# so the two transitive loads join the manifest through sys.modules — their
+# recorded ``_apparatus_source`` bytes are what actually executed. A manifest
+# entry whose module never loaded (or carries no recorded bytes) fails closed
+# in _verify_loaded_apparatus, so the list cannot silently shrink.
+APPARATUS_FILES = (
+    ('scripts/native-witness/witness.py', lambda: w),
+    ('scripts/native-witness/stimulus_plan.py', lambda: stimuli),
+    ('scripts/native-witness/stimulus_driver.py', lambda: stimulus_driver),
+    ('scripts/gateway-parity/common.py', lambda: common),
+    ('scripts/gateway-parity/native_evidence.py',
+     lambda: sys.modules.get('native_evidence')),
+    ('scripts/gateway-parity/_guard.py', lambda: sys.modules.get('_guard')),
+)
+
 
 class Blocked(w.Incomplete):
     """A shared lease or fixed port is unavailable; no fallback endpoint."""
@@ -106,12 +123,14 @@ def _verify_loaded_apparatus():
     window therefore holds the window's mutant — the lease serializes disk
     writes, not loads. After acquiring the lease, refuse before any owned
     process unless the executing entry (code-object fingerprint, nested
-    functions included) and the four imported apparatus modules (the
-    ``_apparatus_source`` bytes that actually executed) match HEAD. Missing
-    provenance fails closed. A mutant that deletes this verification itself
-    escapes self-verification — the same boundary scripts/parity/round.py's
-    fix-r2 verification documents; the negative-control kill rows cover the
-    deletion case.
+    functions included) and every apparatus module in APPARATUS_FILES (the
+    ``_apparatus_source`` bytes that actually executed — including the
+    native_evidence and _guard that witness.py and native_evidence.py load at
+    their own import time, #2513 fix-r5) match HEAD. Missing provenance fails
+    closed. A mutant that deletes this verification itself escapes
+    self-verification — the same boundary scripts/parity/round.py's fix-r2
+    verification documents; the negative-control kill rows cover the deletion
+    case.
     """
     expected_entry = _head_source('scripts/native-witness/collect.py')
     if not isinstance(_apparatus_code, CodeType):
@@ -120,10 +139,8 @@ def _verify_loaded_apparatus():
                             dont_inherit=True, optimize=sys.flags.optimize)
     if _code_fingerprint(_apparatus_code) != _code_fingerprint(expected_code):
         raise ValueError('#2513 loaded apparatus differs from HEAD: scripts/native-witness/collect.py')
-    for relative, module in (('scripts/native-witness/witness.py', w),
-                             ('scripts/native-witness/stimulus_plan.py', stimuli),
-                             ('scripts/native-witness/stimulus_driver.py', stimulus_driver),
-                             ('scripts/gateway-parity/common.py', common)):
+    for relative, loaded in APPARATUS_FILES:
+        module = loaded()
         source = getattr(module, '_apparatus_source', None)
         if not isinstance(source, bytes) or source != _head_source(relative):
             raise ValueError('#2513 loaded apparatus differs from HEAD: ' + relative)

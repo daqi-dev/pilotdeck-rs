@@ -40,6 +40,14 @@ spec = importlib.util.spec_from_file_location('witness_collector', ROOT / 'scrip
 c = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(c)
 
+# #2513 fix-r5: the HEAD tables below are derived from the collector's
+# APPARATUS_FILES, so a manifest entry added to collect.py cannot leave the
+# tests behind (the DS review P1: native_evidence.py and _guard.py were
+# missing from all three hand-copied lists while the verification loop had
+# already moved on).
+HEAD_FILES = ('scripts/native-witness/collect.py',) + tuple(
+    relative for relative, _ in c.APPARATUS_FILES)
+
 
 def signal_lease_child(folder, phase, signum):
     """Real signals in a disposable process; never touch the global lease/ports."""
@@ -723,15 +731,29 @@ class WitnessTests(unittest.TestCase):
             self.assertTrue((lock / 'owner.json').read_bytes() == original, '#1140 predecessor lease unchanged')
             self.assertTrue(bind.call_count == run.call_count == 0, '#1140 busy lease never touches ports or process')
 
+    def test_the_apparatus_manifest_is_a_closed_set(self):
+        # #2513 fix-r5: the HEAD tables derive from APPARATUS_FILES, so the
+        # derivation alone cannot notice a manifest that silently lost an
+        # entry — this test names the members and makes any change deliberate
+        # (the DS review P1 was exactly a lost pair of transitive loads).
+        self.assertEqual({relative for relative, _ in c.APPARATUS_FILES}, {
+            'scripts/native-witness/witness.py',
+            'scripts/native-witness/stimulus_plan.py',
+            'scripts/native-witness/stimulus_driver.py',
+            'scripts/gateway-parity/common.py',
+            'scripts/gateway-parity/native_evidence.py',
+            'scripts/gateway-parity/_guard.py'})
+
     def test_apparatus_verified_after_lease(self):
         # #2513 fix-r4: the lease serializes mutation windows, not loads; the
         # collector started inside a window must be refused after the lease —
         # and the verification itself must actually run (its own negative row).
+        # fix-r5: the requested set must cover the whole APPARATUS_FILES
+        # manifest, not merely be non-empty — a loop that skipped the
+        # transitive native_evidence/_guard entries would still pass the old
+        # bool(requested) assertion.
         from contextlib import nullcontext
-        heads = {relative: (ROOT / relative).read_bytes() for relative in (
-            'scripts/native-witness/collect.py', 'scripts/native-witness/witness.py',
-            'scripts/native-witness/stimulus_plan.py', 'scripts/native-witness/stimulus_driver.py',
-            'scripts/gateway-parity/common.py')}
+        heads = {relative: (ROOT / relative).read_bytes() for relative in HEAD_FILES}
         requested = []
         def head_source(relative):
             requested.append(relative)
@@ -741,16 +763,22 @@ class WitnessTests(unittest.TestCase):
                 mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket'), \
                 mock.patch.object(c, '_native_run', return_value='finished'), redirect_stdout(io.StringIO()):
             self.assertTrue(c.native_run('', '', self.folder / 'unused') == 'finished', '#2513 verified apparatus reaches collection')
-            self.assertTrue(bool(requested), '#2513 post-lease apparatus verification cannot be bypassed')
+            # assertTrue, not assertEqual: the negative-control harness binds
+            # this control by the single-line AssertionError marker registered
+            # in negative.py ('#2513 post-lease apparatus verification cannot
+            # be bypassed'); assertEqual would emit a multi-line set diff the
+            # marker regex cannot match. Same-strength assertion either way.
+            self.assertTrue(set(requested) == set(HEAD_FILES),
+                            '#2513 post-lease apparatus verification cannot be bypassed'
+                            ' (the requested set must cover the whole APPARATUS_FILES manifest)')
 
     def test_apparatus_provenance_refused_after_lease(self):
         # #2513 fix-r4: apparatus bytes recorded at load time must match HEAD
         # after the lease; a mutation-window load of a sibling is refused.
+        # fix-r5: the transitive loads (native_evidence via witness, _guard
+        # via native_evidence) are manifest rows of their own.
         from contextlib import nullcontext
-        heads = {relative: (ROOT / relative).read_bytes() for relative in (
-            'scripts/native-witness/collect.py', 'scripts/native-witness/witness.py',
-            'scripts/native-witness/stimulus_plan.py', 'scripts/native-witness/stimulus_driver.py',
-            'scripts/gateway-parity/common.py')}
+        heads = {relative: (ROOT / relative).read_bytes() for relative in HEAD_FILES}
         with mock.patch.object(c, '_head_source', side_effect=lambda relative: heads[relative]), \
                 mock.patch.object(c, 'parity_lock', return_value=nullcontext()), \
                 mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket'), \
@@ -759,15 +787,20 @@ class WitnessTests(unittest.TestCase):
             heads['scripts/native-witness/witness.py'] += b'\n# 2513 mutated provenance'
             with self.assertRaises(c.Blocked, msg='#2513 imported apparatus provenance is verified after the lease'):
                 c.native_run('', '', self.folder / 'unused')
+            heads['scripts/native-witness/witness.py'] = (ROOT / 'scripts/native-witness/witness.py').read_bytes()
+            heads['scripts/gateway-parity/native_evidence.py'] += b'\n# 2513 mutated provenance'
+            with self.assertRaises(c.Blocked, msg='#2513 transitive native_evidence provenance is verified after the lease'):
+                c.native_run('', '', self.folder / 'unused')
+            heads['scripts/gateway-parity/native_evidence.py'] = (ROOT / 'scripts/gateway-parity/native_evidence.py').read_bytes()
+            heads['scripts/gateway-parity/_guard.py'] += b'\n# 2513 mutated provenance'
+            with self.assertRaises(c.Blocked, msg='#2513 transitive _guard provenance is verified after the lease'):
+                c.native_run('', '', self.folder / 'unused')
 
     def test_apparatus_entry_fingerprint_refused_after_lease(self):
         # #2513 fix-r4: the executing entry code object itself, not restored
         # disk bytes, must match HEAD after the lease.
         from contextlib import nullcontext
-        heads = {relative: (ROOT / relative).read_bytes() for relative in (
-            'scripts/native-witness/collect.py', 'scripts/native-witness/witness.py',
-            'scripts/native-witness/stimulus_plan.py', 'scripts/native-witness/stimulus_driver.py',
-            'scripts/gateway-parity/common.py')}
+        heads = {relative: (ROOT / relative).read_bytes() for relative in HEAD_FILES}
         def run_case():
             with mock.patch.object(c, 'parity_lock', return_value=nullcontext()), \
                     mock.patch.object(sys, 'platform', 'linux'), mock.patch.object(c.socket, 'socket'), \
