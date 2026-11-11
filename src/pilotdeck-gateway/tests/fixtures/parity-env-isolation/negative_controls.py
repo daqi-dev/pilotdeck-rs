@@ -25,6 +25,18 @@ round.py verifies its executing code and g03_compare bytes against HEAD
 The offline controls redirect the lock to a temp path and never take the
 shared lease, so they do not participate in this exclusion.
 
+Guard under test (#2513 fix-r6, MM boundary#3): the fix-r2 guard call inside
+round.py's parity_lock (``_verify_loaded_apparatus()`` on the ``lock == LOCK``
+branch) had zero kill coverage — every test and control redirected the lock,
+and the branch is the guard's only home. The offline control
+scripts/parity/controls/round_head_guard.py stages a scratch repository whose
+HEAD pins the scratch bytes (round.py with only LOCK rewritten to a redirected
+lease path), replays the mutation-window interleaving — load from mutated
+bytes, restore the disk, then take the lease — and fails with its #2513
+refusal assertions when the guard's call site is deleted. The kill row's
+exactly-once anchor is that very call line, so --check and the run-time stale
+anchor check both refuse a renamed or removed guard call in round.py.
+
 Every mutated source equals HEAD before its window opens (mutating_sources);
 each mutant compiles before its control runs; stale anchors abort instead of
 being recorded as SURVIVED.  No shadow repository or HEAD exemption is used.
@@ -73,10 +85,21 @@ mutations = [
      "'PILOTDECK_AGENT_LOOP_TCP_PORT',\n                'PILOTDECK_GATEWAY_MODE'):",
      "'PILOTDECK_AGENT_LOOP_TCP_PORT'):",
      'control_round_host_env_isolation'),
+    # Deleting the post-lease apparatus-verification call (#2513 fix-r6,
+    # MM boundary#3) disarms the fix-r2 guard: a round compiled inside a
+    # mutation window would run the window's mutant after the disk is
+    # restored. The anchor is the call line itself — exactly-once, so a
+    # renamed or removed guard in round.py is a startup refusal, never a
+    # silently smaller green run.
+    ('parity-round-apparatus-verify-deleted', root / 'scripts/parity/round.py',
+     "            _verify_loaded_apparatus()\n",
+     "            pass\n",
+     'control_round_head_guard'),
 ]
 
 positives = [
     ('parity-round-host-env-isolation', 'control_round_host_env_isolation'),
+    ('parity-round-head-guard', 'control_round_head_guard'),
 ]
 
 # Static rosters: the denominators of this run are literals in the source, not
@@ -84,9 +107,11 @@ positives = [
 # green run (#1666; negative_selection.registered).
 EXPECTED_MUTATIONS = [
     'parity-round-gateway-mode-strip',
+    'parity-round-apparatus-verify-deleted',
 ]
 EXPECTED_POSITIVES = [
     'parity-round-host-env-isolation',
+    'parity-round-head-guard',
 ]
 
 # The KILLED judge below greps the control entry's own leak marker, and the
@@ -95,9 +120,16 @@ EXPECTED_POSITIVES = [
 CONTROL_ENTRY = root / 'scripts/parity/controls/host_env_isolation.py'
 CONTROL_MARKERS = ('PILOTDECK_GATEWAY_MODE 泄漏', '#2513')
 
+# Same binding for the fix-r6 round-head guard control: its refusal
+# assertions carry the #2513 tag, and the entry must name the guarded
+# apparatus; --check binds both so a rename there cannot silently
+# downgrade the kill to INVALID.
+ROUND_GUARD_ENTRY = root / 'scripts/parity/controls/round_head_guard.py'
+ROUND_GUARD_MARKERS = ('#2513', 'scripts/parity/round.py')
 
-def run_control(scratch, label):
-    command = [sys.executable, '-I', str(root / 'scripts/parity/controls/host_env_isolation.py')]
+
+def run_control(scratch, label, entry):
+    command = [sys.executable, '-I', str(entry)]
     result = run_owned(command, cwd=str(root), timeout=600)
     for suffix, value in (('stdout', result.stdout), ('stderr', result.stderr),
                           ('exit', f'{result.returncode}\n')):
@@ -107,7 +139,7 @@ def run_control(scratch, label):
 
 def control_round_host_env_isolation(scratch):
     """The offline host-env control must pass on the guarded source."""
-    result = run_control(scratch, 'host-env')
+    result = run_control(scratch, 'host-env', CONTROL_ENTRY)
     log = result.stdout + result.stderr
     if result.returncode != 0:
         if 'PILOTDECK_GATEWAY_MODE 泄漏' not in log:
@@ -117,8 +149,21 @@ def control_round_host_env_isolation(scratch):
                              f'round.py 清理元组的变异体被当场抓住 (exit={result.returncode})')
 
 
+def control_round_head_guard(scratch):
+    """The offline round-head guard control must pass on the guarded source."""
+    result = run_control(scratch, 'round-head', ROUND_GUARD_ENTRY)
+    log = result.stdout + result.stderr
+    if result.returncode != 0:
+        if '#2513' not in log:
+            raise RuntimeError('round_head_guard failed without the #2513 marker '
+                              f'(exit={result.returncode}): {log.strip()}')
+        raise AssertionError('#2513 round.py 取锁后装置核验守卫被删除：变异窗口内'
+                             f'编译的轮次在取锁后未被拒绝 (exit={result.returncode})')
+
+
 RUNNERS = {
     'control_round_host_env_isolation': control_round_host_env_isolation,
+    'control_round_head_guard': control_round_head_guard,
 }
 
 
@@ -145,6 +190,14 @@ def check_errors():
     for marker in CONTROL_MARKERS:
         if marker not in entry:
             errors.append(f'control entry lost its {marker!r} marker')
+    # The round-head guard entry is bound the same way, and the kill row
+    # above already pins the guard's call line in round.py itself (its
+    # ``before`` anchor): a renamed or removed guard call is refused here,
+    # never a silently smaller green run (#2513 fix-r6, MM boundary#3).
+    entry = ROUND_GUARD_ENTRY.read_text(encoding='utf-8')
+    for marker in ROUND_GUARD_MARKERS:
+        if marker not in entry:
+            errors.append(f'round-head guard entry lost its {marker!r} marker')
     return errors
 
 

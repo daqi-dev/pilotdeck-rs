@@ -406,6 +406,34 @@ mutations = [
      "    bootstrap_code = getattr(_bootstrap, '_bootstrap_code', None)\n"
      "    if not isinstance(bootstrap_code, CodeType):\n"
      "        bootstrap_code = compile(_head_source('scripts/cli-parity/_bootstrap.py'), str(_bootstrap_path), 'exec')"),
+    # #2513 fix-r6 (MM boundary#1): _head_source reads the worktree file
+    # instead of the committed object — the verification becomes always-true
+    # under a mutation window (worktree bytes == loaded bytes) while every
+    # other ApparatusVerificationTests row patches _head_source away and
+    # stays green. The bound cell is the one that does not patch it: the
+    # worktree read returns this mutant's own bytes, the independent git
+    # invocation still returns HEAD, and the equality fires its marker.
+    ('apparatus-head-source-worktree-read',
+     run_round,
+     "    result = subprocess.run(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(ROOT), 'show', f'HEAD:{relative}'],\n"
+     "                            env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null'},\n"
+     "                            capture_output=True, timeout=30)",
+     "    return (ROOT / relative).read_bytes()  # mutant: the worktree file, not the committed object"),
+    # #2513 fix-r6 (MM boundary#2): the call site itself — deleting
+    # ``_verify_loaded_apparatus()`` from main leaves every body-level kill
+    # row green (they mutate the function's body, which is then never
+    # invoked). The bound ContractTests row drives main onto the leased path
+    # on any platform (the macOS-only preflight twin cannot be the bound row
+    # on a Linux host) and pins that the gate runs exactly once before any
+    # work; with the call gone the markered call-count assertion fires. The
+    # native-witness 'bypass-apparatus-verify' row is the same-shape
+    # precedent.
+    ('apparatus-verify-call-site-deleted',
+     run_round,
+     "            _verify_loaded_apparatus()\n"
+     "            # Stop before other runners may consider the lease expired. The",
+     "            pass  # mutant: the post-lease apparatus gate is never called\n"
+     "            # Stop before other runners may consider the lease expired. The"),
 ]
 
 # #1666: the denominator is this static roster, not `len(mutations)`. Deleting
@@ -444,6 +472,8 @@ EXPECTED_NAMES = (
     'apparatus-entry-fingerprint-unchecked',
     'apparatus-bootstrap-unverified',
     'apparatus-bootstrap-missing-accepted',
+    'apparatus-head-source-worktree-read',
+    'apparatus-verify-call-site-deleted',
 )
 tests = {
     'allow-rule-drops-port': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
@@ -485,6 +515,10 @@ tests = {
         'ApparatusVerificationTests.test_mutated_bootstrap_is_refused',
     'apparatus-bootstrap-missing-accepted':
         'ApparatusVerificationTests.test_missing_bootstrap_code_fails_closed',
+    'apparatus-head-source-worktree-read':
+        'ApparatusVerificationTests.test_head_source_reads_the_committed_object',
+    'apparatus-verify-call-site-deleted':
+        'ContractTests.test_post_lease_apparatus_gate_is_called_by_main',
 }
 # The exclusive assertion message each mutant must turn red. A string is one
 # marker; a tuple lists the alternative markers of one assertion family (the
@@ -555,6 +589,13 @@ failure_fragments = {
     'apparatus-bootstrap-missing-accepted':
         ('#2513 a missing bootstrap code object must fail closed',
          "#2513 loaded apparatus differs from HEAD: scripts/cli-parity/_bootstrap.py"),
+    # fix-r6: both rows bind to the bound test's own markered msg (the
+    # call-count shape fires the message; the worktree-read row's equality
+    # carries it as its msg too).
+    'apparatus-head-source-worktree-read':
+        '#2513 _head_source reads the committed HEAD object, not the worktree or index',
+    'apparatus-verify-call-site-deleted':
+        '#2513 the post-lease apparatus gate runs before any work',
 }
 
 SEPARATOR = '-' * 70

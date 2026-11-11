@@ -150,8 +150,14 @@ def _verify_loaded_apparatus():
     ``_apparatus_source`` bytes that actually executed) match HEAD. Missing
     provenance fails closed. A mutant that deletes this verification itself
     escapes self-verification — the same boundary scripts/parity/round.py's
-    fix-r2 verification documents; the negative-control kill rows cover the
-    deletion case.
+    fix-r2 verification documents. The call-site deletion has two explicit
+    nets (#2513 fix-r6, MM boundary#2): the unit test
+    ``ContractTests.test_failed_preflight_cannot_start_any_product_round``
+    (main must call the gate exactly once before any work) and the
+    ``apparatus-verify-call-site-deleted`` kill row in the
+    cli-parity-mock-gateway negative controls, whose mutation deletes this
+    very call. The body-level mutants are covered separately — by the
+    ``apparatus-*`` kill rows that disarm the individual checks inside.
 
     #2513 fix-r4 (review boundary#2): the bootstrap's executing code is
     verified the same way — it is this entry's own loader, so a mutated

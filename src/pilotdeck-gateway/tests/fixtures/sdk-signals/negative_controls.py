@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -553,6 +554,108 @@ def raw_text(value):
     return value or ""
 
 
+def _require_host_lease(common, lock=None):
+    """#2513 fix-r6 (MM concurrency P1): the host pre-hold, machine-checked.
+
+    fix-r4's redirect also removed the old shared-lease 60 s TimeoutError as
+    a side effect: nothing failed when the caller never pre-held
+    /tmp/pdrs-parity.lock, so a run without the host's serialization could
+    silently open a mutation window unguarded — the fail-open the review
+    flagged. This gate runs before the window opens (from `redirected`,
+    before the redirected lease is taken) and is fail-closed: the shared
+    lease's owner.json must exist and name a live pid that is not this
+    process itself, the README's "取不到租约即退出稍后重跑" contract.
+    Otherwise one reason line goes to stderr and the run exits 2 — this
+    file's existing refusal shape (a refusal, never a verdict). The owner
+    and liveness reads come from the verified `common` module, so the gate
+    cannot drift from the lease protocol it polices.
+    """
+    lock = common.LOCK if lock is None else lock
+    previous = common.owner(lock)
+    if previous is None:
+        print(
+            f"#2513 host pre-hold required: {lock / 'owner.json'} is missing "
+            "or invalid; exit and rerun under the host hold",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    pid = previous["pid"]
+    if not common.alive(pid):
+        print(
+            f"#2513 host pre-hold required: owner pid {pid} is not alive; "
+            "exit and rerun under the host hold",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    if pid == os.getpid():
+        print(
+            "#2513 host pre-hold required: owner pid is this fixture itself "
+            "— the pre-hold must be the host's, not the fixture's own",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+
+def _self_check():
+    """#2513 fix-r6: the host pre-hold gate's own four rows.
+
+    (a) a missing owner.json, (b) a dead owner pid, (c) our own pid and
+    (d) a live external pid — the first three must refuse with exit 2, the
+    fourth must proceed. The scenarios use throwaway lock directories,
+    never the real /tmp/pdrs-parity.lock.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "negative_selfcheck_parity_sdk_signals",
+        root / "scripts/gateway-parity/common.py")
+    common = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(common)
+
+    def publish_owner(lock, pid):
+        lock.mkdir(parents=True, exist_ok=True)
+        (lock / "owner.json").write_text(json.dumps({
+            "pid": pid, "timestamp": 1000000.0,
+            "token": "self-check", "cleanupPending": True}))
+
+    def refused(lock, label):
+        try:
+            _require_host_lease(common, lock)
+        except SystemExit as error:
+            if error.code != 2:
+                raise RuntimeError(
+                    f"#2513 self-check {label}: exit {error.code!r}, expected 2")
+            return
+        raise RuntimeError(
+            f"#2513 self-check {label}: proceeded where the refusal was required")
+
+    with tempfile.TemporaryDirectory() as held:
+        base = Path(held)
+        # (a) the lock directory exists but no owner was ever published.
+        empty = base / "a-pdrs-parity.lock"
+        empty.mkdir()
+        refused(empty, "(a) missing owner.json")
+        # (b) the owner is a dead process (a reaped child's pid).
+        dead = subprocess.Popen(["/bin/sleep", "0"])
+        dead.wait()
+        dead_lock = base / "b-pdrs-parity.lock"
+        publish_owner(dead_lock, dead.pid)
+        refused(dead_lock, "(b) dead owner pid")
+        # (c) the "owner" is this fixture process itself.
+        own_lock = base / "c-pdrs-parity.lock"
+        publish_owner(own_lock, os.getpid())
+        refused(own_lock, "(c) own pid")
+        # (d) the owner is a live external process: the gate proceeds.
+        live = subprocess.Popen(["/bin/sleep", "30"])
+        try:
+            live_lock = base / "d-pdrs-parity.lock"
+            publish_owner(live_lock, live.pid)
+            _require_host_lease(common, live_lock)
+        finally:
+            live.terminate()
+            live.wait()
+    print("#2513 host pre-hold gate self-check: PASS (4 rows)")
+    return 0
+
+
 def _redirect_window_parity_lock(out):
     """#2513 fix-r4 (review 条2): redirect this family's window lease.
 
@@ -567,6 +670,12 @@ def _redirect_window_parity_lock(out):
     this run's evidence directory, same owner/guard/stale-takeover protocol.
     Mutual exclusion against live rounds is not weakened — the host pre-hold
     provides it for the whole run, which is exactly the README contract.
+
+    #2513 fix-r6: that contract is now machine-checked, not assumed —
+    `_require_host_lease` runs before the redirected lease is taken and
+    refuses (exit 2) unless the real shared lease names a live external
+    pid, restoring the fail-closed side fix-r4 lost with the old 60 s
+    TimeoutError.
 
     Returns the restore callable; the caller must invoke it in a `finally`.
     The pristine ruler module is still executed from verified snapshot bytes
@@ -593,6 +702,9 @@ def _redirect_window_parity_lock(out):
         spec.loader.exec_module(common)
         common.guard = lambda lock: TreeLock(
             lock.with_name(lock.name + ".guard"), timeout=timeout)
+        # #2513 fix-r6: the window opens only under the host's pre-held
+        # shared lease — checked here, before anything is mutated.
+        _require_host_lease(common)
         restored = [False]
         with common.parity_lock(
                 timeout=timeout, lock=out / "parity-redirect.lock"):
@@ -635,9 +747,16 @@ def main():
     if args in (["--check"], ["--check-anchors"]):
         print(f"#1145 {EXPECTED_TOTAL} product anchors: PASS")
         return 0
+    # #2513 fix-r6: --self-check is its own documented branch — the host
+    # pre-hold gate's four rows (missing owner.json / dead pid / own pid /
+    # live external pid). It opens no mutation window and needs no lease:
+    # the scenarios run against throwaway lock directories.
+    if args == ["--self-check"]:
+        return _self_check()
     if not args:
         raise SystemExit(
-            "usage: negative_controls.py --check-anchors (alias: --check) | NEW_OUTPUT_DIR [mutation ...]"
+            "usage: negative_controls.py --check-anchors (alias: --check) | --self-check | "
+            "NEW_OUTPUT_DIR [mutation ...]"
         )
 
     selected_names = args[1:]

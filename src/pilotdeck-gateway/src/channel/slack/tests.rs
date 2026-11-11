@@ -221,6 +221,13 @@ struct Mock {
     closing: Arc<AtomicBool>,
     scripted: Arc<SyncMutex<VecDeque<(u16, String)>>>,
     tasks: SyncMutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// #2513 fix-r6: text frames the mock pushes the moment its upgrade
+    /// response is written — the startup-window probe. A frame queued here
+    /// is already on the wire before the client's `start()` can finish
+    /// storing its session, which is the interleave the DS r6 review
+    /// identified (spawn precedes the store; the reader used to read
+    /// `app.is_none()` as "stopped").
+    on_open: Arc<SyncMutex<Vec<String>>>,
 }
 
 async fn start_mock(
@@ -242,6 +249,7 @@ async fn start_mock(
         closing: Arc::new(AtomicBool::new(false)),
         scripted: Arc::new(SyncMutex::new(scripted)),
         tasks: SyncMutex::new(Vec::new()),
+        on_open: Arc::default(),
     });
     let accept_mock = mock.clone();
     let accept_record = record.clone();
@@ -353,6 +361,13 @@ async fn serve_connection(mut stream: TcpStream, mock: Arc<Mock>, record: Arc<Sy
             .lock()
             .expect("#1344 sockets mutex")
             .push(socket.clone());
+        // #2513 fix-r6: the startup-window probe. These frames are written
+        // the instant the upgrade response is on the wire — before the
+        // client's `start()` can finish storing its session, so a reader
+        // that reads "no app yet" as "stopped" will drop them.
+        for text in mock.on_open.lock().expect("#1344 on_open mutex").drain(..) {
+            write_text_frame(&socket, &text);
+        }
         read_frames(read_half, socket, mock, record).await;
         return;
     }
@@ -1645,6 +1660,91 @@ async fn auth_test_failure_releases_the_session() {
     )
     .await;
     stop_mock(&mock);
+}
+
+/// #2513 fix-r6 (DS r6 concurrency P1): the startup window. `start_session`
+/// spawned the frame reader before storing the live app, and the reader read
+/// `app.is_none()` as "stopped" — a `type:"message"` frame that landed the
+/// moment the handshake completed was silently dropped, while the TS baseline
+/// (its handlers are registered at construction) dispatches it. The stop
+/// sentinel is now the channel's `closing` flag — never `app.is_none()` — so
+/// the window cannot be misread, and #2312's post-stop drop semantics ride
+/// the same flag. Runs on a multi-thread runtime (the production entry
+/// shape) with the mock pushing a message frame the instant its 101
+/// response is written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn startup_window_frame_dispatches_and_post_stop_stays_silent() {
+    let _port_segment = lock_port_segment().await;
+    let port = 18186;
+    ensure_replay_port_free(port).await;
+    let record: Arc<SyncMutex<Record>> = Arc::new(SyncMutex::new(Record::default()));
+    let gates: Gates = Arc::new(SyncMutex::new(HashMap::new()));
+    let gateway: GatewayRef = Arc::new(MockGateway {
+        turns: vec![],
+        next: SyncMutex::new(0),
+        record: record.clone(),
+        gates,
+    });
+    let mock = start_mock(port, &record, VecDeque::new()).await;
+    // The startup-window probe: a user message already on the wire when the
+    // 101 lands, before `start()`'s session store can run.
+    mock.on_open.lock().expect("#1344 on_open mutex").push(
+        json!({"type": "message", "payload": {"event": {
+            "channel": "C1",
+            "user": "U999",
+            "ts": "300.1",
+            "text": "窗口帧"
+        }}})
+        .to_string(),
+    );
+    let channel = load_channel(port, &[], gateway);
+    let handle = bounded(
+        "#2513 a startup-window message frame is dispatched",
+        channel.start(case_deps(&record)),
+    )
+    .await
+    .expect("#2513 start");
+    let waited = record.clone();
+    until(
+        "#2513 a startup-window message frame is dispatched",
+        "case startup-window submitTurn",
+        move || waited.lock().expect("#1344 record mutex").rpcs.len() == 1,
+    )
+    .await;
+    // #2312 on the new sentinel: a frame after `stop` still stays silent —
+    // the closing flag, not an empty runtime, is what drops it.
+    bounded(
+        "#2513 a post-stop message frame stays silent",
+        handle.stop("done"),
+    )
+    .await
+    .expect("#2513 stop result");
+    let socket = mock
+        .sockets
+        .lock()
+        .expect("#1344 sockets mutex")
+        .last()
+        .cloned()
+        .expect("#2513 the socket opened");
+    write_text_frame(
+        &socket,
+        &json!({"type": "message", "payload": {"event": {
+            "channel": "C1",
+            "user": "U999",
+            "ts": "300.2",
+            "text": "停机后帧"
+        }}})
+        .to_string(),
+    );
+    ticks(50).await;
+    crate::negative_assert_eq!(
+        record.lock().expect("#1344 record mutex").rpcs.len(),
+        1,
+        "#2513 a post-stop message frame stays silent"
+    );
+    stop_mock(&mock);
+    drop(channel);
+    drop(handle);
 }
 
 // ---------------------------------------------------------------------------

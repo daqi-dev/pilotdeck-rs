@@ -744,6 +744,25 @@ class WitnessTests(unittest.TestCase):
             'scripts/gateway-parity/native_evidence.py',
             'scripts/gateway-parity/_guard.py'})
 
+    def test_head_source_reads_the_committed_object(self):
+        # #2513 fix-r6 (MM boundary#1): every other apparatus cell patches
+        # _head_source away, so a mutant that reads the worktree (or the
+        # index) instead of ``git show HEAD:`` makes the verification
+        # always-true under a mutation window while those rows stay green.
+        # This cell does not patch it: the pristine function must return
+        # exactly the committed object of this entry, proven against an
+        # independent git invocation — both sides read the same HEAD object,
+        # so the cell holds on a dirty tree too (the mutant run is the one
+        # where worktree bytes differ from HEAD). assertTrue, not assertEqual:
+        # the negative-control harness binds this row by the single-line
+        # AssertionError marker.
+        expected = subprocess.run(
+            ['git', '-C', str(ROOT), 'show', 'HEAD:scripts/native-witness/collect.py'],
+            capture_output=True, timeout=30)
+        self.assertTrue(expected.returncode == 0, '#2513 the independent HEAD read must succeed')
+        self.assertTrue(c._head_source('scripts/native-witness/collect.py') == expected.stdout,
+                        '#2513 _head_source reads the committed HEAD object, not the worktree or index')
+
     def test_apparatus_verified_after_lease(self):
         # #2513 fix-r4: the lease serializes mutation windows, not loads; the
         # collector started inside a window must be refused after the lease —
