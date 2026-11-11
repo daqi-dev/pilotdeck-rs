@@ -1110,6 +1110,11 @@ mod tests {
     const ISOLATED_PROJECT_MESSAGE: &str =
         "The isolated native process serves only its configured project.";
 
+    // Two families walk this same gate-order shape — this one and config's
+    // `config_blank_key_gate_order`. They are deliberately kept as two
+    // same-shape walkers (per-family parity readability, per-family negative
+    // control rows): a cell added here must be mirrored there, or the other
+    // family's tests keep passing without measuring the new cell.
     async fn blank_key_gate_order(method: &str) {
         let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#2090 fixture");
