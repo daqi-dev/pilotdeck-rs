@@ -58,6 +58,12 @@ GUARDED = [
     ROOT / 'src/pilotdeck-gateway/src/runtime/plugins.rs',
     ROOT / 'src/pilotdeck-gateway/src/runtime/mcp/sdk.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_process.rs',
+    # r4 DS sibling P1: the bound test's whole setup is the factory —
+    # registry() assembles ProjectResourcesFactory::new(...).with_plugins(...)
+    # and the resources it builds feed the lease runtime, so a concurrent
+    # edit to factory.rs during a run must be caught by the source guard
+    # (the #1274 MM r1 P1 precedent guards it for the same assembly reason).
+    ROOT / 'src/pilotdeck-gateway/src/runtime/project/factory.rs',
     # The guarded files' declarators and remaining judgement-chain members:
     # runtime/mod.rs declares mcp / plugins / project, runtime/mcp/mod.rs
     # declares sdk, project/plugins.rs is the PluginResources the awaited
