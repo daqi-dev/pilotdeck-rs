@@ -53,9 +53,12 @@ Run with no other writers in this worktree: the runner rewrites the guarded
 sources in place, and `CARGO_TARGET_DIR` only isolates build artifacts, not
 source files — a plain `cargo test` / `cargo build` sharing this tree during
 the mutation window compiles a mutant and produces unrelated false failures.
-`.negative-source.lock` only orders negative-control `mutating_sources`
-holders; it does not block ordinary cargo runs, and its release (e.g. after a
-SIGKILLed runner) does not prove the tree is clean.
+The exclusive `.negative-source.lock` orders negative-control
+`mutating_sources` writers among themselves; Rust read-lease consumers
+(`tests/common/read_lease.rs` in the gateway and cli crates) take a shared
+lock on the same file, so a writer also excludes those readers. It does not
+block ordinary cargo runs or lock-free Python checkers, and its release
+(e.g. after a SIGKILLed runner) does not prove the tree is clean.
 
 `--check` verifies every anchor matches the tree exactly once, and that the
 hand-copied numbers still describe the artifacts they name: the README
