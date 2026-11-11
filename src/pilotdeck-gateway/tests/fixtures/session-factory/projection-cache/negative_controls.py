@@ -193,6 +193,17 @@ def main():
     for _, filename, old, new, _, _ in mutations:
         mutate((root / filename).read_text(), None, [(old, new)])
     if sys.argv[1:] == ['--audit']:
+        # #2303 fix-r4 (DS concurrency#1 / MM sibling#1, zero denominator): an
+        # empty table is never "every anchor bound" -- mutations emptied,
+        # renamed away or skipped to zero rows must refuse (2, the
+        # never-started exit) instead of printing a PASS over zero anchors.
+        if not mutations:
+            sys.stderr.write('INVALID: audit produced zero anchors (mutations '
+                             'emptied, renamed away or skipped?); "every '
+                             'anchor bound" cannot pass on an empty '
+                             'denominator\n')
+            sys.stderr.flush()
+            return 2
         # #1210: bound test names may come from the matrix_tests! macro table,
         # so a plain `fn <name>` scan would not find them. Accept either the
         # direct function or the `name=>"case"` table entry; anything else
