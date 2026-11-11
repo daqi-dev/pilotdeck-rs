@@ -23,6 +23,7 @@ from unittest.mock import MagicMock, Mock, patch
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import negative_controls as gate
+import negative_process
 
 
 class _RecordingTreeLock:
@@ -30,10 +31,12 @@ class _RecordingTreeLock:
     ``.negative-source.lock``——被下面的只读审计钩子判写（#1279 standalone
     红过），且让本套件依赖锁文件空闲。与 test_negative_roster_guards.py 的
     ``_RecordingTreeLock`` 同形：记录锁获取/释放与读的相对顺序，只验「读面在
-    锁内」的语义，不落真锁文件。"""
+    锁内」的语义，不落真锁文件。fix-r5 加 ``busy``：``__enter__`` 抛
+    TimeoutError，驱动 setUpClass 的锁忙拒跑形态（名册驱动器同形）。"""
 
-    def __init__(self, events):
+    def __init__(self, events, *, busy=False):
         self.events = events
+        self.busy = busy
         self.held = False
         self.calls = []
 
@@ -42,6 +45,8 @@ class _RecordingTreeLock:
         return self
 
     def __enter__(self):
+        if self.busy:
+            raise TimeoutError('setup-class drive: lock timeout (#2795 fix-r5)')
         self.events.append('lock-enter')
         self.held = True
         return self
@@ -84,8 +89,16 @@ class DriftTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.expectations = gate.panel_table('EXPECTATION_CASES')
-        cls.calibration = gate.panel_table('CALIBRATION_CASES')
+        # #2795 fix-r5（评审 concurrency P2#1 升格 + simplify P2#1 结构性收口）：
+        # setUpClass 早于 setUp 的记录桩 / 读面补丁，此前两处 panel_table 读在
+        # 锁外——gateway-entry-guard 等兄弟变异轮写 controls/session_domain.py 的
+        # write 与 restore 之间，无锁 ast.parse 会把变异体当权威表。与 main()
+        # 预检同面，改走共享 anchor_read_window 装置（锁内读 + rc 2 拒跑）；
+        # 机检见 SetupClassReadSurface。
+        with negative_process.anchor_read_window(
+                gate.ROOT, 'session-domain-expectations meta-controls'):
+            cls.expectations = gate.panel_table('EXPECTATION_CASES')
+            cls.calibration = gate.panel_table('CALIBRATION_CASES')
 
     def test_binding_corruptions_are_rejected(self):
         state = 'drop-registry-state-require'
@@ -403,6 +416,54 @@ class DriftTests(unittest.TestCase):
                         '#1190 evidence: never carry previous row evidence')
         self.assertTrue('anchor expired' in recorded[0]['reason'] and 'SyntaxError' in recorded[1]['reason'],
                         '#1190 evidence: exercise anchor and compile failures')
+
+
+class SetupClassReadSurface(unittest.TestCase):
+    """#2795 fix-r5（评审 concurrency P2#1 升格）：setUpClass 读面的机检。
+
+    fix-r4 给 main() 的预检（panel_table / check_anchors）补了树锁，但
+    setUpClass 早于 setUp 的记录桩，两处 panel_table 读仍在锁外。本类直接
+    驱动真实的 setUpClass：只把 negative_process.tree_lock 换成记录桩
+    （装置内部经 negative_process 全局查 tree_lock），读面记名判红；
+    busy 时装置必须 SystemExit(2) + 统一文案（与名册驱动的拒跑形态同形）。
+    """
+
+    def test_setup_class_reads_panels_inside_the_tree_lock(self):
+        events = []
+        lock = _RecordingTreeLock(events)
+        with patch.object(negative_process, 'tree_lock', lock), \
+                _pinned_anchor_reads(events, lock):
+            DriftTests.setUpClass()
+        unlocked = [event for event in events
+                    if isinstance(event, tuple) and event[0] == 'unlocked-read']
+        self.assertTrue(not unlocked and events[:1] == ['lock-enter']
+                        and events[-1:] == ['lock-exit'],
+                        '#2795 meta-controls: setUpClass must read the panel '
+                        f'source inside the shared anchor_read_window: {events!r}')
+        self.assertTrue(lock.calls == [((gate.ROOT,), {'timeout': 60})],
+                        '#2795 meta-controls: setUpClass must lock the repo '
+                        f'root with the 60 s bounded wait: {lock.calls!r}')
+
+    def test_setup_class_refuses_when_the_tree_lock_is_busy(self):
+        events = []
+        lock = _RecordingTreeLock(events, busy=True)
+        errors = io.StringIO()
+        with patch.object(negative_process, 'tree_lock', lock), \
+                contextlib.redirect_stderr(errors):
+            with self.assertRaises(SystemExit) as caught:
+                DriftTests.setUpClass()
+        self.assertTrue(caught.exception.code == 2,
+                        '#2795 meta-controls: a busy tree lock must refuse '
+                        f'setUpClass with rc 2, got {caught.exception.code!r}')
+        self.assertTrue(
+            'session-domain-expectations meta-controls: '
+            'tree lock or anchor read failed' in errors.getvalue()
+            and 'TimeoutError' in errors.getvalue(),
+            '#2795 meta-controls: the refusal must use the shared device '
+            f'message and name the lock wait: {errors.getvalue()!r}')
+        self.assertTrue(events == [],
+                        '#2795 meta-controls: a refused setUpClass must read '
+                        f'no panel bytes: {events!r}')
 
 
 def negative_checks():

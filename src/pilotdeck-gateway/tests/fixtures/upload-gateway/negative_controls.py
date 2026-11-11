@@ -56,13 +56,14 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import anchor_read_window, mutating_sources, run_owned, wait_for_slot
 from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered, select, verdict_exit
 from _negkit import non_head
 
 root = Path(__file__).resolve().parents[5]
 GATEWAY = root / 'src/pilotdeck-gateway/src/upload/gateway.rs'
 STORE = root / 'src/pilotdeck-gateway/src/upload/mod.rs'
+DISPATCH = root / 'src/pilotdeck-gateway/src/dispatch.rs'
 ORACLE = 'upload::gateway_tests::upload_gateway_oracle_replay_matches_ts_results'
 PATH_TEST = 'upload::gateway_tests::upload_gateway_never_projects_attachment_disk_path'
 PROJECTION = 'upload::gateway_tests::upload_gateway_projection_drops_unknown_and_empty_optional_fields'
@@ -993,6 +994,15 @@ mutations = [
 ''', '''            change(&mut current);
 ''', 'upload::tests::upload_refusals_write_nothing_emit_nothing_and_do_not_poison_the_gate',
      '#2275 the refusal answers its semantic code, not the injected write fault'),
+    # #2795 fix-r5（评审 sibling P2#4）：upload 面同一「方法表泄漏到默认
+    # dispatch」正控（upload_gateway_methods_stay_outside_the_default_dispatch_table）
+    # 此前没有配对变异行——snapshot-projection 的 dispatch-registration 同形：
+    # 把 upload_create 泄漏进 LOCAL_METHODS，绑定测试在自己的
+    # "{method}" 断言（首个方法名）上红。
+    ('dispatch-registration', DISPATCH, '    "native_archive_artifact",\n];',
+     '    "native_archive_artifact",\n    "upload_create",\n];',
+     'upload::gateway_tests::upload_gateway_methods_stay_outside_the_default_dispatch_table',
+     'upload_create'),
 ]
 
 # #1666: static denominator; a deleted row must not shrink the run silently and
@@ -1043,6 +1053,9 @@ EXPECTED_NAMES = (
     # 同一名册口径。
     'mutate-reread-falls-back-to-outside-snapshot',
     'mutate-no-change-gate-dropped',
+    # #2795 fix-r5（评审 sibling P2#4）：upload 面的方法表泄漏负控（同
+    # snapshot-projection 的 dispatch-registration 形）。
+    'dispatch-registration',
 )
 
 if '--check' in sys.argv[1:]:
@@ -1051,11 +1064,16 @@ if '--check' in sys.argv[1:]:
         registered(mutations, EXPECTED_NAMES)
     except ValueError as error:
         refuse(str(error))
-    for name, source, old, _new, _test, _expected in mutations:
-        original = source.read_text()
-        occurrences = original.count(old)
-        if occurrences != 1:
-            raise ValueError(f'{name}: anchor occurs {occurrences} times (expected 1)')
+    # #2795 fix-r5（评审 sibling P2#4 同类跟改）：--check 的锚点核对环此前是
+    # 裸读——兄弟变异窗口中间的变异体会被核对错在它不拥有的源上（假 FAIL）；
+    # 锁忙 / 读失败是拒跑（2）。改走共享 anchor_read_window 装置（本入口在
+    # import 期分发，与 matrix_main 共享路径同形）。
+    with anchor_read_window(root, 'upload-gateway --check'):
+        for name, source, old, _new, _test, _expected in mutations:
+            original = source.read_text()
+            occurrences = original.count(old)
+            if occurrences != 1:
+                raise ValueError(f'{name}: anchor occurs {occurrences} times (expected 1)')
     print(f'PASS: {len(mutations)} mutation anchors match their sources')
     sys.exit(0)
 
@@ -1078,7 +1096,7 @@ summary = []
 # was mis-spelled PDRS_NEG_BASELINE until #1540, so an override silently
 # never reached this guard.
 baseline_source, baseline, baseline_sha = non_head.gate(root)
-with mutating_sources(root, [GATEWAY, STORE], baseline=baseline) as snapshots:
+with mutating_sources(root, [GATEWAY, STORE, DISPATCH], baseline=baseline) as snapshots:
     for name, source, old, new, test, expected in run_rows:
         original = snapshots[source]
         before = hashlib.sha256(original).hexdigest()

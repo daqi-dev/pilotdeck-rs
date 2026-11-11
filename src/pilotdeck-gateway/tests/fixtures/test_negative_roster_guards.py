@@ -1250,10 +1250,43 @@ class SnapshotAuditReadSurface(unittest.TestCase):
 
 # The refusal message every family entry prints on a busy lock or a failed
 # read. Three spellings exist (fix-r4's neutral prefix, fix-r3's mode-qualified
-# forms, and issue-2495's own stale-scan wording from #2590 fix-r3b); a new
-# same-family entry must match one of them or the scan stays blind to it.
+# forms, and issue-2495's own stale-scan wording from #2590 fix-r3b); they stay
+# matched until the legacy sites are migrated onto the shared device in batch
+# (see the #2795 fix-r5 续跑表 in RESULT.md).
 READ_SURFACE_MARKER = re.compile(
     r'''tree lock or (?:anchor read|read|stale read) failed''')
+
+# #2795 fix-r5（simplify P2#1 连轮结构性收口）：fix-r2/r3/r4 连续四轮逐点补
+# 同一防务，54 个文件手抄出三种拒跑文案——名册按文案认入口，第 4 种拼写的
+# 新入口扫不出（fix-r4 自己的注释承认的机制缺口）。共享装置
+# ``negative_process.anchor_read_window`` 落地后，登记签名扩成「装置名」：
+# 新入口改走装置即被扫出（文案只写在装置里）；上面的旧三拼写保持兼容，
+# 存量入口按续跑表分批迁移。
+ANCHOR_READ_WINDOW_CALL = re.compile(r'(?<!def )anchor_read_window\(')
+# A device call's literal label (every device site spells its label as a
+# single-quoted literal): the busy-refusal test pins that the message on
+# stderr carries the entry's own label, not just the shared spelling.
+ANCHOR_READ_WINDOW_LABEL = re.compile(
+    r"anchor_read_window\(\s*\w+(?:\.\w+)*,\s*'([^']+)'")
+
+
+def read_surface_signature(text):
+    """An entry registers either by calling the shared device or by the
+    legacy family message; the scan keeps both directions honest."""
+    return bool(ANCHOR_READ_WINDOW_CALL.search(text)
+                or READ_SURFACE_MARKER.search(text))
+
+
+# The device definition and the shared matrix runner are not roster entries:
+# negative_process.py defines the device (the refusal message lives only
+# there) and negative_suite.py's matrix_main calls it on behalf of its
+# callers; neither has a main() this roster could drive. Their coverage is
+# every calling entry's roster row (channel-slack today) plus
+# test_negative_suite.py, which drives matrix_main directly.
+READ_SURFACE_SHARED_MODULES = frozenset({
+    'negative_process.py',
+    'negative_suite.py',
+})
 
 
 class ReadSurfaceSpec:
@@ -1351,6 +1384,19 @@ READ_SURFACE_ROSTER = {
     # 名册登记后同样被「锁内读」机检覆盖（其专用 mismatch 机检在
     # RegisteredEntryRosterGuard，二者互补不重复）。
     'issue-2495/negative_controls.py': ReadSurfaceSpec(['--check'], 'ROOT'),
+    # #2795 fix-r5（评审 sibling P1#1/P1#2/P1#3 + P2#4 同类跟改）：
+    # 三个此前完全裸读的入口改走共享 anchor_read_window 装置并登记——
+    # frozen-reinsert-guard 与 background-panic 的 --check-anchors、
+    # channel-slack 的 --check（preflight + matrix_main 共享路径）；
+    # upload-gateway 的 --check 同为裸读（评审 signature 盲区外的同形漏网，
+    # 补 dispatch-registration 变异行时一并收口），且在 import 期分发。
+    'frozen-reinsert-guard/negative_controls.py': ReadSurfaceSpec(
+        ['--check-anchors'], 'ROOT'),
+    'background-panic/negative_controls.py': ReadSurfaceSpec(
+        ['--check-anchors'], 'root'),
+    'channel-slack/negative_controls.py': ReadSurfaceSpec(['--check'], 'ROOT'),
+    'upload-gateway/negative_controls.py': ReadSurfaceSpec(
+        ['--check'], 'root', dispatch_at_exec=True),
 }
 
 
@@ -1547,33 +1593,49 @@ class ReadOnlyAnchorReadSurfaceRoster(unittest.TestCase):
         found = {str(path.relative_to(FIXTURES))
                  for path in FIXTURES.rglob('*.py')
                  if not path.name.startswith('test_')
-                 and READ_SURFACE_MARKER.search(path.read_text(encoding='utf-8'))}
+                 and str(path.relative_to(FIXTURES))
+                 not in READ_SURFACE_SHARED_MODULES
+                 and read_surface_signature(path.read_text(encoding='utf-8'))}
         self.assertTrue(found == set(READ_SURFACE_ROSTER),
                         f'#2795 every entry whose read-only anchor surface '
-                        f'refuses through the family message must be '
+                        f'refuses through the family message or calls the '
+                        f'shared anchor_read_window device must be '
                         f'machine-checked through this roster '
                         f'(unregistered={sorted(found - set(READ_SURFACE_ROSTER))} '
                         f'stale={sorted(set(READ_SURFACE_ROSTER) - found)})')
 
     def test_the_scan_detects_a_new_family_entry(self):
         # The kill shape the scan exists for: the next batch adds the same
-        # family defence to another entry and forgets the register row. The
-        # predicate is demonstrated on a synthetic tree (never the real one).
+        # family defence to another entry and forgets the register row. Both
+        # signatures are demonstrated on a synthetic tree (never the real one):
+        # the legacy family message, and a device call whose label/message a
+        # fourth spelling could never drift (#2795 fix-r5 结构性收口——装置名
+        # 即登记签名，文案只写在装置里).
         with tempfile.TemporaryDirectory(prefix='negctl-2795r4-scan-') as base:
-            synthetic = Path(base) / 'new-family' / 'negative_controls.py'
-            synthetic.parent.mkdir()
-            synthetic.write_text(
-                "print('tree lock or anchor read failed: demo')\n")
-            found = {str(path.relative_to(base))
-                     for path in Path(base).rglob('*.py')
-                     if not path.name.startswith('test_')
-                     and READ_SURFACE_MARKER.search(path.read_text(encoding='utf-8'))}
-        self.assertTrue(found == {'new-family/negative_controls.py'}
+            legacy = Path(base) / 'new-family' / 'negative_controls.py'
+            legacy.parent.mkdir()
+            legacy.write_text("print('tree lock or anchor read failed: demo')\n")
+            device_based = Path(base) / 'new-device-family' / 'negative_controls.py'
+            device_based.parent.mkdir()
+            device_based.write_text(
+                'from negative_process import anchor_read_window\n'
+                "with anchor_read_window(ROOT, 'demo'):\n    pass\n")
+            def scan(tree_root):
+                return {str(path.relative_to(tree_root))
+                        for path in Path(tree_root).rglob('*.py')
+                        if not path.name.startswith('test_')
+                        and str(path.relative_to(tree_root))
+                        not in READ_SURFACE_SHARED_MODULES
+                        and read_surface_signature(path.read_text(encoding='utf-8'))}
+            found = scan(base)
+        self.assertTrue(found == {'new-family/negative_controls.py',
+                                 'new-device-family/negative_controls.py'}
                         and 'new-family/negative_controls.py'
                         not in READ_SURFACE_ROSTER,
                         '#2795 the scan predicate must flag a new same-family '
-                        'entry, which the register test above then reports as '
-                        'unregistered (red)')
+                        'entry through either signature (legacy message or '
+                        'shared device call), which the register test above '
+                        'then reports as unregistered (red)')
 
     def test_each_entry_reads_only_inside_the_tree_lock(self):
         repo_root = str(FIXTURES.parents[3])
@@ -1613,13 +1675,32 @@ class ReadOnlyAnchorReadSurfaceRoster(unittest.TestCase):
     def test_each_entry_refuses_when_the_tree_lock_is_busy(self):
         for script, spec in sorted(READ_SURFACE_ROSTER.items()):
             with self.subTest(script=script):
+                source = (FIXTURES / script).read_text(encoding='utf-8')
                 run = _drive_read_surface(self, script, spec, busy=True)
                 self.assertTrue(run.code == 2,
                                 f'#2795 {script}: a busy tree lock is a '
                                 f'refusal to start (2), got {run.code!r}')
-                self.assertIn('tree lock or', run.stderr,
-                              f'#2795 {script}: the refusal must name the '
-                              f'lock wait on stderr: {run.stderr[:400]!r}')
+                if ANCHOR_READ_WINDOW_CALL.search(source):
+                    # fix-r5 结构性收口：装置化入口的忙锁拒跑必须走装置的
+                    # 统一文案 + 异常类型名（文案只写在装置里，入口不再有自
+                    # 己的拼写），且认得到入口源里的字面标签之一。
+                    self.assertIn('tree lock or anchor read failed', run.stderr,
+                                  f'#2795 {script}: the device-based refusal '
+                                  f'must use the unified message: '
+                                  f'{run.stderr[:400]!r}')
+                    self.assertIn('TimeoutError', run.stderr,
+                                  f'#2795 {script}: the device names the '
+                                  f'refusal cause: {run.stderr[:400]!r}')
+                    labels = ANCHOR_READ_WINDOW_LABEL.findall(source)
+                    self.assertTrue(
+                        not labels or any(label in run.stderr for label in labels),
+                        f'#2795 {script}: the refusal must carry one of the '
+                        f'entry\'s device labels {labels!r}: '
+                        f'{run.stderr[:400]!r}')
+                else:
+                    self.assertIn('tree lock or', run.stderr,
+                                  f'#2795 {script}: the refusal must name the '
+                                  f'lock wait on stderr: {run.stderr[:400]!r}')
                 self.assertTrue(run.events == [],
                                 f'#2795 {script}: a refused run must read no '
                                 f'anchors: {run.events!r}')

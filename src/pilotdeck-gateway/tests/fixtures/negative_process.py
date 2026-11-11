@@ -392,6 +392,44 @@ def tree_lock(root, **kwargs):
     return TreeLock(Path(root) / ".negative-source.lock", **kwargs)
 
 
+# The one refusal message of every read-only anchor window. fix-r2/r3/r4 added
+# the defence entry by entry and the hand-copied message drifted into three
+# spellings, so the roster scan that recognizes the message could not see a
+# fourth one (#2795 fix-r5, simplify P2-1 structural close-out). The device
+# below is now the only writer of this text.
+ANCHOR_READ_REFUSAL = "tree lock or anchor read failed"
+
+
+@contextmanager
+def anchor_read_window(root, label, timeout=60):
+    """The one shared read-only anchor window: tree lock, fail-closed read.
+
+    #2795 fix-r5 (simplify P2-1, coordinator escalation): a read-only anchor
+    preflight must read product sources with the shared tree lock held -- a
+    sibling mutation runner can leave a mutant on disk between its write and
+    restore phases, and an unlocked preflight validates anchors against bytes
+    it does not own (a false FAIL) or parses a mutant as the authority. A busy
+    lock or a failed read is a refusal to start, never a bare traceback the
+    host would read as rc 1.
+
+    This device is the single implementation of that defence: the lock window,
+    the exception surface and the refusal message live only here, so a new
+    same-family entry calls it (and the roster scan recognizes the device
+    name) instead of hand-copying a fourth message spelling.
+
+    ``TimeoutError`` is an ``OSError`` subclass (PEP 3151), so one tuple entry
+    covers both the busy-lock wait and read failures; ``UnicodeDecodeError``
+    is the other half of the read surface.
+    """
+    try:
+        with tree_lock(root, timeout=timeout):
+            yield
+    except (OSError, UnicodeDecodeError) as error:
+        print(f"{label}: {ANCHOR_READ_REFUSAL}: "
+              f"{type(error).__name__}: {error}", file=sys.stderr, flush=True)
+        raise SystemExit(2)
+
+
 GIT_TIMEOUT = 120
 
 

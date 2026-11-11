@@ -13,7 +13,8 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, new_output_directory, run_owned, wait_for_slot
+from negative_process import (anchor_read_window, mutating_sources,
+                              new_output_directory, run_owned, wait_for_slot)
 from negative_suite import invalidate_completed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -463,14 +464,23 @@ def main():
         parser.error('unknown --only mutation')
     selected = [row for row in MUTATIONS if not args.only or row[0] in args.only]
     if args.check_anchors:
+        # #2795 fix-r5（评审 sibling P1#1 + simplify P2#1 结构性收口）：锚点
+        # 预检也要持树锁读——兄弟变异运行器在自己的 write 与 restore 之间可能
+        # 把变异体留在盘上，无锁读会把核对错在它不拥有的源上（假 FAIL）；锁忙 /
+        # 读失败是拒跑（2），不是宿主会读成 rc 1 的裸 traceback。改走共享
+        # anchor_read_window 装置（manager-gateway --audit fix-r2 先例的收敛形态）。
         errors = 0
-        for name, path, old, new, _test, _assertion in selected:
-            try:
-                changed(path.read_text(), old, new, path)
-                print(f'{name}: anchor OK; Python mutant compiles (runtime not run)')
-            except Exception as error:
-                errors += 1
-                print(f'{name}: INVALID: {error}')
+        with anchor_read_window(ROOT, 'frozen-reinsert-guard --check-anchors'):
+            for name, path, old, new, _test, _assertion in selected:
+                try:
+                    changed(path.read_text(), old, new, path)
+                    print(f'{name}: anchor OK; Python mutant compiles (runtime not run)')
+                except (OSError, UnicodeDecodeError):
+                    # 读失败由装置兜成 rc 2 拒跑，不是逐行 INVALID 计数。
+                    raise
+                except Exception as error:
+                    errors += 1
+                    print(f'{name}: INVALID: {error}')
         return int(bool(errors))
     if args.output is None:
         parser.error('--output is required unless --check-anchors is used')
