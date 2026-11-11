@@ -1,10 +1,13 @@
 //! #2558: the A4 gateway's error console writes never panic when stderr
-//! fails. The eight #2558 sites (`main.rs` startup/accept/connection,
-//! `http_proxy.rs` pairing ×2 and plain proxy, `upstream.rs` connection
-//! task, the memory maintenance default diagnostic) now go through the
-//! shared `console_log_line`, which drops the write error like TS's
-//! `console.error`, while `println!`/`eprintln!` panic on a failed write
-//! (std behavior). The lib-side probes (`http_proxy::tests`,
+//! fails. The #2558 sites — the A4 entry (`main.rs` startup/accept/
+//! connection), `http_proxy.rs`'s four error lines, `upstream.rs`'s
+//! connection task, the memory maintenance default diagnostic, the native
+//! entry's listening/stop/halt lines (`src/native_process.rs`, fix-r1),
+//! and the default warn sinks (`refresh.rs`, `replacement.rs`,
+//! `plugins.rs`, fix-r1) — go through the shared `console_log_line`, which
+//! drops the write error like TS's `console.error`, while `println!`/
+//! `eprintln!` panic on a failed write (std behavior). `native_ws.rs`
+//! joined the same shape in #2434. The lib-side probes (`http_proxy::tests`,
 //! `upstream::tests`, `runtime::memory::maintenance::tests`, plus
 //! `native_process::channels_tests`' failing-sink unit case) drive the
 //! reachable sites in re-exec'd children with EPIPE stderr; this file owns
@@ -31,17 +34,25 @@ use std::{
     time::Duration,
 };
 
-/// The files that own the eight #2558 error lines plus the shared writer
-/// itself. Scanned through the shared proc-macro2 lexer
-/// (`common/source_inputs`), never a text search: comments and string
-/// literals — including the doc comments that quote the macro — are token
-/// kinds there and cannot false-positive.
-const EPRINTLN_FREE_SOURCES: [&str; 5] = [
+/// The files that own the #2558 error lines plus the shared writer itself
+/// (its definition in `native_process/channels.rs`, the native entry that
+/// re-exports it, and `native_ws.rs`, which routed its accept-error lines
+/// through the writer in #2434). Kept complete against new callers by
+/// `shared_writer_call_sites_stay_listed`. Scanned through the shared
+/// proc-macro2 lexer (`common/source_inputs`), never a text search:
+/// comments and string literals — including the doc comments that quote
+/// the macro — are token kinds there and cannot false-positive.
+const EPRINTLN_FREE_SOURCES: [&str; 10] = [
     "src/main.rs",
     "src/http_proxy.rs",
     "src/upstream.rs",
     "src/runtime/memory/maintenance.rs",
     "src/native_process/channels.rs",
+    "src/native_process.rs",
+    "src/native_ws.rs",
+    "src/runtime/refresh.rs",
+    "src/runtime/replacement.rs",
+    "src/runtime/plugins.rs",
 ];
 
 /// Lexical guard: none of the #2558 files may write an error console line
@@ -58,8 +69,132 @@ fn error_console_writes_stay_non_panicking() {
             .unwrap_or_else(|error| panic!("#2558 reading {relative}: {error}"));
         let tokens = source_inputs::lex_source(&source)
             .unwrap_or_else(|error| panic!("#2558 lexing {relative}: {error}"));
+        // A lexed-to-empty file (truncated or emptied) would pass the scan
+        // vacuously; the scan is only evidence with tokens to scan.
+        assert!(
+            !tokens.is_empty(),
+            "#2558 {relative} lexed to an empty token stream; the guard would \
+             pass without scanning anything"
+        );
         assert_no_eprintln(&tokens, relative);
     }
+}
+
+/// The guard must be able to fail (DS r1 boundary#1): an `eprintln!` site
+/// fed to `assert_no_eprintln` has to panic, so an emptied or silently
+/// weakened detector cannot pass as a green run of the file scan above.
+#[test]
+fn assert_no_eprintln_kills_a_real_eprintln() {
+    let fixture = "fn f() { eprintln!(\"#2558 fixture line\"); }";
+    let tokens = source_inputs::lex_source(fixture)
+        .unwrap_or_else(|error| panic!("#2558 lexing the self-test fixture: {error}"));
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        assert_no_eprintln(&tokens, "fixture.rs")
+    }))
+    .expect_err("#2558 the detector must panic on a real eprintln! site");
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or_default();
+    assert!(
+        message.contains("#2558 fixture.rs still writes an error console line"),
+        "#2558 the detector's panic must name the offending file, got {message:?}"
+    );
+}
+
+/// Every production source file that lexically names the shared writer must
+/// be listed in `EPRINTLN_FREE_SOURCES` (fix-r1 review MM sibling#4's
+/// derived rule): the guard is the only killable pin for sites without a
+/// portable EPIPE trigger, so an unlisted caller would silently escape it
+/// — exactly how `native_ws.rs` (a #2434 caller) sat outside the table
+/// until fix-r1. Naming the writer counts a call, the definition, or a
+/// re-export; comments and doc text quote it only as non-`Ident` tokens.
+/// Test modules (`tests.rs` / `*_tests.rs`, the crate's two test-file
+/// spellings) are excluded: their diagnostics are libtest-support code,
+/// not product console lines.
+#[test]
+fn shared_writer_call_sites_stay_listed() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut derived = Vec::new();
+    let mut stack = vec![manifest.join("src")];
+    while let Some(directory) = stack.pop() {
+        let mut entries: Vec<_> = fs::read_dir(&directory)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "#2558 reading {}: {error}",
+                    directory
+                        .strip_prefix(manifest)
+                        .unwrap_or(&directory)
+                        .display()
+                )
+            })
+            .map(|entry| entry.expect("#2558 a directory entry"))
+            .collect();
+        entries.sort_by_key(|entry| entry.path());
+        for entry in entries {
+            let path = entry.path();
+            if entry.file_type().expect("#2558 an entry type").is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|extension| extension != "rs") {
+                continue;
+            }
+            let is_test_module = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name == "tests.rs" || name.ends_with("_tests.rs"));
+            if is_test_module {
+                continue;
+            }
+            let bytes = fs::read(&path)
+                .unwrap_or_else(|error| panic!("#2558 reading {}: {error}", path.display()));
+            let Ok(source) = String::from_utf8(bytes) else {
+                // A non-UTF-8 payload is not Rust source (rustc cannot
+                // compile it either); it cannot name the writer.
+                continue;
+            };
+            let tokens = source_inputs::lex_source(&source).unwrap_or_else(|error| {
+                panic!(
+                    "#2558 {relative} is not lexable Rust; fail closed: {error}",
+                    relative = path.display()
+                )
+            });
+            if tokens_contain_ident(&tokens, "console_log_line") {
+                derived.push(
+                    path.strip_prefix(manifest)
+                        .expect("#2558 source sits under the manifest")
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                );
+            }
+        }
+    }
+    // The walk itself must find callers: a silently broken walk (wrong
+    // root, wrong exclusion) would pass vacuously, so anchor it on a
+    // caller every shape of this crate has had since #2558 r0 — the A4
+    // entry's own file.
+    assert!(
+        derived.iter().any(|caller| caller == "src/main.rs"),
+        "#2558 the walk found no caller in src/main.rs; the derived set is \
+         wrong: {derived:?}"
+    );
+    for caller in &derived {
+        assert!(
+            EPRINTLN_FREE_SOURCES.contains(&caller.as_str()),
+            "#2558 {caller} names the shared writer but is not in \
+             EPRINTLN_FREE_SOURCES; the eprintln-free guard never scans it"
+        );
+    }
+}
+
+fn tokens_contain_ident(tokens: &[SourceToken], word: &str) -> bool {
+    tokens.iter().any(|token| match token {
+        SourceToken::Ident(name) => name == word,
+        SourceToken::Group { tokens, .. } => tokens_contain_ident(tokens, word),
+        _ => false,
+    })
 }
 
 fn assert_no_eprintln(tokens: &[SourceToken], file: &str) {

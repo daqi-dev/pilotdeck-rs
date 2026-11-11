@@ -137,12 +137,19 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
         faces.clone(),
         crate::switch::SwitchTimeouts::production(options.drain_budget),
     );
-    eprintln!("native listening {address}");
+    // #2558: the twin of the A4 entry's startup line (main.rs) — same
+    // binary, same path before the accept loop, and an `eprintln!` panics
+    // when the write fails (std behavior), killing `run()` before it serves.
+    channels::console_log_line(
+        &mut std::io::stderr(),
+        &format!("native listening {address}"),
+    );
     #[cfg(unix)]
     tokio::select! { _ = terminate.recv() => {}, _ = interrupt.recv() => {} }
     #[cfg(not(unix))]
     let _ = tokio::signal::ctrl_c().await;
-    eprintln!("native stopping");
+    // #2558: same non-panicking shape as the listening line above.
+    channels::console_log_line(&mut std::io::stderr(), "native stopping");
     match machine.run().await {
         Ok(()) => Ok(()),
         Err(error) => {
@@ -150,7 +157,14 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
             // the death march below still terminates the process (a
             // registered difference — the matrix's surviving-owner semantics
             // cannot outlive SIGTERM), but a halt never exits 0 (D1).
-            eprintln!("{NATIVE_SWITCH_HALTED}: {error}");
+            // #2558: a best-effort halt line, like TS's `console.error` — an
+            // `eprintln!` here panics when the write fails (std behavior),
+            // and the panic would skip the death march that the halt path
+            // still owes (`finish_after_halt` below).
+            channels::console_log_line(
+                &mut std::io::stderr(),
+                &format!("{NATIVE_SWITCH_HALTED}: {error}"),
+            );
             faces.finish_after_halt().await.map_err(|teardown| {
                 crate::ProxyError::from(format!("{error}; teardown: {teardown}"))
             })?;

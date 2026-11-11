@@ -165,12 +165,20 @@ impl RefreshLog for ConsoleLog {
         println!("{}", String::from_utf16_lossy(message.units()));
     }
     fn warn(&self, message: &str, detail: WarnDetail<'_>) {
-        match detail {
-            WarnDetail::Text(text) => {
-                eprintln!("{message} {}", String::from_utf16_lossy(text.units()))
-            }
-            WarnDetail::Error(error) => eprintln!("{message} {error}"),
-        }
+        // #2558: a best-effort console line, like TS's `console.warn` — an
+        // `eprintln!` here panics when the write fails (std behavior), and
+        // this default is the production wiring's warn sink
+        // (`native_process/services.rs`), so the panic would kill the
+        // request-side task that only owed a warning (the maintenance
+        // default's #2558 fix, same shape).
+        let detail = match detail {
+            WarnDetail::Text(text) => String::from_utf16_lossy(text.units()),
+            WarnDetail::Error(error) => error.to_string(),
+        };
+        crate::native_process::channels::console_log_line(
+            &mut std::io::stderr(),
+            &format!("{message} {detail}"),
+        );
     }
 }
 
