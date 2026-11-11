@@ -49,6 +49,14 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/always-on-2294/negative_controls
 CARGO_TARGET_DIR=/absolute/build/dir python3 -I src/pilotdeck-gateway/tests/fixtures/always-on-2294/negative_controls.py /tmp/fresh-always-on-negative [mutation ...]
 ```
 
+Run with no other writers in this worktree: the runner rewrites the guarded
+sources in place, and `CARGO_TARGET_DIR` only isolates build artifacts, not
+source files — a plain `cargo test` / `cargo build` sharing this tree during
+the mutation window compiles a mutant and produces unrelated false failures.
+`.negative-source.lock` only orders negative-control `mutating_sources`
+holders; it does not block ordinary cargo runs, and its release (e.g. after a
+SIGKILLed runner) does not prove the tree is clean.
+
 `--check` verifies every anchor matches the tree exactly once, and that the
 hand-copied numbers still describe the artifacts they name: the README
 scenario total and group-table counts equal the `oracle.json` records, the
