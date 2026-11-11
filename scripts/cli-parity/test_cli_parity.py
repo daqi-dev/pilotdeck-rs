@@ -3304,7 +3304,54 @@ class ContractTests(unittest.TestCase):
              patch('run_round.run_round') as product, redirect_stdout(io.StringIO()):
             self.assertEqual(main(), 2)
             # #2513 fix-r3: the post-lease apparatus gate runs before any work.
-            verify_apparatus.assert_called_once()
+            # fix-r6: markered (not a bare assert_called_once) so the kill row
+            # that deletes the call site in run_round.main is judged on this
+            # exact assertion, never on a bare-mock failure shape.
+            self.assertEqual(
+                verify_apparatus.call_count, 1,
+                '#2513 the post-lease apparatus gate runs before any work')
+            preflight.assert_called_once()
+            product.assert_not_called()
+        summary = json.loads((output / 'summary.json').read_text())
+        self.assertEqual(summary['status'], 'BLOCKED')
+        self.assertIn('synthetic EPERM', summary['error'])
+
+    def test_post_lease_apparatus_gate_is_called_by_main(self):
+        # #2513 fix-r6 (MM boundary#2): the deletion net. The body-level kill
+        # rows mutate inside _verify_loaded_apparatus; deleting the call
+        # itself leaves every one of them green. The macOS-shaped twin above
+        # cannot be the bound row on a Linux host — main blocks at the
+        # sandbox-exec gate before the lease — so this cell drives main onto
+        # the leased path on any platform: the darwin gate and the
+        # sandbox-exec presence check are the only lies, everything else
+        # between main's entry and the lease is stubbed exactly like the
+        # twin. The gate must run exactly once, before any product work.
+        output = self.root / 'gate-run'
+        real_is_file = Path.is_file
+
+        def darwin_is_file(self):
+            # The one lie this cell needs: macOS's sandbox-exec is present.
+            if self == Path('/usr/bin/sandbox-exec'):
+                return True
+            return real_is_file(self)
+
+        with patch('sys.argv', ['run_round.py', '--node', sys.executable]), \
+             patch('run_round.sys.platform', 'darwin'), \
+             patch.object(Path, 'is_file', darwin_is_file), \
+             patch('run_round.output_path', return_value=output), \
+             patch('run_round.baseline_path', return_value=self.root / 'baseline'), \
+             patch('run_round.baseline_identity', return_value={'sourceHead': HEAD}), \
+             patch('run_round.node_identity', return_value=dict(PINNED_NODE)), \
+             patch('run_round.ts_read_roots', return_value=[]), \
+             patch('run_round.sandbox_profile', return_value='synthetic policy'), \
+             patch('run_round.parity_lock', return_value=nullcontext({'pid': 1})), \
+             patch('run_round._verify_loaded_apparatus') as verify_apparatus, \
+             patch('run_round.preflight', side_effect=Blocked('synthetic EPERM')) as preflight, \
+             patch('run_round.run_round') as product, redirect_stdout(io.StringIO()):
+            self.assertEqual(main(), 2)
+            self.assertEqual(
+                verify_apparatus.call_count, 1,
+                '#2513 the post-lease apparatus gate runs before any work')
             preflight.assert_called_once()
             product.assert_not_called()
         summary = json.loads((output / 'summary.json').read_text())
@@ -3540,6 +3587,26 @@ class ApparatusVerificationTests(unittest.TestCase):
                                   msg='#2513 a HEAD read failure must refuse '
                                       'the round, not compare against nothing'):
             _run_round._verify_loaded_apparatus()
+
+    def test_head_source_reads_the_committed_object(self):
+        # #2513 fix-r6 (MM boundary#1): every other cell patches _head_source
+        # away, so a mutant that reads the worktree (or the index) instead of
+        # ``git show HEAD:`` makes the verification always-true while every
+        # bound row stays green. This cell does not patch it: the pristine
+        # function must return exactly the committed object of this entry,
+        # proven against an independent git invocation. Both sides read the
+        # same HEAD object, so the cell holds on a dirty tree too — the
+        # mutant run is the one where worktree bytes differ from HEAD.
+        result = subprocess.run(
+            ['git', '-C', str(ROOT), 'show', 'HEAD:scripts/cli-parity/run_round.py'],
+            capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0,
+                         '#2513 the independent HEAD read must succeed')
+        self.assertEqual(
+            _run_round._head_source('scripts/cli-parity/run_round.py'),
+            result.stdout,
+            '#2513 _head_source reads the committed HEAD object, '
+            'not the worktree or index')
 
     def test_entry_fingerprint_mismatch_is_refused(self):
         heads = self.heads(_common._apparatus_source)
