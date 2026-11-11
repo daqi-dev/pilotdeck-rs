@@ -62,7 +62,8 @@ Rust 重放（`runtime/settings/gateway_tests.rs`）逐行执行同一 setup 词
 SHA 与来源写进每条 summary 记录、`baseline.json` 与 `baseline-replay.log`
 首行，非 HEAD 基线显式打 `NON-HEAD BASELINE` 且即使全杀也以专属码 `42`
 退出、stdout 与 `baseline.json` 标 `NON-HOST EVIDENCE` / `hostEvidence:
-false`（宿主口径只认 HEAD，杀失败仍优先 `1`））：
+false`（宿主口径只认 HEAD，杀失败仍优先 `1`）；该逃生口的冷/暖 scanner target 两态统一见
+上级 [`fixtures/README.md`](../README.md)「共享输入扫描器」节，#2305 条 5 同步）：
 
 ```sh
 CARGO_TARGET_DIR=… python3 \

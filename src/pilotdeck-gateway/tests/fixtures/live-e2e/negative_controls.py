@@ -17,7 +17,8 @@ ROOT = Path(__file__).resolve().parents[5]
 FIXTURE = Path(__file__).resolve().parent
 sys.path.insert(0, str(FIXTURE.parent))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import ReceiptRun, judge, passed
+from negative_suite import ReceiptRun, declares_test, judge, passed
+from negative_source import assertion_marker_present
 
 SOURCE = ROOT / 'src/pilotdeck-gateway/tests/live_e2e.rs'
 BINDINGS = {
@@ -86,15 +87,41 @@ def main():
     declared = set(re.findall(r'mutants::on\("([^"]+)"\)', source))
     if declared != set(BINDINGS):
         raise RuntimeError(f'#748 stale switch bindings: source={declared}, runner={set(BINDINGS)}')
+    # #2303 (条 4): every binding is audited before the refusal, and a
+    # scanner refusal (ValueError) becomes one named INVALID record per row
+    # instead of a raw traceback on the first failure -- the session-factory
+    # / session-drop-release audit shape.
+    invalid = []
     for name, (test, assertion) in BINDINGS.items():
-        if source.count(f'mutants::on("{name}")') != 1 or f'"{assertion}"' not in source or test not in source:
-            raise RuntimeError('#748 stale switch/assertion binding: ' + name)
+        try:
+            # #2303 (条 5): the assertion marker must live in code, never in
+            # a comment -- the raw-text scan let a commented-out copy of the
+            # assertion satisfy the binding after the real one was deleted.
+            # #2303 (条 17): the bound cell must be declared, not merely
+            # mentioned -- `cell!` rows here, plain fns for the last two.
+            if (source.count(f'mutants::on("{name}")') != 1
+                    or not assertion_marker_present(source, f'"{assertion}"')
+                    or not declares_test(source, test, 'cell!')):
+                raise ValueError('stale switch/assertion binding')
+        except Exception as error:
+            invalid.append(f'{name}: {type(error).__name__}: {error}')
     for name, (test, assertion, production, tests) in LIB_BINDINGS.items():
-        if (TURN / production).read_text().count(f'mutants::on("{name}")') != 1:
-            raise RuntimeError('#748 stale production switch: ' + name)
-        text = (TURN / tests).read_text()
-        if test.rsplit('::', 1)[1] not in text or f'"{assertion}"' not in text:
-            raise RuntimeError('#748 stale production test binding: ' + name)
+        try:
+            if (TURN / production).read_text().count(f'mutants::on("{name}")') != 1:
+                raise ValueError('stale production switch')
+            text = (TURN / tests).read_text()
+            # #2303 (条 17): the old short-name "occurs anywhere" scan accepted
+            # a noise carrier (a comment, an unrelated mention); the shared
+            # declaration rule requires the fn form in the bound module file.
+            # #2303 (条 5): the assertion marker must live in code, never in
+            # a comment.
+            if (not declares_test(text, test.rsplit('::', 1)[1])
+                    or not assertion_marker_present(text, f'"{assertion}"')):
+                raise ValueError('stale production test binding')
+        except Exception as error:
+            invalid.append(f'{name}: {type(error).__name__}: {error}')
+    if invalid:
+        raise RuntimeError('#748 binding audit INVALID rows: ' + '; '.join(invalid))
     # #1194/#1398: the feature switches above cannot see a plain-Python guard,
     # so bind it by text here. Behaviour is proven by
     # test_acceptance.py::test_capture_second_signal_preserves_cleanup.

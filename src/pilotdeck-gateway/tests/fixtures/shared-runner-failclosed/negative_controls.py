@@ -38,11 +38,16 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, new_output_directory, run_owned
+from negative_process import (mutating_sources, new_output_directory, run_owned,
+                              write_source_atomic)
 
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 SUITE = FIXTURES / 'negative_suite.py'
+# #2303 (条 1/20): the two hand-rolled Rust lexers converged into
+# ``negative_source``; the scanner rows below mutate SOURCE, and the guard
+# restores it with the same byte-for-byte contract as SUITE/SQLITE.
+SOURCE = FIXTURES / 'negative_source.py'
 SQLITE = FIXTURES / '_shared/negative_sqlite_header.py'
 
 # (name, source, before, after, bound unittest, exact #1076 assertion message)
@@ -276,38 +281,62 @@ MUTANT_ROWS = [
     (
         'audit-binding-missing-declaration-allowed',
         SUITE,
-        "    compact = ''.join(_rust_code_only(source).split())",
-        "    return True\n    compact = ''.join(_rust_code_only(source).split())",
+        "    code = _rust_code_only(source)",
+        "    return True\n    code = _rust_code_only(source)",
         'test_negative_suite.AuditBindingTests.test_declares_test_needs_the_exact_name',
         '#1890 a missing declaration must be refused',
     ),
     # #1890 r8: the table-row form needs a left boundary, or a longer name that
     # merely ends in the short name (`xcase_a =>`) satisfies the binding.
+    # #2303 (条 9): the boundary is now the shared TABLE_LEFT separator
+    # (`{`, `,` or a newline), so a match arm (`Ok(case_a) =>`) is refused too.
     (
         'audit-binding-suffix-name-allowed',
         SUITE,
-        "    if re.search(r'(?<!\\w)' + escaped + '=>', compact):",
-        "    if short + '=>' in compact:",
+        "    if re.search(_TABLE_LEFT + escaped + r'\\s*=>', code):",
+        "    if re.search(escaped + r'\\s*=>', code):",
         'test_negative_suite.AuditBindingTests.test_declares_test_needs_the_exact_name',
         '#1890 a longer name ending in the short name must not count',
     ),
     (
-        # #2064 r10: the fn form's boundary is now a single left-lookahead in
-        # `_FN_LEFT`; removing it re-opens the embedded-fn hole (the old bare
-        # `\w$`-style acceptance) for `run_fncase_a(`.
+        # #2064 r10 + #2303 (条 1/19): the fn--name boundary is real
+        # whitespace in the code view now; loosening it re-embeds ``fn`` and
+        # the name into one identifier (`run_fncase_a(`) -- the old
+        # embedded-fn hole, pinned on the whitespace itself.
         'audit-binding-embedded-fn-allowed',
-        SUITE,
-        "_FN_LEFT = r'(?<!\\w)(?:(?:' + '|'.join(_FN_QUALIFIERS) + r'))*'",
-        "_FN_LEFT = r'(?:(?:' + '|'.join(_FN_QUALIFIERS) + r'))*'",
+        SOURCE,
+        "FN_LEFT = r'(?<!\\w)fn\\s+'",
+        "FN_LEFT = r'(?<!\\w)fn\\s*'",
         'test_negative_suite.AuditBindingTests.test_declares_test_needs_the_exact_name',
         '#1890 a longer identifier must not satisfy the fn form',
+    ),
+    (
+        # The word boundary in front of ``fn``: without it a qualifier glued
+        # onto ``fn`` (`asyncfn case_a(`) reads as a qualified declaration --
+        # the old head.endswith() hole, now one longer identifier.
+        'audit-binding-qualifier-suffix-allowed',
+        SOURCE,
+        "FN_LEFT = r'(?<!\\w)fn\\s+'",
+        "FN_LEFT = r'fn\\s+'",
+        'test_negative_suite.AuditBindingTests.test_declares_test_needs_the_exact_name',
+        '#2303 a qualifier glued onto fn is an identifier, not a declaration',
+    ),
+    (
+        # ``fn`` itself is load-bearing: dropping it leaves a bare
+        # name-at-word-boundary matcher that a call (`case_a();`) satisfies.
+        'audit-binding-fn-keyword-dropped',
+        SOURCE,
+        "FN_LEFT = r'(?<!\\w)fn\\s+'",
+        "FN_LEFT = r'(?<!\\w)'",
+        'test_negative_suite.AuditBindingTests.test_declares_test_needs_the_exact_name',
+        '#2303 a call is not a declaration',
     ),
     (
         'audit-binding-longer-macro-allowed',
         SUITE,
         "    return bool(macro) and re.search(\n"
-        "        r'(?<!\\w)' + re.escape(macro) + r'\\(' + escaped + ',', compact) is not None",
-        "    return bool(macro) and macro + '(' + escaped + ',' in compact",
+        "        r'(?<!\\w)' + re.escape(macro) + r'\\(\\s*' + escaped + r'\\s*,', code) is not None",
+        "    return bool(macro) and macro + '(' + escaped + ',' in code",
         'test_negative_suite.AuditBindingTests.test_declares_test_needs_the_exact_name',
         '#1890 a longer macro name must not satisfy the table form',
     ),
@@ -326,31 +355,34 @@ MUTANT_ROWS = [
         '#2064 declares_test must refuse an empty short name',
     ),
     (
-        # #2064-2a: deleting the qualifier whitelist strands every
-        # `async fn` / `pub fn` binding (a false stale, not a pass).
-        'audit-binding-qualifiers-dropped',
-        SUITE,
-        "_FN_LEFT = r'(?<!\\w)(?:(?:' + '|'.join(_FN_QUALIFIERS) + r'))*'",
-        "_FN_LEFT = r'(?<!\\w)'",
-        'test_negative_suite.AuditBindingTests.test_declares_test_accepts_every_existing_form',
-        '#2064 an async fn declaration must satisfy the fn form',
+        # #2303 (条 3): the fn-form-only entry behind ``declares_test``;
+        # always-true is the drift the panic-marker audit had (a table row
+        # or a macro call satisfied "the test is declared as a fn").
+        'audit-binding-declares-function-always-true',
+        SOURCE,
+        "    return re.search(FN_LEFT + re.escape(short) + r'\\s*\\(',\n"
+        "                     rust_code_only(source)) is not None",
+        "    return True",
+        'test_negative_source.DeclaresFunctionTests.'
+        'test_the_table_and_macro_forms_do_not_satisfy_it',
+        '#2303 a table row must not satisfy the fn-only form',
     ),
     (
-        # #2064-2b: the old head.endswith() accepted any head ending in a
-        # qualifier word, so `runasyncfncase_a(`/`xpubfncase_a(` passed as a
-        # qualified declaration.
-        'audit-binding-qualifier-suffix-allowed',
-        SUITE,
-        "_FN_LEFT = r'(?<!\\w)(?:(?:' + '|'.join(_FN_QUALIFIERS) + r'))*'",
-        "_FN_LEFT = r'(?<!\\w)(?:\\w*(?:' + '|'.join(_FN_QUALIFIERS) + r'))*'",
-        'test_negative_suite.AuditBindingTests.test_declares_test_needs_the_exact_name',
-        '#2064 a qualifier glued onto a longer identifier must not satisfy the fn form',
+        # #2303 (条 8): the body is cut from a head that starts in code;
+        # ignoring the noise spans would cut it from a commented-out decoy.
+        'audit-binding-test-body-noise-skipped',
+        SOURCE,
+        "    noise = [(start, end) for kind, start, end in _lex(source) if kind != 'code']",
+        "    noise = []",
+        'test_negative_source.TestBodySegmentation.'
+        'test_a_block_comment_fn_head_is_not_a_declaration',
+        '#2303 the body must come from the head in code',
     ),
     (
         # #2064 r10: comments and literals are blanked before matching; each
         # stripping branch that stops working re-opens its carrier.
         'audit-binding-line-comment-kept',
-        SUITE,
+        SOURCE,
         "        if source.startswith('//', i):",
         "        if source.startswith('//', i) and False:",
         'test_negative_suite.AuditBindingTests.test_declares_test_ignores_comment_and_string_carriers',
@@ -358,19 +390,19 @@ MUTANT_ROWS = [
     ),
     (
         'audit-binding-block-comment-kept',
-        SUITE,
+        SOURCE,
         "        if source.startswith('/*', i):\n"
-        "            depth, i = 1, i + 2",
+        "            depth, j = 1, i + 2",
         "        if source.startswith('/*', i) and False:\n"
-        "            depth, i = 1, i + 2",
+        "            depth, j = 1, i + 2",
         'test_negative_suite.AuditBindingTests.test_declares_test_ignores_comment_and_string_carriers',
         '#2064 a block comment must not satisfy the fn form',
     ),
     (
         'audit-binding-string-literal-kept',
-        SUITE,
-        "_STRING_START = re.compile(r'(?:cr|c|br|rb|r|b)?(#*)\"')",
-        "_STRING_START = re.compile(r'(?:cr|c|br|rb|r|b)?(#*)\"\\Z')",
+        SOURCE,
+        "_STRING_START = re.compile(r'(cr|c|br|r|b)?(#*)\"')",
+        "_STRING_START = re.compile(r'(cr|c|br|r|b)?(#*)\"\\Z')",
         'test_negative_suite.AuditBindingTests.test_declares_test_ignores_comment_and_string_carriers',
         '#2064 a string literal must not satisfy the fn form',
     ),
@@ -378,7 +410,7 @@ MUTANT_ROWS = [
         # The char-literal branch: a `'"'` that no longer scans as one char
         # re-opens its quote as a string opener and un-strips later code.
         'audit-binding-char-literal-kept',
-        SUITE,
+        SOURCE,
         "        if source[i] == \"'\" or (source[i] == 'b' and _token_start(source, i)):",
         "        if False and (source[i] == 'b' and _token_start(source, i)):",
         'test_negative_suite.AuditBindingTests.test_declares_test_ignores_comment_and_string_carriers',
@@ -388,24 +420,48 @@ MUTANT_ROWS = [
         # #449 / #1166: the fail-closed scan rule itself -- an unterminated
         # literal that no longer raises audits whatever it guessed.
         'audit-binding-unterminated-string-accepted',
-        SUITE,
-        "                while True:\n"
-        "                    if i >= length:\n"
+        SOURCE,
+        "                    if j >= length:\n"
         "                        raise ValueError('unterminated Rust string')",
-        "                while True:\n"
-        "                    if i >= length:\n"
+        "                    if j >= length:\n"
         "                        break",
         'test_negative_suite.AuditBindingTests.test_declares_test_unterminated_literal_is_refused',
         '#2064 an unterminated literal must fail closed',
     ),
     (
+        # #2303 (条 18): the same rule for the two raises that had no test.
+        # An unterminated block comment that breaks instead of raising
+        # blanked-to-EOF, guessing the rest of the file away.
+        'audit-binding-unterminated-block-comment-accepted',
+        SOURCE,
+        "                    raise ValueError('unterminated Rust block comment')",
+        "                    break",
+        'test_negative_suite.AuditBindingTests.'
+        'test_declares_test_unterminated_comments_and_raws_are_refused',
+        '#2303 an unterminated block comment must fail closed',
+    ),
+    (
+        # #2303 (条 18): an unterminated raw string that stops failing closed
+        # clamps the missing close onto the opener, emits three bytes as the
+        # literal and audits the carried fn text as code.
+        'audit-binding-unterminated-raw-string-accepted',
+        SOURCE,
+        "                if close < 0:\n"
+        "                    raise ValueError('unterminated Rust raw string')",
+        "                if close < 0:\n"
+        "                    close = j",
+        'test_negative_suite.AuditBindingTests.'
+        'test_declares_test_unterminated_comments_and_raws_are_refused',
+        '#2303 an unterminated raw string must fail closed',
+    ),
+    (
         # #2064 r11: the C-string prefixes. Dropping ``cr|c`` re-opens the
-        # raw C string hole: the inner quote closes a bogus plain string and
-        # the carried fn text returns to the code view.
+        # raw C string hole: the carrier now trips the #2303 unknown-prefix
+        # refusal instead, which the bound carrier counts as a hit.
         'audit-binding-c-string-prefix-allowed',
-        SUITE,
-        "_STRING_START = re.compile(r'(?:cr|c|br|rb|r|b)?(#*)\"')",
-        "_STRING_START = re.compile(r'(?:br|rb|r|b)?(#*)\"')",
+        SOURCE,
+        "_STRING_START = re.compile(r'(cr|c|br|r|b)?(#*)\"')",
+        "_STRING_START = re.compile(r'(br|r|b)?(#*)\"')",
         'test_negative_suite.AuditBindingTests.test_declares_test_ignores_comment_and_string_carriers',
         '#2064 a raw C string literal must not satisfy the fn form',
     ),
@@ -413,7 +469,7 @@ MUTANT_ROWS = [
         # #2064 r11: the escape char bodies. Reverting to the pattern that
         # cannot close '\u{…}' / '\xNN' leaks their quotes into the code view.
         'audit-binding-char-escape-allowed',
-        SUITE,
+        SOURCE,
         '_CHAR_START = re.compile(r"b?\'(?:\\\\u\\{[0-9A-Fa-f_]+\\}|\\\\x[0-9A-Fa-f]{2}|\\\\.|[^\\\\\'])\'")',
         '_CHAR_START = re.compile(r"b?\'(?:\\\\.|[^\\\\\'])\'")',
         'test_negative_suite.AuditBindingTests.test_rust_code_only_blanks_escape_char_literals',
@@ -422,27 +478,74 @@ MUTANT_ROWS = [
     (
         # #2064 r4: the fail-closed refusal of a raw hash delimiter with no
         # r-bearing prefix. Disabling the refusal re-opens the c#"…"# carrier:
-        # the inner quote closes a bogus plain string and the carried fn text
-        # returns to the code view (here it dies as unterminated instead, so
-        # the bound kill is the message check after the assertRaises).
+        # it now dies as an unterminated string instead, so the bound kill is
+        # the reason check after the assertRaises.
         'audit-binding-c-string-hash-prefix-accepted',
-        SUITE,
-        "            if hashes and 'r' not in start.group(0):",
-        "            if False and 'r' not in start.group(0):",
+        SOURCE,
+        "            if hashes and prefix not in _RAW_PREFIXES:",
+        "            if False and prefix not in _RAW_PREFIXES:",
         'test_negative_suite.AuditBindingTests.test_declares_test_ignores_comment_and_string_carriers',
         '#2064 a hash delimiter without an r prefix must fail closed',
     ),
     (
         # #2064 r4: the gate that lets a c-prefixed literal open a string.
         # Dropping ``c`` from the gate set re-opens the raw C string hole via
-        # the cr carrier (bound there; the c# carrier below would die as an
-        # unterminated string and blur the first failure).
+        # the cr carrier (bound there): the ``#`` now trips the #2303
+        # unknown-prefix refusal, which the bound carrier counts as a hit.
         'audit-binding-c-string-gate-allowed',
-        SUITE,
+        SOURCE,
         "        if source[i] == '\"' or (source[i] in 'rbc' and _token_start(source, i)):",
         "        if source[i] == '\"' or (source[i] in 'rb' and _token_start(source, i)):",
         'test_negative_suite.AuditBindingTests.test_declares_test_ignores_comment_and_string_carriers',
         '#2064 a raw C string literal must not satisfy the fn form',
+    ),
+    (
+        # #2303 (条 16): deleting the ``br`` alternative strands the raw byte
+        # string carrier at the unknown-prefix refusal (counted as a hit by
+        # the bound test); keeping it is what blanks ``br#"…"#`` whole.
+        'audit-binding-br-alternative-deleted',
+        SOURCE,
+        "_STRING_START = re.compile(r'(cr|c|br|r|b)?(#*)\"')",
+        "_STRING_START = re.compile(r'(cr|c|r|b)?(#*)\"')",
+        'test_negative_suite.AuditBindingTests.'
+        'test_declares_test_ignores_raw_byte_string_carriers',
+        '#2064 a raw byte string literal must not satisfy the fn form',
+    ),
+    (
+        # #2303 (条 15): the unknown-prefix refusal itself. Disabling it lets
+        # the inner quote open a bogus plain string and the carried fn text
+        # returns to the code view.
+        'audit-binding-unknown-prefix-accepted',
+        SOURCE,
+        "                and i and _WORD.match(source[i - 1])):",
+        "                and i and False):",
+        'test_negative_suite.AuditBindingTests.test_declares_test_refuses_unknown_hash_prefixes',
+        '#2303 an unknown string prefix must fail closed',
+    ),
+    (
+        # #2303 (条 15): ``rb`` stays out of the prefix table. Re-adding it
+        # only turns the unknown-prefix refusal into the invalid-prefix one,
+        # a guess about a shape rustc rejects outright; the bound reason
+        # check kills that drift.
+        'audit-binding-rb-prefix-readded',
+        SOURCE,
+        "_STRING_START = re.compile(r'(cr|c|br|r|b)?(#*)\"')",
+        "_STRING_START = re.compile(r'(cr|c|br|rb|r|b)?(#*)\"')",
+        'test_negative_suite.AuditBindingTests.test_declares_test_refuses_unknown_hash_prefixes',
+        '#2303 the rb prefix must not borrow the raw-string gate',
+    ),
+    (
+        # #2303 (条 5): the binding-audit marker matcher must scan the
+        # comment-free view. Falling back to the raw text re-opens the
+        # comment carrier -- a commented-out copy of the assertion
+        # satisfies the binding while the compiler ignores the line.
+        'audit-binding-marker-raw-scan',
+        SOURCE,
+        "    return marker in squeeze(source)",
+        "    return marker in source",
+        'test_negative_source.AssertionMarkerTests.'
+        'test_a_line_comment_carrier_does_not_satisfy_the_binding',
+        '#2303 a line comment must not carry the assertion marker',
     ),
 ]
 
@@ -523,7 +626,7 @@ def main():
     # No cargo subprocess is launched: the bound unittest is a Python child.
     results = []
     try:
-        with mutating_sources(ROOT, [SUITE, SQLITE]) as originals:
+        with mutating_sources(ROOT, [SUITE, SQLITE, SOURCE]) as originals:
             texts = {path: originals[path].decode() for path in originals}
             # Preflight every selected anchor before any positive/mutant run:
             # an expired anchor aborts as INVALID, never SURVIVED.
@@ -535,12 +638,18 @@ def main():
                     if not passed(run_test(test, env)):
                         reason = 'positive control did not pass'
                     else:
-                        path.write_text(texts[path].replace(before, after, 1))
+                        # #2303 (条 10/14): publish the mutant in one rename --
+                        # the old truncating in-place write left a window where
+                        # a concurrently-importing sibling read half-written
+                        # bytes (write_source_atomic, #1903/#1908 direction).
+                        write_source_atomic(
+                            ROOT, path,
+                            texts[path].replace(before, after, 1).encode())
                         status, reason = classify(run_test(test, env), test, message)
                 except Exception as error:
                     status, reason = 'INVALID', f'{type(error).__name__}: {error}'
                 finally:
-                    path.write_bytes(originals[path])
+                    write_source_atomic(ROOT, path, originals[path])
                     if path.read_bytes() != originals[path]:
                         raise RuntimeError(f'#1076 byte restoration failed: {path}')
                 try:

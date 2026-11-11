@@ -71,19 +71,30 @@ def audit():
                ('runtime::turn::live::tests::', live, None))
     sources = {path: path.read_text() for _, path, _ in modules}
     macros = {path: macro for _, path, macro in modules}
+    # #2303 (条 4): the session-factory / session-drop-release audit shape --
+    # every row is checked and accounted (CHECKED or INVALID with its
+    # reason), so a scanner refusal (ValueError) becomes one named INVALID
+    # row instead of a raw traceback on the first failure.
+    rows = []
     for name, path, old, new, scope, test, panic in cases:
-        mutate(path.read_text(), scope, [(old, new)])
-        # #1890: one shared binding rule (this copy required the spaced
-        # `fn name(` spelling and carried the macro form inline).
-        file, short = bind_module_file(test, [(prefix, source) for prefix, source, _ in modules])
-        if not declares_test(sources[file], short, macros[file]):
-            raise ValueError('bound test not found: ' + test)
-    return [{'mutation': n, 'test': t, 'panic': a} for n, _, _, _, _, t, a in cases]
+        try:
+            mutate(path.read_text(), scope, [(old, new)])
+            # #1890: one shared binding rule (this copy required the spaced
+            # `fn name(` spelling and carried the macro form inline).
+            file, short = bind_module_file(test, [(prefix, source) for prefix, source, _ in modules])
+            if not declares_test(sources[file], short, macros[file]):
+                raise ValueError('bound test not found: ' + test)
+            rows.append(dict(mutation=name, test=test, panic=panic, status='CHECKED'))
+        except Exception as error:
+            rows.append(dict(mutation=name, test=test, panic=panic, status='INVALID',
+                             reason=f'{type(error).__name__}: {error}'))
+    return rows
 
 
 if sys.argv[1:] == ['--audit']:
-    print(json.dumps(audit(), indent=2))
-    raise SystemExit()
+    audited = audit()
+    print(json.dumps(audited, indent=2))
+    raise SystemExit(int(any(row['status'] != 'CHECKED' for row in audited)))
 env = os.environ.copy()
 if not env.get('CARGO_TARGET_DIR'):
     raise SystemExit('CARGO_TARGET_DIR must be supplied by caller')

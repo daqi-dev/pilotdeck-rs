@@ -481,106 +481,18 @@ fn append_delta_regenerates_identically() {
 /// companion files. The fixture has no committed `.generation-owner`, so the
 /// marker never entered that comparison surface: a no-op marker write, a
 /// sibling fixture's identity, and (see #2116 item 2) a `wx` → `w` regression
-/// all stayed green. Follow the dedicated-generator caliber instead
-/// (`factory_generators_clean_only_owned_work` and kin): drive `generate.mts`
-/// directly, pin existence and the owner identity, and give the exclusive
-/// `wx` open its own foreign-marker cell — no fixture anywhere pre-seeded a
-/// foreign `.generation-owner` and expected EEXIST. This generator allocates
-/// no `run-*` work roots, so the marker carries no cleanup ownership here;
-/// it carries the output directory's cross-generator exclusivity (the marker
-/// is the first `wx` write, before `try`).
+/// all stayed green. Follow the dedicated-generator caliber instead:
+/// drive `generate.mts` directly, pin existence and the owner identity, and
+/// give the exclusive `wx` open its own foreign-marker cell — no fixture
+/// anywhere pre-seeded a foreign `.generation-owner` and expected EEXIST.
+/// This generator allocates no `run-*` work roots, so the marker carries no
+/// cleanup ownership here; it carries the output directory's
+/// cross-generator exclusivity. #2304 (条 2): the cell shape lives in
+/// `test_baseline::generation_owner_marker_cell`.
 #[test]
 #[ignore = "requires fixed Node v22.22.0 / ICU 78.2 and real TS baseline"]
 fn append_delta_generator_writes_owned_marker() {
-    use std::fs;
-    // #1890 caliber: the manual negative controls make these assertions
-    // panic on purpose, so a plain trailing remove_dir_all would never run
-    // and leave the scratch behind in /tmp. The Drop guard cleans both paths.
-    struct Scratch(std::path::PathBuf);
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-    for collision in [false, true] {
-        let root =
-            std::env::temp_dir().join(format!("pdrs-2116-append-delta-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&root).expect("#2116 create append-delta marker scratch");
-        let _scratch = Scratch(root.clone());
-        if collision {
-            // A realistic foreign owner: the parent factory generator's marker.
-            fs::write(root.join(".generation-owner"), "session-factory\n")
-                .expect("#2116 seed foreign owner marker");
-        }
-        let base = PathBuf::from(
-            std::env::var_os("PDRS_BASELINE").expect("#2116 append-delta TS baseline configured"),
-        );
-        let mut command = crate::test_baseline::node_command();
-        command
-            .arg("--disable-warning=ExperimentalWarning")
-            .arg("--import")
-            .arg(base.join("node_modules/tsx/dist/loader.mjs"))
-            .arg(
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("tests/fixtures/session-factory/append-delta/generate.mts"),
-            )
-            .arg(&root);
-        let (status, stdout, stderr) =
-            crate::test_baseline::run_generator(&mut command, "session-factory/append-delta")
-                .expect("#2116 append-delta marker generator run");
-        let output = format!(
-            "{}{}",
-            String::from_utf8_lossy(&stdout),
-            String::from_utf8_lossy(&stderr)
-        );
-        assert!(
-            status.success() != collision,
-            "#2116 append-delta generator succeeds only without a foreign owner marker: {output}"
-        );
-        if collision {
-            // A nonzero exit alone also matches an earlier crash or a deadline
-            // kill; pin the failure to the marker's exclusive open (#1281
-            // caliber: path and code both have to show up).
-            assert!(
-                output.contains("EEXIST") && output.contains(".generation-owner"),
-                "#2116 append-delta generator fails on the exclusive owner marker open: {output}"
-            );
-            assert_eq!(
-                fs::read_to_string(root.join(".generation-owner"))
-                    .expect("#2116 read foreign owner marker"),
-                "session-factory\n",
-                "#2116 failed append-delta generation preserves the foreign owner bytes"
-            );
-            // The marker is the first write into OUT: pin that the generator
-            // wrote nothing else before the exclusive open failed, or a moved
-            // (still-wx) marker write would pass every assertion above.
-            let mut names: Vec<_> = fs::read_dir(&root)
-                .expect("#2116 list collision scratch")
-                .map(|entry| entry.expect("#2116 read scratch entry").file_name())
-                .collect();
-            names.sort();
-            assert_eq!(
-                names,
-                [std::ffi::OsString::from(".generation-owner")],
-                "#2116 collision cell writes nothing before the exclusive marker open"
-            );
-        } else {
-            assert!(
-                !output.contains("EEXIST"),
-                "#2116 append-delta generator success cell reports no collision: {output}"
-            );
-            assert_eq!(
-                fs::read_to_string(root.join(".generation-owner"))
-                    .expect("#2116 append-delta ownership marker"),
-                "session-factory/append-delta\n",
-                "#2116 append-delta generator writes its ownership marker"
-            );
-        }
-        // #2116 r4: the Drop guard above swallows removal errors (it runs on
-        // both the normal and the panic path); this explicit removal asserts
-        // the scratch is reclaimable at cell end (DS r2 P2).
-        fs::remove_dir_all(&root).expect("#2116 remove append-delta marker scratch");
-    }
+    crate::test_baseline::generation_owner_marker_cell("session-factory/append-delta");
 }
 
 #[test]
@@ -609,12 +521,11 @@ fn tail_generator_cleans_only_owned_work() {
                     .join("tests/fixtures/turn-runner-tail/generate.mts"),
             )
             .arg(&root);
-        let (status, stdout, stderr) = crate::test_baseline::run_generator_with_deadline(
-            &mut command,
-            "turn-runner-tail",
-            Duration::from_secs(120),
-        )
-        .expect("#1253 bounded tail generator");
+        // #2304 (条 4): the knob-aware entry — a slow host can raise the
+        // bound through PDRS_REGEN_TIMEOUT_SECS instead of editing this cell.
+        let (status, stdout, stderr) =
+            crate::test_baseline::run_generator(&mut command, "turn-runner-tail")
+                .expect("#1253 bounded tail generator");
         assert!(
             status.success() != collision,
             "#1253 tail generator succeeds: {}{}",
@@ -715,6 +626,19 @@ fn tail_generator_cleans_only_owned_work() {
         }
         fs::remove_dir_all(root).expect("#1253 remove owned test scratch");
     }
+}
+
+/// #2304 (条 1): the tail generator's `.generation-owner` conflict cell —
+/// `tail_generator_cleans_only_owned_work` above pins the marker's existence
+/// and identity on the success path, but nothing pre-seeded a foreign
+/// `.generation-owner` and expected the generator to refuse the directory
+/// (#2116 item 2's minimum for every marker-writing generator: the exclusive
+/// `wx` open exits with EEXIST and the foreign bytes survive). The cell shape
+/// lives in `test_baseline::generation_owner_marker_cell`.
+#[test]
+#[ignore = "requires fixed Node and real TS baseline"]
+fn tail_generator_writes_owned_marker() {
+    crate::test_baseline::generation_owner_marker_cell("turn-runner-tail");
 }
 
 fn delivery() -> JsValue {
@@ -1159,12 +1083,11 @@ fn factory_generators_clean_only_owned_work() {
         if matches!(variant, Variant::SnapshotFailure) {
             command.env("PDRS_1253_SNAPSHOT_FAIL", "1");
         }
-        let (status, stdout, stderr) = crate::test_baseline::run_generator_with_deadline(
-            &mut command,
-            "session-factory",
-            Duration::from_secs(300),
-        )
-        .expect("#1253 cleanup generator bounded execution");
+        // #2304 (条 4): the knob-aware entry — a slow host can raise the
+        // bound through PDRS_REGEN_TIMEOUT_SECS instead of editing this cell.
+        let (status, stdout, stderr) =
+            crate::test_baseline::run_generator(&mut command, "session-factory")
+                .expect("#1253 cleanup generator bounded execution");
         // #1281 review: a bare non-zero exit does not prove the cell failed at
         // its intended point — a missing baseline, a bad flag, a crashed loader
         // or an earlier `wx` write (file-snapshot-test and probe both write

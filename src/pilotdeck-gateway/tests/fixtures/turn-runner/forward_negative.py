@@ -258,14 +258,26 @@ def audit():
     # declares_test's fn form covers) instead of the forwarding table.
     modules = ((test_prefix, base / 'forward_tests.rs'),
                ('runtime::turn::live::stream_tests::gates_tests::', base / 'gates_tests.rs'))
+    # #2303 (条 4): the session-factory / session-drop-release audit shape --
+    # every row is checked and accounted (CHECKED or INVALID with its
+    # reason), so a scanner refusal (ValueError) becomes one named INVALID
+    # row instead of a raw traceback on the first failure.
+    rows = []
     for name,path,old,new,scope,test,anchor in cases:
-        mutate(path.read_text(),scope,[(old,new)])
-        file, short = bind_module_file(test, modules)
-        if not declares_test(file.read_text(), short, 'case!'):
-            raise ValueError('bound full test not found: ' + test)
-    return [{'mutation':n,'test':t,'assertion':a} for n,_,_,_,_,t,a in cases]
+        try:
+            mutate(path.read_text(),scope,[(old,new)])
+            file, short = bind_module_file(test, modules)
+            if not declares_test(file.read_text(), short, 'case!'):
+                raise ValueError('bound full test not found: ' + test)
+            rows.append(dict(mutation=name, test=test, assertion=anchor, status='CHECKED'))
+        except Exception as error:
+            rows.append(dict(mutation=name, test=test, assertion=anchor, status='INVALID',
+                             reason=f'{type(error).__name__}: {error}'))
+    return rows
 if sys.argv[1:] == ['--audit']:
-    print(json.dumps(audit(),indent=2));raise SystemExit()
+    audited = audit()
+    print(json.dumps(audited,indent=2))
+    raise SystemExit(int(any(row['status'] != 'CHECKED' for row in audited)))
 env=os.environ.copy()
 if not env.get('CARGO_TARGET_DIR'): raise SystemExit('CARGO_TARGET_DIR must be supplied by caller')
 env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only',CARGO_PROFILE_TEST_DEBUG='line-tables-only',CARGO_TERM_QUIET='false')

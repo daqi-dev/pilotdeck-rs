@@ -394,6 +394,15 @@ def tree_lock(root, **kwargs):
 
 GIT_TIMEOUT = 120
 
+# #2305 (条 2): the five scanner identity sources. The Rust example hashes
+# the same five through include_str! at the end of its main(), so this tuple
+# must stay in step with that list; workspace-pristine pins the pair against
+# drift (the digest is byte-identical only while both sides name these files).
+SCANNER_IDENTITY_FILES = ('src/pilotdeck-gateway/examples/workspace_inputs.rs',
+                          'src/pilotdeck-gateway/tests/common/source_inputs.rs',
+                          'src/pilotdeck-gateway/Cargo.toml',
+                          'src/Cargo.toml', 'src/Cargo.lock')
+
 
 def _git(root, *args):
     # Popen, not subprocess.run: runner meta-controls patch subprocess.run to
@@ -499,10 +508,7 @@ def _workspace_literal_inputs(root, baseline, *, env=None):
     try:
         target = _scanner_environment(env)['CARGO_TARGET_DIR']
         scanner_root = Path(__file__).resolve().parents[4]
-        sources = (scanner_root / 'src/pilotdeck-gateway/examples/workspace_inputs.rs',
-                   scanner_root / 'src/pilotdeck-gateway/tests/common/source_inputs.rs',
-                   scanner_root / 'src/pilotdeck-gateway/Cargo.toml',
-                   scanner_root / 'src/Cargo.toml', scanner_root / 'src/Cargo.lock')
+        sources = tuple(scanner_root / relative for relative in SCANNER_IDENTITY_FILES)
         digest = hashlib.sha256(b''.join(path.read_bytes() for path in sources)).hexdigest()
         executable = Path(target).resolve() / 'debug/examples/workspace_inputs'
         expected_head = _git(root, 'rev-parse', '--verify', baseline + '^{commit}').decode().strip()

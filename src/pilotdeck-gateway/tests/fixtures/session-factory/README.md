@@ -15,7 +15,7 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib r
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --audit
 ```
 
-179 项变异绑定完整 Rust 测试名和专属失败消息（`--audit` 机检该数与用例表一致，漂移即失败）。先应用补丁并提交，使所有变异目标等于 HEAD（未提交的沙箱候选可用 `PDRS_NEGATIVE_BASELINE=<目标>` 指定自己的快照，默认仍是 HEAD）；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
+179 项变异绑定完整 Rust 测试名和专属失败消息（`--audit` 机检该数与用例表一致，漂移即失败）。先应用补丁并提交，使所有变异目标等于 HEAD（未提交的沙箱候选可用 `PDRS_NEGATIVE_BASELINE=<目标>` 指定自己的快照，默认仍是 HEAD；该逃生口按 scanner target 冷/暖两态受限，统一口径见上级 [`fixtures/README.md`](../README.md)「共享输入扫描器」节，#2305 条 5 同步）；再由协调者在宿主运行长负控，OUT 必须为尚不存在的目录：
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.py --compile "$OUT_COMPILE"
@@ -104,3 +104,21 @@ python3 src/pilotdeck-gateway/tests/fixtures/session-factory/subagent_schemata.p
 ```
 
 `subagent-drop-started` 丢光行表、绑 `subagent_started_rows_match_ts`；`subagent-started-first-only` 只留每 id 首行、绑 `subagent_duplicate_started_rows_kept`；`subagent-completed-deduped` 错误去重 completed 行、绑 `subagent_duplicate_completed_rows_kept`；`subagent-started-index-last` 把 `startedById` 改成末条胜出、绑 `subagent_duplicate_started_rows_kept` 的索引断言；`subagent-completed-index-first` 把 `completedById` 改成首条胜出、绑 `subagent_duplicate_completed_rows_kept` 的索引断言。消费者（web `readSessionMessages` 的 sidechain 依赖 `startedById.get`）在 #2044 接线，本单只交付函数与金样。
+
+## #2116/#2304 `.generation-owner` 判据与手工负控
+
+`generate.mts` 的 `.generation-owner` 是对 OUT 的首个 `wx` 写入（早于 `run-*` 探针根分配），身份串 `session-factory\n`：OUT 已被外来 marker 标记时，生成器在写出任何输出前于该独占 open 处以 EEXIST 退出，外来 owner 字节不被覆写。本生成器是 session-factory 族的父生成器（projection-cache / append-delta 的身份串都带本目录名），它分配 `run-*` 探针根，marker 在此承载输出目录的跨生成器独占。
+
+#2304（条 1）新增专用用例 `factory_probe_generator_writes_owned_marker`（`runtime::session::factory::tests`，factory_tests.rs）：成功格钉 marker 存在且内容为身份串，冲突格预置外来 `.generation-owner`，断言失败点落在独占 open（输出同时含 `EEXIST` 与 `.generation-owner`）、外来字节保留、且冲突格 OUT 只剩外来 marker（首写 listing）。用例形状收敛在共享 `tests/common/baseline.rs::generation_owner_marker_cell`（#2304 条 2）。
+
+沿用 #2116 口径不为该 `#[ignore]` 断言登记自动化负控（不扩 `subagent_schemata.py` 等既有表）；判据强度由手工负控留档保证：`{flag:'wx'}`→`{flag:'w'}`、marker 写入改 no-op、身份串换邻居夹具（`session-factory/append-delta`）三只 `generate.mts` 变异各使绑定断言 FAILED（KILLED），恢复后复跑通过。复跑正控的钉版环境（Node v22.22.0 / ICU 78.2、`PDRS_BASELINE` 指向 `cc7c4e65` 检出、从仓库根加 `--manifest-path src/Cargo.toml`）统一见上级 [`fixtures/README.md`](../README.md) 的「手工负控钉版环境（#2304 条 3）」段；`test result:` 行须为 `1 passed; 0 failed`：
+
+```sh
+cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib \
+  runtime::session::factory::tests::factory_probe_generator_writes_owned_marker \
+  -- --exact --include-ignored
+```
+
+手工负控复跑：对 `generate.mts` 的 marker 写入行分别施加上述三只变异，同命令复跑须 FAILED 于对应 `#2116` 绑定断言（`test result:` 行含 `1 failed`）；每只跑完 `git checkout -- <generate.mts>` 恢复并核对工作区干净，复跑正控须回到 `1 passed; 0 failed`。
+
+第四只变异（#2304 条 5）：在 marker 写入前落一个输出写（等价于把 marker 后移到首个输出写之后），绑定用例 FAILED 于冲突格首写 listing 断言「collision cell writes nothing before the exclusive marker open」，`git checkout --` 恢复后复跑回到 `1 passed; 0 failed`——三只已登记变异都死在更早断言，该 listing 断言由此获得自己的负控留档。

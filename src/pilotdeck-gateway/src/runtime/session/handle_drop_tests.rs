@@ -423,12 +423,10 @@ fn run_drop_generator(
         )
         .arg(output)
         .env("PDRS_BASELINE", &baseline);
-    crate::test_baseline::run_generator_with_deadline(
-        &mut command,
-        "session-drop-release",
-        Duration::from_secs(90),
-    )
-    .expect("#1010 preservation generator completed within its bound")
+    // #2304 (条 4): the knob-aware entry — a slow host can raise the bound
+    // through PDRS_REGEN_TIMEOUT_SECS instead of editing this cell.
+    crate::test_baseline::run_generator(&mut command, "session-drop-release")
+        .expect("#1010 preservation generator completed within its bound")
 }
 
 #[test]

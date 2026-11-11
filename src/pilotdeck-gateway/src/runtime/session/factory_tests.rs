@@ -5634,6 +5634,23 @@ fn dispose_failure_followups_regenerates_identically() {
     crate::test_baseline::regenerates_identically("session-factory");
 }
 
+/// #2304 (条 1): the factory probe generator's `.generation-owner` conflict
+/// cell. This generator is the parent of the session-factory family (the
+/// projection-cache and append-delta generators carry its directory in their
+/// own identities), yet it had no marker cell of its own: nothing pre-seeded
+/// a foreign `.generation-owner` and expected the generator to refuse the
+/// directory (#2116 item 2's minimum for every marker-writing generator: the
+/// exclusive `wx` open exits with EEXIST and the foreign bytes survive). The
+/// success cell also matters here for the family: this generator allocates
+/// `run-*` probe roots below OUT, so the marker is the only cross-generator
+/// exclusivity it owns. The cell shape lives in
+/// `test_baseline::generation_owner_marker_cell`.
+#[test]
+#[ignore = "requires fixed TS baseline and Node v22.22.0"]
+fn factory_probe_generator_writes_owned_marker() {
+    crate::test_baseline::generation_owner_marker_cell("session-factory");
+}
+
 #[tokio::test]
 async fn failed_drained_seed_releases_prepared_resources() {
     drained_seed_case(false, true, None).await;

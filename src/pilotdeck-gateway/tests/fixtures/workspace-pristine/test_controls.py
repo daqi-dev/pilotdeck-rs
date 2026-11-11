@@ -16,6 +16,7 @@ import inspect
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -601,13 +602,47 @@ class WorkspacePristine(unittest.TestCase):
                 api._assert_product_pristine(self.root, 'HEAD')
 
     def scanner_reply(self):
-        paths = (ROOT / 'src/pilotdeck-gateway/examples/workspace_inputs.rs',
-                 ROOT / 'src/pilotdeck-gateway/tests/common/source_inputs.rs',
-                 ROOT / 'src/pilotdeck-gateway/Cargo.toml',
-                 ROOT / 'src/Cargo.toml', ROOT / 'src/Cargo.lock')
+        paths = tuple(ROOT / relative for relative in api.SCANNER_IDENTITY_FILES)
         return dict(head=git(self.root, 'rev-parse', 'HEAD').stdout.decode().strip(),
                     root=str(self.root), inputs=[],
                     scanner_sha256=hashlib.sha256(b''.join(path.read_bytes() for path in paths)).hexdigest())
+
+    def test_scanner_identity_files_match_the_example(self):
+        # #2305 (条 2): the Python identity tuple and the Rust example's
+        # include_str! list must name the same five files — the digest is only
+        # byte-identical while both sides agree, so an edit on either side
+        # without the other is silent drift this test turns red.
+        example = ROOT / 'src/pilotdeck-gateway/examples/workspace_inputs.rs'
+        included = sorted(
+            (example.parent / argument).resolve().relative_to(ROOT).as_posix()
+            for argument in re.findall(r'include_str!\("([^"]+)"\)', example.read_text()))
+        self.assertEqual(included, sorted(api.SCANNER_IDENTITY_FILES),
+                         msg='#2305 scanner identity files must match the Rust include_str! list')
+
+    def test_non_head_baseline_candidate_is_admitted(self):
+        # #2106 / #2305 (条 4+6): a candidate pinned to a non-HEAD baseline
+        # stays admissible after HEAD moves on. The scanner must be asked for
+        # the requested baseline — a regression back to the worktree HEAD
+        # would silently equal the two and admit drifted candidates.
+        head = git(self.root, 'rev-parse', 'HEAD').stdout.decode().strip()
+        (self.root / 'src/pilotdeck-cli/src/main.rs').write_text('// sandbox candidate\n')
+        git(self.root, 'add', '-A')
+        candidate = git(self.root, 'stash', 'create').stdout.decode().strip()
+        self.assertTrue(candidate, msg='#2106 git stash create must yield a dangling commit')
+        commands = []
+
+        def reply(command, **_):
+            commands.append(command)
+            document = self.scanner_reply()
+            document['head'] = candidate
+            return subprocess.CompletedProcess([], 0, json.dumps(document), '')
+
+        with patch.object(api, 'run_owned', side_effect=reply):
+            inputs = api._workspace_literal_inputs(self.root, candidate)
+        self.assertEqual(inputs, (), msg='#2106 non-HEAD candidate must be admitted (ENTER-OK)')
+        self.assertNotEqual(candidate, head, msg='#2106 HEAD must have moved past the candidate baseline')
+        self.assertEqual(commands[0][2], candidate,
+                         msg='#2106 the scanner argv carries the requested baseline, not the worktree HEAD')
 
     def test_scanner_failure_is_rejected(self):
         result = subprocess.CompletedProcess([], 1, json.dumps(self.scanner_reply()), 'lexer failure')

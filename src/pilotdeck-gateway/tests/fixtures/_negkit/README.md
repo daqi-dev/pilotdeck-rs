@@ -97,40 +97,10 @@ summary 顶层包括 `mode: full|sample`、按声明次序的 `selected` 名单�
 
 `turn-submit/negative.py` 保留 57 个变异和 `baseline`，`failure-guard/negative.py` 保留 22 个变异和 `baseline-pure/baseline-submit`。两者支持 `--check`；运行参数仍为 `output [case ...]`，抽样总带正控，重复/未知选择拒绝。旧判分器不再参与迁后 runner：`_negkit/submit.py` 只复用 `negative_process` 的 HEAD 源码守卫和进程所有权工具，不复用旧判分和摘要发布。未提交的产品改动不能用 `PDRS_NEGATIVE_BASELINE` 或其他 git 对象放行。
 
-> **现状（#2106 实测）**：`negative_process` 共享 runner 入口（如 `config-store`、`turn-runner` 等）的
-> `PDRS_NEGATIVE_BASELINE` 候选基线逃生口按 scanner target 冷暖分两态（`_ensure_workspace_scanner`
-> 解析出的 `CARGO_TARGET_DIR`，默认 `<tree>/_build/cargo-target`；候选基线/身份的拒绝一律是
-> `SourceBaselineError`，rc 随入口契约各不相同：`config-store` 走 `run_cases` 归 rc=1；
-> `settings-gateway`（已迁移 `refuse()`/`entered` 契约）拒跑为 rc=2；`turn-runner` 等直连
-> `mutating_sources` 的自管入口未捕获异常退出归 rc=1；冷 target bootstrap 的槽位/构建失败抛
-> `CalledProcessError`/`TimeoutExpired`/`RuntimeError`，同样非零退出，fail-closed，不产生假 PASS）：
->
-> - **冷 target（scanner 未预建）**：bootstrap 前按字面 `HEAD` 校验 `src`/`.cargo`/`rust-toolchain*`，
->   候选 diff 只要有任何一处落在这些区域内即被拒（未跟踪缓存类文件按 `_assert_input_areas` 的排除表
->   豁免；非 HEAD 候选即使已通过外层 `mutating_sources` 的基线区域断言也过不去这一关）；候选 diff
->   完全在区域外且不在 scanner 字面输入集（如只改 `state/`；字面输入集定义见下段）时不受影响。
-> - **暖 target（scanner 已预建且身份匹配）**：候选 diff 不触碰 scanner 身份 5 文件
->   （`src/Cargo.toml`、`src/Cargo.lock`、`src/pilotdeck-gateway/Cargo.toml`、
->   `src/pilotdeck-gateway/tests/common/source_inputs.rs`、
->   `src/pilotdeck-gateway/examples/workspace_inputs.rs`，依赖升级是最常见形态）时可用；触碰任一个
->   会在 `_assert_product_pristine` 的 scanner 身份比对处被拒。「身份匹配」只比对这 5 个文件当前
->   worktree 字节与 scanner 构建期内嵌摘要——HEAD 是否移动不参与判断（实测：空提交前移 HEAD、5 文件
->   字节不动，非身份候选仍 ENTER-OK，`remote-verify-r4-probe/`）。身份 5 文件被改过（构建后漂移或
->   候选自身触碰）时以同一条身份失配消息拒绝所有候选——包括 diff 在 5 文件之外的——须重建 scanner
->   后再试。
->
-> 另一项边界：候选改动落在 `src`/`.cargo`/`rust-toolchain*` 内时必须先 `git add` 进 index——
-> `_assert_input_areas` 的 `--cached` 腿对被扫描区域要求 index 等于候选基线快照，未暂存候选在冷、暖
-> target 上都会被外层基线断言拒绝；比对范围之外的改动（如 `state/`）不参与该比对。**scanner
-> 字面输入集**的定义见上级 [`fixtures/README.md`](../README.md)「共享输入扫描器」节（tracked
-> `src/**/*.rs` 种子 + include/path/mod 递归边；清单由 `workspace_inputs` 现算、不硬编码，
-> 项数随仓库演进漂移，判定以现算为准）——该集合不只落在 `src` 内：#2106 实测快照
-> （`remote-verify-r4-probe/`）中 `src` 外有 3 项：`scripts/cli-parity/help.txt`、
-> `scripts/cli-parity/scenarios.json`、`specs/gateway-coverage/coverage-manifest.json`。字面输入
-> 文件未暂存的改动同样被 `--cached` 腿报 `source baseline mismatch`——`scripts/`、`specs/` 里
-> 只有上列文件不豁免，其余文件仍属区域外候选。收货复核实测（暖 target、本 README 在 `src/` 内
-> 且改动已暂存：触碰 `src/Cargo.toml` 的候选被拒，仅改本 README 的候选 ENTER-OK）原始记录在
-> `_tmp/20261108-harvest-2106-r1/`（#2106）。
+> **现状（#2106 实测，#2305 条 1 归位上级）**：`negative_process` 共享 runner 入口的
+> `PDRS_NEGATIVE_BASELINE` 冷/暖 target 两态、scanner 身份 5 文件（单一真相源
+> `negative_process.py` 的 `SCANNER_IDENTITY_FILES` 常量）、index 腿与 rc 口径统一见上级
+> [`fixtures/README.md`](../README.md)「共享输入扫描器」节，此处不再保留副本。
 > `_negkit/submit.py` 本身仍然禁用该变量（本目录政策不变）。终局口径未定（放宽 bootstrap
 > 校验，或把 `PDRS_NEGATIVE_BASELINE` 限定为暖 target 专用并文档化），登记在 #2106。
 

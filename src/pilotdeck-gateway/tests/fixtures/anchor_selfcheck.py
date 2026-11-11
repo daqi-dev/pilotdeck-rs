@@ -52,6 +52,7 @@ import tokenize
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pending_reanchor as pending
+from negative_source import fn_qualifier_run
 
 TABLES = {'mutants', 'mutations', 'controls', 'cases', 'runner_mutations'}
 # #996: migrated fixture runners declare compile-time switch bindings in a
@@ -1609,7 +1610,11 @@ def anchor_count(anchor):
             raise Unsupported(f'{anchor.name}: function-scoped anchors must be strings')
         # Same method boundaries as turn-runner/_negative_common.mutate; never
         # import that executable runner to extract the function-scoped anchor.
-        methods = list(re.finditer(r'^    (?:pub(?:\([^)]*\))? )?(?:async )?fn (\w+)', text, re.M))
+        # #2303 (条 2): the qualifier words come from the shared list
+        # (negative_source is a pure helper, not that runner), so ``const fn``
+        # / ``unsafe fn`` / ``extern "C" fn`` methods resolve here too.
+        methods = list(re.finditer(
+            r'^    ' + fn_qualifier_run(r'[ \t]+') + r'*fn (\w+)', text, re.M))
         matches = [i for i, method in enumerate(methods) if method[1] == anchor.scope]
         if len(matches) != 1 or anchor.before != anchor.before.lstrip() or '\n' in anchor.before:
             raise Unsupported(f'{anchor.name}: invalid function-scoped anchor {anchor.scope}')

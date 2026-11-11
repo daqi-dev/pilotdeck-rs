@@ -32,6 +32,7 @@ PROCESS = Path(__file__).resolve().parent / 'process.mts'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_panic import panic_evidence
+from negative_source import fn_qualifier_run
 from negative_suite import invalidate_completed, passed
 
 EXECUTABLE = 'executable_native_loop_stimulus'
@@ -144,7 +145,9 @@ class Case:
 
 
 STRING = re.compile(r'r#"(?:[^"]|"(?!#))"#|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', re.S)
-ANCHOR_FN = r'^\s*(?:pub(?:\([^)]*\))? )?(?:async )?fn {}\('
+# #2303 (条 2): every qualifier word from the shared list, so
+# ``const fn`` / ``unsafe fn`` / ``extern "C" fn`` resolve as anchors too.
+ANCHOR_FN = r'^\s*' + fn_qualifier_run(r'[ \t]+') + r'*fn {}\('
 
 
 def strip_literals(line):

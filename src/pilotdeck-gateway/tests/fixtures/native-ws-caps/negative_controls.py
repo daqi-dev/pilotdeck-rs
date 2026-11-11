@@ -16,6 +16,7 @@ FIXTURE = Path(__file__).resolve().parent
 sys.path.insert(0, str(FIXTURE.parent))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import ReceiptRun, bind_module_file, declares_test, judge, passed
+from negative_source import assertion_marker_present
 from _shared.mutant_switch import preflight, clean_environment, enforce_denominator
 
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_ws.rs'
@@ -80,10 +81,24 @@ def main():
     # module satisfied the binding.
     modules = ((PREFIX, TESTS), ('runtime::turn::gateway::tests::', HOST_TESTS))
     sources = {path: path.read_text() for _, path in modules}
+    # #2303 (条 4): every row is audited before the refusal, and a scanner
+    # refusal (ValueError) becomes one named INVALID record per row instead
+    # of a raw traceback on the first failure -- the session-factory /
+    # session-drop-release audit shape.
+    invalid = []
     for _, _, test, assertion in switches:
-        file, short = bind_module_file(test, modules)
-        if not declares_test(sources[file], short) or '"' + assertion + '"' not in sources[file]:
-            raise RuntimeError('#1079 stale test/assertion binding: ' + test)
+        try:
+            file, short = bind_module_file(test, modules)
+            # #2303 (条 5): the assertion marker must live in code, never in
+            # a comment -- the raw-text scan let a commented-out copy of the
+            # assertion satisfy the binding after the real one was deleted.
+            if (not declares_test(sources[file], short)
+                    or not assertion_marker_present(sources[file], '"' + assertion + '"')):
+                raise ValueError('stale test/assertion binding')
+        except Exception as error:
+            invalid.append(f'{test}: {type(error).__name__}: {error}')
+    if invalid:
+        raise RuntimeError('#1079 binding audit INVALID rows: ' + '; '.join(invalid))
     if args.check:
         # #1885: prove-failable pin -- restoring the old guarded list (product
         # files, shared modules, `FIXTURE.iterdir()`) trips this, while the run

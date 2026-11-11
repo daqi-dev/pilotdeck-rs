@@ -28,8 +28,11 @@ It uses the shared `mutating_sources`, `wait_for_slot`, and `run_owned` owners,
 requires assertion failures (not compile failures), and restores checked bytes.
 An uncommitted sandbox candidate can supply `PDRS_NEGATIVE_BASELINE` with its
 candidate tree object and isolated `GIT_INDEX_FILE`/object directory; the same
-byte checks remain mandatory. See the task RESULT for the exact tested command
-and isolated-index procedure. The normal repository index is never changed.
+byte checks remain mandatory (the escape hatch is gated by the cold/warm scanner
+target states — canonical semantics in the parent
+[`fixtures/README.md`](../README.md) scanner section, #2305 item 5). See the
+task RESULT for the exact tested command and isolated-index procedure. The
+normal repository index is never changed.
 A fully-killed run against that pinned baseline is not host evidence (#1540):
 it prints `NON-HOST EVIDENCE`, records `baseline.json` in the evidence
 directory, and exits 42 instead of 0.

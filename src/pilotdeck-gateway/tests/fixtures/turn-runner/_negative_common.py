@@ -6,6 +6,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import run_owned, wait_for_slot
+from negative_source import fn_qualifier_run
+
+# #2303 (条 2): the method-boundary matcher accepts every shared qualifier
+# word (``const fn`` / ``unsafe fn`` / ``extern "C" fn`` / ``pub(crate) fn``)
+# from the same list every other matcher uses, so a scoped anchor cannot be
+# stranded by a narrow pub/async-only copy. Line-anchored, so the separator
+# stays on one line.
+METHOD_HEAD = r'^    ' + fn_qualifier_run(r'[ \t]+') + r'*fn (\w+)'
 
 def mutate(original, scope, replacements, *, expected_count=1):
     if scope is None:
@@ -16,7 +24,7 @@ def mutate(original, scope, replacements, *, expected_count=1):
                                  f'(expected {expected_count})')
             body = body.replace(old, new, 1)
         return body
-    methods = list(re.finditer(r'^    (?:pub(?:\([^)]*\))? )?(?:async )?fn (\w+)', original, re.M))
+    methods = list(re.finditer(METHOD_HEAD, original, re.M))
     matches = [i for i, method in enumerate(methods) if method[1] == scope]
     if len(matches) != 1:
         raise ValueError(f'scope {scope!r} matches {len(matches)} methods; expected 1')

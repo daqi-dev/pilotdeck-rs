@@ -206,13 +206,20 @@ def main():
                    ('runtime::session::factory::projection_cache_tests::', 'projection_cache_tests.rs'))
         sources = {name: (root / 'src/pilotdeck-gateway/src/runtime/session' / name).read_text()
                    for _, name in modules}
+        # #2303 (条 4 同类跟改): every row is audited before the refusal, and
+        # a scanner refusal (ValueError) becomes one named record per row
+        # instead of a raw traceback on the first failure (the session-
+        # factory / session-drop-release audit shape).
+        invalid = []
         for _name, _filename, _old, _new, test, _assertion in mutations:
             try:
                 file, short = bind_module_file(test, modules)
-            except ValueError as error:
-                raise SystemExit(f'#1210 {error}')
-            if not declares_test(sources[file], short):
-                raise SystemExit(f'#1210 bound test not found for {short}: {test}')
+                if not declares_test(sources[file], short):
+                    raise ValueError(f'bound test not found for {short}: {test}')
+            except Exception as error:
+                invalid.append(f'{test}: {type(error).__name__}: {error}')
+        if invalid:
+            raise SystemExit('#1210 binding audit INVALID rows: ' + '; '.join(invalid))
         print('PASS: #1011 projection cache mutation anchors (static only)')
         return 0
     if len(sys.argv) != 2:

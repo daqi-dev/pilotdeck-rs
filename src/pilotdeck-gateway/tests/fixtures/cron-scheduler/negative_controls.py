@@ -324,8 +324,13 @@ def check_manifest():
     scheduler_test_source = tests.read_text()
     for row in mutations:
         ident = row[4].rsplit('::', 1)[-1]
-        if not declares_test(scheduler_test_source, ident):
-            errors.append(f'{row[0]}: bound test {ident} is not defined in scheduler_tests.rs')
+        # #2303（条 4 同类跟改）：declares_test 的 fail-closed 拒绝（ValueError）
+        # 落进本清单的 per-row 收账，不再裸穿成 traceback。
+        try:
+            if not declares_test(scheduler_test_source, ident):
+                errors.append(f'{row[0]}: bound test {ident} is not defined in scheduler_tests.rs')
+        except Exception as error:
+            errors.append(f'{row[0]}: {type(error).__name__}: {error}')
     return errors
 
 

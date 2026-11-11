@@ -8,7 +8,8 @@ looked present. The helper may relax syntax whitespace only.
 """
 import unittest
 
-from negative_source import assertion_message_present, squeeze, test_body
+from negative_source import (assertion_marker_present, assertion_message_present,
+                              declares_function, squeeze, test_body)
 
 MESSAGE = 'gateway case filter must match at least one scenario'
 SPLIT = f'''
@@ -105,6 +106,33 @@ fn helper_after_the_last_test() {
             test_body(self.SOURCE, 'absent')
         with self.assertRaises(LookupError):
             test_body('async fn open() {\n    let x = 1;\n', 'open')
+
+    def test_every_shared_qualifier_word_resolves_the_head(self):
+        # #2303 (条 2): ``const fn`` / ``unsafe fn`` / ``extern "C" fn`` /
+        # ``pub(crate) fn`` all declare a test body; the old narrow pattern
+        # only knew pub/async and stranded the rest as LookupError.
+        for head in ('const fn', 'unsafe fn', 'extern "C" fn',
+                     'pub(crate) fn', 'default fn'):
+            with self.subTest(head=head):
+                source = f'{head} scoped() {{\n    assert!(a);\n}}\n'
+                self.assertIn('assert!(a);', test_body(source, 'scoped'))
+
+    def test_a_block_comment_fn_head_is_not_a_declaration(self):
+        # #2303 (条 8): a line-start ``fn name()`` inside a block comment (or
+        # a string literal) is not the function the body is cut from; the head
+        # must start in code, per the #2064 r10 carrier rule.
+        commented = (
+            '/* a commented-out decoy:\nfn first() {\n    assert!(decoy);\n}\n*/\n'
+            'fn first() {\n    assert!(a);\n}\n'
+        )
+        body = test_body(commented, 'first')
+        self.assertIn('assert!(a);', body,
+                      '#2303 the body must come from the head in code')
+        self.assertNotIn('decoy', body,
+                         '#2303 a block-comment fn head must not be taken as the declaration')
+        carried = 'let decoy = "\nfn first() {\n    assert!(decoy);\n}\n";\nfn first() {\n    assert!(a);\n}\n'
+        self.assertNotIn('decoy', test_body(carried, 'first'),
+                         '#2303 a string-literal fn head must not be taken as the declaration')
 
 
 class SqueezeKeepsLiteralsAndCallShapes(unittest.TestCase):
@@ -209,6 +237,99 @@ class SqueezeIsLexicalNotQuoteCounting(unittest.TestCase):
     def test_syntax_whitespace_still_collapses(self):
         spread = 'assert!(\n        !x,\n        "msg"\n    );'
         self.assertEqual('assert!(!x, "msg");', squeeze(spread))
+
+
+class SqueezeRefusesIllegalPrefixShapes(unittest.TestCase):
+    """#2303 (条 13): the #2064 r4 refusal rules apply to ``squeeze`` too.
+
+    The two lexers converged, so a raw hash delimiter without a legal raw
+    prefix (``c#"…"#`` / ``b#"…"#``) and an unknown multi-letter prefix
+    (``rb#"…"#``) raise here as well, instead of the old behaviour: the
+    mis-lexed ``#`` became code, the inner quote opened a bogus plain string
+    and the carried bytes returned to the code view.
+    """
+
+    def test_a_hash_delimiter_without_a_raw_prefix_is_refused(self):
+        with self.assertRaises(ValueError,
+                                msg='#2303 squeeze must refuse c#"…"#'):
+            squeeze('let s = c#"x"fn case_a(){"#;')
+        with self.assertRaises(ValueError,
+                                msg='#2303 squeeze must refuse b#"…"#'):
+            squeeze('let s = b#"x"fn case_a(){"#;')
+
+    def test_an_unknown_multi_letter_prefix_is_refused(self):
+        with self.assertRaises(ValueError,
+                                msg='#2303 squeeze must refuse rb#"…"#'):
+            squeeze('let s = rb#"x"fn case_a(){"y"#;')
+
+    def test_legal_prefixed_raw_literals_keep_their_bytes(self):
+        # The positive side: every legal prefix shape stays one literal,
+        # bytes verbatim, so a needle inside it is not folded by syntax
+        # whitespace collapsing.
+        for literal, source in (
+                ('br#"must  match"#', 'let s = br#"must  match"#;'),
+                ('cr#"must  match"#', 'let s = cr#"must  match"#;'),
+                ('r#"must  match"#', 'let s = r#"must  match"#;'),
+                ('b"must  match"', 'let s = b"must  match";'),
+                ('c"must  match"', 'let s = c"must  match";')):
+            with self.subTest(literal=literal):
+                self.assertIn(literal, squeeze(source))
+
+
+class DeclaresFunctionTests(unittest.TestCase):
+    """#2303 (条 3): the fn-form-only entry behind ``declares_test``."""
+
+    def test_the_fn_form_is_accepted_and_pinned(self):
+        self.assertTrue(declares_function('async fn case_a() {', 'case_a'),
+                        '#2303 the fn form must satisfy declares_function')
+        self.assertTrue(declares_function('pub fn case_a() {', 'case_a'),
+                        '#2303 a pub fn declaration must satisfy declares_function')
+
+    def test_the_table_and_macro_forms_do_not_satisfy_it(self):
+        self.assertFalse(declares_function('matrix_tests! { case_a => "row" }', 'case_a'),
+                         '#2303 a table row must not satisfy the fn-only form')
+        self.assertFalse(declares_function('case!(case_a,);', 'case_a'),
+                         '#2303 a macro row must not satisfy the fn-only form')
+
+
+class AssertionMarkerTests(unittest.TestCase):
+    """#2303 (条 5): the shared comment-proof marker matcher for binding audits."""
+
+    MARKER = '"#749 close budget covers accepted bytes"'
+
+    def test_a_string_literal_carries_the_marker(self):
+        carried = 'fn close_budget() {\n    assert!(kept, "#749 close budget covers accepted bytes");\n}\n'
+        self.assertTrue(assertion_marker_present(carried, self.MARKER),
+                        '#2303 a string literal must carry the marker')
+
+    def test_a_line_comment_carrier_does_not_satisfy_the_binding(self):
+        # Delete the assertion, keep a commented-out copy of it: the raw-text
+        # scan this matcher replaced stayed green (the comment carrier).
+        commented = ('fn close_budget() {}\n'
+                     '// assert!(kept, "#749 close budget covers accepted bytes");\n')
+        self.assertFalse(assertion_marker_present(commented, self.MARKER),
+                         '#2303 a line comment must not carry the assertion marker')
+
+    def test_a_block_comment_carrier_does_not_satisfy_the_binding(self):
+        commented = ('fn close_budget() {}\n'
+                     '/* assert!(kept, "#749 close budget covers accepted bytes"); */\n')
+        self.assertFalse(assertion_marker_present(commented, self.MARKER),
+                         '#2303 a block comment must not carry the assertion marker')
+
+    def test_a_marker_missing_entirely_is_rejected(self):
+        self.assertFalse(assertion_marker_present('fn close_budget() {}\n', self.MARKER),
+                        '#2303 a missing marker must be refused')
+
+    def test_a_marker_split_by_a_format_placeholder_is_not_the_quoted_needle(self):
+        # The quoted needle demands the marker as one contiguous literal; a
+        # formatted message broken across `{...}` pieces does not satisfy it.
+        formatted = 'fn close_budget() {\n    assert!(kept, "#749 {}");\n}\n'
+        self.assertFalse(assertion_marker_present(formatted, self.MARKER),
+                         '#2303 a formatted message is not the quoted marker needle')
+
+    def test_the_fail_closed_scan_rules_apply(self):
+        with self.assertRaises(ValueError, msg='#2303 an unterminated literal must refuse the scan'):
+            assertion_marker_present('let s = "unterminated\n', self.MARKER)
 
 
 if __name__ == '__main__':

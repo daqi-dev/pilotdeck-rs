@@ -483,103 +483,18 @@ fn regenerates_identically() {
 /// companion files. The fixture has no committed `.generation-owner`, so the
 /// marker never entered that comparison surface: a no-op marker write, a
 /// sibling fixture's identity, and (see #2116 item 2) a `wx` → `w` regression
-/// all stayed green. Follow the dedicated-generator caliber instead
-/// (`factory_generators_clean_only_owned_work` and kin): drive `generate.mts`
-/// directly, pin existence and the owner identity, and give the exclusive
-/// `wx` open its own foreign-marker cell — no fixture anywhere pre-seeded a
-/// foreign `.generation-owner` and expected EEXIST. This generator allocates
-/// no `run-*` work roots, so the marker carries no cleanup ownership here;
-/// it carries the output directory's cross-generator exclusivity (the marker
-/// is the first `wx` write, before the per-case `<name>.jsonl` files).
+/// all stayed green. Follow the dedicated-generator caliber instead:
+/// drive `generate.mts` directly, pin existence and the owner identity, and
+/// give the exclusive `wx` open its own foreign-marker cell — no fixture
+/// anywhere pre-seeded a foreign `.generation-owner` and expected EEXIST.
+/// This generator allocates no `run-*` work roots, so the marker carries no
+/// cleanup ownership here; it carries the output directory's
+/// cross-generator exclusivity. #2304 (条 2): the cell shape lives in
+/// `test_baseline::generation_owner_marker_cell`.
 #[test]
 #[ignore = "requires fixed TS baseline and Node v22.22.0"]
 fn prompt_hooks_generator_writes_owned_marker() {
-    use std::fs;
-    use std::path::PathBuf;
-    // #1890 caliber: the manual negative controls make these assertions
-    // panic on purpose, so a plain trailing remove_dir_all would never run
-    // and leave the scratch behind in /tmp. The Drop guard cleans both paths.
-    struct Scratch(std::path::PathBuf);
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-    for collision in [false, true] {
-        let root =
-            std::env::temp_dir().join(format!("pdrs-2116-prompt-hooks-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&root).expect("#2116 create prompt-hooks marker scratch");
-        let _scratch = Scratch(root.clone());
-        if collision {
-            fs::write(root.join(".generation-owner"), "session-factory\n")
-                .expect("#2116 seed foreign owner marker");
-        }
-        let base = PathBuf::from(
-            std::env::var_os("PDRS_BASELINE").expect("#2116 prompt-hooks TS baseline configured"),
-        );
-        let mut command = crate::test_baseline::node_command();
-        command
-            .arg("--disable-warning=ExperimentalWarning")
-            .arg("--import")
-            .arg(base.join("node_modules/tsx/dist/loader.mjs"))
-            .arg(
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("tests/fixtures/turn-prompt-hooks/generate.mts"),
-            )
-            .arg(&root);
-        let (status, stdout, stderr) =
-            crate::test_baseline::run_generator(&mut command, "turn-prompt-hooks")
-                .expect("#2116 prompt-hooks marker generator run");
-        let output = format!(
-            "{}{}",
-            String::from_utf8_lossy(&stdout),
-            String::from_utf8_lossy(&stderr)
-        );
-        assert!(
-            status.success() != collision,
-            "#2116 prompt-hooks generator succeeds only without a foreign owner marker: {output}"
-        );
-        if collision {
-            assert!(
-                output.contains("EEXIST") && output.contains(".generation-owner"),
-                "#2116 prompt-hooks generator fails on the exclusive owner marker open: {output}"
-            );
-            assert_eq!(
-                fs::read_to_string(root.join(".generation-owner"))
-                    .expect("#2116 read foreign owner marker"),
-                "session-factory\n",
-                "#2116 failed prompt-hooks generation preserves the foreign owner bytes"
-            );
-            // The marker is the first write into OUT: pin that the generator
-            // wrote nothing else before the exclusive open failed, or a moved
-            // (still-wx) marker write would pass every assertion above.
-            let mut names: Vec<_> = fs::read_dir(&root)
-                .expect("#2116 list collision scratch")
-                .map(|entry| entry.expect("#2116 read scratch entry").file_name())
-                .collect();
-            names.sort();
-            assert_eq!(
-                names,
-                [std::ffi::OsString::from(".generation-owner")],
-                "#2116 collision cell writes nothing before the exclusive marker open"
-            );
-        } else {
-            assert!(
-                !output.contains("EEXIST"),
-                "#2116 prompt-hooks generator success cell reports no collision: {output}"
-            );
-            assert_eq!(
-                fs::read_to_string(root.join(".generation-owner"))
-                    .expect("#2116 prompt-hooks ownership marker"),
-                "turn-prompt-hooks\n",
-                "#2116 prompt-hooks generator writes its ownership marker"
-            );
-        }
-        // #2116 r4: the Drop guard above swallows removal errors (it runs on
-        // both the normal and the panic path); this explicit removal asserts
-        // the scratch is reclaimable at cell end (DS r2 P2).
-        fs::remove_dir_all(&root).expect("#2116 remove prompt-hooks marker scratch");
-    }
+    crate::test_baseline::generation_owner_marker_cell("turn-prompt-hooks");
 }
 
 #[tokio::test]
