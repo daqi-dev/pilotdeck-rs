@@ -1053,6 +1053,19 @@ struct IdleBody {
 impl IdleBody {
     /// Releases the slot and re-arms the idle deadline at body completion.
     /// Idempotent: the frame end and the drop can both reach it.
+    ///
+    /// #1517 fix-r3: that idempotence is load-bearing on the write-side flag
+    /// specifically — `take()` is what makes it so. The first arrival is the
+    /// frame end (`poll_frame`'s `Ready(None)`, hyper polling the body), and
+    /// the second is this body's `Drop` (the response handed off and dropped,
+    /// or the connection torn down). Between the two the flag may already
+    /// have been cleared by the gate's confirming `poll_flush` — the tail
+    /// fully on the wire — and a second `store(true)` here would re-set it
+    /// with no write left behind it, so no later flush could ever clear it:
+    /// the three read-side consumers (`withholding_mid_stream` withholding
+    /// follow-up heads, the mirror clear in `poll_read`, the stand-by
+    /// re-arm) would hold the flag forever, and the next request would be
+    /// withheld indefinitely.
     fn release(&mut self) {
         if let Some(rearm) = self.rearm.take() {
             rearm.send_modify(|generation| *generation += 1);

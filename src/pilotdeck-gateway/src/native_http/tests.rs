@@ -4643,6 +4643,131 @@ async fn unaccepted_head_grid_destroys_silently_like_ts() {
     .await;
 }
 
+/// #1517 fix-r3 (rev2 条 1, the released-body corner of the never-accepted
+/// head): the same zero-writable-space lane as the f2 cell — the transport
+/// parks from the very start, so the response head itself never gets past
+/// hyper's write buffer — but here the body is **released** at +88.4 s: every
+/// frame is handed to hyper, the in-flight slot is gone, and the release's
+/// own write-side flag is the only thing left withholding the follow-up half
+/// head (+89 s, after the release — the f2 cell held the body forever). At
+/// the half head's +150 s grid landing Node destroys without the 408 — its
+/// `_headerSent` latches at the `res.write` hand-off, transport acceptance
+/// or not — so the gate's mirror must stay set through the whole parked
+/// stretch: the hand-off set at the offered-but-parked head covers it, the
+/// release's write-side flag alone would not (pre-fix-r2 mirror semantics:
+/// written stays 0 forever, the 408 arms into the parked write and the close
+/// never lands).
+#[tokio::test(start_paused = true)]
+async fn released_body_unaccepted_head_grid_destroys_silently_like_ts() {
+    manual_clock(async {
+        let grid_anchor = tokio::time::Instant::now();
+        let (server, mut client) = tokio::io::duplex(4096);
+        let park = WritePark::default();
+        let transport = ParkedWriteTransport {
+            inner: server,
+            park: park.clone(),
+        };
+        let (_stop, stop_rx) = watch::channel(false);
+        let (release_tx, release_rx) = watch::channel(false);
+        let last = "x".repeat(1024);
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            transport,
+            move |_request, _lease| {
+                let release = release_rx.clone();
+                let last = last.clone();
+                async move {
+                    hyper::Response::builder()
+                        .status(hyper::StatusCode::OK)
+                        .header(hyper::header::CONTENT_TYPE, "text/plain")
+                        .body(held_body("part1-", &last, release))
+                        .map_err(std::io::Error::other)
+                }
+            },
+            stop_rx,
+            None,
+            Some(grid_anchor),
+        ));
+        // Park before the request even lands — the f2 lane: the head itself
+        // parks inside hyper's write buffer, never accepted by the transport.
+        park.park();
+        client
+            .write_all(&latin1_bytes(
+                "GET /held HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            ))
+            .await
+            .expect("#1517-f3 write the streaming request");
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // t = +88.4 s: release the last chunk. The body ends — every frame
+        // handed to hyper, the in-flight slot gone, the release's write-side
+        // flag up — but the parked transport keeps the whole response,
+        // head included, inside hyper's write buffer.
+        tokio::time::advance(Duration::from_millis(88_400)).await;
+        release_tx.send_replace(true);
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // t = +89 s: the follow-up half head, after the release — the
+        // quadrant's point (nothing but the release's write-side flag
+        // withholds it now). Its deadline (+149 s) quantizes to +150 s.
+        tokio::time::advance(Duration::from_millis(600)).await;
+        client
+            .write_all(&latin1_bytes(
+                "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Len",
+            ))
+            .await
+            .expect("#1517-f3 write the post-release half head");
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // t ≈ +149.9 s: just before the half head's deadline landing.
+        tokio::time::advance(Duration::from_millis(60_900)).await;
+        probe_still_open(
+            &mut client,
+            "#1517-f3 the released body keeps the connection open before the half head's deadline",
+        )
+        .await;
+        // The +150 s grid landing: Node destroys the started response
+        // without the 408 — the head was handed to the write side (offered to
+        // the gate) even though the transport never accepted a byte, and the
+        // body has since been released; the mirror must have stayed set the
+        // whole parked stretch.
+        eof_after_idle_close(
+            &mut client,
+            Duration::from_millis(200),
+            "#1517-f3 the released body's close lands at the +150 s grid point",
+        )
+        .await;
+        park.unpark();
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // The close discarded the parked response wholesale: the resumed
+        // drain sees nothing — no head, no body, and above all no 51-byte
+        // 408 (Node's destroy drops the same queue).
+        let mut remainder = Vec::new();
+        drain_until_closed(
+            &mut client,
+            &mut remainder,
+            8,
+            "the released-body drain",
+        )
+        .await;
+        assert!(
+            remainder.is_empty(),
+            "#1517-f3 the released body's close discards the parked response — the resumed drain sees no bytes and no 408, got {:?}",
+            latin1_string(&remainder)
+        );
+        let served = task.await.expect("#1517-f3 task join");
+        ended_by_408_close(
+            served,
+            "the released-body connection future ends at the grid-point close",
+        );
+    })
+    .await;
+}
+
 /// #1292 fix-r1 (matrix M6): while a request is in flight — here a pipelined
 /// second request whose response body is held mid-stream — no
 /// headersTimeout exists: Node's `requestTimeout` (300 s, registered as not
