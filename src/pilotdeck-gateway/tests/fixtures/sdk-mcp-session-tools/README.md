@@ -36,12 +36,10 @@ CARGO_TARGET_DIR=<dir> python3 -I tests/fixtures/sdk-mcp-session-tools/negative_
 - 同树互斥（#2468）：本夹具原地改写 `tools.rs` 等守卫源码，运行期间**本工作树内
   不得有其他写者**——普通 `cargo test` / `cargo build` 也不行（同
   `cli-parity-mock-gateway/negative_controls.py` 的「Run with no other writers in
-  this worktree」同款要求）。`.negative-source.lock` 的排他互斥只在负控族
-  `mutating_sources` 写者之间；走 Rust `read_lease` 的消费方（gateway/cli 两
-  crate 的 `tests/common/read_lease.rs`）以共享锁持同一文件，writer 与 reader
-  亦互斥（writer 会阻塞到 reader 放锁，勿误判挂起后 SIGKILL——那会留变异体）。
-  `cargo-slots.sh` 名额闸是并发配额；普通 cargo 与无锁的 Python 只读检查器不被
-  互斥、挡不住变异体，锁的释放也不证明树洁净；无锁的普通 cargo 在变异窗口里
+  this worktree」同款要求）。`.negative-source.lock` 的持有者谱系与互斥面见
+  `tests/common/read_lease.rs` 头注释与 `tests/fixtures/README.md` 的
+  `mutating_sources` 段（正本，此处不重复展开）；`cargo-slots.sh` 名额闸是并发
+  配额，不互斥任何持锁者；锁的释放不证明树洁净；变异窗口里无锁的普通 cargo
   会读到变异体，产生无关的假 FAIL / 假编译错。
 - 每个 `#[tokio::test]` 变异轮的正向/负向/还原三跑都经 `cargo-slots.sh` 名额闸。
 - 单测体在 `mod tests` 内（缩进 4），外部测试在 crate 顶层——`test_body` 的
