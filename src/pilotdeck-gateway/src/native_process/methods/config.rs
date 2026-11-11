@@ -71,14 +71,15 @@ pub(super) fn trimmed_string_is_non_empty(value: &JsString) -> bool {
 /// string that is non-empty after JS trim, else
 /// INVALID_SESSION_KEY. A non-null non-string throws the bare TypeError the
 /// TS optional-chain call produces on the wire
-/// (A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R2 ②).
+/// (A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R2 ②). #1623 adds the
+/// lone-surrogate rejection on top: the model-selection / permission /
+/// thinking / style writes this family appends reach the transcript
+/// through the same `sanitize_session_id` lossy identity, so
+/// `s\u{D800}` would append into `s\u{FFFD}`'s transcript — 方案 B
+/// rejects the key (stricter than TS; see
+/// `A7-W5-SESSION-KEY-SURROGATE-REJECT-001`).
 fn require_session_key(params: &JsValue) -> Result<JsString, RequestError> {
-    super::require_text(
-        params,
-        "sessionKey",
-        "INVALID_SESSION_KEY",
-        "sessionKey is required.",
-    )
+    super::require_session_key(params)
 }
 
 /// `truthy` over the protocol's value kinds, like the JS Boolean context.
@@ -1874,6 +1875,40 @@ mod tests {
         );
         r.owner
             .end_turn(&"session".into(), Some(&run), Some(&reservation));
+        teardown(&r).await;
+    }
+
+    /// #1623: a lone-surrogate `sessionKey` is refused at the gate before
+    /// the port write. `record_model_selection` renders the transcript
+    /// identity through `sanitize_session_id`'s lossy conversion, so
+    /// `s\u{D800}` would append this session's model-selection metadata into
+    /// `s\u{FFFD}`'s transcript — the write-side half of the alias the
+    /// session_dir family rejects (方案 B, stricter than TS;
+    /// A7-W5-SESSION-KEY-SURROGATE-REJECT-001).
+    #[tokio::test]
+    async fn session_model_set_surrogate_key_answers_the_session_key_gate() {
+        let (_scratch, r) = setup_fixture();
+        let key = JsString::from_utf16(vec![0x73, 0xd800]);
+        let error = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([
+                    ("sessionKey", JsValue::String(key)),
+                    ("selection", selection("model", "test", "test")),
+                ]),
+            )
+            .await
+            .expect_err("#1623 the surrogate key answers the sessionKey gate");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#1623 the surrogate key is a sessionKey error"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "sessionKey must not contain an unpaired surrogate.",
+            "#1623 the surrogate key keeps the shared guard's message"
+        );
         teardown(&r).await;
     }
 
