@@ -27,6 +27,13 @@ const HELD_BOUND_MS: f64 = 3000.0;
 /// observation cap, or a bound-expiry release would unblock the predecessor and
 /// a receipt written by a lazily dispatched append would look correct.
 const OUTLIVED_BOUND_MS: f64 = 30000.0;
+/// The shared (site, key) pairs every fragment, release guard, and receipt
+/// query in this file agrees on (#1781): one constant per pair, so a retargeted
+/// key cannot leave the guard releasing a barrier the queries never watched —
+/// or the queries waiting on a barrier the guard never released.
+const REGISTRY_TURN_TIMEOUT: (&str, &str) = ("registry", "agent_status:turn_timeout");
+const WRITER_SESSION_METADATA: (&str, &str) = ("writer", "session_metadata");
+const WRITER_TURN_TIMEOUT: (&str, &str) = ("writer", "turn_timeout");
 
 /// The controlled entry for one test: a dedicated instance injected into the
 /// test's own writer and registry stores at construction, so an armed
@@ -96,10 +103,24 @@ fn matches(receipt: &JsValue, site: &str, phase: &str, key: &str) -> bool {
 /// Waits for one receipt. The timeout label is a static per-call assertion so
 /// a mutation kill lands on a bindable named assertion, never a plain panic.
 fn wait_receipt(dir: &Path, site: &str, phase: &str, key: &str, timeout: &str) -> JsValue {
+    wait_receipt_after(dir, site, phase, key, 0, timeout)
+}
+
+/// Waits for one receipt whose sequence number is above `after` (#1805): a key
+/// that already completed an earlier round has that round's receipts on disk,
+/// and only the sequence keeps the two rounds apart.
+fn wait_receipt_after(
+    dir: &Path,
+    site: &str,
+    phase: &str,
+    key: &str,
+    after: u64,
+    timeout: &str,
+) -> JsValue {
     let deadline = Instant::now() + OBSERVE;
     loop {
         for receipt in receipts(dir) {
-            if matches(&receipt, site, phase, key) {
+            if matches(&receipt, site, phase, key) && seq_of(&receipt) > after {
                 return receipt;
             }
         }
@@ -126,14 +147,17 @@ fn count_receipts(dir: &Path, site: &str, phase: &str, key: &str) -> usize {
         .filter(|receipt| matches(receipt, site, phase, key))
         .count()
 }
-/// The lowest sequence number of a `phase` receipt for `site`/`key`, if any.
+/// The highest sequence number of a `phase` receipt for `site`/`key` that is
+/// newer than `after`, if any (#1805: the current barrier for a key is its
+/// latest `block` receipt, and only receipts newer than it belong to that
+/// round — an earlier round's receipts must not read as the current state).
 /// Deliberately non-panicking (`BarrierRelease::drop` calls it while a failed
 /// assertion is unwinding, where a second panic aborts the process) and
 /// order-independent: `read_dir` returns entries in no defined order, so the
 /// caller must pick by sequence, never by the first match. Filters by the same
 /// `.json` extension `receipts()` uses, so a `*.json.tmp` write in flight (or
 /// any other sidecar) is never counted as a receipt.
-fn receipt_seq(dir: &Path, site: &str, phase: &str, key: &str) -> Option<u64> {
+fn receipt_seq(dir: &Path, site: &str, phase: &str, key: &str, after: u64) -> Option<u64> {
     let entries = fs::read_dir(dir.join("witness")).ok()?;
     let mut seqs: Vec<u64> = Vec::new();
     for entry in entries.flatten() {
@@ -149,12 +173,13 @@ fn receipt_seq(dir: &Path, site: &str, phase: &str, key: &str) -> Option<u64> {
         };
         if matches(&receipt, site, phase, key)
             && let Some(seq) = field(&receipt, "seq").as_number()
+            && seq > after as f64
         {
             seqs.push(seq as u64);
         }
     }
     seqs.sort_unstable();
-    seqs.into_iter().next()
+    seqs.pop()
 }
 /// Releases a still-held barrier before `Scratch` deletes its control directory.
 /// Without it a failing assertion leaves the worker polling a removed directory
@@ -188,9 +213,18 @@ impl Drop for BarrierRelease {
         // barrier while this guard is already spinning has not written its
         // `block` receipt yet, and a one-shot sample would then skip the release
         // entirely — the leak this guard exists to stop.
-        let observe = |phase: &str| receipt_seq(&self.control, self.site, phase, self.key);
+        //
+        // #1805: every check pairs with the *current* barrier — the highest
+        // `block` receipt for this site/key. A key that completed an earlier
+        // round still has that round's release and complete receipts on disk,
+        // and an unpaired read would call that history "already released" and
+        // skip the release the current barrier is waiting on.
+        let observe =
+            |phase: &str, after: u64| receipt_seq(&self.control, self.site, phase, self.key, after);
+        let sample =
+            |barrier: Option<u64>| (barrier.and_then(|seq| observe("release", seq)), barrier);
         let mut deadline = Instant::now() + Duration::from_secs(2);
-        let mut observed = (observe("release"), observe("block"));
+        let mut observed = sample(observe("block", 0));
         loop {
             if observed.0.is_none()
                 && let Some(seq) = observed.1
@@ -206,7 +240,7 @@ impl Drop for BarrierRelease {
             // leave that write with whatever is left of the block-receipt wait.
             // A stalled or failing barrier extends nothing, so `Drop` still ends:
             // at most the `block` and `release` transitions can push it out.
-            let current = (observe("release"), observe("block"));
+            let current = sample(observe("block", 0));
             if current != observed {
                 observed = current;
                 deadline = Instant::now() + Duration::from_secs(2);
@@ -215,7 +249,12 @@ impl Drop for BarrierRelease {
             // for its `complete` receipt so `Scratch` does not remove the
             // directory (and race the worker into re-creating it) before that
             // write finishes.
-            if observe("complete").is_some() || Instant::now() >= deadline {
+            if observed
+                .1
+                .and_then(|seq| observe("complete", seq))
+                .is_some()
+                || Instant::now() >= deadline
+            {
                 break;
             }
             thread::sleep(POLL);
@@ -362,13 +401,14 @@ fn writer_barrier_blocks_underlying_append() {
     arm(
         &control,
         &config_text(&[barrier_fragment(
-            "writer",
+            WRITER_TURN_TIMEOUT.0,
             "b1",
-            "turn_timeout",
+            WRITER_TURN_TIMEOUT.1,
             HELD_BOUND_MS,
         )]),
     );
-    let _release_guard = BarrierRelease::new(&control, "writer", "turn_timeout");
+    let _release_guard =
+        BarrierRelease::new(&control, WRITER_TURN_TIMEOUT.0, WRITER_TURN_TIMEOUT.1);
     let (writer, path) = writer_fixture(&scratch.0, Some(armed(&control)));
     let blocked = {
         let writer = writer.clone();
@@ -380,9 +420,9 @@ fn writer_barrier_blocks_underlying_append() {
     };
     let block = wait_receipt(
         &control,
-        "writer",
+        WRITER_TURN_TIMEOUT.0,
         "block",
-        "turn_timeout",
+        WRITER_TURN_TIMEOUT.1,
         "#1370 writer barrier blocks the underlying append",
     );
     let block_seq = seq_of(&block);
@@ -405,9 +445,9 @@ fn writer_barrier_blocks_underlying_append() {
     };
     wait_receipt(
         &control,
-        "writer",
+        WRITER_SESSION_METADATA.0,
         "queued",
-        "session_metadata",
+        WRITER_SESSION_METADATA.1,
         "#1370 writer queued receipt while the barrier holds",
     );
     negative_assert!(
@@ -419,9 +459,9 @@ fn writer_barrier_blocks_underlying_append() {
     queued.join().unwrap();
     let release_receipt = wait_receipt(
         &control,
-        "writer",
+        WRITER_TURN_TIMEOUT.0,
         "release",
-        "turn_timeout",
+        WRITER_TURN_TIMEOUT.1,
         "#1370 writer release receipt after release.json",
     );
     negative_assert_eq!(
@@ -431,9 +471,9 @@ fn writer_barrier_blocks_underlying_append() {
     );
     wait_receipt(
         &control,
-        "writer",
+        WRITER_TURN_TIMEOUT.0,
         "complete",
-        "turn_timeout",
+        WRITER_TURN_TIMEOUT.1,
         "#1370 writer complete receipt after the real write",
     );
     let transcript = text(&path);
@@ -448,7 +488,12 @@ fn writer_barrier_blocks_underlying_append() {
         "#1370 file order is the queue order: {transcript}"
     );
     // The queued write was never blocked, so it owes no complete receipt.
-    assert_no_receipt(&control, "writer", "complete", "session_metadata");
+    assert_no_receipt(
+        &control,
+        WRITER_SESSION_METADATA.0,
+        "complete",
+        WRITER_SESSION_METADATA.1,
+    );
 }
 
 // Matrix 6: without a release the barrier self-releases at the bound.
@@ -458,7 +503,12 @@ fn writer_barrier_bound_releases_without_release_file() {
     let control = scratch.control();
     arm(
         &control,
-        r#"{"writer":{"barrier":{"id":"b1","key":"turn_timeout","boundMs":150}}}"#,
+        &config_text(&[barrier_fragment(
+            WRITER_TURN_TIMEOUT.0,
+            "b1",
+            WRITER_TURN_TIMEOUT.1,
+            150.0,
+        )]),
     );
     let (writer, path) = writer_fixture(&scratch.0, Some(armed(&control)));
     let blocked = thread::spawn(move || {
@@ -468,16 +518,16 @@ fn writer_barrier_bound_releases_without_release_file() {
     });
     wait_receipt(
         &control,
-        "writer",
+        WRITER_TURN_TIMEOUT.0,
         "block",
-        "turn_timeout",
+        WRITER_TURN_TIMEOUT.1,
         "#1370 bounded writer block receipt",
     );
     let release = wait_receipt(
         &control,
-        "writer",
+        WRITER_TURN_TIMEOUT.0,
         "release",
-        "turn_timeout",
+        WRITER_TURN_TIMEOUT.1,
         "#1370 bound expiry self-releases the barrier",
     );
     negative_assert_eq!(
@@ -488,9 +538,9 @@ fn writer_barrier_bound_releases_without_release_file() {
     blocked.join().unwrap();
     wait_receipt(
         &control,
-        "writer",
+        WRITER_TURN_TIMEOUT.0,
         "complete",
-        "turn_timeout",
+        WRITER_TURN_TIMEOUT.1,
         "#1370 bounded writer complete receipt",
     );
     negative_assert!(
@@ -507,7 +557,11 @@ fn barrier_and_fault_ids_are_single_shot() {
     let control = scratch.control();
     arm(
         &control,
-        &config_text(&[fault_fragment("writer", "f1", "session_metadata")]),
+        &config_text(&[fault_fragment(
+            WRITER_SESSION_METADATA.0,
+            "f1",
+            WRITER_SESSION_METADATA.1,
+        )]),
     );
     let (writer, path) = writer_fixture(&scratch.0, Some(armed(&control)));
     let error = writer
@@ -523,9 +577,9 @@ fn barrier_and_fault_ids_are_single_shot() {
     );
     wait_receipt(
         &control,
-        "writer",
+        WRITER_SESSION_METADATA.0,
         "fault",
-        "session_metadata",
+        WRITER_SESSION_METADATA.1,
         "#1370 writer fault receipt",
     );
     negative_assert_eq!(text(&path), "", "#1370 faulted write leaves no bytes");
@@ -533,7 +587,12 @@ fn barrier_and_fault_ids_are_single_shot() {
     let second = writer.record_session_metadata(&"s1".into(), &"t2".into(), metadata_value(2));
     negative_assert!(second.is_ok(), "#1370 the fault fires only once");
     negative_assert_eq!(
-        count_receipts(&control, "writer", "fault", "session_metadata"),
+        count_receipts(
+            &control,
+            WRITER_SESSION_METADATA.0,
+            "fault",
+            WRITER_SESSION_METADATA.1
+        ),
         1,
         "#1370 fault id is single-shot"
     );
@@ -541,13 +600,17 @@ fn barrier_and_fault_ids_are_single_shot() {
     arm(
         &control,
         &config_text(&[barrier_fragment(
-            "writer",
+            WRITER_SESSION_METADATA.0,
             "b2",
-            "session_metadata",
+            WRITER_SESSION_METADATA.1,
             HELD_BOUND_MS,
         )]),
     );
-    let _release_guard = BarrierRelease::new(&control, "writer", "session_metadata");
+    let _release_guard = BarrierRelease::new(
+        &control,
+        WRITER_SESSION_METADATA.0,
+        WRITER_SESSION_METADATA.1,
+    );
     let blocked = {
         let writer = writer.clone();
         thread::spawn(move || {
@@ -558,24 +621,29 @@ fn barrier_and_fault_ids_are_single_shot() {
     };
     let block = wait_receipt(
         &control,
-        "writer",
+        WRITER_SESSION_METADATA.0,
         "block",
-        "session_metadata",
+        WRITER_SESSION_METADATA.1,
         "#1370 re-armed writer block receipt",
     );
     release(&control, seq_of(&block));
     blocked.join().unwrap();
     wait_receipt(
         &control,
-        "writer",
+        WRITER_SESSION_METADATA.0,
         "complete",
-        "session_metadata",
+        WRITER_SESSION_METADATA.1,
         "#1370 re-armed writer complete receipt",
     );
     let third = writer.record_session_metadata(&"s1".into(), &"t4".into(), metadata_value(4));
     negative_assert!(third.is_ok(), "#1370 the barrier blocks only once");
     negative_assert_eq!(
-        count_receipts(&control, "writer", "block", "session_metadata"),
+        count_receipts(
+            &control,
+            WRITER_SESSION_METADATA.0,
+            "block",
+            WRITER_SESSION_METADATA.1
+        ),
         1,
         "#1370 barrier id is single-shot"
     );
@@ -595,9 +663,9 @@ fn registry_fault_is_single_eio_in_lock() {
     arm(
         &control,
         &config_text(&[fault_fragment(
-            "registry",
+            REGISTRY_TURN_TIMEOUT.0,
             "f1",
-            "agent_status:turn_timeout",
+            REGISTRY_TURN_TIMEOUT.1,
         )]),
     );
     let error = registry.append(&run(), &agent_status_event("turn_timeout"));
@@ -607,9 +675,9 @@ fn registry_fault_is_single_eio_in_lock() {
     );
     wait_receipt(
         &control,
-        "registry",
+        REGISTRY_TURN_TIMEOUT.0,
         "fault",
-        "agent_status:turn_timeout",
+        REGISTRY_TURN_TIMEOUT.1,
         "#1370 registry fault receipt",
     );
     negative_assert_eq!(
@@ -625,7 +693,12 @@ fn registry_fault_is_single_eio_in_lock() {
     let retried = registry.append(&run(), &agent_status_event("turn_timeout"));
     negative_assert!(retried.is_ok(), "#1370 the registry fault fires only once");
     negative_assert_eq!(
-        count_receipts(&control, "registry", "fault", "agent_status:turn_timeout"),
+        count_receipts(
+            &control,
+            REGISTRY_TURN_TIMEOUT.0,
+            "fault",
+            REGISTRY_TURN_TIMEOUT.1
+        ),
         1,
         "#1370 registry fault id is single-shot"
     );
@@ -650,16 +723,17 @@ fn registry_barrier_holds_chain_lock() {
     arm(
         &control,
         &config_text(&[barrier_fragment(
-            "registry",
+            REGISTRY_TURN_TIMEOUT.0,
             "b1",
-            "agent_status:turn_timeout",
+            REGISTRY_TURN_TIMEOUT.1,
             HELD_BOUND_MS,
         )]),
     );
     // Bound by `registry-barrier-outside-lock`, so this case takes the failure
     // path on every negative-control run: without the guard the blocked thread
     // outlives `Scratch` and re-creates `/tmp/pdrs-stimulus-*`.
-    let _release_guard = BarrierRelease::new(&control, "registry", "agent_status:turn_timeout");
+    let _release_guard =
+        BarrierRelease::new(&control, REGISTRY_TURN_TIMEOUT.0, REGISTRY_TURN_TIMEOUT.1);
     let blocked = {
         let registry = registry.clone();
         thread::spawn(move || {
@@ -670,9 +744,9 @@ fn registry_barrier_holds_chain_lock() {
     };
     let block = wait_receipt(
         &control,
-        "registry",
+        REGISTRY_TURN_TIMEOUT.0,
         "block",
-        "agent_status:turn_timeout",
+        REGISTRY_TURN_TIMEOUT.1,
         "#1370 registry barrier blocks the in-lock persist",
     );
     let reader = {
@@ -694,9 +768,9 @@ fn registry_barrier_holds_chain_lock() {
     );
     let release_receipt = wait_receipt(
         &control,
-        "registry",
+        REGISTRY_TURN_TIMEOUT.0,
         "release",
-        "agent_status:turn_timeout",
+        REGISTRY_TURN_TIMEOUT.1,
         "#1370 registry release receipt after release.json",
     );
     negative_assert_eq!(
@@ -706,9 +780,9 @@ fn registry_barrier_holds_chain_lock() {
     );
     wait_receipt(
         &control,
-        "registry",
+        REGISTRY_TURN_TIMEOUT.0,
         "complete",
-        "agent_status:turn_timeout",
+        REGISTRY_TURN_TIMEOUT.1,
         "#1370 registry complete receipt after the real persist",
     );
 }
@@ -721,7 +795,8 @@ fn registry_barrier_holds_chain_lock() {
 async fn registry_port_appends_queue_with_witness_receipts() {
     let scratch = Scratch::new();
     let control = scratch.control();
-    let _release_guard = BarrierRelease::new(&control, "registry", "agent_status:turn_timeout");
+    let _release_guard =
+        BarrierRelease::new(&control, REGISTRY_TURN_TIMEOUT.0, REGISTRY_TURN_TIMEOUT.1);
     let port = Arc::new(
         crate::runtime::turn::publish::FileRegistry::new(
             FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
@@ -739,9 +814,9 @@ async fn registry_port_appends_queue_with_witness_receipts() {
     arm(
         &control,
         &config_text(&[barrier_fragment(
-            "registry",
+            REGISTRY_TURN_TIMEOUT.0,
             "b1",
-            "agent_status:turn_timeout",
+            REGISTRY_TURN_TIMEOUT.1,
             HELD_BOUND_MS,
         )]),
     );
@@ -755,9 +830,9 @@ async fn registry_port_appends_queue_with_witness_receipts() {
     };
     let block = wait_receipt(
         &control,
-        "registry",
+        REGISTRY_TURN_TIMEOUT.0,
         "block",
-        "agent_status:turn_timeout",
+        REGISTRY_TURN_TIMEOUT.1,
         "#1370 registry port blocks the append",
     );
     let queued = {
@@ -797,9 +872,9 @@ async fn registry_port_appends_queue_with_witness_receipts() {
     );
     wait_receipt(
         &control,
-        "registry",
+        REGISTRY_TURN_TIMEOUT.0,
         "complete",
-        "agent_status:turn_timeout",
+        REGISTRY_TURN_TIMEOUT.1,
         "#1370 registry port complete receipt",
     );
     // The queued write was never blocked, so it owes no complete receipt.
@@ -823,7 +898,8 @@ async fn publication_queued_receipt_survives_predecessor_serialization() {
     use crate::runtime::turn::publish::{FileRegistry, TurnPublisher, TurnRunRegistry};
     let scratch = Scratch::new();
     let control = scratch.control();
-    let _release_guard = BarrierRelease::new(&control, "registry", "agent_status:turn_timeout");
+    let _release_guard =
+        BarrierRelease::new(&control, REGISTRY_TURN_TIMEOUT.0, REGISTRY_TURN_TIMEOUT.1);
     let registry = Arc::new(
         FileRegistry::new(
             FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
@@ -835,9 +911,9 @@ async fn publication_queued_receipt_survives_predecessor_serialization() {
     arm(
         &control,
         &config_text(&[barrier_fragment(
-            "registry",
+            REGISTRY_TURN_TIMEOUT.0,
             "p1",
-            "agent_status:turn_timeout",
+            REGISTRY_TURN_TIMEOUT.1,
             OUTLIVED_BOUND_MS,
         )]),
     );
@@ -852,9 +928,9 @@ async fn publication_queued_receipt_survives_predecessor_serialization() {
     );
     let block = wait_receipt(
         &control,
-        "registry",
+        REGISTRY_TURN_TIMEOUT.0,
         "block",
-        "agent_status:turn_timeout",
+        REGISTRY_TURN_TIMEOUT.1,
         "#1370 publication blocks the first append",
     );
     negative_assert!(
@@ -897,7 +973,8 @@ async fn failed_queued_witness_fails_the_append_before_the_worker() {
     use crate::runtime::turn::publish::{FileRegistry, TurnRunRegistry};
     let scratch = Scratch::new();
     let control = scratch.control();
-    let _release_guard = BarrierRelease::new(&control, "registry", "agent_status:turn_timeout");
+    let _release_guard =
+        BarrierRelease::new(&control, REGISTRY_TURN_TIMEOUT.0, REGISTRY_TURN_TIMEOUT.1);
     let port = Arc::new(
         FileRegistry::new(
             FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
@@ -909,9 +986,9 @@ async fn failed_queued_witness_fails_the_append_before_the_worker() {
     arm(
         &control,
         &config_text(&[barrier_fragment(
-            "registry",
+            REGISTRY_TURN_TIMEOUT.0,
             "w1",
-            "agent_status:turn_timeout",
+            REGISTRY_TURN_TIMEOUT.1,
             HELD_BOUND_MS,
         )]),
     );
@@ -924,9 +1001,9 @@ async fn failed_queued_witness_fails_the_append_before_the_worker() {
     };
     let block = wait_receipt(
         &control,
-        "registry",
+        REGISTRY_TURN_TIMEOUT.0,
         "block",
-        "agent_status:turn_timeout",
+        REGISTRY_TURN_TIMEOUT.1,
         "#1370 witness failure fixture blocks the first append",
     );
     // Sabotage exactly the next receipt: the atomic rename cannot replace a
@@ -980,9 +1057,9 @@ async fn failed_barrier_releases_its_hold_before_later_entries() {
     arm(
         &control,
         &config_text(&[barrier_fragment(
-            "registry",
+            REGISTRY_TURN_TIMEOUT.0,
             "f1",
-            "agent_status:turn_timeout",
+            REGISTRY_TURN_TIMEOUT.1,
             HELD_BOUND_MS,
         )]),
     );
@@ -1021,7 +1098,8 @@ async fn witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append() {
     use crate::runtime::turn::publish::{FileRegistry, TurnRunRegistry};
     let scratch = Scratch::new();
     let control = scratch.control();
-    let _release_guard = BarrierRelease::new(&control, "registry", "agent_status:turn_timeout");
+    let _release_guard =
+        BarrierRelease::new(&control, REGISTRY_TURN_TIMEOUT.0, REGISTRY_TURN_TIMEOUT.1);
     let port = Arc::new(
         FileRegistry::new(
             FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
@@ -1036,9 +1114,9 @@ async fn witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append() {
     arm(
         &control,
         &config_text(&[barrier_fragment(
-            "registry",
+            REGISTRY_TURN_TIMEOUT.0,
             "q1",
-            "agent_status:turn_timeout",
+            REGISTRY_TURN_TIMEOUT.1,
             OUTLIVED_BOUND_MS,
         )]),
     );
@@ -1051,9 +1129,9 @@ async fn witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append() {
     };
     let block = wait_receipt(
         &control,
-        "registry",
+        REGISTRY_TURN_TIMEOUT.0,
         "block",
-        "agent_status:turn_timeout",
+        REGISTRY_TURN_TIMEOUT.1,
         "#1370 fifo fixture blocks the first append",
     );
     // Entry tick while the barrier is held: this append owes a receipt, and its
@@ -1072,9 +1150,9 @@ async fn witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append() {
     release(&control, seq_of(&block));
     wait_receipt(
         &control,
-        "registry",
+        REGISTRY_TURN_TIMEOUT.0,
         "release",
-        "agent_status:turn_timeout",
+        REGISTRY_TURN_TIMEOUT.1,
         "#1370 fifo fixture releases the barrier",
     );
     // The hold is gone with the release, so this append owes no receipt and is
@@ -1138,7 +1216,8 @@ async fn withheld_witnessed_future_does_not_park_the_registry_worker() {
     use crate::runtime::turn::publish::{FileRegistry, TurnRunRegistry};
     let scratch = Scratch::new();
     let control = scratch.control();
-    let _release_guard = BarrierRelease::new(&control, "registry", "agent_status:turn_timeout");
+    let _release_guard =
+        BarrierRelease::new(&control, REGISTRY_TURN_TIMEOUT.0, REGISTRY_TURN_TIMEOUT.1);
     let port = Arc::new(
         FileRegistry::new(
             FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
@@ -1152,9 +1231,9 @@ async fn withheld_witnessed_future_does_not_park_the_registry_worker() {
     arm(
         &control,
         &config_text(&[barrier_fragment(
-            "registry",
+            REGISTRY_TURN_TIMEOUT.0,
             "h1",
-            "agent_status:turn_timeout",
+            REGISTRY_TURN_TIMEOUT.1,
             OUTLIVED_BOUND_MS,
         )]),
     );
@@ -1167,9 +1246,9 @@ async fn withheld_witnessed_future_does_not_park_the_registry_worker() {
     };
     let block = wait_receipt(
         &control,
-        "registry",
+        REGISTRY_TURN_TIMEOUT.0,
         "block",
-        "agent_status:turn_timeout",
+        REGISTRY_TURN_TIMEOUT.1,
         "#1370 withheld fixture trips the barrier",
     );
     // Invoke the witnessed append while the barrier is held, then deliberately
@@ -1188,9 +1267,9 @@ async fn withheld_witnessed_future_does_not_park_the_registry_worker() {
     release(&control, seq_of(&block));
     wait_receipt(
         &control,
-        "registry",
+        REGISTRY_TURN_TIMEOUT.0,
         "release",
-        "agent_status:turn_timeout",
+        REGISTRY_TURN_TIMEOUT.1,
         "#1370 withheld fixture releases the barrier",
     );
     // The witnessed job holds the FIFO slot ahead of this append, and its settle
@@ -1254,13 +1333,27 @@ fn two_site_barriers_release_by_sequence() {
     arm(
         &control,
         &config_text(&[
-            barrier_fragment("writer", "w1", "session_metadata", HELD_BOUND_MS),
-            barrier_fragment("registry", "r1", "agent_status:turn_timeout", HELD_BOUND_MS),
+            barrier_fragment(
+                WRITER_SESSION_METADATA.0,
+                "w1",
+                WRITER_SESSION_METADATA.1,
+                HELD_BOUND_MS,
+            ),
+            barrier_fragment(
+                REGISTRY_TURN_TIMEOUT.0,
+                "r1",
+                REGISTRY_TURN_TIMEOUT.1,
+                HELD_BOUND_MS,
+            ),
         ]),
     );
-    let _writer_release_guard = BarrierRelease::new(&control, "writer", "session_metadata");
+    let _writer_release_guard = BarrierRelease::new(
+        &control,
+        WRITER_SESSION_METADATA.0,
+        WRITER_SESSION_METADATA.1,
+    );
     let _registry_release_guard =
-        BarrierRelease::new(&control, "registry", "agent_status:turn_timeout");
+        BarrierRelease::new(&control, REGISTRY_TURN_TIMEOUT.0, REGISTRY_TURN_TIMEOUT.1);
     let (writer, path) = writer_fixture(&scratch.0, Some(stimulus));
     let writer_blocked = {
         let writer = writer.clone();
@@ -1272,9 +1365,9 @@ fn two_site_barriers_release_by_sequence() {
     };
     let writer_block = wait_receipt(
         &control,
-        "writer",
+        WRITER_SESSION_METADATA.0,
         "block",
-        "session_metadata",
+        WRITER_SESSION_METADATA.1,
         "#1370 two-site writer block receipt",
     );
     let registry_blocked = {
@@ -1287,9 +1380,9 @@ fn two_site_barriers_release_by_sequence() {
     };
     let registry_block = wait_receipt(
         &control,
-        "registry",
+        REGISTRY_TURN_TIMEOUT.0,
         "block",
-        "agent_status:turn_timeout",
+        REGISTRY_TURN_TIMEOUT.1,
         "#1370 two-site registry block receipt",
     );
     // Releasing the registry sequence frees only the registry barrier.
@@ -1297,9 +1390,9 @@ fn two_site_barriers_release_by_sequence() {
     registry_blocked.join().unwrap();
     wait_receipt(
         &control,
-        "registry",
+        REGISTRY_TURN_TIMEOUT.0,
         "complete",
-        "agent_status:turn_timeout",
+        REGISTRY_TURN_TIMEOUT.1,
         "#1370 two-site registry complete receipt",
     );
     thread::sleep(Duration::from_millis(200));
@@ -1315,9 +1408,9 @@ fn two_site_barriers_release_by_sequence() {
     writer_blocked.join().unwrap();
     wait_receipt(
         &control,
-        "writer",
+        WRITER_SESSION_METADATA.0,
         "complete",
-        "session_metadata",
+        WRITER_SESSION_METADATA.1,
         "#1370 two-site writer complete receipt",
     );
     negative_assert!(
@@ -1440,5 +1533,178 @@ fn stimulus_keys_derive_as_declared() {
         registry_keys[2],
         "turn_completed",
         "#1370 registry key is the type"
+    );
+}
+
+// #1805 item 1: a stalled barrier — the block receipt is on disk but the
+// worker died inside `wait_for_release` (release.json unreadable), so no
+// release or complete receipt can ever land. The guard itself must still end
+// within its budget: only receipts that actually advance may extend it, never
+// the release-writing branch's own retries.
+#[test]
+fn stalled_barrier_guard_still_ends_within_its_budget() {
+    let scratch = Scratch::new();
+    let control = scratch.control();
+    arm(
+        &control,
+        &config_text(&[barrier_fragment(
+            WRITER_TURN_TIMEOUT.0,
+            "s1",
+            WRITER_TURN_TIMEOUT.1,
+            HELD_BOUND_MS,
+        )]),
+    );
+    // Sabotage the release path: release.json as a directory makes the
+    // worker's read fail (so its append errors out instead of blocking) and
+    // the guard's own write fail (so no release or complete ever lands).
+    fs::create_dir(control.join("release.json")).expect("#1805 sabotage the release path");
+    let (writer, path) = writer_fixture(&scratch.0, Some(armed(&control)));
+    let blocked = thread::spawn(move || {
+        writer
+            .record_agent_status_message(&"s1".into(), &"t1".into(), &status("turn_timeout"))
+            .expect_err("#1805 the stalled write fails instead of hanging")
+    });
+    wait_receipt(
+        &control,
+        WRITER_TURN_TIMEOUT.0,
+        "block",
+        WRITER_TURN_TIMEOUT.1,
+        "#1805 the stalled barrier writes its block receipt",
+    );
+    blocked
+        .join()
+        .expect("#1805 the stalled worker thread ends");
+    negative_assert!(
+        !text(&path).contains("turn_timeout"),
+        "#1805 the stalled write lands no bytes"
+    );
+    // Drop the guard on its own thread and sample it: the fixed guard ends
+    // after its 2 s budget, while the budget-refresh regression spins forever
+    // — which must surface as this named assertion, never a hung binary.
+    let guard = BarrierRelease::new(&control, WRITER_TURN_TIMEOUT.0, WRITER_TURN_TIMEOUT.1);
+    let dropping = thread::spawn(move || drop(guard));
+    thread::sleep(Duration::from_secs(5));
+    negative_assert!(
+        dropping.is_finished(),
+        "#1805 the stalled release guard ends within its budget"
+    );
+    dropping
+        .join()
+        .expect("#1805 the stalled release guard thread ends");
+}
+
+// #1805 item 2: the release guard pairs its receipts with the *current*
+// barrier. A key that already completed a full round leaves block, release,
+// and complete receipts on disk; an unpaired guard reads that history as
+// "already released" and skips the release the new barrier is waiting on.
+// Pairing by sequence — only receipts newer than the current block receipt
+// count — keeps the two rounds apart.
+#[test]
+fn release_guard_pairs_receipts_with_the_current_barrier() {
+    let scratch = Scratch::new();
+    let control = scratch.control();
+    let registry = Arc::new(
+        FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
+            .expect("#1805 registry fixture opens"),
+    );
+    registry
+        .accept(&accept_input())
+        .expect("#1805 registry fixture accepts the run");
+    // Round one: a complete block -> release -> complete cycle on the shared
+    // key, so round two starts with history an unpaired guard would mistake
+    // for its own state.
+    arm(
+        &control,
+        &config_text(&[barrier_fragment(
+            REGISTRY_TURN_TIMEOUT.0,
+            "p1",
+            REGISTRY_TURN_TIMEOUT.1,
+            HELD_BOUND_MS,
+        )]),
+    );
+    let first = {
+        let registry = registry.clone();
+        thread::spawn(move || {
+            registry
+                .append(&run(), &agent_status_event("turn_timeout"))
+                .expect("#1805 first round append completes")
+        })
+    };
+    let first_block = wait_receipt(
+        &control,
+        REGISTRY_TURN_TIMEOUT.0,
+        "block",
+        REGISTRY_TURN_TIMEOUT.1,
+        "#1805 first round blocks the append",
+    );
+    release(&control, seq_of(&first_block));
+    first.join().expect("#1805 first round append thread ends");
+    wait_receipt(
+        &control,
+        REGISTRY_TURN_TIMEOUT.0,
+        "release",
+        REGISTRY_TURN_TIMEOUT.1,
+        "#1805 first round release receipt",
+    );
+    wait_receipt(
+        &control,
+        REGISTRY_TURN_TIMEOUT.0,
+        "complete",
+        REGISTRY_TURN_TIMEOUT.1,
+        "#1805 first round complete receipt",
+    );
+    // Round two: the same key under a fresh single-shot id, with a bound that
+    // outlives the observation cap, so a guard that skips the release cannot
+    // hide behind a bound expiry inside the cap.
+    arm(
+        &control,
+        &config_text(&[barrier_fragment(
+            REGISTRY_TURN_TIMEOUT.0,
+            "p2",
+            REGISTRY_TURN_TIMEOUT.1,
+            OUTLIVED_BOUND_MS,
+        )]),
+    );
+    let guard = BarrierRelease::new(&control, REGISTRY_TURN_TIMEOUT.0, REGISTRY_TURN_TIMEOUT.1);
+    let second = {
+        let registry = registry.clone();
+        thread::spawn(move || {
+            registry
+                .append(&run(), &agent_status_event("turn_timeout"))
+                .expect("#1805 second round append completes")
+        })
+    };
+    let second_block = wait_receipt_after(
+        &control,
+        REGISTRY_TURN_TIMEOUT.0,
+        "block",
+        REGISTRY_TURN_TIMEOUT.1,
+        seq_of(&first_block),
+        "#1805 second round blocks the append",
+    );
+    drop(guard);
+    let second_release = wait_receipt_after(
+        &control,
+        REGISTRY_TURN_TIMEOUT.0,
+        "release",
+        REGISTRY_TURN_TIMEOUT.1,
+        seq_of(&second_block),
+        "#1805 the release guard releases the current barrier",
+    );
+    second
+        .join()
+        .expect("#1805 second round append thread ends");
+    negative_assert_eq!(
+        field(&second_release, "bounded"),
+        &JsValue::Undefined,
+        "#1805 the guard's release is an explicit release, not a bound expiry"
+    );
+    wait_receipt_after(
+        &control,
+        REGISTRY_TURN_TIMEOUT.0,
+        "complete",
+        REGISTRY_TURN_TIMEOUT.1,
+        seq_of(&second_block),
+        "#1805 second round complete receipt",
     );
 }

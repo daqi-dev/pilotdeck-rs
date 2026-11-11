@@ -216,6 +216,59 @@ mutations = [
      'if !path.is_dir() {',
      'if false {',
      'executable_native_storage_stimulus', '#1370 executable invalid stimulus dir'),
+    # #1805 item 1: the release guard's budget may only be extended by a
+    # receipt that actually advanced. The fix-r5 shape refreshed the deadline
+    # unconditionally inside the release-writing branch, so a stalled barrier
+    # (block receipt on disk, release and complete forever absent — the worker
+    # died inside wait_for_release) spun `Drop` forever instead of ending.
+    ('drop-budget-refreshed-in-release-branch', TESTS,
+     '''            if observed.0.is_none()
+                && let Some(seq) = observed.1
+            {
+                // Non-panicking release: a `.unwrap()` here could abort during unwind.
+                let temporary = self.control.join("release.json.tmp");
+                if fs::write(&temporary, format!("{{\\"seq\\":{seq}}}")).is_ok() {
+                    let _ = fs::rename(&temporary, self.control.join("release.json"));
+                }
+            }
+            // Only a receipt that actually advanced earns the durable write behind
+            // it a fresh budget — the barrier the worker reaches late must not
+            // leave that write with whatever is left of the block-receipt wait.
+            // A stalled or failing barrier extends nothing, so `Drop` still ends:
+            // at most the `block` and `release` transitions can push it out.
+            let current = sample(observe("block", 0));
+            if current != observed {
+                observed = current;
+                deadline = Instant::now() + Duration::from_secs(2);
+            }''',
+     '''            if observed.0.is_none()
+                && let Some(seq) = observed.1
+            {
+                // Non-panicking release: a `.unwrap()` here could abort during unwind.
+                let temporary = self.control.join("release.json.tmp");
+                if fs::write(&temporary, format!("{{\\"seq\\":{seq}}}")).is_ok() {
+                    let _ = fs::rename(&temporary, self.control.join("release.json"));
+                }
+                deadline = Instant::now() + Duration::from_secs(2);
+            }
+            // Only a receipt that actually advanced earns the durable write behind
+            // it a fresh budget — the barrier the worker reaches late must not
+            // leave that write with whatever is left of the block-receipt wait.
+            // A stalled or failing barrier extends nothing, so `Drop` still ends:
+            // at most the `block` and `release` transitions can push it out.
+            let current = sample(observe("block", 0));
+            if current != observed {
+                observed = current;
+            }''',
+     'storage::stimulus_tests::stalled_barrier_guard_still_ends_within_its_budget', '#1805 the stalled release guard ends within its budget'),
+    # #1805 item 2: receipts pair with the current barrier by sequence. With
+    # the floor neutralized, a key that completed an earlier round reads as
+    # already released: the guard skips the release.json write the current
+    # barrier is waiting on and exits on the stale round's receipts.
+    ('release-guard-receipts-unpaired', TESTS,
+     '&& seq > after as f64',
+     '&& seq > after as f64 * 0.0',
+     'storage::stimulus_tests::release_guard_pairs_receipts_with_the_current_barrier', '#1805 the release guard releases the current barrier'),
 ]
 
 
