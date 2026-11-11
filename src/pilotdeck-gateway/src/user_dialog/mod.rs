@@ -49,11 +49,10 @@ pub use http_store::{
     HttpStoreTransportResponse, HttpStoreValidationError, LiveGatewayUserDialogStore,
     create_gateway_user_dialog_store_http_handler, start_gateway_user_dialog_store_http_server,
 };
-// Internal use only (the 408 framing checks of the webhook and sms lanes; the
+// Internal use only (the sms lane's #2499 head-deadline read gate in
+// production, and the 408 framing checks of the webhook and sms lanes; the
 // api_server lane calls the same response builder but asserts on parsed fields,
-// not on these bytes); not public API. Test-gated so a non-test build never
-// carries an unused re-export.
-#[cfg(test)]
+// not on these bytes); not public API.
 pub(crate) use http_store::NODE_408_RESPONSE;
 pub use journal::{
     GatewayUserDialogJournal, JournalOptions, UserDialogJournal, create_gateway_user_dialog_journal,

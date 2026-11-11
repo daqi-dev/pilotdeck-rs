@@ -1,23 +1,35 @@
-//! #1955: the sms listener's **request-head** deadline (Node `headersTimeout`).
+//! #1955/#2499: the sms listener's **request-head** deadline (Node
+//! `headersTimeout`).
 //!
-//! The lane serves through a bare `http1::Builder`; hyper silently disables
-//! its built-in header-read timeout unless a `Timer` is installed
-//! (`hyper::common::time` turns `Dur::Default(Some(30 s))` into `None`), so
-//! before this fix a client that wrote half a request head and stopped kept
-//! the detached connection task and the socket forever — unauthenticated
-//! connection exhaustion. `mod.rs` now installs the same
-//! `.timer(TokioTimer::new()).header_read_timeout(60 s)` pair as the sibling
-//! `wecom_callback` lane.
+//! #1955 established the deadline itself: without one, a client that wrote
+//! half a request head and stopped kept the detached connection task and the
+//! socket forever — unauthenticated connection exhaustion. hyper's
+//! `.timer(TokioTimer::new()).header_read_timeout(60 s)` pair answered that
+//! with a zero-byte close. #2499 (#2026 decision B) replaces the pair with
+//! `mod.rs`'s [`HeadersTimeoutGate`]: the lane owns the read side and answers
+//! the expiry with Node's 51-byte `408 Request Timeout` + `Connection: close`
+//! (`crate::user_dialog::NODE_408_RESPONSE`) written straight onto the socket
+//! — never through hyper's response path — landing on the 30 s
+//! connections-checker grid, i.e. at the first grid point **strictly after**
+//! the deadline (整除进一; a deadline that lands exactly on a grid point takes
+//! its successor), with the grid's phase anchored at the listener's bind.
+//! Measured on the pinned Node: a half-sent head at 89,995 ms, a zero-byte
+//! head at 90,004 ms, a first head delayed 35 s at 120.008 s
+//! (`_tmp/20261107-issue-1955/smoke/ts-half-head.out`,
+//! `ts-zero-and-delayed.out`). The anchored deadline per request head:
+//! connection establishment for the first head (Node's accept-time
+//! `last_message_start_`), the head's own first byte once it arrives
+//! (`on_message_begin`), the previous response's finish for a follow-up head —
+//! disarmed the moment the awaited head parsed, and disarmed for good when
+//! the channel's stop watch fires.
 //!
-//! Wire shape: the TS baseline (`createServer` with no options,
-//! `headersTimeout = 60 s`, measured in
-//! `_tmp/20261107-issue-1955/smoke/ts-half-head.out`) answers the same half
-//! head with Node's 51-byte `408 Request Timeout` + `Connection: close` on the
-//! 30 s connections-checker grid (measured: 90,004 ms). hyper has no public
-//! hook for writing a response once it owns the read head, so Rust closes
-//! without a byte. That presentation and timing difference is registered in
-//! `specs/gateway-parity/diffs/A8.3-CH-SMS-012.md`; the assertions below pin
-//! the bounded-close shape, not the TS bytes.
+//! The bounded differences that remain are registered in
+//! `specs/gateway-parity/diffs/A8.3-CH-SMS-017.md`: the deterministic
+//! strictly-after landing (Node's checker tick runs on real timer jitter) and
+//! the idle keep-alive follow-up head's silent close at this 60 s deadline
+//! where Node's `keepAliveTimeout` owns the idle connection at 5–6 s — that
+//! path stays byte-silent here on purpose (012 residual 3's approved
+//! reading).
 //!
 //! These cases live here rather than in `sms/tests.rs` because the two
 //! modules' test identities are registered by different negative-control
@@ -43,6 +55,15 @@
 //! unconditional one is the mutation switch `sms-stop-drain-on-sender-drop`,
 //! and #2269's `sms-stop-drain-predrain-count` restores the r1 pre-drain
 //! snapshot the truncation warn used to count with.
+//!
+//! #2499's landing cells run on the paused clock (`#[tokio::test(start_paused
+//! = true)]` + the `manual_clock` harness from `native_http/tests.rs`):
+//! `tokio::io::duplex` drives [`serve_sms_connection`] directly with an
+//! explicit grid anchor and interval, so every landing is probed at an exact
+//! virtual instant — never raced on the wall clock, and no 30 s waits. The
+//! wall-clock cases inject the grid through `SmsShared::test_grid_interval`
+//! instead (`INJECTED_GRID`), keeping a landing observable inside ~1 s while
+//! the byte-exact 408 stays the primary discriminator.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -78,19 +99,32 @@ const PORT_STOP_BOUND: u16 = 18977;
 const PORT_BIND_RACE: u16 = 18976;
 const PORT_STOP_PANIC: u16 = 18978;
 const PORT_STOP_DROP: u16 = 18979;
+/// The paused-clock cells' `webhookPort`. They never bind: the cells drive
+/// [`serve_sms_connection`] over a duplex directly, so the value only feeds
+/// `SmsChannelOptions` (the port the channel parses before `start`). Kept in
+/// the unclaimed stretch of the gap above so it cannot collide with a bound
+/// pin even if a future change starts a listener on it.
+const PORT_PAUSED_CELLS: u16 = 18933;
 
 /// The injected deadline for the fast cases. Far above scheduler jitter (the
 /// complete head is already in the socket buffer before the server polls) and
 /// far below the read deadline the assertions allow.
 const INJECTED: Duration = Duration::from_millis(300);
-/// The upper bound for a close that the injected deadline caused (#2020).
-///
-/// The lower bound (`>= INJECTED / 2`) only rejects a zero-length deadline; on
-/// its own it lets a close that took 30 s pass. This is the one constant the
-/// other side of that bracket lives in: `2 * INJECTED`, i.e. one full extra
-/// timer tick of slack for the scheduler, and still far below `READ_LIMIT` so
-/// that "the close was slow" and "the client gave up" stay distinguishable.
-const CLOSE_UPPER: Duration = Duration::from_millis(600);
+/// #2499: the injected checker-grid interval for the wall-clock fast cases.
+/// The landing is the first grid point strictly after the deadline, so a
+/// case's 408 arrives between `INJECTED` and `INJECTED + INJECTED_GRID` after
+/// the bind instead of up to half a minute later — the wall-clock cells could
+/// not afford the production 30 s grid per socket. The paused-clock cells do
+/// not use this: they pass the interval to [`serve_sms_connection`] directly.
+const INJECTED_GRID: Duration = Duration::from_millis(400);
+/// The upper bound for a close that the injected deadline caused (#2020,
+/// #2499). The lower bound (`>= INJECTED / 2`) only rejects a zero-length
+/// deadline; on its own it lets a close that took 30 s pass. The 408 lands on
+/// the injected grid, so the close lands within one grid interval plus
+/// scheduler slack of the deadline — `INJECTED_GRID + INJECTED` plus margin —
+/// and still far below `READ_LIMIT` so that "the close was slow" and "the
+/// client gave up" stay distinguishable.
+const CLOSE_UPPER: Duration = Duration::from_millis(1500);
 /// How long a client read may take before the test calls it unbounded.
 const READ_LIMIT: Duration = Duration::from_secs(5);
 /// The head deadline injected by the `stop()` drain cases. The fast case
@@ -121,6 +155,16 @@ const BOUND_WAIT: Duration = Duration::from_secs(80);
 /// 60 s [`STOP_DRAIN_LIMIT`] instead, because the stalled connection's
 /// [`BOUND_DEADLINE`] head deadline outlives the bound.
 const REBIND_LIMIT: Duration = Duration::from_secs(2);
+/// #2499: the paused-clock probe family's read window — the `timeout` each
+/// probe arms on its read before its advance. The windowed read is armed
+/// **before** the advance, so a still-open read resolves `Elapsed` while a
+/// close the advance crosses lands wins (tokio polls the inner read before
+/// the delay); the advance stays strictly greater than the window so the
+/// probe always crosses the read's timeout.
+const PAUSED_PROBE_READ_WINDOW: Duration = Duration::from_millis(50);
+/// #2499: the paused-clock probe family's advance — the virtual time each
+/// windowed probe crosses while its read is pending.
+const PAUSED_PROBE_ADVANCE: Duration = Duration::from_millis(60);
 
 struct NullSender;
 impl SmsSender for NullSender {
@@ -167,7 +211,14 @@ fn options(port: u16, injected: Option<Duration>) -> SmsChannelOptions {
 /// `start()` closes that hole for every case in this module: the no-op handle
 /// holds no `SmsShared` at all, so it cannot pass. The guard's own criterion is
 /// pinned from the failing side by `a_start_that_loses_the_bind_race_holds_no_listener`.
-async fn start(port: u16, injected: Option<Duration>) -> (Arc<dyn ChannelHandle>, Arc<SmsShared>) {
+///
+/// #2499: `grid` injects the connections-checker interval before `start()`
+/// takes it for the accept loop's spawn (`None` keeps Node's 30 s).
+async fn start_with_grid(
+    port: u16,
+    injected: Option<Duration>,
+    grid: Option<Duration>,
+) -> (Arc<dyn ChannelHandle>, Arc<SmsShared>) {
     match std::net::TcpListener::bind(("127.0.0.1", port)) {
         Ok(probe) => drop(probe),
         Err(error) => panic!(
@@ -177,6 +228,12 @@ async fn start(port: u16, injected: Option<Duration>) -> (Arc<dyn ChannelHandle>
     }
     let channel = SmsChannel::new(options(port, injected));
     let shared = channel.shared.clone();
+    if let Some(grid) = grid {
+        *shared
+            .test_grid_interval
+            .lock()
+            .expect("#2499 the test grid interval lock") = grid;
+    }
     let handle = channel
         .start(ChannelStartDeps {
             config: None,
@@ -196,6 +253,12 @@ async fn start(port: u16, injected: Option<Duration>) -> (Arc<dyn ChannelHandle>
          foreign server"
     );
     (handle, shared)
+}
+
+/// [`start_with_grid`] with Node's production grid — the cases whose timing
+/// does not depend on the landing.
+async fn start(port: u16, injected: Option<Duration>) -> (Arc<dyn ChannelHandle>, Arc<SmsShared>) {
+    start_with_grid(port, injected, None).await
 }
 
 /// [`start`] with an injected logger: the #2257 panic case needs the stop
@@ -291,13 +354,205 @@ async fn wait_for_task_release(shared: &Arc<SmsShared>, baseline: usize) -> usiz
     }
 }
 
-/// #1955 negative/positive pair: a half-sent head — and a connection that never
-/// sends a byte at all — is closed at the deadline (zero bytes, so it is the
-/// head timer and not a served response), and the detached connection task that
-/// served it does not survive the close.
+// ── #2499: the paused-clock landing harness (the `native_http/tests.rs`
+// manual-clock shape, trimmed to this lane's duplex-driven
+// `serve_sms_connection`). Virtual time moves only through the explicit
+// advances below, so every landing instant is probed, never raced. ──
+
+/// #2499: the virtual-clock harness from `native_ws::tests` (via
+/// `native_http/tests.rs`): the wrapped future is polled against yields of
+/// the current-thread runtime, so the serve task makes progress between
+/// advances. The wall guard only diagnoses a stalled future; it is never a
+/// timing result.
+async fn manual_clock<F: std::future::Future>(future: F) -> F::Output {
+    tokio::pin!(future);
+    let wall = std::time::Instant::now();
+    loop {
+        tokio::select! {
+            biased;
+            result = &mut future => return result,
+            _ = tokio::task::yield_now() => {}
+        }
+        assert!(
+            wall.elapsed() < Duration::from_secs(60),
+            "#2499 manual-clock harness stalled: the serve future never resolved"
+        );
+    }
+}
+
+/// #2499: give the spawned serve task scheduling slots on the paused clock —
+/// the native lane's eight yields, enough for the accept → read → arm cycle
+/// of one connection between advances.
+async fn yield_a_beat() {
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+}
+
+/// #1250's twin helper for reading probe buffers: latin-1 so every byte is
+/// one character and the expected ASCII never re-encodes on the way out.
+fn latin1_string(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| *byte as char).collect()
+}
+
+/// #2499: probe for data/EOF at the current virtual time — the windowed read
+/// is armed before its `PAUSED_PROBE_ADVANCE` advance, so a still-open read
+/// resolves `Elapsed`, while a close latched during the advance wins.
+async fn probe_still_open(client: &mut tokio::io::DuplexStream, what: &str) {
+    yield_a_beat().await;
+    let mut probe = [0u8; 1];
+    let pending = tokio::time::timeout(PAUSED_PROBE_READ_WINDOW, client.read(&mut probe));
+    tokio::time::advance(PAUSED_PROBE_ADVANCE).await;
+    yield_a_beat().await;
+    match pending.await {
+        Err(_quiet) => {}
+        Ok(Ok(0)) => panic!("#2499 {what}"),
+        Ok(Ok(count)) => panic!("#2499 {what}: {count} unexpected byte(s) arrived"),
+        Ok(Err(error)) => panic!("#2499 {what}: {error}"),
+    }
+}
+
+/// #2499: read the 51-byte headersTimeout 408 and the EOF that follows it,
+/// inside the same windowed probe pattern as `probe_still_open`. The bytes
+/// are asserted equal to `crate::user_dialog::NODE_408_RESPONSE` itself — the
+/// exact canned response Node writes, never a re-typed literal. A missing 408
+/// (the `sms-headers-408-bytes-off` mutant, or a landing that never comes)
+/// fails at this helper's own message instead of hanging the harness.
+async fn headers_timeout_408_arrives(client: &mut tokio::io::DuplexStream, what: &str) {
+    let expected = crate::user_dialog::NODE_408_RESPONSE;
+    let mut buffer = Vec::new();
+    while buffer.len() < expected.len() {
+        let mut chunk = [0u8; 64];
+        let pending = tokio::time::timeout(PAUSED_PROBE_READ_WINDOW, client.read(&mut chunk));
+        tokio::time::advance(PAUSED_PROBE_ADVANCE).await;
+        yield_a_beat().await;
+        match pending.await {
+            Ok(Ok(0)) => panic!(
+                "#2499 {what}: EOF before the 408 arrived (buffer so far: {:?})",
+                latin1_string(&buffer)
+            ),
+            Ok(Ok(count)) => buffer.extend_from_slice(&chunk[..count]),
+            Ok(Err(error)) => panic!("#2499 {what}: {error}"),
+            Err(_no_408) => {
+                panic!(
+                    "#2499 {what}: the 51-byte 408 never arrived at the head \
+                     deadline's grid landing"
+                )
+            }
+        }
+    }
+    assert_eq!(
+        buffer, expected,
+        "#2499 {what}: the bytes are exactly Node's canned 51-byte 408"
+    );
+    let mut tail = [0u8; 1];
+    let pending = tokio::time::timeout(PAUSED_PROBE_READ_WINDOW, client.read(&mut tail));
+    tokio::time::advance(PAUSED_PROBE_ADVANCE).await;
+    yield_a_beat().await;
+    match pending.await {
+        Ok(Ok(0)) => {}
+        other => panic!(
+            "#2499 {what}: the connection closes after the 408 like Node's \
+             destroy(), got {other:?}"
+        ),
+    }
+}
+
+/// #2499: advance to ~10 ms shy of the expected silent-close landing (the
+/// caller's `elapsed`), then read the latched EOF through the windowed probe.
+/// The zero-byte follow-up head's close must carry no bytes at all; a stray
+/// 408 (the `sms-headers-idle-followup-408` mutant) fails with the bytes
+/// read, a missing close (an early or absent deadline) with the window
+/// budget. The helper's advance crosses the landing before the read's own
+/// timeout fires, so an EOF latched during the advance wins — the same
+/// arithmetic as `native_http/tests.rs`'s `eof_after_idle_close`.
+async fn eof_without_a_408(client: &mut tokio::io::DuplexStream, elapsed: Duration, what: &str) {
+    tokio::time::advance(elapsed).await;
+    yield_a_beat().await;
+    let mut probe = [0u8; 64];
+    let pending = tokio::time::timeout(PAUSED_PROBE_READ_WINDOW, client.read(&mut probe));
+    tokio::time::advance(PAUSED_PROBE_ADVANCE).await;
+    yield_a_beat().await;
+    match pending.await {
+        Ok(Ok(0)) => {}
+        Ok(Ok(count)) => panic!(
+            "#2499 {what}: {count} byte(s) arrived before the EOF — the idle \
+             follow-up head must close byte-silent, not with a 408"
+        ),
+        Ok(Err(error)) => panic!("#2499 {what}: {error}"),
+        Err(_open) => panic!(
+            "#2499 {what}: the idle keep-alive connection was never closed at \
+             its standby deadline's grid landing"
+        ),
+    }
+}
+
+/// #2499: read one full keep-alive response of this lane — the 404 a wrong
+/// path gets, content-length framed, ending in the body `Not Found`. The
+/// response's last body byte is the instant the standby deadline arms (the
+/// [`RearmBody`] release), so its arrival proves the gate re-armed; no
+/// barrier beyond the read itself is needed.
+async fn read_sms_response(client: &mut tokio::io::DuplexStream, what: &str) {
+    let mut buffer = Vec::new();
+    while !latin1_string(&buffer).contains("\r\n\r\nNot Found") {
+        let mut chunk = [0u8; 256];
+        let read = client
+            .read(&mut chunk)
+            .await
+            .unwrap_or_else(|error| panic!("#2499 {what}: {error}"));
+        if read == 0 {
+            panic!(
+                "#2499 {what}: EOF before the 404 response arrived (buffer so \
+                 far: {:?})",
+                latin1_string(&buffer)
+            );
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+    }
+}
+
+/// #2499: spawn one duplex-driven sms connection serving the half head's
+/// landing cells. The grid anchor plays the listener's bind (captured before
+/// the spawn, at the same virtual instant), the interval is
+/// [`NODE_CONNECTIONS_CHECKING_INTERVAL`] — the production grid, exactly what
+/// the paused clock is for — and the stop watch starts `false` for the cells
+/// that never stop.
+#[allow(clippy::type_complexity)]
+fn spawn_paused(
+    headers_timeout: Option<Duration>,
+    grid_interval: Duration,
+) -> (
+    tokio::io::DuplexStream,
+    tokio::task::JoinHandle<()>,
+    tokio::sync::watch::Sender<bool>,
+) {
+    let grid_anchor = tokio::time::Instant::now();
+    let (server, client) = tokio::io::duplex(4096);
+    let (stop, stop_rx) = tokio::sync::watch::channel(false);
+    let channel = SmsChannel::new(options(PORT_PAUSED_CELLS, headers_timeout));
+    let shared = channel.shared.clone();
+    drop(channel);
+    let task = tokio::spawn(serve_sms_connection(
+        server,
+        shared,
+        stop_rx,
+        grid_anchor,
+        grid_interval,
+    ));
+    (client, task, stop)
+}
+
+/// #1955/#2499 negative pair: a half-sent head — and a connection that never
+/// sends a byte at all — is answered at the deadline's grid landing with
+/// Node's 51-byte 408 + close, and the detached connection task that served
+/// it does not survive the close. Binds the negative control
+/// `sms-header-read-no-timeout` (no deadline at all: the read times out
+/// instead of seeing EOF) and `sms-headers-408-bytes-off` (the close comes,
+/// but byte-silent instead of with the 408).
 #[tokio::test]
 async fn half_sent_head_is_closed_at_the_deadline_and_leaves_no_task() {
-    let (handle, shared) = start(PORT_HALF_HEAD, Some(INJECTED)).await;
+    let (handle, shared) =
+        start_with_grid(PORT_HALF_HEAD, Some(INJECTED), Some(INJECTED_GRID)).await;
     // After `start()` the only strong references are the channel, the handle
     // and the accept loop; every connection task adds one for its lifetime.
     let baseline = Arc::strong_count(&shared);
@@ -329,23 +584,30 @@ async fn half_sent_head_is_closed_at_the_deadline_and_leaves_no_task() {
             "#1955 the server retired the stalled head at the deadline; without \
              the timer this read would time out instead of seeing EOF"
         );
+        // #2499: the answer is Node's own canned 408 — the exact
+        // `user_dialog::NODE_408_RESPONSE` bytes (measured on the pinned
+        // Node at 89,995 ms / 90,004 ms for the half-sent and the zero-byte
+        // first head), not hyper's zero-byte close and not a re-typed
+        // literal.
         assert_eq!(
             bytes,
-            Vec::<u8>::new(),
-            "#1955 a head timeout closes without a response byte \
-             (the TS 408 residual is A8.3-CH-SMS-012)"
+            crate::user_dialog::NODE_408_RESPONSE,
+            "#2499 the head deadline's answer is Node's canned 51-byte 408 + \
+             Connection: close (the pre-#2499 zero-byte close is the dead \
+             residual A8.3-CH-SMS-012)"
         );
         // A close that lands in the same instant as the write would mean the
         // deadline was effectively zero (e.g. an accidental `Duration::ZERO`
         // injection), not the injected 300 ms; a close well past the deadline
-        // means the timer never fired and something else ended the read.
+        // plus one grid interval means the timer never fired and something
+        // else ended the read.
         assert!(
             elapsed >= INJECTED / 2,
             "#1955 the close came from the injected {INJECTED:?} deadline, took {elapsed:?}"
         );
         assert!(
             elapsed < CLOSE_UPPER,
-            "#1955 the close landed inside one extra timer tick of the injected \
+            "#1955 the close landed inside one injected grid interval of the \
              {INJECTED:?} deadline ({CLOSE_UPPER:?}); took {elapsed:?}, so the \
              head timer did not decide it"
         );
@@ -359,6 +621,317 @@ async fn half_sent_head_is_closed_at_the_deadline_and_leaves_no_task() {
     );
 
     handle.stop("test").await.expect("#1955 stop");
+}
+
+/// #2499 (§4.2 off-grid): the 408 lands on the first checker grid point
+/// **after** the deadline, never at it. A +15 s deadline on a 30 s grid is
+/// off-grid: nothing is answered at +14.46 s (before the deadline), nothing at
+/// +29.46 s (past the deadline, before the +30 s landing), and the 51-byte
+/// 408 + close arrive at +30 s. Binds the negative control
+/// `sms-headers-grid-off` (deadline mode: the 408 fires at the +15 s deadline
+/// itself and the +29.46 s probe reads it).
+#[tokio::test(start_paused = true)]
+async fn the_408_lands_on_the_first_grid_point_after_the_deadline() {
+    manual_clock(async {
+        let (mut client, task, _stop) = spawn_paused(
+            Some(Duration::from_secs(15)),
+            NODE_CONNECTIONS_CHECKING_INTERVAL,
+        );
+        client
+            .write_all(b"POST /sms/incoming HTTP/1.1\r\nHost: x\r\n")
+            .await
+            .expect("#2499 write the half head");
+        // Let the serve task run once before the advances: the deadline is
+        // armed at the connection's first poll and re-anchored at the head's
+        // first byte, both at the same virtual instant here.
+        yield_a_beat().await;
+        // t = +14.46 s: still unanswered just before the +15 s deadline.
+        tokio::time::advance(Duration::from_millis(14_400)).await;
+        probe_still_open(
+            &mut client,
+            "#2499 the half head stays unanswered just before its +15 s deadline",
+        )
+        .await;
+        // t = +29.46 s: past the deadline, still nothing — the landing is the
+        // grid's +30 s point, not the deadline itself.
+        tokio::time::advance(Duration::from_millis(14_940)).await;
+        probe_still_open(
+            &mut client,
+            "#2499 the half head stays unanswered between its +15 s deadline and \
+             the +30 s grid landing",
+        )
+        .await;
+        // t = +30.06 s: the landing.
+        tokio::time::advance(Duration::from_millis(600)).await;
+        headers_timeout_408_arrives(&mut client, "off-grid half head").await;
+        task.await
+            .expect("#2499 the off-grid landing cell's serve task join");
+    })
+    .await;
+}
+
+/// #2499 (§4.2 on-grid): a deadline that lands exactly on a grid point fires
+/// at its **successor** — the checker's comparison is strictly greater
+/// (`ConnectionsList::Expired`, node_http_parser.cc), so the +30 s deadline on
+/// the 30 s grid answers at +60 s, not +30 s. The probes bracket the deadline
+/// instant (+30.66 s, past it) and the gap before the landing (+59.46 s):
+/// nothing may answer in between. Binds the negative control
+/// `sms-headers-grid-off` from the other side (deadline mode: the 408 fires
+/// at the +30 s deadline and the +30.66 s probe reads it).
+#[tokio::test(start_paused = true)]
+async fn an_on_grid_deadline_fires_at_its_successor_grid_point() {
+    manual_clock(async {
+        let (mut client, task, _stop) = spawn_paused(
+            Some(Duration::from_secs(30)),
+            NODE_CONNECTIONS_CHECKING_INTERVAL,
+        );
+        client
+            .write_all(b"POST /sms/incoming HTTP/1.1\r\nHost: x\r\n")
+            .await
+            .expect("#2499 write the half head");
+        yield_a_beat().await;
+        // t = +30.6 s: past the deadline instant, nothing — the deadline was
+        // exactly on the grid, so the 408 holds for the next point.
+        tokio::time::advance(Duration::from_millis(30_600)).await;
+        probe_still_open(
+            &mut client,
+            "#2499 the on-grid half head stays unanswered past its own +30 s \
+             deadline: the strictly-greater comparison holds it for +60 s",
+        )
+        .await;
+        // t = +59.46 s: just before the +60 s landing.
+        tokio::time::advance(Duration::from_millis(28_740)).await;
+        probe_still_open(
+            &mut client,
+            "#2499 the on-grid half head stays unanswered just before the +60 s \
+             successor grid point",
+        )
+        .await;
+        // t = +60.06 s: the landing.
+        tokio::time::advance(Duration::from_millis(600)).await;
+        headers_timeout_408_arrives(&mut client, "on-grid half head").await;
+        task.await
+            .expect("#2499 the on-grid landing cell's serve task join");
+    })
+    .await;
+}
+
+/// #2499 (§4.3, the native lane's `first_head_delayed_anchors_at_its_first_
+/// byte_like_ts` mirror; TS `ts-zero-and-delayed.out`): the connection's
+/// *first* request head anchors its own deadline at its first byte — Node's
+/// `on_message_begin` — not at the connection's accept. Connect, stay silent
+/// for 30 s, then send an incomplete head with the default 60 s deadline: the
+/// head's own deadline (+90 s) lands exactly on the checker's grid, so the
+/// strictly-greater comparison holds it for +120 s — which is also where the
+/// TS baseline answered (120.008 s). The probes bracket the connection-start
+/// deadline's landing (+59.46 s, before it), the head-deadline instant the
+/// connect anchor would have answered at (+90.66 s, past it) and the gap
+/// before the landing (+119.46 s). Binds the negative control
+/// `sms-headers-first-byte-anchor-off` (connect-anchored mode: the 408 lands
+/// at the +90 s grid point and the +90.66 s probe reads it).
+#[tokio::test(start_paused = true)]
+async fn a_delayed_first_head_re_anchors_the_deadline_at_its_first_byte() {
+    manual_clock(async {
+        let (mut client, task, _stop) = spawn_paused(None, NODE_CONNECTIONS_CHECKING_INTERVAL);
+        // The connect-anchored arm must land at t0, not at the first byte:
+        // let the serve task take its first poll slots before the silence,
+        // else the connection-establishment anchor would coincide with the
+        // +30 s first byte and the two mutants' landings would coincide too.
+        yield_a_beat().await;
+        // The 30 s of silence: the connection-establishment anchor arms a
+        // +60 s deadline whose landing would be +90 s — the instant the
+        // re-anchored head's own deadline lands on-grid past.
+        tokio::time::advance(Duration::from_secs(30)).await;
+        client
+            .write_all(b"POST /sms/incoming HTTP/1.1\r\nHost: x\r\n")
+            .await
+            .expect("#2499 write the delayed half head");
+        // Let the serve task read it: the first byte re-anchors the deadline
+        // at +30 s — the head's own +90 s deadline, on-grid, lands at +120 s.
+        yield_a_beat().await;
+        // t = +59.46 s: before the connect-anchored arm's own deadline.
+        tokio::time::advance(Duration::from_millis(29_400)).await;
+        probe_still_open(
+            &mut client,
+            "#2499 the delayed first head stays unanswered before the \
+             connect-anchored arm's +60 s deadline",
+        )
+        .await;
+        // t = +90.66 s: past the connect-anchored arm's +90 s landing — the
+        // discriminator between the two anchors — and exactly on the head's
+        // own deadline, which the grid holds for +120 s.
+        tokio::time::advance(Duration::from_millis(31_200)).await;
+        probe_still_open(
+            &mut client,
+            "#2499 the delayed first head stays unanswered past the \
+             connect-anchored +90 s landing: its own deadline re-anchored at \
+             its first byte and lands on-grid at +120 s (measured: 120.008 s)",
+        )
+        .await;
+        // t = +119.46 s: just before the landing.
+        tokio::time::advance(Duration::from_millis(28_740)).await;
+        probe_still_open(
+            &mut client,
+            "#2499 the delayed first head stays unanswered just before its \
+             +120 s grid landing",
+        )
+        .await;
+        // t = +120.06 s: the landing.
+        tokio::time::advance(Duration::from_millis(600)).await;
+        headers_timeout_408_arrives(&mut client, "delayed first head").await;
+        task.await
+            .expect("#2499 the delayed-first-head cell's serve task join");
+    })
+    .await;
+}
+
+/// #2499 (§4.4 first half): a zero-byte **follow-up** head on a connection
+/// that already served a response is Node's `keepAliveTimeout` business —
+/// the idle socket leaves the checker's active list at
+/// `on_message_complete`, so its 5 s close owns it. This lane does not
+/// replicate that idle close (the registered A8.3-CH-SMS-017 residual), so
+/// its own standby deadline does fire at +30 s here — but byte-silent: an
+/// EOF with no 408 in front of it. Binds the negative control
+/// `sms-headers-idle-followup-408` (the mutant writes the 408 on this path
+/// too and the helper reads the bytes).
+#[tokio::test(start_paused = true)]
+async fn an_idle_keep_alive_connection_closes_silently_without_a_408() {
+    manual_clock(async {
+        let (mut client, task, _stop) = spawn_paused(
+            Some(Duration::from_secs(15)),
+            NODE_CONNECTIONS_CHECKING_INTERVAL,
+        );
+        client
+            .write_all(b"POST /not-the-sms-path HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n")
+            .await
+            .expect("#2499 write the served request");
+        // No `Connection: close`: the connection keeps living after the 404,
+        // into the standby window whose deadline this cell is about.
+        read_sms_response(&mut client, "idle keep-alive first response").await;
+        // The response's finish re-armed the deadline at this same virtual
+        // instant (t = 0): a +15 s deadline on the 30 s grid, landing at +30 s.
+        yield_a_beat().await;
+        // Advance to 10 ms shy of the landing, then window the EOF in.
+        eof_without_a_408(
+            &mut client,
+            Duration::from_millis(29_990),
+            "the idle keep-alive connection",
+        )
+        .await;
+        task.await
+            .expect("#2499 the idle keep-alive cell's serve task join");
+    })
+    .await;
+}
+
+/// #2499 (§4.4 second half): the same standby window, but the follow-up head
+/// **starts** — a half head at +20 s re-anchors the deadline at its own first
+/// byte (+20 s + 15 s = +35 s, landing on the +60 s grid point), so the
+/// standby window's own landing (+30 s) passes without a close and the 408
+/// arrives at +60 s instead. Node keeps the head in the checker's active
+/// list from `on_message_begin`, which is exactly this. Binds the negative
+/// control `sms-headers-first-byte-anchor-off` from the follow-up side
+/// (standby-anchored mode: the +30 s landing fires — silent, since the head
+/// never registered as started — and the +30.66 s probe reads the EOF).
+#[tokio::test(start_paused = true)]
+async fn a_follow_up_half_head_after_a_served_response_is_answered_with_the_408() {
+    manual_clock(async {
+        let (mut client, task, _stop) = spawn_paused(
+            Some(Duration::from_secs(15)),
+            NODE_CONNECTIONS_CHECKING_INTERVAL,
+        );
+        client
+            .write_all(b"POST /not-the-sms-path HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n")
+            .await
+            .expect("#2499 write the served request");
+        read_sms_response(&mut client, "follow-up first response").await;
+        yield_a_beat().await;
+        // The follow-up head starts at +20 s — inside the standby window
+        // (whose own deadline is +15 s, landing at +30 s on the grid).
+        tokio::time::advance(Duration::from_secs(20)).await;
+        client
+            .write_all(b"POST /sms/incoming HTTP/1.1\r\nHost: x\r\n")
+            .await
+            .expect("#2499 write the follow-up half head");
+        // Let the serve task read it: the first byte re-anchors the deadline
+        // at +20 s — its own +35 s deadline lands at +60 s.
+        yield_a_beat().await;
+        // t = +29.46 s: before the standby landing — the would-be close if
+        // the re-anchoring were missing is still ahead of this probe.
+        tokio::time::advance(Duration::from_millis(9_400)).await;
+        probe_still_open(
+            &mut client,
+            "#2499 the follow-up half head keeps the connection open before the \
+             standby window's own +30 s landing",
+        )
+        .await;
+        // t = +30.66 s: past the standby landing — the discriminator between
+        // the standby anchor and the head's own first-byte anchor.
+        tokio::time::advance(Duration::from_millis(1_200)).await;
+        probe_still_open(
+            &mut client,
+            "#2499 the follow-up half head stays unanswered past the standby \
+             window's +30 s landing: its deadline re-anchored at its own first \
+             byte and lands at +60 s",
+        )
+        .await;
+        // t = +59.46 s: just before the +60 s landing.
+        tokio::time::advance(Duration::from_millis(28_740)).await;
+        probe_still_open(
+            &mut client,
+            "#2499 the follow-up half head stays unanswered just before its \
+             +60 s grid landing",
+        )
+        .await;
+        // t = +60.06 s: the landing — and this head received bytes, so the
+        // answer is the 408, not the silent close.
+        tokio::time::advance(Duration::from_millis(600)).await;
+        headers_timeout_408_arrives(&mut client, "follow-up half head").await;
+        task.await
+            .expect("#2499 the follow-up head cell's serve task join");
+    })
+    .await;
+}
+
+/// #2499 (§4.5, fast path): a stop disarms the head deadline — Node clears
+/// its connections checker in `httpServerPreClose`, so a draining connection
+/// never answers its half-sent head with a 408. The stop watch fires at t = 0
+/// with the +15 s deadline armed (landing +30 s); the probes at +31 s show
+/// the connection still open past the landing — no 408, no EOF — and only
+/// the client's own disconnect ends the task. Binds the negative control
+/// `sms-headers-stop-no-disarm` (the deadline survives the stop, the 408
+/// lands at +30 s and the +31 s probe reads it).
+#[tokio::test(start_paused = true)]
+async fn stop_disarms_the_head_deadline_for_connections_still_draining() {
+    manual_clock(async {
+        let (mut client, task, stop) = spawn_paused(
+            Some(Duration::from_secs(15)),
+            NODE_CONNECTIONS_CHECKING_INTERVAL,
+        );
+        client
+            .write_all(b"POST /sms/incoming HTTP/1.1\r\nHost: x\r\n")
+            .await
+            .expect("#2499 write the half head");
+        yield_a_beat().await;
+        stop.send(true).expect("#2499 the stop watch is alive");
+        // t = +31.06 s: past the +30 s landing the armed deadline would have
+        // fired at — the stop disarmed it, so the connection is still open,
+        // with nothing on the wire.
+        tokio::time::advance(Duration::from_millis(31_000)).await;
+        probe_still_open(
+            &mut client,
+            "#2499 the stop disarmed the half head's deadline: the draining \
+             connection stays open past its would-be +30 s grid landing, with \
+             no 408 and no EOF",
+        )
+        .await;
+        // The client's own disconnect ends the task — the drain's business,
+        // #2026 decision C's side, not the head deadline's.
+        drop(client);
+        task.await
+            .expect("#2499 the stop-disarm cell's serve task join");
+    })
+    .await;
 }
 
 /// #1955 positive control: a complete request head is read and served well
@@ -409,12 +982,15 @@ async fn the_uninjected_head_deadline_is_nodes_sixty_seconds() {
     handle.stop("test").await.expect("#1955 stop");
 }
 
-/// #1955 production default: the un-injected deadline closes a stalled head at
-/// Node's 60 s, not at the test's injected value. Ignored from the normal suite
-/// because it cannot finish faster than a minute; run explicitly with
+/// #1955 production default: the un-injected deadline answers a stalled head
+/// with Node's 51-byte 408 at the first 30 s checker grid point after the 60 s
+/// deadline — with the bind-anchored grid, that is +90 s from the start. The
+/// window brackets the deadline (+58 s) and the landing plus the grid's phase
+/// margin (+95 s). Ignored from the normal suite because it cannot finish
+/// faster than a minute and a half; run explicitly with
 /// `cargo test -p pilotdeck-gateway --lib -- --ignored
-/// channel::sms::head_timeout_tests` to reproduce the measured close.
-#[ignore = "60 s wall-clock: the production default head deadline"]
+/// channel::sms::head_timeout_tests` to reproduce the measured landing.
+#[ignore = "90 s wall-clock: the production default head deadline's grid landing"]
 #[tokio::test]
 async fn the_default_head_deadline_is_nodes_sixty_seconds() {
     let (handle, shared) = start(PORT_DEFAULT_DEADLINE, None).await;
@@ -428,7 +1004,7 @@ async fn the_default_head_deadline_is_nodes_sixty_seconds() {
         .write_all(b"POST /sms/incoming HTTP/1.1\r\nHost: x\r\n")
         .await
         .expect("#1955 write the half head");
-    let (bytes, closed) = read_until_close(&mut socket, Duration::from_secs(90)).await;
+    let (bytes, closed) = read_until_close(&mut socket, Duration::from_secs(100)).await;
     let elapsed = started.elapsed();
     assert!(
         closed,
@@ -436,32 +1012,36 @@ async fn the_default_head_deadline_is_nodes_sixty_seconds() {
     );
     assert_eq!(
         bytes,
-        Vec::<u8>::new(),
-        "#1955 no response bytes on a head timeout"
+        crate::user_dialog::NODE_408_RESPONSE,
+        "#2499 the default deadline's answer is Node's canned 51-byte 408, got \
+         {} bytes",
+        bytes.len()
     );
     assert!(
-        elapsed >= Duration::from_secs(58) && elapsed < Duration::from_secs(90),
-        "#1955 the default close lands on the 60 s deadline, took {elapsed:?}"
+        elapsed >= Duration::from_secs(58) && elapsed < Duration::from_secs(95),
+        "#2499 the default 60 s deadline's 408 lands on the first 30 s checker \
+         grid point after it (+90 s), took {elapsed:?}"
     );
     handle.stop("test").await.expect("#1955 stop");
 }
 
-/// #2026 (decision C): `SmsHandle::stop()` drains the connections the accept
-/// loop already handed out — the `wecom_callback` lane's
-/// `stop_drains_a_half_sent_header_once_the_header_timeout_fires` shape. A
-/// half-sent request head is drained to its **natural** deadline (the
-/// injected head deadline, far shorter than the 60 s [`STOP_DRAIN_LIMIT`]
-/// here): `stop()` must not come back before that deadline retires the
-/// connection, and once it has returned the connection's EOF must already be
-/// pending. The pre-#2026 detach shape (stop returns while the connection
-/// lives) is the mutation switch `sms-stop-no-drain` and must fail this case.
+/// #2026 (decision C) + #2499 (§4.5): `SmsHandle::stop()` drains the
+/// connections the accept loop already handed out — the `wecom_callback`
+/// lane's shape — and the head deadline is **disarmed** while it drains
+/// (Node clears the connections checker in `server.close()`), so the drain
+/// ends by the client's own disconnect, not by a 408 at the head deadline's
+/// landing. The pre-#2026 detach shape (stop returns while the connection
+/// lives) is the mutation switch `sms-stop-no-drain` and must fail this case;
+/// the pre-#2499 deadline-survives-stop shape is `sms-headers-stop-no-disarm`
+/// and must fail the no-408 probe below.
 ///
 /// The client clearing stays after the drain, like the TS `server.close()`
 /// callback ordering (`A8.3-CH-SMS-013-R1`): `send_reply` keeps returning
 /// true while the drain is in flight and false once `stop()` returned.
 #[tokio::test]
 async fn stop_drains_a_half_sent_header_once_the_header_timeout_fires() {
-    let (handle, shared) = start(PORT_STOP_DRAIN, Some(INJECTED)).await;
+    let (handle, shared) =
+        start_with_grid(PORT_STOP_DRAIN, Some(INJECTED), Some(INJECTED_GRID)).await;
     // A present client makes the during/after-`stop()` readings real
     // observations instead of checks on a value that was never set.
     shared.runtime.lock().await.client = Some(Arc::new(NullSender) as Arc<dyn SmsSender>);
@@ -499,7 +1079,6 @@ async fn stop_drains_a_half_sent_header_once_the_header_timeout_fires() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 
-    let started = tokio::time::Instant::now();
     let stopping = tokio::spawn({
         let handle = handle.clone();
         async move { handle.stop("test").await }
@@ -518,38 +1097,38 @@ async fn stop_drains_a_half_sent_header_once_the_header_timeout_fires() {
         "#2026 the Twilio client stays usable while stop() drains: a stop \
          that returned early cleared it (A8.3-CH-SMS-013-R1)"
     );
+    // #2499: past the would-be landing (deadline 300 ms + injected grid
+    // 400 ms, well behind us at 600 ms) the draining connection is still
+    // open with nothing on the wire — the stop disarmed the head deadline.
+    // A deadline that survived the stop (`sms-headers-stop-no-disarm`)
+    // lands its 408 here and both halves of this probe read it.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let (bytes, closed) = read_until_close(&mut socket, DRAIN_OBSERVE).await;
+    assert!(
+        !closed,
+        "#2499 stop() disarmed the head deadline: the draining connection \
+         stays open past its would-be grid landing — no EOF inside \
+         {DRAIN_OBSERVE:?}"
+    );
+    assert!(
+        bytes.is_empty(),
+        "#2499 stop() disarmed the head deadline: no 408 bytes on the \
+         draining connection, got {} bytes: {:?}",
+        bytes.len(),
+        String::from_utf8_lossy(&bytes)
+    );
+    // The drain ends by the client's own disconnect: half-close the write
+    // side, the server's read gets the EOF mid-head, the task ends and the
+    // drain reaps it.
+    socket
+        .shutdown()
+        .await
+        .expect("#2026 close the client half of the draining connection");
     tokio::time::timeout(READ_LIMIT, stopping)
         .await
         .expect("#2026 stop() must finish draining inside the read limit")
         .expect("#2026 the stop task must not panic")
         .expect("#2026 stop");
-    let elapsed = started.elapsed();
-
-    assert!(
-        elapsed >= INJECTED / 2,
-        "#2026 stop() waited for the in-flight connection: it returned in \
-         {elapsed:?}, before the injected {INJECTED:?} head deadline could \
-         retire it (the drain is missing)"
-    );
-    assert!(
-        elapsed < READ_LIMIT,
-        "#2026 stop() returned inside the read limit, took {elapsed:?}"
-    );
-    // The drain ran the connection to its natural deadline, so by the time
-    // stop() returned the EOF is already pending: zero bytes, immediate EOF.
-    let (bytes, closed) = read_until_close(&mut socket, DRAIN_OBSERVE).await;
-    assert!(
-        closed,
-        "#2026 the drained connection reached EOF before stop() returned: \
-         no EOF inside {DRAIN_OBSERVE:?} means stop() came back while it \
-         still lived"
-    );
-    assert_eq!(
-        bytes,
-        Vec::<u8>::new(),
-        "#2026 the drain closes the connection at its own head deadline, \
-         zero response bytes (the TS 408 residual is A8.3-CH-SMS-012)"
-    );
     assert!(
         !super::send_reply(
             &shared,
