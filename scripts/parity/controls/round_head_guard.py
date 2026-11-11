@@ -33,6 +33,27 @@ Three phases pin the guard:
 A mutant that deletes the guard's call site fails phase 1: no ValueError is
 raised where the refusal is required, the probe scratch yields instead, and
 the bound markered assertion goes red.
+
+#2513 fix-r7 (boundary P1 + sibling P2#2) adds two phases pinning *where*
+``_head_source`` reads the bytes it compares against — the committed object
+of this scratch, never the worktree file and never a decoy repository an
+inherited ``GIT_DIR`` steers ``git -C`` at (measured pre-fix:
+``_tmp/20261026-issue-2513/fix-r7/evidence-a-head-source-experiment.txt``):
+
+  4. acceptance with the worktree and the environment pointing elsewhere —
+     the executing bytes equal scratch HEAD, but the disk file is mutated
+     after the load and ``GIT_DIR`` is steered at a decoy repository whose
+     HEAD pins exactly those mutated bytes.  The guard must still ACCEPT.
+     A mutant that reads the worktree file, or one that inherits the
+     environment (and therefore the decoy HEAD), refuses here and this
+     phase's markered assertion goes red;
+  5. refusal under environment steering — the executing bytes differ from
+     scratch HEAD (the mutation-window interleaving) and ``GIT_DIR`` is
+     steered at a decoy whose HEAD pins the executing bytes: the pre-fix
+     bare-``git`` shape false-passed exactly here.  The hardened
+     ``/usr/bin/git`` with a fixed environment must refuse with the
+     standard #2513 ValueError; an environment-inheriting mutant accepts
+     and the bound assertRaises goes red.
 """
 import sys
 
@@ -161,6 +182,33 @@ def _stage_round(tag):
     return holder, entry_dir / 'round.py', entry_dir / _G03_ENTRY, scratch / 'parity.lock'
 
 
+def _stage_decoy(tag, round_bytes):
+    """Stage a decoy repository whose HEAD pins the given round.py bytes.
+
+    The steering half of the #2513 fix-r7 phases: a bare, environment-
+    inheriting ``git -C <scratch> show HEAD:…`` reads this repository's
+    object when ``GIT_DIR`` names it (measured pre-fix, evidence-a), while
+    the hardened ``/usr/bin/git`` with its fixed environment never sees the
+    variable.  g03_compare.py is committed alongside (pristine) so a mutant
+    that passes the round.py comparison still reads a well-formed decoy
+    instead of failing on a missing object.
+    """
+    (_REPO / '_tmp').mkdir(parents=True, exist_ok=True)
+    holder = tempfile.TemporaryDirectory(prefix=f'pdrs-2513-roundguard-decoy-{tag}-',
+                                         dir=_REPO / '_tmp')
+    decoy = Path(holder.name)
+    entry_dir = decoy / 'scripts' / 'parity'
+    entry_dir.mkdir(parents=True)
+    (entry_dir / 'round.py').write_bytes(round_bytes)
+    shutil.copy2(_PARITY / 'g03_compare.py', entry_dir / _G03_ENTRY)
+    for args in (['init', '-q'],
+                 ['add', '-A'],
+                 ['-c', 'user.name=pdrs-2513-roundguard', '-c', 'user.email=pdrs-2513@invalid',
+                  'commit', '-q', '-m', 'pdrs-2513 fix-r7 round.py guard control decoy']):
+        subprocess.run(['git', '-C', str(decoy), *args], check=True, timeout=30)
+    return holder, decoy
+
+
 class RoundHeadGuardControls(unittest.TestCase):
     def setUp(self):
         self.holders = []
@@ -236,6 +284,81 @@ class RoundHeadGuardControls(unittest.TestCase):
                          '#2513 g03_compare 装置核验拒绝消息必须逐字节是既有的单行 #2513 消息')
         self.assertFalse(lock.exists(),
                          '#2513 拒绝路径必须把重定向租约完整释放，不留 owner 残留')
+
+    def test_guard_accepts_when_worktree_and_git_dir_point_elsewhere(self):
+        # Phase 4 (#2513 fix-r7, boundary P1 + sibling P2#2): the executing
+        # bytes equal scratch HEAD, but after the load the disk file is
+        # mutated AND GIT_DIR is steered at a decoy repository whose HEAD pins
+        # exactly those mutated bytes. The guard must still ACCEPT — the
+        # hardened _head_source reads the committed object of this scratch
+        # only. A mutant that reads the worktree file, or inherits the
+        # environment (and with it the decoy HEAD), refuses here and this
+        # phase's markered assertion goes red.
+        holder, entry, sibling, lock = _stage_round('worktree')
+        self.holders.append(holder)
+        module = _load('round_guard_worktree', entry)
+        different = entry.read_bytes() + b'\n_2513_guard_probe = 1\n'
+        entry.write_bytes(different)
+        decoy_holder, decoy = _stage_decoy('worktree', different)
+        self.holders.append(decoy_holder)
+        held = False
+        try:
+            os.environ['GIT_DIR'] = str(decoy / '.git')
+            try:
+                with module.parity_lock():
+                    held = lock.exists()
+            except ValueError as error:
+                raise AssertionError(
+                    '#2513 _head_source 必须只读提交对象：工作区被改且 GIT_DIR 被引导时，'
+                    '执行字节==HEAD 的轮次被拒绝（读到了工作区文件或诱饵 HEAD）: '
+                    + str(error)) from error
+        finally:
+            os.environ.pop('GIT_DIR', None)
+            module.LIVE_GROUPS.clear()
+        self.assertTrue(held,
+                        '#2513 工作区≠HEAD 且 GIT_DIR 被引导时，守卫必须仍接受执行字节==HEAD 的轮次'
+                        '并持有重定向租约')
+        self.assertFalse(lock.exists(),
+                         '#2513 接受路径在 yield 结束后必须释放重定向租约')
+
+    def test_guard_refuses_when_git_dir_steers_at_executing_bytes(self):
+        # Phase 5 (#2513 fix-r7): the executing bytes differ from scratch HEAD
+        # (the mutation-window interleaving), the disk is restored before the
+        # lease, and GIT_DIR is steered at a decoy whose HEAD pins the
+        # executing bytes — the pre-fix bare-git shape false-passed exactly
+        # here (measured pre-fix, evidence-a). The hardened _head_source must
+        # still refuse: its fixed environment never sees GIT_DIR. A mutant
+        # that inherits the environment accepts and the bound assertRaises
+        # goes red.
+        holder, entry, sibling, lock = _stage_round('gitdir')
+        self.holders.append(holder)
+        pristine = entry.read_bytes()
+        executing = pristine + b'\n_2513_guard_probe = 1\n'
+        entry.write_bytes(executing)
+        module = _load('round_guard_gitdir', entry)
+        entry.write_bytes(pristine)
+        decoy_holder, decoy = _stage_decoy('gitdir', executing)
+        self.holders.append(decoy_holder)
+        try:
+            os.environ['GIT_DIR'] = str(decoy / '.git')
+            with self.assertRaises(ValueError, msg='#2513 _head_source 必须不继承环境：'
+                                                   'GIT_DIR 指向装着执行字节的诱饵 HEAD 时守卫假放行') as caught:
+                with module.parity_lock():
+                    # The canary carries the same dedicated marker as the
+                    # assertRaises msg: an exception of the wrong type (this
+                    # raise, the false-pass shape) bypasses the msg parameter,
+                    # and the kill row's judge greps this exact marker.
+                    raise AssertionError('#2513 _head_source 必须不继承环境：'
+                                        'GIT_DIR 指向装着执行字节的诱饵 HEAD 时守卫假放行'
+                                        '（parity_lock 在引导环境下让步，未抛 ValueError 即到达 yield）')
+            self.assertTrue(str(caught.exception) ==
+                            '#2513 loaded apparatus differs from HEAD: scripts/parity/round.py',
+                            '#2513 round.py 装置核验拒绝消息必须逐字节是既有的单行 #2513 消息')
+            self.assertFalse(lock.exists(),
+                             '#2513 拒绝路径必须把重定向租约完整释放，不留 owner 残留')
+        finally:
+            os.environ.pop('GIT_DIR', None)
+            module.LIVE_GROUPS.clear()
 
 
 if __name__ == '__main__':

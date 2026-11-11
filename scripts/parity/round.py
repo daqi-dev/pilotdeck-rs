@@ -89,8 +89,19 @@ _REPO_ROOT = _HERE.parent.parent
 
 
 def _head_source(relative):
-    return subprocess.check_output(
-        ['git', '-C', str(_REPO_ROOT), 'show', f'HEAD:{relative}'], timeout=30)
+    # The committed object only, read like the cli-parity and native-witness
+    # siblings: no worktree file, no config-steered git, no inherited GIT_*
+    # (#2513 fix-r7, boundary P1 + sibling P2#2 — a bare `git` here let
+    # GIT_DIR steer the post-lease guard into a decoy HEAD).
+    result = subprocess.run(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(_REPO_ROOT),
+                             'show', f'HEAD:{relative}'],
+                            env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+                                 'GIT_CONFIG_GLOBAL': '/dev/null'},
+                            capture_output=True, timeout=30)
+    if result.returncode:
+        raise ValueError('#2513 cannot read HEAD source ' + relative + ': '
+                         + result.stderr.decode(errors='replace').strip())
+    return result.stdout
 
 
 def _code_fingerprint(code):

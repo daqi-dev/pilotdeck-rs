@@ -198,6 +198,51 @@ SIGKILL、或恢复本身失败（磁盘满 / 权限），仍会留下变异体�
 用 HEAD 字节校验拒绝脏树，不会把变异体当基线，但源文件需要人工恢复。
 主错误与停止错误**都**写进 INVALID 的 reason（`主错误; stop failed: …`），互不遮盖。
 
+## 窗口重定向与宿主预持（#2513 fix-r7）
+
+本 fixture 与 `sdk_signal_exit` 矩阵同车道：宿主按
+`src/pilotdeck-cli/tests/fixtures/sdk-signals/README.md` 的对照表先取
+`/tmp/pdrs-parity.lock` 再跑整批。而 `src/pilotdeck-cli/tests/` 自 #2513 起是
+parity guarded 前缀，`writer()` / `red()` / `--stop-check` 的变异窗口覆盖的
+`capture.py` 命中该前缀 → `mutating_sources` 走 `_parity_mutation_lock`，在宿主
+持有的共享锁上排队 60 s 超时：GREEN、RED、SIGTERM 收尾全部假 INVALID
+（fix-r6 给 8 个 sdk fixture 加 `PDRS_SDK_TEST_PARITY_LOCK` 重定向时漏掉了本
+fixture，fix-r7 补齐）。
+
+修复是 sdk-signals fix-r4 的 Python 同型：`_redirect_window_parity_lock` 把
+`negative_process._parity_mutation_lock` 换成重定向版——窗口租约取在证据目录的
+`out/parity-redirect.lock` 上，对宿主预持的共享租约不互斥；干净版 `common.py`
+仍从 HEAD 证明的字节 staged 执行（绝不变异盘上代码）。`_require_host_lease`
+前置闸在窗口打开**之前**跑：共享租约的 owner.json 必须在场且是活的非本进程 pid
+（宿主预持的证明），否则一行原因退出 2——「取不到租约即退出稍后重跑」，不是
+无守卫地开窗口。writer 的重定向安装在最外层 `try` 之前、恢复放在最外层
+`finally` 的**第一项**（它补的是模块全局，留下会误导本进程后续窗口）。
+
+`sdk_signal_exit.rs` 本身**不取** parity 租约（只有 `.negative-source.lock` 读
+租约），Rust 侧无需重定向。
+
+两个新自检模式（都不跑 cargo，不占名额）：
+
+```sh
+python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-signal-read-lease/negative_controls.py \
+  --window-lock-check NEW_OUTPUT_DIR
+python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-signal-read-lease/negative_controls.py \
+  --kill-window-lock NEW_OUTPUT_DIR
+```
+
+- **`--window-lock-check`**：共享租约被一个活的外部进程持有（有宿主预持就用它，
+  否则自起一个有界 `--shared-hold` 持有者，SIGTERM 干净放锁）时，guarded 入口必须
+  在 `WINDOW_LOCK_PROBE_SECONDS`（5 s）界内于重定向路径取到窗口锁：owner.json 在
+  `out/parity-redirect.lock` 上、探针不阻塞、窗口退出后重定向租约按协议释放。这是
+  kill 行钉住的条件——重定向失效时探针在共享租约上排队，5 s 后带着
+  「#2513 该 fixture 必须能取到窗口锁」的断言失败，不是 60 s 挂起。
+- **`--kill-window-lock`**：一条自变异 kill 行。锚点
+  `lock=out / "parity-redirect.lock"):` 改回 `lock=common.LOCK):`，变异体经
+  `--window-lock-check` 子进程判定：KILLED 要求失败日志带该行专属 marker（排他：
+  同入口的无关红仍是 INVALID，绝不记 KILLED）；正跑、变异跑、恢复跑各有产物；
+  非 KILLED 退出非 0。与 `--stop-check` 同理须整批提交后跑
+  （`mutating_sources` 拒绝脏树）。
+
 ## 运行（提交后；mutating_sources 拒绝脏树）
 
 ```sh
