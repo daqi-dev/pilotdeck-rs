@@ -106,6 +106,15 @@ mutations = [
      'if let Some(checkpoint) = checkpoint.filter(|_| false) {',
      'runtime::session::factory::projection_cache_tests::fresh_load',
      '#1011 valid cache is hydrated'),
+    # #2043 fix-r1 (boundary P2): the web-view equality sweep has the same
+    # blind spot — both paths replay the same log — so the same hydrate-branch
+    # removal must also fail the web restore's own hydrated-row assertion.
+    ('web-hydrate-branch-removed',
+     'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs',
+     'if let Some(checkpoint) = checkpoint.filter(|_| ordered) {',
+     'if let Some(checkpoint) = checkpoint.filter(|_| false) {',
+     'runtime::session::factory::projection_cache_tests::web_history_restores_identically_with_and_without_checkpoint',
+     '#2044 checkpoint restore consumes the cached projection rows'),
     # fix-r1 (DeepSeek P2-1): rejecting the whole envelope because one row's
     # codec is unknown must not dehydrate the two supported rows.
     ('envelope-over-rejected',

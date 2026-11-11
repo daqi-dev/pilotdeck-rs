@@ -1475,6 +1475,14 @@ async fn web_history_restores_identically_with_and_without_checkpoint() {
                 if present { "checkpoint" } else { "cold" }
             )
         });
+        // #2043 fix-r1: replay and hydrate produce equal views, so the equality
+        // sweep below cannot see that the checkpoint rows were consumed; only
+        // this counter can (same shape as the fresh-load/stale-load matrix).
+        assert_eq!(
+            *lock(&h.storage.cache.hydrated_rows),
+            if present { 2 } else { 0 },
+            "#2044 checkpoint restore consumes the cached projection rows"
+        );
         let entries = lock(&h.log.entries).clone();
         let view = crate::storage::project_web_history(&entries).unwrap_or_else(|error| {
             panic!(

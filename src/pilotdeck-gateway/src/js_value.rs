@@ -89,6 +89,29 @@ pub(crate) fn expand_replacement(
     out
 }
 
+/// The JS string iterator (ECMAScript `String.prototype[Symbol.iterator]`):
+/// each yield is one code point — a well-formed surrogate pair is one
+/// two-unit chunk, and everything else (a lone surrogate included) is its own
+/// single-unit chunk. Every port that spreads or iterates a JS string shares
+/// this one walk: permission denials, the web fileArtifact finalize and the
+/// module host's stream events. Real TS/Node v22.22.0:
+/// `[...'a\u{1F600}\uD800b']` yields `'a'`, `'\u{1F600}'`, `'\uD800'`, `'b'`.
+pub(crate) fn code_point_chunks(units: &[u16]) -> Vec<&[u16]> {
+    let mut chunks = Vec::new();
+    let mut rest = units;
+    while let Some((&first, tail)) = rest.split_first() {
+        // The pairing read: a high surrogate followed by a low one.
+        let paired = (0xd800..=0xdbff).contains(&first)
+            && tail
+                .first()
+                .is_some_and(|&next| (0xdc00..=0xdfff).contains(&next));
+        let (chunk, remainder) = rest.split_at(usize::from(paired) + 1);
+        chunks.push(chunk);
+        rest = remainder;
+    }
+    chunks
+}
+
 /// Why a full `String(value)` (with `ToPrimitive`) throws.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ToStringError {

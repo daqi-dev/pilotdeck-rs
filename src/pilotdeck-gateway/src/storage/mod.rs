@@ -30,7 +30,7 @@ pub use transcript_adapter::{
 pub(crate) use transcript::{
     LedgerLock, MAX_BYTES as TRANSCRIPT_MAX_BYTES, canonical_transcript_path,
 };
-pub(crate) use transcript_adapter::slice_index;
+pub(crate) use transcript_adapter::{message_contains_tool_result, slice_index};
 
 pub use ledger::{
     KnownTerminal, OperationIdentity, OperationRecovery, OperationResolution,
