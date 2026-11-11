@@ -9,15 +9,16 @@
 //! and every writer restores its guarded sources before releasing.
 //!
 //! Lock taxonomy, for anyone pointing at this header as the canonical
-//! wording: writers take the lock exclusive; resident Rust readers take it
-//! shared; read-only Python runners (e.g. `utf16-residual-sort/
-//! negative_controls.py --check-anchors`) take it exclusive too. What the
-//! lock does not exclude: anything that never takes it — a plain
-//! `cargo test`, or a fixture's lockless `--check` branch — can read a
-//! mid-window mutant and false-fail. A writer SIGKILLed while inside the
-//! mutation window leaves the mutant on disk (its `finally` restore never
-//! ran); the lock dies with the process, so an absent lock proves nothing
-//! about tree cleanliness.
+//! wording: the lock has one mechanism — `tree_lock`, LOCK_EX on that file —
+//! and whether a command holds it is a per-runner fact, not a property of
+//! reading or writing: `utf16-residual-sort/negative_controls.py
+//! --check-anchors` takes it; a fixture's `--check` branch does not;
+//! neither does a plain `cargo test`. Nothing that never takes the lock
+//! is excluded from anything — any of them can read a mid-window mutant
+//! and false-fail. A writer SIGKILLed while inside the mutation window
+//! leaves the mutant on disk (its `finally` restore never ran); the lock
+//! dies with the process, so an absent lock proves nothing about tree
+//! cleanliness.
 //!
 //! This mirrors `src/pilotdeck-cli/tests/common/read_lease.rs`. Rust integration
 //! tests are separate crates, so a helper cannot be shared without a dedicated
