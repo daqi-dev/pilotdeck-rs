@@ -51,8 +51,12 @@ originals["mod.rs"] = (
     # #1334 added this re-export after the removal list above was written;
     # leaving it in makes the standalone replay crate name `http_store`, which
     # this fixture pops, so the scratch build dies on E0433 and every mutant is
-    # scored INVALID (the same transform fails on the 8fd664c47 base).
+    # scored INVALID (the same transform fails on the 8fd664c47 base). #2499
+    # dropped the `#[cfg(test)]` prefix (the sms lane's read gate consumes the
+    # re-export in production), so both spellings must go: one of the two
+    # replaces matches, the other is then a no-op.
     .replace("#[cfg(test)]\npub(crate) use http_store::NODE_408_RESPONSE;\n", "", 1)
+    .replace("pub(crate) use http_store::NODE_408_RESPONSE;\n", "", 1)
 )
 assert "mod tests;" not in originals["mod.rs"]
 assert "http_store" not in originals["mod.rs"]

@@ -25,7 +25,10 @@ builder arm to the read gate). `#2499` registers the five gate switches:
 `sms-headers-first-byte-anchor-off` (the first-byte re-anchor),
 `sms-headers-idle-followup-408` (the zero-byte follow-up head's silent close,
 the registered residual) and `sms-headers-stop-no-disarm` (the stop watch
-disarming a draining connection's deadline). `#2026` (decision C) replaced
+disarming a draining connection's deadline). `#2499` fix-r1 adds two more:
+`sms-headers-grid-inclusive` (an on-grid deadline holding for its successor
+grid point) and `sms-headers-chunked-body-withheld` (a chunked request body
+staying "open" instead of self-locking the handler). `#2026` (decision C) replaced
 #2035's
 `sms-stop-waits-for-connections` — its detach semantics is now the *mutation*,
 not the production shape — with `sms-stop-no-drain` (the pre-#2026 detach
@@ -68,20 +71,31 @@ switches = [
      'half_sent_head_is_closed_at_the_deadline_and_leaves_no_task',
      "#2499 the head deadline's answer is Node's canned 51-byte 408"),
     # #2499: the landing degenerates to the deadline itself instead of the
-    # first connections-checker grid point strictly after it. Killed by the
-    # paused-clock off-grid cell: the mutant's 408 fires at the +15 s
-    # deadline, so the probe between the deadline and the +30 s landing
-    # reads it instead of staying open.
+    # first connections-checker grid point strictly after it. Killed by both
+    # paused-clock landing cells: the off-grid cell's mutant 408 fires at
+    # the +15 s deadline, so the probe between the deadline and the +30 s
+    # landing reads it; the on-grid cell's fires at the +30 s deadline the
+    # strictly-greater comparison holds for +60 s, so its probe past the
+    # deadline reads it too.
     ('sms-headers-grid-off', SMS / 'mod.rs',
-     'the_408_lands_on_the_first_grid_point_after_the_deadline',
-     'stays unanswered between its +15 s deadline and the +30 s grid landing'),
+     ['the_408_lands_on_the_first_grid_point_after_the_deadline',
+      'an_on_grid_deadline_fires_at_its_successor_grid_point'],
+     ['stays unanswered between its +15 s deadline and the +30 s grid landing',
+      'stays unanswered past its own +30 s deadline']),
     # #2499: the deadline never re-anchors at the awaited head's first byte —
-    # the connect-anchored arm survives. Killed by the paused-clock
-    # delayed-first-head cell: the mutant's 408 lands at the connect
-    # anchor's +90 s grid point, and the probe past it reads the bytes.
+    # the connect-anchored or standby arm survives. Killed by all three
+    # re-anchor cells: the paused-clock delayed-first-head cell (the
+    # mutant's 408 lands at the connect anchor's +90 s grid point, and the
+    # probe past it reads the bytes) and both follow-up cells (the standby
+    # window's +30 s landing closes the follow-up head one grid point
+    # before its own first-byte-anchored +60 s one).
     ('sms-headers-first-byte-anchor-off', SMS / 'mod.rs',
-     'a_delayed_first_head_re_anchors_the_deadline_at_its_first_byte',
-     'stays unanswered past the connect-anchored +90 s landing'),
+     ['a_delayed_first_head_re_anchors_the_deadline_at_its_first_byte',
+      'a_follow_up_half_head_after_a_served_response_is_answered_with_the_408',
+      'a_follow_up_head_after_a_bodied_request_re_anchors_at_its_first_byte'],
+     ['stays unanswered past the connect-anchored +90 s landing',
+      'the follow-up half head stays unanswered past the standby',
+      'the follow-up head stays unanswered past the standby']),
     # #2499: a zero-byte follow-up head on a connection that already served a
     # response is answered with the 408 too, instead of Node's
     # `keepAliveTimeout` silent close (the registered residual). Killed by
@@ -128,6 +142,23 @@ switches = [
      ['a_stop_task_that_panics_at_its_log_line_frees_the_port_without_a_drain',
       'a_dropped_handle_frees_the_port_without_a_drain'],
      ['did not rebind inside', 'did not rebind inside']),
+    # #2499 fix-r1 (review sibling#3): an on-grid deadline fires at its own
+    # grid point instead of waiting for the strictly-greater comparison's
+    # successor. Killed by the paused-clock on-grid cell: the mutant's 408
+    # arrives at +30 s, so the probe past the deadline reads it where the
+    # cell requires silence until +60 s.
+    ('sms-headers-grid-inclusive', SMS / 'mod.rs',
+     'an_on_grid_deadline_fires_at_its_successor_grid_point',
+     'stays unanswered past its own +30 s deadline'),
+    # #2499 fix-r1 (review boundary#1/concurrency#1): a chunked request
+    # body reads as "no body pending", so the gate parks its bytes as if
+    # they were the next request's head and the handler starves into the
+    # body 408. Killed by the paused-clock chunked cell: the starved body
+    # read's 408-with-`Connection: close` lands instead of the TwiML, so
+    # the cell reads EOF before its answer.
+    ('sms-headers-chunked-body-withheld', SMS / 'mod.rs',
+     'a_chunked_request_body_reaches_the_handler_and_is_answered_not_408',
+     'EOF before the TwiML response arrived'),
     # #2269: the r1 counting shape — the truncation warn reads a pre-drain
     # snapshot, so the connection that retired during the drain is still
     # counted as aborted. Killed by the bound case's warn-count assertion

@@ -511,6 +511,38 @@ async fn read_sms_response(client: &mut tokio::io::DuplexStream, what: &str) {
     }
 }
 
+/// #2499 fix-r1: read one full TwiML response of this lane — the 200 the
+/// sms path answers with, content-length framed, ending in the empty
+/// `TWIML_OK` body (the same marker discipline as [`read_sms_response`]).
+/// One probe window per chunk, like the other paused-clock probes: the
+/// answer arrives at the first poll in real usage, while a gate that
+/// withholds the request body starves the handler forever — the window
+/// turns that into this cell's own fast failure instead of a hang.
+async fn read_sms_twiml(client: &mut tokio::io::DuplexStream, what: &str) {
+    let mut buffer = Vec::new();
+    while !latin1_string(&buffer).contains(TWIML_OK) {
+        let mut chunk = [0u8; 256];
+        let pending = tokio::time::timeout(PAUSED_PROBE_READ_WINDOW, client.read(&mut chunk));
+        tokio::time::advance(PAUSED_PROBE_ADVANCE).await;
+        yield_a_beat().await;
+        let read = match pending.await {
+            Ok(read) => read.unwrap_or_else(|error| panic!("#2499 {what}: {error}")),
+            Err(_elapsed) => panic!(
+                "#2499 {what}: the TwiML answer never arrived — the request \
+                 body was withheld from the handler",
+            ),
+        };
+        if read == 0 {
+            panic!(
+                "#2499 {what}: EOF before the TwiML response arrived (buffer so \
+                 far: {:?})",
+                latin1_string(&buffer)
+            );
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+    }
+}
+
 /// #2499: spawn one duplex-driven sms connection serving the half head's
 /// landing cells. The grid anchor plays the listener's bind (captured before
 /// the spawn, at the same virtual instant), the interval is
@@ -889,6 +921,223 @@ async fn a_follow_up_half_head_after_a_served_response_is_answered_with_the_408(
         headers_timeout_408_arrives(&mut client, "follow-up half head").await;
         task.await
             .expect("#2499 the follow-up head cell's serve task join");
+    })
+    .await;
+}
+
+/// #2499 fix-r1 (r1 review concurrency#1 / boundary#1): a
+/// `Transfer-Encoding: chunked` request body is the awaited request's own
+/// body, not a withheld "next head" — the chunk bytes must reach the
+/// handler's `frame()` reads while the request is in flight. The r1 −1
+/// sentinel made `withholding_mid_stream`'s `<= 0` read the chunked body as
+/// "nothing owed", so the gate swallowed every chunk into `withheld_head`
+/// and parked: the handler's body read never resolved (the bytes only
+/// re-feed once `in_flight` returns to 0, which that very read prevents —
+/// the self-lock), and the request died at the injected `request_timeout`
+/// with the body-read 408. The native lane's `i64::MAX` sentinel
+/// (`http_proxy.rs`, "no mid-stream anchoring for it") keeps `<= 0` false
+/// for the whole open body, so the chunks pass through to hyper. This cell
+/// pins that: the head goes on the wire alone, the body follows in dribbles
+/// whose 16 KB total passes hyper's first read buffer (8 KB,
+/// `hyper::proto::h1::io`'s `INIT_BUFFER_SIZE`), and the handler reads all
+/// of it and answers the empty TwiML 200 — never the 408 the body timeout
+/// or the head deadline would leave. Binds the negative control
+/// `sms-headers-chunked-body-withheld` (the mutant restores the −1
+/// sentinel, the 408 lands and this cell's TwiML read fails).
+#[tokio::test(start_paused = true)]
+async fn a_chunked_request_body_reaches_the_handler_and_is_answered_not_408() {
+    manual_clock(async {
+        let (mut client, task, _stop) = spawn_paused(
+            Some(Duration::from_secs(15)),
+            NODE_CONNECTIONS_CHECKING_INTERVAL,
+        );
+        // The head on its own: the service parses it, stores the chunked
+        // body's "open" count, and the handler's body read is pending before
+        // any chunk byte exists — the exact interleave the −1 sentinel broke.
+        client
+            .write_all(
+                b"POST /sms/incoming HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: \
+                 chunked\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n",
+            )
+            .await
+            .expect("#2499 write the chunked request head");
+        yield_a_beat().await;
+        // The body in dribbles: 8 × 2 KB segments, each its own write the gate
+        // must pass through while the request is in flight, and a total past
+        // hyper's first read buffer so no single read could hold the body
+        // whole even if the client had sent it at once.
+        let segment = "Body=".to_owned() + &"0123456789abcdef".repeat(128);
+        for _ in 0..8 {
+            client
+                .write_all(format!("{:x}\r\n{segment}\r\n", segment.len()).as_bytes())
+                .await
+                .expect("#2499 write one chunked body segment");
+            yield_a_beat().await;
+        }
+        client
+            .write_all(b"0\r\n\r\n")
+            .await
+            .expect("#2499 write the terminating chunk");
+        yield_a_beat().await;
+        // Past the injected deadlines' reach at the response's virtual
+        // instant: the request is done (the handler read the whole body), the
+        // standby window re-armed at the response's finish, and its +15 s
+        // deadline's +30 s landing is still ahead of this advance.
+        tokio::time::advance(Duration::from_secs(16)).await;
+        yield_a_beat().await;
+        read_sms_twiml(&mut client, "chunked sms request").await;
+        drop(client);
+        task.await
+            .expect("#2499 the chunked-body cell's serve task join");
+    })
+    .await;
+}
+
+/// #2499 fix-r1 (r1 review concurrency#2, interleave A): a request whose body
+/// hyper read together with its head leaves no stale body count that
+/// suppresses the follow-up head's first-byte re-anchor. The head and its
+/// 96-byte body go on the wire in one write, so the gate's single read
+/// delivers both together: the head parses (the service stores
+/// `Content-Length: 96`), and the handler reads the body straight out of
+/// hyper's read buffer — those 96 bytes never pass the gate's per-read
+/// accounting again, so the count the *next* head's first read sees must not
+/// still hold them. The pre-fix shape: `read > body_before` failed against
+/// the stale 96, the follow-up head never re-anchored, and the standby
+/// window's own +30 s landing closed the connection a grid point before the
+/// head's own +60 s landing — Node re-anchors `last_message_start_` at
+/// `on_message_begin` regardless of how the previous body reached the
+/// parser. The probes bracket the standby landing (+30.66 s, the
+/// discriminator), the gap (+59.46 s) and the re-anchored landing (+60.06 s).
+#[tokio::test(start_paused = true)]
+async fn a_follow_up_head_after_a_bodied_request_re_anchors_at_its_first_byte() {
+    manual_clock(async {
+        let (mut client, task, _stop) = spawn_paused(
+            Some(Duration::from_secs(15)),
+            NODE_CONNECTIONS_CHECKING_INTERVAL,
+        );
+        // Head and body in one write: the gate's read returns both together,
+        // and the handler's frames come out of hyper's buffer, never past the
+        // gate's countdown again.
+        let body = "Body=".to_owned() + &"0123456789".repeat(10);
+        let request = format!(
+            "POST /sms/incoming HTTP/1.1\r\nHost: x\r\nContent-Type: \
+             application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        client
+            .write_all(request.as_bytes())
+            .await
+            .expect("#2499 write the head and its body together");
+        read_sms_twiml(&mut client, "the bodied request's response").await;
+        // The response's finish re-armed the deadline at this same virtual
+        // instant (t = 0): a +15 s deadline on the 30 s grid, landing at +30 s.
+        yield_a_beat().await;
+        // The follow-up head starts at +20 s — inside the standby window.
+        tokio::time::advance(Duration::from_secs(20)).await;
+        client
+            .write_all(b"POST /sms/incoming HTTP/1.1\r\nHost: x\r\n")
+            .await
+            .expect("#2499 write the follow-up half head");
+        // Let the serve task read it: the first byte re-anchors the deadline
+        // at +20 s — its own +35 s deadline lands at +60 s.
+        yield_a_beat().await;
+        // t = +29.46 s: before the standby landing.
+        tokio::time::advance(Duration::from_millis(9_400)).await;
+        probe_still_open(
+            &mut client,
+            "#2499 the follow-up head keeps the connection open before the \
+             standby window's own +30 s landing",
+        )
+        .await;
+        // t = +30.66 s: past the standby landing — the discriminator between
+        // the standby anchor and the head's own first-byte anchor. A stale
+        // body count that suppresses the re-anchor closes the connection
+        // right here, one grid point before the head's own landing.
+        tokio::time::advance(Duration::from_millis(1_200)).await;
+        probe_still_open(
+            &mut client,
+            "#2499 the follow-up head stays unanswered past the standby \
+             window's +30 s landing: its deadline re-anchored at its own first \
+             byte and lands at +60 s",
+        )
+        .await;
+        // t = +59.46 s: just before the +60 s landing.
+        tokio::time::advance(Duration::from_millis(28_740)).await;
+        probe_still_open(
+            &mut client,
+            "#2499 the follow-up head stays unanswered just before its +60 s \
+             grid landing",
+        )
+        .await;
+        // t = +60.06 s: the landing — and this head received bytes, so the
+        // answer is the 408, not the silent close.
+        tokio::time::advance(Duration::from_millis(600)).await;
+        headers_timeout_408_arrives(&mut client, "follow-up head after a bodied request").await;
+        task.await
+            .expect("#2499 the bodied-request follow-up cell's serve task join");
+    })
+    .await;
+}
+
+/// #2499 fix-r1 (r1 review concurrency#2, interleave A — the drain twin,
+/// registered residual): the same stale-count shape against a request whose
+/// handler never reads the body (`/not-the-sms-path` answers the 404 without
+/// `into_body`), so hyper drains the 96 body bytes out of its own read
+/// buffer — a path the gate cannot see or count (and post-response drain
+/// reads that *do* cross the gate are indistinguishable from head bytes, so
+/// zeroing the count on the 404 would mis-anchor exactly the trickled-body
+/// shape the count currently gets right). The residual, registered in
+/// `A8.3-CH-SMS-017` residual 3: the follow-up head's first-byte re-anchor
+/// stays suppressed, so its expiry rides the standby window — closing at
+/// the standby landing, one grid point before Node's own re-anchored
+/// landing, never earlier and never left hanging. With no anchor recorded
+/// the gate cannot tell this head received bytes, so the close is the
+/// byte-silent one (residual 2's path), not a 408.
+#[tokio::test(start_paused = true)]
+async fn a_follow_up_head_after_an_unread_request_body_closes_on_the_standby_landing() {
+    manual_clock(async {
+        let (mut client, task, _stop) = spawn_paused(
+            Some(Duration::from_secs(15)),
+            NODE_CONNECTIONS_CHECKING_INTERVAL,
+        );
+        let body = "z".repeat(96);
+        let request = format!(
+            "POST /not-the-sms-path HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        client
+            .write_all(request.as_bytes())
+            .await
+            .expect("#2499 write the head and its body together");
+        read_sms_response(&mut client, "the bodied 404's response").await;
+        yield_a_beat().await;
+        tokio::time::advance(Duration::from_secs(20)).await;
+        client
+            .write_all(b"POST /sms/incoming HTTP/1.1\r\nHost: x\r\n")
+            .await
+            .expect("#2499 write the follow-up half head");
+        yield_a_beat().await;
+        tokio::time::advance(Duration::from_millis(9_400)).await;
+        probe_still_open(
+            &mut client,
+            "#2499 the follow-up head keeps the connection open before the \
+             standby window's own +30 s landing",
+        )
+        .await;
+        // t = +30.66 s: the standby landing — the residual's boundary. Node,
+        // re-anchored at the follow-up head's first byte, would hold this
+        // connection until its own +60 s landing; the stale unread-body count
+        // suppresses the re-anchor, so the standby window closes here, exactly
+        // one grid point early and never sooner — byte-silent, because without
+        // the anchor the gate cannot tell this head received bytes.
+        eof_without_a_408(
+            &mut client,
+            Duration::from_millis(1_200),
+            "follow-up head after an unread body",
+        )
+        .await;
+        task.await
+            .expect("#2499 the unread-body follow-up cell's serve task join");
     })
     .await;
 }

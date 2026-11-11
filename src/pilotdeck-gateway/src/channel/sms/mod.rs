@@ -1105,7 +1105,14 @@ fn headers_deadline_landing(
         return deadline;
     }
     let elapsed = deadline.saturating_duration_since(anchor).as_nanos();
-    let ticks = elapsed / interval.as_nanos() + 1;
+    let ticks = if crate::mutants::on("sms-headers-grid-inclusive") {
+        // The inclusive-grid shape the negative control kills: an on-grid
+        // deadline firing at its own grid point, one checker interval
+        // before Node's strictly-greater comparison lets it.
+        elapsed.div_ceil(interval.as_nanos())
+    } else {
+        elapsed / interval.as_nanos() + 1
+    };
     let ticks = u32::try_from(ticks).expect("#2499 the checker grid stays within u32 ticks");
     anchor + interval * ticks
 }
@@ -1169,8 +1176,8 @@ struct HeadersTimeoutGate<S> {
     in_flight: Arc<AtomicUsize>,
     /// #2499: request-body bytes the connection still owes the handler
     /// (from the parsed request's `Content-Length`; a chunked body stays
-    /// "open", −1 — the conservative residual like the native lane's).
-    /// Only the bytes past them can start the *next* head: Node's
+    /// "open", `i64::MAX` — the native lane's sentinel). Only the bytes
+    /// past them can start the *next* head: Node's
     /// `last_message_start_` is set at `on_message_begin`, not by body
     /// bytes.
     body_remaining: Arc<AtomicI64>,
@@ -1512,6 +1519,20 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for HeadersTimeoutGate<S> {
             } else {
                 self.withheld_head.drain(..n);
             }
+            // #2499 fix-r1 (interleave B): a request pipelined whole — head
+            // and body — while the previous response streamed parks both in
+            // the withheld buffer. The head's first chunk re-feeds before the
+            // service stores the new `Content-Length` (hyper parses that
+            // chunk first), but the *body* chunks re-feed after it, and
+            // without this count they never pass the fresh-read accounting
+            // below — the stored length lingers and suppresses the successor
+            // head's first-byte re-anchor, closing it on the standby
+            // landing instead. Same read as the fresh path: the parked
+            // bytes past the awaited body can only be the next head's.
+            let body_before = self.body_remaining.load(Ordering::Relaxed);
+            self.consume_request_body(n);
+            let head_start = body_before <= 0 || n as i64 > body_before;
+            self.arm_started_head(cx, head_start);
             return Poll::Ready(Ok(()));
         }
         if self.withheld_eof {
@@ -1647,15 +1668,23 @@ impl Drop for RearmBody {
 }
 
 /// #2499: the awaited request's remaining body bytes — from the parsed
-/// request's `Content-Length`; a chunked body stays "open" (−1, the
-/// conservative residual like the native lane's: a chunked follow-up head
-/// is never withheld), and no framing at all means an empty body.
+/// request's `Content-Length`; a chunked body stays "open" (`i64::MAX`, the
+/// native lane's sentinel: no mid-stream parking for a body whose length the
+/// reader cannot know up front), and no framing at all means an empty body.
 fn request_content_length(request: &Request<Incoming>) -> i64 {
     if request
         .headers()
         .contains_key(hyper::header::TRANSFER_ENCODING)
     {
-        return -1;
+        if crate::mutants::on("sms-headers-chunked-body-withheld") {
+            // The pre-fix-r1 sentinel the negative control kills: −1 reads
+            // as "body over" in `withholding_mid_stream`'s `<= 0`, so the
+            // gate parks the chunked body's bytes as if they were the next
+            // request's head and the handler starves into the 300 s body
+            // 408 (fix-r1 review boundary#1/concurrency#1).
+            return -1;
+        }
+        return i64::MAX;
     }
     match request
         .headers()
@@ -1720,7 +1749,7 @@ async fn serve_sms_connection<S>(
             // request's own body bytes are counted so the reader can
             // tell them from a *next* head's first byte.
             body_remaining.store(request_content_length(&request), Ordering::Relaxed);
-            match handle_request(request, shared).await {
+            match handle_request(request, shared, body_remaining).await {
                 Ok(response) => Ok(response.map(|body| {
                     crate::Body::new(RearmBody {
                         inner: body,
@@ -1760,9 +1789,10 @@ async fn serve_sms_connection<S>(
 async fn handle_request(
     request: Request<Incoming>,
     shared: Arc<SmsShared>,
+    body_remaining: Arc<AtomicI64>,
 ) -> Result<Response<crate::Body>, DestroyConnection> {
     let version = request.version();
-    route_request(request, shared)
+    route_request(request, shared, body_remaining)
         .await
         .map(|response| finalize(response, version))
 }
@@ -1770,6 +1800,7 @@ async fn handle_request(
 async fn route_request(
     request: Request<Incoming>,
     shared: Arc<SmsShared>,
+    body_remaining: Arc<AtomicI64>,
 ) -> Result<Response<crate::Body>, DestroyConnection> {
     // #2152: the TS channel is a bare `http.createServer` (SmsChannel.ts:89,
     // no options), so llhttp / `_http_server.js` reject a bad method, a
@@ -1857,6 +1888,15 @@ async fn route_request(
             Err(_) => return Ok(crate::channel::webhook::node_request_timeout_response()),
         }
     };
+    // #2499 fix-r1 (interleave A): the handler has finished reading the
+    // awaited request's body, so hyper has consumed all of it — any
+    // positive remainder is bytes it read ahead into its own buffer
+    // together with the head (or parked head bytes re-fed past the store),
+    // which never crossed the gate's fresh-read accounting. Left in place
+    // it would read as "the body is still coming" and skip the successor
+    // head's first-byte re-anchor, closing a follow-up head on the
+    // standby landing instead of its own.
+    body_remaining.store(0, Ordering::Relaxed);
     if let Some(error) = read_error {
         // #1339 fix-r1: probed on the pinned Node v22.22.0
         // (probes/truncated-body.txt, 3/3 deterministic) — the handler's
