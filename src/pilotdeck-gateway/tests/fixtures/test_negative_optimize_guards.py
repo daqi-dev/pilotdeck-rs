@@ -104,6 +104,12 @@ SCRIPTS = (
     # refuse_unusable_target + verdict_exit); its startup refusals join the
     # machine-checked matrix here, and its --check is also wired into CI.
     ('issue-2495/negative_controls.py', (), ()),
+    # #2887: the compiled-switch fixture born on the same negative_selection
+    # startup contract (registered + refuse + claim_dir + missing_target/
+    # refuse_unusable_target + verdict_exit) on top of the shared
+    # precompiled-switch executor; its startup refusals join the
+    # machine-checked matrix here too.
+    ('user-dialog-bus-observer/negative_controls.py', (), ()),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption

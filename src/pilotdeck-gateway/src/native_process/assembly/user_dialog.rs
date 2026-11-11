@@ -14,6 +14,23 @@ pub(super) fn build_user_dialog_bus() -> Arc<Mutex<GatewayUserDialogBus>> {
     // separate renderer-broadcast gap (there is no production
     // `NotificationServer`/`broadcastNotification` in the native process).
     // Tracked separately; it must not gate availability.
+    //
+    // The claim above is registered as the `user-dialog-bus-observer-coupled`
+    // executable mutation (`crate::mutants::on`, feature `pdrs-mutants`;
+    // `tests/fixtures/user-dialog-bus-observer/negative_controls.py`, the
+    // mcp-resolver-lease precedent): with the switch selected the assembly
+    // reverts to the legacy observer-coupled constructor below. The branch is
+    // `#[cfg(all(test, feature = "pdrs-mutants"))]` because that constructor
+    // is test-only (#1600); with the feature off the switch is a constant
+    // `false` and this branch does not exist, so the production bytes are the
+    // `connected` call alone.
+    #[cfg(all(test, feature = "pdrs-mutants"))]
+    if crate::mutants::on("user-dialog-bus-observer-coupled") {
+        return Arc::new(Mutex::new(GatewayUserDialogBus::new(
+            crate::user_dialog::DialogRuntime::default(),
+            None,
+        )));
+    }
     Arc::new(Mutex::new(GatewayUserDialogBus::connected(
         crate::user_dialog::DialogRuntime::default(),
     )))
@@ -23,13 +40,17 @@ pub(super) fn build_user_dialog_bus() -> Arc<Mutex<GatewayUserDialogBus>> {
 mod tests {
     use super::build_user_dialog_bus;
 
-    /// #1445 negative control: if production reverts to
-    /// `GatewayUserDialogBus::new(runtime, None)` (observer-coupled
-    /// connectivity) this test turns red, restoring the unreachable family.
+    /// #1445 negative control: if production reverts to the legacy
+    /// `new(runtime, None)` observer-coupled constructor this test turns red,
+    /// restoring the unreachable family.
+    /// #2887: the claim is registered as the `user-dialog-bus-observer-coupled`
+    /// executable mutation (`tests/fixtures/user-dialog-bus-observer/
+    /// negative_controls.py`), which must stay red at the assertion below;
+    /// this prose no longer carries the proof on its own.
     #[test]
     fn production_bus_is_connected_without_an_observer() {
         let bus = build_user_dialog_bus();
-        assert!(
+        crate::negative_assert!(
             bus.lock().unwrap_or_else(|e| e.into_inner()).is_connected(),
             "#1445 production assembly must build a connected bus"
         );

@@ -124,6 +124,8 @@ TABLES = (
     'memory-gateway/negative_controls.py',
     'snapshot-projection/negative_controls.py',
     'metadata-process-cwd/negative_controls.py',
+    # #2887: the user-dialog assembly switch table, born with its anchors.
+    'user-dialog-bus-observer/negative_controls.py',
 )
 
 
