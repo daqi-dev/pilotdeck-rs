@@ -1225,9 +1225,32 @@ impl UploadStore {
             let leases = root_real.join(id);
             for lease in names(&leases).into_iter().filter(|id| safe_id(id)) {
                 let dir = leases.join(lease);
-                let metadata = fs::read(dir.join("lease.json"))
-                    .ok()
-                    .and_then(|b| parse_json(&String::from_utf8_lossy(&b)).ok());
+                // #2098 fix-r2 (review DS#2 / MM): the fourth path-read of
+                // the family. This was `fs::read` — a bare open that
+                // follows a swapped link and blocks a FIFO swapped in for
+                // `lease.json` for a writer that never comes, and reads a
+                // device link without EOF (the same faces the three sibling
+                // readers close with the guarded open). The entry read goes
+                // through `open_artifact_guarded` and the handle's own
+                // terms; anything the terms refuse is "unreadable", which
+                // this half already spells "expired" (the malformed-JSON
+                // default just above), so no legal entry changes meaning.
+                let metadata = (|| {
+                    let mut file = open_artifact_guarded(&dir.join("lease.json")).ok()?;
+                    let info = file.metadata().ok()?;
+                    // The type term: a FIFO or device entry is not read at
+                    // all. A directory is left to its read-stage `EISDIR`,
+                    // the same deliberate shape as the siblings.
+                    if !info.file_type().is_file() && !info.file_type().is_dir() {
+                        return None;
+                    }
+                    // The same cap as the record leaf this JSON mirrors.
+                    if info.len() > MAX_METADATA_JSON_BYTES {
+                        return None;
+                    }
+                    let bytes = read_exact_file(&mut file, info.len()).ok()?;
+                    parse_json(&String::from_utf8_lossy(&bytes)).ok()
+                })();
                 if let Some(m) = metadata
                     && future(&m, "expiresAt", (self.options.now)())?
                 {
