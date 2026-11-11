@@ -1594,6 +1594,9 @@ class EnvironmentControls(unittest.TestCase):
         # #1800 fix-r4（DS sibling#2/boundary#1 同撞）：管道分支配对用例
         # （stdout-pipe-fault）Ran 11→12，下限同步抬到 12——两分支合并/调
         # 序（健康 head 读法变 rc 2）同样必须红。
+        # #1800 fix-r5（DS boundary P2a）：三态第三腿（invalid-verdict-pipe，
+        # 判决路径 INVALID + counts 行管道故障）Ran 12→13，下限同步抬到
+        # 13——管道分支折进 os._exit(0) 的坏改法必须红。
         minimums = (
             ('test_negative_optimize_guards', 10),
             ('settings-gateway/test_negative_controls.py', 13),
@@ -1601,7 +1604,7 @@ class EnvironmentControls(unittest.TestCase):
             ('network-timing/test_negative_controls.py', 10),
             ('test_negative_roster_guards', 6),
             ('issue-2495/test_negative_controls.py', 30),
-            ('sdk-signals-close-order-pin/test_negative_controls.py', 12),
+            ('sdk-signals-close-order-pin/test_negative_controls.py', 13),
         )
         # r39（DS sibling#4 P2）：network-timing 的两条 EACCES 判杀用例按宿主
         # 能力条件跳过（`@unittest.skipUnless(EACCES_STAGEABLE, ...)`——root /

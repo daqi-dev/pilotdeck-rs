@@ -71,6 +71,12 @@ exactly like the issue-2495 / SessionRunnerTests precedents:
   survive and no "#1382 stdout summary write failed" diagnostic may
   appear — pinning that the pipe branch stays ahead of the OSError
   branch instead of both folding into one refusal.
+- invalid-verdict-pipe: the third leg of that pairing — a verdict-path
+  INVALID run (no abort, the summary carries the INVALID rows) read
+  through ``... | head``. Swallowing the pipe must not swallow the
+  verdict: the run still exits 2 with the "#1382 INVALID controls"
+  diagnostic, so a folded-in ``os._exit(0)`` on the pipe branch cannot
+  pass a no-verdict run off as green.
 
 Both senses of exit 1 are pinned: the verdict path's 1 above, and the
 pre-guard refusals' 1 (an unknown selection, a missing CARGO_TARGET_DIR)
@@ -165,7 +171,7 @@ else:
         if (index - 1) % 2 == 0:
             if mode == 'cancel' and control == len(names) - 1:
                 raise KeyboardInterrupt()
-            if mode == 'invalid-verdict':
+            if mode in ('invalid-verdict', 'invalid-verdict-pipe'):
                 # The verdict path's INVALID row: the negative run fails
                 # without any dedicated #1382 marker (the stale-anchor shape),
                 # so the runner's else branch records INVALID and the exit
@@ -214,7 +220,7 @@ else:
 
         Path.replace = fail_summary_publish
 
-    if mode == 'stdout-pipe-fault':
+    if mode in ('stdout-pipe-fault', 'invalid-verdict-pipe'):
         # #1800 fix-r4（DS sibling#2 / boundary#1，两家同撞）：管道分支与
         # 两个 except 的先后次序此前零仓内覆盖——合并或调序成统一的
         # `except OSError` 后，健康的 `... | head` 运行会从「吞管道、按判
@@ -535,6 +541,44 @@ class InvalidVerdictTests(_PinDriver, unittest.TestCase):
         self.assertEqual(catalog.read_bytes(), before,
                          '#1800 an INVALID-verdict run must still restore '
                          'the catalog')
+
+    def test_invalid_verdict_with_a_closed_pipe_still_exits_two(self):
+        # #1800 fix-r5（DS boundary P2a）：三态配对的第三腿——判决路径
+        # INVALID（非中止）的运行被 ``... | head`` 读到 counts 行。吞掉管
+        # 道错误后必须落到判决段的 `if invalid: os._exit(2)`，不能把
+        #「装置没出判决」折进管道分支的退出。坏改法（`except
+        # BrokenPipeError: ... os._exit(0)` 或判决段挪进 try 提前退出）
+        # 会让 head 读法的 INVALID 运行 rc 0——协调者把无判决读成全绿
+        # （假 PASS），而健康用例（rc 0）、ENOSPC 用例（不抛
+        # BrokenPipeError）、abort 用例（不装管道故障）全照绿。
+        process, summary, tree, before = self.run_pin('invalid-verdict-pipe')
+        self.assertEqual(process.returncode, 2,
+                         '#1800 a verdict-path INVALID run read through a '
+                         'closed pipe must still exit 2 — swallowing the '
+                         'pipe error must not swallow the verdict: '
+                         f'rc={process.returncode}, stderr={process.stderr!r}')
+        self.assertIn('#1382 INVALID controls', process.stderr,
+                      '#1800 the INVALID diagnostic must still reach stderr '
+                      'after the pipe branch')
+        self.assertNotIn('#1382 stdout summary write failed', process.stderr,
+                         '#1800 the pipe error is swallowed, not diagnosed')
+        self.assertNotIn('#1382 run did not complete', process.stderr,
+                         '#1800 the rc 2 is the verdict path, not an abort')
+        self.assertNotIn('"counts"', process.stdout,
+                         '#1800 the counts line never reached the reader: '
+                         'the pipe closed at it')
+        self.assertIsNotNone(summary,
+                            '#1800 a verdict-path INVALID run is not an '
+                            'abort: the summary must still be published')
+        self.assertEqual([row['status'] for row in summary['results']],
+                         ['INVALID'] * len(SELECTION),
+                         '#1800 the rows are INVALID on the verdict path, '
+                         'with the pipe fault layered on top')
+        catalog = (tree / 'src/pilotdeck-gateway/tests/fixtures/sdk-signals'
+                   '/negative_controls.py')
+        self.assertEqual(catalog.read_bytes(), before,
+                         '#1800 an INVALID-verdict pipe run must still '
+                         'restore the catalog')
 
     def test_unpublished_summary_exits_two_without_a_summary(self):
         # #1800 fix-r2（PR #2979 boundary P1）：summary 发布失败→rc 2 那条
