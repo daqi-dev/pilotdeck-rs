@@ -27,10 +27,10 @@
 | `scripts/parity/controls/lock_release.py` | `3eb2d5a5d814d62d738eff5a89b3996fcde09f679914d7c6209b00e94e0e973c` | 2026-10-30 #1067 重登记（**AI 代批，待人复核**） | 信号挂起 / 残留组保留 / cleanupPending 拒绝接管 / 中断 BLOCKED；TERM-KILL 失败、wait 超时、最终探测 OSError 三条未证实路径与接管断言即负控绑定失败点；setUp 先建 `_tmp/`（新检出可跑） |
 | `scripts/parity/controls/multimodal.py` | `ceaa70dfaafd3583eb43372aefbf11a60642861539ffe1ddcccdab3e1f300140` | 2026-10-30 #1067 fix-r1 重登记（**AI 代批，待人复核**） | 多态与日期前提的负例 / 正例；run_controls 先建 `_tmp/`（新检出可跑） |
 | `scripts/parity/controls/review_r1.py` | `1be00c3d444080c0fd3320d0fea416964a56d0393a8de4edb5e49db7d1f3fd9f` | 2026-10-30 #1067 fix-r1 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照；setUp 先建 `_tmp/`（新检出可跑） |
-| `scripts/parity/controls/round_head_guard.py` | `d9be663c5c74faf73eb944e0edc763ee2e0047dead0bffd297750e4a6ba22555` | generated | frozen/ |
+| `scripts/parity/controls/round_head_guard.py` | `6d0577c5bef62659b14916912db2306f61223f90af78afcd1487da13f18e6650` | generated | frozen/ |
 | `scripts/parity/controls/run_all.py` | `4d3d7683c48e14ca6a8567ad1482ec5e19da9d9790b62526515a040f9e9cb425` | 2026-10-30 #1067 fix-r1 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照；run_controls 先建 `_tmp/`（新检出可跑） |
 | `scripts/parity/g03_compare.py` | `51ac99f443343032ca1833381f07a96f950ff016e8734a10c67556715ca6e8b8` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
-| `scripts/parity/round.py` | `3cf414e2cefc37ab762cb6400ed77139c925bc9a2a33dbe42d8de07a77b07f20` | 2026-10-26 #209 A1 重登记（**AI 代批，待人复核**） | 锁只在本次会话组证实停止后释放；清理期间挂起 SIGINT/SIGTERM |
+| `scripts/parity/round.py` | `a2249b19531740b22fbe6661fe58438a2de89be12d311b9fa7fa3d0b391c8f17` | 2026-10-26 #209 A1 重登记（**AI 代批，待人复核**） | 锁只在本次会话组证实停止后释放；清理期间挂起 SIGINT/SIGTERM |
 | `scripts/parity/score.py` | `0b6b069af4bfe855eb122f21cc18461bd829991efd6b4b8c3d9ef557b587286b` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 计分：普通第 i 对第 i；多态整类匹配；日期 / 同源 / 不重叠前提 |
 | `scripts/parity/self_compare.py` | `22c98ea805780441d0d6cd241f7877f2e683ec660757ed0fafb0c11de6d9b083` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 
