@@ -59,6 +59,11 @@ exactly like the issue-2495 / SessionRunnerTests precedents:
   fails — no summary may survive a failed publish (a stale or half-written
   one would read as evidence), and rc 2 must say the device produced no
   verdict.
+- stdout-write-fault: a healthy all-KILLED run whose final counts line
+  cannot be written — the write fails with the measured /dev/full shape
+  (OSError ENOSPC, not a pipe error), so it must not be swallowed as
+  ``... | head``: rc 2 with a stderr diagnostic naming the failure, while
+  the summary on disk still carries the completed verdict rows.
 
 Both senses of exit 1 are pinned: the verdict path's 1 above, and the
 pre-guard refusals' 1 (an unknown selection, a missing CARGO_TARGET_DIR)
@@ -201,6 +206,31 @@ else:
             return raw_replace(self, target)
 
         Path.replace = fail_summary_publish
+
+    if mode == 'stdout-write-fault':
+        # #1800 fix-r3 (comment follow-up 1): the final counts line fails
+        # with the measured /dev/full shape — OSError(ENOSPC), never a pipe
+        # error (the review's premise, reproduced by this file's host
+        # evidence). Only that one line fails: the per-control record lines
+        # still reach the reader, so the run itself completed and only the
+        # stdout delivery broke. The swap is in-process (nothing inherited
+        # from the environment is consulted) and stderr keeps its real
+        # stream, so the diagnostic the fix must print stays observable.
+        real_stdout = sys.stdout
+
+        class FullDiskStdout:
+            def write(self, text):
+                if '"counts"' in text:
+                    raise OSError(28, 'No space left on device')
+                return real_stdout.write(text)
+
+            def flush(self):
+                return real_stdout.flush()
+
+            def close(self):
+                return real_stdout.close()
+
+        sys.stdout = FullDiskStdout()
 sys.argv = [str(runner_path), str(out), *names]
 exec(compile(source, str(runner_path), 'exec'), runner_globals if mode != 'busy-lock' else {'__file__': str(runner_path), '__name__': '__main__'})
 """
@@ -511,6 +541,55 @@ class InvalidVerdictTests(_PinDriver, unittest.TestCase):
         self.assertEqual(catalog.read_bytes(), before,
                          '#1800 a publish-fault run must still restore '
                          'the catalog')
+
+
+class StdoutWriteFaultTests(_PinDriver, unittest.TestCase):
+    """#1800 fix-r3: a non-EPIPE stdout write failure fails closed, loudly."""
+
+    def test_stdout_write_failure_exits_two_with_a_stderr_diagnostic(self):
+        # #1800 fix-r3（评论追加 1）：最终 counts 行的 stdout 写失败——
+        # /dev/full 实测抛 OSError(ENOSPC) 而非 BrokenPipeError（实验 A/B
+        # 原始输出贴 RESULT）——原 except 只认管道，异常落进尾段 catch-all：
+        # rc 2 不变、stderr 0 字节（连 abort 路径的「run did not complete」
+        # 都被跳过），即评审所说的「静默 rc 2」。回归两个方向都要红：吞掉
+        # 诊断（stderr 无该行），或放行成 rc 0（协调者把没送达的判决读成
+        # 全绿）。
+        process, summary, tree, before = self.run_pin('stdout-write-fault')
+        self.assertEqual(process.returncode, 2,
+                         '#1800 a run whose final stdout line cannot be '
+                         'written must exit 2 — the verdict line never '
+                         f'reached the reader: rc={process.returncode}, '
+                         f'stderr={process.stderr!r}')
+        self.assertIn(
+            '#1382 stdout summary write failed: OSError: '
+            '[Errno 28] No space left on device',
+            process.stderr,
+            '#1800 a swallowed non-EPIPE stdout write failure must name '
+            'itself on stderr before failing closed')
+        self.assertIsNotNone(
+            summary,
+            '#1800 only the stdout line failed: the summary must still be '
+            'published')
+        self.assertTrue(
+            [row['status'] for row in summary['results']]
+            == ['KILLED'] * len(SELECTION),
+            '#1800 the rows completed and were recorded: only the stdout '
+            'delivery failed, got '
+            + repr([row['status'] for row in summary['results']]))
+        self.assertIn(': KILLED: ', process.stdout,
+                      '#1800 the record lines must still have reached the '
+                      'reader: the fault is the final counts line alone')
+        self.assertNotIn('"counts"', process.stdout,
+                         '#1800 the counts line must not be readable from '
+                         'stdout: its write failed')
+        self.assertNotIn('#1382 run did not complete', process.stderr,
+                         '#1800 the rc 2 must come from the stdout write '
+                         'branch, not the abort branch — the run completed')
+        catalog = (tree / 'src/pilotdeck-gateway/tests/fixtures/sdk-signals'
+                   '/negative_controls.py')
+        self.assertTrue(catalog.read_bytes() == before,
+                        '#1800 a stdout-fault run must still restore the '
+                        'catalog byte for byte')
 
 
 class PreGuardRefusalTests(unittest.TestCase):
