@@ -226,6 +226,27 @@ impl UploadStore {
             set(&mut record, "idempotencyKeyHash", text(&key));
         }
         set(&mut record, "receivedClientFileIds", JsValue::Array(vec![]));
+        // #2098 fix-r3 (reviews MM boundary#1 + DS boundary#4, two houses
+        // independently): the write side's own ceiling on the record it is
+        // about to put on disk. `validate_manifest` bounds the files' bytes,
+        // never the record's own JSON (`name` carries no length term), so one
+        // frame-sized manifest could land a record the read cap below
+        // refuses — and the listing's skip would then take it out of the
+        // idempotency replay and the concurrency count, where TS reads such a
+        // record back and replays it. Refusing the create before anything
+        // touches the disk keeps "this gateway wrote it" and "this gateway
+        // can read it" one set, single-sourced on the read side's own
+        // constant; the skip face stays for records this gateway did not
+        // write. A record already at the cap can still grow past it through
+        // a later `mutate` (`write` has no cap of its own) — that residual
+        // belongs to the same registered follow-up.
+        let line = json_line(&record)?;
+        if line.len() > MAX_METADATA_JSON_BYTES as usize {
+            return Err(UploadError::dialog(
+                "UPLOAD_TASK_TOO_LARGE",
+                "Upload manifest record exceeds the supported size.",
+            ));
+        }
         make_dir(&task_dir(&record).join("files"))?;
         self.write(&record)?;
         self.emit(&record);

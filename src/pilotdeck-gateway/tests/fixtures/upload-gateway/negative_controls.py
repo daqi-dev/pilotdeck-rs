@@ -24,7 +24,11 @@ The #1494 rows pin the read_at handle binding: dropping it, or restoring the
 pre-fix pre-open path spelling check, must each turn its named TOCTOU test
 red; the pre-open identity row drops the identity term; and the approved-stat
 row restores the follow-the-link sample, which lets a link planted before the
-approved stat become the approved object.
+approved stat become the approved object. Since fix-r3 the handle row is
+single-factor (review DS boundary#1): its mutant drops only the handle path
+term, and its named test reaches it through a swapped ``<id>`` *directory*
+whose ``metadata.json`` is a hard link of the approved inode — the guarded
+open succeeds, the identity term passes, and only the handle term refuses.
 
 The lease-link rows pin the one descriptor the lease entry is checked
 through: four drop the identity comparison, its content term, the
@@ -48,7 +52,13 @@ FIFO, symlink and length rows — the flag rows edit the same shared
 named test, so the family cannot lose a flag while any one caller is tested.
 The `verify-hash-length-dropped` row restores the read-to-EOF digest (the
 pre-fix shape) and `read-at-metadata-cap-dropped` drops the record-leaf size
-cap.
+cap. The fix-r3 additions pin the write side and the skip faces around them:
+`create-record-cap-dropped` drops the create's own record-JSON ceiling
+(single-sourced with the read cap), `unreadable-face-empty-code-loosened`
+widens the skip whitelist's code-empty arm — a malformed-JSON sibling record
+must keep failing the listing round — and `cleanup-lease-entry-open-dropped`
+restores the lease entry's pre-fix ``fs::read``, whose FIFO hang the named
+test's watchdog turns into its timeout panic.
 
 The #1887/#1888 rows pin the two halves of the shared "home" question: the
 reader's lexical prefix check refuses a `.tmp` that is a link into the same
@@ -83,12 +93,17 @@ KEY_DEDUPE = 'upload::gateway_tests::upload_gateway_idempotency_hash_still_dedup
 FIDELITY = 'upload::gateway_tests::upload_gateway_preserves_raw_utf16_parameters'
 SIZE = 'upload::gateway_tests::upload_gateway_part_size_cap_is_checked_before_allocating'
 MESSAGES = 'upload::gateway_tests::upload_gateway_error_messages_preserve_lone_surrogates'
-READ_AT_SWAP = ('upload::tests::upload_read_at_metadata_swapped_between_'
-                'canonicalize_and_open_is_rejected')
 LEASE_CHAIN = 'upload::tests::upload_read_at_forged_record_cannot_reach_the_lease'
 READ_AT_RENAME = 'upload::tests::upload_read_at_record_renamed_after_open_is_rejected'
 READ_AT_PREAPPROVED = (
     'upload::tests::upload_read_at_metadata_swapped_before_approved_stat_is_rejected')
+# #2098 fix-r3 (条A, review DS boundary#1, P1): the handle binding's own
+# single-factor fixture — the `<id>` directory swapped for a link to an
+# outside holder whose metadata.json is a hard link of the approved inode,
+# so the open succeeds and every other term passes.
+READ_AT_HANDLE = (
+    'upload::tests::upload_read_at_metadata_hardlinked_through_a_swapped_'
+    'id_dir_is_rejected')
 LEASE_LINK = 'upload::tests::upload_lease_link_of_a_swapped_attachment_is_rejected'
 LEASE_LINK_SYMLINK = 'upload::tests::upload_lease_link_never_pins_a_symlink_source'
 LEASE_LINK_REWRITE = 'upload::tests::upload_lease_link_of_a_rewritten_attachment_is_rejected'
@@ -120,6 +135,21 @@ READ_AT_GROWN = (
 # record with the sweep's own logged-skip 口径 instead of failing the whole
 # project's later `create` calls.
 LIST_SKIP = 'upload::tests::upload_create_survives_a_sibling_record_over_the_read_cap'
+# #2098 fix-r3 (条B): the write side's own ceiling on the record JSON, so a
+# record this gateway wrote can never be one its own read cap refuses (and
+# the listing skip then takes out of the idempotency replay).
+CREATE_CAP = (
+    'upload::tests::upload_create_refuses_a_manifest_record_past_the_write_cap')
+# #2098 fix-r3 (条D): a malformed-JSON sibling record must keep failing the
+# listing round — the `""` face of `unreadable_record_face` may not widen
+# into a blanket skip of every code-empty error.
+MALFORMED_SIBLING = (
+    'upload::tests::upload_create_still_fails_on_a_malformed_json_sibling_record')
+# #2098 fix-r3 (条C): the fourth read site's own row — reverting the lease
+# entry read to the pre-fix `fs::read` blocks the cleanup on a FIFO, and the
+# named test's watchdog is what turns that hang into a red test.
+LEASE_ENTRY_FIFO = (
+    'upload::tests::upload_lease_cleanup_does_not_wait_on_a_fifo_lease_entry')
 LEASE_ROOT_LINK = 'upload::tests::upload_lease_root_link_is_refused'
 READ_AT_LINKED_ANCESTOR = 'upload::tests::upload_read_at_rejects_a_linked_tmp_ancestor'
 SWEEP = 'upload::tests::upload_cleanup_bad_record_does_not_abort_the_sweep'
@@ -313,42 +343,19 @@ mutations = [
         let provider = self.require()?;
         gateway_record(&provider.get(&upload_id)?)''', ORDER,
      'get must require the provider before validating uploadId'),
-    # #1494: the read_at handle binding, re-anchored for #2098 fix-r2
-    # (review DS#1 / MM, two families hit the same finding). The r1 ruling
-    # moved both named tests' swap into the `BetweenCanonicalizeAndOpen`
-    # window with a symlink and their assertions to the guarded open's
-    # ELOOP — under the previous rows the mutants only edited terms after
-    # the open, so the open already refused the link and both rows survived
-    # without evidence. fix-r2 makes each mutant the genuine pre-fix
-    # shape: the open itself reverts to a bare `File::open`, which follows
-    # the swapped link onto the outside bytes, so the dropped #1494 terms
-    # are reachable again and each named test dies on its own receipt.
-    # `read-at-handle-check-dropped` drops the handle binding and the
-    # identity term outright — the outside record is read back, and the
-    # named test's `expect_err` receipt is the kill. Both mutants keep
-    # #2098's type term and size cap: those are this PR's, not the #1494
-    # binding, and their own rows pin them.
-    ('read-at-handle-check-dropped', STORE, '''        let bytes = match open_artifact_guarded(&canonical_path) {
-            // UploadStore.ts:384 reads through `readFile` (node:fs/promises): an
-            // open error names its path, a descriptor read error (EISDIR after a
-            // directory swap, EIO, ...) is `read` without one (node v22.22.0,
-            // `_tmp/20261025-issue-656/node-probe/read-stages.out`).
-            Ok(mut file) => {
-                #[cfg(test)]
-                swap_test_hook::notify(swap_test_hook::SwapWindow::AfterOpen, &canonical_path);
-                // #1494: bind the approval to the opened handle — the
-                // platform's own resolved path for the descriptor must still
-                // name a location inside the canonical upload root, and a
-                // handle with no resolvable path is never read either
-                // (fail closed, like the #1468 lease binding). The identity
-                // term below also refuses a benign concurrent store rewrite
-                // (`write` renames a fresh `metadata.json` over the old one):
-                // that mismatch is indistinguishable from a post-approval
-                // rename of an outside vnode into the root, and a retry would
-                // re-read the now-in-root replacement and hand the attacker
-                // the bytes. The availability trade-off is owned by the
-                // #1494 P2 follow-up.
-                let handle_inside = match crate::handle_path::opened_path(&file) {
+    # #1494: the read_at handle binding, narrowed to its single factor for
+    # #2098 fix-r3 (review DS boundary#1, P1). The r2 shape also reverted the
+    # guarded open to a bare `File::open`, so the ELOOP-bound test killed the
+    # row without the handle term ever mattering. The mutant now drops only
+    # the handle path term. The named test's fixture swaps the `<id>`
+    # *directory* for a link to an outside holder whose `metadata.json` is a
+    # hard link of the approved inode: the guarded open succeeds (`O_NOFOLLOW`
+    # guards only the final component), the dev/ino term passes, and the
+    # lexical prefix ran on the pre-swap spelling — so only this term
+    # refuses. Without it the record is read back, and the named test's
+    # `expect_err` receipt is the kill. The ELOOP shape the row used to bind
+    # stays pinned by `read-at-open-nofollow-dropped`.
+    ('read-at-handle-check-dropped', STORE, '''                let handle_inside = match crate::handle_path::opened_path(&file) {
                     Ok(handle) => handle.starts_with(&upload_root),
                     Err(_) => false,
                 };
@@ -358,68 +365,8 @@ mutations = [
                         "Upload metadata handle leaves the upload directory.",
                     ));
                 }
-                // #2098: the open is the guarded family, so the terms that
-                // make it safe run on the one descriptor it returned. The
-                // type term refuses a `metadata.json` swapped for a FIFO
-                // (the `O_NONBLOCK` open returned at once) or a device, and
-                // the length terms below refuse the sparse-file and
-                // same-inode-append faces of the unbounded read.
-                let opened = match file.metadata() {
-                    Ok(metadata) => metadata,
-                    Err(e) => return Err(UploadError::io(e, "stat", None)),
-                };
-                if !opened.file_type().is_file() && !opened.file_type().is_dir() {
-                    // A directory keeps its Node read-stage shape: the read
-                    // below fails at once with `EISDIR … read` (#656,
-                    // `upload_metadata_directory_reports_the_read_stage`),
-                    // so it is neither the FIFO's wait nor the device's
-                    // unbounded stream this term exists for.
-                    return Err(UploadError::dialog(
-                        "PROJECT_PATH_FORBIDDEN",
-                        "Upload metadata path became a non-regular file after validation.",
-                    ));
-                }
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::MetadataExt;
-                    if opened.dev() != approved.dev() || opened.ino() != approved.ino() {
-                        return Err(UploadError::dialog(
-                            "PROJECT_PATH_FORBIDDEN",
-                            "Upload metadata handle names a different file than the one validated.",
-                        ));
-                    }
-                }
-''', '''        let bytes = match File::open(&canonical_path) {
-            // UploadStore.ts:384 reads through `readFile` (node:fs/promises): an
-            // open error names its path, a descriptor read error (EISDIR after a
-            // directory swap, EIO, ...) is `read` without one (node v22.22.0,
-            // `_tmp/20261025-issue-656/node-probe/read-stages.out`).
-            Ok(mut file) => {
-                #[cfg(test)]
-                swap_test_hook::notify(swap_test_hook::SwapWindow::AfterOpen, &canonical_path);
-                // #2098: the open is the guarded family, so the terms that
-                // make it safe run on the one descriptor it returned. The
-                // type term refuses a `metadata.json` swapped for a FIFO
-                // (the `O_NONBLOCK` open returned at once) or a device, and
-                // the length terms below refuse the sparse-file and
-                // same-inode-append faces of the unbounded read.
-                let opened = match file.metadata() {
-                    Ok(metadata) => metadata,
-                    Err(e) => return Err(UploadError::io(e, "stat", None)),
-                };
-                if !opened.file_type().is_file() && !opened.file_type().is_dir() {
-                    // A directory keeps its Node read-stage shape: the read
-                    // below fails at once with `EISDIR … read` (#656,
-                    // `upload_metadata_directory_reports_the_read_stage`),
-                    // so it is neither the FIFO's wait nor the device's
-                    // unbounded stream this term exists for.
-                    return Err(UploadError::dialog(
-                        "PROJECT_PATH_FORBIDDEN",
-                        "Upload metadata path became a non-regular file after validation.",
-                    ));
-                }
-''', READ_AT_SWAP,
-     '#1494 the swapped-in outside record must never be read back'),
+''', '', READ_AT_HANDLE,
+     '#1494 a record reached through a swapped id dir must never be read back'),
     # The pre-#1494 shape is a check of the pre-open spelling: the bare
     # `File::open` follows the swapped link onto the outside bytes, and the
     # spelling check passes because the canonicalize→open swap never
@@ -714,6 +661,30 @@ mutations = [
                 records.push(record);
             }''', LIST_SKIP,
      '#2098 an oversized sibling record must not poison the project listing'),
+    # #2098 fix-r3 (条B, reviews MM boundary#1 + DS boundary#4, two houses
+    # independently): the write side's own ceiling. Without it a frame-sized
+    # manifest lands a record the read cap below refuses — and the listing's
+    # skip then takes it out of the idempotency replay and the concurrency
+    # count, where TS reads such a record back. This mutant drops the cap
+    # check (`if false`), the over-cap create touches the disk, and the named
+    # test's `expect_err` receipt is the kill.
+    ('create-record-cap-dropped', STORE,
+     '        if line.len() > MAX_METADATA_JSON_BYTES as usize {',
+     '        if false {',
+     CREATE_CAP,
+     '#2098 a manifest record past the cap must be refused at create'),
+    # #2098 fix-r3 (条D, review DS boundary#3): the `""` face of the skip
+    # whitelist exists for the exact-read terms' synthetic io errors; a JSON
+    # parse failure is also code-empty but must stay strict (TS's own
+    # `JSON.parse` fails the listing the same way). This mutant widens the
+    # arm to a blanket skip, the malformed sibling no longer fails the
+    # round, the create succeeds, and the named test's `expect_err` receipt
+    # is the kill.
+    ('unreadable-face-empty-code-loosened', STORE, '''            "" => matches!(
+                error.message_string().as_str(),
+                "unexpected end of file" | "invalid data"
+            ),''', '''            "" => true,''', MALFORMED_SIBLING,
+     '#2098 a malformed-JSON sibling record must still fail the listing'),
     # #1888: the writer's lease root goes through the same home guard as the
     # reader's. This row restores the pre-fix shape — a bare join off
     # `projectKey`, created through whatever is at that spelling — so a lease
@@ -871,6 +842,31 @@ mutations = [
                 }
 ''', '', LEASE_ENTRY,
      'a symlinked lease entry must not be swept'),
+    # #2098 fix-r3 (条C, review DS boundary#2): the fourth read site's own
+    # row. The pre-fix shape was `fs::read` — a bare blocking open — so a
+    # FIFO swapped in for `lease.json` waits forever for a writer that never
+    # comes. This mutant restores it, the named test's watchdog turns the
+    # hang into its timeout panic, and that dedicated message is the kill.
+    ('cleanup-lease-entry-open-dropped', STORE, '''                let metadata = (|| {
+                    let mut file = open_artifact_guarded(&dir.join("lease.json")).ok()?;
+                    let info = file.metadata().ok()?;
+                    // The type term: a FIFO or device entry is not read at
+                    // all. A directory is left to its read-stage `EISDIR`,
+                    // the same deliberate shape as the siblings.
+                    if !info.file_type().is_file() && !info.file_type().is_dir() {
+                        return None;
+                    }
+                    // The same cap as the record leaf this JSON mirrors.
+                    if info.len() > MAX_METADATA_JSON_BYTES {
+                        return None;
+                    }
+                    let bytes = read_exact_file(&mut file, info.len()).ok()?;
+                    parse_json(&String::from_utf8_lossy(&bytes)).ok()
+                })();''', '''                let metadata = (|| {
+                    let bytes = fs::read(&dir.join("lease.json")).ok()?;
+                    parse_json(&String::from_utf8_lossy(&bytes)).ok()
+                })();''', LEASE_ENTRY_FIFO,
+     '#2098 a FIFO lease entry must never make the cleanup wait for a writer'),
     # #1646 review r3: the record half's "do not re-resolve the root per entry"
     # property had two mutations; the lease half had none. fix-r1 (#2423) moved
     # the gate to the `canonical_home` walk, so the snapshot property now lives
@@ -1320,6 +1316,8 @@ EXPECTED_NAMES = (
     'read-at-open-nofollow-dropped', 'read-at-metadata-cap-dropped',
     'read-at-type-check-dropped', 'read-at-exact-read-dropped',
     'list-strict-error-restored',
+    # #2098 fix-r3 的三条（条B 写侧上限 / 条D 空码面收窄放宽），同一口径。
+    'create-record-cap-dropped', 'unreadable-face-empty-code-loosened',
     'lease-root-link-refused',
     'read-at-upload-root-prefix-dropped',
     # main 的 #1646 清理鲁棒性十五条，rebase 后并入；同理，名册漏一条即
@@ -1329,6 +1327,8 @@ EXPECTED_NAMES = (
     'cleanup-symlink-root-swept', 'cleanup-record-rm-aborts',
     'cleanup-orphan-root-recanonicalized', 'cleanup-lease-symlink-root-swept',
     'cleanup-record-rm-follows-swapped-root', 'cleanup-lease-entry-symlink-swept',
+    # #2098 fix-r3 的一条（条C 第四读位退回 fs::read），同一口径。
+    'cleanup-lease-entry-open-dropped',
     'cleanup-lease-root-recanonicalized', 'lease-alias-walk-downgraded',
     'lease-release-symlink-root-swept',
     'plain-root-accepts-any-resolve', 'cleanup-orphan-rm-silent',

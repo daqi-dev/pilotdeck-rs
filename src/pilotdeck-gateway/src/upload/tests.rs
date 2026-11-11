@@ -1293,6 +1293,68 @@ fn upload_read_at_metadata_swapped_between_canonicalize_and_open_is_rejected() {
     );
 }
 
+/// #1494 fix-r3 (review DS boundary#1, P1): the handle binding's own
+/// single-factor fixture. The earlier window test above swaps the leaf for a
+/// symlink, which the guarded open itself refuses (ELOOP), so no mutation
+/// that only drops the handle term can ever reach its assertion. Here the
+/// `<id>` *directory* is swapped for a link to a holder outside the upload
+/// root, and the holder's `metadata.json` is a hard link of the approved
+/// record inode (measured on Linux 2026-11-11,
+/// `_tmp/20261026-issue-2098/fix-r3/probe-handle-alias/probe.out`: the open
+/// succeeds — `O_NOFOLLOW` guards only the final component — the descriptor
+/// still names the approved dev/ino, and `readlink /proc/self/fd/N` answers
+/// the outside holder path). The prefix check ran on the pre-swap spelling,
+/// so the handle path term is the only one that can refuse. The in-root name
+/// is removed with the id dir, leaving the vnode exactly one (outside) name:
+/// macOS `F_GETPATH` answers one of the vnode's names and keeps the name the
+/// open used (fix-r2 probe `_tmp/20261111-issue-2098/fix-r2/probe-rename-
+/// getpath`), so the deleted in-root spelling cannot come back as the
+/// answer there either.
+#[cfg(unix)]
+#[test]
+fn upload_read_at_metadata_hardlinked_through_a_swapped_id_dir_is_rejected() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    let id_dir = project.join(".tmp/chat-uploads/upload-1");
+    let metadata = id_dir.join("metadata.json");
+    // Inside the project but outside the upload root is already "outside"
+    // for the handle term: the upload root is `<project>/.tmp/chat-uploads`.
+    let holder = project.join("outside-holder");
+    fs::create_dir_all(&holder).expect("#1494 create the outside holder directory");
+    let fired = Arc::new(AtomicBool::new(false));
+    let swap = {
+        let fired = fired.clone();
+        move |_path: &Path| {
+            fs::hard_link(&metadata, holder.join("metadata.json"))
+                .expect("#1494 hard-link the record leaf into the outside holder");
+            fs::remove_dir_all(&id_dir)
+                .expect("#1494 remove the id dir and the record leaf's in-root name");
+            std::os::unix::fs::symlink(&holder, &id_dir)
+                .expect("#1494 swap the id dir for a link to the outside holder");
+            fired.store(true, Ordering::SeqCst);
+        }
+    };
+    let _guard = swap_test_hook::set(swap_test_hook::SwapWindow::BetweenCanonicalizeAndOpen, swap);
+    let result = h.store.get("upload-1");
+    drop(_guard);
+    assert!(
+        fired.load(Ordering::SeqCst),
+        "#1494 the swap hook must fire inside the canonicalize→open window"
+    );
+    let error = result
+        .expect_err("#1494 a record reached through a swapped id dir must never be read back");
+    assert_eq!(
+        (error.code.as_str(), error.message_string().as_str()),
+        (
+            "PROJECT_PATH_FORBIDDEN",
+            "Upload metadata handle leaves the upload directory."
+        ),
+        "#1494 only the handle path term can refuse this shape: the open landed on the approved inode through the swapped id dir"
+    );
+}
+
 /// #1494 (review concurrency#1, mirrored from #1468): the handle check
 /// answers with the object's *current* name. Let the open land on an outside
 /// regular file through a swapped-in hard link (so the descriptor references
@@ -2207,6 +2269,121 @@ fn upload_create_still_fails_on_a_tampered_sibling_record() {
             "UPLOAD_INTEGRITY_MISMATCH",
             "Upload metadata identity does not match its directory."
         )
+    );
+}
+
+/// #2098 fix-r3 (条B, reviews MM boundary#1 / DS boundary#4, two houses
+/// independently): the write side's own ceiling. `validate_manifest` bounds
+/// the files' bytes, never the record's own JSON (`name` carries no length
+/// term), so a frame-sized manifest could land a record the read cap
+/// refuses — and the listing's skip would then take it out of the
+/// idempotency replay and the concurrency count, where TS reads such a
+/// record back and replays it. The create now refuses such a manifest
+/// before anything touches the disk, single-sourced on the read cap's own
+/// constant, so "this gateway wrote it" and "this gateway can read it"
+/// stay one set. A record exactly at the cap is legal on both sides of the
+/// pair; one byte past it never reaches the disk.
+#[test]
+fn upload_create_refuses_a_manifest_record_past_the_write_cap() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    let manifest = |name_len: usize| {
+        JsValue::Array(vec![object([
+            ("clientFileId", text("file-1")),
+            ("name", text(&"x".repeat(name_len))),
+            ("relativePath", text("a/b.txt")),
+            ("size", JsValue::Number(1.0)),
+        ])])
+    };
+    // Probe the serialized record length with a short name: every other
+    // record field is fixed-width under this harness (same clock, same
+    // length uploadId, no idempotency key), and an ASCII `x` never needs a
+    // JSON escape, so each extra name byte is exactly one extra record byte.
+    h.store
+        .create("project", &manifest(16), None)
+        .expect("#2098 the probe create with a short name must succeed");
+    let base = fs::metadata(metadata_path(&project))
+        .expect("#2098 stat the probe record leaf")
+        .len();
+    let at_cap = 16 + (MAX_METADATA_JSON_BYTES - base) as usize;
+    // Exactly at the cap: created, on disk at exactly the cap, readable back.
+    let record = h
+        .store
+        .create("project", &manifest(at_cap), None)
+        .expect("#2098 a record exactly at the cap must still be created");
+    let id = string(&record, "uploadId").unwrap();
+    assert_eq!(
+        id, "upload-2",
+        "#2098 the harness uuid counter must name the second create upload-2"
+    );
+    assert_eq!(
+        fs::metadata(project.join(".tmp/chat-uploads/upload-2/metadata.json"))
+            .expect("#2098 stat the at-cap record leaf")
+            .len(),
+        MAX_METADATA_JSON_BYTES,
+        "#2098 the at-cap record leaf must be exactly at the read cap"
+    );
+    assert_eq!(
+        status(
+            &h.store
+                .get(&id)
+                .expect("#2098 the at-cap record must read back through the read cap")
+        ),
+        "created",
+        "#2098 the at-cap record must survive the write/read pair"
+    );
+    // One byte past the cap: refused at the create, nothing touches the disk.
+    let error = h
+        .store
+        .create("project", &manifest(at_cap + 1), None)
+        .expect_err("#2098 a manifest record past the cap must be refused at create");
+    assert_eq!(
+        (error.code.as_str(), error.message_string().as_str()),
+        (
+            "UPLOAD_TASK_TOO_LARGE",
+            "Upload manifest record exceeds the supported size."
+        ),
+        "#2098 the refusal must be the write side's own oversized family"
+    );
+    assert!(
+        !project.join(".tmp/chat-uploads/upload-3").exists(),
+        "#2098 the refused create must leave no task directory on disk"
+    );
+}
+
+/// #2098 fix-r3 (条D, review DS boundary#3): the listing's skip line must not
+/// swallow a JSON parse failure. A malformed sibling record is a refusal TS
+/// itself produces — its `JSON.parse` fails the same listing — so `create`
+/// keeps failing the round instead of skipping the sibling like the read
+/// hardening's own faces above.
+#[test]
+fn upload_create_still_fails_on_a_malformed_json_sibling_record() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    let sibling = project.join(".tmp/chat-uploads/malformed-a");
+    fs::create_dir_all(&sibling).expect("#2098 create the malformed sibling record dir");
+    fs::write(
+        sibling.join("metadata.json"),
+        b"{\"uploadId\": \"malformed-a\", ",
+    )
+    .expect("#2098 write the malformed sibling record leaf");
+    let manifest = value(&crate::test_baseline::oracle(ORACLE), "manifest");
+    let error = h
+        .store
+        .create("project", &manifest, None)
+        .expect_err("#2098 a malformed-JSON sibling record must still fail the listing");
+    assert!(
+        error.code.is_empty(),
+        "#2098 a JSON parse failure carries no errno code to mirror: {}",
+        error.code
+    );
+    assert!(
+        error.message_string().contains("at byte"),
+        "#2098 the refusal must be the parser's own message: {}",
+        error.message_string()
     );
 }
 
