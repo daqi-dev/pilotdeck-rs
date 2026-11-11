@@ -377,11 +377,11 @@ async fn production_cleanup_matrix() {
             Some("channels"),
             "#1328 channel assembly stops before the gateway lifecycle disposal"
         );
-        let gateway_calls: Vec<&str> = actual_calls
-            .iter()
-            .copied()
-            .filter(|step| !matches!(*step, "automation" | "channels"))
-            .collect();
+        // #1725: consume the pinned native-only prefix positionally —
+        // dropping the steps by value would silently swallow an automation
+        // or channels step that landed anywhere later in the order too,
+        // instead of only the first two the assertions above pinned.
+        let gateway_calls: Vec<&str> = actual_calls.iter().copied().skip(2).collect();
         negative_assert_eq!(
             json!(gateway_calls),
             *ts_calls,
