@@ -23,7 +23,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _negkit import non_head
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
 
 fixture = Path(__file__).resolve().parent
 rust = fixture.parents[3]
@@ -212,12 +212,23 @@ MUTANTS = [
      True),
 ]
 if check_anchors:
-    original = source.read_bytes()
-    bad = [
-        f'{name}: anchor occurs {original.count(old)} times (expected 1)'
-        for name, old, _new, _oracle in MUTANTS
-        if original.count(old) != 1
-    ]
+    # #2795 fix-r3（sibling P1 同族跟改，manager-gateway fix-r2 先例）：锚点核对
+    # 也要持树锁读——兄弟变异运行器在自己的 write 与 restore 之间可能把变异体
+    # 留在盘上，无锁读会把核对错在它不拥有的源上；锁忙 / 读失败是拒跑（2），
+    # 不是宿主会读成 rc 1 的裸 traceback（stale 仍是原有的 rc 1 语义）。
+    # check-anchors 是独立模式，与下方 mutating_sources 变异轮无同进程嵌套。
+    try:
+        with tree_lock(repo, timeout=60):
+            original = source.read_bytes()
+            bad = [
+                f'{name}: anchor occurs {original.count(old)} times (expected 1)'
+                for name, old, _new, _oracle in MUTANTS
+                if original.count(old) != 1
+            ]
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'--check-anchors tree lock or read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        sys.exit(2)
     if bad:
         print('\n'.join(bad), file=sys.stderr)
         sys.exit(1)

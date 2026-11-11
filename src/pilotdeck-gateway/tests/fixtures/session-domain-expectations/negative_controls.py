@@ -63,7 +63,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, new_output_directory, run_owned
+from negative_process import mutating_sources, new_output_directory, run_owned, tree_lock
 from negative_suite import invalidate_completed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -302,11 +302,22 @@ def check_anchors(selected):
         print('EMPTY ANCHOR SELECTION: nothing to validate; '
               'the anchor gate must not pass', file=sys.stderr)
         return 2
-    for name, source, old, _new in selected:
-        count = source.read_text().count(old)
-        if count != 1:
-            print(f'STALE ANCHOR {name}: {count} matches in {source.relative_to(ROOT)}')
-            return 2
+    # #2795 fix-r3（sibling P1 同族跟改，manager-gateway fix-r2 先例）：锚点核对
+    # 也要持树锁读——兄弟变异运行器在自己的 write 与 restore 之间可能把变异体
+    # 留在盘上，无锁读会把核对错在它不拥有的源上；锁忙 / 读失败是拒跑（2），
+    # 不是宿主会读成 rc 1 的裸 traceback。check-anchors 是独立模式，
+    # 与变异轮（mutating_sources originals，读在锁窗口内）无同进程嵌套。
+    try:
+        with tree_lock(ROOT, timeout=60):
+            for name, source, old, _new in selected:
+                count = source.read_text().count(old)
+                if count != 1:
+                    print(f'STALE ANCHOR {name}: {count} matches in {source.relative_to(ROOT)}')
+                    return 2
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'--check-anchors tree lock or read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        return 2
     print(f'{len(selected)} anchors: ok')
     return 0
 

@@ -29,7 +29,7 @@ FIXTURES = Path(__file__).resolve().parents[1]
 HANDLE_PATH = ROOT / 'src/pilotdeck-gateway/src/handle_path.rs'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import (mutating_sources, run_owned, wait_for_slot,
-                              write_source_atomic)
+                              tree_lock, write_source_atomic)
 from negative_selection import (claim_dir, missing_target, refuse,
                                 refuse_unusable_target, registered, verdict_exit)
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
@@ -93,12 +93,22 @@ def check_binding_scope():
 
 def stale_names():
     stale = []
-    for name, path, old, new, test, assertion in mutations:
-        text = path.read_text()
-        body = test_body(test)
-        if (text.count(old) != 1 or old == new or
-                not body or f'"{assertion}"' not in body):
-            stale.append(name)
+    # #2795 fix-r3（sibling P1 同族跟改，manager-gateway fix-r2 先例）：锚点核对
+    # 也要持树锁读——兄弟变异运行器在自己的 write 与 restore 之间可能把变异体
+    # 留在盘上，无锁读会把核对错在它不拥有的源上；锁忙 / 读失败沿用本入口
+    # 既有 refuse 习惯（具名 rc 2），stale 判定消息保持原样。核对发生在
+    # 变异轮（mutating_sources）之前，顺序取锁无同进程嵌套。
+    try:
+        with tree_lock(ROOT, timeout=60):
+            for name, path, old, new, test, assertion in mutations:
+                text = path.read_text()
+                body = test_body(test)
+                if (text.count(old) != 1 or old == new or
+                        not body or f'"{assertion}"' not in body):
+                    stale.append(name)
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        refuse(f'#1990 tree lock or anchor read failed: '
+               f'{type(error).__name__}: {error}')
     return stale
 
 

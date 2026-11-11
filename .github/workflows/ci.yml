@@ -370,7 +370,7 @@ jobs:
       # negative-controls 作业。此前该脚本只在宿主链人工跑，CI 上一条都不跑——仓内
       # Rust 注释引用的行号静默漂移没有机检兜底。本作业没有 resources/ 基线树
       # （.gitignore），所以只跑第 1 层（引用名册对账）+ --self-check（机检自身的
-      # 变异负控 NC1–NC6，含「同形收尾行挪走必须判红」）；第 2 层对冻结基线
+      # 变异负控 NC1–NC7，含「同形收尾行挪走必须判红」）；第 2 层对冻结基线
       # cc7c4e65 的实读在 a51-coverage 作业（那边已浅克隆该 commit）。
       - name: TS 行号锚点机检（#2795）
         shell: bash

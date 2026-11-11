@@ -312,8 +312,13 @@ class _RecordingTreeLock:
         self.events = events
         self.busy = busy
         self.held = False
+        # #2795 fix-r3（评审 sibling#3/concurrency#2）：锁实参必须记名——
+        # 锁到错误的树（root.parent）或任意超时都不许静默绿；
+        # session-lease/test_lease.py:282 的 seen 同形。
+        self.calls = []
 
-    def __call__(self, root, **kwargs):
+    def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
         return self
 
     def __enter__(self):
@@ -332,12 +337,15 @@ class _RecordingTreeLock:
 class AuditDrive:
     """One driven ``--audit`` run of manager-gateway's real ``main()``."""
 
-    def __init__(self, module, code, stdout, stderr, events):
+    def __init__(self, module, code, stdout, stderr, events, lock=None):
         self.module = module
         self.code = code
         self.stdout = stdout
         self.stderr = stderr
         self.events = events
+        # #2795 fix-r3（评审 sibling#3/concurrency#2）：驱动器带回 fake 锁，
+        # 用例可断言 tree_lock 收到的实参（仓根 + timeout=60）。
+        self.lock = lock
 
 
 def _drive_manager_audit(testcase, *, busy_lock=False, fail_first_read=False):
@@ -350,6 +358,12 @@ def _drive_manager_audit(testcase, *, busy_lock=False, fail_first_read=False):
     OSError. The selection, the roster check, the real anchors and the JSON
     publication all go through the entry's real code; no cargo, no tree
     mutation, no evidence directory.
+    #2795 fix-r3（评审 concurrency#1 / boundary#2）: the held-lock check also
+    sits on the patched ``read_text`` itself, so an entry that reads every
+    source *before* entering the lock and only calls ``mutate`` inside it is
+    still red; and every completed anchor check records ``('checked', name)``
+    so "the audit actually checked the roster" is an assertable quantity, not
+    an implied one.
     """
     module = load_entry(MANAGER_SCRIPT)
     base = Path(tempfile.mkdtemp(prefix='negctl-2795r2-'))
@@ -357,18 +371,27 @@ def _drive_manager_audit(testcase, *, busy_lock=False, fail_first_read=False):
     events = []
     lock = _RecordingTreeLock(events, busy=busy_lock)
     real_mutate = module.mutate
+    anchor_to_name = {row[2]: row[0] for row in module.cases}
 
     def recording_mutate(original, scope, replacements):
         # The kill target: every anchor check must happen with the shared tree
         # lock held -- an unlocked read races a sibling runner's mutant window.
         if not lock.held:
             events.append('unlocked-read')
+        # #2795 fix-r3（评审 boundary#2）：核对「发生」本身可判红——每次锚点
+        # 核对记行名，成功用例断言序列等于选中名册全表。
+        events.append(('checked', anchor_to_name.get(replacements[0][0])))
         return real_mutate(original, scope, replacements)
 
     unreadable = module.cases[0][1].resolve() if fail_first_read else None
     real_read_text = pathlib.Path.read_text
 
     def failing_read_text(self, *args, **kwargs):
+        # #2795 fix-r3（评审 concurrency#1）：持锁检查下沉到被 patch 的
+        # read_text 层——只在 mutate 里查锁会把「锁外先读 texts、锁内空转
+        # mutate」的形态放绿，读本身才是要钉住的读面。
+        if not lock.held:
+            events.append('unlocked-read')
         if unreadable is not None and self.resolve() == unreadable:
             raise OSError('audit drive: unreadable source (#2795 fix-r2)')
         return real_read_text(self, *args, **kwargs)
@@ -392,7 +415,57 @@ def _drive_manager_audit(testcase, *, busy_lock=False, fail_first_read=False):
             code = f'uncaught {type(error).__name__}: {error}'
         except ValueError as error:
             code = f'uncaught ValueError: {error}'
-    return AuditDrive(module, code, stdout.getvalue(), stderr.getvalue(), events)
+    return AuditDrive(module, code, stdout.getvalue(), stderr.getvalue(),
+                      events, lock)
+
+
+def _drive_snapshot_audit(testcase, *, busy_lock=False, fail_first_read=False):
+    """Run snapshot-projection's real ``main()`` in ``--audit`` mode.
+
+    #2795 fix-r3（评审 sibling#2，B③ 配对负控）：fix-r1 给 snapshot-projection
+    的 ``--audit`` 加了树锁 / 拒跑，此前没有任何机检——把 ``with tree_lock``
+    删掉或把异常分支退回直冒 CI 仍绿。本驱动复用 manager 侧的
+    ``_RecordingTreeLock`` / ``AuditDrive`` 形态（只换入口），同样只 stub
+    读面缝隙：``tree_lock`` 换成记名 fake（``busy_lock`` 时 ``__enter__`` 抛
+    TimeoutError），``fail_first_read`` 让首个源读抛 OSError。剥参、名册
+    对账、真实锚点与 ``#888 anchors: N/N unique`` 发布全走入口真码；
+    无 cargo、无树变异、无证据目录。
+    """
+    module = load_entry('snapshot-projection/negative_controls.py')
+    base = Path(tempfile.mkdtemp(prefix='negctl-2795r3-'))
+    testcase.addCleanup(shutil.rmtree, base, ignore_errors=True)
+    events = []
+    lock = _RecordingTreeLock(events, busy=busy_lock)
+    unreadable = module.mutations[0][1].resolve() if fail_first_read else None
+    real_read_text = pathlib.Path.read_text
+
+    def failing_read_text(self, *args, **kwargs):
+        # Same read-level pin as the manager drive: the audit's occurrence
+        # counts must be computed on bytes read under the lock, so an
+        # unlocked read is red even though this entry never calls mutate().
+        if not lock.held:
+            events.append('unlocked-read')
+        if unreadable is not None and self.resolve() == unreadable:
+            raise OSError('audit drive: unreadable source (#2795 fix-r3)')
+        return real_read_text(self, *args, **kwargs)
+
+    stdout, stderr = io.StringIO(), io.StringIO()
+    wrapper = base / 'wrapper-launch.py'
+    with patch.object(module, 'tree_lock', lock), \
+         patch.object(pathlib.Path, 'read_text', failing_read_text), \
+         patch('sys.argv', [str(wrapper), '--audit']), \
+         contextlib.redirect_stdout(stdout), \
+         contextlib.redirect_stderr(stderr):
+        try:
+            code = module.main()
+        except SystemExit as error:
+            code = error.code if isinstance(error.code, int) else 1
+        except (TimeoutError, OSError, UnicodeDecodeError) as error:
+            code = f'uncaught {type(error).__name__}: {error}'
+        except ValueError as error:
+            code = f'uncaught ValueError: {error}'
+    return AuditDrive(module, code, stdout.getvalue(), stderr.getvalue(),
+                      events, lock)
 
 
 def _rename_roster(names):
@@ -1037,10 +1110,11 @@ class ManagerAuditReadSurface(unittest.TestCase):
                         f'#2795 the audit must publish the selected roster, '
                         f'got {run.stdout[:200]!r}')
         self.assertTrue('unlocked-read' not in run.events,
-                        '#2795 every anchor check must happen with the '
+                        '#2795 every source read must happen with the '
                         'shared tree lock held (a sibling runner may have a '
                         'mutant on disk between its write and restore '
-                        'phases)')
+                        'phases; reading before the lock and only mutating '
+                        'inside it is the same race)')
         self.assertTrue(run.events.count('lock-enter') == 1,
                         f'#2795 the audit must acquire the tree lock exactly '
                         f'once around the whole anchor loop: {run.events!r}')
@@ -1048,6 +1122,19 @@ class ManagerAuditReadSurface(unittest.TestCase):
                         and run.events[-1] == 'lock-exit',
                         f'#2795 the lock must wrap every read, not be taken '
                         f'and dropped per anchor: {run.events!r}')
+        # #2795 fix-r3（评审 sibling#3/concurrency#2）：锁实参同形钉死——仓根
+        # 与 timeout=60，锁到 root.parent 或换超时都红。
+        self.assertTrue(run.lock.calls == [((run.module.root,),
+                                            {'timeout': 60})],
+                        f'#2795 the audit must lock the repo root with the '
+                        f'60 s bounded wait, got {run.lock.calls!r}')
+        # #2795 fix-r3（评审 boundary#2）：核对「发生」可判红——checked 序列
+        # 必须等于选中名册全表，循环体删成 pass 是零核对假绿。
+        checked = [entry[1] for entry in run.events
+                   if isinstance(entry, tuple) and entry[0] == 'checked']
+        self.assertTrue(checked == [row[0] for row in run.module.cases],
+                        f'#2795 the audit must check every roster row '
+                        f'exactly once, got {checked!r}')
 
     def test_audit_refuses_when_the_tree_lock_is_busy(self):
         run = _drive_manager_audit(self, busy_lock=True)
@@ -1064,6 +1151,12 @@ class ManagerAuditReadSurface(unittest.TestCase):
                         run.events == [],
                         f'#2795 a refused audit must check no anchors: '
                         f'{run.events!r}')
+        # #2795 fix-r3（评审 boundary#2）：拒跑必须零核对。
+        checked = [entry for entry in run.events
+                   if isinstance(entry, tuple) and entry[0] == 'checked']
+        self.assertTrue(checked == [],
+                        f'#2795 a refused audit must record no checked '
+                        f'anchors: {checked!r}')
 
     def test_audit_refuses_when_a_source_read_fails(self):
         run = _drive_manager_audit(self, fail_first_read=True)
@@ -1072,6 +1165,73 @@ class ManagerAuditReadSurface(unittest.TestCase):
                         f'start (2), got {run.code!r}')
         self.assertTrue('--audit tree lock or read failed' in run.stderr
                         and 'OSError' in run.stderr,
+                        f'#2795 the refusal must name the audit read surface '
+                        f'and the read failure: {run.stderr!r}')
+        # #2795 fix-r3（评审 boundary#2）：读失败拒跑必须零核对。
+        checked = [entry for entry in run.events
+                   if isinstance(entry, tuple) and entry[0] == 'checked']
+        self.assertTrue(checked == [],
+                        f'#2795 a read-failure refusal must record no '
+                        f'checked anchors: {checked!r}')
+
+
+class SnapshotAuditReadSurface(unittest.TestCase):
+    """snapshot-projection's ``--audit`` read surface: the paired guard.
+
+    #2795 fix-r3 (sibling P2, B③ 配对负控): fix-r1 gave this entry's
+    ``--audit`` the tree lock and the fail-closed read, but no machine check
+    existed — deleting the ``with tree_lock`` or reverting the refusal to a
+    traceback kept CI green. Same three pins as ``ManagerAuditReadSurface``,
+    through the entry's real ``main()``.
+    """
+
+    def test_audit_reads_only_inside_the_tree_lock(self):
+        run = _drive_snapshot_audit(self)
+        self.assertTrue(run.code == 0,
+                        f'#2795 the anchors-only audit must exit 0, got '
+                        f'{run.code!r}; stderr={run.stderr!r}')
+        rows = len(run.module.mutations)
+        self.assertTrue(run.stdout.strip()
+                        == f'#888 anchors: {rows}/{rows} unique',
+                        f'#2795 the audit must publish the full anchor '
+                        f'count, got {run.stdout!r}')
+        self.assertTrue('unlocked-read' not in run.events,
+                        '#2795 every anchor read must happen with the '
+                        'shared tree lock held (a sibling runner may have '
+                        'a mutant on disk between its write and restore '
+                        'phases)')
+        self.assertTrue(run.events.count('lock-enter') == 1
+                        and run.events[0] == 'lock-enter'
+                        and run.events[-1] == 'lock-exit',
+                        f'#2795 the lock must wrap the whole anchor loop '
+                        f'exactly once: {run.events!r}')
+        # #2795 fix-r3（评审 sibling#3/concurrency#2 同形）：仓根 + 60 s。
+        self.assertTrue(run.lock.calls == [((run.module.ROOT,),
+                                            {'timeout': 60})],
+                        f'#2795 the audit must lock the repo root with the '
+                        f'60 s bounded wait, got {run.lock.calls!r}')
+
+    def test_audit_refuses_when_the_tree_lock_is_busy(self):
+        run = _drive_snapshot_audit(self, busy_lock=True)
+        self.assertTrue(run.code == 2,
+                        f'#2795 a busy tree lock is a refusal to start (2), '
+                        f'got {run.code!r}')
+        self.assertTrue('--audit tree lock or read failed' in run.stderr,
+                        f'#2795 the refusal must name the audit read '
+                        f'surface: {run.stderr!r}')
+        self.assertTrue(run.events == [],
+                        f'#2795 a refused audit must read no anchors: '
+                        f'{run.events!r}')
+
+    def test_audit_refuses_when_a_source_read_fails(self):
+        run = _drive_snapshot_audit(self, fail_first_read=True)
+        self.assertTrue(run.code == 2,
+                        f'#2795 an unreadable anchor source is a refusal to '
+                        f'start (2), got {run.code!r}')
+        # This entry's refusal prints the error itself (no type name), so the
+        # named surface plus the drive's own marker pin the read failure.
+        self.assertTrue('--audit tree lock or read failed' in run.stderr
+                        and 'unreadable source' in run.stderr,
                         f'#2795 the refusal must name the audit read surface '
                         f'and the read failure: {run.stderr!r}')
 

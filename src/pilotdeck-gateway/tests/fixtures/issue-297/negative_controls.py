@@ -46,7 +46,7 @@ import signal
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
 from negative_selection import (claim_dir, missing_target, refuse,
                                  refuse_unusable_target, registered, select)
 from negative_suite import Case, invalidate_completed, run_cases
@@ -97,8 +97,20 @@ def mutate(content, scope, replacements):
 
 
 def audit(rows):
-    for _, path, old, new, _, _ in rows:
-        mutate(path.read_text(), None, [(old, new)])
+    # #2795 fix-r3（sibling P1 同族跟改，manager-gateway fix-r2 先例）：锚点核对
+    # 也要持树锁读——兄弟变异运行器在自己的 write 与 restore 之间可能把变异体
+    # 留在盘上，无锁读会把核对错在它不拥有的源上；锁忙 / 读失败是拒跑（2）
+    # （本入口在 audit 内具名拒绝，stale ValueError 仍走调用点的 refuse）。
+    # audit 与后续变异轮是顺序关系，锁先释放再由 mutating_sources 重取。
+    try:
+        with tree_lock(root, timeout=60):
+            for _, path, old, new, _, _ in rows:
+                mutate(path.read_text(), None, [(old, new)])
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'--check tree lock or read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        return 2
+    return 0
 
 
 def compile_controls(rows, out, env):
@@ -173,12 +185,14 @@ def main():
         parser.error(f'{args.output!r} is a mutation name; '
                      'the evidence directory comes first')
     try:
-        audit(rows)  # Stale anchors are refusals, never survivors.
+        audit_rc = audit(rows)  # Stale anchors are refusals, never survivors.
     except (ValueError, OSError) as error:
         # r7 (DS r6 boundary/concurrency + MM r6 boundary, both families): a
         # missing/renamed source (FileNotFoundError, PermissionError) is an
         # OSError, not a ValueError -- it must refuse (2), never traceback (1).
         refuse(f'stale anchor: {error}')
+    if audit_rc:  # #2795 fix-r3: the lock/read refusal (2) reaches the exit code.
+        return audit_rc
     if args.check:
         print(f'{len(rows)} rows / '
               f'{len({(row[1], row[2]) for row in rows})} unique anchors checked')

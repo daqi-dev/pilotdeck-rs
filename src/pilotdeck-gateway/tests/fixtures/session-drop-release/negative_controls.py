@@ -362,29 +362,43 @@ def audit():
     # same-named short function). The prefixes were already defined above but
     # were never used to pick the body.
     modules = ((drop_prefix, drop_tests), (factory_prefix, factory_tests), (lease_prefix, lease_tests))
-    sources = {path: path.read_text() for _, path in modules}
-    for name, path, old, new, scope, test, assertion in cases:
-        try:
-            original = path.read_text()
-            changed = mutate(original, scope, [(old, new)])
-            if changed == original:
-                raise ValueError('mutation leaves source unchanged')
-            # #1890: one shared binding rule; this copy used to require the
-            # spaced spellings `fn name(` / `name =>`, so a rustfmt change
-            # could silently unship the audit.
-            file, test_name = bind_module_file(test, modules)
-            body = sources[file]
-            if not declares_test(body, test_name):
-                raise ValueError('bound test not found: ' + test)
-            if not test_name.endswith('regenerates_identically'):
-                literals = [piece.split('"')[0] for piece in body.split('"#')[1:]]
-                anchors = assertion if isinstance(assertion, list) else [assertion]
-                if not any(any(literal in anchor or anchor.startswith(literal)
-                               for literal in literals) for anchor in anchors):
-                    raise ValueError('bound failure message not found: ' + repr(assertion))
-            rows.append(dict(mutation=name, status='CHECKED', test=test, assertion=assertion))
-        except Exception as error:
-            rows.append(dict(mutation=name, status='INVALID', reason=str(error)))
+    # #2795 fix-r3（sibling P1 同族跟改，manager-gateway fix-r2 先例）：锚点核对
+    # 也要持树锁读——兄弟变异运行器在自己的 write 与 restore 之间可能把变异体
+    # 留在盘上，无锁读会把核对错在它不拥有的源上；锁忙 / 读失败是整轮拒跑
+    # （2），不能折成 INVALID 行（宿主会读成 rc 1 的假 FAIL）。audit 是
+    # --audit 独立模式，与变异轮无同进程嵌套。
+    try:
+        with tree_lock(root, timeout=60):
+            sources = {path: path.read_text() for _, path in modules}
+            for name, path, old, new, scope, test, assertion in cases:
+                try:
+                    original = path.read_text()
+                    changed = mutate(original, scope, [(old, new)])
+                    if changed == original:
+                        raise ValueError('mutation leaves source unchanged')
+                    # #1890: one shared binding rule; this copy used to require the
+                    # spaced spellings `fn name(` / `name =>`, so a rustfmt change
+                    # could silently unship the audit.
+                    file, test_name = bind_module_file(test, modules)
+                    body = sources[file]
+                    if not declares_test(body, test_name):
+                        raise ValueError('bound test not found: ' + test)
+                    if not test_name.endswith('regenerates_identically'):
+                        literals = [piece.split('"')[0] for piece in body.split('"#')[1:]]
+                        anchors = assertion if isinstance(assertion, list) else [assertion]
+                        if not any(any(literal in anchor or anchor.startswith(literal)
+                                       for literal in literals) for anchor in anchors):
+                            raise ValueError('bound failure message not found: ' + repr(assertion))
+                    rows.append(dict(mutation=name, status='CHECKED', test=test, assertion=assertion))
+                except Exception as error:
+                    if isinstance(error, (TimeoutError, OSError, UnicodeDecodeError)):
+                        # #2795 fix-r3：锁/读失败穿透为整轮拒跑（2），不折成 INVALID 行。
+                        raise
+                    rows.append(dict(mutation=name, status='INVALID', reason=str(error)))
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'--audit tree lock or read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        return 2
     print(json.dumps(rows, indent=2))
     return int(any(row['status'] != 'CHECKED' for row in rows))
 

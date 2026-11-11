@@ -350,6 +350,13 @@ def _self_check() -> int:
     if rc != 2 or "给了空值" not in err:
         failures.append(f"NC7a: 空串 --ts-baseline 时 main 退 {rc}、stderr={err!r}，"
                         "应为 2 且报「给了空值」（fail-closed）")
+    # NC7c（fix-r3 P3 顺手）：守卫文案声明「空串/全空白」，空串之外的全空白模态
+    # 也要机检——`if not baseline` 形态的判空只盖空串、放过 "   "，与
+    # test_negative_optimize_guards.py:527 的 empty+blank 双模态先例同形。
+    rc, err = main_stderr(["--ts-baseline", "   "])
+    if rc != 2 or "给了空值" not in err:
+        failures.append(f"NC7c: 全空白 --ts-baseline 时 main 退 {rc}、stderr={err!r}，"
+                        "应为 2 且报「给了空值」（fail-closed）")
     saved_env = os.environ.get("PDRS_TS_BASELINE")
     os.environ["PDRS_TS_BASELINE"] = ""
     try:
@@ -361,6 +368,17 @@ def _self_check() -> int:
             os.environ["PDRS_TS_BASELINE"] = saved_env
     if rc != 2 or "给了空值" not in err:
         failures.append(f"NC7b: 空串 PDRS_TS_BASELINE 时 main 退 {rc}、stderr={err!r}，"
+                        "应为 2 且报「给了空值」（fail-closed）")
+    os.environ["PDRS_TS_BASELINE"] = "   "
+    try:
+        rc, err = main_stderr([])
+    finally:
+        if saved_env is None:
+            os.environ.pop("PDRS_TS_BASELINE", None)
+        else:
+            os.environ["PDRS_TS_BASELINE"] = saved_env
+    if rc != 2 or "给了空值" not in err:
+        failures.append(f"NC7d: 全空白 PDRS_TS_BASELINE 时 main 退 {rc}、stderr={err!r}，"
                         "应为 2 且报「给了空值」（fail-closed）")
 
     if failures:

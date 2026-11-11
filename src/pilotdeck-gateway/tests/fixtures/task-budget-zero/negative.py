@@ -41,7 +41,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (mutating_sources, run_owned, wait_for_slot,
-                               write_source_atomic)
+                               tree_lock, write_source_atomic)
 from negative_selection import (claim_dir, missing_target, refuse,
                                refuse_unusable_target, select)
 
@@ -128,7 +128,19 @@ mode, arguments = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else (None, [
 if mode == '--check':
     if arguments:
         raise SystemExit(f'--check takes no arguments: {arguments!r}\n{USAGE}')
-    check_anchors({path: path.read_text() for _name, path, _b, _a in cases})
+    # #2795 fix-r3（sibling P1 同族跟改，manager-gateway fix-r2 先例）：锚点核对
+    # 也要持树锁读——兄弟变异运行器在自己的 write 与 restore 之间可能把变异体
+    # 留在盘上，无锁读会把核对错在它不拥有的源上；锁忙 / 读失败是拒跑（2）。
+    # 主路径 :187 的核对读发生在 mutating_sources 锁窗口内（规则 1），
+    # 禁止再嵌套加锁，故只有这条独立 --check 入口套锁。
+    try:
+        with tree_lock(root, timeout=60):
+            texts = {path: path.read_text() for _name, path, _b, _a in cases}
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'--check tree lock or read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        raise SystemExit(2)
+    check_anchors(texts)
     raise SystemExit(0)
 if mode == '--self-test':
     if arguments:

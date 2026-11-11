@@ -9,7 +9,7 @@ import sys
 
 root = Path(__file__).resolve().parents[6]
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
 from negative_suite import Case, run_cases, publish_summary
 
 
@@ -186,8 +186,19 @@ def main():
     if sys.argv[1:] == ['--inputs']:
         print(json.dumps([str(p.relative_to(root)) for p in input_paths()]))
         return 0
-    for _, filename, old, new, _, _ in mutations:
-        mutate((root / filename).read_text(), None, [(old, new)])
+    # #2795 fix-r3（sibling P1 同族跟改，manager-gateway fix-r2 先例）：锚点核对
+    # 也要持树锁读——兄弟变异运行器在自己的 write 与 restore 之间可能把变异体
+    # 留在盘上，无锁读会把核对错在它不拥有的源上；锁忙 / 读失败是拒跑（2），
+    # 不是宿主会读成 rc 1 的裸 traceback。核对与下方变异轮是顺序关系，
+    # 锁先释放再由 mutating_sources 重取，无同进程嵌套。
+    try:
+        with tree_lock(root, timeout=60):
+            for _, filename, old, new, _, _ in mutations:
+                mutate((root / filename).read_text(), None, [(old, new)])
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'--audit tree lock or read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        return 2
     if sys.argv[1:] == ['--audit']:
         print(f'PASS: #1253 {len(mutations)} unique effective mutation anchors (static only)')
         return 0

@@ -25,7 +25,7 @@ import sys
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[5] / 'src/pilotdeck-gateway/tests/fixtures'))
 from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources,
-                               run_owned, wait_for_slot)  # noqa: E402
+                               run_owned, tree_lock, wait_for_slot)  # noqa: E402
 from negative_suite import Case, classify, passed  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[5]
@@ -89,10 +89,21 @@ CASES = [
 
 def check_anchors():
     failures = []
-    for name, path, old, _, _, _ in CASES:
-        count = path.read_text().count(old)
-        if count != 1:
-            failures.append(f'{name}: expected 1 anchor in {path.name}, got {count}')
+    # #2795 fix-r3（sibling P1 同族跟改，manager-gateway fix-r2 先例）：锚点核对
+    # 也要持树锁读——兄弟变异运行器在自己的 write 与 restore 之间可能把变异体
+    # 留在盘上，无锁读会把核对错在它不拥有的源上；锁忙 / 读失败是拒跑（2），
+    # 不是宿主会读成 rc 1 的裸 traceback。check-anchors 是独立模式，
+    # 与变异轮无同进程嵌套。
+    try:
+        with tree_lock(REPO, timeout=60):
+            for name, path, old, _, _, _ in CASES:
+                count = path.read_text().count(old)
+                if count != 1:
+                    failures.append(f'{name}: expected 1 anchor in {path.name}, got {count}')
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'--check-anchors tree lock or read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        return 2
     if len({row[5] for row in CASES}) != len(CASES):
         failures.append('two mutants share one bound assertion message')
     print('\n'.join(failures) if failures else f'{len(CASES)} anchors OK')

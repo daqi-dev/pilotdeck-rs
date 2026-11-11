@@ -3,6 +3,7 @@
 import json, os, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import tree_lock
 from negative_suite import Case, bind_module_file, declares_test, run_cases
 from _negkit import non_head
 from _negative_common import mutate
@@ -258,11 +259,22 @@ def audit():
     # declares_test's fn form covers) instead of the forwarding table.
     modules = ((test_prefix, base / 'forward_tests.rs'),
                ('runtime::turn::live::stream_tests::gates_tests::', base / 'gates_tests.rs'))
-    for name,path,old,new,scope,test,anchor in cases:
-        mutate(path.read_text(),scope,[(old,new)])
-        file, short = bind_module_file(test, modules)
-        if not declares_test(file.read_text(), short, 'case!'):
-            raise ValueError('bound full test not found: ' + test)
+    # #2795 fix-r3（sibling P1 同族跟改，manager-gateway fix-r2 先例）：锚点核对
+    # 也要持树锁读——兄弟变异运行器在自己的 write 与 restore 之间可能把变异体
+    # 留在盘上，无锁读会把核对错在它不拥有的源上；锁忙 / 读失败是拒跑（2），
+    # 不是宿主会读成 rc 1 的裸 traceback。audit 是 --audit 独立模式，
+    # 与下方变异轮无同进程嵌套。
+    try:
+        with tree_lock(root, timeout=60):
+            for name,path,old,new,scope,test,anchor in cases:
+                mutate(path.read_text(),scope,[(old,new)])
+                file, short = bind_module_file(test, modules)
+                if not declares_test(file.read_text(), short, 'case!'):
+                    raise ValueError('bound full test not found: ' + test)
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'--audit tree lock or read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        raise SystemExit(2)
     return [{'mutation':n,'test':t,'assertion':a} for n,_,_,_,_,t,a in cases]
 if sys.argv[1:] == ['--audit']:
     print(json.dumps(audit(),indent=2));raise SystemExit()
