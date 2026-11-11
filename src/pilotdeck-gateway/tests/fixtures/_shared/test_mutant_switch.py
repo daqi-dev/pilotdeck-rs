@@ -198,6 +198,47 @@ class MutantSwitchTests(unittest.TestCase):
                                  '#818 a panic without the bound test thread header '
                                  'is not a kill')
 
+    def test_spliced_stdout_is_neither_a_pass_nor_a_kill(self):
+        """#1087: stdout can no longer splice the status line (#818 口径).
+
+        `--nocapture` spliced the child's own stdout between the
+        `test <name> ...` prefix and the status word, so a printing bound test
+        broke exactly the lines the shared judge matches. The executor no
+        longer passes that flag; this pins both halves of the same criterion
+        as #818's `test_marker_in_named_stdout_is_rejected`: a spliced status
+        line is not a pass, and a marker printed on stdout is not a kill.
+        """
+        row = binding('sample')
+        spliced_ok = SimpleNamespace(
+            returncode=0,
+            stdout=f'test sample ... {row["anchor"]}\nok\ntest result: ok. 1 passed;',
+            stderr='')
+        spliced_failed = SimpleNamespace(
+            returncode=101,
+            stdout=f'test sample ... {row["anchor"]}\nFAILED\ntest result: FAILED',
+            stderr='')
+
+        def invoke(label, test, selector, _row, positive):
+            if selector is None:
+                return positive
+            return spliced_failed
+
+        # The positive phase sees the spliced ok line: not a pass, so the row
+        # is INVALID instead of the old false INVALID-by-splice turning into a
+        # misleading SURVIVED elsewhere.
+        produced = list(shared.execute_suite(
+            [row], lambda label, test, selector, _row: invoke(
+                label, test, selector, _row, spliced_ok)))[0]
+        self.assertEqual(produced['status'], 'INVALID',
+                         '#1087 a stdout-spliced status line is not a pass')
+        # The negative phase sees the marker only in spliced stdout, never in
+        # the named test's panic payload: not a kill.
+        produced = list(shared.execute_suite(
+            [row], lambda label, test, selector, _row: invoke(
+                label, test, selector, _row, result(test))))[0]
+        self.assertEqual(produced['status'], 'INVALID',
+                         '#1087 a marker printed on stdout is not a kill')
+
     def test_list_tests_run_every_cell_and_align_anchors(self):
         row = dict(name='cells', test=['first_cell', 'second_cell'],
                    anchor=['#996 first_cell anchor', '#996 second_cell anchor'],
@@ -255,6 +296,56 @@ class MutantSwitchTests(unittest.TestCase):
             row['anchor'] = ['#996 first', '#996 second']
             shared.preflight([row])
 
+    def test_single_cell_list_binding_judges_by_its_paired_anchor(self):
+        """#1087: preflight and execute_suite share one alignment rule.
+
+        A single-cell list binding used to skip the alignment (`len(tests) >
+        1`) and hand the verdict the whole `['anchor']` list, which classify
+        reads as alternatives — the same verdict for every legal shape, but an
+        inconsistency the preflight never admits for multi-cell rows. Pin the
+        unified reading: the cell's verdict sees exactly its paired anchor.
+        """
+        row = dict(name='solo', test=['only_cell'], anchor=['#996 only anchor'],
+                   path=Path('/fixture.rs'))
+        judged = []
+
+        def verdict(value, bound):
+            judged.append(bound['anchor'])
+            return shared.classify(value, SimpleNamespace(
+                test=bound['test'], assertion=bound['anchor']))
+
+        def invoke(label, test, selector, bound):
+            if selector is None:
+                return result(test)
+            self.assertEqual(label, 'solo-negative')
+            return result(test, 'FAILED', bound['anchor'])
+
+        produced = list(shared.execute_suite([row], invoke, verdict=verdict))
+        self.assertEqual(produced[0]['status'], 'KILLED')
+        self.assertEqual(judged, ['#996 only anchor'],
+                         '#1087 a single-cell list binding is judged by its '
+                         'paired anchor, not by the whole anchor list')
+
+    def test_string_test_with_alternative_anchors_keeps_any_one_kill(self):
+        """#818 fix-r4: the string-test + list-anchor shape stays alternatives.
+
+        Turn-family rows bind one test to several admissible assertions; any
+        one of them failing is a kill. The unified alignment (equal lengths
+        only) must not re-read this one-test/two-anchor shape as per-cell.
+        """
+        row = dict(name='alt', test='sample',
+                   anchor=['#996 first outcome', '#996 second outcome'],
+                   path=Path('/fixture.rs'))
+
+        def invoke(label, test, selector, _row):
+            if selector is None:
+                return result(test)
+            return result(test, 'FAILED', '#996 second outcome')
+
+        produced = list(shared.execute_suite([row], invoke))
+        self.assertEqual(produced[0]['status'], 'KILLED',
+                         '#818 fix-r4 any single alternative anchor must kill')
+
     def test_verdict_and_passed_use_the_prefixed_test(self):
         seen = []
         def verdict(value, bound):
@@ -285,6 +376,9 @@ class MutantSwitchTests(unittest.TestCase):
                 selector = kwargs['env'].get(shared.SELECTOR)
                 self.assertIn('--exact', command,
                               '#818 the executor must bind one exact test name')
+                self.assertNotIn('--nocapture', command,
+                                 '#1087 the executor must not splice the child\'s '
+                                 'stdout into the status lines the judge matches')
                 self.assertTrue(command[0].endswith('test-binary') or Path(command[0]).is_file(),
                                 '#818 the executor must run the precompiled test binary')
                 return result(command[1], 'FAILED' if selector else 'ok',

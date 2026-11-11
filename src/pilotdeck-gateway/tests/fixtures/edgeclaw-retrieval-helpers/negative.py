@@ -10,11 +10,13 @@ mutant, so it prints ``STALE ANCHOR`` and exits 2 (same rule as #772 fix-r2).
 A failed cell does not abort the matrix. Like ``edgeclaw-messages/negative.py``
 the script first runs the unmutated suite once and requires exit code 0 (so an
 environment panic cannot be mistaken for a kill), then executes every case,
-prints KILLED/SURVIVED per cell, and exits 1 when anything survived. A kill
-must contain the ``assert_eq!`` failure line and the function-level replay
-anchor recorded for that case (for example ``tokenizeSearchText args=``);
-``could not compile`` is never a kill. After restoring every byte, the same
-unmutated suite runs once more and must pass (``restored.log``).
+prints KILLED/SURVIVED per cell, and exits 1 when anything survived. A kill is
+the shared #813 criterion (#1087): the bound test's own ``FAILED`` status line
+plus the function-level replay anchor (for example ``tokenizeSearchText
+args=``) inside that test's own panic payload — a sibling's panic or captured
+stdout is never evidence; ``could not compile`` is never a kill. After
+restoring every byte, the same unmutated suite runs once more and must pass
+(``restored.log``).
 
 ``negative_process.mutating_sources`` demands that the gateway product tree
 match the baseline (HEAD by default); the coordinator can therefore run the
@@ -27,6 +29,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
@@ -141,10 +144,14 @@ unknown = only - {case[0] for case in cases}
 assert not unknown, f'unknown NEGATIVE_ONLY cases: {sorted(unknown)}'
 
 
-def assertion_failure(log, anchor):
+def assertion_failure(log, test, anchor):
+    # #1087: only the named test's own FAILED status line plus the marker
+    # inside that test's own panic payload kills (negative_panic judges both);
+    # the old `anchor in log` also matched a sibling's panic or captured
+    # stdout, which is not evidence (#818's cargo-side form).
     if 'could not compile' in log:
         return False
-    return 'assertion `left == right` failed' in log and anchor in log
+    return named_test_killed(log, test, anchor)
 
 
 killed, survived = [], []
@@ -192,7 +199,7 @@ with mutating_sources(root, sorted({path for _, path, _, _, _, _ in cases}),
                 run = run_owned(cmd, cwd=root, env=env, timeout=300)
                 log = run.stdout + run.stderr
                 (out / f'{name}.log').write_text(slots.stdout + slots.stderr + log)
-                if not (run.returncode != 0 and assertion_failure(log, anchor)):
+                if not (run.returncode != 0 and assertion_failure(log, test, anchor)):
                     reason = 'did not fail a narrowed runtime assertion'
             finally:
                 path.write_bytes(originals[path])

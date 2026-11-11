@@ -97,6 +97,9 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_selection import verdict_exit  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[5]
 RUN = ROOT / "scripts/fe-parity/run.mjs"
 LEDGER_ROOT = ROOT / "_tmp/fe-parity"
@@ -576,7 +579,11 @@ def main():
     green = all(row["status"] in ("PASS", "KILLED") for row in rows)
     print(f"{killed}/{len(negatives)} report negatives KILLED; "
           f"positive control {'holds' if green else 'BROKEN'}; see {out_dir / 'summary.json'}", flush=True)
-    return 0 if green and killed == len(negatives) else 1
+    # #1087: an empty negatives selection (a lost row table, a misparsed
+    # selection) must never read as success; the shared exit contract keeps
+    # zero only for a nonempty all-KILLED run while the green gate above still
+    # owns the pristine/target positive rows.
+    return 0 if green and verdict_exit(negatives, key="status") == 0 else 1
 
 
 if __name__ == "__main__":

@@ -5,7 +5,10 @@ Every case compiles and must fail a runtime oracle assertion; a compile error
 never counts as a kill. The script runs the unmutated suite first, then every
 mutant, and one final unmutated suite after restoration; it prints
 KILLED/SURVIVED and exits 1 when any mutant survives. The original bytes are
-restored in ``finally`` by ``mutating_sources``.
+restored in ``finally`` by ``mutating_sources``. A kill is the shared #813
+criterion (#1087): the bound test's own ``FAILED`` status line plus the
+recorded anchor inside that test's own panic payload — a marker anywhere else
+in the log (a sibling's panic, captured stdout) is not evidence.
 
 New product files are not in HEAD before the coordinator commits them, so this
 script is normally run after that commit. ``NEGATIVE_ONLY=a,b`` narrows the run
@@ -39,6 +42,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -300,12 +304,16 @@ unknown = only - {row[0] for row in rows}
 assert not unknown, f'unknown NEGATIVE_ONLY cases: {sorted(unknown)}'
 
 
-def assertion_failure(log, anchor):
+def assertion_failure(log, test, anchor):
+    # #1087: only the named test's own FAILED status line plus the marker
+    # inside that test's own panic payload kills (negative_panic judges
+    # both); the old `anchor in log` also matched a sibling's panic or
+    # captured stdout.
     if 'could not compile' in log:
         return False
     if 'test result: FAILED.' not in log:
         return False
-    return anchor in log
+    return named_test_killed(log, test, anchor)
 
 
 def cargo_test(test):
@@ -351,10 +359,8 @@ with mutating_sources(root, [paths[key] for key in paths], baseline=baseline) as
             run = cargo_test(test)
             log = run.stdout + run.stderr
             (out / f'{name}.log').write_text(slots.stdout + slots.stderr + log)
-            if not (run.returncode != 0 and assertion_failure(log, anchor)):
+            if not (run.returncode != 0 and assertion_failure(log, test, anchor)):
                 reason = 'did not fail the narrowed assertion'
-            elif anchor not in log:
-                reason = f'failed without the {anchor} anchor'
         except AnchorExpired as error:
             for path, data in originals.items():
                 path.write_bytes(data)

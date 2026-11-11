@@ -222,7 +222,13 @@ def execute_suite(selected_rows, invoke, verdict=None, prefix='', receipt_run=No
                 witness_failed = bool(witness
                                       and phase(name, 'witness-negative', witnesses, name, row))
                 anchors = row.get('anchor')
-                aligned = (len(tests) > 1 and isinstance(anchors, list)
+                # #1087: the same alignment preflight requires — a list test
+                # gets its per-cell anchor whenever the assertion list has the
+                # same length, single cell included. The old `len(tests) > 1`
+                # gap passed the whole list as one cell's anchor, which
+                # classify then read as alternatives: an identical verdict for
+                # every legal shape, but a preflight/execution inconsistency.
+                aligned = (isinstance(anchors, list)
                            and len(anchors) == len(tests))
                 verdicts = []
                 for index, test in enumerate(tests):
@@ -367,7 +373,11 @@ def run(root, output, selected_rows, env, *, guarded, script=None, requested=(),
 
             def invoke(label, test, selector, row):
                 # Exact binding still runs one test, including explicit TS guards.
-                command = [str(binary), prefix + test, '--exact', '--nocapture', '--include-ignored']
+                # No `--nocapture` (#1087): it splices the child's stdout into
+                # the `test <name> ... ok/FAILED` status line, and the shared
+                # classify/passed judge those exact lines (#938 r14). A bound
+                # test that prints must not become a false INVALID by splice.
+                command = [str(binary), prefix + test, '--exact', '--include-ignored']
                 begin = time.monotonic()
                 child_env = selector_environment(env, selector)
                 receipt = row.get('receipt')

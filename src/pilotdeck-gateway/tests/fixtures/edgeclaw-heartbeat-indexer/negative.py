@@ -5,8 +5,11 @@ Every row changes one existing anchor in `heartbeat/indexer.rs`, runs the one
 named integration test and restores the original bytes in `finally`. A stale
 anchor aborts with status 2 instead of being reported as SURVIVED, and the
 runner never stops at the first non-kill: it records every KILLED / SURVIVED /
-SKIPPED row. The exit code reuses `negative_selection.verdict_exit`: rc=0
-only when at least one row ran and every row was actually KILLED, so any
+SKIPPED row. A kill is the shared #813 criterion (#1087): the bound test's own
+`FAILED` status line plus the recorded anchor inside that test's own panic
+payload — a marker anywhere else in the log (a sibling's panic, captured
+stdout) is not evidence. The exit code reuses `negative_selection.verdict_exit`:
+rc=0 only when at least one row ran and every row was actually KILLED, so any
 SURVIVED or SKIPPED row — and a selection that killed nothing — exits
 non-zero. A row is SKIPPED when its bound test printed the `#1263 skip:` line:
 the 0444 write probe found a caller that writes through the mode
@@ -32,6 +35,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_selection import verdict_exit
 
@@ -896,9 +900,13 @@ def cargo_test(test):
     return run_owned(command, cwd=root, env=env, timeout=600)
 
 
-def assertion_failure(log, anchor):
+def assertion_failure(log, test, anchor):
+    # #1087: only the named test's own FAILED status line plus the marker
+    # inside that test's own panic payload kills (negative_panic judges
+    # both); the old `anchor in log` also matched a sibling's panic or
+    # captured stdout.
     return ('could not compile' not in log and 'test result: FAILED.' in log
-            and anchor in log)
+            and named_test_killed(log, test, anchor))
 
 
 killed, survived, skipped = [], [], []
@@ -939,7 +947,7 @@ with mutating_sources(root, [indexer, entries, file_memory], baseline=baseline) 
                 reason = 'skipped'
             elif run.returncode == 0:
                 reason = 'bound test still passed'
-            elif not assertion_failure(log, anchor):
+            elif not assertion_failure(log, test, anchor):
                 reason = 'did not fail at the bound assertion'
         except AnchorExpired as error:
             for original, data in originals.items():
