@@ -40,8 +40,6 @@ mod test_permission_faults;
 mod test_process;
 #[path = "common/scratch.rs"]
 mod test_scratch;
-#[path = "common/skip_line.rs"]
-mod test_skip_line;
 
 use llm_stub::LlmStub;
 use pilotdeck_gateway::runtime::{
@@ -3442,16 +3440,12 @@ async fn clear_failing_inside_delete_entries_rearms_indexed_rows() {
         // must be able to open the manifest for writing.
         restore_manifest_writable()
             .expect("#1207 make the workspace manifest writable again before the skip");
-        if test_permission_faults::require_permission_faults() {
-            panic!(
-                "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the 0444 probe still \
-                 succeeds (root or CAP_DAC_OVERRIDE); the mid-deletion clear-failure \
-                 contract needs an unprivileged host (需要非特权宿主)"
-            );
-        }
-        test_skip_line::stderr_skip_line(
+        test_permission_faults::skip_or_require(
             "#1263 skip: 0444 does not block this caller (root or CAP_DAC_OVERRIDE); \
              the mid-deletion clear-failure contract needs an unprivileged host\n",
+            "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the 0444 probe still \
+             succeeds (root or CAP_DAC_OVERRIDE); the mid-deletion clear-failure \
+             contract needs an unprivileged host (需要非特权宿主)",
         );
         return;
     }
