@@ -1,7 +1,8 @@
-//! Shared sdk exit-harness pieces (#1044): exclusive runtime fixture, owned
-//! child with bounded stdin writers, output collection and disk snapshots.
-//! Test entry points stay in each `sdk_*_exit.rs` so libtest keeps bare names
-//! for the negative-control receipt protocol; only the bodies live here.
+//! Shared sdk exit-harness pieces (#1044, #1179): exclusive runtime fixture,
+//! owned child with bounded stdin writers, output collection and disk
+//! snapshots, serving all six `sdk_*_exit.rs` families. Test entry points
+//! stay in each `sdk_*_exit.rs` so libtest keeps bare names for the
+//! negative-control receipt protocol; only the bodies live here.
 #[path = "negative_receipt.rs"]
 mod negative_receipt;
 pub(crate) use negative_receipt::verify;
@@ -135,7 +136,14 @@ impl Drop for OwnedChild {
         }
         // The child owns every early/delayed writer. Kill/reap happens first,
         // including when collect or the mock future is cancelled or panics.
-        for writer in self.1.lock().expect("#1136 owned stdin writers").drain(..) {
+        // #1136 owned stdin writers: recover the guard from a poisoned mutex
+        // instead of panicking -- panicking in Drop during an unwind aborts
+        // the whole test binary.
+        let mut writers = self
+            .1
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for writer in writers.drain(..) {
             let finished =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| writer.finish()));
             if let Err(payload) = finished {

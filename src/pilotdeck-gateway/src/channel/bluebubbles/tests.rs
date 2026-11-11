@@ -14,17 +14,26 @@
 //! 003 `stop` does not await in-flight turns (#1353 owns the drain entry):
 //!     the stop-drains case pins the TS shape — the held turn finishes after
 //!     stop and its reply is gated by `running === false` posting nothing;
+//!     003-R1 corrects the Rust-side half: stop also aborts and bounded-reaps
+//!     the driver task with two new `error` log paths, still without awaiting
+//!     in-flight turns;
 //! 004 a same-guid row arriving after a restart re-dispatches channel-side;
 //!     the restart-clears-guids case records both dispatches, and the
 //!     never-re-executes case pins the dedupe inside one epoch;
 //! 005 a non-empty but invalid `serverUrl` logs and keeps polling instead of
 //!     the TS unhandled rejection — no replay case (the fake's URL is always
-//!     well-formed), the `Invalid URL` string is a component pin below.
+//!     well-formed), the `Invalid URL` string is a component pin below;
+//! 007 the #2285 deviations (drop-without-stop ends the driver once no poll
+//!     is in flight — the silent-server in-flight window matches TS's
+//!     leaked interval, 007's registered gap — and a panicking per-tick poll
+//!     task is swallowed without the TS `poll error` log) do not shape this
+//!     replay; their pins live in the #2285 section below.
 use super::super::protocol::{
     BoxFuture, ChannelError, ChannelHandle, ChannelStartDeps, TurnEventStream, TurnGateway,
     TurnRequest,
 };
 use super::*;
+use crate::channel::http_client::HttpClient;
 use crate::test_baseline;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
@@ -252,6 +261,11 @@ struct MockInbound {
     record: Arc<Mutex<Record>>,
     gates: Gates,
     responded: Gate,
+    /// Counts `submit` entries — bumped before the turn-index lock is
+    /// taken, so a dispatch that panics on that (poisoned) lock still lands
+    /// here (#2285 r2: an empty gateway projection alone cannot tell
+    /// "panicked inside submit" from "never dispatched").
+    submit_attempts: std::sync::atomic::AtomicUsize,
 }
 
 /// Adapts the scripted `mpsc` receiver to the shared `TurnEventStream`; the
@@ -298,6 +312,7 @@ impl MockInbound {
             record,
             gates,
             responded,
+            submit_attempts: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 }
@@ -307,6 +322,10 @@ impl TurnGateway for MockInbound {
         &self,
         input: TurnRequest,
     ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>> {
+        // Before the turn-index lock: a poisoned dispatch must still count
+        // as having reached `submit` (#2285 r2).
+        self.submit_attempts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let turn = {
             let mut next = self.next.lock().expect("#1343 turn index");
             let index = *next;
@@ -409,7 +428,13 @@ struct Mock {
     armed: Mutex<Option<Arc<Mutex<Record>>>>,
     scripted_polls: Mutex<Vec<(u16, String)>>,
     scripted_sends: Mutex<Vec<(u16, String)>>,
-    strays: Mutex<Vec<String>>,
+    /// (case epoch, request) — the epoch is stamped when the server task
+    /// reads the request, so a poll leaking past its case's end is charged
+    /// to that case by name instead of being silently cleared by the next
+    /// `arm()` (#2285 r2 ④; `arm()` increments the epoch and no longer
+    /// clears).
+    strays: Mutex<Vec<(u64, String)>>,
+    epoch: std::sync::atomic::AtomicU64,
 }
 
 impl Mock {
@@ -419,6 +444,7 @@ impl Mock {
             scripted_polls: Mutex::new(Vec::new()),
             scripted_sends: Mutex::new(Vec::new()),
             strays: Mutex::new(Vec::new()),
+            epoch: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -439,14 +465,24 @@ impl Mock {
             .unwrap_or_default()
     }
 
-    fn arm(&self, case: &Value, record: Arc<Mutex<Record>>) {
+    /// Arms the mock for one case and returns that case's epoch. The epoch
+    /// increments here; strays are never cleared anymore — a leftover from
+    /// an earlier case must fail the case that observes it, not vanish
+    /// (#2285 r2 ④: the `arm()` clear traded r1's false FAIL for a silent
+    /// false-PASS window that nothing tested).
+    fn arm(&self, case: &Value, record: Arc<Mutex<Record>>) -> u64 {
+        let epoch = self.epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         *self.armed.lock().expect("#1343 armed mutex") = Some(record);
         *self.scripted_polls.lock().expect("#1343 poll script") = Self::scripted(case, "polls");
         *self.scripted_sends.lock().expect("#1343 send script") = Self::scripted(case, "sends");
-        // A strays entry from a previous case (a poll that the server task
-        // only processed after that case's own stray check) would otherwise
-        // be charged to the next case and fail it (review r1 P2 arbitration).
-        self.strays.lock().expect("#1343 stray mutex").clear();
+        epoch
+    }
+
+    fn stray(&self, text: String) {
+        self.strays
+            .lock()
+            .expect("#1343 stray mutex")
+            .push((self.epoch.load(std::sync::atomic::Ordering::SeqCst), text));
     }
 
     fn disarm(&self) {
@@ -491,10 +527,7 @@ async fn start_mock_on(mock: Arc<Mock>, port: u16) {
                         };
                         let record = mock.armed.lock().expect("#1343 armed mutex").clone();
                         let Some(record) = record else {
-                            mock.strays
-                                .lock()
-                                .expect("#1343 stray mutex")
-                                .push(format!("{method} {path}"));
+                            mock.stray(format!("{method} {path}"));
                             return Ok::<_, std::io::Error>(respond(200, "{}"));
                         };
                         if method == "GET" && path == "/api/v1/message" {
@@ -556,10 +589,7 @@ async fn start_mock_on(mock: Arc<Mock>, port: u16) {
                         // ever uses is a divergence the strays check
                         // reports loudly (the generator's handler asserts
                         // instead, failing its own run).
-                        mock.strays
-                            .lock()
-                            .expect("#1343 stray mutex")
-                            .push(format!("unexpected {method} {path}"));
+                        mock.stray(format!("unexpected {method} {path}"));
                         Ok(respond(200, "{}"))
                     }
                 });
@@ -591,6 +621,49 @@ fn turn_scripts(case: &Value) -> Vec<TurnScript> {
         .unwrap_or_default()
 }
 
+/// The generator's post-case quiescence window (`ticks(50)`), made
+/// self-extending for the disarm drain (#2285 r2 ⑤, fix-r1 boundary #2): a
+/// single silent 50 ms round no longer ends the drain — a loopback peer
+/// starved past the first window may still be holding in-flight bytes, and
+/// that first-window exit was exactly the r1 false-FAIL shape. The drain now
+/// leaves only after two consecutive silent rounds, and repeats while the
+/// arrival counters still move, up to six rounds (300 ms), so bytes a slow
+/// or loaded peer has already written still land inside the case's own
+/// armed window instead of turning into a late stray. Still a heuristic
+/// (two starved windows in a row still cut it off); polls beyond the
+/// scripted slots only ever draw the dry default and stay invisible in the
+/// deduplicated `pollQueries` projection, so the extra rounds cannot change
+/// a green snapshot; the whole wait stays far inside `DEADLINE`. The
+/// termination semantics are pinned by
+/// `drained_holds_through_a_single_silent_window` below.
+async fn drained(record: &Arc<Mutex<Record>>) {
+    let snapshot = |record: &Arc<Mutex<Record>>| {
+        let record = record.lock().expect("#1343 record mutex");
+        (
+            record.polls,
+            record.sends,
+            record.gateway.len(),
+            record.responds.len(),
+            record.decides.len(),
+        )
+    };
+    let mut last = snapshot(record);
+    let mut quiet = 0usize;
+    for _ in 0..6 {
+        tokio::time::sleep(SETTLE).await;
+        let now = snapshot(record);
+        if now == last {
+            quiet += 1;
+            if quiet >= 2 {
+                break;
+            }
+        } else {
+            quiet = 0;
+            last = now;
+        }
+    }
+}
+
 async fn replay(case: &Value, mock: &Arc<Mock>) -> Value {
     let record = Arc::new(Mutex::new(Record::default()));
     let gates = Gates::default();
@@ -598,7 +671,7 @@ async fn replay(case: &Value, mock: &Arc<Mock>) -> Value {
     let responded: Gate = Arc::new(tokio::sync::watch::Sender::new(false));
     let name = case["name"].as_str().expect("#1343 case name");
     let context = format!("case {name}");
-    mock.arm(case, record.clone());
+    let case_epoch = mock.arm(case, record.clone());
 
     let responder = Arc::new(MockResponder {
         record: record.clone(),
@@ -719,7 +792,7 @@ async fn replay(case: &Value, mock: &Arc<Mock>) -> Value {
     // letting the server task see them after `disarm` and charge the
     // next-late stray to this case (review r1 P2 arbitration: three lanes
     // flagged the disarm/strays race as a false-FAIL window).
-    tokio::time::sleep(SETTLE).await;
+    drained(&record).await;
     mock.disarm();
 
     // Every scripted slot must have been served; polls beyond the scripted
@@ -762,10 +835,28 @@ async fn replay(case: &Value, mock: &Arc<Mock>) -> Value {
         );
     }
     let strays = mock.strays.lock().expect("#1343 stray mutex");
+    // #2285 r2 ④: `arm()` no longer clears strays, so the list keeps every
+    // stray since the replay began. Each entry carries the epoch of the case
+    // whose window it was read in: a leftover from an earlier case fails
+    // this case by name (the leak is visible, not silently dropped by the
+    // next `arm()`), and a stray of this case's own epoch is the same
+    // out-of-armed-window failure it always was. The strays themselves go
+    // to stderr (the assertion messages stay byte-stable for the receipt
+    // protocol).
+    if !strays.is_empty() {
+        eprintln!("#1343 case {name} strays: {strays:?}");
+    }
+    crate::negative_assert!(
+        strays.iter().all(|(epoch, _)| *epoch == case_epoch),
+        "#2285 every stray lands inside the case that armed it (case {name})"
+    );
     crate::negative_assert_eq!(
-        strays.len(),
+        strays
+            .iter()
+            .filter(|(epoch, _)| *epoch == case_epoch)
+            .count(),
         0,
-        "#1343 case {name} records no request outside an armed case: {strays:?}"
+        "#1343 case {name} records no request outside an armed case"
     );
     drop(strays);
     record.lock().expect("#1343 record mutex").snapshot()
@@ -893,6 +984,353 @@ async fn send_reply_after_stop_is_gated_by_running() {
 #[ignore = "regenerates from the real TS baseline; set PDRS_BASELINE and the pinned Node v22.22.0 runtime"]
 fn bluebubbles_fixture_regenerates_identically() {
     crate::test_baseline::regenerates_identically("channel-bluebubbles");
+}
+
+// ------------------------------------------------- #2285 poll-driver pins
+
+/// `sendReply`'s `AbortSignal.timeout(120_000)` (Node v22.22.0 实测, see
+/// `_tmp/20261108-issue-2285-r1/probe-2285.output`: a fresh 120 000 ms
+/// signal stays pending — a real deadline, not an immediate abort — and
+/// the mechanism fires with `TimeoutError` at its own deadline; the 120 000
+/// literal itself is the TS source). The reply POST deadline is a semantic
+/// sibling of `MESSAGE_LIMIT` (both ride the request bytes) and gets the
+/// same constant-pin + negative-control treatment (#2285 ①).
+#[test]
+fn send_timeout_is_the_ts_abort_deadline() {
+    crate::negative_assert_eq!(
+        SEND_TIMEOUT,
+        Duration::from_millis(120_000),
+        "#2285 the reply POST keeps the TS AbortSignal.timeout(120_000) deadline"
+    );
+}
+
+/// #2285 ②: dropping a started channel without `stop` must end the poll
+/// driver. TS leaks its interval on that flow (the registered unsupported
+/// start-without-stop shape); here the driver holds only a `Weak<Runtime>`,
+/// so the next tick's upgrade failure breaks the loop. Two observable
+/// proofs, both bounded by `DEADLINE`: the loopback server stops seeing
+/// polls once a full poll interval has had every chance to fire, and the
+/// `Runtime` itself is freed (the driver's `Weak` no longer upgrades).
+/// This pin's mock answers every request; a server whose responses
+/// outlast `POLL_MS` keeps an in-flight poll holding a strong `Arc`, so
+/// that in-flight window is not covered here — the registered TS-leak
+/// shape (007, known gap, no dedicated pin).
+#[tokio::test]
+async fn poll_driver_exits_when_runtime_is_dropped() {
+    const CELL: &str = "#2285 dropping a started channel without stop ends the poll driver";
+    const DROP_PORT: u16 = 19463;
+    let record = Arc::new(Mutex::new(Record::default()));
+    let mock = Mock::new();
+    mock.arm(
+        &json!({ "scripted": { "polls": [], "sends": [] } }),
+        record.clone(),
+    );
+    start_mock_on(mock.clone(), DROP_PORT).await;
+    let channel = BlueBubblesChannel::new(
+        BlueBubblesOptions {
+            server_url: Some(JsString::from(format!("http://127.0.0.1:{DROP_PORT}"))),
+            password: Some(JsString::from("pw-drop")),
+            mapper: None,
+            env: None,
+        },
+        no_interaction(),
+    );
+    let deps = ChannelStartDeps {
+        config: None,
+        report_status: None,
+        log: None,
+        turn_gateway: None,
+    };
+    let handle = bounded("drop", channel.start(deps))
+        .await
+        .expect("#2285 drop start");
+    {
+        let record = record.clone();
+        until(CELL, "drop first poll", move || {
+            record.lock().expect("#1343 record mutex").polls >= 1
+        })
+        .await;
+    }
+    let weak = Arc::downgrade(&channel.runtime);
+    drop(handle);
+    drop(channel);
+    // One full poll interval plus the settle margin: a live driver would
+    // have fired at least one tick in that window and the loopback server
+    // would have seen it (the immediate poll already landed above).
+    tokio::time::sleep(SETTLE).await;
+    let before = record.lock().expect("#1343 record mutex").polls;
+    tokio::time::sleep(POLL_MS + SETTLE * 4).await;
+    tokio::time::sleep(SETTLE).await;
+    {
+        let record = record.lock().expect("#1343 record mutex");
+        crate::negative_assert_eq!(
+            record.polls,
+            before,
+            "{CELL} (the server keeps seeing polls after the drop)"
+        );
+    }
+    // The interval task itself is gone: its `Weak` no longer upgrades once
+    // every strong reference is dropped. A leaked driver (the TS shape)
+    // parks on its timer forever and keeps this upgrade succeeding.
+    let started = Instant::now();
+    while weak.upgrade().is_some() {
+        crate::negative_assert!(started.elapsed() < DEADLINE, "{CELL}");
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+}
+
+/// #2285 ③: a panicking per-tick poll task must not stop the interval
+/// driver — TS's `pollMessages` catch keeps the channel polling through a
+/// failing exchange, and `void this.pollMessages()` gives TS no panic
+/// detection either (007 registers the Rust deviation: the panic is
+/// swallowed by the runtime instead of logged). The injection poisons the
+/// scripted gateway's turn-index mutex; the dispatchable row sits in slot
+/// one, so it lands in the driver's first tick's spawned poll task (the
+/// immediate poll draws the row-less slot zero) — its `submit` panics after
+/// the GET already landed server-side, the tick after it (the dry default,
+/// no rows) completes cleanly, and `stop` still returns `Ok` — the driver's
+/// handle is reaped, not stalled. The third-poll wait is what the
+/// `poll-task-inlined-into-driver` negative control kills: inlining the
+/// per-tick poll moves the panic into the driver task itself, no third
+/// poll ever arrives, and `until` fires the cell.
+#[tokio::test]
+async fn poll_task_panic_does_not_stop_the_driver() {
+    const CELL: &str = "#2285 a panicking poll task does not stop the poll driver";
+    const PANIC_PORT: u16 = 19464;
+    let record = Arc::new(Mutex::new(Record::default()));
+    let mock = Mock::new();
+    mock.arm(
+        &json!({
+            "scripted": {
+                // Slot zero (the immediate poll) is row-less; the poison row
+                // lands in the driver's first tick, and every later poll
+                // draws the dry default and never touches a lock the
+                // poisoned path could poison.
+                "polls": [
+                    { "status": 200, "json": [] },
+                    { "status": 200, "json": [
+                        { "guid": "panic-1", "chatGuid": "BB-PANIC", "text": "boom" }
+                    ] }
+                ],
+                "sends": []
+            }
+        }),
+        record.clone(),
+    );
+    start_mock_on(mock.clone(), PANIC_PORT).await;
+    let gates = Gates::default();
+    let responded: Gate = Arc::new(tokio::sync::watch::Sender::new(false));
+    let responder = Arc::new(MockResponder {
+        record: record.clone(),
+        responded: responded.clone(),
+    });
+    let gateway = MockInbound::new(Vec::new(), record.clone(), gates.clone(), responded);
+    // Poison the turn-index mutex before any dispatch can use it.
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = gateway.next.lock().expect("#2285 turn index");
+        panic!("#2285 poison the turn index");
+    }));
+    let channel = BlueBubblesChannel::new(
+        BlueBubblesOptions {
+            server_url: Some(JsString::from(format!("http://127.0.0.1:{PANIC_PORT}"))),
+            password: Some(JsString::from("pw-panic")),
+            mapper: None,
+            env: None,
+        },
+        Arc::new(HelperInteraction::new(responder)),
+    );
+    let logger = record.clone();
+    let deps = ChannelStartDeps {
+        config: None,
+        report_status: None,
+        log: Some(Arc::new(move |level, message| {
+            logger
+                .lock()
+                .expect("#1343 record mutex")
+                .logs
+                .push(json!([level, mask_dynamic(message)]));
+        })),
+        turn_gateway: Some(gateway.clone()),
+    };
+    let handle = bounded("panic", channel.start(deps.clone()))
+        .await
+        .expect("#2285 panic start");
+    // The immediate poll (row-less) lands first.
+    {
+        let record = record.clone();
+        until(CELL, "panic first poll", move || {
+            record.lock().expect("#1343 record mutex").polls >= 1
+        })
+        .await;
+    }
+    // The driver's first tick served the poison row's GET; its dispatch
+    // panicked on the poisoned turn index right after (invisibly — that is
+    // the registered deviation).
+    {
+        let record = record.clone();
+        until(CELL, "panic second poll", move || {
+            record.lock().expect("#1343 record mutex").polls >= 2
+        })
+        .await;
+    }
+    // The interval survived the panicking poll task: its next tick still
+    // polls (a clean, row-less exchange).
+    {
+        let record = record.clone();
+        until(CELL, "panic third poll", move || {
+            record.lock().expect("#1343 record mutex").polls >= 3
+        })
+        .await;
+    }
+    // Judged only now, after the third poll: the dispatch spawned at the
+    // first tick has certainly run, so an empty gateway can no longer pass
+    // on a dispatch that simply has not executed yet (the r2 review's
+    // false-PASS window — the server counts the poll before the spawned
+    // dispatch runs). Exactly one submit attempt proves the injection path
+    // was walked (`submit` was reached); the empty projection proves the
+    // panic beat the recording push.
+    crate::negative_assert_eq!(
+        gateway
+            .submit_attempts
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "{CELL} (the poisoned dispatch reached submit exactly once)"
+    );
+    crate::negative_assert!(
+        record
+            .lock()
+            .expect("#1343 record mutex")
+            .gateway
+            .is_empty(),
+        "{CELL} (the poisoned dispatch panicked before recording)"
+    );
+    bounded("panic", handle.stop("done"))
+        .await
+        .expect("#2285 stop still succeeds after a poll task panicked");
+    // Weak judgment only, per 003-R1's registered abort/reap no-criterion
+    // gap: `stop` already returned `Ok` above, and this window checks the
+    // server-side count stops growing afterwards. It deliberately does not
+    // claim to probe a surviving driver — `running === false` returns any
+    // post-stop `poll_messages` before the GET, so the count freezes with
+    // or without one (the drop pin can make that claim because it never
+    // stops; this scenario cannot).
+    tokio::time::sleep(POLL_MS + SETTLE * 4).await;
+    let settled = record.lock().expect("#1343 record mutex").polls;
+    tokio::time::sleep(POLL_MS + SETTLE).await;
+    {
+        let record = record.lock().expect("#1343 record mutex");
+        crate::negative_assert_eq!(
+            record.polls,
+            settled,
+            "{CELL} (polls stop arriving after stop)"
+        );
+    }
+}
+
+/// The disarm drain's termination condition (#2285 fix-r1, boundary #2): a
+/// single silent 50 ms window must not end the drain. An arrival landing
+/// between the first and the second window — the starved-server shape the
+/// old single-window check mistook for quiescence, which was r1's false
+/// FAIL window — must still be observed and extend the wait. The paused
+/// clock makes the trace exact: the mover's deadline sits determinately
+/// between the two windows, so the drain runs 50 → 75 (arrival) → 100
+/// (movement seen, extension) → 150 → 200 ms (two consecutive silent
+/// windows) and never earlier — the pin below asserts that exact total, so
+/// a drain that terminated on *cumulative* silence instead (150 ms, the
+/// `drained-quiet-not-reset` negative control) cannot pass it either.
+#[tokio::test(start_paused = true)]
+async fn drained_holds_through_a_single_silent_window() {
+    const CELL: &str = "#2285 the disarm drain holds through a single silent window";
+    let record = Arc::new(Mutex::new(Record::default()));
+    let mover = {
+        let record = record.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(SETTLE + SETTLE / 2).await;
+            record.lock().expect("#1343 record mutex").polls += 1;
+        })
+    };
+    let started = tokio::time::Instant::now();
+    drained(&record).await;
+    mover.await.expect("#2285 drained mover");
+    let elapsed = started.elapsed();
+    crate::negative_assert_eq!(
+        record.lock().expect("#1343 record mutex").polls,
+        1,
+        "{CELL} (the in-window arrival was observed)"
+    );
+    crate::negative_assert_eq!(
+        elapsed,
+        SETTLE * 4,
+        "{CELL} (two consecutive silent windows end the drain at exactly 200 ms)"
+    );
+}
+
+/// #2285 r2 ④: `arm()` no longer clears the strays list. A request the
+/// previous case leaked past its armed window — here a real one that walks
+/// the loopback socket into the disarmed server task, which charges it
+/// through `mock.stray()` exactly like a leaked poll — must survive the
+/// next `arm()` and keep the epoch that read it, so the case that observes
+/// it fails by name instead of the leak being silently dropped (the r1
+/// false-PASS window the old `arm()` clear opened). The
+/// `arm-clear-reinserted` negative control re-inserts the clear and dies on
+/// the survival assertion; `late-stray-real-path` injects the same real
+/// late request inside the golden replay and dies on the first case's
+/// no-stray cell.
+#[tokio::test]
+async fn late_stray_survives_the_next_arm() {
+    const CELL: &str = "#2285 a late stray survives the next arm charged to its own epoch";
+    const STRAY_PORT: u16 = 19465;
+    let record = Arc::new(Mutex::new(Record::default()));
+    let mock = Mock::new();
+    let first = mock.arm(
+        &json!({ "scripted": { "polls": [], "sends": [] } }),
+        record.clone(),
+    );
+    start_mock_on(mock.clone(), STRAY_PORT).await;
+    mock.disarm();
+    // The real late request: it walks the socket into the server task,
+    // which reads it disarmed and charges the stray to `first`'s epoch
+    // before answering (so the stray is already recorded once the response
+    // completes).
+    let client = HttpClient::new();
+    let late = client
+        .request_unbounded(
+            "GET",
+            &format!("http://127.0.0.1:{STRAY_PORT}/api/v1/message?late=1"),
+            None,
+            "",
+        )
+        .await;
+    crate::negative_assert!(late.is_ok(), "{CELL} (the late request settles)");
+    {
+        let strays = mock.strays.lock().expect("#1343 stray mutex");
+        crate::negative_assert_eq!(
+            strays.len(),
+            1,
+            "{CELL} (the disarmed server recorded the late request)"
+        );
+        crate::negative_assert_eq!(
+            strays[0].0,
+            first,
+            "{CELL} (the stray is charged to the epoch that read it)"
+        );
+    }
+    // The next case's arm must not clear it: the entry keeps its original
+    // epoch — foreign to the new epoch — which is exactly how the next
+    // case's stray check sees it.
+    let second = mock.arm(
+        &json!({ "scripted": { "polls": [], "sends": [] } }),
+        record.clone(),
+    );
+    {
+        let strays = mock.strays.lock().expect("#1343 stray mutex");
+        crate::negative_assert_eq!(
+            strays.iter().filter(|(epoch, _)| *epoch == first).count(),
+            1,
+            "{CELL} (the next arm must not clear the late stray)"
+        );
+        crate::negative_assert!(second != first, "{CELL} (the arm increments the epoch)");
+    }
 }
 
 // ---------------------------------------------------------------- pins

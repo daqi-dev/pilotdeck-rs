@@ -152,14 +152,17 @@ fn reserve_model_update<'a>(
 }
 
 /// Resolves `projectKey` from params, falling back to the configured project.
-/// The session_dir slice owns the family's copy of this resolution; a local
-/// one keeps the config family inside its sanctioned file set.
+/// The nullish read itself is the family-shared `resolve_project_key`
+/// (`methods/mod.rs`); this local wrapper only adds the `serves_project` gate,
+/// mirroring the session_dir slice's own `resolve_project` wrapper (#2068 —
+/// both wrappers stay because each family keeps its own sanctioned file set).
 fn resolve_project(requests: &Requests, params: &JsValue) -> Result<String, RequestError> {
-    let project = params
-        .get("projectKey")
-        .and_then(JsValue::as_string)
-        .and_then(|s| s.to_utf8().ok())
-        .unwrap_or_else(|| requests.options.project.to_string_lossy().into_owned());
+    // #2068: same shared nullish read as the session_dir slice — the TS chains
+    // here (`resolveProjectKey` / `ProjectRuntimeRegistry.resolve`) start at
+    // `path.resolve`, so a non-string key is the `ERR_INVALID_ARG_TYPE`
+    // TypeError, never the configured-project fallback the old
+    // `to_utf8().ok()` chain gave.
+    let project = super::resolve_project_key(params, &requests.options.project)?;
     if !requests.options.serves_project(&project) {
         return Err(gateway_error(
             "CAPABILITY_UNAVAILABLE",
@@ -3337,6 +3340,57 @@ mod tests {
         storage
             .restore()
             .expect("#1457 the concurrently written transcript still loads");
+        teardown(&r).await;
+    }
+
+    // #2068: the config family's projectKey chains (`resolveProjectKey` for
+    // model set/clear, `ProjectRuntimeRegistry.resolve` for the styles list)
+    // start at the same `path.resolve`, so the local resolution shares the
+    // nullish read: a non-string key is the `ERR_INVALID_ARG_TYPE` TypeError
+    // (code preserved over the boundary, the frozen oracle's `project-number`
+    // WS original) and a lone-surrogate key is a real unserved key — never the
+    // configured-project fallback the old `to_utf8().ok()` chain silently
+    // gave (probe `_tmp/20261110-issue-2068/probe/probe-2068.out`).
+    #[tokio::test]
+    async fn session_model_set_project_key_read_follows_the_ts_chain() {
+        let (_scratch, r) = setup_fixture();
+        let error = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([("projectKey", JsValue::Number(7.0))]),
+            )
+            .await
+            .expect_err("#2068 a non-string projectKey is the path.resolve TypeError");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "ERR_INVALID_ARG_TYPE",
+            "#2068 the non-string projectKey answers the Node TypeError code"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "The \"paths[0]\" argument must be of type string. Received type number (7)",
+            "#2068 the non-string projectKey keeps the path.resolve TypeError message"
+        );
+        let error = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([(
+                    "projectKey",
+                    JsValue::String(JsString::from_utf16(vec![0xd800])),
+                )]),
+            )
+            .await
+            .expect_err("#2068 a surrogate projectKey is a real unserved key");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "CAPABILITY_UNAVAILABLE",
+            "#2068 the surrogate projectKey reaches the capability gate"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "The isolated native process serves only its configured project.",
+            "#2068 the surrogate projectKey keeps the isolation message"
+        );
         teardown(&r).await;
     }
 }

@@ -33,8 +33,7 @@ use super::protocol::{
 };
 use super::sms::{
     AnswerGuard, BeginAnswer, DecisionReply, GatewayRef, ImElicitationHelper, ImPermissionHelper,
-    InitialPromptGuard, PermissionAnswer, PermissionDecision, PermissionState, PromptGuard,
-    SubmitTurnRequest, elicitation as sms_elicitation, permission as sms_permission,
+    PermissionAnswer, PermissionDecision, PermissionState, elicitation as sms_elicitation,
 };
 
 pub use super::sms::EnvLookup;
@@ -43,7 +42,23 @@ pub use mapper::{MappedSession, SlackSessionMapper, SlackSessionMapperState};
 /// `MAX_MESSAGE_LENGTH` (`SlackChannel.ts:16`).
 const MAX_MESSAGE_LENGTH: usize = 39_000;
 /// The SDK REST base the stub contract speaks; production Slack traffic.
-const DEFAULT_BASE_URL: &str = "https://slack.com/api";
+/// #2321: the bare host — every call-site path below carries its own `/api`
+/// prefix (`/api/apps.connections.open` etc., the stub contract's pinned wire
+/// bytes), so a default that also carried `/api` double-joined every
+/// production REST call to `…/api/api/…`. The replay always passes an
+/// explicit loopback base, so no golden cell reaches this seam.
+const DEFAULT_BASE_URL: &str = "https://slack.com";
+
+/// The default [`DEFAULT_BASE_URL`] as a `JsString`, under the #2321
+/// negative-control switch `slack-default-base-double-api` (the pre-fix
+/// default that carried its own `/api`).
+fn default_base_url() -> JsString {
+    if crate::mutants::on("slack-default-base-double-api") {
+        JsString::from("https://slack.com/api")
+    } else {
+        JsString::from(DEFAULT_BASE_URL)
+    }
+}
 /// The stub contract's WS failure text: the committed `bolt-stub.mjs`
 /// rejects `start()` with `new Error("websocket error")`, so the native
 /// client reports the same bytes (only observable when the endpoint refuses
@@ -51,19 +66,25 @@ const DEFAULT_BASE_URL: &str = "https://slack.com/api";
 const WEBSOCKET_ERROR: &str = "Error: websocket error";
 
 /// The socket-mode session a live `this.app` holds: the WS send half, used
-/// only by `stop()`'s `close(1000)`. `None` until the socket opens — a failed
-/// `connections.open` or handshake leaves `app` empty here, where the TS
-/// instance keeps `this.app` set after `new BoltApp(...)` threw; the
-/// divergence is unobservable without a socket (no inbound frames reach
+/// only by `stop()`'s `close(1000)`, plus the reader task's join handle so a
+/// failed start can retire the whole session (#2312). `None` until the socket
+/// opens — a failed `connections.open` or handshake leaves `app` empty here,
+/// where the TS instance keeps `this.app` set after `new BoltApp(...)` threw;
+/// the divergence is unobservable without a socket (no inbound frames reach
 /// `sendReply`) and is registered in A8.3-CH-SLACK-001 范围 item 6. That item
 /// reached its decision point with the #2301 production wiring
 /// (`production_loader_mounts` + `create_startup_configured`): the R1
 /// correction keeps the divergence as-is — the wiring has no retry / re-entry
-/// path, so the two states still cannot be told apart.
+/// path, so the two states still cannot be told apart. The auth.test-failure
+/// path keeps the socket open on both sides (R2: the port retires it
+/// wire-invisibly where the TS instance leaks `this.app` until teardown).
 struct LiveApp {
     sink: Option<
         futures_util::stream::SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
     >,
+    /// #2312: the reader task's handle — never polled for completion, only
+    /// `abort`ed when a failed start retires the session.
+    reader: Option<tokio::task::JoinHandle<()>>,
 }
 
 struct SlackRuntime {
@@ -94,8 +115,8 @@ struct SlackShared {
     /// already applied — the values are immutable afterwards).
     bot_token: JsValue,
     app_token: JsValue,
-    /// The REST base: `https://slack.com/api` in production, the loopback
-    /// mock in tests.
+    /// The REST base: `https://slack.com` in production (#2321 — the
+    /// call-site paths carry their own `/api`), the loopback mock in tests.
     base_url: JsString,
     http: super::http_client::HttpClient,
 }
@@ -168,9 +189,10 @@ pub struct SlackChannelOptions {
     pub gateway: Option<GatewayRef>,
     /// `process.env` replacement; `None` means no variable is ever set.
     pub env: Option<EnvLookup>,
-    /// The SDK REST base; `None` is the real `https://slack.com/api`. This is
-    /// the stub-contract seam the tests point at the loopback mock (the TS
-    /// side's equivalent is the stub's `PDRS_SLACK_MOCK` variable).
+    /// The SDK REST base; `None` is the real `https://slack.com` (#2321: the
+    /// bare host — the contract paths below carry their own `/api` prefix).
+    /// This is the stub-contract seam the tests point at the loopback mock
+    /// (the TS side's equivalent is the stub's `PDRS_SLACK_MOCK` variable).
     pub base_url: Option<JsString>,
 }
 
@@ -223,7 +245,7 @@ impl SlackChannel {
                 permissions: Arc::new(StdMutex::new(ImPermissionHelper::default())),
                 bot_token,
                 app_token,
-                base_url: base_url.unwrap_or_else(|| JsString::from(DEFAULT_BASE_URL)),
+                base_url: base_url.unwrap_or_else(default_base_url),
                 http: super::http_client::HttpClient::new(),
             }),
         }
@@ -265,11 +287,11 @@ impl ChannelAdapter for SlackChannel {
             // shared fields), `event`/`error` registration (the reader task),
             // `app.start()` (connections.open + WS), `auth.test`, the connected
             // log. A failure logs `slack: start failed: ${e}` and returns the
-            // empty handle. TS keeps `this.app` set on the failed-start path;
-            // the port leaves `runtime.app` set only when the failure landed
-            // after the WS opened (auth.test and later), and empty for a
-            // failed `connections.open` / handshake — the registered
-            // divergence (A8.3-CH-SLACK-001 范围 item 6).
+            // empty handle. TS keeps `this.app` set (the socket and handlers
+            // live until process teardown); the port retires the session a
+            // failure already opened — wire-invisibly, so the oracle cell
+            // keeps its `ws == [open]` shape — the registered divergence
+            // (A8.3-CH-SLACK-001-R2).
             if let Err(error) = start_session(&shared).await {
                 shared.log("error", format!("slack: start failed: {error}"));
                 return Ok(Arc::new(NoopHandle) as Arc<dyn ChannelHandle>);
@@ -279,16 +301,20 @@ impl ChannelAdapter for SlackChannel {
     }
 }
 
+/// `${base}${path}` — the single join the stub contract's `/api/...` paths
+/// assume (#2321: pinned full-URL by `default_rest_base_joins_the_contract_
+/// paths_once`).
+fn rest_url(base: &JsString, path: &str) -> String {
+    format!("{}{path}", String::from_utf16_lossy(base.units()))
+}
+
 /// One JSON POST through the shared outbound client; the body string is the
 /// stub contract's own `JSON.stringify` text, so key order is byte-compared.
 async fn post_json(shared: &SlackShared, path: &str, body: &JsValue) -> Result<JsValue, String> {
     let text = stringify_json(body)
         .map_err(|_| "SyntaxError: JSON stringify failure".to_owned())?
         .ok_or("JSON.stringify returned undefined")?;
-    let url = format!(
-        "{}{path}",
-        String::from_utf16_lossy(shared.base_url.units())
-    );
+    let url = rest_url(&shared.base_url, path);
     let response = shared
         .http
         .request(
@@ -340,16 +366,31 @@ async fn start_session(shared: &Arc<SlackShared>) -> Result<(), String> {
     .map_err(|_| WEBSOCKET_ERROR.to_owned())?
     .map_err(|_| WEBSOCKET_ERROR.to_owned())?;
     let (sink, stream) = ws.split();
+    let reader = spawn_reader(shared.clone(), stream);
     {
         let mut runtime = shared.runtime.lock().await;
-        runtime.app = Some(LiveApp { sink: Some(sink) });
+        runtime.app = Some(LiveApp {
+            sink: Some(sink),
+            reader: Some(reader),
+        });
     }
-    spawn_reader(shared.clone(), stream);
-    // `app.client.auth.test({token})`: POST `/api/auth.test`.
+    // `app.client.auth.test({token})`: POST `/api/auth.test`. #2312: a
+    // failure here must not leak the session the socket already opened —
+    // the TS catch keeps `this.app` (the registered R2 divergence) and hands
+    // back a handle whose `stop()` does nothing, which in the port would pin
+    // the reader task and the `Arc<SlackShared>` forever. The port retires
+    // the session on the failure itself, wire-invisibly.
     let mut auth_body = JsObject::new();
     auth_body.insert("token".into(), shared.bot_token.clone());
-    let auth = post_json(shared, "/api/auth.test", &JsValue::Object(auth_body)).await?;
+    let auth = match post_json(shared, "/api/auth.test", &JsValue::Object(auth_body)).await {
+        Ok(auth) => auth,
+        Err(error) => {
+            abandon_session(shared).await;
+            return Err(error);
+        }
+    };
     if !super::sms::truthy(&auth.get("ok").cloned().unwrap_or(JsValue::Undefined)) {
+        abandon_session(shared).await;
         return Err(format!(
             "Error: {}",
             String::from_utf16_lossy(
@@ -378,15 +419,46 @@ async fn start_session(shared: &Arc<SlackShared>) -> Result<(), String> {
     Ok(())
 }
 
-/// The WS read loop: one text frame `{"type":"message","payload":{"event":…}}`
-/// dispatches `handle_message` as its own task (the async listener the stub
-/// registers — a frame is never blocked by a previous frame's turn). The
-/// error handler contract is the stub's: a transport failure reports
-/// `Error: websocket error` through `app.error`.
+/// #2312: retire a session whose start failed after the socket opened:
+/// take the app out, drop the sink and abort the reader task. The teardown is
+/// wire-invisible — the sink's drop sends a bare TCP FIN and the mock's
+/// recorder only logs close *frames*, so the failed-start cell keeps its TS
+/// shape (`ws == [open]`) — while the real handle's `stop()` sends the
+/// recorded `close(1000)`. `NoopHandle::stop` stays empty because by the
+/// time the failure handle is returned there is nothing left to stop.
+async fn abandon_session(shared: &Arc<SlackShared>) {
+    let app = {
+        let mut runtime = shared.runtime.lock().await;
+        runtime.app.take()
+    };
+    let Some(app) = app else {
+        return;
+    };
+    let LiveApp { sink, reader } = app;
+    // Order matters for the Arc release, not the wire: the reader's clone of
+    // `Arc<SlackShared>` only goes away with the task, so abort it after the
+    // sink (a reader mid-frame would otherwise re-take `app` and find it
+    // gone — same observable, extra work).
+    drop(sink);
+    if let Some(reader) = reader {
+        reader.abort();
+    }
+}
+
+/// The WS read loop: the TS stub (`bolt-stub.mjs`) invokes the message
+/// handler synchronously per frame, and `handleSlackMessage`'s prefix up to
+/// `activeChats.add` is synchronous (`SlackChannel.ts:174`) — the frame
+/// order IS the admission order. The reader therefore runs that prefix
+/// inline ([`admit_frame`], #2313: a frame is never blocked by a previous
+/// frame's turn — the prefix only ever awaits brief lock sections) and
+/// spawns just the async continuation the admission produced
+/// ([`run_admitted`]). The error handler contract is the stub's: a transport
+/// failure or an abnormal close reports `Error: websocket error` through
+/// `app.error`.
 fn spawn_reader(
     shared: Arc<SlackShared>,
     mut stream: futures_util::stream::SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
-) {
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         while let Some(frame) = stream.next().await {
             match frame {
@@ -417,17 +489,68 @@ fn spawn_reader(
                         .and_then(|payload| payload.get("event"))
                         .cloned()
                         .unwrap_or(JsValue::Undefined);
-                    let shared = shared.clone();
-                    tokio::spawn(async move {
-                        if let Err(error) = handle_message(&shared, event).await {
-                            shared.log(
-                                "error",
-                                format!("slack: message handler error: {}", error.to_js_string()),
-                            );
-                        }
-                    });
+                    // #2313 负控（slack-frame-admission-race）：恢复修复前的形状
+                    // ——「过滤+入场」随每帧 spawn 的任务走，且 `admit_frame` 的
+                    // race 臂把 has 与 resolve+insert 拆成两个锁区间夹一个
+                    // yield；连发两帧的任务在 yield 处交错、双双入场。生产
+                    // 多线程 runtime 上每帧 spawn 的两个任务可被不同 worker
+                    // 抢走，这正是该交错的现实来源（对称任务形状在单线程
+                    // FIFO 下不会重排，负控必须制造非对称），
+                    // back-to-back-frames 格红。
+                    let admitted = if crate::mutants::on("slack-frame-admission-race") {
+                        let shared = shared.clone();
+                        tokio::spawn(async move {
+                            let admitted = admit_frame(&shared, event, true).await;
+                            if let Some(admission) = admitted
+                                && let Err(error) = run_admitted(&shared, admission).await
+                            {
+                                shared.log(
+                                    "error",
+                                    format!(
+                                        "slack: message handler error: {}",
+                                        error.to_js_string()
+                                    ),
+                                );
+                            }
+                        });
+                        None
+                    } else {
+                        admit_frame(&shared, event, false).await
+                    };
+                    if let Some(admission) = admitted {
+                        let shared = shared.clone();
+                        tokio::spawn(async move {
+                            if let Err(error) = run_admitted(&shared, admission).await {
+                                shared.log(
+                                    "error",
+                                    format!(
+                                        "slack: message handler error: {}",
+                                        error.to_js_string()
+                                    ),
+                                );
+                            }
+                        });
+                    }
                 }
-                Ok(Message::Close(_)) => break,
+                Ok(Message::Close(frame)) => {
+                    // #2321: the stub contract routes a close whose code is
+                    // neither 1000 (the stop handshake) nor 1005 (no status)
+                    // through the error handler — the same `bolt error` text a
+                    // transport failure reports. Measured on this stack
+                    // (tokio-tungstenite behind the loopback mock): a server
+                    // close frame is delivered as `Ok(Message::Close(..))`,
+                    // never `Err(..)`, so the code is read here.
+                    let code = frame
+                        .as_ref()
+                        .map(|close| u16::from(close.code))
+                        .unwrap_or(1005);
+                    if !matches!(code, 1000 | 1005)
+                        && !crate::mutants::on("slack-abnormal-close-silent")
+                    {
+                        shared.log("error", format!("slack: bolt error: {WEBSOCKET_ERROR}"));
+                    }
+                    break;
+                }
                 Ok(_) => {}
                 Err(_) => {
                     shared.log("error", format!("slack: bolt error: {WEBSOCKET_ERROR}"));
@@ -435,7 +558,7 @@ fn spawn_reader(
                 }
             }
         }
-    });
+    })
 }
 
 fn boundaries(shared: &SlackShared) -> Boundaries {
@@ -470,12 +593,48 @@ fn thread_chat_id(channel_id: &JsString, thread_ts: &JsValue) -> Option<JsString
     ]))
 }
 
-/// `handleSlackMessage` (`SlackChannel.ts:102`): filters, mention strip, the
-/// thread-qualified chat id, the pending elicitation/permission answers, the
-/// active-chat admission and the mapper dispatch.
-async fn handle_message(shared: &Arc<SlackShared>, event: JsValue) -> Result<(), ChannelError> {
+/// One admitted frame: the send context plus the async continuation its
+/// synchronous prefix chose (#2313).
+struct Admission {
+    channel_id: JsString,
+    thread_ts: JsValue,
+    continuation: FrameContinuation,
+}
+
+/// What [`admit_frame`] hands the spawned continuation.
+enum FrameContinuation {
+    /// A taken pending elicitation entry and its answer text.
+    Elicitation {
+        entry: sms_elicitation::PendingElicitation,
+        text: JsString,
+    },
+    /// A begun permission answer (status or decide).
+    Permission {
+        begin: BeginAnswer,
+        chat_id: JsString,
+    },
+    /// The `/new` acknowledgement reply.
+    NewChat,
+    /// An admitted turn; the guard releases the active-chat slot when the
+    /// turn ends (its `Drop` replaces the TS `finally` delete).
+    Turn {
+        mapped: MappedSession,
+        guard: super::ActiveChat<JsString>,
+    },
+}
+
+/// `handleSlackMessage`'s synchronous prefix (`SlackChannel.ts:102`): the
+/// filters, mention strip, the thread-qualified chat id, the pending
+/// elicitation/permission answers and the active-chat admission — run
+/// inline by the reader per frame (#2313: the TS stub dispatches this
+/// stretch synchronously, so the frame order is the admission order; the
+/// prefix only ever awaits brief lock sections, so a frame is never blocked
+/// by a previous frame's turn). `race` is the #2313 negative control's shape
+/// (see the reader's `slack-frame-admission-race` arm). Returns the async
+/// continuation the reader then spawns.
+async fn admit_frame(shared: &Arc<SlackShared>, event: JsValue, race: bool) -> Option<Admission> {
     if matches!(event, JsValue::Undefined | JsValue::Null) {
-        return Ok(());
+        return None;
     }
     // `event.bot_id || event.subtype === "bot_message"` — the discriminator
     // the fixture's 判别力正控 removes on the TS side (`bot-id` filter).
@@ -492,10 +651,10 @@ async fn handle_message(shared: &Arc<SlackShared>, event: JsValue) -> Result<(),
                 .unwrap_or(JsValue::Undefined),
         ) || is_subtype("bot_message"))
     {
-        return Ok(());
+        return None;
     }
     if is_subtype("message_changed") || is_subtype("message_deleted") {
-        return Ok(());
+        return None;
     }
     let user_id = event_field(&event, "user")
         .cloned()
@@ -506,13 +665,13 @@ async fn handle_message(shared: &Arc<SlackShared>, event: JsValue) -> Result<(),
     };
     // `userId && this.botUserId && userId === this.botUserId`
     if super::sms::truthy(&user_id) && super::sms::truthy(&bot_user_id) && user_id == bot_user_id {
-        return Ok(());
+        return None;
     }
     let channel_id = event_field(&event, "channel")
         .cloned()
         .unwrap_or(JsValue::Undefined);
     if !super::sms::truthy(&channel_id) {
-        return Ok(());
+        return None;
     }
     let channel_id = super::sms::js_string_of(&channel_id);
     // `String(event.text ?? "").replace(/<@[^>]+>/g, "").trim()`
@@ -546,7 +705,7 @@ async fn handle_message(shared: &Arc<SlackShared>, event: JsValue) -> Result<(),
     }
     .unwrap_or_else(|| channel_id.clone());
     if text.units().is_empty() {
-        return Ok(());
+        return None;
     }
 
     // The pending elicitation answer.
@@ -559,30 +718,12 @@ async fn handle_message(shared: &Arc<SlackShared>, event: JsValue) -> Result<(),
         }
     };
     if let Some(entry) = pending_elicitation {
-        let gateway = boundaries(shared)
-            .gateway
-            .expect("#1344 checked before the elicitation take");
-        let trimmed = JsString::from_utf16(super::sms::trim_units(text.units()).to_vec());
-        let (response, confirmation) = if trimmed == JsString::from("0") {
-            (
-                sms_elicitation::cancelled_response(&entry),
-                Some(JsString::from("已取消。")),
-            )
-        } else {
-            (sms_elicitation::answered_response(&entry, &trimmed), None)
-        };
-        match gateway.respond_elicitation(response).await {
-            Err(error) => shared.log(
-                "error",
-                format!("slack: elicitation answer error: {}", error.to_js_string()),
-            ),
-            Ok(()) => {
-                if let Some(confirmation) = confirmation {
-                    send_reply(shared, &channel_id, &thread_ts, confirmation).await;
-                }
-            }
-        }
-        return Ok(());
+        let text = JsString::from_utf16(super::sms::trim_units(text.units()).to_vec());
+        return Some(Admission {
+            channel_id,
+            thread_ts,
+            continuation: FrameContinuation::Elicitation { entry, text },
+        });
     }
 
     // The pending permission answer.
@@ -598,83 +739,38 @@ async fn handle_message(shared: &Arc<SlackShared>, event: JsValue) -> Result<(),
         }
     };
     if let Some(begin) = began {
-        match begin {
-            BeginAnswer::None => (),
-            BeginAnswer::Status(answer) => {
-                deliver_answer(shared, &chat_id, &channel_id, &thread_ts, answer).await;
-            }
-            BeginAnswer::Decide {
-                entry,
-                deny,
-                remember,
-                answer_token,
-                generation,
-                shifted_rest,
-            } => {
-                let mut guard = AnswerGuard::new(
-                    shared.permissions.clone(),
-                    chat_id.clone(),
-                    generation,
-                    entry.clone(),
-                    shifted_rest.clone(),
-                );
-                let gateway = boundaries(shared)
-                    .gateway
-                    .expect("#1344 checked before begin");
-                let decision = PermissionDecision {
-                    session_key: entry.session_key.clone(),
-                    request_id: entry.request_id.clone(),
-                    deny,
-                    remember,
-                };
-                let reply = if deny {
-                    DecisionReply::Deny
-                } else if remember {
-                    DecisionReply::AllowSession
-                } else {
-                    DecisionReply::AllowOnce
-                };
-                match gateway.permission_decide(decision).await {
-                    Err(error) => {
-                        shared
-                            .permissions
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .fail_answer(&chat_id, generation, entry, shifted_rest);
-                        guard.settle();
-                        shared.log(
-                            "error",
-                            format!("slack: permission answer error: {}", error.to_js_string()),
-                        );
-                    }
-                    Ok(outcome) => {
-                        let answer = shared
-                            .permissions
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .finish_answer(
-                                &chat_id,
-                                answer_token,
-                                generation,
-                                reply,
-                                shifted_rest,
-                                outcome,
-                            );
-                        guard.settle();
-                        if let Some(answer) = answer {
-                            deliver_answer(shared, &chat_id, &channel_id, &thread_ts, answer).await;
-                        }
-                    }
-                }
-            }
-        }
-        return Ok(());
+        return Some(Admission {
+            channel_id,
+            thread_ts,
+            continuation: FrameContinuation::Permission { begin, chat_id },
+        });
     }
 
     // `activeChats.has` → resolve → add in one lock section (the sms #1339
-    // fix-r1 shape; TS runs the same stretch synchronously).
+    // fix-r1 shape; TS runs the same stretch synchronously). The race arm is
+    // the #2313 negative control's other half: two lock sections with a
+    // yield between, so two spawned admissions interleave — the reorder the
+    // production multi-thread runtime can produce without the reader-
+    // synchronous admission.
     let dedupe_off = crate::mutants::on("slack-active-dedupe-off");
-    let (already_active, outcome) = {
+    let (already_active, outcome) = if race {
+        let already_active = {
+            let runtime = shared.runtime.lock().await;
+            runtime
+                .active_chats
+                .lock()
+                .expect("#1344 active chats mutex")
+                .contains(&chat_id)
+        };
+        tokio::task::yield_now().await;
+        let mut runtime = shared.runtime.lock().await;
+        let outcome = if already_active && !dedupe_off {
+            None
+        } else {
+            Some(dispatch_outcome(&mut runtime, &chat_id, &text))
+        };
+        (already_active, outcome)
+    } else {
         let mut runtime = shared.runtime.lock().await;
         let already_active = runtime
             .active_chats
@@ -684,20 +780,7 @@ async fn handle_message(shared: &Arc<SlackShared>, event: JsValue) -> Result<(),
         let outcome = if already_active && !dedupe_off {
             None
         } else {
-            let mapped = runtime.mapper.resolve(&chat_id, &text);
-            if mapped.command_new && mapped.message.is_empty() {
-                Some(DispatchOutcome::NewChat)
-            } else if mapped.message.is_empty() {
-                Some(DispatchOutcome::EmptyMessage)
-            } else {
-                let active = runtime.active_chats.clone();
-                active
-                    .lock()
-                    .expect("#1344 active chats mutex")
-                    .insert(chat_id.clone());
-                let guard = super::ActiveChat::new(active, chat_id.clone());
-                Some(DispatchOutcome::Dispatch(mapped, guard))
-            }
+            Some(dispatch_outcome(&mut runtime, &chat_id, &text))
         };
         (already_active, outcome)
     };
@@ -711,8 +794,133 @@ async fn handle_message(shared: &Arc<SlackShared>, event: JsValue) -> Result<(),
         );
     }
     match outcome {
-        None => Ok(()),
-        Some(DispatchOutcome::NewChat) => {
+        None => None,
+        Some(DispatchOutcome::NewChat) => Some(Admission {
+            channel_id,
+            thread_ts,
+            continuation: FrameContinuation::NewChat,
+        }),
+        Some(DispatchOutcome::EmptyMessage) => None,
+        Some(DispatchOutcome::Dispatch(mapped, guard)) => Some(Admission {
+            channel_id,
+            thread_ts,
+            continuation: FrameContinuation::Turn { mapped, guard },
+        }),
+    }
+}
+
+/// The async continuation of an admitted frame — everything
+/// `handleSlackMessage` does from its first await on: the elicitation /
+/// permission answer RPCs, the `/new` acknowledgement and the turn itself.
+/// Always spawned, never run inline, so no turn blocks the reader's frame
+/// order (#2313).
+async fn run_admitted(shared: &Arc<SlackShared>, admission: Admission) -> Result<(), ChannelError> {
+    let Admission {
+        channel_id,
+        thread_ts,
+        continuation,
+    } = admission;
+    match continuation {
+        FrameContinuation::Elicitation { entry, text } => {
+            let gateway = boundaries(shared)
+                .gateway
+                .expect("#1344 checked before the elicitation take");
+            let (response, confirmation) = if text == JsString::from("0") {
+                (
+                    sms_elicitation::cancelled_response(&entry),
+                    Some(JsString::from("已取消。")),
+                )
+            } else {
+                (sms_elicitation::answered_response(&entry, &text), None)
+            };
+            match gateway.respond_elicitation(response).await {
+                Err(error) => shared.log(
+                    "error",
+                    format!("slack: elicitation answer error: {}", error.to_js_string()),
+                ),
+                Ok(()) => {
+                    if let Some(confirmation) = confirmation {
+                        send_reply(shared, &channel_id, &thread_ts, confirmation).await;
+                    }
+                }
+            }
+            Ok(())
+        }
+        FrameContinuation::Permission { begin, chat_id } => {
+            match begin {
+                BeginAnswer::None => (),
+                BeginAnswer::Status(answer) => {
+                    deliver_answer(shared, &chat_id, &channel_id, &thread_ts, answer).await;
+                }
+                BeginAnswer::Decide {
+                    entry,
+                    deny,
+                    remember,
+                    answer_token,
+                    generation,
+                    shifted_rest,
+                } => {
+                    let mut guard = AnswerGuard::new(
+                        shared.permissions.clone(),
+                        chat_id.clone(),
+                        generation,
+                        entry.clone(),
+                        shifted_rest.clone(),
+                    );
+                    let gateway = boundaries(shared)
+                        .gateway
+                        .expect("#1344 checked before begin");
+                    let decision = PermissionDecision {
+                        session_key: entry.session_key.clone(),
+                        request_id: entry.request_id.clone(),
+                        deny,
+                        remember,
+                    };
+                    let reply = if deny {
+                        DecisionReply::Deny
+                    } else if remember {
+                        DecisionReply::AllowSession
+                    } else {
+                        DecisionReply::AllowOnce
+                    };
+                    match gateway.permission_decide(decision).await {
+                        Err(error) => {
+                            shared
+                                .permissions
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .fail_answer(&chat_id, generation, entry, shifted_rest);
+                            guard.settle();
+                            shared.log(
+                                "error",
+                                format!("slack: permission answer error: {}", error.to_js_string()),
+                            );
+                        }
+                        Ok(outcome) => {
+                            let answer = shared
+                                .permissions
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .finish_answer(
+                                    &chat_id,
+                                    answer_token,
+                                    generation,
+                                    reply,
+                                    shifted_rest,
+                                    outcome,
+                                );
+                            guard.settle();
+                            if let Some(answer) = answer {
+                                deliver_answer(shared, &chat_id, &channel_id, &thread_ts, answer)
+                                    .await;
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+        FrameContinuation::NewChat => {
             send_reply(
                 shared,
                 &channel_id,
@@ -722,8 +930,10 @@ async fn handle_message(shared: &Arc<SlackShared>, event: JsValue) -> Result<(),
             .await;
             Ok(())
         }
-        Some(DispatchOutcome::EmptyMessage) => Ok(()),
-        Some(DispatchOutcome::Dispatch(mapped, _guard)) => {
+        FrameContinuation::Turn {
+            mapped,
+            guard: _guard,
+        } => {
             process_message(
                 shared,
                 &channel_id,
@@ -736,6 +946,30 @@ async fn handle_message(shared: &Arc<SlackShared>, event: JsValue) -> Result<(),
     }
 }
 
+/// The mapper→outcome mapping inside the admission lock section (shared by
+/// the fused and the #2313 race shapes so the switch branch cannot drift
+/// from the production path).
+fn dispatch_outcome(
+    runtime: &mut SlackRuntime,
+    chat_id: &JsString,
+    text: &JsString,
+) -> DispatchOutcome {
+    let mapped = runtime.mapper.resolve(chat_id, text);
+    if mapped.command_new && mapped.message.is_empty() {
+        DispatchOutcome::NewChat
+    } else if mapped.message.is_empty() {
+        DispatchOutcome::EmptyMessage
+    } else {
+        let active = runtime.active_chats.clone();
+        active
+            .lock()
+            .expect("#1344 active chats mutex")
+            .insert(chat_id.clone());
+        let guard = super::ActiveChat::new(active, chat_id.clone());
+        DispatchOutcome::Dispatch(mapped, guard)
+    }
+}
+
 enum DispatchOutcome {
     NewChat,
     EmptyMessage,
@@ -743,9 +977,9 @@ enum DispatchOutcome {
 }
 
 /// The post-answer part of the TS permission branch: confirmation send, the
-/// non-advancing statuses and the next queued prompt (the sms `deliver_answer`
-/// shape; slack carries the `{channelId, threadTs}` send context instead of
-/// the chat id).
+/// non-advancing statuses and the next queued prompt. #2320: only the adapter
+/// — the body is the sms-module shared implementation; this channel's send
+/// carries the `{channelId, threadTs}` context instead of the chat id.
 async fn deliver_answer(
     shared: &Arc<SlackShared>,
     chat_id: &JsString,
@@ -753,52 +987,24 @@ async fn deliver_answer(
     thread_ts: &JsValue,
     answer: PermissionAnswer,
 ) {
-    let mut guard = PromptGuard::new(
-        shared.permissions.clone(),
-        chat_id.clone(),
-        answer.answer_token,
-    );
-    if let Some(text) = answer.text.clone() {
-        let delivered = send_reply(shared, channel_id, thread_ts, text).await;
-        if !delivered {
-            shared
-                .permissions
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .recover_answer(chat_id, answer.answer_token);
-            guard.settle();
-            return;
-        }
-        if !answer.can_advance && !answer.retry_prompt {
-            guard.settle();
-            return;
-        }
-        let next_prompt = shared
-            .permissions
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take_next_prompt(chat_id, answer.answer_token);
-        if let Some(prompt) = next_prompt {
-            let expected = shared
-                .permissions
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .get_prompt_request_id(chat_id, answer.answer_token);
-            let delivered = send_reply(shared, channel_id, thread_ts, prompt).await;
-            shared
-                .permissions
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .confirm_next_prompt(chat_id, delivered, expected.as_ref(), answer.answer_token);
-        }
-    }
-    guard.settle();
+    let send = |text: JsString| {
+        let shared = shared.clone();
+        let channel_id = channel_id.clone();
+        let thread_ts = thread_ts.clone();
+        Box::pin(async move { send_reply(&shared, &channel_id, &thread_ts, text).await })
+            as BoxFuture<bool>
+    };
+    super::sms::deliver_answer_shared(shared.permissions.clone(), chat_id, answer, send).await;
 }
 
 /// `processMessage` (`SlackChannel.ts:182`). The TS chat id here is
 /// `ctx.threadTs ? channelId:threadTs : channelId` — no `!== ts` guard, so a
 /// root message (thread_ts === ts) clears elicitation state under the
 /// thread-qualified key while its turn ran under the bare channel id.
+/// #2320: only the adapter — the turn event stream is the sms-module shared
+/// implementation; this channel carries the `{channelId, threadTs}` send
+/// context, the slack render, the slack-tagged log and the switch that swaps
+/// the error reply text.
 async fn process_message(
     shared: &Arc<SlackShared>,
     channel_id: &JsString,
@@ -807,104 +1013,61 @@ async fn process_message(
     message: &JsString,
 ) -> Result<(), ChannelError> {
     let gateway = boundaries(shared).gateway;
-    if gateway.is_none() {
+    let Some(gateway) = gateway else {
         return Ok(());
-    }
-    let gateway = gateway.expect("#1344 checked above");
+    };
     let chat_id = thread_chat_id(channel_id, thread_ts).unwrap_or_else(|| channel_id.clone());
-    let mut reply_units: Vec<u16> = Vec::new();
-    let request = SubmitTurnRequest {
-        session_key: session_key.clone(),
-        channel_key: JsString::from("slack"),
-        message: message.clone(),
+    let send = |text: JsString| {
+        let shared = shared.clone();
+        let channel_id = channel_id.clone();
+        let thread_ts = thread_ts.clone();
+        Box::pin(async move { send_reply(&shared, &channel_id, &thread_ts, text).await })
+            as BoxFuture<bool>
     };
-    let mut turn_error = None;
-    let mut stream = match gateway.submit_turn(request).await {
-        Err(error) => {
-            turn_error = Some(error.to_js_string());
-            None
-        }
-        Ok(stream) => Some(stream),
+    let capture_elicitation = |chat_id: &JsString, session_key: &JsString, event: &JsValue| {
+        let shared = shared.clone();
+        let chat_id = chat_id.clone();
+        let session_key = session_key.clone();
+        let event = event.clone();
+        Box::pin(async move {
+            let mut runtime = shared.runtime.lock().await;
+            runtime.elicitation.capture(&chat_id, &session_key, &event)
+        }) as BoxFuture<JsString>
     };
-    if let Some(stream) = stream.as_mut() {
-        loop {
-            let event = match stream.next_event().await {
-                None => break,
-                Some(Ok(event)) => event,
-                Some(Err(error)) => {
-                    turn_error = Some(error.to_js_string());
-                    break;
-                }
-            };
-            let kind = event.get("type").and_then(JsValue::as_string);
-            let is = |name: &str| kind.as_ref().is_some_and(|kind| kind.equals_str(name));
-            if is("elicitation_request") {
-                let question = {
-                    let mut runtime = shared.runtime.lock().await;
-                    runtime.elicitation.capture(&chat_id, session_key, &event)
-                };
-                send_reply(shared, channel_id, thread_ts, question).await;
-                continue;
-            }
-            if is("permission_request") {
-                let expected = event
-                    .get("requestId")
-                    .and_then(sms_permission::optional_string);
-                let question = shared
-                    .permissions
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .capture(&chat_id, session_key, &event);
-                if let Some(question) = question {
-                    let mut guard = InitialPromptGuard::new(
-                        shared.permissions.clone(),
-                        chat_id.clone(),
-                        expected.clone(),
-                    );
-                    let delivered = send_reply(shared, channel_id, thread_ts, question).await;
-                    shared
-                        .permissions
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .confirm_initial_prompt(&chat_id, delivered, expected.as_ref());
-                    guard.settle();
-                }
-                continue;
-            }
-            if let Some(fragment) = render::render_slack_event(&event) {
-                reply_units.extend_from_slice(fragment.units());
-            }
-        }
-    }
-    if let Some(error) = turn_error {
-        shared.log("error", format!("slack: submitTurn error: {error}"));
-        reply_units = if crate::mutants::on("slack-error-reply-text") {
+    let clear_elicitation = |chat_id: &JsString| {
+        let shared = shared.clone();
+        let chat_id = chat_id.clone();
+        Box::pin(async move {
+            let mut runtime = shared.runtime.lock().await;
+            runtime.elicitation.clear(&chat_id);
+        }) as BoxFuture<()>
+    };
+    let log = |level: &str, message: String| shared.log(level, message);
+    let render = |event: &JsValue| render::render_slack_event(event);
+    let error_reply = || {
+        if crate::mutants::on("slack-error-reply-text") {
             "出错了。".encode_utf16().collect::<Vec<u16>>()
         } else {
             "处理消息时发生错误，请重试。"
                 .encode_utf16()
                 .collect::<Vec<u16>>()
-        };
-    }
-    {
-        let mut runtime = shared.runtime.lock().await;
-        runtime.elicitation.clear(&chat_id);
-    }
-    shared
-        .permissions
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clear_after_turn(&chat_id);
-    let final_text = super::sms::trim_units(&reply_units);
-    if !final_text.is_empty() {
-        send_reply(
-            shared,
-            channel_id,
-            thread_ts,
-            JsString::from_utf16(final_text.to_vec()),
-        )
-        .await;
-    }
+        }
+    };
+    super::sms::drive_turn_shared(
+        gateway,
+        shared.permissions.clone(),
+        &chat_id,
+        session_key,
+        message,
+        "slack",
+        error_reply,
+        log,
+        render,
+        capture_elicitation,
+        clear_elicitation,
+        send,
+    )
+    .await;
     Ok(())
 }
 

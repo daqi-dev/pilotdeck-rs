@@ -33,6 +33,21 @@ from negative_process import (mutating_sources, node_version, run_owned,
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / "src/pilotdeck-gateway/src"
 FIXTURES = ROOT / "src/pilotdeck-gateway/tests/fixtures"
+# #2133: neg-for-diff.sh finds this table by the literal `dir/file` of every
+# changed .rs file. The rows that name their directory inline
+# (`SOURCE / "runtime/snapshot.rs"`, `SOURCE / "storage/workspace_snapshot.rs"`)
+# are already discoverable; `SOURCE / "metadata.rs"` takes its directory from
+# the constant and needs its anchor. The three shared fixtures are here because
+# the loop keys any change under `fixtures/**` and the imports alone do not put
+# those literals in this file. Checked row by row by
+# fixtures/test_negative_discovery_anchors.py.
+DISCOVERY_ANCHORS = (
+    'src/metadata.rs',
+    'fixtures/negative_panic.py',
+    'fixtures/negative_process.py',
+    'fixtures/negative_selection.py',
+    'fixtures/negative_scope.py',
+)
 
 # (name, path, before, after, target, test, expected marker)
 # `target` is "lib" or the integration-test file stem. The marker is the
