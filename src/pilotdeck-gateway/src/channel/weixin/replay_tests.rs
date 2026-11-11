@@ -1037,6 +1037,12 @@ fn recorded_expected_panics_when_absent() {
     recorded_expected(&json!({}));
 }
 
+/// The channel-scenario count the generator declares (`expectedCaseCount`);
+/// the count pin and the declaration pin read this one constant, so the two
+/// literals cannot drift apart (#1725 — the count moved 15→20 in #1822 and
+/// both sites had to be found by hand).
+const EXPECTED_CASE_COUNT: usize = 20;
+
 fn oracle_cases(oracle: &Value) -> Vec<&Value> {
     let cases = oracle["cases"]
         .as_array()
@@ -1052,10 +1058,14 @@ fn oracle_cases(oracle: &Value) -> Vec<&Value> {
         !channel.is_empty(),
         "#1328 weixin oracle cases must be non-empty"
     );
-    crate::negative_assert_eq!(channel.len(), 20, "#1328 weixin oracle case count");
+    crate::negative_assert_eq!(
+        channel.len(),
+        EXPECTED_CASE_COUNT,
+        "#1328 weixin oracle case count"
+    );
     crate::negative_assert_eq!(
         oracle["expectedCaseCount"],
-        json!(20),
+        json!(EXPECTED_CASE_COUNT),
         "#1328 weixin generator declaration"
     );
     crate::negative_assert_eq!(
