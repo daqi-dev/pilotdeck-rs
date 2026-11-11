@@ -36,17 +36,14 @@ CARGO_TARGET_DIR=<dir> python3 -I tests/fixtures/sdk-mcp-session-tools/negative_
 - 同树互斥（#2468）：本夹具原地改写 `tools.rs` 等守卫源码，运行期间**本工作树内
   不得有其他写者**——普通 `cargo test` / `cargo build` 也不行（同
   `cli-parity-mock-gateway/negative_controls.py` 的「Run with no other writers in
-  this worktree」同款要求）。`.negative-source.lock` 的持有者谱系与互斥面
-  （写者排他、Rust 读者共享租约、被 SIGKILL 的 runner 残留变异体使读者持续红）
-  见 `src/pilotdeck-gateway/tests/common/read_lease.rs` 头注释（正本；
-  `src/pilotdeck-cli/tests/common/read_lease.rs` 同构镜像）；`mutating_sources`
-  与 `build_snapshot` 的锁内行为另见 `src/pilotdeck-gateway/tests/fixtures/README.md`
-  「共享输入扫描器（#1166 fix-r4）」段（该段不涉 `.negative-source.lock` 本身）。
-  `cargo-slots.sh` 名额闸是并发配额，不互斥任何持锁者；锁的释放不证明树洁净。
-  锁外只读检查器同样不被互斥——本夹具 `--check`（`negative_controls.py` 的
-  `--check` 分支）不取锁，别的写者变异窗口内并发跑它会读到变异体假 FAIL；
-  持锁写者被共享读者挡住是在等、不是挂起，误判后 SIGKILL 会把变异体留在
-  树里；变异窗口里无锁的普通 cargo 会读到变异体，产生无关的假 FAIL / 假编译错。
+  this worktree」同款要求）。`.negative-source.lock` 的持有者谱系、互斥面与
+  「锁缺席不证明树洁净」以 `src/pilotdeck-gateway/tests/common/read_lease.rs`
+  头注释为正本（cli 侧 `src/pilotdeck-cli/tests/common/read_lease.rs` 同构镜像）；
+  `mutating_sources` 与 `build_snapshot` 的锁内行为另见
+  `src/pilotdeck-gateway/tests/fixtures/README.md`「共享输入扫描器（#1166 fix-r4）」段
+  （该段不涉 `.negative-source.lock` 本身）。`cargo-slots.sh` 名额闸是并发配额，
+  不互斥任何持锁者。本夹具的操作性规则同上条：变异窗口内本树什么都不另跑——
+  写者、读者、锁外检查器（本夹具 `--check` 分支不取锁）与普通 cargo 一律算。
 - 每个 `#[tokio::test]` 变异轮的正向/负向/还原三跑都经 `cargo-slots.sh` 名额闸。
 - 单测体在 `mod tests` 内（缩进 4），外部测试在 crate 顶层——`test_body` 的
   函数尾锚按函数自身缩进回引（`(?P=indent)`），嵌套块的大括号不截断函数体；

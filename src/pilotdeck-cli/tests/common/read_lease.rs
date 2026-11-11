@@ -8,6 +8,17 @@
 //! run restores. A shared lock suffices: readers never exclude each other, and
 //! every writer restores its guarded sources before releasing.
 //!
+//! Lock taxonomy, for anyone pointing at this header as the canonical
+//! wording: writers take the lock exclusive; resident Rust readers take it
+//! shared; read-only Python runners (e.g. `utf16-residual-sort/
+//! negative_controls.py --check-anchors`) take it exclusive too. What the
+//! lock does not exclude: anything that never takes it — a plain
+//! `cargo test`, or a fixture's lockless `--check` branch — can read a
+//! mid-window mutant and false-fail. A writer SIGKILLed while inside the
+//! mutation window leaves the mutant on disk (its `finally` restore never
+//! ran); the lock dies with the process, so an absent lock proves nothing
+//! about tree cleanliness.
+//!
 //! #1662 started this in `sdk_signal_exit.rs`; #1885 lifts it into this shared
 //! module so `signal_replay.rs` (96-cell replay, the SIGINT wrapper probe and
 //! both D1 ledger readers) uses the exact same lease instead of a second
