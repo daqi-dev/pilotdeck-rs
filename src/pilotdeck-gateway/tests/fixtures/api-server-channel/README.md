@@ -99,13 +99,17 @@ replay must reproduce:
   `parser_rejections_keep_the_registered_transport_shape` pins the raw bytes so
   the masking cannot hide a missing rejection.
   `parser_admission_cells_stay_justified_by_the_oracle` holds the registered
-  set against the oracle in all three directions — every entry exists and
+  set against the oracle in all four directions — every entry exists and
   records no length line the mask could hide, every bare-400 cell (a 400 whose
   only header is `connection`; an empty expectation list is not one) is
-  registered, and the registered set is exactly those bare cells plus the inert
-  `missing-host` entry, so a stale widening fails by name (#2775) — and
+  registered, the registered set is exactly those bare cells plus the inert
+  `missing-host` entry, so a stale widening fails by name (#2775), and the
+  admission set the replay's selection point derives through
+  `fn parser_admission` is that same set, so widening the predicate fails the
+  guard instead of silently re-widening the mask (#2775 fix-r2) — and
   `only_the_registered_cells_mask_a_content_length_zero` injects the line on
-  the unregistered `stream` cell to prove the mask cannot normalize it away.
+  the unregistered `stream` cell to prove the mask cannot normalize it away,
+  with its exemption flag derived from the same predicate.
 
 The placeholder is a fixture protocol with a fail-closed reader
 (`channel::api_server::tests::recorded_body`), so a generator change cannot
@@ -240,4 +244,9 @@ Two #2775 rows target the mask's own scope instead of the product: the
 the injected-line unit test (`only_the_registered_cells_mask_a_content_length_zero`)
 must reject; and the `api-server-admission-stale` row appends a third,
 never-inert cell (`body-read-timeout`) to `PARSER_ADMISSION_CELLS`, which the
-oracle guard's upper-bound assertion must reject as a stale entry.
+oracle guard's upper-bound assertion must reject as a stale entry. A third,
+`api-server-cl0-wide` (fix-r2), widens `fn parser_admission` itself to every
+cell — the selection point `compare_response` reads — which the guard's
+through-the-predicate leg must reject, the same shape as native-http's
+`native-http-cl0-wide`, native-ws's `native-ws-budget-cl0-wide` and webhook's
+`webhook-replay-cl0-wide`.
