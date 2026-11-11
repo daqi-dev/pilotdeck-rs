@@ -25,7 +25,8 @@ fn encode(
     initialize()?;
     // libvips is lazy: `input` remains live until save has completed and all
     // image nodes below are destroyed. Never return a VipsImage from here.
-    let loaded = VipsImage::new_from_buffer(input, "[fail_on=warning]").map_err(|e| e.to_string())?;
+    let loaded =
+        VipsImage::new_from_buffer(input, "[fail_on=warning]").map_err(|e| e.to_string())?;
     let rotated = if rotate {
         Some(ops::autorot(&loaded).map_err(|e| e.to_string())?)
     } else {
