@@ -4,16 +4,16 @@
 Before any mutation the script runs the unmutated suite once and requires
 exit code 0: a panic caused by the environment (for example a bad
 ``PDRS_BASELINE``) must not be mistaken for a killed mutant. A killed mutant
-must then fail on an assertion, not on any panic:
+is the shared #813 criterion (#1087): the bound test's own ``FAILED`` status
+line plus one of the oracle's ``{group}/`` anchors inside that test's own
+panic payload (the replay helper formats its message that way). A marker
+anywhere else in the log — a sibling test's panic, captured stdout, build
+output — is not evidence. ``could not compile`` is never a kill.
 
-* ``assertion `left == right` failed`` from an ``assert_eq!`` replay, or
-* an assertion message beginning with one of the oracle's ``{group}/`` anchors
-  (the replay helper formats its message that way).
-
-``could not compile`` is never a kill. Every case compiles and the original
-bytes are restored in ``finally``. ``mutating_sources`` demands that the gateway
-product tree match the baseline, so an uncommitted authoring tree is refused;
-the coordinator runs this once after committing (item 11 of the task).
+Every case compiles and the original bytes are restored in ``finally``.
+``mutating_sources`` demands that the gateway product tree match the baseline,
+so an uncommitted authoring tree is refused; the coordinator runs this once
+after committing (item 11 of the task).
 
 Every anchor is checked against the baseline bytes before the unmutated suite
 runs: a stale anchor is a harness defect, not a surviving mutant, so it prints
@@ -24,7 +24,9 @@ uncommitted authoring tree, ``NEGATIVE_BASELINE=$(git stash create)`` can name a
 dangling commit of the current worktree so the same script can prove 1-2
 samples without committing. The default remains HEAD. ``NEGATIVE_ONLY=a,b``
 runs just those cases (the unmutated baseline still runs first); it is for
-proving a sample without spending the full mutation matrix.
+proving a sample without spending the full mutation matrix. The judge and its
+twin controls live at module level so ``test_negative.py`` can import them
+without running the suite.
 """
 import json
 import os
@@ -32,16 +34,12 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
 fixtures = Path(__file__).resolve().parent
 messages = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/messages.rs'
-out = Path(sys.argv[1]).resolve()
-target = os.environ.get('CARGO_TARGET_DIR')
-assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
-baseline = os.environ.get('NEGATIVE_BASELINE') or 'HEAD'
-out.mkdir(parents=True, exist_ok=True)
 
 oracle_groups = {case['group'] for case in
                  json.loads((fixtures / 'oracle.json').read_text())['cases']}
@@ -166,81 +164,98 @@ cases = [
      'index = skip_js_space(value, end);', 'index = end;',
      'user_strip_matches_ts'),
 ]
-env = dict(os.environ)
-env['CARGO_TARGET_DIR'] = target
-only = {name for name in os.environ.get('NEGATIVE_ONLY', '').split(',') if name}
-unknown = only - {case[0] for case in cases}
-assert not unknown, f'unknown NEGATIVE_ONLY cases: {sorted(unknown)}'
 
 
-def assertion_failure(log):
+def assertion_failure(log, test):
+    # #1087: only the named test's own FAILED status line plus the group
+    # anchor inside that test's own panic payload kills (negative_panic
+    # judges both). The old `anchor in log` also matched a sibling test's
+    # panic, captured stdout and build output — the false-kill shapes the
+    # twin controls in test_negative.py pin.
     if 'could not compile' in log:
         return False
-    if 'assertion `left == right` failed' in log:
-        return True
-    return any(f'{anchor}/' in log for anchor in assertion_anchors)
+    if 'test result: FAILED.' not in log:
+        return False
+    return named_test_killed(log, test,
+                             [f'{anchor}/' for anchor in assertion_anchors])
 
 
-killed, survived = [], []
-with mutating_sources(root, sorted({path for _, path, _, _, _ in cases}),
-                      baseline=baseline) as originals:
-    # A product line that this list did not follow used to be reported as
-    # SURVIVED (`AssertionError: (name, 0)`), hiding a broken control behind
-    # the same label as a real surviving mutant. Refuse before compiling.
-    sources = {path: data.decode() for path, data in originals.items()}
-    stale = []
-    for name, path, before, _after, _test in cases:
-        count = sources[path].count(before)
-        if count != 1:
-            stale.append((name, path.relative_to(root).as_posix(), count))
-    if stale:
-        report = '\n'.join(
-            f'STALE ANCHOR {name}: {count} matches in {relative}'
-            for name, relative, count in stale) + '\n'
-        (out / 'stale-anchors.log').write_text(report)
-        print(report, end='', flush=True)
-        print('STALE ANCHORS: negative.py is out of sync with messages.rs; refusing to run',
-              flush=True)
-        sys.exit(2)
-    base_cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
-                '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_messages']
-    slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
-    run = run_owned(base_cmd, cwd=root, env=env, timeout=600)
-    (out / 'baseline.log').write_text(slots.stdout + slots.stderr + run.stdout + run.stderr)
-    if run.returncode != 0:
-        print('BASELINE FAILED: unmutated suite must pass before mutations', flush=True)
-        sys.exit(1)
+def main(argv=None):
+    argv = list(sys.argv if argv is None else argv)
+    out = Path(argv[1]).resolve()
+    target = os.environ.get('CARGO_TARGET_DIR')
+    assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
+    baseline = os.environ.get('NEGATIVE_BASELINE') or 'HEAD'
+    out.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ)
+    env['CARGO_TARGET_DIR'] = target
+    only = {name for name in os.environ.get('NEGATIVE_ONLY', '').split(',') if name}
+    unknown = only - {case[0] for case in cases}
+    assert not unknown, f'unknown NEGATIVE_ONLY cases: {sorted(unknown)}'
 
-    for name, path, before, after, test in cases:
-        if only and name not in only:
-            continue
-        reason = None
-        try:
-            source = originals[path].decode()
-            slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
-            path.write_text(source.replace(before, after))
+    killed, survived = [], []
+    with mutating_sources(root, sorted({path for _, path, _, _, _ in cases}),
+                          baseline=baseline) as originals:
+        # A product line that this list did not follow used to be reported as
+        # SURVIVED (`AssertionError: (name, 0)`), hiding a broken control behind
+        # the same label as a real surviving mutant. Refuse before compiling.
+        sources = {path: data.decode() for path, data in originals.items()}
+        stale = []
+        for name, path, before, _after, _test in cases:
+            count = sources[path].count(before)
+            if count != 1:
+                stale.append((name, path.relative_to(root).as_posix(), count))
+        if stale:
+            report = '\n'.join(
+                f'STALE ANCHOR {name}: {count} matches in {relative}'
+                for name, relative, count in stale) + '\n'
+            (out / 'stale-anchors.log').write_text(report)
+            print(report, end='', flush=True)
+            print('STALE ANCHORS: negative.py is out of sync with messages.rs; refusing to run',
+                  flush=True)
+            return 2
+        base_cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
+                    '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_messages']
+        slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
+        run = run_owned(base_cmd, cwd=root, env=env, timeout=600)
+        (out / 'baseline.log').write_text(slots.stdout + slots.stderr + run.stdout + run.stderr)
+        if run.returncode != 0:
+            print('BASELINE FAILED: unmutated suite must pass before mutations', flush=True)
+            return 1
+
+        for name, path, before, after, test in cases:
+            if only and name not in only:
+                continue
+            reason = None
             try:
-                cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
-                       '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_messages', test, '--', '--exact']
-                run = run_owned(cmd, cwd=root, env=env, timeout=300)
-                log = run.stdout + run.stderr
-                (out / f'{name}.log').write_text(slots.stdout + slots.stderr + log)
-                if not (run.returncode != 0 and assertion_failure(log)):
-                    reason = 'did not fail a narrowed assertion'
-            finally:
-                path.write_bytes(originals[path])
-        except Exception as error:
-            reason = f'{type(error).__name__}: {error}'
-        if reason is None:
-            killed.append(name)
-            print(f'KILLED   {name}: {test}', flush=True)
-        else:
-            survived.append((name, reason))
-            print(f'SURVIVED {name}: {reason}', flush=True)
-    for path, data in originals.items():
-        path.write_bytes(data)
-        assert path.read_bytes() == data, 'restoration failed: ' + str(path)
-print(f'KILLED   {len(killed)}: ' + ', '.join(killed))
-print(f'SURVIVED {len(survived)}: ' + ', '.join(name for name, _ in survived))
-if survived:
-    sys.exit(1)
+                source = originals[path].decode()
+                slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
+                path.write_text(source.replace(before, after))
+                try:
+                    cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
+                           '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_messages', test, '--', '--exact']
+                    run = run_owned(cmd, cwd=root, env=env, timeout=300)
+                    log = run.stdout + run.stderr
+                    (out / f'{name}.log').write_text(slots.stdout + slots.stderr + log)
+                    if not (run.returncode != 0 and assertion_failure(log, test)):
+                        reason = 'did not fail a narrowed assertion'
+                finally:
+                    path.write_bytes(originals[path])
+            except Exception as error:
+                reason = f'{type(error).__name__}: {error}'
+            if reason is None:
+                killed.append(name)
+                print(f'KILLED   {name}: {test}', flush=True)
+            else:
+                survived.append((name, reason))
+                print(f'SURVIVED {name}: {reason}', flush=True)
+        for path, data in originals.items():
+            path.write_bytes(data)
+            assert path.read_bytes() == data, 'restoration failed: ' + str(path)
+    print(f'KILLED   {len(killed)}: ' + ', '.join(killed))
+    print(f'SURVIVED {len(survived)}: ' + ', '.join(name for name, _ in survived))
+    return 1 if survived else 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

@@ -404,23 +404,47 @@ def run(root, output, selected_rows, env, *, guarded, script=None, requested=(),
                                                   ReceiptRun(output, label, targets))
                                      if receipts else None):
                 rows.append(row)
-                publish_summary(output, rows, started, build_seconds)
+                # #1087 fix-r1: the row stays in memory only; the summary is
+                # published once below, after the exit checks. A per-row
+                # publish here left an all-KILLED summary on disk whenever a
+                # BaseException interrupted the run before those checks could
+                # revoke it (same #1061 rule gateway-batch already follows).
                 print(f"{row['name']}: {row['status']}: {row['reason']}", flush=True)
             verify_unchanged(root, hashes)
             if script is not None:
                 enforce_denominator(root, script, rows, requested)
-    except Exception as error:
+    except BaseException as error:
         reason = f'runner: {type(error).__name__}: {error}'
         # #1037: a guard or verification failure (record_sources, the exit
         # verify_unchanged, the denominator check) must revoke every already
         # completed row through the one shared implementation (#979), never a
         # second copy; otherwise an all-KILLED summary publishes a false pass.
+        # #1087 fix-r1: the catch is BaseException, so a cancellation
+        # (KeyboardInterrupt, SystemExit) takes the same void-and-publish
+        # path instead of skipping it and leaving the unverified rows as the
+        # last summary on disk.
         invalidate_completed(rows, reason)
         for row in selected_rows[len(rows):]:
             rows.append({key: row[key] for key in ('name', 'test', 'anchor')} | {
                 'status': 'INVALID', 'reason': reason})
         print(reason, file=sys.stderr)
-    publish_summary(output, rows, started, build_seconds)
+        # The voided summary goes out through the temp-and-rename publish, so
+        # an interrupt inside this publish — even a second SIGINT — leaves the
+        # pre-existing bytes untouched: a missing or unchanged summary plus the
+        # nonzero exit is the fail-closed signal (#1061 same rule).
+        publish_summary(output, rows, started, build_seconds)
+        # #1059 fix-r2 (#1061 same rule): with the INVALID summary on disk, a
+        # SystemExit is normalized to 2 instead of judged by its raw code
+        # (256/-256 truncate to a zero POSIX status, a string code exits 1).
+        if isinstance(error, SystemExit):
+            raise SystemExit(2) from error
+        if not isinstance(error, Exception):
+            raise
+    else:
+        # Every exit check passed (and the guarded sources never changed):
+        # only now may a summary exist on disk (#1087 fix-r1; the per-row
+        # publish inside the window was the stale-green-summary window).
+        publish_summary(output, rows, started, build_seconds)
     print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts(rows).items()),
           flush=True)
     return int(not rows or any(row['status'] != 'KILLED' for row in rows))

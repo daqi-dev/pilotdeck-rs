@@ -393,9 +393,15 @@ def main():
                     record(name, "INVALID", "restore mismatch")
                     raise SystemExit(2)
 
-    (out / "summary.json").write_text(
+    # #1087 fix-r1: one atomic rename, never a truncating write_text. The
+    # publish already happens only after the last restore verification; the
+    # write channel itself must also never leave an empty or half-written
+    # summary.json behind (#1903 rule).
+    tmp = out / "summary.json.tmp"
+    tmp.write_text(
         json.dumps(results, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
     )
+    tmp.replace(out / "summary.json")
     killed = sum(row["status"] == "KILLED" for row in results)
     print(f"{killed}/{len(results)} KILLED; see {out / 'summary.json'}", flush=True)
     # #1087: an empty run (a lost mutation table, a misparsed selection) must

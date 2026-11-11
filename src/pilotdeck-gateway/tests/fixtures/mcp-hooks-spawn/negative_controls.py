@@ -10,7 +10,10 @@ test's panic, is never a kill (fail-closed INVALID, the cargo-side form of
 #818). Every mutant runs to the end: rows are recorded KILLED / SURVIVED /
 INVALID with a reason, the summary.json is published once after the last
 restore verification, and the shared ``negative_selection.verdict_exit``
-contract keeps exit 0 only for a nonempty all-KILLED run.
+contract keeps exit 0 only for a nonempty all-KILLED run. #1087 fix-r1: that
+publish is one atomic rename (``write_summary``), never a truncating
+``write_text`` — the runner, its twin controls in ``test_negative_controls.py``
+and the mutation table stay at module level.
 """
 import argparse, json, os, re, sys
 from pathlib import Path
@@ -20,16 +23,7 @@ from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_selection import verdict_exit
 from negative_suite import passed
-if not os.environ.get('CARGO_TARGET_DIR'):
-    sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
-p = argparse.ArgumentParser()
-p.add_argument('output')
-p.add_argument('--only', action='append')
-p.add_argument('--check-patterns', action='store_true')
-a = p.parse_args()
-out = Path(a.output).resolve()
-out.mkdir(parents=True, exist_ok=False)
-baseline = os.environ.get('NEGATIVE_BASELINE') or 'HEAD'
+
 client = 'src/pilotdeck-gateway/src/runtime/mcp/client.rs'
 hooks = 'src/pilotdeck-gateway/src/runtime/async_hooks.rs'
 mutants = [
@@ -42,16 +36,15 @@ mutants = [
  ('delivery-poison', hooks, r'\*self\s*\.pending\s*\.delivery\s*\.lock\(\)\s*\.unwrap_or_else\(std::sync::PoisonError::into_inner\) = None;', 'if let Ok(mut slot) = self.pending.delivery.lock() { *slot = None; }', 'delivery_poison_failure', 'poisoned delivery cleared'),
  ('submit-clear', hooks, r'\*self\s*\.pending\s*\.delivery\s*\.lock\(\)\s*\.unwrap_or_else\(std::sync::PoisonError::into_inner\) = None;', 'let _ = &self.pending;', 'submit_sink_panic_clears_delivery', 'submit panic clears delivery'),
 ]
-if a.only:
-    unknown = set(a.only) - {m[0] for m in mutants}
-    if unknown:
-        sys.exit(f'unknown mutants: {sorted(unknown)}')
-    mutants = [m for m in mutants if m[0] in a.only]
-def save(name, value):
+
+
+def save(out, name, value):
     with (out / name).open('x') as f: f.write(value)
-def run(name, test):
+
+
+def run(out, name, test):
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
-    save(name + '.slots.log', slots.stdout + slots.stderr)
+    save(out, name + '.slots.log', slots.stdout + slots.stderr)
     return run_owned(['cargo', 'test', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', '--lib', test], cwd=root, env=os.environ.copy(), timeout=600)
 
 
@@ -85,41 +78,83 @@ def classify(result, test, anchor):
     return 'INVALID', 'missing bound runtime failure (build error, wrong panic, or missing anchor)'
 
 
-results = []
-for name, relative, pattern, replacement, test, anchor in mutants:
-    path = root / relative
-    if a.check_patterns:
-        _, n = re.subn(pattern, replacement, path.read_text(), flags=re.S)
-        if n != 1:
-            sys.exit(f'stale pattern {name}: {n} matches in {relative}')
-        print(f'{name}: unique source pattern; test={test}; anchor={anchor}', flush=True)
-        continue
-    status, reason = 'INVALID', 'not executed'
-    try:
-        with mutating_sources(root, [path], baseline=baseline) as original:
-            changed, n = re.subn(pattern, replacement, original[path].decode(), flags=re.S)
+def write_summary(out, results):
+    """Publish the one final summary atomically (#1087 fix-r1 / #1903 rule).
+
+    The publish already happens only after the last restore verification; the
+    remaining #1087 fix-r1 half is the write channel itself — a truncating
+    ``write_text`` killed mid-write leaves an empty or half-written
+    summary.json, so the payload goes to a sibling temp file and is renamed
+    into place in one atomic step.
+    """
+    tmp = out / 'summary.json.tmp'
+    tmp.write_text(json.dumps(results, indent=2) + '\n')
+    # ``os.rename`` (not ``Path.replace``/``os.replace``): this runner also
+    # regex-mutates sources, and the anchor selfcheck reads ANY ``.replace``
+    # attribute call as a literal string consumer mixed with the regex one,
+    # refusing the whole script. ``os.rename`` is the same single atomic
+    # rename on POSIX (it silently replaces an existing target), and this
+    # runner family is POSIX-only — ``negative_process`` needs ``flock``.
+    os.rename(tmp, out / 'summary.json')
+
+
+def main(argv=None):
+    argv = list(sys.argv if argv is None else argv)
+    if not os.environ.get('CARGO_TARGET_DIR'):
+        sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
+    p = argparse.ArgumentParser()
+    p.add_argument('output')
+    p.add_argument('--only', action='append')
+    p.add_argument('--check-patterns', action='store_true')
+    a = p.parse_args(argv[1:])
+    out = Path(a.output).resolve()
+    out.mkdir(parents=True, exist_ok=False)
+    baseline = os.environ.get('NEGATIVE_BASELINE') or 'HEAD'
+    selected = mutants
+    if a.only:
+        unknown = set(a.only) - {m[0] for m in mutants}
+        if unknown:
+            sys.exit(f'unknown mutants: {sorted(unknown)}')
+        selected = [m for m in mutants if m[0] in a.only]
+    results = []
+    for name, relative, pattern, replacement, test, anchor in selected:
+        path = root / relative
+        if a.check_patterns:
+            _, n = re.subn(pattern, replacement, path.read_text(), flags=re.S)
             if n != 1:
-                status, reason = 'INVALID', f'stale pattern: {n} matches in {relative}'
-            else:
-                path.write_text(changed)
-                result = run(name, test)
-                save(name + '.log', result.stdout + result.stderr)
-                status, reason = classify(result, test, anchor)
-        restored = run(name + '-restored', test)
-        save(name + '-restored.log', restored.stdout + restored.stderr)
-        restored_names = full_names(restored.stdout + restored.stderr, test)
-        if (restored.returncode != 0 or len(restored_names) != 1
-                or not passed(restored, restored_names[0])):
-            status, reason = 'INVALID', reason + '; restored run not green'
-    except Exception as error:
-        status, reason = 'INVALID', f'{type(error).__name__}: {error}'
-    print(f'{name}: {status}: {reason}', flush=True)
-    results.append({'mutation': name, 'test': test, 'assertion': anchor,
-                    'status': status, 'reason': reason})
-if a.check_patterns:
-    raise SystemExit(0)
-counts = {state: sum(row['status'] == state for row in results)
-          for state in ('KILLED', 'SURVIVED', 'INVALID')}
-print(json.dumps(counts), flush=True)
-(out / 'summary.json').write_text(json.dumps(results, indent=2) + '\n')
-raise SystemExit(verdict_exit(results, key='status'))
+                sys.exit(f'stale pattern {name}: {n} matches in {relative}')
+            print(f'{name}: unique source pattern; test={test}; anchor={anchor}', flush=True)
+            continue
+        status, reason = 'INVALID', 'not executed'
+        try:
+            with mutating_sources(root, [path], baseline=baseline) as original:
+                changed, n = re.subn(pattern, replacement, original[path].decode(), flags=re.S)
+                if n != 1:
+                    status, reason = 'INVALID', f'stale pattern: {n} matches in {relative}'
+                else:
+                    path.write_text(changed)
+                    result = run(out, name, test)
+                    save(out, name + '.log', result.stdout + result.stderr)
+                    status, reason = classify(result, test, anchor)
+            restored = run(out, name + '-restored', test)
+            save(out, name + '-restored.log', restored.stdout + restored.stderr)
+            restored_names = full_names(restored.stdout + restored.stderr, test)
+            if (restored.returncode != 0 or len(restored_names) != 1
+                    or not passed(restored, restored_names[0])):
+                status, reason = 'INVALID', reason + '; restored run not green'
+        except Exception as error:
+            status, reason = 'INVALID', f'{type(error).__name__}: {error}'
+        print(f'{name}: {status}: {reason}', flush=True)
+        results.append({'mutation': name, 'test': test, 'assertion': anchor,
+                        'status': status, 'reason': reason})
+    if a.check_patterns:
+        return 0
+    counts = {state: sum(row['status'] == state for row in results)
+              for state in ('KILLED', 'SURVIVED', 'INVALID')}
+    print(json.dumps(counts), flush=True)
+    write_summary(out, results)
+    return verdict_exit(results, key='status')
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

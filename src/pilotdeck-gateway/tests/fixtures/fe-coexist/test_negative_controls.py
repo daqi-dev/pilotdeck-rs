@@ -12,12 +12,18 @@ Run with:
 
     python3 -B -m unittest -v fe-coexist/test_negative_controls.py
 """
+import json
 import sys
+import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import negative_controls  # noqa: E402
+
+SimpleNamespace = types.SimpleNamespace
 
 
 TAP = """TAP version 13
@@ -100,6 +106,97 @@ class TAPBlockKillCriterion(unittest.TestCase):
                          '#1087 only the two failing subtests contribute blocks')
         self.assertNotIn('0.260875', '\n'.join(blocks),
                          '#1087 the passing subtest\'s diagnostic block never counts')
+
+
+class CoexistSummaryControls(unittest.TestCase):
+    """#1087 fix-r1: the final summary must be published by one rename.
+
+    The runner publishes ``summary.json`` only after the last restore
+    verification; the write channel itself must also never be a truncating
+    ``write_text``, or a kill mid-write leaves an empty or half-written
+    summary behind (#1903 rule). Only the guard and the node runs are mocked;
+    the publication under test is the delivered ``main``.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix='pdrs-coexist-runner-')
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        self.source = self.root / 'fixture.mjs'
+        self.source.write_text('x = 0\n')
+        self.oracle = self.root / 'oracle.test.mjs'
+        self.oracle.write_text('x = 0\n')
+
+    def _drive(self, disk):
+        out_arg = self.root / 'out' / 'run'
+        out = out_arg.resolve()
+        source = self.source
+
+        class Guard:
+            def __enter__(self):
+                return {source: b'x = 0\n'}
+
+            def __exit__(self, *exc):
+                return False
+
+        def mutating(root, paths, **kwargs):
+            return Guard()
+
+        def run_owned(command, **kwargs):
+            if '--check' in command:
+                return SimpleNamespace(returncode=0, stdout='', stderr='')
+            return SimpleNamespace(
+                returncode=1, stdout=(
+                    'TAP version 13\nnot ok 1 - bound\n  ---\n  error: |-\n'
+                    '    bound marker\n  ...\n# tests 1\n# fail 1\n'), stderr='')
+
+        real_write_text = Path.write_text
+        real_replace = Path.replace
+
+        def model_write_text(self, data, *args, **kwargs):
+            if self.parent == out and self.name == 'summary.json':
+                disk['direct'] = data
+                return None
+            if self.parent == out and self.name == 'summary.json.tmp':
+                disk['staged'] = data
+                return None
+            return real_write_text(self, data, *args, **kwargs)
+
+        def model_replace(self, destination, *args, **kwargs):
+            if self.parent == out and self.name == 'summary.json.tmp':
+                disk['renames'] = disk.get('renames', 0) + 1
+                disk['summary'] = disk['staged']
+                return None
+            return real_replace(self, destination, *args, **kwargs)
+
+        with patch.multiple(
+                negative_controls,
+                ROOT=self.root,
+                mutations=[('one', self.source, 'x = 0', 'x = 1',
+                            self.oracle, 'bound marker')],
+                mutating_sources=mutating,
+                run_owned=run_owned), \
+                patch.object(
+                sys, 'argv', ['negative_controls.py', str(out_arg)]), \
+                patch.object(Path, 'write_text', model_write_text), \
+                patch.object(Path, 'replace', model_replace):
+            code = negative_controls.main()
+        return code
+
+    def test_summary_is_published_by_one_atomic_rename(self):
+        disk = {}
+        code = self._drive(disk)
+        message = '#1087 the final summary must be one rename, never an in-place write'
+        self.assertTrue(code == 0, message + ' (the sample run must stay green)')
+        self.assertTrue(disk.get('direct') is None,
+                        message + ' (summary.json was written in place)')
+        self.assertTrue(disk.get('renames') == 1,
+                        message + ' (the summary was not published by exactly one rename)')
+        rows = json.loads(disk['summary'])
+        self.assertTrue([row['status'] for row in rows] == ['KILLED'],
+                        message + ' (the final payload must keep the row)')
+        self.assertTrue(self.source.read_text() == 'x = 0\n',
+                        message + ' (the guarded tree must end restored)')
 
 
 if __name__ == '__main__':

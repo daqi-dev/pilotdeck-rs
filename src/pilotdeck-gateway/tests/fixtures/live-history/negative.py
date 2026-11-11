@@ -124,5 +124,10 @@ with mutating_sources(root, list(dict.fromkeys(c[1] for c in chosen)), baseline=
 counts = {state: sum(row['status'] == state for row in results)
           for state in ('KILLED', 'SURVIVED', 'INVALID')}
 print(json.dumps(counts), flush=True)
-(out/'summary.json').write_text(json.dumps(results, indent=2)+'\n')
+# #1087 fix-r1: one atomic rename, never a truncating write_text. The publish
+# already happens only after every guarded byte was restored and verified; the
+# write channel itself must also never leave an empty or half-written
+# summary.json behind (#1903 rule).
+(out/'summary.json.tmp').write_text(json.dumps(results, indent=2)+'\n')
+(out/'summary.json.tmp').replace(out/'summary.json')
 raise SystemExit(verdict_exit(results, key='status'))
