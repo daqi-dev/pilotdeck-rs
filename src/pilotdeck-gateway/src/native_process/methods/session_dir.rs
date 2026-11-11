@@ -1083,11 +1083,16 @@ mod tests {
         // are both forced to answer.
         const UNSERVED_PROJECT: &str = "/nonexistent/pdrs-2090";
         // (1) No `projectKey`: the fallback is the configured project, so the
-        // family's own sessionKey gate answers — for an absent key and for a
-        // blank one alike.
+        // family's own sessionKey gate answers — for an absent key, a blank
+        // one, and the zero-length spelling alike. #2207: `""` gets its own
+        // cell instead of riding the `"   "` representative; the two agree on
+        // the TS gate (`"".trim()` and `"   ".trim()` are both `""`, Node
+        // v22.22.0 probe in `_tmp/20261111-issue-2199/ts-probe-gate.log`), so
+        // no divergence of its own is registered.
         for (label, params) in [
             ("missing", object([])),
             ("blank", object([("sessionKey", "   ".into())])),
+            ("empty", object([("sessionKey", "".into())])),
         ] {
             let expected = format!("#2090 a {label} sessionKey is rejected");
             let error =
@@ -1131,37 +1136,42 @@ mod tests {
         // before the method dispatch, so the first code is the admission one.
         // The valid-key control answering identically is what proves admission
         // — not the key — decides here.
-        for (label, params) in [
-            (
-                "blank key + unserved project",
-                object([
-                    ("sessionKey", "   ".into()),
-                    ("projectKey", UNSERVED_PROJECT.into()),
-                ]),
-            ),
-            (
-                "valid key + unserved project",
-                object([
-                    ("sessionKey", "pdrs-2090-control".into()),
-                    ("projectKey", UNSERVED_PROJECT.into()),
-                ]),
-            ),
+        // #2199: an explicit empty-string `projectKey` — present, not nullish —
+        // resolves against the process cwd on both sides (TS `resolve("")` =
+        // cwd, `projectRegistry.ts` `resolveProjectKey`; Rust `serves_project`
+        // runs the same `resolve_process_path("")` = cwd), so it is just
+        // another explicit project key. The fixture's cwd is not the scratch
+        // project, so admission refuses it like the unserved path below; a cwd
+        // equal to the configured project would admit it through to the
+        // sessionKey gate on both sides alike (Node v22.22.0 probe:
+        // `path.resolve("") === process.cwd()`), so it has no divergence of
+        // its own — the unserved-project answer family (R8 difference 3)
+        // covers it.
+        for (label, project) in [
+            ("unserved project", UNSERVED_PROJECT),
+            ("empty-string projectKey", ""),
         ] {
-            let expected = format!("#2090 admission refuses {label}");
-            let error =
-                crate::runtime::turn::gateway::GatewayRequests::request(&r, method.into(), params)
-                    .await
-                    .expect_err(&expected);
-            negative_assert_eq!(
-                error.code.as_str(),
-                "gateway_request_failed",
-                "#2090 admission answers an unserved project before the sessionKey gate"
-            );
-            negative_assert_eq!(
-                key_message(&error),
-                ISOLATED_PROJECT_MESSAGE,
-                "#2090 the admission message is the isolated-project one"
-            );
+            for (key_label, key) in [("blank key", "   "), ("valid key", "pdrs-2090-control")] {
+                let params = object([("sessionKey", key.into()), ("projectKey", project.into())]);
+                let expected = format!("#2090 admission refuses {label} with a {key_label}");
+                let error = crate::runtime::turn::gateway::GatewayRequests::request(
+                    &r,
+                    method.into(),
+                    params,
+                )
+                .await
+                .expect_err(&expected);
+                negative_assert_eq!(
+                    error.code.as_str(),
+                    "gateway_request_failed",
+                    "#2090 admission answers an unserved project before the sessionKey gate"
+                );
+                negative_assert_eq!(
+                    key_message(&error),
+                    ISOLATED_PROJECT_MESSAGE,
+                    "#2090 the admission message is the isolated-project one"
+                );
+            }
         }
 
         // (3) #2272: a valid sessionKey with `projectKey: null` runs the
