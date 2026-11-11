@@ -54,6 +54,45 @@ inherited ``GIT_DIR`` steers ``git -C`` at (measured pre-fix:
      ``/usr/bin/git`` with a fixed environment must refuse with the
      standard #2513 ValueError; an environment-inheriting mutant accepts
      and the bound assertRaises goes red.
+
+#2513 fix-r8 (sibling review P1 + a-class boundary findings) extends the same
+pinning to the *gateway-parity* entry — scripts/gateway-parity/common.py's
+``_apparatus_head``/``_head_source`` and _guard.py's ``verify_cli_imports``
+had the exact bare-``git`` shape round.py's ``_head_source`` had before
+fix-r7, plus a ``GIT_DIR``-in-environment branch of ``_has_git_checkout``
+that treated the steered variable as checkout evidence.  Four more phases
+(their assertion messages carry the ``#2513 gateway-parity`` prefix the
+kill rows in parity-env-isolation judge by):
+
+  6. gateway acceptance under steering — the scratch pins the worktree's
+     common.py, the probe executes exactly those bytes, then the disk is
+     mutated and ``GIT_DIR`` is steered at a decoy whose HEAD pins the
+     mutated bytes.  ``verify_loaded_apparatus`` must still ACCEPT.  An
+     environment-inheriting mutant reads the decoy HEAD (or dies on the
+     decoy's missing objects) and this phase's markered assertion goes red;
+  7. gateway refusal under steering — the probe executes bytes that differ
+     from scratch HEAD and the decoy pins exactly those executing bytes:
+     the pre-fix shape false-passed exactly here.  The verification must
+     refuse with the standard #166 message naming the probe;
+  8. guard refusal under steering — the live tree's ``_guard.py`` must
+     refuse a probe whose executing bytes differ from the scratch HEAD even
+     when ``GIT_DIR`` steers at a decoy that pins a lobotomized ``common.py``
+     (``verify_loaded_apparatus`` reduced to a no-op).  A
+     ``verify_cli_imports`` mutant that inherits the environment trusts the
+     lobotomized verifier and this phase's markered assertion goes red;
+  9. static export under steering — a static scratch (no ``.git`` anywhere
+     above it; the system temp directory, not the worktree's ``_tmp/``
+     whose walk-up would find the worktree's checkout) with ``GIT_DIR``
+     steered at a real decoy repository: both ``common.verify_loaded_apparatus``
+     and ``_guard.verify_cli_imports`` must return ``None`` (static
+     semantics).  The pre-fix ``return True`` branch counted the steered
+     variable as checkout evidence, walked into a HEAD it could never read
+     and failed on it.
+
+Two mechanical repairs ride along (the r8 a-class findings):
+``GIT_DIR`` steering now saves and restores the caller's value instead of
+popping it unconditionally, and the scratch/decoy staging git calls run
+with ``_discover_baseline``'s clean environment instead of inheriting one.
 """
 import sys
 
@@ -84,6 +123,7 @@ sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-parity-roundguard-pyc-')
 sys.dont_write_bytecode = True
 
 import importlib.util
+from contextlib import contextmanager
 from pathlib import Path
 import shutil
 import subprocess
@@ -92,12 +132,47 @@ import unittest
 _HERE = Path(__file__).resolve().parent          # scripts/parity/controls
 _PARITY = _HERE.parent                            # scripts/parity
 _REPO = _PARITY.parent.parent                     # the worktree root
+_GATEWAY = _PARITY.parent / 'gateway-parity'       # scripts/gateway-parity
 
 # The one edit the scratch carries: LOCK points at the scratch's own lease
 # path, so the ``lock == LOCK`` branch — the guard's only home — is live
 # without ever touching the shared /tmp/pdrs-parity.lock.
 _LOCK_ANCHOR = "LOCK = Path('/tmp/pdrs-parity.lock')"
 _G03_ENTRY = 'g03_compare.py'
+
+
+def _scratch_env():
+    """Same git isolation as _discover_baseline — never inherit GIT_*."""
+    env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
+    env['GIT_CONFIG_GLOBAL'] = os.devnull
+    return env
+
+
+def _scratch_git(root, *args):
+    """Run git inside a staged scratch with the clean environment above."""
+    subprocess.run(['git', '--no-optional-locks', '-c', 'core.fsmonitor=false',
+                   '-c', 'core.hooksPath=/dev/null', '-c', 'safe.directory=*',
+                   '-C', str(root), *args],
+                  check=True, timeout=30, env=_scratch_env())
+
+
+@contextmanager
+def _steered_git_dir(decoy):
+    """Point GIT_DIR at the decoy, restoring the caller's value afterwards.
+
+    #2513 fix-r8 (boundary finding): the steering phases used to pop GIT_DIR
+    unconditionally on exit, deleting a value the caller may have had before
+    the phase ran.  Save and restore instead.
+    """
+    previous = os.environ.get('GIT_DIR')
+    os.environ['GIT_DIR'] = str(decoy / '.git')
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop('GIT_DIR', None)
+        else:
+            os.environ['GIT_DIR'] = previous
 
 
 def _discover_baseline():
@@ -178,7 +253,7 @@ def _stage_round(tag):
                  ['add', '-A'],
                  ['-c', 'user.name=pdrs-2513-roundguard', '-c', 'user.email=pdrs-2513@invalid',
                   'commit', '-q', '-m', 'pdrs-2513 fix-r6 round.py guard control scratch']):
-        subprocess.run(['git', '-C', str(scratch), *args], check=True, timeout=30)
+        _scratch_git(scratch, *args)
     return holder, entry_dir / 'round.py', entry_dir / _G03_ENTRY, scratch / 'parity.lock'
 
 
@@ -205,7 +280,56 @@ def _stage_decoy(tag, round_bytes):
                  ['add', '-A'],
                  ['-c', 'user.name=pdrs-2513-roundguard', '-c', 'user.email=pdrs-2513@invalid',
                   'commit', '-q', '-m', 'pdrs-2513 fix-r7 round.py guard control decoy']):
-        subprocess.run(['git', '-C', str(decoy), *args], check=True, timeout=30)
+        _scratch_git(decoy, *args)
+    return holder, decoy
+
+
+def _stage_gateway(tag, common_bytes, guard_bytes=None):
+    """Stage a scratch repository pinning the worktree's gateway-parity bytes.
+
+    Layout: ``<holder>/scripts/gateway-parity/{common.py[, _guard.py]}``, so a
+    probe loaded from the scratch executes bytes this repository's HEAD pins
+    and ``verify_loaded_apparatus`` compares them against that HEAD — the
+    entry contract replayed against a repository this control owns, never
+    the worktree's objects and never the shared lease.
+    """
+    (_REPO / '_tmp').mkdir(parents=True, exist_ok=True)
+    holder = tempfile.TemporaryDirectory(prefix=f'pdrs-2513-roundguard-gw-{tag}-',
+                                         dir=_REPO / '_tmp')
+    scratch = Path(holder.name)
+    entry_dir = scratch / 'scripts' / 'gateway-parity'
+    entry_dir.mkdir(parents=True)
+    (entry_dir / 'common.py').write_bytes(common_bytes)
+    if guard_bytes is not None:
+        (entry_dir / '_guard.py').write_bytes(guard_bytes)
+    for args in (['init', '-q'],
+                 ['add', '-A'],
+                 ['-c', 'user.name=pdrs-2513-roundguard', '-c', 'user.email=pdrs-2513@invalid',
+                  'commit', '-q', '-m', 'pdrs-2513 fix-r8 gateway-parity guard control scratch']):
+        _scratch_git(scratch, *args)
+    return holder, entry_dir
+
+
+def _stage_gateway_decoy(tag, common_bytes):
+    """Stage a decoy repository whose HEAD pins the given common.py bytes.
+
+    The gateway twin of ``_stage_decoy``: an environment-inheriting
+    ``git -C <scratch> …`` reads this repository's objects when ``GIT_DIR``
+    names it, while the hardened ``/usr/bin/git`` with its fixed environment
+    never sees the variable.
+    """
+    (_REPO / '_tmp').mkdir(parents=True, exist_ok=True)
+    holder = tempfile.TemporaryDirectory(prefix=f'pdrs-2513-roundguard-gwdecoy-{tag}-',
+                                         dir=_REPO / '_tmp')
+    decoy = Path(holder.name)
+    entry_dir = decoy / 'scripts' / 'gateway-parity'
+    entry_dir.mkdir(parents=True)
+    (entry_dir / 'common.py').write_bytes(common_bytes)
+    for args in (['init', '-q'],
+                 ['add', '-A'],
+                 ['-c', 'user.name=pdrs-2513-roundguard', '-c', 'user.email=pdrs-2513@invalid',
+                  'commit', '-q', '-m', 'pdrs-2513 fix-r8 gateway-parity guard control decoy']):
+        _scratch_git(decoy, *args)
     return holder, decoy
 
 
@@ -303,17 +427,16 @@ class RoundHeadGuardControls(unittest.TestCase):
         self.holders.append(decoy_holder)
         held = False
         try:
-            os.environ['GIT_DIR'] = str(decoy / '.git')
-            try:
-                with module.parity_lock():
-                    held = lock.exists()
-            except ValueError as error:
-                raise AssertionError(
-                    '#2513 _head_source 必须只读提交对象：工作区被改且 GIT_DIR 被引导时，'
-                    '执行字节==HEAD 的轮次被拒绝（读到了工作区文件或诱饵 HEAD）: '
-                    + str(error)) from error
+            with _steered_git_dir(decoy):
+                try:
+                    with module.parity_lock():
+                        held = lock.exists()
+                except ValueError as error:
+                    raise AssertionError(
+                        '#2513 _head_source 必须只读提交对象：工作区被改且 GIT_DIR 被引导时，'
+                        '执行字节==HEAD 的轮次被拒绝（读到了工作区文件或诱饵 HEAD）: '
+                        + str(error)) from error
         finally:
-            os.environ.pop('GIT_DIR', None)
             module.LIVE_GROUPS.clear()
         self.assertTrue(held,
                         '#2513 工作区≠HEAD 且 GIT_DIR 被引导时，守卫必须仍接受执行字节==HEAD 的轮次'
@@ -340,25 +463,182 @@ class RoundHeadGuardControls(unittest.TestCase):
         decoy_holder, decoy = _stage_decoy('gitdir', executing)
         self.holders.append(decoy_holder)
         try:
-            os.environ['GIT_DIR'] = str(decoy / '.git')
-            with self.assertRaises(ValueError, msg='#2513 _head_source 必须不继承环境：'
-                                                   'GIT_DIR 指向装着执行字节的诱饵 HEAD 时守卫假放行') as caught:
-                with module.parity_lock():
-                    # The canary carries the same dedicated marker as the
-                    # assertRaises msg: an exception of the wrong type (this
-                    # raise, the false-pass shape) bypasses the msg parameter,
-                    # and the kill row's judge greps this exact marker.
-                    raise AssertionError('#2513 _head_source 必须不继承环境：'
-                                        'GIT_DIR 指向装着执行字节的诱饵 HEAD 时守卫假放行'
-                                        '（parity_lock 在引导环境下让步，未抛 ValueError 即到达 yield）')
-            self.assertTrue(str(caught.exception) ==
-                            '#2513 loaded apparatus differs from HEAD: scripts/parity/round.py',
-                            '#2513 round.py 装置核验拒绝消息必须逐字节是既有的单行 #2513 消息')
-            self.assertFalse(lock.exists(),
-                             '#2513 拒绝路径必须把重定向租约完整释放，不留 owner 残留')
+            with _steered_git_dir(decoy):
+                with self.assertRaises(ValueError, msg='#2513 _head_source 必须不继承环境：'
+                                                       'GIT_DIR 指向装着执行字节的诱饵 HEAD 时守卫假放行') as caught:
+                    with module.parity_lock():
+                        # The canary carries the same dedicated marker as the
+                        # assertRaises msg: an exception of the wrong type (this
+                        # raise, the false-pass shape) bypasses the msg parameter,
+                        # and the kill row's judge greps this exact marker.
+                        raise AssertionError('#2513 _head_source 必须不继承环境：'
+                                            'GIT_DIR 指向装着执行字节的诱饵 HEAD 时守卫假放行'
+                                            '（parity_lock 在引导环境下让步，未抛 ValueError 即到达 yield）')
+                self.assertTrue(str(caught.exception) ==
+                                '#2513 loaded apparatus differs from HEAD: scripts/parity/round.py',
+                                '#2513 round.py 装置核验拒绝消息必须逐字节是既有的单行 #2513 消息')
+                self.assertFalse(lock.exists(),
+                                 '#2513 拒绝路径必须把重定向租约完整释放，不留 owner 残留')
         finally:
-            os.environ.pop('GIT_DIR', None)
             module.LIVE_GROUPS.clear()
+
+    def test_gateway_verify_accepts_when_git_dir_steers_at_other_bytes(self):
+        # Phase 6 (#2513 fix-r8, sibling P1): the scratch pins the worktree's
+        # common.py, the probe executes exactly those bytes, then the disk is
+        # mutated and GIT_DIR is steered at a decoy whose HEAD pins the
+        # mutated bytes. verify_loaded_apparatus must still ACCEPT — its
+        # hardened reads use the committed object of this scratch only. A
+        # mutant that reads the worktree file, or inherits the environment
+        # (and with it the decoy HEAD), refuses here — or dies reading a
+        # decoy object the scratch does not have — and this phase's markered
+        # assertion goes red.
+        common_bytes = (_GATEWAY / 'common.py').read_bytes()
+        holder, entry_dir = _stage_gateway('accept', common_bytes)
+        self.holders.append(holder)
+        module = _load('gateway_common_accept', entry_dir / 'common.py')
+        module._apparatus_source = common_bytes
+        different = common_bytes + b'\n_2513_gateway_probe = 1\n'
+        (entry_dir / 'common.py').write_bytes(different)
+        decoy_holder, decoy = _stage_gateway_decoy('accept', different)
+        self.holders.append(decoy_holder)
+        try:
+            with _steered_git_dir(decoy):
+                try:
+                    head = module.verify_loaded_apparatus()
+                except (ValueError, subprocess.CalledProcessError) as error:
+                    raise AssertionError(
+                        '#2513 gateway-parity 装置核验读 HEAD 时不得继承环境：'
+                        '工作区被改且 GIT_DIR 被引导时，执行字节==HEAD 的核验被拒'
+                        '（读到了工作区文件或诱饵 HEAD）: ' + str(error)) from error
+        finally:
+            module.LIVE_GROUPS.clear()
+        self.assertIsNotNone(head,
+                             '#2513 gateway-parity 装置核验必须接受执行字节==HEAD 的模块，'
+                             '即使工作区被改且 GIT_DIR 被引导')
+
+    def test_gateway_verify_refuses_when_git_dir_steers_at_executing_bytes(self):
+        # Phase 7 (#2513 fix-r8, sibling P1): the probe executes bytes that
+        # differ from scratch HEAD (the mutation-window interleaving), the
+        # disk is restored before the verification, and GIT_DIR is steered at
+        # a decoy whose HEAD pins the executing bytes — the pre-fix
+        # bare-``git`` shape false-passed exactly here. The verification must
+        # refuse with the standard #166 message naming the probe.
+        common_bytes = (_GATEWAY / 'common.py').read_bytes()
+        holder, entry_dir = _stage_gateway('refuse', common_bytes)
+        self.holders.append(holder)
+        executing = common_bytes + b'\n_2513_gateway_probe = 1\n'
+        (entry_dir / 'common.py').write_bytes(executing)
+        module = _load('gateway_common_refuse', entry_dir / 'common.py')
+        module._apparatus_source = executing
+        (entry_dir / 'common.py').write_bytes(common_bytes)
+        decoy_holder, decoy = _stage_gateway_decoy('refuse', executing)
+        self.holders.append(decoy_holder)
+        try:
+            with _steered_git_dir(decoy):
+                try:
+                    with self.assertRaises(
+                            ValueError,
+                            msg='#2513 gateway-parity 装置核验必须不继承环境：'
+                                'GIT_DIR 指向装着执行字节的诱饵 HEAD 时核验假放行') as caught:
+                        module.verify_loaded_apparatus()
+                except subprocess.CalledProcessError as error:
+                    # An environment-inheriting mutant resolves the decoy
+                    # HEAD, then fails reading the decoy's missing object
+                    # from the scratch — re-raise with the dedicated marker.
+                    raise AssertionError(
+                        '#2513 gateway-parity 装置核验必须不继承环境：'
+                        '诱饵 HEAD 被当成 scratch 的 HEAD（读到 scratch 里不存在的对象）: '
+                        + str(error)) from error
+            self.assertEqual(str(caught.exception),
+                             '#166 loaded apparatus differs from HEAD: '
+                             + str((entry_dir / 'common.py').resolve()),
+                             '#2513 gateway-parity 装置核验拒绝消息必须逐字节是既有的单行 #166 消息')
+        finally:
+            module.LIVE_GROUPS.clear()
+
+    def test_gateway_guard_refuses_lobotomized_verifier_under_steering(self):
+        # Phase 8 (#2513 fix-r8, sibling P1): the live tree's _guard.py must
+        # refuse a probe whose executing bytes differ from the scratch HEAD
+        # even when GIT_DIR steers at a decoy that pins a lobotomized
+        # common.py (verify_loaded_apparatus reduced to a no-op). A
+        # verify_cli_imports mutant that inherits the environment trusts the
+        # lobotomized verifier — or dies reading a decoy object — and this
+        # phase's markered assertion goes red.
+        common_bytes = (_GATEWAY / 'common.py').read_bytes()
+        guard_bytes = (_GATEWAY / '_guard.py').read_bytes()
+        holder, entry_dir = _stage_gateway('guard', common_bytes, guard_bytes)
+        self.holders.append(holder)
+        executing = common_bytes + b'\n_2513_gateway_probe = 1\n'
+        (entry_dir / 'common.py').write_bytes(executing)
+        probe = _load('gateway_common_guard', entry_dir / 'common.py')
+        probe._apparatus_source = executing
+        (entry_dir / 'common.py').write_bytes(common_bytes)
+        lobotomy = (common_bytes
+                    + b'\n\nverify_loaded_apparatus = lambda head=None: head  # decoy\n')
+        decoy_holder, decoy = _stage_gateway_decoy('guard', lobotomy)
+        self.holders.append(decoy_holder)
+        guard = _load('gateway_guard_probe', _GATEWAY / '_guard.py')
+        try:
+            with _steered_git_dir(decoy):
+                try:
+                    with self.assertRaises(
+                            ValueError,
+                            msg='#2513 gateway-parity 的 _guard 必须不继承环境：'
+                                'GIT_DIR 指向装着叶切核验器的诱饵 HEAD 时 _guard 假放行') as caught:
+                        guard.verify_cli_imports(apparatus=entry_dir)
+                except subprocess.CalledProcessError as error:
+                    raise AssertionError(
+                        '#2513 gateway-parity 的 _guard 必须不继承环境：'
+                        '诱饵 HEAD 被当成 scratch 的 HEAD（读到 scratch 里不存在的对象）: '
+                        + str(error)) from error
+            self.assertEqual(str(caught.exception),
+                             '#166 loaded apparatus differs from HEAD: '
+                             + str((entry_dir / 'common.py').resolve()),
+                             '#2513 _guard 拒绝消息必须逐字节是既有的单行 #166 消息')
+        finally:
+            probe.LIVE_GROUPS.clear()
+
+    def test_gateway_entries_stay_static_when_git_dir_steers_and_no_checkout(self):
+        # Phase 9 (#2513 fix-r8, sibling P1): GIT_DIR is not checkout
+        # evidence. A static export — a scratch with no .git anywhere above
+        # it, in the system temp directory (a scratch under the worktree's
+        # _tmp/ would let both the walk and `git -C` find the worktree's
+        # checkout) — with GIT_DIR steered at a real decoy repository must
+        # keep static semantics: common.verify_loaded_apparatus returns None
+        # and _guard.verify_cli_imports returns None. The pre-fix
+        # `return True` branch counted the steered variable as checkout
+        # evidence, walked into a HEAD it could never read and failed on it.
+        holder = tempfile.TemporaryDirectory(prefix='pdrs-2513-roundguard-static-')
+        self.addCleanup(holder.cleanup)
+        scratch = Path(holder.name)
+        entry_dir = scratch / 'scripts' / 'gateway-parity'
+        entry_dir.mkdir(parents=True)
+        shutil.copy2(_GATEWAY / 'common.py', entry_dir / 'common.py')
+        module = _load('gateway_common_static', entry_dir / 'common.py')
+        guard = _load('gateway_guard_static', _GATEWAY / '_guard.py')
+        decoy_holder, decoy = _stage_gateway_decoy('static',
+                                                   (_GATEWAY / 'common.py').read_bytes())
+        self.holders.append(decoy_holder)
+        try:
+            with _steered_git_dir(decoy):
+                try:
+                    value = module.verify_loaded_apparatus()
+                except (ValueError, subprocess.CalledProcessError) as error:
+                    raise AssertionError(
+                        '#2513 gateway-parity 装置核验不得把 GIT_DIR 当成检出证据：'
+                        '静态导出在引导环境下走了 HEAD 核验而不是静态语义: ' + str(error)) from error
+                try:
+                    cli = guard.verify_cli_imports(apparatus=entry_dir)
+                except (ValueError, subprocess.CalledProcessError) as error:
+                    raise AssertionError(
+                        '#2513 gateway-parity 的 _guard 不得把 GIT_DIR 当成检出证据：'
+                        '静态导出在引导环境下走了 HEAD 核验而不是静态语义: ' + str(error)) from error
+        finally:
+            module.LIVE_GROUPS.clear()
+        self.assertIsNone(value,
+                          '#2513 gateway-parity 装置核验在静态导出+GIT_DIR 引导下必须返回 None')
+        self.assertIsNone(cli,
+                          '#2513 gateway-parity 的 _guard 在静态导出+GIT_DIR 引导下必须返回 None')
 
 
 if __name__ == '__main__':

@@ -667,8 +667,21 @@ def parity_lock(timeout=600, takeovers=None, lock=LOCK):
 def _has_git_checkout(root):
     """Missing checkout metadata permits static use; broken metadata does not."""
     import os
+    import subprocess
     if 'GIT_DIR' in os.environ:
-        return True
+        # #2513 fix-r8: GIT_DIR alone is not checkout evidence. A variable
+        # that points at a real repository only steers the hardened reads
+        # (root's own metadata decides, exactly like the walk below); a
+        # broken one is unreadable metadata and must fail closed through
+        # the caller's HEAD read.
+        try:
+            subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*',
+                                     '--git-dir', os.environ['GIT_DIR'],
+                                     'rev-parse', '--git-dir'],
+                                    env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+                                         'GIT_CONFIG_GLOBAL': '/dev/null'}, timeout=30)
+        except subprocess.CalledProcessError:
+            return True
     for directory in (root, *root.parents):
         try:
             (directory / '.git').lstat()
@@ -679,14 +692,24 @@ def _has_git_checkout(root):
 
 
 def _apparatus_head():
-    return subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', '--verify', 'HEAD'],
-                                   timeout=30).decode().strip()
+    # #2513 fix-r8: bare `git -C` inherits the caller's environment; a
+    # steered GIT_DIR reads the decoy repository's HEAD and the verification
+    # false-passes. Same isolation as round.py's hardened _head_source
+    # (fix-r7); the check_output call shape stays because test_safety pins
+    # its HEAD-read probe to that patch point.
+    return subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(ROOT),
+                                    'rev-parse', '--verify', 'HEAD'],
+                                   env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+                                        'GIT_CONFIG_GLOBAL': '/dev/null'}, timeout=30).decode().strip()
 
 
 def _head_source(head, path):
     relative = Path(path).resolve().relative_to(ROOT).as_posix()
-    return subprocess.check_output(['git', '-C', str(ROOT), 'show', f'{head}:{relative}'],
-                                   timeout=30)
+    # #2513 fix-r8: same hardened shape as _apparatus_head above.
+    return subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(ROOT),
+                                    'show', f'{head}:{relative}'],
+                                   env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+                                        'GIT_CONFIG_GLOBAL': '/dev/null'}, timeout=30)
 
 
 

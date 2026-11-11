@@ -47,6 +47,14 @@ decoy HEAD), and the two head-source kill rows below are judged by
 ``control_round_head_guard_head_source`` against their dedicated phase
 markers, so an unrelated red in the same entry stays INVALID, never KILLED.
 
+Guard under test (#2513 fix-r8, sibling review P1): the gateway-parity entry
+had the same bare-``git`` shape in scripts/gateway-parity/common.py's
+``_apparatus_head``/``_head_source`` and _guard.py's ``verify_cli_imports``,
+plus a ``_has_git_checkout`` branch that treated a steered ``GIT_DIR``
+variable as checkout evidence.  Five kill rows below are judged by
+``control_round_head_guard_gateway`` against the control's phase-6..9
+markers, with the same INVALID-never-KILLED exclusivity.
+
 Every mutated source equals HEAD before its window opens (mutating_sources);
 each mutant compiles before its control runs; stale anchors abort instead of
 being recorded as SURVIVED.  No shadow repository or HEAD exemption is used.
@@ -132,12 +140,88 @@ mutations = [
      "                                 'GIT_CONFIG_GLOBAL': '/dev/null'},",
      "env=dict(os.environ),",
      'control_round_head_guard_head_source'),
+    # #2513 fix-r8 (sibling review P1): the gateway-parity entry had the same
+    # bare-``git`` shape round.py had before fix-r7, in three places —
+    # common.py's _apparatus_head/_head_source and _guard.py's
+    # verify_cli_imports — plus a _has_git_checkout branch that treated a
+    # steered GIT_DIR variable as checkout evidence. Five rows, judged by
+    # control_round_head_guard_gateway against the dedicated phase-6..9
+    # markers of the same control (an unrelated red in the same entry stays
+    # INVALID, never KILLED). The env rows inherit os.environ, so GIT_DIR
+    # steers the HEAD read at the decoy repository the phases pin; the
+    # gitdir-pass rows restore the pre-fix `return True` and phase 9's
+    # static-export assertions go red (the steered variable counted as
+    # checkout evidence over a static export).
+    ('gateway-common-apparatus-head-env-inherited', root / 'scripts/gateway-parity/common.py',
+     "    return subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(ROOT),\n"
+     "                                    'rev-parse', '--verify', 'HEAD'],\n"
+     "                                   env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "                                        'GIT_CONFIG_GLOBAL': '/dev/null'}, timeout=30).decode().strip()",
+     "    return subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(ROOT),\n"
+     "                                    'rev-parse', '--verify', 'HEAD'],\n"
+     "                                   env=dict(os.environ), timeout=30).decode().strip()",
+     'control_round_head_guard_gateway'),
+    ('gateway-common-head-source-env-inherited', root / 'scripts/gateway-parity/common.py',
+     "    return subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(ROOT),\n"
+     "                                    'show', f'{head}:{relative}'],\n"
+     "                                   env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "                                        'GIT_CONFIG_GLOBAL': '/dev/null'}, timeout=30)",
+     "    return subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(ROOT),\n"
+     "                                    'show', f'{head}:{relative}'],\n"
+     "                                   env=dict(os.environ), timeout=30)",
+     'control_round_head_guard_gateway'),
+    ('gateway-common-has-git-checkout-gitdir-pass', root / 'scripts/gateway-parity/common.py',
+     "    if 'GIT_DIR' in os.environ:\n"
+     "        # #2513 fix-r8: GIT_DIR alone is not checkout evidence. A variable\n"
+     "        # that points at a real repository only steers the hardened reads\n"
+     "        # (root's own metadata decides, exactly like the walk below); a\n"
+     "        # broken one is unreadable metadata and must fail closed through\n"
+     "        # the caller's HEAD read.\n"
+     "        try:\n"
+     "            subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*',\n"
+     "                                     '--git-dir', os.environ['GIT_DIR'],\n"
+     "                                     'rev-parse', '--git-dir'],\n"
+     "                                    env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "                                         'GIT_CONFIG_GLOBAL': '/dev/null'}, timeout=30)\n"
+     "        except subprocess.CalledProcessError:\n"
+     "            return True\n",
+     "    if 'GIT_DIR' in os.environ:\n"
+     "        return True\n",
+     'control_round_head_guard_gateway'),
+    ('gateway-guard-verify-cli-imports-env-inherited', root / 'scripts/gateway-parity/_guard.py',
+     "    head = subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(root),\n"
+     "                                    'rev-parse', '--verify', 'HEAD'],\n"
+     "                                   env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "                                        'GIT_CONFIG_GLOBAL': '/dev/null'}, timeout=30).decode().strip()",
+     "    head = subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(root),\n"
+     "                                    'rev-parse', '--verify', 'HEAD'],\n"
+     "                                   env=dict(os.environ), timeout=30).decode().strip()",
+     'control_round_head_guard_gateway'),
+    ('gateway-guard-has-git-checkout-gitdir-pass', root / 'scripts/gateway-parity/_guard.py',
+     "    if 'GIT_DIR' in os.environ:\n"
+     "        # #2513 fix-r8: GIT_DIR alone is not checkout evidence. A variable\n"
+     "        # that points at a real repository only steers the hardened reads\n"
+     "        # (root's own metadata decides, exactly like the walk below); a\n"
+     "        # broken one is unreadable metadata and must fail closed through\n"
+     "        # the caller's HEAD read.\n"
+     "        try:\n"
+     "            subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*',\n"
+     "                                     '--git-dir', os.environ['GIT_DIR'],\n"
+     "                                     'rev-parse', '--git-dir'],\n"
+     "                                    env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "                                         'GIT_CONFIG_GLOBAL': '/dev/null'}, timeout=30)\n"
+     "        except subprocess.CalledProcessError:\n"
+     "            return True\n",
+     "    if 'GIT_DIR' in os.environ:\n"
+     "        return True\n",
+     'control_round_head_guard_gateway'),
 ]
 
 positives = [
     ('parity-round-host-env-isolation', 'control_round_host_env_isolation'),
     ('parity-round-head-guard', 'control_round_head_guard'),
     ('parity-round-head-source-guard', 'control_round_head_guard_head_source'),
+    ('gateway-round-head-guard', 'control_round_head_guard_gateway'),
 ]
 
 # Static rosters: the denominators of this run are literals in the source, not
@@ -148,11 +232,17 @@ EXPECTED_MUTATIONS = [
     'parity-round-apparatus-verify-deleted',
     'parity-round-head-source-worktree-read',
     'parity-round-head-source-env-inherited',
+    'gateway-common-apparatus-head-env-inherited',
+    'gateway-common-head-source-env-inherited',
+    'gateway-common-has-git-checkout-gitdir-pass',
+    'gateway-guard-verify-cli-imports-env-inherited',
+    'gateway-guard-has-git-checkout-gitdir-pass',
 ]
 EXPECTED_POSITIVES = [
     'parity-round-host-env-isolation',
     'parity-round-head-guard',
     'parity-round-head-source-guard',
+    'gateway-round-head-guard',
 ]
 
 # The KILLED judge below greps the control entry's own leak marker, and the
@@ -167,6 +257,13 @@ CONTROL_MARKERS = ('PILOTDECK_GATEWAY_MODE 泄漏', '#2513')
 # downgrade the kill to INVALID.
 ROUND_GUARD_ENTRY = root / 'scripts/parity/controls/round_head_guard.py'
 ROUND_GUARD_MARKERS = ('#2513', 'scripts/parity/round.py')
+
+# Same binding for the fix-r8 gateway phases of that control: the phase-6..9
+# assertions carry the dedicated 「#2513 gateway-parity」 prefix the judge
+# below greps, and the entry must name the guarded gateway apparatus;
+# --check binds both so a rename there cannot silently downgrade every
+# kill to INVALID.
+ROUND_GUARD_GATEWAY_MARKERS = ('#2513 gateway-parity', 'scripts/gateway-parity/common.py')
 
 
 def run_control(scratch, label, entry):
@@ -224,10 +321,32 @@ def control_round_head_guard_head_source(scratch):
                              f'(exit={result.returncode})')
 
 
+def control_round_head_guard_gateway(scratch):
+    """#2513 fix-r8: the gateway-parity phases of the same control must pass.
+
+    Exclusivity: the kill is credited only when the failing phase carries the
+    ``#2513 gateway-parity`` marker (the dedicated phase-6..9 assertions);
+    an unrelated red in the same control entry stays a RuntimeError (INVALID),
+    never a KILLED.
+    """
+    result = run_control(scratch, 'round-head-gateway', ROUND_GUARD_ENTRY)
+    log = result.stdout + result.stderr
+    if result.returncode != 0:
+        if '#2513' not in log:
+            raise RuntimeError('round_head_guard failed without the #2513 marker '
+                              f'(exit={result.returncode}): {log.strip()}')
+        if '#2513 gateway-parity' not in log:
+            raise RuntimeError('round_head_guard failed without a gateway-parity '
+                              f'phase marker (exit={result.returncode}): {log.strip()}')
+        raise AssertionError('#2513 gateway-parity 装置核验的裸 git 读取或 GIT_DIR '
+                             f'直通分支被当场抓住 (exit={result.returncode})')
+
+
 RUNNERS = {
     'control_round_host_env_isolation': control_round_host_env_isolation,
     'control_round_head_guard': control_round_head_guard,
     'control_round_head_guard_head_source': control_round_head_guard_head_source,
+    'control_round_head_guard_gateway': control_round_head_guard_gateway,
 }
 
 
@@ -262,6 +381,9 @@ def check_errors():
     for marker in ROUND_GUARD_MARKERS:
         if marker not in entry:
             errors.append(f'round-head guard entry lost its {marker!r} marker')
+    for marker in ROUND_GUARD_GATEWAY_MARKERS:
+        if marker not in entry:
+            errors.append(f'round-head guard entry lost its {marker!r} gateway marker')
     return errors
 
 

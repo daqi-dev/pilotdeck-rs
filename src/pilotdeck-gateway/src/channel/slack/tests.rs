@@ -1336,6 +1336,13 @@ async fn replay(case: &Value) -> Value {
 
     let mut channel: Option<SlackChannel> = None;
     let mut handle: Option<Arc<dyn ChannelHandle>> = None;
+    // #2513 fix-r8 (slack matrix ws-send race): after `stop` the reader task
+    // observes the close frame and `read_frames` retain-clears the socket
+    // from `mock.sockets`, so a later `ws-send` reading the live list races
+    // an empty Vec and records a phantom "dropped". The stop step archives
+    // the socket before `handle.stop()`; a later start clears the archive and
+    // the ws-send step falls back to it.
+    let mut stopped_socket: Option<MockSocket> = None;
 
     for step in case["steps"].as_array().expect("#1344 case steps") {
         match step["op"].as_str().expect("#1344 step op") {
@@ -1352,6 +1359,7 @@ async fn replay(case: &Value) -> Value {
                     .unwrap_or_default();
                 channel = Some(load_channel(port, &without, gateway.clone()));
                 let channel = channel.as_ref().expect("#1344 channel built");
+                stopped_socket = None;
                 handle = Some(
                     bounded(&cell, channel.start(case_deps(&record)))
                         .await
@@ -1360,6 +1368,7 @@ async fn replay(case: &Value) -> Value {
             }
             "restart" => {
                 let channel = channel.as_ref().expect("#1344 restart needs a channel");
+                stopped_socket = None;
                 handle = Some(
                     bounded(&cell, channel.start(case_deps(&record)))
                         .await
@@ -1369,6 +1378,16 @@ async fn replay(case: &Value) -> Value {
             "stop" => {
                 let reason = step["reason"].as_str().expect("#1344 stop reason");
                 let handle = handle.as_ref().expect("#1344 started");
+                // A channel that already closed itself (its own close frame
+                // retain-clears the socket) legitimately reaches stop with an
+                // empty list; the archive stays None and ws-send then keeps
+                // recording "dropped", exactly like before.
+                stopped_socket = mock
+                    .sockets
+                    .lock()
+                    .expect("#1344 sockets mutex")
+                    .last()
+                    .cloned();
                 bounded(&cell, handle.stop(reason))
                     .await
                     .expect("#1344 stop result");
@@ -1379,7 +1398,8 @@ async fn replay(case: &Value) -> Value {
                     .lock()
                     .expect("#1344 sockets mutex")
                     .last()
-                    .cloned();
+                    .cloned()
+                    .or(stopped_socket.clone());
                 match socket {
                     Some(socket) => {
                         let envelope =

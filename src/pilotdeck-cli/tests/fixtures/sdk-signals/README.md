@@ -253,7 +253,8 @@ trace 位置与 dispatched abort 的先后、reset 之后无 wire 事件；再�
 自 #2513 fix-r3 起是共享租约消费方——`src/pilotdeck-cli/tests/` 已入锁族谓词；自
 #2513 fix-r4 起该窗口自身的租约**重定向**到本批证据目录内的
 `parity-redirect.lock`（`PDRS_SDK_TEST_PARITY_LOCK` 的 Python 同型，见其
-`_redirect_window_parity_lock`），对共享租约仍不互斥，内部 cargo test 选
+`_redirect_window_parity_lock`；自 fix-r8 起重定向前有 `_require_host_lease` 身份闸，
+未验证则回退共享租约排队），对共享租约仍不互斥，内部 cargo test 选
 `signal_cases::*` / `pending_abort_*` 真 bind 28999，与本节矩阵同样须宿主先持租约
 再跑）。**自取租约者是例外，宿主不要为它们预持**：重采块
 `capture.py:45`（cli-parity 的 `parity_lock()`；`probe.mjs:17-18` 断言 owner.pid 是
@@ -287,10 +288,19 @@ stdout 单面」。
 | 命令块 / 装置 | 绑 28999 | 自身与共享租约 `/tmp/pdrs-parity.lock` 的关系 | 宿主是否预持 |
 | --- | --- | --- | --- |
 | `sdk_signal_exit` 矩阵本批（`signal_cases::*` / `pending_abort_*`） | 是 | 不取租约（仅进程内 `SERIAL` 互斥） | **必须预持** |
-| `src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py`（窗口改 gateway 侧源） | 内部 cargo 真 bind | 变异窗口租约自 fix-r4 重定向到证据目录 `parity-redirect.lock`，对共享租约不互斥 | **必须预持** |
-| `src/pilotdeck-gateway/tests/fixtures/sdk-signal-read-lease/negative_controls.py`（GREEN/RED/`--stop-check`，窗口改 cli 侧 `capture.py`） | 常驻测试 `--exact` 只读盘不绑端口 | 变异窗口租约自 fix-r7 同样重定向（`_redirect_window_parity_lock` 同型，`_require_host_lease` 前置闸取不到即退出 2）；不重定向则 writer/red 在宿主持有的共享锁上自排队 60 s 超时 → 全部 INVALID | **必须预持**（与整批同车道；`--window-lock-check` / `--kill-window-lock` 见该 fixture README） |
+| `src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py`（窗口改 gateway 侧源） | 内部 cargo 真 bind | 变异窗口租约自 fix-r4 重定向到证据目录 `parity-redirect.lock`，对共享租约不互斥；自 fix-r8 起重定向前有 `_require_host_lease` 身份闸（同 read-lease 同形） | **必须预持** |
+| `src/pilotdeck-gateway/tests/fixtures/sdk-signal-read-lease/negative_controls.py`（GREEN/RED/`--stop-check`，窗口改 cli 侧 `capture.py`） | 常驻测试 `--exact` 只读盘不绑端口 | 变异窗口租约自 fix-r7 同样重定向（`_redirect_window_parity_lock` 同型）；自 fix-r8 起前置闸改为**身份校验 + fail-closed 回退**：宿主预持可验证（owner.json 活外部 pid + `host-hold.json` marker + `PDRS_PARITY_HOST_TOKEN` 一致）才开重定向窗口，验证不到则一行原因打到 stderr 并回退在共享租约上排队（不是退出 2）——活的 parity round 持锁时窗口照旧排队，不会误开 | **必须预持**（与整批同车道；`--window-lock-check` / `--kill-window-lock` 见该 fixture README） |
 | 重采块 `capture.py` | 是 | 自取 cli-parity `parity_lock()`（`probe.mjs` 断言 owner.pid 是它自己） | **不要预持**（预持即 `Blocked`） |
 | D0 Rust 六文件 `sdk_{run,resume,format,settings,sessions_list,sessions_messages}_exit.rs` | — | 各自 `ParityLock::acquire` 同一把锁（180 s 上限） | **不要预持**（预持即整族假 FAIL） |
+
+#2513 fix-r8 起预持还带**身份**：两个 gateway 侧 fixture 的重定向窗口只在
+「owner.json 活外部 pid + 锁目录内 `host-hold.json` 的 token 与 env
+`PDRS_PARITY_HOST_TOKEN` 一致」时打开。宿主持锁期间原子发布
+`/tmp/pdrs-parity.lock/host-hold.json`（`{"token": ...}`，tmp+replace，生命周期与持锁
+相同）并向被跑的 fixture 导出同一 token，两个 fixture 才会把重定向窗口当作宿主车道
+的一部分；身份校验不到时窗口不开，改在共享租约上排队（见各自 README 的
+`--window-lock-check` 四场景）。宿主没接这套布线时，窗口一律走共享租约排队，
+不会出现无守卫的变异窗口。
 
 ```sh
 scripts/cargo-slots.sh

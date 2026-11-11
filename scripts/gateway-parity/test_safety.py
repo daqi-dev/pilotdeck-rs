@@ -756,7 +756,7 @@ class ImportIsolation(unittest.TestCase):
         mutant._apparatus_source = source
 
         def git_read(command, **kwargs):
-            if command[3] == 'rev-parse':
+            if 'rev-parse' in command:
                 return (self.head + '\n').encode()
             return sources[command[-1].split(':', 1)[1]]
 
@@ -785,7 +785,7 @@ class ImportIsolation(unittest.TestCase):
         read = Path.read_bytes
 
         def git_read(command, **kwargs):
-            return ((self.head + '\n').encode() if command[3] == 'rev-parse'
+            return ((self.head + '\n').encode() if 'rev-parse' in command
                     else sources[command[-1].split(':', 1)[1]])
 
         with patch.object(subprocess, 'check_output', side_effect=git_read):
@@ -827,7 +827,7 @@ class ImportIsolation(unittest.TestCase):
                 output = io.StringIO()
                 reached = False
                 def git_read(command, **kwargs):
-                    return (self.head + '\n').encode() if command[3] == 'rev-parse' else head_verifier
+                    return (self.head + '\n').encode() if 'rev-parse' in command else head_verifier
                 with patch.dict(sys.modules, {'__main__': module}), \
                         patch.object(subprocess, 'check_output', side_effect=git_read), \
                         patch.object(common, 'verify_loaded_apparatus', return_value=None), \
@@ -1100,7 +1100,7 @@ class ImportIsolation(unittest.TestCase):
         sources = {p.relative_to(common.ROOT).as_posix(): p.read_bytes()
                    for p in common.SCRIPT.rglob('*.py') if 'node_modules' not in p.parts}
         def git_read(command, **kwargs):
-            return ((self.head + '\n').encode() if command[3] == 'rev-parse'
+            return ((self.head + '\n').encode() if 'rev-parse' in command
                     else sources[command[-1].split(':', 1)[1]])
         class WorkReached(Exception):
             pass
