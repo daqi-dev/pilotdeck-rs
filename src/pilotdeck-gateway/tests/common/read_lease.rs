@@ -9,16 +9,24 @@
 //! and every writer restores its guarded sources before releasing.
 //!
 //! Lock taxonomy, for anyone pointing at this header as the canonical
-//! wording: the lock has one mechanism — `tree_lock`, LOCK_EX on that file —
-//! and whether a command holds it is a per-runner fact, not a property of
-//! reading or writing: `utf16-residual-sort/negative_controls.py
-//! --check-anchors` takes it; a fixture's `--check` branch does not;
-//! neither does a plain `cargo test`. Nothing that never takes the lock
-//! is excluded from anything — any of them can read a mid-window mutant
-//! and false-fail. A writer SIGKILLed while inside the mutation window
-//! leaves the mutant on disk (its `finally` restore never ran); the lock
-//! dies with the process, so an absent lock proves nothing about tree
-//! cleanliness.
+//! wording: one lock file, two acquisition modes. Writers take it
+//! exclusively (`tree_lock`, LOCK_EX); the resident readers in this
+//! module take it shared (`fixture_read_lease`, `try_lock_shared`) and
+//! are thereby excluded from writer windows but never from each other.
+//! Whether any *other* command takes the lock at all is a per-runner
+//! fact, not a property of reading or writing: `utf16-residual-sort/
+//! negative_controls.py --check-anchors` takes it; `issue-1246/
+//! negative_controls.py --check` takes it (its check runs inside the
+//! tree lock), and so does `issue-2495/negative_controls.py --check`
+//! (its stale scan runs inside the tree lock); `always-on-2294/
+//! negative_controls.py --check` does not; a plain `cargo test` takes
+//! none itself, but the resident tests that call `fixture_read_lease`
+//! hold it shared for their reads (`live_e2e.rs` here). Nothing that
+//! never takes the lock is excluded from anything — any lockless command
+//! can read a mid-window mutant and false-fail. A writer SIGKILLed while
+//! inside the mutation window leaves the mutant on disk (its `finally`
+//! restore never ran); the lock dies with the process, so an absent lock
+//! proves nothing about tree cleanliness.
 //!
 //! This mirrors `src/pilotdeck-cli/tests/common/read_lease.rs`. Rust integration
 //! tests are separate crates, so a helper cannot be shared without a dedicated
