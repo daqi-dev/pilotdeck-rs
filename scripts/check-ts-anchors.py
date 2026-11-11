@@ -22,7 +22,9 @@ TS 基线（resources/PilotDeck，不入库）不动之后，仓内 Rust 注释�
    `TS_ANCHORS` 是「锚点名 → 行号 → 该行必须含的签名」表；签名以 `=` 开头表示整行
    strip 相等（`);` / `},` 这类短签名必须整行判，否则同形收尾行如 `});` 会顶替命中，
    #2795 fix-r1 条6）。给出基线路径就逐条实读 GatewayWsConnection.ts 核对；
-   路径给了但文件找不到/读不了 → 退 2，不静默跳过。
+   路径给了但文件找不到/读不了 → 退 2，不静默跳过；给了空值（空串/全空白，含
+   `--ts-baseline ""` 与 `PDRS_TS_BASELINE=""`）同样退 2——显式空值不得被 `or`
+   折叠成「未提供」静默跳过第 2 层（#2795 fix-r2 boundary P0）。
    没给路径时只跑第 1 层（CI 里没有 resources/ 基线，见 .gitignore）。
    基线钉在 schema-FROZEN.md 的 cc7c4e65（与 CI 两处浅克隆同一冻结 commit）。
 
@@ -31,7 +33,7 @@ TS 基线（resources/PilotDeck，不入库）不动之后，仓内 Rust 注释�
   python3 -I scripts/check-ts-anchors.py --ts-baseline /path/to/PilotDeck
   python3 -I scripts/check-ts-anchors.py --self-check   # 机检自身的变异负控
 
-退出码：0 通过 · 1 判红（锚点漂移 / 名册失配）· 2 前置错误（基线路径失效等，fail-closed）。
+退出码：0 通过 · 1 判红（锚点漂移 / 名册失配）· 2 前置错误（基线路径失效、基线为空值等，fail-closed）。
 """
 
 from __future__ import annotations
@@ -329,6 +331,38 @@ def _self_check() -> int:
     if rc != 2:
         failures.append(f"NC5: 基线路径失效时 main 退 {rc}，应为 2（fail-closed）")
 
+    # NC7（fix-r2 boundary P0：空值基线 fail-closed，与 NC5 互补——NC5 盖非空不存在
+    # 路径，NC7 盖空值）：`--ts-baseline ""` 与 `PDRS_TS_BASELINE=""` 在旧的 `or`
+    # 折叠下都静默落入「未提供」分支、只跑第 1 层、exit 0，与 fail-closed 契约相反；
+    # 空值必须退 2 且 stderr 报「给了空值」——只验 rc 会放过「空串落进路径解析臂、
+    # 碰巧也退 2」的换汤变异（消息必须点名叫空值）。NC7b 走 main([])（显式空 argv，
+    # 避免吃到外层 --self-check 递归），env 由 save/restore 保护。
+    import contextlib
+    import io
+
+    def main_stderr(argv: list[str]) -> tuple[int, str]:
+        captured = io.StringIO()
+        with contextlib.redirect_stderr(captured):
+            rc = main(argv)
+        return rc, captured.getvalue()
+
+    rc, err = main_stderr(["--ts-baseline", ""])
+    if rc != 2 or "给了空值" not in err:
+        failures.append(f"NC7a: 空串 --ts-baseline 时 main 退 {rc}、stderr={err!r}，"
+                        "应为 2 且报「给了空值」（fail-closed）")
+    saved_env = os.environ.get("PDRS_TS_BASELINE")
+    os.environ["PDRS_TS_BASELINE"] = ""
+    try:
+        rc, err = main_stderr([])
+    finally:
+        if saved_env is None:
+            os.environ.pop("PDRS_TS_BASELINE", None)
+        else:
+            os.environ["PDRS_TS_BASELINE"] = saved_env
+    if rc != 2 or "给了空值" not in err:
+        failures.append(f"NC7b: 空串 PDRS_TS_BASELINE 时 main 退 {rc}、stderr={err!r}，"
+                        "应为 2 且报「给了空值」（fail-closed）")
+
     if failures:
         for failure in failures:
             print(f"SELF-CHECK FAIL: {failure}", file=sys.stderr)
@@ -347,8 +381,23 @@ def main(argv: list[str] | None = None) -> int:
         return _self_check()
 
     problems = check_citations(ROOT)
-    baseline = args.ts_baseline or os.environ.get("PDRS_TS_BASELINE")
-    if baseline:
+    # 空值 ≠ 未提供（#2795 fix-r2 boundary P0）：`--ts-baseline ""` /
+    # `PDRS_TS_BASELINE=""` 是调用方的配置错误，旧的 `or` 写法把它折叠成「未提供」、
+    # 静默跳过第 2 层并 exit 0——与上面第 2 层的 fail-closed 契约相反。flag 与 env
+    # 分开判 None：显式给了哪个就用哪个；两处都没给才是「未提供」。
+    if args.ts_baseline is not None:
+        baseline = args.ts_baseline
+    else:
+        baseline = os.environ.get("PDRS_TS_BASELINE")
+    if baseline is not None:
+        if not baseline.strip():
+            print(
+                "FAIL-CLOSED: --ts-baseline / PDRS_TS_BASELINE 给了空值（空串或全空白）——"
+                "显式提供的基线必须指向 PilotDeck 根或 GatewayWsConnection.ts 本身；"
+                "要只跑引用名册层就整项不要传",
+                file=sys.stderr,
+            )
+            return 2
         try:
             ts_path = resolve_ts_path(baseline)
         except FileNotFoundError as exc:

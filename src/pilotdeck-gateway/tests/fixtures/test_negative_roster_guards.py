@@ -301,6 +301,100 @@ def _drive_manager(testcase, argv, *, drop_last=False, renamed=False,
     return Drive(module, code, out, stdout.getvalue(), stderr.getvalue(), writes, installed)
 
 
+class _RecordingTreeLock:
+    """A stubbed ``tree_lock`` for the --audit drive: records acquisition.
+
+    ``busy`` makes every ``__enter__`` raise ``TimeoutError`` (the entry's
+    documented busy-lock refusal shape, issue-2495's bounded-wait precedent).
+    """
+
+    def __init__(self, events, *, busy=False):
+        self.events = events
+        self.busy = busy
+        self.held = False
+
+    def __call__(self, root, **kwargs):
+        return self
+
+    def __enter__(self):
+        if self.busy:
+            raise TimeoutError('audit drive: lock timeout (#2795 fix-r2)')
+        self.events.append('lock-enter')
+        self.held = True
+        return self
+
+    def __exit__(self, *_exc):
+        self.held = False
+        self.events.append('lock-exit')
+        return False
+
+
+class AuditDrive:
+    """One driven ``--audit`` run of manager-gateway's real ``main()``."""
+
+    def __init__(self, module, code, stdout, stderr, events):
+        self.module = module
+        self.code = code
+        self.stdout = stdout
+        self.stderr = stderr
+        self.events = events
+
+
+def _drive_manager_audit(testcase, *, busy_lock=False, fail_first_read=False):
+    """Run manager-gateway's real ``main()`` in ``--audit`` mode.
+
+    Only the audit read surface's seams are stubbed: ``tree_lock`` becomes a
+    recording fake (refusing on ``busy_lock``) and ``mutate`` a wrapper that
+    records whether the shared lock was held at each anchor check.
+    ``fail_first_read`` makes the first selected case's source read raise
+    OSError. The selection, the roster check, the real anchors and the JSON
+    publication all go through the entry's real code; no cargo, no tree
+    mutation, no evidence directory.
+    """
+    module = load_entry(MANAGER_SCRIPT)
+    base = Path(tempfile.mkdtemp(prefix='negctl-2795r2-'))
+    testcase.addCleanup(shutil.rmtree, base, ignore_errors=True)
+    events = []
+    lock = _RecordingTreeLock(events, busy=busy_lock)
+    real_mutate = module.mutate
+
+    def recording_mutate(original, scope, replacements):
+        # The kill target: every anchor check must happen with the shared tree
+        # lock held -- an unlocked read races a sibling runner's mutant window.
+        if not lock.held:
+            events.append('unlocked-read')
+        return real_mutate(original, scope, replacements)
+
+    unreadable = module.cases[0][1].resolve() if fail_first_read else None
+    real_read_text = pathlib.Path.read_text
+
+    def failing_read_text(self, *args, **kwargs):
+        if unreadable is not None and self.resolve() == unreadable:
+            raise OSError('audit drive: unreadable source (#2795 fix-r2)')
+        return real_read_text(self, *args, **kwargs)
+
+    stdout, stderr = io.StringIO(), io.StringIO()
+    wrapper = base / 'wrapper-launch.py'
+    with patch.object(module, 'tree_lock', lock), \
+         patch.object(module, 'mutate', recording_mutate), \
+         patch.object(pathlib.Path, 'read_text', failing_read_text), \
+         patch('sys.argv', [str(wrapper), '--audit']), \
+         contextlib.redirect_stdout(stdout), \
+         contextlib.redirect_stderr(stderr):
+        try:
+            code = module.main()
+        except SystemExit as error:
+            code = error.code if isinstance(error.code, int) else 1
+        except (TimeoutError, OSError, UnicodeDecodeError) as error:
+            # A refusal must be a returned 2 with the named message, never an
+            # exception escaping main() -- a bare traceback reads as rc 1 on the
+            # host and carries no dedicated refusal message.
+            code = f'uncaught {type(error).__name__}: {error}'
+        except ValueError as error:
+            code = f'uncaught ValueError: {error}'
+    return AuditDrive(module, code, stdout.getvalue(), stderr.getvalue(), events)
+
+
 def _rename_roster(names):
     """The same-length drift: the roster keeps its size, not its last name."""
     renamed = list(names)
@@ -919,6 +1013,67 @@ class ManagerRosterGuard(unittest.TestCase):
         self.assertTrue('registry is not usable' in run.stderr,
                         f'#2309 the refusal must name the registry on stderr: '
                         f'{run.stderr!r}')
+
+
+class ManagerAuditReadSurface(unittest.TestCase):
+    """The ``--audit`` read surface must hold the shared tree lock and refuse.
+
+    #2795 fix-r2 (sibling P2②): snapshot-projection's ``--audit`` grew the
+    tree lock and the fail-closed read (fix-r1 条2) while this same-family
+    entry kept its unlocked, uncaught loop -- a sibling mutation runner with
+    a mutant between its write and restore phases made the read-only audit
+    check anchors against a source it does not own, and a busy lock or an
+    unreadable source surfaced as a bare traceback a host reads as rc 1.
+    """
+
+    def test_audit_reads_only_inside_the_tree_lock(self):
+        run = _drive_manager_audit(self)
+        self.assertTrue(run.code == 0,
+                        f'#2795 the anchors-only audit must exit 0, got '
+                        f'{run.code!r}; stderr={run.stderr!r}')
+        rows = json.loads(run.stdout)
+        self.assertTrue([row['mutation'] for row in rows]
+                        == list(run.module.EXPECTED_NAMES),
+                        f'#2795 the audit must publish the selected roster, '
+                        f'got {run.stdout[:200]!r}')
+        self.assertTrue('unlocked-read' not in run.events,
+                        '#2795 every anchor check must happen with the '
+                        'shared tree lock held (a sibling runner may have a '
+                        'mutant on disk between its write and restore '
+                        'phases)')
+        self.assertTrue(run.events.count('lock-enter') == 1,
+                        f'#2795 the audit must acquire the tree lock exactly '
+                        f'once around the whole anchor loop: {run.events!r}')
+        self.assertTrue(run.events[0] == 'lock-enter'
+                        and run.events[-1] == 'lock-exit',
+                        f'#2795 the lock must wrap every read, not be taken '
+                        f'and dropped per anchor: {run.events!r}')
+
+    def test_audit_refuses_when_the_tree_lock_is_busy(self):
+        run = _drive_manager_audit(self, busy_lock=True)
+        self.assertTrue(run.code == 2,
+                        f'#2795 a busy tree lock is a refusal to start (2), '
+                        f'got {run.code!r}')
+        self.assertTrue('--audit tree lock or read failed' in run.stderr,
+                        f'#2795 the refusal must name the audit read '
+                        f'surface: {run.stderr!r}')
+        self.assertTrue('TimeoutError' in run.stderr,
+                        f'#2795 the refusal must name the lock wait as the '
+                        f'cause: {run.stderr!r}')
+        self.assertTrue('unlocked-read' not in run.events and
+                        run.events == [],
+                        f'#2795 a refused audit must check no anchors: '
+                        f'{run.events!r}')
+
+    def test_audit_refuses_when_a_source_read_fails(self):
+        run = _drive_manager_audit(self, fail_first_read=True)
+        self.assertTrue(run.code == 2,
+                        f'#2795 an unreadable anchor source is a refusal to '
+                        f'start (2), got {run.code!r}')
+        self.assertTrue('--audit tree lock or read failed' in run.stderr
+                        and 'OSError' in run.stderr,
+                        f'#2795 the refusal must name the audit read surface '
+                        f'and the read failure: {run.stderr!r}')
 
 
 class RecordingRegistry:
