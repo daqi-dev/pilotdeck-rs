@@ -39,12 +39,18 @@ exactly like the issue-2495 / SessionRunnerTests precedents:
   revoke-everything half of the same accounting (#979);
 - cancel: ``run_owned`` raises KeyboardInterrupt during the last control's
   negative run — the deterministic shape of a Ctrl-C, which is a
-  BaseException the per-control ``except Exception`` must not swallow.
+  BaseException the per-control ``except Exception`` must not swallow;
+- survived: ``run_owned`` answers every phase green — the verdict edge none
+  of the abort modes can reach: the mutated catalog's preflight still
+  passes, so every row is SURVIVED and the run exits 1, the code the
+  contract reserves for "the device ran and a control survived". Routing
+  that path to rc 0 (a coordinator reads a red device as green) or to rc 2
+  (it reads "the device never ran") must both land here as a red test.
 
-The three-state exit contract is pinned at its other edge too: pre-guard
-refusals (an unknown selection, a missing CARGO_TARGET_DIR) exit 1 with no
-summary — those run the real, unmodified script directly, because nothing
-needs patching before the guard. Run from this directory:
+Both senses of exit 1 are pinned: the verdict path's 1 above, and the
+pre-guard refusals' 1 (an unknown selection, a missing CARGO_TARGET_DIR)
+with no summary — those run the real, unmodified script directly, because
+nothing needs patching before the guard. Run from this directory:
 ``python3 -I sdk-signals-close-order-pin/test_negative_controls.py``.
 """
 import json
@@ -122,6 +128,11 @@ else:
         # stage-queue shape).
         index = calls['count']
         calls['count'] += 1
+        if mode == 'survived':
+            # The verdict edge no abort mode can reach: every phase green, so
+            # the negative run's preflight still passes and the row survives.
+            return subprocess.CompletedProcess(
+                command, 0, 'product anchors: PASS\\n', '')
         if index == 0:
             return subprocess.CompletedProcess(
                 command, 0, 'product anchors: PASS\\n', '')
@@ -176,8 +187,13 @@ LOCK_HOLDER_SOURCE = (
 _BASES = []
 
 
-class AbortAccountingTests(unittest.TestCase):
-    """Every abort lands in the same accounting: all INVALID, summary, rc 2."""
+class _PinDriver:
+    """The shared subprocess driver: the real runner over a temporary tree.
+
+    Not a TestCase — both the abort class and the verdict class below need
+    ``run_pin`` / ``counts_line``, and neither can inherit the other's
+    tests.
+    """
 
     def run_pin(self, mode, names=SELECTION, base=None):
         """Drive the real runner source in a subprocess over a temporary tree.
@@ -222,6 +238,10 @@ class AbortAccountingTests(unittest.TestCase):
     def counts_line(stdout):
         lines = [line for line in stdout.split('\n') if line.strip()]
         return json.loads(lines[-1]) if lines else None
+
+
+class AbortAccountingTests(_PinDriver, unittest.TestCase):
+    """Every abort lands in the same accounting: all INVALID, summary, rc 2."""
 
     def assert_rows(self, summary, reasons):
         self.assertIsNotNone(summary, 'an aborting run must still publish its summary')
@@ -351,6 +371,36 @@ class AbortAccountingTests(unittest.TestCase):
                    '/negative_controls.py')
         self.assertEqual(catalog.read_bytes(), before,
                          '#1800 a cancelled run must still restore the tree')
+
+
+class SurvivedVerdictTests(_PinDriver, unittest.TestCase):
+    """The verdict edge no abort can reach: a surviving control exits 1."""
+
+    def test_survived_negative_exits_one_and_keeps_the_tree_restored(self):
+        # #1800 fix-r1（PR #2979 boundary P2，升 b 类）：负控回放此前恒为
+        # 「rc!=0+marker → KILLED」或 abort，runner 判决路径的 SURVIVED→rc 1
+        # 零覆盖——回归把它路由成 rc 0（协调者读成绿）或 rc 2（读成「装置
+        # 未跑」），本文件仍全绿，而 runner 自己的契约明写这两个码不得共用。
+        process, summary, tree, before = self.run_pin('survived')
+        self.assertEqual(process.returncode, 1,
+                         f'#1800 a surviving selection must exit 1: '
+                         f'{process.stderr!r}{process.stdout!r}')
+        self.assertIsNotNone(summary)
+        self.assertEqual([row['status'] for row in summary['results']],
+                         ['SURVIVED'] * len(SELECTION),
+                         '#1800 a green negative run is SURVIVED, never '
+                         'KILLED or INVALID')
+        self.assertEqual([row['reason'] for row in summary['results']],
+                         ['preflight still passed'] * len(SELECTION))
+        self.assertEqual(summary['counts'],
+                         {'KILLED': 0, 'SURVIVED': len(SELECTION), 'INVALID': 0})
+        self.assertEqual(self.counts_line(process.stdout)['counts'],
+                         {'KILLED': 0, 'SURVIVED': len(SELECTION), 'INVALID': 0})
+        self.assertIn('#1382 SURVIVED controls', process.stderr)
+        catalog = (tree / 'src/pilotdeck-gateway/tests/fixtures/sdk-signals'
+                   '/negative_controls.py')
+        self.assertEqual(catalog.read_bytes(), before,
+                         '#1800 a surviving run must still restore the catalog')
 
 
 class PreGuardRefusalTests(unittest.TestCase):
