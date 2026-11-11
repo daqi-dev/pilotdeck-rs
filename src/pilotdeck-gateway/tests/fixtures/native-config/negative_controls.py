@@ -642,6 +642,26 @@ mutations = [
      '        if let Some(project) = input.get("projectKey").filter(|v| !v.is_undefined()) {',
      'native_process::management_tests::submit_workspace_id_treats_an_explicit_null_project_key_as_not_provided',
      '#2562 explicit null is not an error with the recorder on'),
+    # ── #2617: the submit path's string branch converts a lone-surrogate
+    # projectKey lossily — the #2083 close-path shape (`session_dir.rs`), same
+    # judge same fix (TS resolver chain runs the key to completion; probes
+    # `_tmp/20261111-issue-2617-probe/probe-submit-surrogate.out` +
+    # `_tmp/20261111-issue-2617/probe-submit-surrogate-resolver.out`). The
+    # first row re-adds the pre-#2617 `to_utf8` rejection, so the anchor's
+    # code assertion dies first; the second row disables the capability gate
+    # itself, so the anchor's reject-cell `.expect_err` dies on the served Ok.
+    ('submit-surrogate-project-key-rejected', SERVICES,
+     '            let project = String::from_utf16_lossy(project.units());',
+     '            let project = project\n'
+     '                .to_utf8()\n'
+     '                .map_err(|_| failure("projectKey must be a valid path string."))?;',
+     'native_process::management_tests::submit_workspace_id_surrogate_project_key_reaches_the_capability_gate',
+     '#2617 the surrogate projectKey reaches the capability gate'),
+    ('submit-serve-gate-removed', SERVICES,
+     '            if !self.options.serves_project(&project) {',
+     '            if false && !self.options.serves_project(&project) {',
+     'native_process::management_tests::submit_workspace_id_surrogate_project_key_reaches_the_capability_gate',
+     '#2617 the surrogate projectKey is not the type error'),
     # ── #2564: the #2272 admission mutant re-bound to the close_project_sessions
     # path — with the null arm dropped the admission refusal (isolated-project
     # message) answers before the method's own `?.trim()` gate, so the null
@@ -1301,19 +1321,9 @@ mutations = [
 # the derived counts in the paragraph above describe the #2065 table as it was.
 # #2195: CRON / CRON_TESTS joined the scanned files with the row above, so
 # the counts moved to 51 rows / 41 literal-anchor entries.
-# #2207: the five #2090 gate-order tests joined the bound rows (an
-# admission-refusal mutant and a trim-gate mutant each), so the counts moved
-# to 80 rows / 62 literal-anchor entries.
-# #2199: the six config-family gate-order tests joined the same form, so the
-# counts moved to 92 rows / 64 literal-anchor entries.
-# #2199 fix-r1: the six admission-null-refused-config rows above (DS
-# sibling#1, the #2564 fix-r1 precedent re-applied to the config family)
-# moved the counts to 98 rows / 65 literal-anchor entries.
-# #2207 fix-r2: the four admission-null-refused session_dir rows above
-# (GLM r3 sibling#1) moved the counts to 102 rows / 65 literal-anchor entries.
-# #2207/#2199 fix-r3 (DS r6 sibling#1): the six admission/trim rows above
-# (per-spelling discriminative mutants) moved the counts to 108 rows /
-# 65 literal-anchor entries.
+# #2617 (rebase 改数，基线从分支旧 80/62 前移到 main 108/65): the two submit
+# surrogate rows above joined the table with their two MANAGEMENT_TESTS pins,
+# so the counts moved to 110 rows / 67 literal-anchor entries.
 LITERAL_ANCHORS = [
     (CONFIG, '#1457 session_model_set accepts the fixture selection'),
     (CONFIG, '#1457 session_model_clear succeeds'),
@@ -1380,6 +1390,8 @@ LITERAL_ANCHORS = [
     (CONFIG, '#2199 a null projectKey falls back like a missing one, '
              'so the sessionKey gate answers the blank key'),
     (MANAGEMENT_TESTS, '#2562 explicit null is not an error with the recorder on'),
+    (MANAGEMENT_TESTS, '#2617 the surrogate projectKey reaches the capability gate'),
+    (MANAGEMENT_TESTS, '#2617 the surrogate projectKey is not the type error'),
     (LIVE_TESTS, "#1864 the stored mode reaches the live session's next turn"),
     (FACTORY_TESTS,
      '#1860 hydrate holds the transcript fence until the recorder is published'),
