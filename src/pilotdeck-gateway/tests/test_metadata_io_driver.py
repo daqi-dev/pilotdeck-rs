@@ -1587,6 +1587,10 @@ class EnvironmentControls(unittest.TestCase):
         # busy-lock 用例按构造须等满 2 s flock 超时，是该模块耗时下界；
         # 秒数按实测定，不做预算算术），下限同步抬到 10：不抬则删掉两条
         # 判决路径用例，CI 仍绿——正是 r41/fix-r1 连环修过的下限漂移洞。
+        # #1800 fix-r3（评论追加 1）：stdout 写失败用例（Ran 10→11，本轮实测
+        # 全模块约 2.5 s 不变——新用例 0.05 s，subprocess 全走 stub），下限
+        # 同步抬到 11：不抬则删掉该用例（吞诊断 / 放行 rc 0 两个方向都无人
+        # 看见），CI 仍绿——与 fix-r2 同一个下限漂移洞。
         minimums = (
             ('test_negative_optimize_guards', 10),
             ('settings-gateway/test_negative_controls.py', 13),
@@ -1594,7 +1598,7 @@ class EnvironmentControls(unittest.TestCase):
             ('network-timing/test_negative_controls.py', 10),
             ('test_negative_roster_guards', 6),
             ('issue-2495/test_negative_controls.py', 30),
-            ('sdk-signals-close-order-pin/test_negative_controls.py', 10),
+            ('sdk-signals-close-order-pin/test_negative_controls.py', 11),
         )
         # r39（DS sibling#4 P2）：network-timing 的两条 EACCES 判杀用例按宿主
         # 能力条件跳过（`@unittest.skipUnless(EACCES_STAGEABLE, ...)`——root /
