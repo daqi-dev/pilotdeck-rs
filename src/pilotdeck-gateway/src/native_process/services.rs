@@ -1514,16 +1514,24 @@ impl SubmitHostServices for Services {
                 .as_string()
                 .ok_or_else(|| failure("projectKey must be a valid path string."))?;
             // #2617: the TS resolver chain runs a lone-surrogate `projectKey`
-            // to completion (`resolveProjectStorageId` slugs the key lossily;
-            // Node v22.22.0 probes: submit-level
-            // `_tmp/20261111-issue-2617-probe/probe-submit-surrogate.out`,
-            // resolver-level `_tmp/20261111-issue-2617/
-            // probe-submit-surrogate-resolver.out`), so the string branch
+            // to completion without throwing: the legacy slug regex drops the
+            // surrogate unit, so the key lands on the process cwd's project,
+            // not necessarily the configured one (submit-level probe
+            // `_tmp/20261111-issue-2617-probe/probe-submit-surrogate.out`;
+            // resolver-level rerun `_tmp/20261111-2617-evidence/
+            // probe-submit-surrogate-resolver.out`, whose "resolves like the
+            // fallback" flag is tautological — the script pinned
+            // `fallbackProjectRoot = process.cwd()`). So the string branch
             // converts lossily — the #2083 close-path shape (session_dir.rs)
-            // — and only the `serves_project` capability gate decides. A
-            // non-string keeps the type error above. Residual, accepted with
-            // #2083: a key whose lossy form names the configured project (a
-            // real path containing U+FFFD) is served.
+            // — and only the `serves_project` capability gate decides. TS
+            // judges identity by storage-id slug (the surrogate folds away)
+            // while Rust judges by raw-path equality, so when the cwd is the
+            // configured project TS admits the key and Rust's lossy form
+            // still misses it — the divergence family registered in the
+            // gateway-parity ledger (-R17). A non-string keeps the type
+            // error above. Residual, registered with #2083: a key whose
+            // lossy form names the configured project (a real path
+            // containing U+FFFD) is served.
             let project = String::from_utf16_lossy(project.units());
             if !self.options.serves_project(&project) {
                 return Err(unavailable(

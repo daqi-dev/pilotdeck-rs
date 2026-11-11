@@ -2572,19 +2572,24 @@ async fn submit_workspace_id_treats_an_explicit_null_project_key_as_not_provided
 /// → `resolveProjectStorageId(requestedProjectKey ?? fallbackProjectRoot)`,
 /// createLocalGateway.ts:1026-1028) runs the key to completion: the legacy
 /// slug regex drops the surrogate unit (paths.ts:110), so a lone surrogate
-/// resolves like the configured project and only the type check a non-string
-/// fails (#2562) is left. Node v22.22.0 probes: submit-level
+/// lands on the process cwd's project — not necessarily the configured one —
+/// and only the type check a non-string fails (#2562) is left. Node v22.22.0
+/// probes: submit-level
 /// `_tmp/20261111-issue-2617-probe/probe-submit-surrogate.out` (coordinator)
-/// and the resolver-level rerun `_tmp/20261111-issue-2617/
-/// probe-submit-surrogate-resolver.out`. The reject cell pins the unserved
+/// and the resolver-level rerun
+/// `_tmp/20261111-2617-evidence/probe-submit-surrogate-resolver.out` (its
+/// "resolves like the fallback" flag is tautological: the script pinned
+/// `fallbackProjectRoot = process.cwd()`). The reject cell pins the unserved
 /// surrogate: the capability refusal, not the pre-#2617 `projectKey must be a
 /// valid path string.` error. The admit cell pins the residual #2083
 /// registered: a key whose lossy form names the configured project (a real
 /// path containing U+FFFD) is served — its fixture premise is `options.project`
 /// rewritten to that lossy path, with the surrogate unit in the key at the
-/// U+FFFD position.
+/// U+FFFD position — and answers that project's own storage id, recomputed
+/// with the same `SnapshotProjects` resolver the production path uses.
 #[tokio::test]
 async fn submit_workspace_id_surrogate_project_key_reaches_the_capability_gate() {
+    use crate::runtime::snapshot::SnapshotProjectResolver as _;
     use crate::runtime::turn::submit_host::SubmitHostServices as _;
     let (scratch, requests) = setup();
     let storage_root = scratch.0.join("snapshot-storage");
@@ -2663,9 +2668,20 @@ async fn submit_workspace_id_surrogate_project_key_reaches_the_capability_gate()
         .workspace_id(&residual_input)
         .expect("#2617 the residual lossy form of the configured project is served")
         .expect("#2617 the served residual project answers a workspace id");
-    negative_assert!(
-        served.to_utf8().is_ok(),
-        "#2617 the served workspace id is a valid UTF-8 string"
+    // fix-r1 (review P2): the admit cell discriminates — the served id is the
+    // residual project's own storage id (the same `SnapshotProjects` resolver
+    // the production path uses, services.rs), not just any valid UTF-8 string.
+    let expected = crate::runtime::snapshot::SnapshotProjects::new(
+        requests.options.home.clone(),
+        std::path::PathBuf::new(),
+    )
+    .workspace_id(&residual);
+    negative_assert_eq!(
+        served
+            .to_utf8()
+            .expect("#2617 the served workspace id is valid UTF-8"),
+        expected,
+        "#2617 the admit cell answers the residual project's own workspace id"
     );
 
     requests
