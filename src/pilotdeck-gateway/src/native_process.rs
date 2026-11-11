@@ -35,6 +35,11 @@ mod mcp_status_tests;
 mod requests;
 mod services;
 mod session_overrides;
+// #1623 fix-r2: the lone-surrogate predicate and message are crate-shared so
+// the connection-owned `submit_turn` entry (`runtime::turn::submit`) and the
+// `native_archive` family refuse the same shape the session_dir / config /
+// rewind_files guards already refuse — one predicate, one message, no drift.
+pub(crate) use methods::{SESSION_KEY_SURROGATE_MESSAGE, has_unpaired_surrogate};
 // #1353 A8.5-pr2: the production switch faces over the real assembly.
 #[cfg(test)]
 mod settings_tests;
