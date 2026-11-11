@@ -1424,6 +1424,42 @@ class MatrixMainStartupTests(unittest.TestCase):
             self.assertEqual(list(out.iterdir()), [],
                              '#1734 nothing written into a taken directory')
 
+    def test_check_mode_refuses_when_the_tree_lock_is_busy(self):
+        # #2795 fix-r6（评审 boundary#1/concurrency#3）：fix-r5 把 --check 的
+        # 读面包进 anchor_read_window，但忙锁拒跑这一半没有机检——装置将来
+        # 被改动（吞掉锁异常继续读）不会有人红。这里驱动真实 matrix_main 的
+        # --check 分支：忙锁 → SystemExit(2) + 装置统一拒跑文案 + 点名锁
+        # 等待异常，且不占证据目录（多夹具把该分支当自己的锚点预检）。
+        class BusyLock:
+            def __call__(self, *args, **kwargs):
+                return self
+
+            def __enter__(self):
+                raise TimeoutError('check drive: lock timeout (#2795 fix-r6)')
+
+            def __exit__(self, *_exc):
+                return False
+
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            source = root / 'fixture.py'
+            source.write_text('original')
+            rows = [('first', source, 'original', 'changed', ['cell'])]
+            errors = io.StringIO()
+            with patch('negative_process.tree_lock', BusyLock()), \
+                    contextlib.redirect_stderr(errors):
+                with self.assertRaises(SystemExit) as caught:
+                    suite.matrix_main(root, source, 'prefix::', rows,
+                                      passed_count=1, child_count=1,
+                                      paths=[source], args=['--check'])
+            self.assertEqual(caught.exception.code, 2,
+                             '#2795 a busy tree lock is a refusal to start, '
+                             'never an unlocked read or a red run')
+            self.assertIn('tree lock or anchor read failed', errors.getvalue())
+            self.assertIn('TimeoutError', errors.getvalue())
+            self.assertFalse((root / 'out').exists(),
+                             '#2795 a refused check leaves no evidence directory')
+
 
 class ResultRowSchemaTests(unittest.TestCase):
     """#1579 P1: `matrix_main` rows must stay inside the registered schema.

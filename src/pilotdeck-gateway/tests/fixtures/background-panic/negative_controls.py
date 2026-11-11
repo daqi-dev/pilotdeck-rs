@@ -125,8 +125,6 @@ def main():
         if args.out is None:
             parser.error('out is required unless --check-anchors is used')
     out = args.out.resolve() if args.out is not None else None
-    if out is not None:
-        out.mkdir(parents=True, exist_ok=False)
     if args.only:
         known = {mutant[0] for mutant in mutants}
         if set(args.only) - known or len(args.only) != len(set(args.only)):
@@ -142,12 +140,18 @@ def main():
     # 会被核对成 stale anchor 假红；改走共享 anchor_read_window 装置（锁内读 +
     # rc 2 拒跑，attach-followups-a fix-r4 同形：预检环两态共用一个 60 s 锁窗口，
     # 与后续 mutating_sources 顺序取锁，无同进程嵌套）。
+    # #2795 fix-r6（评审 sibling#6/concurrency#1）：预检窗口必须在 out.mkdir
+    # 之前（run/check 共用）——锁忙拒跑（rc 2）发生在目录创建之后会留下一个
+    # 空证据目录，重跑同路径必 FileExistsError，破坏「拒跑=从未开始、不占
+    # 证据目录」契约（matrix_main test_negative_suite.py 同形明测）。
     with anchor_read_window(root, 'background-panic anchor preflight'):
         for name, relative, pattern, replacement, _test, _anchor in selected:
             mutate(name, (root / relative).read_text(), pattern, replacement)
     if args.check_anchors:
         print(f'{len(selected)} mutation anchors validated; no sources changed')
         sys.exit(0)
+    if out is not None:
+        out.mkdir(parents=True, exist_ok=False)
 
     def record(name, text):
         with (out / name).open('x') as file:

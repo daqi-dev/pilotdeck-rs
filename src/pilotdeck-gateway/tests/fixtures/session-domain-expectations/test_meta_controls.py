@@ -81,6 +81,9 @@ class DriftTests(unittest.TestCase):
         # test_list_is_read_only / test_standalone_check_anchors 的只读审计钩子
         # 判写，也让整套件依赖 .negative-source.lock 空闲。统一换成记录桩；
         # 「读面在锁内」由 _pinned_anchor_reads 单测钉住。
+        # #2795 fix-r6（评审 concurrency#2）：本桩只覆盖实例方法（setUp 之后）；
+        # setUpClass 的锁面见 _meta_class_setup（元控入口）与
+        # SetupClassReadSurface（真入口机检）。
         self.lock_events = []
         self.lock = _RecordingTreeLock(self.lock_events)
         patcher = patch.object(gate, 'tree_lock', self.lock)
@@ -95,6 +98,11 @@ class DriftTests(unittest.TestCase):
         # write 与 restore 之间，无锁 ast.parse 会把变异体当权威表。与 main()
         # 预检同面，改走共享 anchor_read_window 装置（锁内读 + rc 2 拒跑）；
         # 机检见 SetupClassReadSurface。
+        # #2795 fix-r6（评审 concurrency#2）：真入口（unittest.main）保持真锁：
+        # 锁忙 → 装置 SystemExit(2)，实测（Python 3.12.3）确认 SystemExit 穿过
+        # unittest._handleClassSetUp（只捕 Exception）整进程退出 rc 2、无报告，
+        # 是既定的 fail-closed 形态；元控 --negative 入口不取真锁，
+        # 见 _meta_class_setup。
         with negative_process.anchor_read_window(
                 gate.ROOT, 'session-domain-expectations meta-controls'):
             cls.expectations = gate.panel_table('EXPECTATION_CASES')
@@ -426,6 +434,10 @@ class SetupClassReadSurface(unittest.TestCase):
     驱动真实的 setUpClass：只把 negative_process.tree_lock 换成记录桩
     （装置内部经 negative_process 全局查 tree_lock），读面记名判红；
     busy 时装置必须 SystemExit(2) + 统一文案（与名册驱动的拒跑形态同形）。
+    fix-r6 补第三钉（评审 concurrency#2）：--negative 元控入口经
+    _meta_class_setup 复用记录桩，不依赖真锁空闲；真入口保真锁
+    （锁忙 = SystemExit(2) fail-closed，实测 unittest 对 setUpClass 的
+    SystemExit 不出报告、整进程退出）。
     """
 
     def test_setup_class_reads_panels_inside_the_tree_lock(self):
@@ -464,6 +476,46 @@ class SetupClassReadSurface(unittest.TestCase):
         self.assertTrue(events == [],
                         '#2795 meta-controls: a refused setUpClass must read '
                         f'no panel bytes: {events!r}')
+
+    def test_negative_entry_does_not_depend_on_the_real_lock(self):
+        """#2795 fix-r6（评审 concurrency#2）：--negative 元控入口的锁 seam。
+
+        真入口（unittest.main）保真锁；但 ``--negative`` 跑整套变体，不应依赖
+        ``.negative-source.lock`` 空闲（setUp 换记录桩的同一理由）。真锁忙时
+        （外层 busy 桩模拟兄弟持锁）元控的类建面必须照常完成——若
+        ``_meta_class_setup`` 退回直接调 setUpClass（真锁），busy 桩会
+        SystemExit(2)，本用例红。
+        """
+        busy = []
+        with patch.object(negative_process, 'tree_lock',
+                          _RecordingTreeLock(busy, busy=True)):
+            events = _meta_class_setup()
+        self.assertTrue(events[:1] == ['lock-enter'] and events[-1:] == ['lock-exit']
+                        and 'unlocked-read' not in events,
+                        '#2795 meta-controls: the --negative entry must run '
+                        f'its class setup through the stub seam even with a '
+                        f'busy real lock: {events!r}')
+        self.assertTrue(busy == [],
+                        '#2795 meta-controls: the busy real lock must never '
+                        f'be reached by the meta entry: {busy!r}')
+
+
+def _meta_class_setup():
+    """The ``--negative`` meta entry's class setup: the recording-stub seam.
+
+    #2795 fix-r6（评审 concurrency#2）：真入口（unittest.main）的 setUpClass
+    保真锁——锁忙时装置 SystemExit(2) 是既定 fail-closed（实测确认 SystemExit
+    穿过 unittest._handleClassSetUp、整进程退出、无报告）；但 ``--negative``
+    元控跑整套 18 个变体，不必也不该依赖 ``.negative-source.lock`` 空闲
+    （setUp 换记录桩的同一理由）。这里在调用 setUpClass 期间把装置内部的
+    ``negative_process.tree_lock`` 换成记录桩——装置行为本身不变，只有锁
+    的实现被替换。返回桩记录的事件（机检：
+    test_negative_entry_does_not_depend_on_the_real_lock）。
+    """
+    events = []
+    with patch.object(negative_process, 'tree_lock', _RecordingTreeLock(events)):
+        DriftTests.setUpClass()
+    return events
 
 
 def negative_checks():
@@ -529,7 +581,7 @@ def negative_checks():
          'test_check_anchors_rejects_empty_selection',
          '#1364 empty-anchors: an empty selection must not return success'),
     )
-    DriftTests.setUpClass()
+    _meta_class_setup()
     results = []
     for name, function, before, after, method, marker in variants:
         row = {'mutation': name, 'test': f'test_meta_controls.DriftTests.{method}',

@@ -1,0 +1,187 @@
+# #2795 只读锚点读面迁移续跑表（单一真相源）。
+# 本文件同时是 test_negative_roster_guards.py 裸读扫描
+# （test_every_bare_check_preflight_is_in_the_backlog）的豁免清单：
+# 每个非注释行的第一个空格分隔记号是一个 fixtures 相对路径（*.py），
+# 该路径即被豁免。迁完一站（调用点改 with anchor_read_window(root,
+# '<label>')，名册 READ_SURFACE_ROSTER 行不变）就删掉对应行；
+# 删行后扫描若仍命中，该站会被点名红，所以行不能先于迁移删除。
+#
+# 小节：
+#   一、旧三拼写站（fix-r5 立表，55 站）：已有树锁与族拒跑文案、名册
+#       已签名登记，待把自写锁/文案换成共享装置（迁完删入口自己的
+#       try/except 与文案，名册两测自动覆盖）。
+#   二、裸读站（fix-r6 立表）：既无锁也无文案、名册签名扫不到的
+#       --check/--check-anchors 只读预检（评审 sibling P1；扫描按
+#       AST 形状收口，字面比较门 43 站 + argparse 属性门 40 站，
+#       argparse 门为 fix-r6 同族跟改——多数站把读面委托进
+#       _shared/mutant_switch.py，门形状即家族形状）。
+#       每行字段：行=检查门行号；形状=门的字面形状；时序=兄弟变异
+#       write/restore 窗口可命中（无锁核对会把窗口内盘上的变异体当
+#       权威 → stale-anchor 假红 / 假拒跑）；目标=anchor_read_window
+#       迁移。另有「二（续）」扫描盲区登记 3 站（门内经本文件 helper
+#       裸读、文件另处持 tree_lock，谓词放行的形态）。
+#
+# 修复记录：fix-r5 已迁 frozen-reinsert-guard、background-panic、
+# channel-slack（--check 两段 + 本轮 fix-r6 再收 run 分支 preflight）、
+# upload-gateway --check；另有非名册站点 session-domain-expectations/
+# test_meta_controls.py setUpClass（自带 SetupClassReadSurface 机检，
+# fix-r6 加锁 seam）。test_* 前缀文件不进扫描（与名册扫描同排除），
+# 已知裸读登记：session-admission/test_negative.py:18 setUpClass 裸读
+# src/runtime/session/mod.rs（fix-r5 记录，另开跟进）。
+# 每批迁完跑名册两测 + 抽 1 站持锁实测（fix-r5 probe_busy_lock.py
+# 同形）+ 每站点一条「装置撤除」负控（fix-r5 M3 同形）。
+
+## 一、旧三拼写站（fix-r5，55 站；有锁有文案，名册已签名）
+  attach-followups-a/negative_controls.py
+  attach-twopass-1460/negative_controls.py
+  closure_guard_negative.py
+  gateway-entry-guard/negative_controls.py
+  handle-path-macos/negative_controls.py
+  host-model-port/negative_controls.py
+  issue-2495/negative_controls.py
+  issue-297-domain-fold/negative_controls.py
+  issue-297/negative_controls.py
+  js-math-zero/negative.py
+  live-e2e-tmpdir/negative_controls.py
+  manager-gateway/negative_controls.py
+  mcp-gateway/negative_controls.py
+  mcp-http-corrupt-body/negative_controls.py
+  mcp-http-encoding/negative.py
+  mode-routing/negative_controls.py
+  model-http-encoding/negative.py
+  native-collation/negative_controls.py
+  native-loop-stimulus/negative_controls.py
+  native-process/negative_controls.py
+  native-registry-switch/negative_controls.py
+  native-session-e2e/negative_controls.py
+  native-stimulus-plan/negative_controls.py
+  native-storage-stimulus/negative_controls.py
+  native-witness/negative.py
+  native-ws-entry/negative_controls.py
+  output-schema/negative.py
+  p01-preflight/negative_controls.py
+  parity-lock-release/negative_controls.py
+  permission-mode-surrogate/negative_controls.py
+  same-json-surfaces/negative_controls.py
+  sdk-cli-lifecycle/negative_controls.py
+  sdk-format/negative_controls.py
+  sdk-mcp-session-tools/negative_controls.py
+  sdk-run/negative_controls.py
+  sdk-sessions-list/negative_controls.py
+  sdk-sessions-messages/negative_controls.py
+  sdk-settings/negative_controls.py
+  sdk-terminal/negative_controls.py
+  session-domain-expectations/negative_controls.py
+  session-domain-lock-release/negative_controls.py
+  session-domain-native/negative_controls.py
+  session-drop-release/negative_controls.py
+  session-factory/append-delta/negative_controls.py
+  session-factory/negative_controls.py
+  session-factory/projection-cache/negative_controls.py
+  skills-external/negative_controls.py
+  snapshot-projection/negative_controls.py
+  switch-state-machine/negative_controls.py
+  task-budget-zero/negative.py
+  transcript-trim/negative_controls.py
+  turn-runner/forward_negative.py
+  turn-runner/integrity_negative.py
+  utf16-residual-sort/negative_controls.py
+  workspace-pristine/negative_controls.py
+
+## 二、裸读站（fix-r6，扫描豁免清单；无锁无文案，扫描按形状命中）
+  always-on-2294/negative_controls.py  行=252 形状=if args == ['--check']: 逐行 check_anchor(row, row[1].read_text()) + check_manifest() 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  background-create-gate/negative_controls.py  行=160 形状=if sys.argv[1:] == ['--check-anchors']: count = path.read_text().count(old) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  background-persist-progress/negative_controls.py  行=90 形状=if args == ['--check']: 逐行 check_anchor(row, row[1].read_text()) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  background-persist-restart/negative_controls.py  行=296 形状=if args == ['--check']: 逐行 check_anchor(row, row[1].read_text()) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  background-subtick-gate/negative_controls.py  行=146 形状=if sys.argv[1:] == ['--check-anchors']: count = path.read_text().count(old) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  config-store/negative_controls.py  行=711 形状=if args == ['--check']: 逐行 check_anchor(row, row[1].read_text()) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  cron-schedule/negative_controls.py  行=257 形状=if args == ['--check']: 逐行 check_anchor(row, row[1].read_text()) + check_manifest() 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  cron-scheduler/negative_controls.py  行=334 形状=if args == ['--check']: 逐行 check_anchor(row, row[1].read_text()) + check_manifest() 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  cron-store/negative_controls.py  行=446 形状=if args == ['--check']: 逐行 check_anchor(row, row[1].read_text()) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  edgeclaw-llm/negative.py  行=147 形状=门 if sys.argv[1:] == ['--check-anchors']: 前模块级 anchors(source.read_text()) 导入期裸读 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  edgeclaw-llm-index/negative.py  行=137 形状=门 if sys.argv[1:] == ['--check-anchors']: 前模块级 anchors({...read_text()}) 导入期裸读 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  edgeclaw-llm-recall/negative.py  行=285 形状=门内 originals = {path: path.read_text() for path in {case[1] for case in cases}} 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  edgeclaw-llm-telemetry/negative.py  行=124 形状=门 if sys.argv[1:] == ['--check-anchors']: 前 anchors() 导入期裸读 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  edgeclaw-real-provider/negative.py  行=65 形状=门内 check(source.read_text()) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  edgeclaw-retriever/negative.py  行=220 形状=门内 originals = {path: path.read_text() for path in {case[1] for case in cases}} 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  grep-etxtbsy/negative_controls.py  行=1180 形状=门内 count = path.read_text().count(old) + README read_text 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  http-store-park/negative_controls.py  行=156 形状=门内 count = path.read_text().count(old)（另读 pending 注册表）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  issue-1437-methods/negative_controls.py  行=252 形状=门内 mutate(path.read_text(), None, [(old, new)]) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  issue-1604-require-text/negative_controls.py  行=113 形状=门内 mutate(path.read_text(), None, [(old, new)]) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  native-archive-cwd/negative_regeneration.py  行=35 形状=门内 mutate(path.read_text(), None, [(old, new)]) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  native-config/negative_controls.py  行=1509 形状=门内 mutate(case, case.path.read_text()) + check_literal_anchors 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  native-cron/negative_controls.py  行=145 形状=if args == ['--check']: 逐行 check_anchor(row, row[1].read_text()) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  native-dispatch/negative_controls.py  行=64 形状=门内 for case: mutate(case, case.path.read_text()) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  native-entry-authority/negative_controls.py  行=102 形状=门内 check_errors(TEST_FILE.read_text()) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  native-management/negative_controls.py  行=615 形状=门内 mutate(case, case.path.read_text()) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  native-metadata-cwd/negative_regeneration.py  行=35 形状=门内 mutate(path.read_text(), None, [(old, new)]) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  provider-http-boundaries/negative_controls.py  行=89 形状=门内 count = path.read_text().count(old) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  retry-after-dialects/negative_controls.py  行=157 形状=门内 count = path.read_text().count(old) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  run-registry/timestamp-negative.py  行=173 形状=门内 if path.read_text().count(old) != 1 or old == new: 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  session-delete-2392/negative_controls.py  行=205 形状=门内 mutate(case, case.path.read_text()) + check_literal_anchors 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  session-reservation-2391/negative_controls.py  行=267 形状=门内 mutate(case, case.path.read_text()) + check_literal_anchors 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  surrogate-collation-matrix/negative_controls.py  行=271 形状=门内 if path.read_text().count(old) != 1 or old == new: 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  turn-gateway-clock-edge/negative_controls.py  行=127 形状=if args == ['--check']: 逐行 check_anchor(row, row[1].read_text()) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  turn-runner/input_negative.py  行=42 形状=门内 check_mutations(...)（_negative_common 循环内 path.read_text() 裸读）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  turn-runner/live_negative.py  行=37 形状=门内 check_mutations(...)（_negative_common 循环内 path.read_text() 裸读）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  turn-runner/negative_controls.py  行=32 形状=门内 check_mutations(...)（_negative_common 循环内 path.read_text() 裸读）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  turn-runner/runner_negative.py  行=94 形状=门内 check_mutations(...)（_negative_common 循环内 path.read_text() 裸读）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  user-dialog-guard-order/negative_controls.py  行=135 形状=门内 stale = [(name, path.read_text().count(old)) ...] 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  user-dialog-http-store/negative_controls_1232.py  行=252 形状=门内 count = path.read_text().count(old) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  user-dialog-http-store/negative_controls_1277.py  行=145 形状=门内 count = path.read_text().count(old) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  user-dialog-http-store/negative_controls_2152.py  行=140 形状=门内 count = path.read_text().count(old) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  user-dialog-http-store-1555/negative_controls_1555.py  行=205 形状=门内 count = path.read_text().count(old) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  zone-read-bound/negative_controls.py  行=36 形状=门内 count = path.read_text().count(old) 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+
+## 二（续）、扫描盲区登记（门内/门前经 helper 裸读，文件另处持
+## tree_lock，扫描第 4 条放行；人工核对登记，迁完删行）
+  native-witness/negative_authentication.py  行=488 形状=门前 if not preflight(): return 2（本文件 helper 逐项 read_text 无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  native-witness/negative_boundary.py  行=118 形状=门内 preflight()（本文件 helper：test_file/cases 逐项 read_text 无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  session-lease/negative.py  行=147 形状=门内 preflight()（本文件 helper 逐项 read_text 无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+
+## 二（续二）、argparse 形态检查门站（fix-r6 同族跟改，40 站；扫描按
+## if args.check / if args.check_anchors 属性门形状命中）。评审 11 站取样
+## 全是字面比较门，本批是同机制的 argparse 拼写：多数站门前的
+## mutant_switch.preflight(rows) 把读面委托进 _shared/mutant_switch.py
+## （文件级看不见 read_text，门形状即家族形状），其余站门内/门前自读。
+## 字段同第二节；迁完删行。
+  api-web/negative_controls.py  行=126 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  channel-sms/negative_controls.py  行=422 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  channel-sms-head-timeout/negative_controls.py  行=111 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  edgeclaw-native-default/negative.py  行=78 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  edgeclaw-provider/negative.py  行=77 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  edgeclaw-same-root-generation/negative.py  行=113 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  edgeclaw-service-orchestration/switch_negative.py  行=64 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  failure-guard/negative.py  行=134 形状=argparse --check 门；门前 build()（adapter.check 逐项读测试源，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  host-event-timeline/schemata.py  行=217 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  host-factory/schemata.py  行=87 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  live-e2e/negative_controls.py  行=108 形状=argparse --check 门；门前 (FIXTURE/...).read_text().count(anchor) 绑定核对循环（无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  live-recording/schemata.py  行=115 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  live-session/schemata.py  行=159 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  locale-adaptive/negative_controls.py  行=87 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  mcp-resolver-lease/negative_controls.py  行=104 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  module-host/negative_controls.py  行=129 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  module-host-approvals/negative_controls.py  行=141 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  native-http-basic/negative_controls.py  行=263 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  native-ws-caps/negative_controls.py  行=87 形状=argparse --check 门；门前本文件 preflight([...]) + sources = {path: path.read_text()} 绑定核对（无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  proxy-listen-address/negative_controls.py  行=72 形状=argparse --check 门；门前 TESTS.read_text() / path.read_text().count(old) 锚点核对（无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  session-abort-contract/schemata.py  行=71 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  session-adopt/switch_negative.py  行=104 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  session-cwd-timing/negative_controls.py  行=83 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  session-domain/schemata.py  行=122 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  session-factory/subagent_schemata.py  行=76 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  session-owner/schemata.py  行=111 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  session-owner/schemata_close_shutdown.py  行=111 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  session-owner/schemata_equivalent.py  行=70 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  session-owner-hooks/schemata.py  行=82 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  shared-runner-failclosed/negative_controls.py  行=511 形状=argparse --check 门；门内 apply_mutation(name, path.read_text(), before, after)（无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  slot-probe-residual/negative-controls.py  行=692 形状=argparse --check-anchors 门；门内 anchor_preflight(NEGCTL.read_bytes())（本文件 helper 无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  tool-budget-cwd/schemata.py  行=134 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  treelock-budget/negative_controls.py  行=104 形状=argparse --check 门；门内 compile(changed_source(path.read_text(), ...))（无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  turn-gates/schemata.py  行=195 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  turn-prompt-hooks/schemata.py  行=208 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  turn-runner-tail/schemata.py  行=238 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  turn-start-notices/schemata.py  行=188 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  turn-submit/negative.py  行=183 形状=argparse --check 门；门前 build()（oracle read_text + target.read_bytes()，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  user-dialog-http-store/negative_controls_1947.py  行=53 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  webhook-channel/negative_controls.py  行=197 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移

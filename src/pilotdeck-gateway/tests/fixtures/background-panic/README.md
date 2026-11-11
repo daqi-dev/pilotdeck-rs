@@ -52,7 +52,7 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib \
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/background-panic/negative_controls.py \
-  <新证据目录> --check-anchors
+  --check-anchors
 python3 src/pilotdeck-gateway/tests/fixtures/background-panic/negative_controls.py \
   <另一新证据目录> --only empty-flush-join
 ```

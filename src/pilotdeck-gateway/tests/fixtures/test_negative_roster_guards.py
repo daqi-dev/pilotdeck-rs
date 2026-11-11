@@ -68,6 +68,7 @@ exit 1).
 
 Run from this directory: ``python3 -m unittest test_negative_roster_guards``.
 """
+import ast
 import contextlib
 import importlib.util
 import io
@@ -84,6 +85,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import negative_process
 import pending_reanchor as pending
 
 FIXTURES = Path(__file__).resolve().parent
@@ -1272,9 +1274,172 @@ ANCHOR_READ_WINDOW_LABEL = re.compile(
 
 def read_surface_signature(text):
     """An entry registers either by calling the shared device or by the
-    legacy family message; the scan keeps both directions honest."""
-    return bool(ANCHOR_READ_WINDOW_CALL.search(text)
-                or READ_SURFACE_MARKER.search(text))
+    legacy family message; the scan keeps both directions honest.
+
+    #2795 fix-r6（boundary#2）：装置调用认 import 别名形态——
+    ``from negative_process import anchor_read_window as w`` + ``w(ROOT, ...)``
+    既不匹配装置名正则也不匹配旧文案，此前两签名都扫不到，登记防务的
+    新入口照样进不了名册（假 PASS）。AST 解析别名并认别名/属性调用点；
+    解析失败的源退回字面正则（不比修复前更宽）。
+    """
+    if ANCHOR_READ_WINDOW_CALL.search(text) or READ_SURFACE_MARKER.search(text):
+        return True
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return False
+    return _anchor_read_window_alias_call(tree)
+
+
+def _anchor_read_window_alias_call(tree):
+    """True when the AST calls the device through an import alias."""
+    aliases = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.ImportFrom)
+                and node.module == 'negative_process'):
+            for alias in node.names:
+                if alias.name == 'anchor_read_window':
+                    aliases.add(alias.asname or alias.name)
+    if not aliases:
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                and node.func.id in aliases:
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# #2795 fix-r6（评审 sibling P1，boundary/concurrency 拼合角色复核）：
+# 裸读 --check/--check-anchors 预检的静态扫描。名册签名只认「装置调用
+# （含别名）/ 旧三拼写文案」，既无装置也无文案的检查入口是签名盲区——
+# 评审按两种字面形状取样 11 站（native-cron 等），本扫描按 AST 形状收口：
+# 凡检查门——「args == ['--check'] / ['--check-anchors']」字面等值比较
+# （if / 条件表达式，右值单元素常量序列）或 argparse 形态的
+# ``if args.check:`` 属性门（同族：读面多经 ``mutant_switch.preflight``
+# 委托进 _shared/mutant_switch.py，文件级看不见 read_text，故门形状即
+# 家族形状）——且文件内无装置调用（含别名）、无旧文案、无 matrix_main
+# 分发（共享 --check 的锁由 negative_suite 的装置持有）、无 tree_lock 锁
+# 纪律（旧三拼写 55 站的形态），又不在续跑表豁免清单里 → 红。豁免清单 =
+# legacy-migration-backlog.txt 本身（单一真相源，测试不复制清单）。已知
+# 盲区（登记不修）：test_* 前缀文件、门内经本文件 helper 或跨模块 helper
+# 裸读且文件另处持 tree_lock 的站（人工登记进续跑表「盲区登记」节）。
+# ---------------------------------------------------------------------------
+LEGACY_MIGRATION_BACKLOG = FIXTURES / 'legacy-migration-backlog.txt'
+
+# The names a check-gate file may reference without being bare: the shared
+# matrix runner holds the device window for its --check callers, and any
+# tree_lock use is the legacy hand-rolled lock shape the 55-entry backlog
+# section tracks. AST names only -- a comment mentioning matrix_main must
+# not exempt an entry.
+_COVERED_CODE_NAMES = frozenset({'matrix_main', 'tree_lock', 'anchor_read_window'})
+
+
+def backlog_exempted_entries():
+    """Every backlog line's first token is a fixtures-relative path.
+
+    The backlog is the single source of truth for scan exemptions: a
+    non-comment line starts with the exempted ``*.py`` path, everything
+    after it is free-form per-station detail (line / shape / timing /
+    target). Migrating a station onto the shared device removes its line.
+    """
+    entries = set()
+    for line in LEGACY_MIGRATION_BACKLOG.read_text(encoding='utf-8').split('\n'):
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        first = line.split()[0]
+        if first.endswith('.py'):
+            entries.add(first)
+    return entries
+
+
+def _code_names(tree):
+    """Every identifier the code references (imports, names, attributes)."""
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split('.')[0])
+    return names
+
+
+def _has_check_mode_gate(tree):
+    """A check-mode gate: ``<argv-ish> == ['--check']`` / ``['--check-anchors']``.
+
+    The review's sampled shape, generalized over the argv spelling
+    (``args`` / ``sys.argv[1:]`` / a mode variable) and over both statement
+    and conditional-expression positions. #2795 fix-r6 sibling sweep: the
+    argparse spelling (``parser.add_argument('--check',
+    action='store_true')`` + ``if args.check:``) is the same family gate —
+    the review's 11-station sample happened to be all literal compares,
+    but the argparse stations' ``mutant_switch.preflight`` before the gate
+    is the same bare sibling-read window (fix #3 followed its named entry;
+    these are its same-shape siblings, registered not fixed).
+    """
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.If, ast.IfExp)):
+            continue
+        test = node.test
+        if isinstance(test, ast.Compare) and isinstance(test.ops[0], ast.Eq) \
+                and len(test.comparators) == 1:
+            right = test.comparators[0]
+            if (isinstance(right, (ast.List, ast.Tuple)) and len(right.elts) == 1
+                    and isinstance(right.elts[0], ast.Constant)
+                    and right.elts[0].value in ('--check', '--check-anchors')):
+                return True
+        for sub in ast.walk(test):
+            if isinstance(sub, ast.Attribute) and sub.attr in ('check',
+                                                                'check_anchors'):
+                return True
+    return False
+
+
+def bare_check_preflight_signature(text):
+    """True when the source is a bare (unlocked, unsigned) check preflight.
+
+    Gate shape present, but the file has no read-surface signature of its
+    own (device call, alias imports included, or the legacy family message),
+    does not dispatch through matrix_main, and uses no tree_lock anywhere
+    -- the shape the review's P1 sampled by hand in 11 stations.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        # An unparseable gate file cannot prove any discipline: treat the
+        # literal signatures as the only way out (fail-closed).
+        return bool(_has_gate_literal(text) and not READ_SURFACE_MARKER.search(text)
+                    and not ANCHOR_READ_WINDOW_CALL.search(text))
+    if not _has_check_mode_gate(tree):
+        return False
+    if read_surface_signature(text):
+        return False
+    return not (_code_names(tree) & _COVERED_CODE_NAMES)
+
+
+def _has_gate_literal(text):
+    # The regex half of the gate detector for sources ast cannot parse: the
+    # literal compare and the argparse attribute spellings, both fail-closed.
+    return bool(re.search(r'''==\s*\[\s*['"]--check(?:-anchors)?['"]\s*\]''', text)
+                or re.search(r'''if\s+\w+\.check(?:_anchors)?\b''', text))
+
+
+def _bare_check_entries(root):
+    """Scan a fixtures-shaped tree for unexempted bare check preflights."""
+    flagged = set()
+    for path in Path(root).rglob('*.py'):
+        if path.name.startswith('test_') or '__pycache__' in path.parts:
+            continue
+        rel = str(path.relative_to(root))
+        if rel in READ_SURFACE_SHARED_MODULES:
+            continue
+        if bare_check_preflight_signature(path.read_text(encoding='utf-8')):
+            flagged.add(rel)
+    return flagged
 
 
 # The device definition and the shared matrix runner are not roster entries:
@@ -1282,7 +1447,11 @@ def read_surface_signature(text):
 # there) and negative_suite.py's matrix_main calls it on behalf of its
 # callers; neither has a main() this roster could drive. Their coverage is
 # every calling entry's roster row (channel-slack today) plus
-# test_negative_suite.py, which drives matrix_main directly.
+# test_negative_suite.py, which drives matrix_main directly -- including its
+# --check window's busy-lock refusal half (fix-r6:
+# MatrixMainStartupTests.test_check_mode_refuses_when_the_tree_lock_is_busy;
+# before that only channel-slack's own first window stood in front of the
+# shared one).
 READ_SURFACE_SHARED_MODULES = frozenset({
     'negative_process.py',
     'negative_suite.py',
@@ -1611,6 +1780,9 @@ class ReadOnlyAnchorReadSurfaceRoster(unittest.TestCase):
         # the legacy family message, and a device call whose label/message a
         # fourth spelling could never drift (#2795 fix-r5 结构性收口——装置名
         # 即登记签名，文案只写在装置里).
+        # #2795 fix-r6（boundary#2）：import 别名形态同测——
+        # ``from negative_process import anchor_read_window as w`` 的调用点
+        # 也必须被名册签名认出，否则别名入口的防务扫不到（假 PASS）。
         with tempfile.TemporaryDirectory(prefix='negctl-2795r4-scan-') as base:
             legacy = Path(base) / 'new-family' / 'negative_controls.py'
             legacy.parent.mkdir()
@@ -1620,6 +1792,11 @@ class ReadOnlyAnchorReadSurfaceRoster(unittest.TestCase):
             device_based.write_text(
                 'from negative_process import anchor_read_window\n'
                 "with anchor_read_window(ROOT, 'demo'):\n    pass\n")
+            aliased = Path(base) / 'new-alias-family' / 'negative_controls.py'
+            aliased.parent.mkdir()
+            aliased.write_text(
+                'from negative_process import anchor_read_window as w\n'
+                "with w(ROOT, 'demo'):\n    pass\n")
             def scan(tree_root):
                 return {str(path.relative_to(tree_root))
                         for path in Path(tree_root).rglob('*.py')
@@ -1629,13 +1806,15 @@ class ReadOnlyAnchorReadSurfaceRoster(unittest.TestCase):
                         and read_surface_signature(path.read_text(encoding='utf-8'))}
             found = scan(base)
         self.assertTrue(found == {'new-family/negative_controls.py',
-                                 'new-device-family/negative_controls.py'}
+                                 'new-device-family/negative_controls.py',
+                                 'new-alias-family/negative_controls.py'}
                         and 'new-family/negative_controls.py'
                         not in READ_SURFACE_ROSTER,
                         '#2795 the scan predicate must flag a new same-family '
-                        'entry through either signature (legacy message or '
-                        'shared device call), which the register test above '
-                        'then reports as unregistered (red)')
+                        'entry through either signature (legacy message, '
+                        'shared device call or an aliased import of it), '
+                        'which the register test above then reports as '
+                        'unregistered (red)')
 
     def test_each_entry_reads_only_inside_the_tree_lock(self):
         repo_root = str(FIXTURES.parents[3])
@@ -1704,6 +1883,173 @@ class ReadOnlyAnchorReadSurfaceRoster(unittest.TestCase):
                 self.assertTrue(run.events == [],
                                 f'#2795 {script}: a refused run must read no '
                                 f'anchors: {run.events!r}')
+
+
+class BareCheckPreflightBacklog(unittest.TestCase):
+    """#2795 fix-r6（评审 sibling P1）：裸读检查预检的续跑表豁免机检。
+
+    名册签名（装置调用/旧文案）扫不到既无锁也无文案的 --check /
+    --check-anchors 预检——评审按字面形状取样 11 站判 P1。本类把「同族
+    全量清扫」机检化：扫描按 AST 形状命中全部裸读站，续跑表
+    （legacy-migration-backlog.txt，单一真相源）是唯一豁免清单；长出新
+    裸读站不登记就红，登记的行不存在于树（迁移完忘删）也红。
+    """
+
+    def test_every_bare_check_preflight_is_in_the_backlog(self):
+        unregistered = _bare_check_entries(FIXTURES) - backlog_exempted_entries()
+        self.assertTrue(not unregistered,
+                        '#2795 fix-r6: every check-mode (--check / '
+                        '--check-anchors) entry whose preflight has no device '
+                        'call (alias imports included), no legacy family '
+                        'message, no matrix_main dispatch and no tree_lock of '
+                        'its own is a bare sibling-read window -- a sibling '
+                        'mutation runner can leave a mutant on disk between '
+                        'its write and restore phases, and the unlocked '
+                        'preflight validates anchors against bytes it does not '
+                        'own. Register it in legacy-migration-backlog.txt or '
+                        'migrate it onto anchor_read_window '
+                        f'(unregistered={sorted(unregistered)})')
+
+    def test_backlog_entries_exist_in_the_tree(self):
+        # The exemption must not silently disarm itself: a stale row (its
+        # entry renamed away or fully migrated and deleted from the tree)
+        # keeps the scan green for a path nothing can hit anymore.
+        for entry in sorted(backlog_exempted_entries()):
+            with self.subTest(entry=entry):
+                self.assertTrue((FIXTURES / entry).is_file(),
+                                f'#2795 fix-r6: {entry} is exempted in '
+                                'legacy-migration-backlog.txt but does not '
+                                'exist in the tree; a stale exemption row '
+                                'must be removed together with the entry')
+
+    def test_the_bare_scan_detects_each_kill_shape(self):
+        # The scan predicate's every half, demonstrated on a synthetic tree
+        # (never the real one): a bare gate+read entry is flagged — in both
+        # gate spellings (literal compare and the argparse ``if args.check:``
+        # form); the same entry behind an aliased device import, behind the
+        # legacy message, and behind a matrix_main dispatch are not.
+        with tempfile.TemporaryDirectory(prefix='negctl-2795r6-scan-') as base:
+            base = Path(base)
+            bare = base / 'new-bare' / 'negative_controls.py'
+            bare.parent.mkdir()
+            bare.write_text("import sys\n"
+                            "if sys.argv[1:] == ['--check']:\n"
+                            "    for row in rows:\n"
+                            "        check_anchor(row, row[1].read_text())\n")
+            argparse_bare = base / 'new-argparse-bare' / 'negative_controls.py'
+            argparse_bare.parent.mkdir()
+            argparse_bare.write_text("import argparse\n"
+                                     "parser = argparse.ArgumentParser()\n"
+                                     "parser.add_argument('--check', action='store_true')\n"
+                                     "args = parser.parse_args()\n"
+                                     "if args.check:\n"
+                                     "    for row in rows:\n"
+                                     "        check_anchor(row, row[1].read_text())\n")
+            aliased = base / 'new-aliased' / 'negative_controls.py'
+            aliased.parent.mkdir()
+            aliased.write_text(
+                'from negative_process import anchor_read_window as w\n'
+                "if args == ['--check']:\n"
+                "    with w(ROOT, 'demo'):\n"
+                "        for row in rows:\n"
+                "            check_anchor(row, row[1].read_text())\n")
+            legacy = base / 'new-legacy' / 'negative_controls.py'
+            legacy.parent.mkdir()
+            legacy.write_text("if args == ['--check']:\n"
+                             "    for row in rows:\n"
+                             "        check_anchor(row, row[1].read_text())\n"
+                             "print('tree lock or anchor read failed: demo')\n")
+            dispatched = base / 'new-dispatched' / 'negative_controls.py'
+            dispatched.parent.mkdir()
+            dispatched.write_text("from negative_suite import matrix_main\n"
+                                 "if args == ['--check']:\n"
+                                 "    return matrix_main(ROOT, __file__, 'x', rows)\n")
+            found = _bare_check_entries(base)
+        self.assertTrue(found == {'new-bare/negative_controls.py',
+                                  'new-argparse-bare/negative_controls.py'},
+                        '#2795 fix-r6: the bare-check scan must flag the '
+                        'gate+read entry with no discipline of its own in '
+                        'either gate spelling (literal compare, argparse '
+                        f'attribute), and only those: {sorted(found)}')
+
+
+class BackgroundPanicRunRefusal(unittest.TestCase):
+    """#2795 fix-r6（评审 sibling#6/concurrency#1）：拒跑不落证据目录。
+
+    background-panic 的 run 模式此前先 ``out.mkdir`` 再进 fix-r5 新加的
+    锚点窗口——锁忙拒跑（rc 2）发生在目录创建之后，会留下一个空证据目录，
+    重跑同路径必 ``FileExistsError``，破坏「拒跑=从未开始、不占证据目录」
+    契约（matrix_main 的 test_negative_suite.py 同形明测）。本类驱动真实
+    main() 的 run 模式：忙锁 → SystemExit(2) + 装置统一文案，且目录未建。
+    """
+
+    def test_a_busy_lock_refusal_leaves_no_evidence_directory(self):
+        module = load_entry('background-panic/negative_controls.py')
+        base = Path(tempfile.mkdtemp(prefix='negctl-2795r6-bp-'))
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        out = base / 'out'
+        errors = io.StringIO()
+        with patch.dict(os.environ, {'CARGO_TARGET_DIR': str(base / 'cargo-target')}), \
+                patch.object(negative_process, 'tree_lock',
+                             _RecordingTreeLock([], busy=True)), \
+                patch('sys.argv', [str(base / 'wrapper-launch.py'), str(out)]), \
+                contextlib.redirect_stderr(errors):
+            with self.assertRaises(SystemExit) as caught:
+                module.main()
+        self.assertTrue(caught.exception.code == 2,
+                        '#2795 fix-r6: a busy tree lock must refuse the run '
+                        f'with rc 2, got {caught.exception.code!r}')
+        self.assertTrue(
+            'background-panic anchor preflight: '
+            'tree lock or anchor read failed' in errors.getvalue()
+            and 'TimeoutError' in errors.getvalue(),
+            f'#2795 fix-r6: the refusal must use the shared device message '
+            f'and name the lock wait: {errors.getvalue()!r}')
+        self.assertTrue(not out.exists(),
+                        '#2795 fix-r6: a refused run must leave no evidence '
+                        'directory (mkdir happens only after the preflight '
+                        'window; a re-run of the same path must not hit '
+                        'FileExistsError)')
+
+
+class ChannelSlackRunPreflightWindow(unittest.TestCase):
+    """#2795 fix-r6（评审 sibling#2）：run 分支 preflight 的装置窗口。
+
+    channel-slack 的 --check 分支 fix-r5 已收口，run 分支的
+    ``mutant_switch.preflight`` 此前保持裸读——mutant_switch.run 的 pristine
+    校验在其内部（取锁之后），preflight 先读仍可能被兄弟变异窗口打成假
+    拒跑（stale ValueError → 外层 catch → rc 2 ``preflight:``，合法实跑被
+    误归因）。本类驱动真实 main() 的 run 分支：忙锁 → SystemExit(2) +
+    装置统一文案（不进外层 ValueError/OSError catch）。
+    """
+
+    def test_run_mode_preflight_happens_inside_the_device_window(self):
+        module = load_entry('channel-slack/negative_controls.py')
+        base = Path(tempfile.mkdtemp(prefix='negctl-2795r6-cs-'))
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        events = []
+        errors = io.StringIO()
+        with patch.dict(os.environ, {'CARGO_TARGET_DIR': str(base / 'cargo-target')}), \
+                patch.object(negative_process, 'tree_lock',
+                             _RecordingTreeLock(events, busy=True)), \
+                patch('sys.argv', [str(base / 'wrapper-launch.py')]), \
+                contextlib.redirect_stderr(errors):
+            with self.assertRaises(SystemExit) as caught:
+                module.main()
+        self.assertTrue(caught.exception.code == 2,
+                        '#2795 fix-r6: a busy tree lock must refuse the run '
+                        f'before any preflight read, got {caught.exception.code!r}')
+        self.assertTrue(
+            'channel-slack preflight: tree lock or anchor read failed'
+            in errors.getvalue()
+            and 'TimeoutError' in errors.getvalue(),
+            f'#2795 fix-r6: the run-mode refusal must use the shared device '
+            f'message and name the lock wait (a bare preflight that falls '
+            f'through to the outer ValueError catch prints '
+            f'"preflight: ..." instead): {errors.getvalue()!r}')
+        self.assertTrue(events == [],
+                        f'#2795 fix-r6: a refused run-mode preflight must read '
+                        f'no switch sources: {events!r}')
 
 
 class RecordingRegistry:

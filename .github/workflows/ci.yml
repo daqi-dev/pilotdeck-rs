@@ -146,6 +146,12 @@ jobs:
           # 取得阶段拒跑（锁超时 / 树脏）撤目录、还原窗口超时退 1、取得段裸异常
           # 仍按失败关闭退 1 的相位分界用例，不需要 cargo。
           python3 -B -m unittest -v issue-2495/test_negative_controls.py
+          # #2795 fix-r6（评审 boundary#3）：session-domain-expectations 的
+          # SetupClassReadSurface（--negative 元控入口的类级 setUp 读面，
+          # fix-r3 收口）此前不在 CI——设备被改动没人红。同形接入本步
+          # （issue-2495 同款，纯 Python 不需要 cargo 名额，15 例实测 < 1 s，
+          # 含真实 tree_lock 驱动与 setUpClass 记录桩接缝）。
+          python3 -B -m unittest -v session-domain-expectations/test_meta_controls.py
       # #1570：共享负控的副本清单从源码推导（src/ 之外被编译期读取的输入）。
       # 漏一份不会表现成「变异存活」，而是整条变异 INVALID——尺子静默失去判别力。
       # 这里跑推导与 fail-closed 边界的自测；不需要 cargo。

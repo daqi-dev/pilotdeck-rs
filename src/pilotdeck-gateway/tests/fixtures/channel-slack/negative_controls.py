@@ -202,7 +202,14 @@ def main():
             return matrix_main(ROOT, __file__, 'channel::', MUTATIONS,
                                passed_count=1, child_count=0, paths=GUARDED,
                                exact=True, args=['--check'])
-        mutant_switch.preflight(rows)
+        # #2795 fix-r6（评审 sibling#2）：run 分支的 preflight 此前保持裸读——
+        # mutant_switch.run 的 pristine 校验在 run 内部（取锁之后），preflight
+        # 先读仍可能被兄弟变异 write/restore 窗口打成假拒跑（stale ValueError
+        # → 外层 catch → rc 2 `preflight:`，合法实跑被误归因）。与 --check 分支
+        # 同形包进共享装置：锁忙/读失败是拒跑（SystemExit(2) 不进外层
+        # ValueError/OSError catch），与后续 mutant_switch.run 顺序取锁、无嵌套。
+        with anchor_read_window(ROOT, 'channel-slack preflight'):
+            mutant_switch.preflight(rows)
         if not args.output or not os.environ.get('CARGO_TARGET_DIR'):
             raise ValueError('NEW_OUTPUT_DIR and caller CARGO_TARGET_DIR are required')
         output = Path(args.output).resolve()
