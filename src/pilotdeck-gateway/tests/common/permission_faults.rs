@@ -22,11 +22,12 @@
 //!
 //! #1937: this file also carries `skip_or_require`, the ONE place a
 //! skip/require pair may live; it prints through the shared writer, which it
-//! pulls in as a nested module. Every consumer of this file that still
-//! writes a bare skip line keeps its own `mod skip_line;` too, so the
-//! writer file is loaded twice under two names in those crates — the
-//! `network_timing_hooks.rs` precedent, allowed the same way.
-#![allow(clippy::duplicate_mod)]
+//! pulls in as a nested module. The consumers that still write a bare skip
+//! line of their own (write_tools.rs, workspace_snapshot.rs, the lib root)
+//! keep their own `mod skip_line;` too, so the writer file is loaded twice
+//! under two names in those crates — the `network_timing_hooks.rs`
+//! precedent, allowed the same way. A consumer that does not write one
+//! (fix-r1, the heartbeat precedent) must not declare the writer at all.
 //!
 //! #1900: every spelling that means "on" must actually arm the switch. The old
 //! parser matched the exact literals `1` and `true`, so `True`, `YES` or `" 1"`
@@ -35,6 +36,12 @@
 //! fail-open #1263 exists to remove. The switch is now case-insensitive and
 //! trimmed, and anything that is neither a recognized on nor a recognized off
 //! token panics instead of guessing: a typo must not silently disarm the gate.
+
+// The `duplicate_mod` diagnostic is spanless and lands in THIS module's
+// scope (measured on clippy 1.99 by deleting the line), so the allow must
+// live in this file — the `network_timing_hooks.rs` loaded-file precedent —
+// and covers every crate that also declares the writer directly.
+#![allow(clippy::duplicate_mod)]
 
 /// Accepted spellings, case-insensitive and trimmed. Everything else panics.
 const ON: &[&str] = &["1", "true", "yes", "on"];

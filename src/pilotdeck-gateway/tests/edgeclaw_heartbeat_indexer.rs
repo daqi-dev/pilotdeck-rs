@@ -30,9 +30,12 @@ mod test_exact_receipt;
 mod test_negative_receipt;
 #[allow(dead_code)]
 // #1461 r5: renamed to the shared `test_` names — `src/test_process.rs`
-// (#[path]-included below) calls `crate::test_permission_faults` /
-// `crate::test_skip_line` from its two #2138 root-skip arms, and loading
-// the same file twice under two names trips `clippy::duplicate_mod`.
+// (#[path]-included below) calls `crate::test_permission_faults::
+// skip_or_require` from its two #2138 root-skip arms, so this crate root
+// must declare that module name (fix-r1: those arms no longer call
+// `crate::test_skip_line` directly — the note half travels through the
+// pair helper, and this crate has no `mod test_skip_line;` to reason
+// about any more).
 #[path = "common/permission_faults.rs"]
 mod test_permission_faults;
 #[allow(dead_code)]

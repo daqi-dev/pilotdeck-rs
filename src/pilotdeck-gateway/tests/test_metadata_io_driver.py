@@ -5129,16 +5129,45 @@ self_check_controls_run | return | return problems
         cls._lex_fn_inventory[key] = inventory
         return inventory
 
+    _lex_entry_negative_process = None
+
+    @classmethod
+    def _lex_entry_process(cls):
+        # #2115 fix-r1: the lex entry's bootstrap is a sibling of
+        # `_ensure_workspace_scanner`, so it borrows the same shared
+        # process/source machinery — `tests/fixtures/negative_process.py`,
+        # the M6-owned module (imported here, never copied: "sibling runners
+        # must not keep their own allow-lists" cuts both ways). Loaded once
+        # per process; a control that needs to intercept the lease patches
+        # the loaded module's attributes, not this file's copies.
+        if cls._lex_entry_negative_process is None:
+            path = (Path(__file__).resolve().with_name('fixtures')
+                    / 'negative_process.py')
+            spec = importlib.util.spec_from_file_location(
+                'lex_entry_negative_process', path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            cls._lex_entry_negative_process = module
+        return cls._lex_entry_negative_process
+
     @classmethod
     def _run_lex_fn_items(cls, request):
-        # #2115: run (and, once, bootstrap) the lexing entry, refusing a
-        # stale binary. The digest follows the #1166 identity discipline the
-        # negative controls apply to `workspace_inputs`: the example source,
-        # the shared lexer, both manifests and the lockfile, in the order the
-        # example's `scanner_identity()` hashes them. A mismatch means the
-        # binary on disk was built from different rules than this tree
-        # declares — rebuild once (a driver run may have edited sources since
-        # the binary was built), then refuse rather than scan with old rules.
+        # #2115: run (and, once, bootstrap) the lexing entry. fix-r1 (DS
+        # concurrency #1): the bootstrap follows the ONE shared discipline
+        # `_ensure_workspace_scanner` uses (negative_process.py, imported —
+        # never copied): a missing binary is built under a pristine-HEAD
+        # lease (`tree_lock` + `_assert_workspace_sources` + `wait_for_slot`
+        # + `run_owned`), and an EXISTING binary is never rebuilt here. A
+        # digest mismatch means the binary was built from different rules
+        # than this tree declares — a killed negative control leaving
+        # mutated sources behind must surface as a refusal, not as a
+        # rebuild that quietly compiles the mutant into the rules the
+        # guards then trust. Rebuilding a stale entry is the owner's job.
+        # The digest follows the #1166 identity discipline the negative
+        # controls apply to `workspace_inputs`: the example source, the
+        # shared lexer, both manifests and the lockfile, in the order the
+        # example's `scanner_identity()` hashes them.
+        negative = cls._lex_entry_process()
         root = Path(__file__).resolve().parents[3]
         crate = root/'src/pilotdeck-gateway'
         sources = (crate/'examples/lex_fn_items.rs',
@@ -5147,35 +5176,86 @@ self_check_controls_run | return | return problems
                    root/'src/Cargo.toml',
                    root/'src/Cargo.lock')
         digest = hashlib.sha256(b''.join(path.read_bytes() for path in sources)).hexdigest()
-        target = Path(os.environ.get('CARGO_TARGET_DIR') or root/'_build/cargo-target')
+        # #1166: the target directory goes through the one shared admission
+        # (fix-r1, DS concurrency #3): the value is resolved and rejected by
+        # negative_process's own rule, not by a second local allow-list — a
+        # relative CARGO_TARGET_DIR would otherwise resolve against two
+        # different cwds on the Python and the cargo side.
+        try:
+            environment = negative.target_environment(root)
+        except RuntimeError as error:
+            raise AssertionError(f'#2115 the lex entry refuses this '
+                                 f'CARGO_TARGET_DIR: {error}') from error
+        target = Path(environment['CARGO_TARGET_DIR'])
         executable = target/'debug/examples/lex_fn_items'
-        environment = dict(os.environ, CARGO_TARGET_DIR=str(target))
-        for rebuild in (False, True):
-            if rebuild or not executable.is_file():
-                # `cargo` on PATH is the slot-gated wrapper where the hosts
-                # have one, and plain cargo in CI; cwd must be the tree root
-                # so ./rust-toolchain.toml applies (same call shape
-                # `_ensure_workspace_scanner` uses for `workspace_inputs`).
-                built = subprocess.run(['cargo', 'build', '--locked',
-                                        '--manifest-path', 'src/Cargo.toml',
-                                        '-p', 'pilotdeck-gateway',
-                                        '--example', 'lex_fn_items'],
-                                       cwd=root, env=environment,
-                                       capture_output=True, text=True, timeout=1800)
-                if built.returncode != 0:
-                    raise AssertionError('#2115 cannot build the lex entry: '
-                                         + built.stderr[-4000:])
-            result = subprocess.run([str(executable)], input=request,
-                                    capture_output=True, timeout=300)
-            if result.returncode != 0:
-                raise AssertionError('#2115 the lex entry failed: '
-                                     + result.stderr[-4000:].decode(errors='replace'))
-            document = json.loads(result.stdout)
-            if document.get('scanner_sha256') == digest:
-                return document
-        raise AssertionError('#2115 the lex entry binary does not match this source '
-                             'tree (scanner_sha256 mismatch, even after a rebuild); '
-                             'refusing to scan Rust names with stale rules')
+        if not executable.is_file():
+            with negative.tree_lock(root):
+                # Residue → refusal: a killed predecessor can leave any
+                # product source mutated, and building from a mutated tree
+                # compiles the mutant into the binary the guards would then
+                # trust. The lease also serializes cold callers of the
+                # shared target directory.
+                try:
+                    negative._assert_workspace_sources(root, 'HEAD')
+                except Exception as error:
+                    raise AssertionError(
+                        '#2115 the lex entry bootstrap refuses a tree whose build '
+                        'inputs differ from HEAD — a killed negative control can '
+                        'leave mutated sources behind, and rebuilding here would '
+                        'quietly compile the mutant into the scan rules: '
+                        + str(error)) from error
+                # Another cold caller may have completed while this one waited.
+                if not executable.is_file():
+                    negative.wait_for_slot(root/'scripts/cargo-slots.sh',
+                                           timeout=900, interval=15).check_returncode()
+                    # --locked, not --offline: a cold registry (fresh CI
+                    # runner) must be allowed to download exactly the committed
+                    # Cargo.lock versions, while the lockfile itself stays
+                    # pinned (same rationale as `_ensure_workspace_scanner`).
+                    # cwd is the tree root so ./rust-toolchain.toml applies.
+                    try:
+                        built = negative.run_owned(
+                            ['cargo', 'build', '--locked',
+                             '--manifest-path', 'src/Cargo.toml',
+                             '-p', 'pilotdeck-gateway',
+                             '--example', 'lex_fn_items'],
+                            cwd=root, env=environment, timeout=1800, idle_timeout=600)
+                    except subprocess.TimeoutExpired as error:
+                        raise AssertionError('#2115 building the lex entry exceeded '
+                                             'its 1800 s budget (idle 600 s)') from error
+                    if built.returncode != 0:
+                        raise AssertionError('#2115 cannot build the lex entry: '
+                                             + built.stderr[-4000:])
+                    if not executable.is_file():
+                        raise AssertionError('#2115 the lex entry build produced no '
+                                             'executable under ' + str(target))
+        # The request travels over stdin (contents, not paths). run_owned
+        # takes no input, so the bytes go through a file redirect while the
+        # run itself keeps run_owned's process-group ownership; the entry
+        # spawns no children of its own.
+        with tempfile.NamedTemporaryFile() as handle:
+            handle.write(request)
+            handle.flush()
+            try:
+                result = negative.run_owned(
+                    ['bash', '-c', 'exec "$1" < "$2"', 'lex-entry',
+                     str(executable), handle.name], timeout=300)
+            except subprocess.TimeoutExpired as error:
+                raise AssertionError('#2115 the lex entry exceeded its 300 s '
+                                     'budget') from error
+        if result.returncode != 0:
+            raise AssertionError('#2115 the lex entry failed: '
+                                 + result.stderr[-4000:])
+        document = json.loads(result.stdout)
+        if document.get('scanner_sha256') != digest:
+            raise AssertionError(
+                '#2115 the lex entry binary does not match this source tree '
+                '(scanner_sha256 mismatch): refusing to scan Rust names with '
+                'stale rules — a stale binary is the owner\'s job to rebuild. '
+                'From the tree root run: CARGO_TARGET_DIR=' + str(target)
+                + ' cargo build --locked --manifest-path src/Cargo.toml '
+                  '-p pilotdeck-gateway --example lex_fn_items')
+        return document
 
     @classmethod
     def call_sites(cls, text, name):
@@ -5292,12 +5372,17 @@ self_check_controls_run | return | return problems
     # so the `covered` list is a claim the guard keeps true rather than a list
     # of the callers the author happened to remember.
     #
-    # Known blind spots — collected by #1937, none left: the hand-rolled
-    # writer (`tests/unsafe_boundary.rs`'s `stderr_boundary_line`) now
-    # delegates to the shared writer and is registered below like any other
-    # helper, and the four `#1339 skipped:` `eprintln!` macro writes in
-    # `channel/sms/tests.rs` go through the writer too. Anything new should
-    # call the shared writer, not copy it.
+    # Known blind spots — collected by #1937: the hand-rolled writer
+    # (`tests/unsafe_boundary.rs`'s `stderr_boundary_line`) now delegates to
+    # the shared writer and is registered below like any other helper, and
+    # the four `#1339 skipped:` `eprintln!` macro writes in
+    # `channel/sms/tests.rs` go through the writer too. The four `#2691
+    # skipped:` `eprintln!` writes in the same file (the IPv6/port-busy
+    # probes) are still hand-rolled — neither this scan nor the pairing
+    # walk sees them, because they never call the writer; converting them
+    # is registered follow-up work, and until then this "none left" claim
+    # is scoped to writer call sites. Anything new should call the shared
+    # writer, not copy it.
     skip_line_exceptions = {
         'src/module_host/tests.rs::process_audit_is_linux_only': (
             '#1349 `#[cfg(not(target_os = "linux"))]`: the test does not exist in the '
@@ -5502,9 +5587,17 @@ self_check_controls_run | return | return problems
                 # #2115 (sibling #3): a same-named record is indistinguishable
                 # from the call site's owner by key, so every record of that
                 # name must be named, not just the one the line mapping found.
-                for item in record['fns']:
-                    if item['name'] != owner:
-                        continue
+                # fix-r1 (DS boundary #3): an owner the token records cannot
+                # prove (zero same-named fn records — a text-mapped ghost,
+                # e.g. an `fn` inside a raw-string fixture above the call)
+                # used to pass silently; unprovability is a demand, not an
+                # exemption by absence.
+                matching = [item for item in record['fns'] if item['name'] == owner]
+                if not matching:
+                    unregistered.append(
+                        f'{key} (no fn record of {source.relative_to(crate)} is named '
+                        f'{owner}; the line-based owner cannot be proven)')
+                for item in matching:
                     visible = self.nextest_visible_name(crate, source, item['mod'], owner)
                     if visible not in named:
                         unregistered.append(f'{key} (nextest-visible {visible})')
@@ -5543,22 +5636,41 @@ self_check_controls_run | return | return problems
         sources = sources if sources is not None else self.read_crate_sources(crate)
         inventory = self._lex_fn_items(sources)
         pair = crate/'tests'/'common'/'permission_faults.rs'
-        unpaired, lost = [], []
+        unpaired, lost, seen = [], [], set()
         for source in sorted(sources):
             record = inventory[source]
             if 'error' in record:
                 self.fail(f'#1937 the pairing walk refuses a file that does not lex: '
                           f'{record["error"]}')
+            # fix-r1 (DS boundary #2): `_owners_of_call` reads only the calls
+            # the lexer could attribute to a fn, so a half-pair written inside
+            # a macro body (or outside any fn) was invisible to BOTH halves —
+            # the exact "print the skip, never require" arm this guard exists
+            # to catch. Refuse the spelling itself, the same refusal
+            # `_cross_file_relay_callers` makes for a relay it cannot
+            # attribute.
+            for name in ('stderr_skip_line', 'require_permission_faults'):
+                for spelling in sorted(record['unattributed_calls']):
+                    if spelling.rsplit('::', 1)[-1] == name:
+                        self.fail(
+                            f'#1937 the pairing walk refuses {source.relative_to(crate)} '
+                            f'calling `{spelling}` where the lexer cannot attribute a '
+                            f'caller (macro input or no enclosing fn); route the arm '
+                            f'through tests/common/permission_faults.rs::skip_or_require, '
+                            f'or reshape the file so the call site is inside the fn '
+                            f'that owns it')
             for owner in sorted(self._owners_of_call(record, 'stderr_skip_line')):
                 if source == pair and owner == 'skip_or_require':
                     continue
                 key = f'{source.relative_to(crate)}::{owner}'
+                seen.add(key)
                 if key not in self.permission_fault_pair_exceptions:
                     unpaired.append(key)
             for owner in sorted(self._owners_of_call(record, 'require_permission_faults')):
                 if source == pair and owner == 'skip_or_require':
                     continue
                 key = f'{source.relative_to(crate)}::{owner}'
+                seen.add(key)
                 if key not in self.permission_fault_pair_exceptions:
                     lost.append(key)
         self.assertTrue(
@@ -5575,6 +5687,19 @@ self_check_controls_run | return | return problems
             'printing a skip note, so the reason is lost: ' + ', '.join(lost)
             + '. Route the arm through tests/common/permission_faults.rs::'
               'skip_or_require, or register it in permission_fault_pair_exceptions.')
+        # fix-r1 (DS sibling #3): the same stale-entry refusal the reverse
+        # guard makes for skip_line_exceptions — an entry that no longer
+        # matches a call site of either half excuses nothing, and a registry
+        # that only grows is exactly the "excuse nothing" rot the stale check
+        # exists to catch. Only entries that point into the crate being
+        # scanned can go stale (the controls below patch in a synthetic one).
+        applicable = {key for key in self.permission_fault_pair_exceptions
+                      if (crate/key.split('::')[0]).exists()}
+        self.assertEqual(
+            sorted(applicable - seen), [],
+            '#1937 these permission_fault_pair_exceptions entries no longer match a '
+            'call site of either half, so they would excuse nothing: '
+            + ', '.join(sorted(applicable - seen)))
 
     @staticmethod
     def _owners_of_call(record, name):
@@ -5948,6 +6073,122 @@ self_check_controls_run | return | return problems
         # Fail closed: a file that does not lex reports an error, never a
         # best-effort fn list.
         self.assertIn('error', inventory['broken.rs'])
+
+    def test_lex_entry_refuses_a_stale_binary(self):
+        # fix-r1 (DS concurrency #1): an existing binary whose embedded
+        # rules do not match this tree must be refused with the rebuild
+        # command in the message. The old `for rebuild in (False, True)`
+        # loop rebuilt in the test path instead — a killed negative control
+        # leaving mutated sources behind would have had the mutant quietly
+        # compiled into the very rules the guards then trust. The fake
+        # executable answers with a foreign scanner_sha256, so no cargo is
+        # involved in either verdict.
+        with tempfile.TemporaryDirectory() as target:
+            executable = Path(target)/'debug/examples/lex_fn_items'
+            executable.parent.mkdir(parents=True)
+            executable.write_text(
+                '#!/bin/sh\n'
+                'printf \'{"scanner_sha256": "not-this-tree"}\\n\'\n')
+            executable.chmod(0o755)
+            with patch.dict(os.environ, {'CARGO_TARGET_DIR': target}):
+                with self.assertRaisesRegex(
+                        AssertionError,
+                        r"scanner_sha256 mismatch.*owner's job to rebuild.*"
+                        r'cargo build --locked --manifest-path src/Cargo.toml'):
+                    self._lex_fn_items({'probe.rs': 'fn probe() {}\n'})
+
+    def test_lex_entry_bootstrap_refuses_a_mutated_tree(self):
+        # fix-r1 (DS concurrency #1): a cold bootstrap on a tree whose build
+        # inputs differ from HEAD must refuse BEFORE any slot wait or cargo
+        # launch, and say why — residue is a refusal, never a
+        # rebuild-and-continue. The pristine check is the shared
+        # `_assert_workspace_sources` (intercepted here: this test process
+        # must not mutate the real tree); the end-to-end shape, real
+        # mutation and all, is the mutation control bound to this test.
+        negative = self._lex_entry_process()
+
+        def no_launch(*args, **kwargs):
+            self.fail('#2115 the lex entry bootstrap must not launch cargo or '
+                      'wait for a slot on a mutated tree')
+
+        with tempfile.TemporaryDirectory() as target:
+            with patch.dict(os.environ, {'CARGO_TARGET_DIR': target}):
+                with patch.object(negative, '_assert_workspace_sources',
+                                  side_effect=RuntimeError(
+                                      'src/pilotdeck-gateway/examples/lex_fn_items.rs '
+                                      'differs from HEAD')):
+                    with patch.object(negative, 'run_owned', side_effect=no_launch), \
+                         patch.object(negative, 'wait_for_slot', side_effect=no_launch):
+                        with self.assertRaisesRegex(
+                                AssertionError,
+                                'bootstrap refuses a tree whose build inputs '
+                                'differ from HEAD.*quietly compile the mutant'):
+                            self._lex_fn_items({'probe.rs': 'fn probe() {}\n'})
+
+    def test_lex_entry_admits_only_the_shared_target_rule(self):
+        # fix-r1 (DS concurrency #3): the target directory must go through
+        # negative_process's ONE shared admission, never a second local
+        # interpretation — the old code read os.environ itself and would
+        # have accepted a blank, dot, repository-root or src-inside value
+        # (and resolved a relative one against the caller's cwd, which is
+        # not the cwd cargo sees).
+        root = Path(__file__).resolve().parents[3]
+        for bad in ('', '.', 'src/target', str(root)):
+            with patch.dict(os.environ, {'CARGO_TARGET_DIR': bad}):
+                with self.assertRaisesRegex(
+                        AssertionError,
+                        '#2115 the lex entry refuses this CARGO_TARGET_DIR'):
+                    self._lex_fn_items({'probe.rs': 'fn probe() {}\n'})
+
+    def test_pair_exception_registry_cannot_go_stale(self):
+        # fix-r1 (DS sibling #3): permission_fault_pair_exceptions had no
+        # stale-entry check while its skip_line_exceptions twin did — an
+        # entry whose call site disappeared (a rename, a move) would excuse
+        # nothing, silently, forever. The registry is a claim the guard
+        # keeps true; the same refusal the reverse guard makes applies.
+        crate = self.root/'pairing-stale-crate'
+        (crate/'tests').mkdir(parents=True)
+        (crate/'tests'/'probe.rs').write_text(
+            'fn environment_probe_arm() {\n'
+            '    stderr_skip_line("skip: environment probe\\n");\n'
+            '}\n')
+        with patch.object(self, 'permission_fault_pair_exceptions',
+                          {'tests/probe.rs::environment_probe_arm':
+                           ('an environment probe, not a permission-fault '
+                            'contract',),
+                           'tests/probe.rs::renamed_away':
+                           ('an entry whose call site is gone',)}):
+            with self.assertRaisesRegex(
+                    AssertionError,
+                    'permission_fault_pair_exceptions entries no longer match.*'
+                    'tests/probe.rs::renamed_away'):
+                self.assert_skip_lines_pair_their_requirement(crate=crate)
+
+    def test_skip_line_reverse_guard_demands_a_provable_owner(self):
+        # fix-r1 (DS boundary #3): the text scan maps a call site to the
+        # nearest `fn` line above it. When that name has no token record (a
+        # raw-string fixture holding `fn ghost_test() {` above the call),
+        # the old loop iterated zero records and passed silently — an
+        # owner the inventory cannot prove must stay a demand, not an
+        # exemption by absence. Naming the real caller in the filter does
+        # not silence the ghost, so the refusal can only be the provability
+        # one.
+        crate = self.root/'ghost-owner-crate'
+        (crate/'tests').mkdir(parents=True)
+        (crate/'tests'/'fixture.rs').write_text(
+            'const SNIPPET: &str = r#"\n'
+            'fn ghost_test() {\n'
+            '    stderr_skip_line("in a raw string\\n");\n'
+            '}\n'
+            '"#;\n'
+            '\n'
+            'fn real_caller() {\n'
+            '    stderr_skip_line("skip: unregistered\\n");\n'
+            '}\n')
+        with self.assertRaisesRegex(
+                AssertionError, 'no fn record.*ghost_test'):
+            self.assert_every_skip_line_reaches_nextest('test(=real_caller)',
+                                                        crate=crate)
 
     def test_skip_line_reverse_guard_rejects_an_unregistered_call_site(self):
         # #1900 controls for the reverse guard: a skip-printing test the filter
@@ -6614,6 +6855,76 @@ self_check_controls_run | return | return problems
         with self.assertRaisesRegex(
                 AssertionError,
                 'skips them silently green.*tests/probe.rs::environment_probe_arm'):
+            self.assert_skip_lines_pair_their_requirement(crate=crate)
+
+    def test_pairing_guard_refuses_a_call_it_cannot_attribute(self):
+        # fix-r1 (DS boundary #2): a half-pair written inside a macro body
+        # lands in the lexer's `unattributed_calls` bucket, and the pairing
+        # guard used to read only `calls` / `qualified_calls` — the macro
+        # shape hid "print the skip, never require" from BOTH halves of the
+        # check (and the text-based reverse guard maps such a site to
+        # whatever fn happens to sit above the macro). The refusal must
+        # name the file and the spelling; the same call spelled inside its
+        # fn stays visible through the ordinary unpaired path, so the
+        # location, not the call, was the blind spot. A macro that only
+        # routes the pair keeps the consolidated shape green.
+        crate = self.root/'pairing-macro-crate'
+        (crate/'tests'/'common').mkdir(parents=True)
+        (crate/'tests'/'common'/'skip_line.rs').write_text(
+            'pub fn stderr_skip_line(_text: &str) {}\n')
+        (crate/'tests'/'common'/'permission_faults.rs').write_text(
+            '#[path = "skip_line.rs"]\n'
+            'mod skip_line;\n'
+            '\n'
+            'pub fn skip_or_require(note: &str, requirement: &str) {\n'
+            '    skip_line::stderr_skip_line(note);\n'
+            '    assert!(!require_permission_faults(), "{requirement}");\n'
+            '}\n'
+            '\n'
+            'pub fn require_permission_faults() -> bool { false }\n')
+        (crate/'tests'/'arm.rs').write_text(
+            '#[path = "common/skip_line.rs"]\n'
+            'mod skip_line;\n'
+            '\n'
+            'macro_rules! note {\n'
+            '    ($m:literal) => { skip_line::stderr_skip_line($m); };\n'
+            '}\n'
+            '\n'
+            'fn lazy_arm() {\n'
+            '    note!("skip: half a pair, hidden in a macro\\n");\n'
+            '}\n')
+        with patch.object(self, 'permission_fault_pair_exceptions', {}):
+            with self.assertRaisesRegex(
+                    AssertionError,
+                    r'pairing walk refuses tests/arm.rs calling '
+                    r'`skip_line::stderr_skip_line` where the lexer cannot '
+                    r'attribute a caller'):
+                self.assert_skip_lines_pair_their_requirement(crate=crate)
+        (crate/'tests'/'arm.rs').write_text(
+            '#[path = "common/skip_line.rs"]\n'
+            'mod skip_line;\n'
+            '\n'
+            'fn plain_arm() {\n'
+            '    skip_line::stderr_skip_line("skip: half a pair\\n");\n'
+            '}\n')
+        with patch.object(self, 'permission_fault_pair_exceptions', {}):
+            with self.assertRaisesRegex(
+                    AssertionError,
+                    'skips them silently green.*tests/arm.rs::plain_arm'):
+                self.assert_skip_lines_pair_their_requirement(crate=crate)
+        (crate/'tests'/'arm.rs').write_text(
+            '#[path = "common/permission_faults.rs"]\n'
+            'mod permission_faults;\n'
+            '\n'
+            'macro_rules! pair {\n'
+            '    ($m:literal, $r:literal) => '
+            '{ permission_faults::skip_or_require($m, $r) };\n'
+            '}\n'
+            '\n'
+            'fn paired_arm() {\n'
+            '    pair!("skip: the pair\\n", "#1525 arm");\n'
+            '}\n')
+        with patch.object(self, 'permission_fault_pair_exceptions', {}):
             self.assert_skip_lines_pair_their_requirement(crate=crate)
 
     def test_success_output_filter_rejects_a_renamed_test(self):
