@@ -13,11 +13,16 @@
  * 端口纪律：39994（微测专用——fix-r4 挪出 39871–39898 段：原 39894 与 p15_driver 的
  * A-elevate 用例撞号、39895 为 p15 B-control，避让探针 39896–39898；39994 全仓无脚本
  * 绑定，评审 sibling#1 / concurrency#1）。
+ * fix-r5（评审 boundary#1 P1，当轮必修）：T15 归一实跑格——接线层 entryHrefCandidates
+ * 用真实文件系统形状（symlink/空格路径/目录/不存在路径）实跑归一；T13 的手写 href 与
+ * T14 在 v22.22.0 命中 import.meta.main===true 首分支（argv 实参不参与比较）均覆盖不到
+ * 接线层，接线层变异（两 href 传反 / 去 realpathSync 归一 / pathToFileURL 误用）由本格
+ * 判杀。T15 全部同步 fs 操作（无子进程/无网络），watchdog 预算不变。
  */
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -26,7 +31,7 @@ import {
   parseRawGate, pooledHeaderPremise, derivePooledPremise,
   sawCleanFin, eventsAfterWrite, silentHang, isAbnormalEvent,
   rawReuseNote, reuseSilentHangClause, partBNote,
-  pooledSkipReason, agentReuseNote, isMainEntry,
+  pooledSkipReason, agentReuseNote, isMainEntry, entryHrefCandidates,
 } from "./p16_stop_acceptance.mjs";
 
 const PORT_MT = 39994;
@@ -405,6 +410,57 @@ await section("T14", async () => {
   assert.equal(existsSync(resolve(scratch, "out", "p16_stop_acceptance.json")), true, "#T14 main() 失败路径亦落 JSON（rec.dump 兜底）");
 });
 
+// T15 argv realpath 归一实跑格（fix-r5 评审 boundary#1 P1）：接线层
+// entryHrefCandidates(argv1, moduleUrl) 用真实文件系统形状实跑——T13 只测纯函数手写
+// href、T14 在 v22.22.0 命中 import.meta.main===true 首分支（argv 实参不参与比较），
+// 接线层变异（两 href 传反 / 去 realpathSync 归一 / pathToFileURL 误用）此前在任何
+// Node 版本上都不被微测判杀。断言全部走真实 realpathSync/pathToFileURL 路径，不手写
+// href；临时件（symlink/目录）finally 清场，不落仓库。全同步 fs 操作，无子进程。
+await section("T15", async () => {
+  const probePath = fileURLToPath(new URL("./p16_stop_acceptance.mjs", import.meta.url));
+  const probeUrl = pathToFileURL(probePath).href;
+  // ① symlink 指到本探针（「argv[1] 传 symlink 路径、两 href 必须相等」的生产形状）：
+  //    去 realpathSync 归一变异 → argv1Href 停在 symlink 自身 href ≠ selfHref → 红
+  const alias = resolve(tmpdir(), `p16-mt-alias-${process.pid}-${Date.now()}.mjs`);
+  symlinkSync(probePath, alias);
+  try {
+    const h = entryHrefCandidates(alias, probeUrl);
+    assert.equal(h.argv1Href, h.selfHref, "#T15a symlink 入口两 href 必须 realpath 归一后相等");
+    assert.equal(fileURLToPath(h.argv1Href), realpathSync(probePath), "#T15a argv1Href 回解到探针真实路径");
+  } finally {
+    rmSync(alias);
+  }
+  // ② 真实路径含空格形状：pathToFileURL 须 URL 编码（%20）——手工拼 href 变异在此红
+  const spaceDir = resolve(tmpdir(), `p16 mt space ${process.pid}-${Date.now()}`);
+  mkdirSync(spaceDir, { recursive: true });
+  const target = resolve(spaceDir, "target.mjs");
+  writeFileSync(target, "export const t15 = 1;\n");
+  const alias2 = resolve(spaceDir, "alias.mjs");
+  symlinkSync(target, alias2);
+  try {
+    const h = entryHrefCandidates(alias2, pathToFileURL(target).href);
+    assert.equal(h.argv1Href, h.selfHref, "#T15b 空格路径 symlink 两 href 归一后相等");
+    assert.ok(h.argv1Href.includes("%20"), "#T15b href 须 URL 编码空格（%20）——手工拼 href 变异在此红");
+    assert.equal(fileURLToPath(h.argv1Href), realpathSync(target), "#T15b argv1Href 回解到目标真实路径");
+    // ③ argv[1] 为目录：realpathSync 对目录成功归一（实现语义实测口径）——断言其 href
+    const hd = entryHrefCandidates(spaceDir, probeUrl);
+    assert.notEqual(hd.argv1Href, undefined, "#T15c argv[1] 为目录时 realpathSync 成功归一（非 undefined 口径）");
+    assert.equal(fileURLToPath(hd.argv1Href), realpathSync(spaceDir), "#T15c 目录 href 回解到目录真实路径");
+    assert.ok(hd.argv1Href.includes("%20"), "#T15c 目录 href 亦须 URL 编码空格");
+  } finally {
+    rmSync(spaceDir, { recursive: true, force: true });
+  }
+  // ④ argv[1] 不存在 / 缺失（`-e` 宿主形状）：argv1Href 为 undefined（不命中兜底、不抛）；
+  //    selfHref 恒归一到本模块真实路径——两 href 传反变异下 ④ 的 argv1Href 断言即红
+  const missing = resolve(tmpdir(), `p16-no-such-${process.pid}-${Date.now()}`);
+  const hm = entryHrefCandidates(missing, probeUrl);
+  assert.equal(hm.argv1Href, undefined, "#T15d argv[1] 不存在 → argv1Href undefined（不命中兜底、不抛）");
+  assert.equal(fileURLToPath(hm.selfHref), realpathSync(probePath), "#T15d selfHref 归一到本模块真实路径");
+  const hu = entryHrefCandidates(undefined, probeUrl);
+  assert.equal(hu.argv1Href, undefined, "#T15d argv[1] 缺失（-e 宿主形状）→ argv1Href undefined");
+  assert.equal(fileURLToPath(hu.selfHref), realpathSync(probePath), "#T15d selfHref 同上（argv 缺失不影响）");
+});
+
 // fix-r4：正常收尾——watchdog 计时器清除（不拖长正常跑；挂起路径由 watchdog 自身收场）
 clearTimeout(watchdogTimer);
 if (failures.length > 0) {
@@ -412,4 +468,4 @@ if (failures.length > 0) {
   for (const f of failures) console.error(`  ${f}`);
   process.exit(1);
 }
-console.log("p16_gate_microtest: ALL PASS (T1–T14)");
+console.log("p16_gate_microtest: ALL PASS (T1–T15)");

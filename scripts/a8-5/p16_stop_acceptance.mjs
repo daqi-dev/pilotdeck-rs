@@ -17,7 +17,8 @@
  * 两侧 realpathSync 归一后同 URL（symlink 入口可比）任一命中即直接执行——import.meta.main
  * 不提供的 Node 段（22.0–22.16）不再静默 no-op exit 0（尺子假通过面）；两信号皆不命中且
  * import.meta.main 缺失时显式 exit 3（取舍见文件尾注释）；被 import（现代 Node
- * import.meta.main === false）安静交还宿主、不退出（微测/T12 消费方）。
+ * import.meta.main === false）安静交还宿主、不退出（微测/T12 消费方）。fix-r5：href
+ * 归一抽成可测导出 entryHrefCandidates（微测 T15 真实文件系统形状实跑覆盖接线层）。
  * #2759 fix-r2（两线整合）：前提判定经 common.mjs 单源（keepAliveProbe 炮台 +
  * keepAlivePremise 判定，#2756）；头/体切分与 freeSockets 直测并入该主干（direct
  * 压过头推断），close 前池占用复检（A/pool-at-close）保留 #2756 登记面。
@@ -613,29 +614,39 @@ async function main() {
 // ——微测顶层 import 本文件，进程在微测 body 前死亡（退出码 3、零测试输出；T12 子进程
 // 同理 status=3），见本轮证据 raw/emp-exit3-*.out。② 是 Node 明示的「非 main」真值、非
 // 误判；兜底后「直接执行而两信号皆 miss」已不可达（直接执行定义上 argv[1]=本文件真实
-// 路径，realpath 归一必命中兜底）——残余风险是兜底本身被改坏，由微测直接执行格 T14
-// 承担判别（守卫坏 → 微测红）。代价如实登记：import.meta.main 缺失的 Node 段上被 import
-// 会 exit 3（微测在该段不可用——其口径钉 v22.22.0，见 RESULT）。
+// 路径，realpath 归一必命中兜底）——残余风险是兜底本身被改坏，由微测直接执行格 T14 +
+// 归一实跑格 T15 承担判别（守卫/接线坏 → 微测红）。代价如实登记：import.meta.main 缺失
+// 的 Node 段上被 import 会 exit 3（微测在该段不可用——其口径钉 v22.22.0，见 RESULT）。
 export function isMainEntry(importMetaMain, argv1Href, moduleUrlHref) {
   if (importMetaMain === true) return true;
   return argv1Href !== undefined && argv1Href === moduleUrlHref;
 }
 
-const p16Argv1Href = (() => {
+// fix-r5（评审 boundary#1 P1，当轮必修）：argv[1]/本模块两侧 href 归一从调用点的两个
+// IIFE 抽成可测导出——fix-r4 的接线层（realpathSync 归一 + pathToFileURL）零运行时覆盖
+// （T13 只测纯函数手写 href、T14 在 v22.22.0 命中 import.meta.main===true 首分支、argv
+// 实参不参与比较），接线层变异（两 href 传反 / 去 realpathSync 归一 / pathToFileURL
+// 误用）在任何 Node 版本上都不被微测判杀。语义与 fix-r4 的两个 IIFE 逐点相同：argv1
+// 缺失（`-e`/REPL 宿主形状）→ undefined；realpathSync 不可 stat（已删文件等）→ undefined
+// （兜底分支不命中）；两侧先 realpathSync 归一再 pathToFileURL（symlink 入口可比）。
+export function entryHrefCandidates(argv1, moduleUrl) {
+  let argv1Href;
   try {
-    return process.argv[1] === undefined ? undefined : pathToFileURL(realpathSync(process.argv[1])).href;
+    argv1Href = argv1 === undefined ? undefined : pathToFileURL(realpathSync(argv1)).href;
   } catch {
-    return undefined; // argv[1] 不可 stat（已删文件等形状）——兜底分支不命中
+    argv1Href = undefined; // argv[1] 不可 stat（已删文件等形状）——兜底分支不命中
   }
-})();
-const p16SelfHref = (() => {
+  let selfHref;
   try {
-    return pathToFileURL(realpathSync(fileURLToPath(import.meta.url))).href;
+    selfHref = pathToFileURL(realpathSync(fileURLToPath(moduleUrl))).href;
   } catch {
-    return undefined;
+    selfHref = undefined;
   }
-})();
-if (isMainEntry(import.meta.main, p16Argv1Href, p16SelfHref)) {
+  return { argv1Href, selfHref };
+}
+
+const p16EntryHrefs = entryHrefCandidates(process.argv[1], import.meta.url);
+if (isMainEntry(import.meta.main, p16EntryHrefs.argv1Href, p16EntryHrefs.selfHref)) {
   main().catch((e) => {
     say(`P16 FAILED: ${e?.stack ?? e}`);
     rec?.dump?.("p16_stop_acceptance.json");
