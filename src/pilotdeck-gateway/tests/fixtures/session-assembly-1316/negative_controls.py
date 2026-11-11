@@ -11,6 +11,18 @@ mutant inside that test's own panic payload. Original source bytes and hashes
 are verified after every mutation; the summary is emitted only after all
 mutants have run.
 
+Run with no other writers in this worktree: the runner rewrites the guarded
+sources in place (compound `with stop_run(), mutating_sources(...)`), and
+`CARGO_TARGET_DIR` only isolates build artifacts, not source files -- a plain
+cargo test / build sharing this tree during the mutation window compiles a
+mutant and produces unrelated false failures. The exclusive
+`.negative-source.lock` orders negative-control `mutating_sources` writers
+among themselves; Rust read-lease consumers (`tests/common/read_lease.rs` in
+the gateway and cli crates) take a shared lock on the same file, so a writer
+also excludes those readers. It does not block ordinary cargo runs or
+lock-free Python checkers, and its release (e.g. after a SIGKILLed runner)
+does not prove the tree is clean.
+
 Modes: `--self-check` proves the slot guard still exits bounded under
 `python3 -O` (#1632); `--slot-guard-probe BUSY_SCRIPT TIMEOUT` is the child
 mode that self-check drives. Both run before any output directory is created,
