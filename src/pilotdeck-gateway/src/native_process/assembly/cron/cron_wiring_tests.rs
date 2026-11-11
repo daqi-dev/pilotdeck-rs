@@ -546,9 +546,13 @@ async fn a_budget_cut_cleanup_still_disposes_factory_and_project() {
         "#1959 the failure surfaces the discovery error, not a swallowed start: {failure}"
     );
     let recorded = order.lock().expect("#1959 cleanup order lock").clone();
+    // #2486: the automation slot is filled before the start poll, so a
+    // failed builder's teardown now records the automation stop first — a
+    // no-op for a generation its own failure cleanup already drained —
+    // before the channels stage that exhausts the budget here.
     negative_assert_eq!(
         recorded,
-        ["channels", "session", "project"],
+        ["automation", "channels", "session", "project"],
         "#1959 a budget cut mid-teardown must not skip the factory and project fallback disposals"
     );
 }

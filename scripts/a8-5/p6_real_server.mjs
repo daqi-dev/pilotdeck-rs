@@ -82,7 +82,34 @@ async function main() {
   log("pre/ws-hello", { type: (await ws.hello())?.type });
   log("pre/ws-describe", { ok: (await ws.request("describe_server"))?.ok });
   const ka = await keepAliveProbe(port);
-  log("pre/ka", await ka.once("/health"));
+  // #2756（同 p16 #2662 守门形状）：建池前提守门——首次请求失败或响应 Connection
+  // 非 keep-alive（缺头按完整 HTTP/1.1 隐式）时池空，SIGTERM 轮的 keepalive-http
+  // 是新连接在途，「既有 keep-alive 连接被拆」语义不成立（matrix.md §4.2 / §5.1
+  // 单样本格 n=1 无退路），故记 SKIP 行、该条目跳过。
+  const kaFirst = await ka.once("/health");
+  const kaPool = kaFirst.premise === true;
+  log("pre/ka", kaFirst);
+  if (!kaPool) {
+    log("ka/SKIP-sigterm-keepalive-http", {
+      reason: kaFirst.premiseReason,
+      kaFirst,
+      note: "建池前提未成立：sigterm-concurrent 的 keepalive-http 跳过（新连接对照已由 new-http 覆盖，不重复产出），「既有 keep-alive 在途被拆」观测不作对照",
+    });
+  }
+
+  // #2756 fix-r1（boundary P1 仲裁）：SIGTERM 时刻再判一次池占用——S0→SIGTERM
+  // 跨过服务端空闲收尾窗（实测 ~5.5–6s）时池已被收空，keepalive-http 是新连接
+  // 在途（实测错误串退化为 ECONNREFUSED、reusedSocket:false，与「既有 keep-alive
+  // 在途被拆」的 ECONNRESET 语义不同），仍按单样本口径引用即错读证据。判池须在
+  // SIGTERM 前（server 收到 SIGTERM 后 close() ~11ms 内即 FIN 掉池内 socket，
+  // 见轮次证据 exp-close-pool.out）。
+  const kaPoolAtSigterm = kaPool && ka.freeSocketCount() > 0;
+  if (kaPool && !kaPoolAtSigterm) {
+    log("ka/SKIP-pool-drained-before-reuse", {
+      reason: "池在 SIGTERM 前被服务端空闲超时收尾（pre/ka 入池后、SIGTERM 前池已空）",
+      note: "sigterm-concurrent 的 keepalive-http 跳过：池空时是新建连在途而非既有 keep-alive 被拆（新连接对照已由 new-http 覆盖），「既有 keep-alive 在途被拆（ECONNRESET 单样本）」观测不作对照",
+    });
+  }
 
   // SIGTERM 同一轮并发四个入口请求
   child.kill("SIGTERM");
@@ -92,7 +119,41 @@ async function main() {
       (c) => c.hello(),
       (e) => ({ kind: "new-ws", error: e.message }),
     ),
-    ka.once("/health").then((r) => ({ kind: "keepalive-http", ...r })),
+    // #2756：前提未成立时跳过（池空时是新建连而非复用在途，证据无效——同 p16 观察 3
+    // 形状）；fix-r1 起前提 = kaPoolAtSigterm（入池 + SIGTERM 前池仍占用），once 返回
+    // 带 reusedSocket（窗内正常样本应为 true，即真在池内 socket 上在途）。
+    // fix-r2（DS sibling#2 + Grok boundary#1 撞条）：SIGTERM 前的复检不能代替
+    // 在途判别——复检通过后、请求发出前池仍可能被收掉（server 收到 SIGTERM 后
+    // close() ~11ms 内即 FIN 掉池内 socket），此时请求落新连接，错误串退化
+    // ECONNREFUSED、reusedSocket:false，与「既有 keep-alive 在途被拆」语义不同。
+    // 事后按 reusedSocket 复核：false（复用池在发出前已被收尾）→ 记
+    // ka/SKIP-reuse-fell-to-new-conn、该行降级 skipped，与三态编码对齐。
+    // fix-r3（DS sibling#2）：降级行保留 once 原字段（ok/error/code/reusedSocket——
+    // p16 fix-r1「失败分支保留 {...r}」先例，读 sigterm-concurrent 数组的消费方不
+    // 漏判真实挂起/其它失败形状），reason 按 r.ok / r.reusedSocket 实测值推导
+    //（reusedSocket 全路径恒布尔：Node v22.22.0 构造器置 false、freeSockets 弹出
+    // 复用置 true，error/timeout 路径同布尔，见 fix-r3 exp-reused-socket-semantics）。
+    kaPoolAtSigterm
+      ? ka.once("/health").then((r) => {
+          if (r.reusedSocket === true) return { kind: "keepalive-http", ...r };
+          log("ka/SKIP-reuse-fell-to-new-conn", {
+            reusedSocket: r.reusedSocket,
+            once: r,
+            reason: r.ok === true
+              ? `SIGTERM 前池占用复检通过，但请求实际落在新连接（reusedSocket:${r.reusedSocket}，复用池在发出前已被收尾）`
+              : `SIGTERM 前池占用复检通过，但请求未在池内 socket 上完成（ok:false${r.code ? `，${r.code}` : r.error ? `，${r.error}` : ""}；reusedSocket:${r.reusedSocket}）——成因以 once 原值为准，不按「落新连接」单义解释`,
+            note: "keepalive-http 行降级 skipped：该请求不在池内 socket 上在途，「既有 keep-alive 在途被拆（ECONNRESET 单样本）」观测不作对照（新连接对照已由 new-http 覆盖，不重复产出）",
+          });
+          return {
+            kind: "keepalive-http",
+            ...r,
+            skipped: true,
+            reason: r.ok === true
+              ? `请求落新连接而非池内 socket 在途（reusedSocket:${r.reusedSocket}，见 ka/SKIP-reuse-fell-to-new-conn）`
+              : `请求未在池内 socket 上完成（reusedSocket:${r.reusedSocket}，once 原值随行——见 ka/SKIP-reuse-fell-to-new-conn）`,
+          };
+        })
+      : Promise.resolve({ kind: "keepalive-http", skipped: true, reason: kaPool ? "池在 SIGTERM 前被服务端空闲超时收尾（见 ka/SKIP-pool-drained-before-reuse）" : "建池前提未成立（见 ka/SKIP-sigterm-keepalive-http）" }),
     httpProbe(port, "/health").then((r) => ({ kind: "new-http", ...r })),
   ]);
   log("sigterm-concurrent", concurrent);
