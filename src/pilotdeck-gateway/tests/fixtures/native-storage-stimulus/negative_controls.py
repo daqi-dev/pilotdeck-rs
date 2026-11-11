@@ -226,7 +226,7 @@ mutations = [
                 && let Some(seq) = observed.1
             {
                 // Non-panicking release: a `.unwrap()` here could abort during unwind.
-                let temporary = self.control.join("release.json.tmp");
+                let temporary = self.control.join("release.json.guard.tmp");
                 if fs::write(&temporary, format!("{{\\"seq\\":{seq}}}")).is_ok() {
                     let _ = fs::rename(&temporary, self.control.join("release.json"));
                 }
@@ -245,7 +245,7 @@ mutations = [
                 && let Some(seq) = observed.1
             {
                 // Non-panicking release: a `.unwrap()` here could abort during unwind.
-                let temporary = self.control.join("release.json.tmp");
+                let temporary = self.control.join("release.json.guard.tmp");
                 if fs::write(&temporary, format!("{{\\"seq\\":{seq}}}")).is_ok() {
                     let _ = fs::rename(&temporary, self.control.join("release.json"));
                 }

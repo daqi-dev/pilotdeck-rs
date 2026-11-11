@@ -27,11 +27,17 @@ const HELD_BOUND_MS: f64 = 3000.0;
 /// observation cap, or a bound-expiry release would unblock the predecessor and
 /// a receipt written by a lazily dispatched append would look correct.
 const OUTLIVED_BOUND_MS: f64 = 30000.0;
-/// The shared (site, key) pairs every fragment, release guard, and receipt
-/// query in this file agrees on (#1781): one constant per pair, so a retargeted
-/// key cannot leave the guard releasing a barrier the queries never watched —
-/// or the queries waiting on a barrier the guard never released.
+/// The shared (site, key) pairs the fragments, release guards, and receipt
+/// queries in this file use (#1781): one constant per pair, so every site/key
+/// routes through one name and a retargeted key cannot leave the guard
+/// releasing a barrier the queries never watched — or the queries waiting on
+/// a barrier the guard never released. Honest scope: this is name-level
+/// convergence only — the pair stays a positional tuple, so a `.0`/`.1` swap
+/// still compiles (struct-shaped pairs are the P2 follow-up), and the
+/// constants make drift visible to review, not impossible to the compiler.
 const REGISTRY_TURN_TIMEOUT: (&str, &str) = ("registry", "agent_status:turn_timeout");
+const REGISTRY_INPUT_ACCEPTED: (&str, &str) = ("registry", "agent_status:input_accepted");
+const REGISTRY_CANCELLED: (&str, &str) = ("registry", "agent_status:cancelled");
 const WRITER_SESSION_METADATA: (&str, &str) = ("writer", "session_metadata");
 const WRITER_TURN_TIMEOUT: (&str, &str) = ("writer", "turn_timeout");
 
@@ -214,23 +220,44 @@ impl Drop for BarrierRelease {
         // `block` receipt yet, and a one-shot sample would then skip the release
         // entirely — the leak this guard exists to stop.
         //
-        // #1805: every check pairs with the *current* barrier — the highest
-        // `block` receipt for this site/key. A key that completed an earlier
-        // round still has that round's release and complete receipts on disk,
-        // and an unpaired read would call that history "already released" and
-        // skip the release the current barrier is waiting on.
+        // #1805: every check pairs with the *current* barrier — a `block`
+        // receipt for this site/key newer than the previous round's. A key
+        // that completed an earlier round still has that round's release and
+        // complete receipts on disk, and an unpaired read would call that
+        // history "already released" and skip the release the current barrier
+        // is waiting on.
         let observe =
             |phase: &str, after: u64| receipt_seq(&self.control, self.site, phase, self.key, after);
         let sample =
             |barrier: Option<u64>| (barrier.and_then(|seq| observe("release", seq)), barrier);
+        // Anchor semantics, honestly: `observe("block", 0)` reads the highest
+        // `block` receipt on disk, which is only *provisionally* the current
+        // round's. Until this round's `block` receipt lands, the anchor is the
+        // previous round's, and that round's release/complete then pair as
+        // "already released and complete" — the guard breaks without writing
+        // release.json, the current barrier waits out its bound, and once
+        // `Scratch` has removed the tree the worker re-creates
+        // `/tmp/pdrs-stimulus-*` (the B3 leak). Kept as-is: receipts alone
+        // cannot distinguish "this round has not triggered yet" from "this
+        // round is the last block on disk", so a per-round floor needs state
+        // the fixture does not have.
         let mut deadline = Instant::now() + Duration::from_secs(2);
         let mut observed = sample(observe("block", 0));
         loop {
+            // The temp name below is guard-specific on purpose: `write_atomic`
+            // (behind the `release()` helper) stages the same final
+            // `release.json` through `release.json.tmp`, and this `Drop` can
+            // run on its own thread while the test body is still mid-release.
+            // A shared temp name leaves a window where one side's rename finds
+            // the other side's file gone — a plain ENOENT panic, or a release
+            // stamped with the wrong seq (#1781 review: mutual-overwrite
+            // window). `receipt_seq` filters by `.json` extension, so the
+            // extra sidecar is never counted as a receipt.
             if observed.0.is_none()
                 && let Some(seq) = observed.1
             {
                 // Non-panicking release: a `.unwrap()` here could abort during unwind.
-                let temporary = self.control.join("release.json.tmp");
+                let temporary = self.control.join("release.json.guard.tmp");
                 if fs::write(&temporary, format!("{{\"seq\":{seq}}}")).is_ok() {
                     let _ = fs::rename(&temporary, self.control.join("release.json"));
                 }
@@ -845,9 +872,9 @@ async fn registry_port_appends_queue_with_witness_receipts() {
     };
     wait_receipt(
         &control,
-        "registry",
+        REGISTRY_INPUT_ACCEPTED.0,
         "queued",
-        "agent_status:input_accepted",
+        REGISTRY_INPUT_ACCEPTED.1,
         "#1370 registry queued receipt is published while held",
     );
     release(&control, seq_of(&block));
@@ -880,9 +907,9 @@ async fn registry_port_appends_queue_with_witness_receipts() {
     // The queued write was never blocked, so it owes no complete receipt.
     assert_no_receipt(
         &control,
-        "registry",
+        REGISTRY_INPUT_ACCEPTED.0,
         "complete",
-        "agent_status:input_accepted",
+        REGISTRY_INPUT_ACCEPTED.1,
     );
 }
 
@@ -941,9 +968,9 @@ async fn publication_queued_receipt_survives_predecessor_serialization() {
     // so this receipt only exists if the entry tick decided it.
     wait_receipt(
         &control,
-        "registry",
+        REGISTRY_INPUT_ACCEPTED.0,
         "queued",
-        "agent_status:input_accepted",
+        REGISTRY_INPUT_ACCEPTED.1,
         "#1370 publication publishes the queued receipt while the barrier is held",
     );
     release(&control, seq_of(&block));
@@ -1079,9 +1106,14 @@ async fn failed_barrier_releases_its_hold_before_later_entries() {
         appended.is_ok(),
         "#1370 the site accepts entries again after a failed barrier"
     );
-    let stamped = receipts(&control)
-        .iter()
-        .any(|receipt| matches(receipt, "registry", "queued", "agent_status:input_accepted"));
+    let stamped = receipts(&control).iter().any(|receipt| {
+        matches(
+            receipt,
+            REGISTRY_INPUT_ACCEPTED.0,
+            "queued",
+            REGISTRY_INPUT_ACCEPTED.1,
+        )
+    });
     negative_assert!(
         !stamped,
         "#1370 a failed barrier releases its hold before later entries"
@@ -1142,9 +1174,9 @@ async fn witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append() {
     // seeing it proves this append really took the witnessed branch.
     wait_receipt(
         &control,
-        "registry",
+        REGISTRY_INPUT_ACCEPTED.0,
         "queued",
-        "agent_status:input_accepted",
+        REGISTRY_INPUT_ACCEPTED.1,
         "#1370 fifo fixture owes the second append a receipt",
     );
     release(&control, seq_of(&block));
@@ -1176,7 +1208,12 @@ async fn witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append() {
     // no queued receipt. Without this reverse assertion a regression that
     // published `release` before clearing the hold would stamp `cancelled` with
     // a receipt and still keep the FIFO order below, passing unnoticed.
-    assert_no_receipt(&control, "registry", "queued", "agent_status:cancelled");
+    assert_no_receipt(
+        &control,
+        REGISTRY_CANCELLED.0,
+        "queued",
+        REGISTRY_CANCELLED.1,
+    );
     let events = port.events(&run()).await.unwrap();
     let names: Vec<String> = events
         .iter()
@@ -1259,9 +1296,9 @@ async fn withheld_witnessed_future_does_not_park_the_registry_worker() {
     // branch and that the settle does not depend on the withheld future.
     wait_receipt(
         &control,
-        "registry",
+        REGISTRY_INPUT_ACCEPTED.0,
         "queued",
-        "agent_status:input_accepted",
+        REGISTRY_INPUT_ACCEPTED.1,
         "#1370 withheld fixture owes the unpolled append a receipt",
     );
     release(&control, seq_of(&block));
@@ -1289,7 +1326,12 @@ async fn withheld_witnessed_future_does_not_park_the_registry_worker() {
         .expect("#1370 the append behind a withheld witnessed future finished")
         .expect("#1370 the append behind a withheld witnessed future persists");
     // Entered after the release cleared the hold, so it owes no receipt.
-    assert_no_receipt(&control, "registry", "queued", "agent_status:cancelled");
+    assert_no_receipt(
+        &control,
+        REGISTRY_CANCELLED.0,
+        "queued",
+        REGISTRY_CANCELLED.1,
+    );
     tokio::time::timeout(OBSERVE, blocked)
         .await
         .expect("#1370 withheld blocked append finishes within the observation cap")
@@ -1583,9 +1625,24 @@ fn stalled_barrier_guard_still_ends_within_its_budget() {
     // — which must surface as this named assertion, never a hung binary.
     let guard = BarrierRelease::new(&control, WRITER_TURN_TIMEOUT.0, WRITER_TURN_TIMEOUT.1);
     let dropping = thread::spawn(move || drop(guard));
-    thread::sleep(Duration::from_secs(5));
+    // Bounded poll matched to the claim, not one fixed sample: the assertion
+    // under test says the guard ends *within its budget* (2 s), while the old
+    // "sleep 5 s, then check once" let any regression that stretches the
+    // budget by up to 3 s pass green. Measure when the thread actually ends
+    // and bound that by the budget plus one second of scheduling allowance;
+    // the 5 s loop cap below is only the backstop so an infinite spin still
+    // lands on the named assertion instead of hanging the binary.
+    let started = Instant::now();
+    let mut ended = None;
+    while started.elapsed() < Duration::from_secs(5) {
+        if dropping.is_finished() {
+            ended = Some(started.elapsed());
+            break;
+        }
+        thread::sleep(POLL);
+    }
     negative_assert!(
-        dropping.is_finished(),
+        ended.is_some_and(|elapsed| elapsed <= Duration::from_secs(3)),
         "#1805 the stalled release guard ends within its budget"
     );
     dropping
@@ -1666,6 +1723,14 @@ fn release_guard_pairs_receipts_with_the_current_barrier() {
         )]),
     );
     let guard = BarrierRelease::new(&control, REGISTRY_TURN_TIMEOUT.0, REGISTRY_TURN_TIMEOUT.1);
+    // Failure-path note (same B3 shape `registry_barrier_holds_chain_lock`
+    // records): if an assertion fails once `second` has tripped this barrier,
+    // the blocked thread stays on the chain lock until its 30 s bound expires,
+    // `Scratch` drops first and removes the tree, and the worker then
+    // re-creates `/tmp/pdrs-stimulus-*` outliving the test process. Accepted
+    // rather than worked around: the bound must outlive the observation cap,
+    // or a guard that skips the release could hide behind a bound expiry
+    // inside the cap — the false PASS this test exists to exclude.
     let second = {
         let registry = registry.clone();
         thread::spawn(move || {
