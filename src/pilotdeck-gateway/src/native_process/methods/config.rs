@@ -1458,11 +1458,25 @@ mod tests {
         // empty string — `"."` resolves to the cwd and `"foo"` to its child,
         // both outside the configured project here, so they answer in the
         // same unserved-admission family.
+        // The premise these spellings lean on, asserted instead of assumed:
+        // the process cwd is not the configured project, so `""` / `"."` /
+        // `"foo"` resolve unserved. If the fixture ever moves its project to
+        // the cwd, this pin turns red instead of silently flipping the
+        // cells below to the admitted-through side.
+        let cwd_key = std::env::current_dir()
+            .expect("#2199 fixture cwd")
+            .to_string_lossy()
+            .into_owned();
+        negative_assert_eq!(
+            r.options.serves_project(&cwd_key),
+            false,
+            "#2199 the fixture premise: the process cwd is not the configured project"
+        );
         for (label, project) in [
             ("unserved project", UNSERVED_PROJECT),
-            ("empty-string projectKey", ""),
             ("relative-dot projectKey", "."),
             ("relative-path projectKey", "foo"),
+            ("empty-string projectKey", ""),
         ] {
             for (key_label, key) in [
                 ("blank key", Some("   ")),
