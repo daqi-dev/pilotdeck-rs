@@ -189,7 +189,7 @@ GUARDED = [
     ROOT / 'src/Cargo.lock',
     FIXTURES / '_shared/mutant_switch.py',
     FIXTURES / 'negative_suite.py',
-    FIXTURES / 'negative_process.py',
+    FIXTURES / 'negative_process.py', FIXTURES / 'anchor_selfcheck.py',
     FIXTURES / 'live-session/peer.py',
     Path(__file__).resolve(),
 ]

@@ -58,7 +58,7 @@ GUARDED = [
     ROOT / 'src/pilotdeck-gateway/tests/fixtures/session-factory/projections.mts',
     FIXTURES / '_shared/mutant_switch.py',
     FIXTURES / 'negative_suite.py',
-    FIXTURES / 'negative_process.py',
+    FIXTURES / 'negative_process.py', FIXTURES / 'anchor_selfcheck.py',
     Path(__file__).resolve(),
 ]
 

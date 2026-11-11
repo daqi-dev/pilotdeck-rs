@@ -108,7 +108,7 @@ GUARDED = [ROUTER, FILES, NATIVE_HTTP, ROOT / 'src/pilotdeck-gateway/src/api_web
     ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',
     ROOT / 'src/pilotdeck-gateway/tests/common/replay_normalize.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml', ROOT / 'src/Cargo.toml', ROOT / 'src/Cargo.lock',
-    FIXTURES / '_shared/mutant_switch.py', FIXTURES / 'negative_suite.py', FIXTURES / 'negative_process.py',
+    FIXTURES / '_shared/mutant_switch.py', FIXTURES / 'negative_suite.py', FIXTURES / 'negative_process.py', FIXTURES / 'anchor_selfcheck.py',
     Path(__file__), Path(__file__).with_name('oracle.json'),
     Path(__file__).with_name('generate.mts'), Path(__file__).with_name('README.md'),
 ]
