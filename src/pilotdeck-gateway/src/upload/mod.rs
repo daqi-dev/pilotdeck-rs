@@ -562,9 +562,9 @@ impl UploadStore {
         Ok(count)
     }
 
-    /// The record half of [`Self::cleanup_expired`]. Unlike
-    /// [`Self::list_in_project`] (whose strict errors stay for `create` and
-    /// `find_idempotent`), every per-record failure here is a logged skip.
+    /// The record half of [`Self::cleanup_expired`]. Like
+    /// [`Self::list_in_project`] (since #2098 fix-r2), every per-record
+    /// failure here is a logged skip rather than a round-wide abort.
     fn sweep_expired_records(&self, project: &Path, count: &mut usize) {
         // `read_dir` and `remove_dir_all` follow intermediate symlinks, while a
         // `symlink_metadata` on `root/<id>` does not: with a symlinked root the
@@ -1181,13 +1181,25 @@ impl UploadStore {
     }
     fn list_in_project(&self, project: &Path) -> Result<Vec<UploadRecord>> {
         let mut records = vec![];
-        for id in names(&project.join(".tmp/chat-uploads"))
-            .into_iter()
-            .filter(|id| safe_id(id))
-        {
-            if let Some(record) = self.read_at(project, &id)? {
-                records.push(record);
-            }
+        let root = project.join(".tmp/chat-uploads");
+        for id in names(&root).into_iter().filter(|id| safe_id(id)) {
+            // #2098 fix-r2 (review DS#1, option b): the read side's cap is
+            // 64 MiB while the write side can reach ~100 MiB in one frame
+            // (`name`/`relativePath` carry no length term), so one oversized
+            // record used to fail every later `create` and
+            // `find_idempotent` of that project through the strict `?`.
+            // Skipping is the sweep's own 口径 for a bad record: the
+            // readable records keep their exact semantics, and an unreadable
+            // one is treated as absent rather than poisoning the listing.
+            let record = match self.read_at(project, &id) {
+                Ok(Some(record)) => record,
+                Ok(None) => continue,
+                Err(e) => {
+                    self.skip_record(&root.join(&id), &e);
+                    continue;
+                }
+            };
+            records.push(record);
         }
         Ok(records)
     }
