@@ -252,8 +252,10 @@ struct UpgradeReadGate<S> {
     /// ._headerSent`; probe `probe-g2.out`/`probe-c2.out`: a streaming
     /// response is simply destroyed with no 408, `probe-g4.out`: a held
     /// response that has written nothing still gets the 408). Mirrors
-    /// `_headerSent` by treating any hyper write as the head: hyper never
-    /// writes a response's body ahead of its head.
+    /// `_headerSent` at the hand-off (fix-r2, mutant
+    /// `native-http-headersent-needs-acceptance`): `poll_write` called
+    /// with a non-empty buffer already counts — hyper never writes a
+    /// response's body ahead of its head.
     response_head_written: bool,
     /// #1517: hyper's write side holds bytes its flush has not confirmed on
     /// the wire — either the gate itself wrote them (`poll_write`) or the
@@ -762,11 +764,11 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for UpgradeReadGate<S> {
                 "connection closed",
             )));
         }
-        // #1292 fix-r2: hyper wrote response bytes — Node's `_headerSent`:
-        // hyper never writes a response's body ahead of its head, so any
-        // successful write means the in-flight response's head is on the
-        // wire, and a headers-timeout expiry from here on closes silently
-        // (`probe-g2.out`/`probe-c2.out`).
+        // #1292 fix-r2: hyper received response bytes — Node's `_headerSent`:
+        // hyper never writes a response's body ahead of its head, so a
+        // non-empty `poll_write` means the in-flight response's head has
+        // been handed off, and a headers-timeout expiry from here on closes
+        // silently (`probe-g2.out`/`probe-c2.out`).
         // #1517: the bytes are only *handed off* — Node's `finish` needs the
         // flush — so the same write also holds the response's in-flight
         // window open until `poll_flush` confirms the drain.
