@@ -2057,20 +2057,21 @@ fn leaf_swapped_after_revalidation_fails_identity() {
 }
 
 /// #1468: the issue's three-swap sequence — the leaf is a real in-root file
-/// while `lease_guard` canonicalizes it, is swapped for an outside symlink
-/// before `File::open` (so the open itself follows onto the outside file),
-/// is swapped back to a real in-root file for the post-open revalidation,
-/// and is swapped onto the outside file again for the path-stat/fstat
-/// identity comparison. Every path-based check passes while the opened
-/// handle is the outside file: only binding the approval to the handle's
-/// own resolved path (not any spelling checked around it) rejects the
-/// read. All three windows must fire and the attachment must land in the
-/// not-found branch — zero inlined bytes, zero registration, no note line.
+/// while `lease_guard` canonicalizes it, is swapped for a hard link onto an
+/// outside regular file before the open (so the open itself lands on the
+/// outside inode; #2098's guarded open refuses a symlink at the open, so the
+/// window swap-in is a hard link), is swapped back to a real in-root file
+/// for the post-open revalidation, and is swapped onto the outside file
+/// again for the path-stat/fstat identity comparison. Every path-based check
+/// passes while the opened handle is the outside file: only binding the
+/// approval to the handle's own resolved path (not any spelling checked
+/// around it) rejects the read. All three windows must fire and the
+/// attachment must land in the not-found branch — zero inlined bytes, zero
+/// registration, no note line.
 #[cfg(unix)]
 #[test]
 fn multi_step_swap_across_all_windows_is_not_found() {
     use std::cell::Cell;
-    use std::os::unix::fs::symlink;
     use std::rc::Rc;
 
     let scratch = Scratch::new();
@@ -2094,7 +2095,8 @@ fn multi_step_swap_across_all_windows_is_not_found() {
         let outside_link = outside_root.join("outside.png");
         move |_| {
             std::fs::remove_file(&leaf).expect("#1468 remove the in-root leaf");
-            symlink(&outside_link, &leaf).expect("#1468 swap the leaf onto the outside file");
+            std::fs::hard_link(&outside_link, &leaf)
+                .expect("#1468 swap the leaf for a hard link onto the outside file");
             fired.set(fired.get() + 1);
         }
     });
@@ -2113,7 +2115,8 @@ fn multi_step_swap_across_all_windows_is_not_found() {
         let outside_link = outside_root.join("outside.png");
         move |_| {
             std::fs::remove_file(&leaf).expect("#1468 remove the in-root leaf again");
-            symlink(&outside_link, &leaf).expect("#1468 swap the leaf onto the outside file again");
+            std::fs::hard_link(&outside_link, &leaf)
+                .expect("#1468 swap the leaf for a hard link onto the outside file again");
             fired.set(fired.get() + 1);
         }
     });
@@ -2161,19 +2164,20 @@ fn multi_step_swap_across_all_windows_is_not_found() {
 }
 
 /// #1468 (review concurrency#1 / boundary#1): the handle binding answers with
-/// the object's *current* name, so the symlink swap alone is not enough to
-/// pin it. Open the outside file through a swapped-in symlink, then rename
-/// that outside file over the leaf: the handle's name is now a genuine
-/// in-root spelling, the post-open canonicalize passes, and the path stat and
-/// the handle agree on `(dev, inode)` — only the identity recorded before the
-/// open (step 0) still shows that the approved file and the opened file are
-/// different objects. Without it the outside bytes are inlined (RED on the
-/// previous head, where the multi-step test also passed).
+/// the object's *current* name, so a swap alone is not enough to pin it. Open
+/// the outside file through a swapped-in hard link (#2098's guarded open
+/// refuses a symlink at the open, so the window swap-in is a hard link onto
+/// the outside regular file), then rename that outside file over the leaf:
+/// the handle's name is now a genuine in-root spelling, the post-open
+/// canonicalize passes, and the path stat and the handle agree on
+/// `(dev, inode)` — only the identity recorded before the open (step 0)
+/// still shows that the approved file and the opened file are different
+/// objects. Without it the outside bytes are inlined (RED on the previous
+/// head, where the multi-step test also passed).
 #[cfg(unix)]
 #[test]
 fn rename_after_open_is_not_found() {
     use std::cell::Cell;
-    use std::os::unix::fs::symlink;
     use std::rc::Rc;
 
     let scratch = Scratch::new();
@@ -2197,7 +2201,8 @@ fn rename_after_open_is_not_found() {
         let outside_file = outside_file.clone();
         move |_| {
             std::fs::remove_file(&leaf).expect("#1468 remove the in-root leaf");
-            symlink(&outside_file, &leaf).expect("#1468 swap the leaf onto the outside file");
+            std::fs::hard_link(&outside_file, &leaf)
+                .expect("#1468 swap the leaf for a hard link onto the outside file");
             fired.set(fired.get() + 1);
         }
     });
@@ -2386,7 +2391,10 @@ fn composer_lease_entry_swapped_for_a_same_inode_symlink_is_diagnosed_not_found(
 /// containment guard as the lease root. `.tmp/chat-uploads` swapped for a
 /// symlink out of the project would otherwise turn the outside directory the
 /// link points at into an accepted home, and the very multi-swap sequence this
-/// PR closes starts passing again.
+/// PR closes starts passing again. The window swap-ins of that sequence are
+/// hard links onto the outside regular file (#2098's guarded open refuses a
+/// symlink at the open, so a hard link keeps the open landing on the outside
+/// inode); the store-root symlink is this test's subject and stays.
 #[cfg(unix)]
 #[test]
 fn upload_store_root_swapped_outside_project_is_not_a_second_home() {
@@ -2418,7 +2426,8 @@ fn upload_store_root_swapped_outside_project_is_not_a_second_home() {
         let outside_file = outside_file.clone();
         move |_| {
             std::fs::remove_file(&leaf).expect("#1468 remove the in-root leaf");
-            symlink(&outside_file, &leaf).expect("#1468 swap the leaf onto the outside file");
+            std::fs::hard_link(&outside_file, &leaf)
+                .expect("#1468 swap the leaf for a hard link onto the outside file");
             fired.set(fired.get() + 1);
         }
     });
@@ -2440,7 +2449,8 @@ fn upload_store_root_swapped_outside_project_is_not_a_second_home() {
         let outside_file = outside_file.clone();
         move |_| {
             std::fs::remove_file(&leaf).expect("#1468 remove the in-root leaf again");
-            symlink(&outside_file, &leaf).expect("#1468 swap the leaf onto the outside file again");
+            std::fs::hard_link(&outside_file, &leaf)
+                .expect("#1468 swap the leaf for a hard link onto the outside file again");
             fired.set(fired.get() + 1);
         }
     });
