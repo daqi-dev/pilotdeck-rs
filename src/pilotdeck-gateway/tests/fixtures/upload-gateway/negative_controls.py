@@ -112,6 +112,10 @@ READ_AT_FIFO = ('upload::tests::upload_read_at_metadata_swapped_for_a_fifo_'
 READ_AT_ZERO = ('upload::tests::upload_read_at_metadata_swapped_for_a_dev_zero_symlink_'
                 'is_rejected_at_open')
 READ_AT_CAP = 'upload::tests::upload_read_at_metadata_over_the_size_cap_is_rejected'
+# #2098 fix-r2 (review DS#1, option b): the listing skips an unreadable
+# record with the sweep's own logged-skip 口径 instead of failing the whole
+# project's later `create` calls.
+LIST_SKIP = 'upload::tests::upload_create_survives_a_sibling_record_over_the_read_cap'
 LEASE_ROOT_LINK = 'upload::tests::upload_lease_root_link_is_refused'
 READ_AT_LINKED_ANCESTOR = 'upload::tests::upload_read_at_rejects_a_linked_tmp_ancestor'
 SWEEP = 'upload::tests::upload_cleanup_bad_record_does_not_abort_the_sweep'
@@ -662,6 +666,25 @@ mutations = [
      '                if false {',
      READ_AT_CAP,
      '#2098 a sparse record leaf past the cap must be refused before the read'),
+    # #2098 fix-r2 (review DS#1, option b): the write side can reach ~100 MiB
+    # of record JSON in one frame while the read cap is 64 MiB, so the
+    # listing's strict `?` turned one unreadable record into every later
+    # `create` of that project failing. The fix skips it with the sweep's own
+    # logged-skip 口径; this mutant restores the strict `?`, and the named
+    # test's `create` then fails on the over-cap sibling — its `expect`
+    # receipt is the kill.
+    ('list-strict-error-restored', STORE, '''            let record = match self.read_at(project, &id) {
+                Ok(Some(record)) => record,
+                Ok(None) => continue,
+                Err(e) => {
+                    self.skip_record(&root.join(&id), &e);
+                    continue;
+                }
+            };
+            records.push(record);''', '''            if let Some(record) = self.read_at(project, &id)? {
+                records.push(record);
+            }''', LIST_SKIP,
+     '#2098 an oversized sibling record must not poison the project listing'),
     # #1888: the writer's lease root goes through the same home guard as the
     # reader's. This row restores the pre-fix shape — a bare join off
     # `projectKey`, created through whatever is at that spelling — so a lease
@@ -1266,6 +1289,7 @@ EXPECTED_NAMES = (
     'verify-hash-length-dropped', 'verify-bytes-cap-dropped',
     'read-at-open-nonblock-dropped',
     'read-at-open-nofollow-dropped', 'read-at-metadata-cap-dropped',
+    'list-strict-error-restored',
     'lease-root-link-refused',
     'read-at-upload-root-prefix-dropped',
     # main 的 #1646 清理鲁棒性十五条，rebase 后并入；同理，名册漏一条即

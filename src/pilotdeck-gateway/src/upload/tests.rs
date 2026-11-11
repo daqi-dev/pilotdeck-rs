@@ -2088,6 +2088,39 @@ fn upload_read_at_metadata_over_the_size_cap_is_rejected() {
     );
 }
 
+/// #2098 fix-r2 (review DS#1, option b): one record leaf past the read cap
+/// must not poison the project listing. The write side can reach ~100 MiB of
+/// record JSON in one frame (`name`/`relativePath` carry no length term)
+/// while the read cap is 64 MiB, so the strict `?` in `list_in_project`
+/// turned one such record into every later `create` of that project failing
+/// with the read-side refusal. The listing now skips an unreadable record
+/// with the sweep's own logged-skip 口径; the readable records — and a new
+/// `create` — keep their exact semantics.
+#[test]
+fn upload_create_survives_a_sibling_record_over_the_read_cap() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(metadata_path(&project))
+        .expect("#2098 open the sibling record leaf for the sparse extension");
+    file.set_len(MAX_METADATA_JSON_BYTES + 1)
+        .expect("#2098 extend the sibling record leaf past the read cap");
+    drop(file);
+    let manifest = value(&crate::test_baseline::oracle(ORACLE), "manifest");
+    let record = h
+        .store
+        .create("project", &manifest, None)
+        .expect("#2098 an oversized sibling record must not poison the project listing");
+    assert_eq!(
+        status(&h.store.get(&string(&record, "uploadId").unwrap()).unwrap()),
+        "created",
+        "#2098 the new record round-trips through the listing that skipped its sibling"
+    );
+}
+
 /// #1887: the read side of the shared "home" question. A `.tmp` swapped for a
 /// link to another subtree of the same project keeps the canonical spelling
 /// inside the project, so a canonical-containment check alone would accept the
