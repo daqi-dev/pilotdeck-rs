@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported peak-RSS measurement driver: builds the lib test
+# binary once, then times one already-written test process per head shape; it
+# never rewrites product source, so there is no source replacement table.
 """#1555 peak-RSS measurement: one mode per process under `/usr/bin/time`.
 
 Issue #1555's acceptance line asks for a real peak-memory measurement of the
@@ -16,10 +19,10 @@ committed and clean: the driver holds the shared tree lock (the same `flock`
 the negative controls hold while they mutate sources in place) for the whole
 build and measurement window, and a dirty product input is refused with
 `status=INVALID` and exit code 2 instead of being recorded as `src_dirty=false`.
+The lock is either taken here (`tree_lock`) or, under the #1695 dirty-src
+handoff, inherited with the control's descriptor (`driver_lock`).
 """
-# anchor-selfcheck: unsupported peak-RSS measurement driver: builds the lib test
-# binary once, then times one already-written test process per head shape; it
-# never rewrites product source, so there is no source replacement table.
+from contextlib import contextmanager
 import argparse
 import json
 import os
@@ -104,6 +107,48 @@ def workspace_dirty(root):
     return None
 
 
+@contextmanager
+def inherited_lock(fd):
+    """The control's tree lock, handed over with the descriptor (#1695).
+
+    The dirty-src control takes the shared `flock` on one descriptor and
+    passes that descriptor here with `pass_fds`: a `flock` belongs to the
+    open file description, so the lock survives the exec and this process
+    owns it from its first statement -- there is no instant between the
+    control's release of its own copy and this run in which the lock is free
+    while the marker is on disk, which is the false `src/ is dirty` the old
+    release-and-reacquire handoff could hand a sibling runner.
+
+    Releasing is the close itself: an explicit `flock(LOCK_UN)` is not needed
+    (nobody else shares the description once the control closed its copy) and
+    would race nothing. The cargo / rustc / timing children never see the
+    descriptor -- `run_owned` spawns with the default close-fds -- so no
+    orphan can outlive this process still holding the tree lock.
+    """
+    try:
+        yield
+    finally:
+        os.close(fd)
+
+
+def driver_lock(root):
+    """The tree lock for this run: inherited from the control, or taken here.
+
+    Standalone (the clean runs and the `lock-held` control) this is the shared
+    `negative_process.tree_lock`, unchanged. Under the #1695 handoff the
+    control has already transferred its descriptor, so this run OWNS the lock
+    from the first statement: nothing is requested and the two marker lines
+    print back to back -- the wait between them is zero by construction, not
+    by luck. A `PDRS_NEGCTL_LOCK_FD` that is not an integer crashes before any
+    summary is written, and the control reads a driver that died before the
+    lock as INVALID, never as a survivor.
+    """
+    spec = os.environ.get('PDRS_NEGCTL_LOCK_FD')
+    if spec is None:
+        return tree_lock(root, timeout=3600)
+    return inherited_lock(int(spec))
+
+
 def negctl_restore():
     """#1555: undo the dirty-tree control's marker while this driver holds the lock.
 
@@ -116,13 +161,13 @@ def negctl_restore():
     still inside the lock and before the refusal is returned, removes that
     window.
 
-    It does not remove the *other* one (fix-r6 review, sibling P1): the marker
-    is on disk from the moment the control writes it until this process takes
-    the lock, and that handoff is not atomic -- `tree_lock` is `LOCK_NB` plus
-    50 ms polling with no kernel queue, so a sibling polling in the same
-    instant can win the lock first and see the marker. See
-    `dirty_tree_control_1555.py`'s module docstring, R7 §机器判据, and the
-    follow-up issue #1695.
+    It does not remove the *other* window by itself (fix-r6 review, sibling
+    P1): the marker is on disk from the moment the control writes it until
+    this process's restore, which is why the lock now comes with the process
+    (#1695): the control hands its `flock` descriptor over with `pass_fds` and
+    closes its copy without unlocking, so the marker never sits on disk while
+    the tree lock is free and no sibling can win it in between. See
+    `dirty_tree_control_1555.py`'s module docstring and `driver_lock`.
 
     `PDRS_NEGCTL_RESTORE` is `<relative path>\\x1f<original file>\\x1f<marked
     file>`; both files live in the control's output directory, outside the
@@ -231,6 +276,9 @@ def main():
     # the request itself, so a control that holds the lock can see "asked, not
     # acquired" as a state proof of blocking instead of inferring it from a
     # quiet window (the dirty check below is git-heavy on a cold cache).
+    # #1695: under the dirty-src handoff there is no request at all -- the lock
+    # arrived with the descriptor (`driver_lock`) -- and the two lines print
+    # back to back; only the standalone runs actually block between them.
     print(f'starting {json.dumps({"pid": os.getpid()})}', flush=True)
     # The timestamp is this process's own monotonic clock, not the control's
     # read time: a control that polls the log every 50 ms -- and may be slow to
@@ -239,7 +287,7 @@ def main():
     # false pass). Both processes read the same host clock, so the control can
     # subtract this value directly (fix-r5 boundary P2).
     print(f'lock-requested {time.monotonic():.6f}', flush=True)
-    with tree_lock(root, timeout=3600):
+    with driver_lock(root):
         print('lock-acquired', flush=True)
         dirty = workspace_dirty(root)
         provenance = dict(
