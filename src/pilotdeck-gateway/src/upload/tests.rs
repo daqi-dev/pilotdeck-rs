@@ -517,6 +517,63 @@ fn task_dir_of(project: &Path) -> PathBuf {
     project.join(".tmp/chat-uploads/upload-1")
 }
 
+/// #2098 fix-r2 (review DS#2 / MM): the fourth path-read of the family.
+/// `cleanup_expired_leases` used `fs::read` on the lease entry — a bare open
+/// that blocks a FIFO swapped in for `lease.json` for a writer that never
+/// comes, stalling the cleanup round. The entry read now goes through
+/// `open_artifact_guarded` with the handle's own type/length terms; a
+/// non-file entry is not read at all, which this half already spells
+/// "expired" (the malformed-JSON default), so the FIFO lease is reclaimed
+/// rather than waited on while a live future lease survives the round.
+#[cfg(unix)]
+#[test]
+fn upload_lease_cleanup_does_not_wait_on_a_fifo_lease_entry() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    completed(&h);
+    let lease = h
+        .store
+        .acquire_attachment_lease("upload-1", "project", None)
+        .unwrap();
+    let pinned = PathBuf::from(string(&lease.attachments[0], "path").unwrap());
+    let root = project.join(".tmp/chat-upload-leases");
+    let fifo_dir = root.join("u/fifo");
+    fs::create_dir_all(&fifo_dir).unwrap();
+    let made = std::process::Command::new("mkfifo")
+        .arg(fifo_dir.join("lease.json"))
+        .status()
+        .expect("#2098 run mkfifo for the FIFO lease entry fixture");
+    assert!(
+        made.success(),
+        "#2098 create the FIFO lease entry fixture for the cleanup watchdog"
+    );
+    let store = h.store.clone();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(store.cleanup_expired().map(|_| ()).map_err(|e| e.code.clone()));
+    });
+    match rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(Ok(_)) => {}
+        Ok(Err(code)) => panic!("#2098 the lease sweep must not fail on the FIFO entry: {code}"),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            panic!("#2098 a FIFO lease entry must never make the cleanup wait for a writer")
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("#2098 the cleanup thread died before reporting (fixture or product panic)")
+        }
+    }
+    assert!(
+        !fifo_dir.exists(),
+        "#2098 the unreadable FIFO lease is reclaimed as expired, not waited on"
+    );
+    assert!(
+        pinned.exists(),
+        "#2098 the live future lease survives the round that reclaimed the FIFO entry"
+    );
+    lease.release().unwrap();
+}
+
 /// #1441 三态反差（ts-probe/p1-attachment-ids.out.txt，真 TS UploadStore
 /// 实测）：`attachmentIds` undefined → 全部；`[]` → 静默零个（校验与租约
 /// 都成功、无硬链接）；未知 id → ATTACHMENT_NOT_FOUND "Unknown
