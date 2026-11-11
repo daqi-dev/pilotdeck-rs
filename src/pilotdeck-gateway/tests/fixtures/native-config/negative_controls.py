@@ -80,7 +80,24 @@ REVIEW_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/review_tests.rs'
 # the mutated source, CRON_TESTS carries the bound assertion literal (#2065).
 CRON = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/cron.rs'
 CRON_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/cron/cron_tests.rs'
+# #1623 fix-r2: the three entry gates the surrogate divergence now covers —
+# the connection-owned submit entry (submit.rs validate), the rewind_files
+# request gate (tools.rs, delegated to the shared guard), and the archive
+# family's session gate (native_archive.rs). SUBMIT_TESTS / ARCHIVE_TESTS
+# carry their bound tests' assertion literals (the #1864 mutate-writer /
+# read-test precedent); tools.rs carries its own tests module.
+SUBMIT = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/submit.rs'
+SUBMIT_TESTS = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/submit_tests.rs'
+ARCHIVE = ROOT / 'src/pilotdeck-gateway/src/native_archive.rs'
+ARCHIVE_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_archive/tests.rs'
+# #1623 fix-r2: the methods/tools.rs of the rewind_files request gate — a
+# different file from the TOOLS path above (native_process/tools.rs, the
+# host session tools' admission source).
+METHODS_TOOLS = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/tools.rs'
 CFG = 'native_process::methods::config::tests::'
+SUBMIT_T = 'runtime::turn::submit::tests::'
+TOOLS_T = 'native_process::methods::tools::tests::'
+ARCHIVE_T = 'native_archive::tests::'
 FT = 'runtime::session::factory::tests::'
 DIR = 'native_process::methods::session_dir::tests::'
 mutations = [
@@ -648,12 +665,41 @@ mutations = [
      CFG + 'session_model_set_surrogate_key_answers_the_session_key_gate',
      '#1623 the surrogate key answers the sessionKey gate'),
     # #1623: the rejection keeps the guard family's error shape — rewording
-    # the message must be caught by the per-method message assertion.
+    # the message must be caught by the per-method message assertion. fix-r2
+    # re-bound: the wording now lives in the shared `SESSION_KEY_SURROGATE_MESSAGE`
+    # constant (methods/mod.rs) that every gate renders, so the mutant edits
+    # the constant instead of one call site's inline copy.
     ('session-key-surrogate-message', METHODS_MOD,
-     '            message: "sessionKey must not contain an unpaired surrogate.".into(),',
-     '            message: "sessionKey contains a surrogate.".into(),',
+     'pub(crate) const SESSION_KEY_SURROGATE_MESSAGE: &str =\n'
+     '    "sessionKey must not contain an unpaired surrogate.";',
+     'pub(crate) const SESSION_KEY_SURROGATE_MESSAGE: &str =\n'
+     '    "sessionKey contains a surrogate.";',
      DIR + 'tag_session_surrogate_key_gate',
      "answers the guard family's surrogate message"),
+    # ── #1623 fix-r2: the three entry gates the divergence now covers. Each
+    # row removes one gate's surrogate rejection at its own site — not the
+    # shared guard, which the rows above already kill four ways — and binds
+    # the test that pins that gate's refusal.
+    ('submit-entry-surrogate-guard-removed', SUBMIT,
+     '        && crate::native_process::has_unpaired_surrogate(key.units())',
+     '        && false',
+     SUBMIT_T + 'submit_turn_rejects_lone_surrogate_session_key',
+     "#1623 the surrogate key answers the entry gate's error event"),
+    ('rewind-entry-surrogate-guard-removed', METHODS_TOOLS,
+     '            let session_key = super::require_session_key(&params)?;',
+     '            let session_key = required_trimmed(\n'
+     '                &params,\n'
+     '                "sessionKey",\n'
+     '                "INVALID_SESSION_KEY",\n'
+     '                "sessionKey is required.",\n'
+     '            )?;',
+     TOOLS_T + 'rewind_files_rejects_lone_surrogate_session_key',
+     '#1623 rewind_files rejects the lone-surrogate key'),
+    ('archive-entry-surrogate-guard-removed', ARCHIVE,
+     '        JsValue::String(s) if crate::native_process::has_unpaired_surrogate(s.units()) =>',
+     '        JsValue::String(s) if false =>',
+     ARCHIVE_T + 'archive_gate_rejects_lone_surrogate_session_key',
+     '#1623 the archive gate rejects the lone-surrogate key'),
     # ── #2272: the admission filter skips `undefined` AND `null` (the TS
     # nullish read `input.projectKey ?? fallback`, createLocalGateway.ts).
     # Dropping the null arm restores the pre-#2272 shape where an explicit
@@ -1390,9 +1436,13 @@ mutations = [
 # re-bind of the old #1455 row, five new rows, one row re-pointed from
 # config.rs to the shared guard in methods/mod.rs); the later fix-r2/r4/r5
 # commits add their own rows above. The pre-rebase figures (123 rows / 77
-# literal-anchor entries) rode the stale #2207/#2199 chain this rebase
-# replaced, so the counts are re-derived against the post-rebase table by
-# the count-alignment commit on top (real `--check` output).
+# literal-anchor entries, then 126/80 after fix-r2) rode the stale
+# #2207/#2199 chain this rebase replaced, so the counts are re-derived
+# against the post-rebase table by the count-alignment commit on top
+# (real `--check` output).
+# #1623 fix-r2: the three fix-r2 entry gates (submit_turn validate,
+# rewind_files request gate, native_archive session gate) joined with one
+# row and one literal anchor each.
 LITERAL_ANCHORS = [
     (CONFIG, '#1457 session_model_set accepts the fixture selection'),
     (CONFIG, '#1457 session_model_clear succeeds'),
@@ -1489,6 +1539,12 @@ LITERAL_ANCHORS = [
     (SESSION_DIR, '#1623 the surrogate-spelled tag is refused'),
     (SESSION_DIR, "answers the guard family's surrogate message"),
     (CONFIG, '#1623 the surrogate key answers the sessionKey gate'),
+    # #1623 fix-r2: the three entry gates' bound literals — the submit entry
+    # (test file), the rewind request gate (tools.rs carries its tests), and
+    # the archive session gate (test file).
+    (SUBMIT_TESTS, "#1623 the surrogate key answers the entry gate's error event"),
+    (METHODS_TOOLS, '#1623 rewind_files rejects the lone-surrogate key'),
+    (ARCHIVE_TESTS, '#1623 the archive gate rejects the lone-surrogate key'),
 ]
 
 # Where an assertion can live: the mutated sources, the read-side files the
@@ -1498,7 +1554,8 @@ LITERAL_ANCHORS = [
 # scan does not read would be a guard with a blind spot.
 SOURCE_TEXTS = (CONFIG, SESSION_DIR, METHODS_MOD, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS,
                 REVIEW_TESTS, FACTORY, FACTORY_TESTS, REQUESTS, SERVICES,
-                MANAGEMENT_TESTS, CRON, CRON_TESTS, TRANSCRIPT_LOCKS)
+                MANAGEMENT_TESTS, CRON, CRON_TESTS, TRANSCRIPT_LOCKS,
+                SUBMIT, SUBMIT_TESTS, ARCHIVE, ARCHIVE_TESTS, METHODS_TOOLS)
 
 
 def _assertions(case):

@@ -206,7 +206,7 @@ pub(super) fn require_session_key(params: &JsValue) -> Result<JsString, RequestE
     if has_unpaired_surrogate(key.units()) {
         return Err(RequestError {
             code: "INVALID_SESSION_KEY".into(),
-            message: "sessionKey must not contain an unpaired surrogate.".into(),
+            message: SESSION_KEY_SURROGATE_MESSAGE.into(),
             details: None,
             validation: None,
         });
@@ -214,11 +214,18 @@ pub(super) fn require_session_key(params: &JsValue) -> Result<JsString, RequestE
     Ok(key)
 }
 
+/// The #1623 surrogate-rejection message, shared by every gate the divergence
+/// covers (session_dir / config / rewind_files request families, the
+/// connection-owned `submit_turn` entry, and the `native_archive` family) so
+/// the wording cannot drift between them.
+pub(crate) const SESSION_KEY_SURROGATE_MESSAGE: &str =
+    "sessionKey must not contain an unpaired surrogate.";
+
 /// True when the UTF-16 units contain a surrogate without its pair — the one
 /// shape the #1623 gate refuses. `char::decode_utf16` is the same walk the
 /// storage's `String::from_utf16_lossy` performs, so the two can never
 /// disagree about which keys are "lossy".
-fn has_unpaired_surrogate(units: &[u16]) -> bool {
+pub(crate) fn has_unpaired_surrogate(units: &[u16]) -> bool {
     char::decode_utf16(units.iter().copied()).any(|unit| unit.is_err())
 }
 
