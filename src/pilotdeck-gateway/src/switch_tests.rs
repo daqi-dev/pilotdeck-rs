@@ -1079,7 +1079,7 @@ async fn native_cron_stop_retains_failure_across_face_and_provider_teardown() {
         .stop_async()
         .await
         .expect_err("provider teardown sees the same failure");
-    assert_eq!(first.to_string(), second.to_string());
+    assert_eq!(first.as_json(), second.as_json());
     assert_eq!(
         calls.load(Ordering::SeqCst),
         1,
